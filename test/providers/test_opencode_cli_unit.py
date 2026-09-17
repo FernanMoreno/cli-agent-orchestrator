@@ -2,7 +2,7 @@
 
 import re
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -401,13 +401,13 @@ class TestExtractLastMessage:
 
 
 # ---------------------------------------------------------------------------
-# (e)  initialize() calls wait_until_status with timeout=120.0
+# (e) initialize() requires a provider-approved initial viewport within 120 s
 # ---------------------------------------------------------------------------
 
 
 class TestInitialize:
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.wait_until_status")
+    @patch("cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready", new_callable=AsyncMock)
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_success_returns_true(self, mock_tmux, mock_shell, mock_wait):
@@ -417,7 +417,7 @@ class TestInitialize:
         assert await provider.initialize() is True
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.wait_until_status")
+    @patch("cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready", new_callable=AsyncMock)
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_uses_120s_timeout(self, mock_tmux, mock_shell, mock_wait):
@@ -425,11 +425,10 @@ class TestInitialize:
         mock_wait.return_value = True
         provider = make_provider()
         await provider.initialize()
-        _args, kwargs = mock_wait.call_args
-        assert kwargs.get("timeout") == 120.0 or _args[2] == 120.0
+        mock_wait.assert_awaited_once_with(timeout=120.0)
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.wait_until_status")
+    @patch("cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready", new_callable=AsyncMock)
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_sends_agent_flag(self, mock_tmux, mock_shell, mock_wait):
@@ -441,7 +440,7 @@ class TestInitialize:
         assert "--agent developer" in sent_cmd
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.wait_until_status")
+    @patch("cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready", new_callable=AsyncMock)
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_includes_model_when_set(self, mock_tmux, mock_shell, mock_wait):
@@ -453,7 +452,7 @@ class TestInitialize:
         assert "--model anthropic/claude-sonnet-4-6" in sent_cmd
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.wait_until_status")
+    @patch("cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready", new_callable=AsyncMock)
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_no_model_flag_when_unset(self, mock_tmux, mock_shell, mock_wait):
@@ -474,7 +473,7 @@ class TestInitialize:
             await provider.initialize()
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.wait_until_status")
+    @patch("cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready", new_callable=AsyncMock)
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_raises_on_opencode_timeout(self, mock_tmux, mock_shell, mock_wait):
@@ -485,7 +484,7 @@ class TestInitialize:
             await provider.initialize()
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.wait_until_status")
+    @patch("cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready", new_callable=AsyncMock)
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_sets_env_vars_in_command(self, mock_tmux, mock_shell, mock_wait):
@@ -500,6 +499,22 @@ class TestInitialize:
         assert "TERM=xterm-256color" in sent_cmd
         assert "OPENCODE_CONFIG=" in sent_cmd
         assert "OPENCODE_CONFIG_DIR=" in sent_cmd
+
+    @pytest.mark.asyncio
+    @patch("cli_agent_orchestrator.services.status_monitor.status_monitor")
+    @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
+    async def test_initial_viewport_readiness_publishes_the_observed_state(self, mock_backend, mock_monitor):
+        mock_monitor.get_status.return_value = TerminalStatus.UNKNOWN
+        mock_monitor.observe_initial_screen_snapshot.return_value = TerminalStatus.IDLE
+        viewport = "tab agents  ctrl+p commands  • OpenCode"
+        mock_backend.return_value.get_history.return_value = viewport
+
+        assert await make_provider()._wait_for_initial_ready(timeout=1.0) is True
+
+        mock_backend.return_value.get_history.assert_called_once_with(
+            "test-session", "window-0", strip_escapes=True, visible_only=True
+        )
+        mock_monitor.observe_initial_screen_snapshot.assert_called_once_with("test-tid", viewport)
 
 
 # ---------------------------------------------------------------------------

@@ -266,6 +266,34 @@ class StatusMonitor:
             bus.publish(f"terminal.{terminal_id}.status", {"status": detected.value})
             logger.info(f"Terminal {terminal_id} status changed: {detected.value}")
 
+    def observe_initial_screen_snapshot(self, terminal_id: str, snapshot: str) -> TerminalStatus:
+        """Record one provider-approved rendered viewport during initial startup.
+
+        This is deliberately narrower than the stale-PROCESSING recovery path:
+        it is called only before the first prompt is delivered.  It refuses
+        providers without the explicit screen-detection capability, captures no
+        history beyond the supplied visible viewport, and never converts
+        UNKNOWN/PROCESSING into a ready signal.  A confirmed ready state is
+        applied through the normal sticky-latch/event path so all consumers see
+        the same status that allowed input delivery.
+        """
+        if not isinstance(snapshot, str) or not snapshot:
+            return TerminalStatus.UNKNOWN
+        try:
+            provider = provider_manager.get_provider(terminal_id)
+        except Exception:
+            provider = None
+        if provider is None or not getattr(provider, "supports_screen_detection", False):
+            return TerminalStatus.UNKNOWN
+        try:
+            detected = provider.get_status_from_screen(snapshot.splitlines())
+        except Exception:
+            logger.exception("Error detecting initial screen status for %s", terminal_id)
+            return TerminalStatus.UNKNOWN
+        if detected != TerminalStatus.UNKNOWN:
+            self._apply_detection(terminal_id, detected)
+        return detected
+
     def _apply_detection_locked(self, terminal_id: str, detected: TerminalStatus) -> bool:
         """Sticky-latch core of _apply_detection. Caller MUST hold self._lock.
 

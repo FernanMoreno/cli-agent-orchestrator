@@ -272,6 +272,13 @@ class CreateTerminalBody(BaseModel):
 
     initial_message: Optional[str] = None
     initial_message_orchestration_type: Optional[str] = None
+    prompt_redelivery: bool = Field(
+        default=True,
+        description=(
+            "Whether deferred initial-message delivery may retry after pickup "
+            "cannot be confirmed. False is an explicit at-most-once policy."
+        ),
+    )
 
 
 def _check_group_size(group: Optional[List[str]]) -> Optional[List[str]]:
@@ -492,6 +499,14 @@ class RunStepRequest(BaseModel):
             "Typed as the enum so an unknown value is REJECTED with 422 at the "
             "boundary rather than silently downgraded to undeclared, which "
             "would change the verdict (SR-6)."
+        ),
+    )
+    prompt_redelivery: bool = Field(
+        default=True,
+        description=(
+            "Whether post-send pickup recovery may re-deliver the prompt. "
+            "False provides at-most-once delivery and requires caller-side "
+            "reconciliation if pickup is not observed."
         ),
     )
 
@@ -2876,6 +2891,7 @@ async def create_session(
     provider: Optional[str] = None,
     session_name: Optional[str] = None,
     working_directory: Optional[str] = None,
+    caller_id: Optional[TerminalId] = None,
     allowed_tools: Optional[str] = None,
     memory_manager: Optional[str] = None,
     engine: Optional[KiroEngine] = None,
@@ -2940,6 +2956,7 @@ async def create_session(
     """
     initial_message = body.initial_message if body else None
     initial_message_orchestration_type = None
+    prompt_redelivery = body.prompt_redelivery if body else True
     # Structural caps on group/metadata (call-me-ram, PR #433 review) are
     # enforced by CreateSessionBody's own field_validators above — invalid
     # values fail Pydantic body parsing and FastAPI returns 422 automatically,
@@ -2985,12 +3002,14 @@ async def create_session(
             agent_profile=agent_profile,
             session_name=session_name,
             working_directory=working_directory,
+            caller_id=caller_id,
             allowed_tools=allowed_tools_list,
             registry=get_plugin_registry(request),
             env_vars=body.env_vars if body else None,
             engine=engine,
             initial_message=initial_message,
             initial_message_orchestration_type=initial_message_orchestration_type,
+            prompt_redelivery=prompt_redelivery,
             model=model,
             use_worktree=use_worktree,
             idempotency_key=idempotency_key,
@@ -3286,6 +3305,7 @@ async def create_terminal_in_session(
             defer_init=defer_init,
             initial_message=initial_message,
             initial_message_orchestration_type=orch_type,
+            prompt_redelivery=body.prompt_redelivery if body else True,
             engine=engine,
             model=model,
             use_worktree=use_worktree,
@@ -4042,6 +4062,7 @@ async def run_step(
             on_step_terminal_ready=on_step_terminal_ready,
             model=body.model,
             use_worktree=body.use_worktree,
+            prompt_redelivery=body.prompt_redelivery,
         )
         # Success -> transition the script step RUNNING->COMPLETED (no-op for
         # non-script callers). Before building the response so a settle failure

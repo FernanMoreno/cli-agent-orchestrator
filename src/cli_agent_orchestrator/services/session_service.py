@@ -56,12 +56,14 @@ async def create_session(
     agent_profile: str,
     session_name: str | None = None,
     working_directory: str | None = None,
+    caller_id: str | None = None,
     allowed_tools: list[str] | None = None,
     registry: PluginRegistry | None = None,
     env_vars: dict[str, str] | None = None,
     engine: KiroEngine | str | None = None,
     initial_message: str | None = None,
     initial_message_orchestration_type: OrchestrationType | None = None,
+    prompt_redelivery: bool = True,
     model: str | None = None,
     use_worktree: bool = False,
     idempotency_key: str | None = None,
@@ -79,6 +81,9 @@ async def create_session(
     existing deferred-init path so provider initialization and delivery can
     continue after the session response. Omitting it preserves the synchronous
     initialization behavior used by existing callers.
+    ``prompt_redelivery=False`` preserves at-most-once delivery of that initial
+    message; the caller must reconcile an unconfirmed worker instead of
+    retrying delivery.
     On the deferred path, the ``post_create_session`` plugin event is dispatched
     before provider initialization and message delivery finish.
 
@@ -114,6 +119,7 @@ async def create_session(
         session_name=session_name,
         new_session=True,
         working_directory=working_directory,
+        caller_id=caller_id,
         allowed_tools=allowed_tools,
         registry=registry,
         env_vars=env_vars,
@@ -121,6 +127,7 @@ async def create_session(
         defer_init=initial_message is not None,
         initial_message=initial_message,
         initial_message_orchestration_type=initial_message_orchestration_type,
+        prompt_redelivery=prompt_redelivery,
         model=model,
         use_worktree=use_worktree,
         idempotency_key=idempotency_key,

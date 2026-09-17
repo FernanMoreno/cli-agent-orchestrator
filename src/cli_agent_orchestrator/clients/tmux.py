@@ -801,7 +801,15 @@ class TmuxClient:
         try:
             working_directory = self._resolve_and_validate_working_directory(working_directory)
 
-            session = self._find_session(session_name)
+            session = None
+            # tmux can acknowledge new-session before list-sessions exposes
+            # it.  Bounded retry avoids treating that short creation race as a
+            # missing session and rolling back a healthy launch.
+            for _ in range(10):
+                session = self._find_session(session_name)
+                if session:
+                    break
+                time.sleep(0.1)
             if not session:
                 raise ValueError(f"Session '{session_name}' not found")
 
@@ -888,6 +896,7 @@ class TmuxClient:
         enter_count: int = 1,
         force_bracketed_paste: bool = False,
         submit_delay: float = 0.3,
+        plain_shell: bool = False,
     ) -> None:
         """Send keys to window using tmux paste-buffer for instant delivery.
 
@@ -975,7 +984,15 @@ class TmuxClient:
                 check=False,
                 capture_output=True,
             )
-            if force_bracketed_paste and self._pane_is_bracketed_paste_incompatible(
+            if plain_shell:
+                # The caller has a stronger fact than a foreground-process
+                # sample: it is submitting a shell launch command.  Suppress
+                # ``-p`` unconditionally so a stale tmux DECSET-2004 bit
+                # cannot turn the command into unsubmitted bracketed text.
+                # No model-authored message reaches this branch.
+                buf_content = keys.encode()
+                paste_args = []
+            elif force_bracketed_paste and self._pane_is_bracketed_paste_incompatible(
                 validated_session, validated_window
             ):
                 # The pane's live foreground command is a known shell (see
@@ -1620,18 +1637,24 @@ class TmuxClient:
                 instead of being recorded as a permanent failure.
         """
         try:
-            session = self._find_session(session_name)
-            if not session:
-                raise ValueError(f"Session '{session_name}' not found")
-
-            window = self._find_window(session, session_name, window_name)
-            if not window:
-                raise ValueError(f"Window '{window_name}' not found in session '{session_name}'")
-
-            pane = self._find_active_pane(window, session_name, window_name)
-            if pane:
-                pane.cmd("pipe-pane", "-o", f"cat >> {shlex.quote(str(file_path))}")
-                logger.info(f"Started pipe-pane for {session_name}:{window_name} to {file_path}")
+            pane = None
+            # A new window may accept input before it appears in tmux's query
+            # lists.  Attaching the output pipe on the first transient miss
+            # would leave the agent real but unobserved, so retry a bounded
+            # amount before reporting a genuine missing pane.
+            for _ in range(10):
+                session = self._find_session(session_name)
+                if session:
+                    window = self._find_window(session, session_name, window_name)
+                    if window:
+                        pane = self._find_active_pane(window, session_name, window_name)
+                        if pane:
+                            break
+                time.sleep(0.1)
+            if not pane:
+                raise ValueError(f"Pane for '{session_name}:{window_name}' not found")
+            pane.cmd("pipe-pane", "-o", f"cat >> {shlex.quote(str(file_path))}")
+            logger.info(f"Started pipe-pane for {session_name}:{window_name} to {file_path}")
         except Exception as e:
             logger.error(f"Failed to start pipe-pane for {session_name}:{window_name}: {e}")
             raise

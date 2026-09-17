@@ -161,6 +161,7 @@ async def _wait_for_completion(
     cancel_event: Optional["asyncio.Event"] = None,
     *,
     prompt: Optional[str] = None,
+    prompt_redelivery: bool = True,
 ) -> None:
     """Wait for a post-input step to settle, polling ``status_monitor`` (issue #409).
 
@@ -196,6 +197,10 @@ async def _wait_for_completion(
     still requires prior work. A redelivery that itself raises is logged and
     swallowed (a failed recovery attempt is not a step failure) so this wait
     never escapes with anything but its documented exceptions.
+
+    Set ``prompt_redelivery`` to False for at-most-once delivery. The initial
+    send still happens, but this wait never sends Enter or re-pastes the
+    prompt; an unconfirmed terminal must be reconciled rather than retried.
 
     Interruptibility (issue #409b): if ``cancel_event`` fires mid-wait, raises
     ``StepCancelledError`` PROMPTLY (it does not wait out the poll interval) so an
@@ -288,6 +293,7 @@ async def _wait_for_completion(
         # which cannot duplicate a task.
         if (
             prompt is not None
+            and prompt_redelivery
             and not delivery_verified
             and not observed_working
             and current == TerminalStatus.IDLE
@@ -439,6 +445,7 @@ async def run_agent_step(
     engine: Optional[KiroEngine | str] = None,
     model: Optional[str] = None,
     use_worktree: bool = False,
+    prompt_redelivery: bool = True,
 ) -> AgentStepResult:
     """Run one agent step and return its result (success only).
 
@@ -542,6 +549,10 @@ async def run_agent_step(
             ``terminal_service.create_terminal``'s own docstring for the
             resolution/teardown mechanics. Ignored when reusing a terminal.
             Default False = behavior unchanged.
+        prompt_redelivery: When False, do not re-submit a prompt after the
+            initial send. This is the at-most-once delivery mode for callers
+            that can reconcile a terminal durably. Default True preserves the
+            historical pickup-recovery behavior.
 
     Returns:
         ``AgentStepResult`` with status COMPLETED — ONLY on success.
@@ -739,6 +750,22 @@ async def run_agent_step(
             frozen_memory=frozen_memory,
         )
 
+    # ``send_input`` arms the monitor before it pastes into tmux, but it
+    # deliberately leaves a previously latched ready status visible until a
+    # provider frame arrives.  That is appropriate for a general terminal
+    # dashboard, but a synchronous run-step has a stricter boundary: the
+    # ready status that existed before *this* prompt cannot complete this
+    # prompt.  Publish a post-send in-flight boundary only after the blocking
+    # send succeeded.  It prevents a cached IDLE/COMPLETED value from being
+    # accepted as this turn's result while the worker is already working.
+    #
+    # This is not a success signal and does not relax completion: the wait
+    # below still requires a real subsequent provider transition.  If the
+    # output pipe never proves that transition, an at-most-once caller retains
+    # the terminal for reconciliation rather than re-sending or tearing it
+    # down as if a result existed.
+    status_monitor.notify_input_sent(terminal_id, assume_processing=True)
+
     # Wait for completion — IN-PROCESS poll of status_monitor (NOT the
     # HTTP-polling wait_until_terminal_status, which would reintroduce the
     # self-loopback the single-seam rule forbids). Accepts a post-input IDLE as a
@@ -749,7 +776,13 @@ async def run_agent_step(
     # StepExecutionError on timeout/ERROR, or StepCancelledError if cancellation
     # fires mid-wait.
     try:
-        await _wait_for_completion(terminal_id, timeout, cancel_event, prompt=prompt)
+        await _wait_for_completion(
+            terminal_id,
+            timeout,
+            cancel_event,
+            prompt=prompt,
+            prompt_redelivery=prompt_redelivery,
+        )
     except StepCancelledError:
         # A cancellation is NOT a run-failure. Tear down a terminal this call
         # created (best-effort — never let cleanup mask the cancellation), then

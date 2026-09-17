@@ -109,8 +109,8 @@ async def wait_for_shell(
 ) -> bool:
     """Wait for shell to be ready by checking if the output buffer is stable and non-empty.
 
-    For pipe-pane backends (tmux) this reads the StatusMonitor's in-memory
-    buffer, populated by the FIFO reader → event bus → StatusMonitor pipeline.
+    AIPM overlay: all resolved terminals read rendered backend history,
+    independently of the FIFO-fed StatusMonitor buffer.
     Returns True when the buffer is non-empty and has not changed for
     *stable_duration* seconds.
 
@@ -129,7 +129,14 @@ async def wait_for_shell(
     from cli_agent_orchestrator.services.status_monitor import status_monitor
 
     backend = get_backend()
-    window = _resolve_window(terminal_id) if backend.supports_event_inbox() else None
+    # AIPM_SHELL_READY_V1: inspect the rendered pane for tmux too. A generic
+    # utility caller can legitimately have only the monitor record (for
+    # example during a recovery test), so retain the historical monitor
+    # fallback when no provider/window can be resolved.
+    try:
+        window = _resolve_window(terminal_id)
+    except Exception:
+        window = None
     if backend.supports_event_inbox() and window is None:
         logger.warning(
             f"wait_for_shell [{terminal_id}]: event-inbox backend but no provider "
@@ -153,18 +160,18 @@ async def wait_for_shell(
 
     logger.info(f"Waiting for shell to be ready for terminal {terminal_id}...")
 
-    deadline = time.time() + timeout
+    deadline = time.monotonic() + timeout
     previous_buffer = ""
-    last_change = time.time()
+    last_change = time.monotonic()
 
-    while time.time() < deadline:
-        buf = read_buffer()
+    while time.monotonic() < deadline:
+        buf = await asyncio.to_thread(read_buffer)
 
         if buf != previous_buffer:
             previous_buffer = buf
-            last_change = time.time()
+            last_change = time.monotonic()
 
-        stable_elapsed = time.time() - last_change
+        stable_elapsed = time.monotonic() - last_change
 
         if buf.strip() and stable_elapsed >= stable_duration:
             logger.info(f"Shell ready for {terminal_id} (buffer stable, {len(buf)} bytes)")

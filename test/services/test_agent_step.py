@@ -179,6 +179,25 @@ class TestHappyPath:
         m_exit.assert_called_once_with("abc12345")
         m_delete.assert_called_once_with("abc12345", registry=None)
 
+    def test_at_most_once_mode_is_forwarded_to_the_completion_wait(self):
+        """A synchronous caller can prohibit prompt re-delivery explicitly."""
+        create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer()
+        completion = AsyncMock(return_value=None)
+        with (
+            create,
+            send,
+            delete,
+            get_output,
+            exit_cli,
+            wait,
+            status,
+            patch(f"{_MODULE}._wait_for_completion", completion),
+        ):
+            asyncio.run(run_agent_step("kiro_cli", "developer", "one side-effecting task", prompt_redelivery=False))
+
+        assert completion.await_args.kwargs["prompt_redelivery"] is False
+        assert completion.await_args.kwargs["prompt"] == "one side-effecting task"
+
     def test_teardown_false_skips_delete(self):
         create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer()
         with (

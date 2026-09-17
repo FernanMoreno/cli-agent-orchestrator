@@ -244,20 +244,22 @@ class TestWaitForShellEventInbox:
     @patch("cli_agent_orchestrator.providers.manager.provider_manager")
     @patch("cli_agent_orchestrator.backends.registry.get_backend")
     @patch("cli_agent_orchestrator.services.status_monitor.status_monitor")
-    async def test_tmux_backend_still_uses_status_monitor(
+    async def test_tmux_backend_uses_rendered_history(
         self, mock_monitor, mock_get_backend, mock_pm
     ):
-        # Pipe-pane backend: behavior unchanged — read the StatusMonitor buffer,
-        # never touch backend.get_history.
-        mock_monitor.get_buffer.return_value = "prompt $"
-        backend = self._backend(history="ignored", event_inbox=False)
+        # tmux can have a rendered prompt before its FIFO/status-monitor path
+        # catches up. The readiness decision must read the same visible pane as
+        # the user, instead of treating the transient empty monitor buffer as a
+        # failed launch.
+        backend = self._backend(history="prompt $", event_inbox=False)
         mock_get_backend.return_value = backend
+        mock_pm.get_provider.return_value = self._provider()
 
         result = await wait_for_shell("t1", timeout=2.0, stable_duration=0.3, polling_interval=0.1)
 
         assert result is True
-        backend.get_history.assert_not_called()
-        mock_pm.get_provider.assert_not_called()
+        backend.get_history.assert_called_with("sess", "win", strip_escapes=True)
+        mock_monitor.get_buffer.assert_not_called()
 
 
 class TestWaitUntilStatus:

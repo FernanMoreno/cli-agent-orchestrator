@@ -460,6 +460,7 @@ class HerdrBackend(TerminalBackend):
         enter_count: int = 1,
         force_bracketed_paste: bool = False,
         submit_delay: float = 0.3,
+        plain_shell: bool = False,
     ) -> None:
         """Send text to a pane via herdr pane send-text + send-keys Enter.
 
@@ -492,9 +493,8 @@ class HerdrBackend(TerminalBackend):
         # failure or unrecognized command name. Only probed when
         # force_bracketed_paste is actually requested -- an extra herdr
         # round-trip whose result would otherwise be discarded.
-        if force_bracketed_paste and not self._pane_is_bracketed_paste_incompatible(
-            session_name, window_name
-        ):
+        if (force_bracketed_paste and not plain_shell and
+                not self._pane_is_bracketed_paste_incompatible(session_name, window_name)):
             text = "\x1b[200~" + keys + "\x1b[201~"
         else:
             text = keys
@@ -505,7 +505,7 @@ class HerdrBackend(TerminalBackend):
         # For bracketed paste, the TUI needs time to process the end sequence
         # and enter multi-line mode; 2s is intentionally generous.
         # For non-bracketed paste, use the configurable send_delay_ms.
-        if force_bracketed_paste:
+        if force_bracketed_paste and not plain_shell:
             time.sleep(2.0)
         elif self._send_delay_ms > 0:
             time.sleep(self._send_delay_ms / 1000.0)

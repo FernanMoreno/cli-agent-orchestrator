@@ -466,6 +466,7 @@ def _request_fingerprint(
     resume_session_id: Optional[str],
     initial_message: Optional[str],
     initial_message_orchestration_type: Optional[OrchestrationType],
+    prompt_redelivery: bool,
 ) -> str:
     """Fingerprint the create-terminal request an idempotency key stands for.
 
@@ -645,6 +646,7 @@ def _request_fingerprint(
         resume_session_id or "",
         initial_message or "",
         orchestration_value,
+        "1" if prompt_redelivery else "0",
     ]
     return hashlib.sha256(
         "\x00".join(_fingerprint_component(part) for part in parts).encode("utf-8")
@@ -664,6 +666,7 @@ async def create_terminal(
     defer_init: bool = False,
     initial_message: Optional[str] = None,
     initial_message_orchestration_type: Optional[OrchestrationType] = None,
+    prompt_redelivery: bool = True,
     engine: Optional[KiroEngine | str] = None,
     kiro_capability_probe: Optional[Callable[[KiroEngine, set[str]], KiroCapabilities]] = None,
     model: Optional[str] = None,
@@ -736,7 +739,7 @@ async def create_terminal(
             unprotected behavior every current caller keeps.
 
             The key does NOT identify the request on its own -- it is matched
-            together with a fingerprint of ELEVEN fields (see
+            together with a fingerprint of the request fields (see
             ``_request_fingerprint``). Presenting a key that a DIFFERENT
             request already claimed raises ``IdempotencyKeyConflict``
             (HTTP 409) rather than handing back a terminal that answers
@@ -752,12 +755,13 @@ async def create_terminal(
             hashed or excluded-with-a-reason. Adding a parameter to either
             endpoint means classifying it here.
 
-            HASHED (11) -- these determine what the terminal IS, or what
-            privileges and context it launches with:
+            HASHED -- these determine what the terminal IS, its delivery
+            policy, or what privileges and context it launches with:
             ``provider``, ``agent_profile``, ``session_name``,
             ``working_directory``, ``caller_id``, ``model``, ``use_worktree``,
             ``engine``, ``allowed_tools``, ``env_vars``,
-            ``resume_session_id``.
+            ``resume_session_id``, ``initial_message``,
+            ``initial_message_orchestration_type`` and ``prompt_redelivery``.
 
             EXCLUDED, each for a checked reason:
 
@@ -768,10 +772,6 @@ async def create_terminal(
               the ``update_metadata`` MCP tool, so a create-time key is not
               their integrity boundary -- a caller who cares about their value
               cannot rely on creation to fix it anyway.
-            - ``initial_message`` and ``initial_message_orchestration_type``.
-              The delivered payload and its routing, not the terminal: neither
-              is persisted on the row, and a genuine retry re-sends the same
-              message. These create endpoints do not own the prompt.
             - ``defer_init``. Excluded, and this one was decided against the
               instinct that it looks like identity, because three things check
               out against the code:
@@ -779,10 +779,8 @@ async def create_terminal(
               ``session_service.create_session`` derives it as
               ``defer_init=initial_message is not None``. Hashing it would
               therefore make two otherwise-identical requests conflict purely
-              because one supplied a message and the other did not, i.e. it
-              would partially hash ``initial_message`` through the back door,
-              contradicting the deliberate decision above not to hash the
-              prompt.
+              because one supplied a message and the other did not. The
+              message and its redelivery policy are fingerprinted directly.
               (b) It leaves NO permanent difference in the created terminal.
               The only row column it touches is ``shell_command``, which the
               deferred path sets to ``None`` up front and then writes after
@@ -861,7 +859,7 @@ async def create_terminal(
             what a fingerprint over those fields can distinguish:
 
             1. Two callers that BOTH have ``caller_id=None`` and are otherwise
-               identical in all eleven fields are indistinguishable by
+               identical in all fingerprinted fields are indistinguishable by
                fingerprint, so the second reuses the first's terminal. At that
                point the two requests are the same request by every property
                the server can observe, and reuse is the defensible answer.
@@ -878,13 +876,13 @@ async def create_terminal(
                endpoints are not the prompt's owner.
 
             KNOWN DIVERGENCE, stated so the next reader need not rediscover
-            it: even with eleven fields this remains a WEAKER contract than
+            it: even with the complete fingerprint this remains a WEAKER contract than
             the other reuse path in this repo.
             ``agent_step._validate_reused_terminal`` RAISES on a provider or
             engine mismatch against the PERSISTED row, and ``RunStepRequest``
             rejects ``env_vars`` combined with ``reuse_terminal_id`` outright.
             Here a mismatch is refused only insofar as it changes one of the
-            eleven hashed fields, and the comparison is
+            fingerprinted fields, and the comparison is
             request-against-request rather than
             request-against-persisted-metadata. The practical gap: a field
             that is excluded above, or a difference between the request and
@@ -925,6 +923,7 @@ async def create_terminal(
             resume_session_id,
             initial_message,
             initial_message_orchestration_type,
+            prompt_redelivery,
         )
         existing_record = get_idempotency_record(idempotency_key)
         existing_terminal_id = existing_record.terminal_id if existing_record else None
@@ -1421,6 +1420,7 @@ async def create_terminal(
                 initial_message,
                 initial_message_orchestration_type,
                 registry,
+                prompt_redelivery,
             )
         else:
             await provider_instance.initialize()
@@ -1953,6 +1953,7 @@ def _schedule_deferred_init(
     initial_message: Optional[str],
     orchestration_type: Optional[OrchestrationType],
     registry: PluginRegistry | None,
+    prompt_redelivery: bool = True,
 ) -> None:
     """Kick off provider.initialize() in the background and, on success,
     deliver the initial message via send_input.
@@ -2011,9 +2012,17 @@ def _schedule_deferred_init(
                     orchestration_type=effective_orchestration_type,
                 )
                 # Delivery can be silently dropped (Enter swallowed / paste lost)
-                # when the TUI isn't input-ready. Confirm the worker actually
-                # started and re-submit if not; if it never starts, surface the
-                # failure so the supervisor re-routes instead of waiting forever.
+                # when the TUI isn't input-ready. The default confirms pickup and
+                # re-submits as before. An at-most-once caller opts out of that
+                # recovery: it owns reconciliation and must not receive a second
+                # copy of a side-effecting task.
+                if not prompt_redelivery:
+                    logger.warning(
+                        "Deferred init for %s: initial prompt sent once; "
+                        "pickup is intentionally not retried",
+                        terminal_id,
+                    )
+                    return
                 started = await _confirm_worker_started_or_resubmit(
                     terminal_id,
                     initial_message,

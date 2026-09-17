@@ -17,6 +17,7 @@ The provider detects the following terminal states:
 - UNKNOWN: Fallback when no state marker matches (or empty buffer)
 """
 
+import asyncio
 import logging
 import re
 import shlex
@@ -27,7 +28,7 @@ from cli_agent_orchestrator.constants import OPENCODE_CONFIG_DIR, OPENCODE_CONFI
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
 from cli_agent_orchestrator.services.settings_service import get_server_settings
-from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
+from cli_agent_orchestrator.utils.terminal import wait_for_shell
 
 logger = logging.getLogger(__name__)
 
@@ -157,18 +158,68 @@ class OpenCodeCliProvider(BaseProvider):
             raise TimeoutError(f"Shell initialization timed out after {init_timeout}s")
 
         command = self._build_launch_command()
-        get_backend().send_keys(self.session_name, self.window_name, command)
+        # A generated native child starts at a shell prompt.  It must
+        # never be inferred from a racy foreground-process probe: instruct the
+        # transport explicitly to paste the launch command as plain shell text.
+        # This remains a single launch delivery and cannot re-send a prompt.
+        get_backend().send_keys(
+            self.session_name,
+            self.window_name,
+            command,
+            plain_shell=True,
+        )
 
-        # 120s covers first-run npm install (5–30s) and concurrent multi-agent launches.
-        if not await wait_until_status(
-            self.terminal_id,
-            {TerminalStatus.IDLE, TerminalStatus.COMPLETED},
-            timeout=120.0,
-        ):
+        # The normal status monitor consumes pipe-pane chunks.  OpenCode's
+        # alt-screen splash can be fully rendered before that stream yields an
+        # unambiguous status, so startup must also inspect the current viewport.
+        # This is a readiness check only: it happens before any prompt is sent.
+        if not await self._wait_for_initial_ready(timeout=120.0):
             raise TimeoutError("OpenCode CLI initialization timed out after 120 seconds")
 
         self._initialized = True
         return True
+
+    async def _wait_for_initial_ready(self, timeout: float) -> bool:
+        """Wait until the new TUI has proved it can accept its first input.
+
+        A provider may opt into this only through ``supports_screen_detection``.
+        The viewport is sampled solely while bootstrapping a brand-new terminal,
+        before a task exists in the TUI, so an IDLE/COMPLETED marker cannot be a
+        previous-turn remnant.  Unknown, processing, and permission frames are
+        never treated as ready.  The monitor records the observed state first,
+        keeping API/UI status and prompt delivery on the same evidence.
+        """
+        from cli_agent_orchestrator.services.status_monitor import status_monitor
+
+        targets = {TerminalStatus.IDLE, TerminalStatus.COMPLETED}
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            current = await asyncio.to_thread(status_monitor.get_status, self.terminal_id)
+            if current in targets:
+                return True
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return False
+            try:
+                snapshot = await asyncio.to_thread(
+                    get_backend().get_history,
+                    self.session_name,
+                    self.window_name,
+                    strip_escapes=True,
+                    visible_only=True,
+                )
+                observed = await asyncio.to_thread(
+                    status_monitor.observe_initial_screen_snapshot,
+                    self.terminal_id,
+                    snapshot,
+                )
+            except Exception as exc:
+                logger.debug("OpenCode initial viewport probe failed for %s: %s", self.terminal_id, exc)
+                observed = TerminalStatus.UNKNOWN
+            if observed in targets:
+                logger.info("OpenCode initial screen ready for %s: %s", self.terminal_id, observed.value)
+                return True
+            await asyncio.sleep(min(0.5, remaining))
 
     def _build_launch_command(self) -> str:
         """Build the inline-env opencode launch command string."""
