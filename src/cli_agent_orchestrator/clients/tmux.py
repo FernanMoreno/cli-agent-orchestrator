@@ -594,7 +594,8 @@ class TmuxClient:
 
     # Provider env vars that would cause "nested session" errors when CAO
     # itself runs inside a provider (e.g. Claude Code), unless explicitly
-    # allow-listed for provider authentication (Bedrock, Vertex AI, Foundry).
+    # allow-listed for provider authentication (Bedrock, Vertex AI, Foundry,
+    # or Claude Code's documented OAuth-token override).
     # Applied to BOTH inherited env and operator-supplied --env vars so a
     # forwarded ``CLAUDE_CODE_*`` cannot reintroduce nesting.
     _BLOCKED_ENV_PREFIXES = ("CLAUDE", "CODEX_", "__MISE_")
@@ -606,6 +607,7 @@ class TmuxClient:
             "CLAUDE_CODE_SKIP_BEDROCK_AUTH",
             "CLAUDE_CODE_SKIP_VERTEX_AUTH",
             "CLAUDE_CODE_SKIP_FOUNDRY_AUTH",
+            "CLAUDE_CODE_OAUTH_TOKEN",
         }
     )
     # Per-var value cap (PR #246) — keeps the full tmux ``new-session -e`` /

@@ -24,12 +24,12 @@ import shutil
 import time
 import uuid
 from pathlib import Path
-from typing import Final
+from typing import Final, Iterator
 
 import pytest
 import requests
 
-from test.fixtures.cao_server import CaoServer
+from test.fixtures.cao_server import CaoServer, _fixture_health_timeout, _pick_free_port, _start_cao_server
 
 pytestmark = [
     pytest.mark.e2e,
@@ -72,6 +72,31 @@ _RECEIPT_WAIT_SECONDS: Final = 30.0
 _STEP_TIMEOUT_SECONDS: Final = 180.0
 
 
+def _configured_auth_home() -> Path:
+    """Return the operator home which owns the reusable CLI logins."""
+    configured_home = os.environ.get(_AUTH_HOME_ENV, "").strip()
+    return Path(configured_home).expanduser() if configured_home else Path.home()
+
+
+@pytest.fixture
+def live_provider_cao_server(tmp_path: Path) -> Iterator[CaoServer]:
+    """Start one fresh, isolated CAO server for the selected matrix cell.
+
+    Provider login files are linked after startup by ``_link_auth_material``.
+    In particular, do not convert the access token inside a renewable OAuth
+    receipt into ``CLAUDE_CODE_OAUTH_TOKEN``: those are distinct auth inputs.
+    """
+    server = _start_cao_server(
+        tmp_path / "live_provider_cao_home",
+        _pick_free_port(),
+        deadline=_fixture_health_timeout(),
+    )
+    try:
+        yield server
+    finally:
+        server.stop()
+
+
 def _selected_provider(name: str) -> str:
     provider = os.environ.get(name, "").strip()
     if provider not in _PROVIDER_BINARIES:
@@ -109,15 +134,18 @@ def _link_auth_material(cao_server: CaoServer, provider: str) -> None:
     The managed server deliberately redirects HOME to keep its database,
     profiles and logs isolated.  Copying a complete provider directory would
     both leak unrelated state into artifacts and let a test mutate it.  A
-    symlink to one documented auth record is enough for normal CLI login
-    state, while API-key based setups need no filesystem link at all.
+    Symlink every documented auth record for the selected provider, while
+    keeping all unrelated provider state out of the test HOME.  Some CLIs
+    split renewable credentials and account/session metadata across more than
+    one file; linking only the first one can make a logged-in CLI reopen an
+    interactive browser flow.  API-key based setups need no filesystem link.
     """
 
     if any(os.environ.get(key) for key in _PROVIDER_AUTH_ENV[provider]):
         return
 
-    configured_home = os.environ.get(_AUTH_HOME_ENV, "").strip()
-    auth_home = Path(configured_home).expanduser() if configured_home else Path.home()
+    auth_home = _configured_auth_home()
+    linked_any = False
     for relative_path in _PROVIDER_AUTH_FILES[provider]:
         source = auth_home / relative_path
         if not source.is_file():
@@ -127,8 +155,12 @@ def _link_auth_material(cao_server: CaoServer, provider: str) -> None:
         if target.exists() or target.is_symlink():
             if target.resolve() != source.resolve():
                 pytest.fail(f"Refusing to replace existing isolated auth path {target}")
-            return
+            linked_any = True
+            continue
         target.symlink_to(source)
+        linked_any = True
+
+    if linked_any:
         return
 
     searched = ", ".join(str(auth_home / path) for path in _PROVIDER_AUTH_FILES[provider])
@@ -306,7 +338,7 @@ def _run_cross_provider_step(
     return receipt
 
 
-def test_real_provider_native_child_matrix(cao_server: CaoServer) -> None:
+def test_real_provider_native_child_matrix(live_provider_cao_server: CaoServer) -> None:
     """Exercise one explicit parent × child cell of the live provider matrix.
 
     The workflow schedules all nine cells serially.  Keeping the test itself
@@ -314,6 +346,7 @@ def test_real_provider_native_child_matrix(cao_server: CaoServer) -> None:
     exact provider pair instead of an ambiguous large suite.
     """
 
+    cao_server = live_provider_cao_server
     parent_provider = _selected_provider(_PARENT_ENV)
     child_provider = _selected_provider(_CHILD_ENV)
     parent_model = _selected_model(_PARENT_MODEL_ENV, parent_provider)

@@ -187,10 +187,12 @@ class TestCreateSessionEnvironmentFiltering:
                 "HOME": "/home/user",
                 "CLAUDE_CODE_USE_BEDROCK": "1",
                 "CLAUDE_CODE_SKIP_FOUNDRY_AUTH": "1",
+                "CLAUDE_CODE_OAUTH_TOKEN": "test-oauth-token",
             },
         )
         assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
         assert env["CLAUDE_CODE_SKIP_FOUNDRY_AUTH"] == "1"
+        assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "test-oauth-token"
 
     def test_cao_kiro_mise_aws_prefixes_pass(self, tmux, tmp_path):
         env = self._get_passed_environment(

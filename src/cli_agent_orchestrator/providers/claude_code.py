@@ -177,6 +177,20 @@ BYPASS_PROMPT_PATTERN = r"Yes, I accept"  # Bypass permissions confirmation dial
 # containerized fleet does. The title is matched (not the option labels) because
 # the tier name varies and up to three of these can queue up back to back.
 MODEL_UPGRADE_PROMPT_PATTERN = r"Newer \S+ model available"
+# Claude Code 2.1.276 introduced a one-time first-run visual-preference
+# screen. It is neither a task question nor a workspace/security decision:
+# the current selection is already rendered in the terminal (normally Dark
+# mode) and the only action offered is accepting it with Enter. Keep the
+# match intentionally narrow so CAO never presses Enter on an arbitrary
+# interactive question that happens to mention a style.
+TEXT_STYLE_PROMPT_PATTERN = r"Choose the text style that looks best with your terminal"
+# Claude Code displays this first-run route chooser even when its local OAuth
+# credential receipt is already present. The selected subscription route is
+# compatible with that receipt; CAO confirms it only when the exact selected
+# option and a reusable local OAuth receipt (or an explicit documented OAuth
+# override) are both present. A normal interactive login remains operator-owned.
+LOGIN_METHOD_PROMPT_PATTERN = r"Select login method:"
+OAUTH_SUBSCRIPTION_SELECTION_PATTERN = r"[>❯]\s*1\.\s*Claude account with subscription"
 _DIALOG_BOTTOM_LINES = 15
 IDLE_PROMPT_PATTERN_LOG = r"[>❯][\s\xa0]"  # Same pattern for log files
 # New Claude Code TUI completion summary, e.g. "✻ Sautéed for 1s" /
@@ -519,11 +533,14 @@ class ClaudeCodeProvider(BaseProvider):
         # Claude Code detects these and refuses to start ("nested session").
         # Unset all matching vars except CLAUDE_CODE_USE_*,
         # CLAUDE_CODE_SKIP_*_AUTH (needed for provider authentication:
-        # Bedrock, Vertex AI, Foundry), and CLAUDE_CODE_EFFORT_LEVEL (user pref).
+        # Bedrock, Vertex AI, Foundry), the documented CLAUDE_CODE_OAUTH_TOKEN
+        # non-interactive authentication override, and
+        # CLAUDE_CODE_EFFORT_LEVEL (user pref).
         unset_cmd = (
             "unset $(env | sed -n 's/^\\(CLAUDE[A-Z_]*\\)=.*/\\1/p'"
             " | grep -v -E 'CLAUDE_CODE_USE_(BEDROCK|VERTEX|FOUNDRY)"
             "|CLAUDE_CODE_SKIP_(BEDROCK|VERTEX|FOUNDRY)_AUTH"
+            "|CLAUDE_CODE_OAUTH_TOKEN"
             "|CLAUDE_CODE_EFFORT_LEVEL'"
             ") 2>/dev/null"
         )
@@ -585,12 +602,34 @@ class ClaudeCodeProvider(BaseProvider):
                 raise
         logger.info("Set skipDangerousModePermissionPrompt in ~/.claude/settings.json")
 
+    @staticmethod
+    def _has_reusable_oauth_credentials() -> bool:
+        """Return whether Claude's local OAuth receipt can authorize its route.
+
+        The first-run route selector is safe to confirm only when the current
+        HOME already contains both parts of Claude Code's normal renewable
+        OAuth receipt. Reading this small JSON shape is intentionally local
+        and non-mutating; values are never logged, returned, or copied.
+        """
+        credentials_path = Path.home() / ".claude" / ".credentials.json"
+        try:
+            payload = json.loads(credentials_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        oauth = payload.get("claudeAiOauth")
+        if not isinstance(oauth, dict):
+            return False
+        return all(
+            isinstance(oauth.get(field), str) and oauth[field].strip()
+            for field in ("accessToken", "refreshToken")
+        )
+
     async def _handle_startup_prompts(
         self, idle_gap: Optional[float] = None, outer_timeout: Optional[float] = None
     ) -> None:
         """Answer startup prompts that may appear before the REPL is ready.
 
-        Claude Code may show up to three prompts during startup:
+        Claude Code may show up to five prompts during startup:
 
         1. **Bypass permissions confirmation** (``--dangerously-skip-permissions``)
            – shows "Yes, I accept" as option 2; requires ``Down`` + ``Enter``.
@@ -611,6 +650,17 @@ class ClaudeCodeProvider(BaseProvider):
            to the dialog's own cancel path, which persists the refusal in
            ``bedrockDeclinedUpgrades``, so it is asked at most once per
            tier-transition rather than on every launch.
+        4. **Text-style preference** – a one-time Claude Code first-run
+           screen introduced in v2.1.276. It already has a visible current
+           selection, so CAO confirms that selection with ``Enter``. The
+           exact title is matched; this is deliberately not a generic
+           auto-answer for user questions or other choice dialogs.
+        5. **OAuth login-route selector** – shown by current Claude Code once
+           even when its local OAuth credential receipt already exists. CAO
+           confirms the already-selected subscription route only with that
+           exact option plus a reusable local receipt (or an explicitly
+           supplied documented OAuth override). Without both witnesses this
+           remains an operator-owned login choice.
 
         Note that only the FIRST of these is prevented by config. The trust
         dialog and the upgrade nudge are dismissed here, at the TUI, because
@@ -659,6 +709,8 @@ class ClaudeCodeProvider(BaseProvider):
         any_prompt_handled = False
         bypass_accepted = False
         trust_accepted = False
+        text_style_accepted = False
+        oauth_login_route_accepted = False
         # Keyed on the matched title ("Newer Opus model available"), not a bool:
         # one nudge can be shown PER TIER, so a single flag would swallow the
         # second and third and leave init blocked behind an unanswered dialog.
@@ -670,7 +722,11 @@ class ClaudeCodeProvider(BaseProvider):
             if now >= outer_deadline:
                 logger.warning("Startup prompt handler hit provider_init_timeout outer cap")
                 return
-            if any_prompt_handled and now - last_prompt_time >= idle_gap:
+            if (
+                any_prompt_handled
+                and now - last_prompt_time >= idle_gap
+                and not oauth_login_route_accepted
+            ):
                 return  # no new prompt within the idle gap — startup settled
 
             output = await asyncio.to_thread(
@@ -789,7 +845,55 @@ class ClaudeCodeProvider(BaseProvider):
                 await asyncio.sleep(1.0)
                 continue
 
-            # 4) The rendered viewport is a second, independent readiness
+            # 4) Confirm Claude Code's one-time visual-preference selection.
+            #    This is an application-local TUI setting, not a task-level
+            #    question. The exact title prevents a generic ``Enter`` from
+            #    being sent to an unrecognized dialog. Like the other startup
+            #    prompts, the title remains in scrollback after it is dismissed,
+            #    hence the per-launch guard.
+            if not text_style_accepted and re.search(TEXT_STYLE_PROMPT_PATTERN, clean_output):
+                from cli_agent_orchestrator.services.status_monitor import status_monitor
+
+                logger.info("Claude Code text-style preference detected, accepting selection")
+                status_monitor.notify_input_sent(self.terminal_id)
+                await asyncio.to_thread(
+                    get_backend().send_special_key, self.session_name, self.window_name, "Enter"
+                )
+                text_style_accepted = True
+                any_prompt_handled = True
+                last_prompt_time = time.monotonic()  # reset — the REPL renders next
+                await asyncio.sleep(1.0)
+                continue
+
+            # 5) Current Claude Code asks for its login route once even when
+            #    its normal renewable OAuth receipt exists. Do not generalize
+            #    this into an automatic login-dialog answer: only the exact
+            #    preselected subscription option plus a reusable local receipt
+            #    (or an explicit OAuth override) gives CAO authority to
+            #    confirm it.
+            if (
+                not oauth_login_route_accepted
+                and (
+                    os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
+                    or self._has_reusable_oauth_credentials()
+                )
+                and re.search(LOGIN_METHOD_PROMPT_PATTERN, clean_output)
+                and re.search(OAUTH_SUBSCRIPTION_SELECTION_PATTERN, clean_output)
+            ):
+                from cli_agent_orchestrator.services.status_monitor import status_monitor
+
+                logger.info("Claude Code existing OAuth login route detected, accepting subscription route")
+                status_monitor.notify_input_sent(self.terminal_id)
+                await asyncio.to_thread(
+                    get_backend().send_special_key, self.session_name, self.window_name, "Enter"
+                )
+                oauth_login_route_accepted = True
+                any_prompt_handled = True
+                last_prompt_time = time.monotonic()  # reset — authenticated REPL renders next
+                await asyncio.sleep(1.0)
+                continue
+
+            # 6) The rendered viewport is a second, independent readiness
             # witness.  The FIFO monitor can miss a complete first Ink repaint:
             # when that happens the terminal really has a boxed composer, but
             # the raw stream has not yielded a status frame and initialize()
@@ -809,22 +913,24 @@ class ClaudeCodeProvider(BaseProvider):
                 )
                 return
 
-            # 5) Claude Code fully started — no prompts needed.
-            #    The version banner is the ONLY reliable "ready" signal here: it
-            #    renders only once the REPL is up and cannot appear in the echoed
-            #    launch command. The old bare IDLE_PROMPT_PATTERN ("> "/"❯ ") check
-            #    was removed: the injected --append-system-prompt text contains
-            #    "> `memory_store`" (start of a line), which the echoed command
-            #    surfaces in the capture buffer within ~300ms and false-matches as
-            #    "idle". The handler then returned BEFORE the workspace-trust dialog
-            #    rendered, leaving it unaccepted; initialize() then blocked on
-            #    {IDLE, COMPLETED} for 30s and the session was killed. Trust/bypass
-            #    dialogs are handled explicitly above; if no banner ever appears the
-            #    loop just waits out its idle gap and the downstream
-            #    wait_until_status() remains the real readiness gate.
-            if re.search(r"Welcome to|Claude Code v\d+", clean_output):
-                logger.info("Claude Code started without prompts")
-                return
+            # A successful OAuth route choice is not itself a readiness witness.
+            # Claude 2.1.276 can take longer than the ordinary post-dialog gap
+            # to reveal the workspace-trust dialog *after* accepting that route.
+            # Returning on the idle gap would let CAO paste a task into that
+            # dialog, then mistake the later dismissal for a completed turn.
+            # Keep polling until a real composer or an operator-owned dialog is
+            # visible; ``outer_deadline`` still bounds a broken startup.
+
+            # 7) A startup banner alone is NOT a readiness witness. Claude
+            #    Code v2.1.276 renders ``Welcome to Claude Code`` before its
+            #    first-run text-style chooser, so returning on the banner can
+            #    strand an interactive chooser behind a terminal CAO calls
+            #    ready. A rendered composer or an explicit dialog above is the
+            #    real positive evidence. Do not restore a post-prompt banner
+            #    shortcut: after one managed first-run dialog, the next one can
+            #    render a moment later while the banner is still in scrollback.
+            #    The idle-gap/outer deadline above bounds this loop, while a
+            #    real rendered ready state exits it immediately.
 
             await asyncio.sleep(1.0)
 
@@ -1119,6 +1225,11 @@ class ClaudeCodeProvider(BaseProvider):
             # footer is "Enter to confirm · Esc to cancel", which the WAITING
             # match below would otherwise hit.
             and not re.search(MODEL_UPGRADE_PROMPT_PATTERN, bottom_region)
+            # The first-run text-style screen is handled by
+            # _handle_startup_prompts, exactly like trust/bypass. It must not
+            # be projected as operator input while CAO is accepting the
+            # already-selected visual preference.
+            and not re.search(TEXT_STYLE_PROMPT_PATTERN, bottom_region)
         ):
             # AskUserQuestion: "↑/↓ to navigate" in bottom chrome (last 6 lines).
             # Known residual: agent prose containing this exact string in the
@@ -1307,6 +1418,7 @@ class ClaudeCodeProvider(BaseProvider):
             and not re.search(TRUST_PROMPT_PATTERN, joined)
             and not re.search(BYPASS_PROMPT_PATTERN, joined)
             and not re.search(MODEL_UPGRADE_PROMPT_PATTERN, joined)
+            and not re.search(TEXT_STYLE_PROMPT_PATTERN, joined)
         ):
             return TerminalStatus.WAITING_USER_ANSWER
 

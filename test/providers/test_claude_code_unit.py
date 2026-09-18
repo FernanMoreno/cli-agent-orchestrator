@@ -8,7 +8,7 @@ import stat
 import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 import pytest
 
@@ -72,7 +72,14 @@ class TestClaudeCodeProviderInitialization:
         ]
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0")
-        with patch.object(provider, "get_status", return_value=TerminalStatus.IDLE):
+        with (
+            patch.object(provider, "get_status", return_value=TerminalStatus.IDLE),
+            patch.object(
+                provider,
+                "_observe_initial_viewport_state",
+                new=AsyncMock(return_value=TerminalStatus.IDLE),
+            ),
+        ):
             result = await provider.initialize()
 
         assert result is True
@@ -173,7 +180,14 @@ class TestClaudeCodeProviderInitialization:
         mock_load.return_value = mock_profile
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0", "test-agent")
-        with patch.object(provider, "get_status", return_value=TerminalStatus.IDLE):
+        with (
+            patch.object(provider, "get_status", return_value=TerminalStatus.IDLE),
+            patch.object(
+                provider,
+                "_observe_initial_viewport_state",
+                new=AsyncMock(return_value=TerminalStatus.IDLE),
+            ),
+        ):
             result = await provider.initialize()
 
         assert result is True
@@ -199,7 +213,14 @@ class TestClaudeCodeProviderInitialization:
         ]
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0", "my-native-agent")
-        with patch.object(provider, "get_status", return_value=TerminalStatus.IDLE):
+        with (
+            patch.object(provider, "get_status", return_value=TerminalStatus.IDLE),
+            patch.object(
+                provider,
+                "_observe_initial_viewport_state",
+                new=AsyncMock(return_value=TerminalStatus.IDLE),
+            ),
+        ):
             result = await provider.initialize()
 
         assert result is True
@@ -270,7 +291,14 @@ class TestClaudeCodeProviderInitialization:
         mock_load.return_value = mock_profile
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0", "test-agent")
-        with patch.object(provider, "get_status", return_value=TerminalStatus.IDLE):
+        with (
+            patch.object(provider, "get_status", return_value=TerminalStatus.IDLE),
+            patch.object(
+                provider,
+                "_observe_initial_viewport_state",
+                new=AsyncMock(return_value=TerminalStatus.IDLE),
+            ),
+        ):
             result = await provider.initialize()
 
         assert result is True
@@ -293,7 +321,14 @@ class TestClaudeCodeProviderInitialization:
         ]
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0")
-        with patch.object(provider, "get_status", return_value=TerminalStatus.IDLE):
+        with (
+            patch.object(provider, "get_status", return_value=TerminalStatus.IDLE),
+            patch.object(
+                provider,
+                "_observe_initial_viewport_state",
+                new=AsyncMock(return_value=TerminalStatus.IDLE),
+            ),
+        ):
             await provider.initialize()
 
         call_args = mock_tmux.send_keys.call_args
@@ -1441,6 +1476,14 @@ class TestClaudeCodeProviderMisc:
         assert "claude --dangerously-skip-permissions" in command
         assert "--permission-mode" not in command
 
+    def test_build_claude_command_preserves_documented_oauth_token_env(self):
+        """Nested-session cleanup must not discard Claude's supported OAuth env."""
+        provider = ClaudeCodeProvider("test123", "test-session", "window-0")
+
+        command = provider._build_claude_command()
+
+        assert "CLAUDE_CODE_OAUTH_TOKEN" in command
+
     def test_build_claude_command_with_resume_session_id(self):
         """resume_session_id maps to `claude --resume <sid>` (durable-orchestra
         recovery: re-open a prior supervisor conversation in a new CAO session)."""
@@ -1954,7 +1997,12 @@ class TestClaudeCodeProviderStartupPrompts:
         ]
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0")
-        await provider._handle_startup_prompts(idle_gap=5.0)
+        with patch.object(
+            provider,
+            "_observe_initial_viewport_state",
+            new=AsyncMock(return_value=TerminalStatus.IDLE),
+        ):
+            await provider._handle_startup_prompts(idle_gap=5.0)
 
         assert [call.args[2] for call in mock_tmux.send_special_key.call_args_list] == [
             "Down",
@@ -1964,11 +2012,140 @@ class TestClaudeCodeProviderStartupPrompts:
     @pytest.mark.asyncio
     @patch("cli_agent_orchestrator.backends.registry._backend")
     async def test_handle_startup_prompts_not_needed(self, mock_tmux):
-        """Test early return when Claude Code starts without prompts."""
+        """A settled viewport, not a splash banner, proves startup readiness."""
         mock_tmux.get_history.return_value = "Welcome to Claude Code v2.1.0"
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0")
-        await provider._handle_startup_prompts(idle_gap=2.0)
+        with patch.object(
+            provider,
+            "_observe_initial_viewport_state",
+            new=AsyncMock(return_value=TerminalStatus.IDLE),
+        ):
+            await provider._handle_startup_prompts(idle_gap=2.0)
+
+        mock_tmux.send_special_key.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("cli_agent_orchestrator.backends.registry._backend")
+    async def test_handle_startup_prompts_accepts_current_text_style(self, mock_tmux):
+        """Claude Code 2.1.276's first-run style chooser accepts its selection.
+
+        This is intentionally an exact-title handler, rather than a generic
+        choice-dialog auto-answer: startup must never acknowledge task input
+        or a security decision on an operator's behalf.
+        """
+        mock_tmux.get_history.side_effect = [
+            "Welcome to Claude Code v2.1.276\n",
+            "Welcome to Claude Code v2.1.276\n"
+            "Choose the text style that looks best with your terminal\n"
+            "  1. Auto (match terminal)\n"
+            "❯ 2. Dark mode ✔\n"
+            "  3. Light mode\n"
+            "Enter to confirm · Esc to cancel\n",
+            "Welcome to Claude Code v2.1.276\n❯ ",
+        ]
+
+        provider = ClaudeCodeProvider("test123", "test-session", "window-0")
+        with patch.object(
+            provider,
+            "_observe_initial_viewport_state",
+            new=AsyncMock(side_effect=[TerminalStatus.UNKNOWN, TerminalStatus.IDLE]),
+        ):
+            await provider._handle_startup_prompts(idle_gap=5.0)
+
+        mock_tmux.send_special_key.assert_called_once_with("test-session", "window-0", "Enter")
+
+    def test_get_status_text_style_prompt_not_waiting_user_answer(self):
+        """The handler-owned text-style chooser is not operator input."""
+        output = (
+            "Choose the text style that looks best with your terminal\n"
+            "❯ 1. Auto (match terminal)\n"
+            "  2. Dark mode\n"
+            "Enter to confirm · Esc to cancel"
+        )
+
+        provider = ClaudeCodeProvider("test123", "test-session", "window-0")
+
+        assert provider.get_status(output) != TerminalStatus.WAITING_USER_ANSWER
+
+    @pytest.mark.asyncio
+    @patch("cli_agent_orchestrator.backends.registry._backend")
+    async def test_handle_startup_prompts_accepts_oauth_subscription_route(self, mock_tmux):
+        """A reusable OAuth receipt can confirm only its selected route."""
+        mock_tmux.get_history.side_effect = [
+            "Select login method:\n"
+            "❯ 1. Claude account with subscription · Pro, Max, Team, or Enterprise\n"
+            "  2. Anthropic Console account · API usage billing\n",
+            "Welcome to Claude Code v2.1.276\n❯ ",
+        ]
+        provider = ClaudeCodeProvider("test123", "test-session", "window-0")
+
+        with (
+            patch.object(provider, "_has_reusable_oauth_credentials", return_value=True),
+            patch.object(
+                provider,
+                "_observe_initial_viewport_state",
+                new=AsyncMock(return_value=TerminalStatus.IDLE),
+            ),
+        ):
+            await provider._handle_startup_prompts(idle_gap=5.0)
+
+        mock_tmux.send_special_key.assert_called_once_with("test-session", "window-0", "Enter")
+
+    @pytest.mark.asyncio
+    @patch("cli_agent_orchestrator.backends.registry._backend")
+    async def test_handle_startup_prompts_waits_for_late_trust_after_oauth_route(self, mock_tmux):
+        """OAuth acceptance must not make a late workspace dialog look ready."""
+        mock_tmux.get_history.side_effect = [
+            "Select login method:\n"
+            "❯ 1. Claude account with subscription · Pro, Max, Team, or Enterprise\n"
+            "  2. Anthropic Console account · API usage billing\n",
+            "Accessing workspace: /tmp/verified\n"
+            "❯ No, exit\n"
+            "  Yes, I trust this folder\n"
+            "Enter to confirm · Esc to cancel\n",
+            "Welcome to Claude Code v2.1.276\n❯ ",
+        ]
+        provider = ClaudeCodeProvider("test123", "test-session", "window-0")
+
+        with (
+            patch.object(provider, "_has_reusable_oauth_credentials", return_value=True),
+            patch.object(
+                provider,
+                "_observe_initial_viewport_state",
+                new=AsyncMock(return_value=TerminalStatus.IDLE),
+            ),
+        ):
+            await provider._handle_startup_prompts(idle_gap=0.0)
+
+        assert [call.args[2] for call in mock_tmux.send_special_key.call_args_list] == [
+            "Enter",  # confirmed renewable OAuth route
+            "Down",  # moved from "No, exit" to the explicit trust option
+            "Enter",
+        ]
+
+    @pytest.mark.asyncio
+    @patch("cli_agent_orchestrator.backends.registry._backend")
+    async def test_handle_startup_prompts_never_selects_login_route_without_oauth(
+        self, mock_tmux
+    ):
+        """A normal login menu must remain visible for the operator."""
+        mock_tmux.get_history.return_value = (
+            "Select login method:\n"
+            "❯ 1. Claude account with subscription · Pro, Max, Team, or Enterprise\n"
+        )
+        provider = ClaudeCodeProvider("test123", "test-session", "window-0")
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(provider, "_has_reusable_oauth_credentials", return_value=False),
+            patch.object(
+                provider,
+                "_observe_initial_viewport_state",
+                new=AsyncMock(return_value=TerminalStatus.WAITING_USER_ANSWER),
+            ),
+        ):
+            await provider._handle_startup_prompts(idle_gap=5.0)
 
         mock_tmux.send_special_key.assert_not_called()
 
@@ -2020,7 +2197,12 @@ class TestClaudeCodeProviderStartupPrompts:
         ]
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0")
-        await provider._handle_startup_prompts(idle_gap=5.0)
+        with patch.object(
+            provider,
+            "_observe_initial_viewport_state",
+            new=AsyncMock(return_value=TerminalStatus.IDLE),
+        ):
+            await provider._handle_startup_prompts(idle_gap=5.0)
 
         mock_tmux.send_special_key.assert_called_once_with("test-session", "window-0", "Enter")
 
@@ -2036,7 +2218,12 @@ class TestClaudeCodeProviderStartupPrompts:
         ]
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0")
-        await provider._handle_startup_prompts(idle_gap=5.0)
+        with patch.object(
+            provider,
+            "_observe_initial_viewport_state",
+            new=AsyncMock(return_value=TerminalStatus.IDLE),
+        ):
+            await provider._handle_startup_prompts(idle_gap=5.0)
 
         # Verify the menu receives real tmux key names, not pasted escape bytes.
         assert [call.args[2] for call in mock_tmux.send_special_key.call_args_list] == [
@@ -2058,7 +2245,12 @@ class TestClaudeCodeProviderStartupPrompts:
         ]
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0")
-        await provider._handle_startup_prompts(idle_gap=5.0)
+        with patch.object(
+            provider,
+            "_observe_initial_viewport_state",
+            new=AsyncMock(return_value=TerminalStatus.IDLE),
+        ):
+            await provider._handle_startup_prompts(idle_gap=5.0)
 
         # Bypass: Down + Enter. Trust (older layout): Enter.
         assert [call.args[2] for call in mock_tmux.send_special_key.call_args_list] == [
@@ -2083,7 +2275,12 @@ class TestClaudeCodeProviderStartupPrompts:
         ]
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0")
-        await provider._handle_startup_prompts(idle_gap=5.0)
+        with patch.object(
+            provider,
+            "_observe_initial_viewport_state",
+            new=AsyncMock(return_value=TerminalStatus.IDLE),
+        ):
+            await provider._handle_startup_prompts(idle_gap=5.0)
 
         mock_tmux.send_keys.assert_called_once_with("test-session", "window-0", "2")
 
@@ -2108,7 +2305,12 @@ class TestClaudeCodeProviderStartupPrompts:
         ]
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0")
-        await provider._handle_startup_prompts(idle_gap=5.0)
+        with patch.object(
+            provider,
+            "_observe_initial_viewport_state",
+            new=AsyncMock(return_value=TerminalStatus.IDLE),
+        ):
+            await provider._handle_startup_prompts(idle_gap=5.0)
 
         # Twice, not once (missed tier) and not four times (re-answered scrollback).
         assert mock_tmux.send_keys.call_count == 2
@@ -2174,7 +2376,14 @@ class TestClaudeCodeProviderStartupPrompts:
             "Welcome to Claude Code v2.1.235",
         ]
         provider = ClaudeCodeProvider("test123", "test-session", "window-0")
-        with patch.object(provider, "get_status", return_value=TerminalStatus.IDLE):
+        with (
+            patch.object(provider, "get_status", return_value=TerminalStatus.IDLE),
+            patch.object(
+                provider,
+                "_observe_initial_viewport_state",
+                new=AsyncMock(return_value=TerminalStatus.IDLE),
+            ),
+        ):
             result = await provider.initialize()
 
         assert result is True
