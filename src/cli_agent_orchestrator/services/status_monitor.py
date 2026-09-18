@@ -294,6 +294,40 @@ class StatusMonitor:
             self._apply_detection(terminal_id, detected)
         return detected
 
+    def observe_initial_viewport(self, terminal_id: str) -> TerminalStatus:
+        """Read a provider-approved live viewport during initialization only.
+
+        This is the common readiness bridge for every provider that explicitly
+        supports rendered-screen detection. A FIFO can miss a complete first
+        TUI repaint, so initialization must not fail merely because the byte
+        stream did not carry an equivalent status frame. It fails closed for
+        raw-stream providers and, after task dispatch, an idle-looking viewport
+        cannot be mistaken for that turn's completion.
+        """
+        try:
+            provider = provider_manager.get_provider(terminal_id)
+        except Exception:
+            return TerminalStatus.UNKNOWN
+        if (
+            provider is None
+            or not getattr(provider, "supports_screen_detection", False)
+            or getattr(provider, "_task_dispatched", False)
+        ):
+            return TerminalStatus.UNKNOWN
+        try:
+            from cli_agent_orchestrator.backends.registry import get_backend
+
+            snapshot = get_backend().get_history(
+                provider.session_name,
+                provider.window_name,
+                strip_escapes=True,
+                visible_only=True,
+            )
+        except Exception as exc:
+            logger.debug("Initial viewport probe failed for %s: %s", terminal_id, exc)
+            return TerminalStatus.UNKNOWN
+        return self.observe_initial_screen_snapshot(terminal_id, snapshot)
+
     def _apply_detection_locked(self, terminal_id: str, detected: TerminalStatus) -> bool:
         """Sticky-latch core of _apply_detection. Caller MUST hold self._lock.
 

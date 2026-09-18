@@ -789,7 +789,27 @@ class ClaudeCodeProvider(BaseProvider):
                 await asyncio.sleep(1.0)
                 continue
 
-            # 4) Claude Code fully started — no prompts needed.
+            # 4) The rendered viewport is a second, independent readiness
+            # witness.  The FIFO monitor can miss a complete first Ink repaint:
+            # when that happens the terminal really has a boxed composer, but
+            # the raw stream has not yielded a status frame and initialize()
+            # used to consume its entire timeout waiting for one.  This probe is
+            # safe only before a task is sent; after dispatch an IDLE-looking
+            # viewport is ambiguous and must never settle a turn.
+            observed = await self._observe_initial_viewport_state()
+            if observed in {
+                TerminalStatus.IDLE,
+                TerminalStatus.COMPLETED,
+                TerminalStatus.WAITING_USER_ANSWER,
+            }:
+                logger.info(
+                    "Claude Code startup viewport ready for %s: %s",
+                    self.terminal_id,
+                    observed.value,
+                )
+                return
+
+            # 5) Claude Code fully started — no prompts needed.
             #    The version banner is the ONLY reliable "ready" signal here: it
             #    renders only once the REPL is up and cannot appear in the echoed
             #    launch command. The old bare IDLE_PROMPT_PATTERN ("> "/"❯ ") check
@@ -807,6 +827,25 @@ class ClaudeCodeProvider(BaseProvider):
                 return
 
             await asyncio.sleep(1.0)
+
+    async def _observe_initial_viewport_state(self) -> TerminalStatus:
+        """Record an initial ready state directly from Claude's live viewport.
+
+        This is deliberately an initialization-only bridge.  Before CAO has
+        delivered a task, an IDLE/COMPLETED/WAITING_USER_ANSWER viewport cannot
+        belong to an earlier turn.  Once a prompt is in flight, terminal chrome
+        is not proof of turn completion and callers must use the normal
+        completion receipt path instead.
+        """
+        from cli_agent_orchestrator.services.status_monitor import status_monitor
+
+        try:
+            return await asyncio.to_thread(
+                status_monitor.observe_initial_viewport, self.terminal_id
+            )
+        except Exception as exc:  # a probe miss must not make startup fail
+            logger.debug("Claude initial viewport probe failed for %s: %s", self.terminal_id, exc)
+            return TerminalStatus.UNKNOWN
 
     async def initialize(self) -> bool:
         """Initialize Claude Code provider by starting claude command."""

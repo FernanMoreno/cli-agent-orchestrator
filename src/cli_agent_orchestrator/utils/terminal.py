@@ -215,6 +215,19 @@ async def wait_until_status(
         if current in targets:
             logger.info(f"wait_until_status [{terminal_id}]: reached {current.value}")
             return True
+        # A complete first TUI repaint can arrive before the FIFO produces a
+        # parseable frame. Providers opt into this rendered-screen probe; it is
+        # disabled after task dispatch, so it cannot settle an active turn.
+        initial_viewport = await asyncio.to_thread(
+            status_monitor.observe_initial_viewport, terminal_id
+        )
+        if initial_viewport in targets:
+            logger.info(
+                "wait_until_status [%s]: reached %s from initial viewport",
+                terminal_id,
+                initial_viewport.value,
+            )
+            return True
         await asyncio.sleep(polling_interval)
     logger.warning(f"wait_until_status [{terminal_id}]: timeout waiting for {{{target_str}}}")
     return False

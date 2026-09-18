@@ -82,6 +82,31 @@ class TestClaudeCodeProviderInitialization:
 
     @pytest.mark.asyncio
     @patch("cli_agent_orchestrator.providers.claude_code.wait_for_shell")
+    @patch("cli_agent_orchestrator.providers.claude_code.wait_until_status")
+    @patch("cli_agent_orchestrator.backends.registry._backend")
+    @patch(
+        "cli_agent_orchestrator.services.status_monitor.status_monitor.observe_initial_viewport",
+        return_value=TerminalStatus.IDLE,
+    )
+    async def test_initialize_uses_rendered_viewport_when_fifo_has_no_ready_frame(
+        self, mock_observe, mock_tmux, mock_wait_status, mock_wait_shell
+    ):
+        """A complete Ink composer must not time out solely because FIFO lagged."""
+        mock_wait_shell.return_value = True
+        mock_wait_status.return_value = True
+        # No version banner: this represents a changed Claude splash where the
+        # raw stream has no legacy marker but the live viewport is already ready.
+        mock_tmux.get_history.return_value = "────────\n❯ \n────────"
+
+        provider = ClaudeCodeProvider("test123", "test-session", "window-0")
+        with patch.object(provider, "wait_until_input_ready", return_value=True):
+            assert await provider.initialize() is True
+
+        assert mock_observe.called
+        assert mock_wait_status.called
+
+    @pytest.mark.asyncio
+    @patch("cli_agent_orchestrator.providers.claude_code.wait_for_shell")
     @patch("cli_agent_orchestrator.backends.registry._backend")
     async def test_initialize_shell_timeout(self, mock_tmux, mock_wait_shell):
         """Test initialization with shell timeout."""
