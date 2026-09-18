@@ -71,12 +71,72 @@ import requests
 # ---------------------------------------------------------------------------
 
 _HEALTH_POLL_INTERVAL = 0.05
-_HEALTH_TIMEOUT_DEFAULT = 8.0
+# Server import/startup has meaningful cold-path variance (editable source,
+# cache misses, and Windows-mounted WSL worktrees). Eight seconds turns normal
+# bootstrap into a false infrastructure failure; thirty seconds is still a
+# bounded test failure while covering a real CAO start.
+_HEALTH_TIMEOUT_DEFAULT = 30.0
+_HEALTH_TIMEOUT_ENV = "CAO_TEST_SERVER_HEALTH_TIMEOUT"
+
+
+def _provider_is_unavailable_response(status_code: int, body: str) -> bool:
+    """Return whether a terminal-create response proves provider unavailability.
+
+    CAO reports a binary missing before a terminal is created as a client error
+    (``400``), while an authenticated/slow provider usually reports it as a
+    server error (``5xx``).  The shared fixture must skip both cases: neither is
+    evidence about the API contract under test.  Keep this semantic test based
+    on the response wording rather than a provider name so it covers every
+    provider and both hyphenated/underscored identifiers.
+    """
+    if status_code < 400:
+        return False
+    message = body.lower()
+    unavailable_markers = (
+        "initialization timed out",
+        "not installed",
+        "command not found",
+    )
+    if any(marker in message for marker in unavailable_markers):
+        return True
+    return "cannot start because" in message and "not found" in message
+
+
+_HEALTH_TIMEOUT_MIN_SECONDS = 1.0
+_HEALTH_TIMEOUT_MAX_SECONDS = 120.0
 _STOP_GRACE_SECONDS = 5.0
 _LOG_TAIL_LINES = 80
 
 _AUTH_DOMAIN = "test.local"
 _AUTH_AUDIENCE = "cao://test"
+
+
+def _fixture_health_timeout() -> float:
+    """Return the opt-in server-start budget used by shared E2E fixtures.
+
+    The default is intentionally long enough for a cold CAO bootstrap. A
+    real-provider run on a particularly slow mounted worktree may set an
+    explicit bounded override, keeping infrastructure variance out of provider
+    lifecycle assertions without weakening them.
+    """
+    raw_value = os.environ.get(_HEALTH_TIMEOUT_ENV)
+    if raw_value is None or not raw_value.strip():
+        return _HEALTH_TIMEOUT_DEFAULT
+
+    try:
+        timeout = float(raw_value)
+    except ValueError as error:
+        raise ValueError(
+            f"{_HEALTH_TIMEOUT_ENV} must be a number of seconds, got {raw_value!r}"
+        ) from error
+
+    if not _HEALTH_TIMEOUT_MIN_SECONDS <= timeout <= _HEALTH_TIMEOUT_MAX_SECONDS:
+        raise ValueError(
+            f"{_HEALTH_TIMEOUT_ENV} must be between "
+            f"{_HEALTH_TIMEOUT_MIN_SECONDS:g} and {_HEALTH_TIMEOUT_MAX_SECONDS:g} "
+            f"seconds, got {timeout:g}"
+        )
+    return timeout
 
 
 # ---------------------------------------------------------------------------
@@ -502,7 +562,7 @@ def cao_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[CaoServer]:
     """Spawn a managed cao-server subprocess for the whole session."""
     home = tmp_path_factory.mktemp("cao_home_session")
     port = _pick_free_port()
-    server = _start_cao_server(home, port)
+    server = _start_cao_server(home, port, deadline=_fixture_health_timeout())
     try:
         yield server
     finally:
@@ -531,6 +591,7 @@ def cao_server_with_auth(
         server = _start_cao_server(
             home,
             port,
+            deadline=_fixture_health_timeout(),
             extra_env={
                 "AUTH0_DOMAIN": _AUTH_DOMAIN,
                 "AUTH0_AUDIENCE": _AUTH_AUDIENCE,
@@ -582,21 +643,13 @@ def cao_terminal(
         },
     )
     if resp.status_code not in (200, 201):
-        # Provider boot is fragile — CLI may be installed but unauthenticated,
-        # rate-limited, or slow to TUI-init. Treat any 5xx that names the
-        # provider as a skip, not a fixture-contract failure. The integration
-        # tests own provider responsiveness.
+        # Provider boot is fragile — CLI may be absent, unauthenticated,
+        # rate-limited, or slow to TUI-init.  A missing binary is intentionally
+        # a 400 (the request is invalid on this host), while runtime startup
+        # failures can be 5xx.  Both are environment capability failures, not a
+        # contract failure in every test using this generic fixture.
         body = resp.text
-        if resp.status_code >= 500 and any(
-            marker in body.lower()
-            for marker in (
-                "initialization timed out",
-                "not installed",
-                "not found",
-                "command not found",
-                provider.lower(),
-            )
-        ):
+        if _provider_is_unavailable_response(resp.status_code, body):
             pytest.skip(
                 f"provider {provider!r} not usable on this host "
                 f"(HTTP {resp.status_code}): {body[:200]}"

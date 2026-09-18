@@ -119,7 +119,7 @@ async def _validate_reused_terminal(
     terminal_id: str,
     requested_provider: str,
     requested_engine: Optional[KiroEngine | str],
-) -> None:
+) -> Optional[str]:
     """Require reuse constraints to agree with authoritative terminal metadata."""
     metadata = await asyncio.to_thread(terminal_service.get_terminal_metadata, terminal_id)
     if metadata is None:
@@ -217,15 +217,13 @@ async def _wait_for_completion(
     Completion signals (issue #409a):
 
     - ``COMPLETED`` — definitive done marker; returns immediately (unchanged).
-    - ``IDLE`` — accepted as done ONLY after the agent was observed working (a
-      ``PROCESSING`` / ``WAITING_USER_ANSWER`` read) AND IDLE then persists for
-      ``_IDLE_STABLE_POLLS`` consecutive polls. This is the codex-style case where
-      a provider legitimately settles back to its idle prompt after answering and
-      never emits a ``COMPLETED`` marker — requiring ``COMPLETED`` alone hung the
-      step until timeout and left the whole run stuck ``running``. Gating on
-      observed-working is what keeps the idle-right-after-send window (before the
-      agent picks up the prompt) from returning early with empty output; it mirrors
-      the CLI-side ``poll_until_done`` heuristic exactly.
+    - ``IDLE`` — is provisional. The agent must first have been observed working
+      (a ``PROCESSING`` / ``WAITING_USER_ANSWER`` read), IDLE must persist for
+      ``_IDLE_STABLE_POLLS`` consecutive polls, *and* the provider-specific
+      extractor must recover a non-empty result for this turn. The returned result
+      is the durable completion receipt. This lets a provider legitimately settle
+      at an idle prompt after answering while preventing stale terminal chrome from
+      terminating a still-generating turn.
 
     Delivery verification (issue #562): readiness cannot prove a TUI will accept
     input (an OpenCode splash frame carries the same idle footer as a
@@ -283,7 +281,7 @@ async def _wait_for_completion(
                 terminal_id=terminal_id,
             )
         if current == TerminalStatus.COMPLETED:
-            return
+            return None
         if current == TerminalStatus.IDLE:
             # Post-input IDLE only counts once the agent has actually started
             # working — otherwise the idle-before-processing window right after
@@ -291,13 +289,37 @@ async def _wait_for_completion(
             if observed_working:
                 consecutive_idle += 1
                 if consecutive_idle >= _IDLE_STABLE_POLLS:
-                    logger.info(
-                        "step on terminal %s settled IDLE post-input "
-                        "(observed working; %d consecutive idle polls) — done",
-                        terminal_id,
-                        consecutive_idle,
-                    )
-                    return
+                    # A terminal status is a transport observation, not proof
+                    # that this turn produced a result. TUIs can render a stale
+                    # idle footer while a new response is still streaming. Ask
+                    # the provider extractor to prove the current turn instead.
+                    try:
+                        extracted = await asyncio.to_thread(
+                            terminal_service.get_output, terminal_id, OutputMode.LAST
+                        )
+                    except Exception as exc:  # noqa: BLE001 -- IDLE is not a result receipt
+                        logger.info(
+                            "step on terminal %s has stable post-input IDLE but no "
+                            "extractable current-turn result yet (%s); continuing to wait",
+                            terminal_id,
+                            exc,
+                        )
+                        consecutive_idle = 0
+                    else:
+                        if isinstance(extracted, str) and extracted.strip():
+                            logger.info(
+                                "step on terminal %s settled IDLE post-input with durable "
+                                "current-turn output (%d consecutive idle polls)",
+                                terminal_id,
+                                consecutive_idle,
+                            )
+                            return extracted
+                        logger.info(
+                            "step on terminal %s has stable post-input IDLE but the "
+                            "extractor returned no current-turn output; continuing to wait",
+                            terminal_id,
+                        )
+                        consecutive_idle = 0
         elif current in _WORKING_STATES:
             if track_native_child and not observed_working:
                 # A provider transition is the first evidence that a terminal
@@ -861,7 +883,7 @@ async def run_agent_step(
     # StepExecutionError on timeout/ERROR, or StepCancelledError if cancellation
     # fires mid-wait.
     try:
-        await _wait_for_completion(
+        idle_completion_output = await _wait_for_completion(
             terminal_id,
             timeout,
             cancel_event,
@@ -901,14 +923,19 @@ async def run_agent_step(
 
     # Extract the last agent message via the provider-specific path (mirrors
     # how the handoff caller obtained output: get_output in LAST mode runs the
-    # provider's extract_last_message_from_script under the hood). This does a
-    # blocking tmux capture-pane plus regex extraction over the scrollback —
-    # potentially seconds for a large transcript — so run it off the loop.
+    # provider's extract_last_message_from_script under the hood). A stable-IDLE
+    # completion has already extracted the durable result; reuse that exact
+    # receipt rather than recapturing a terminal that may already be changing.
+    # A definitive COMPLETED marker follows the normal extraction path. Capture
+    # plus extraction can take seconds for a large transcript, so run it off the
+    # event loop.
     # Clean up a terminal owned by this call if output extraction fails. Reused
     # terminals remain owned by the caller.
     try:
-        last_message = await asyncio.to_thread(
-            terminal_service.get_output, terminal_id, OutputMode.LAST
+        last_message = (
+            idle_completion_output
+            if isinstance(idle_completion_output, str)
+            else await asyncio.to_thread(terminal_service.get_output, terminal_id, OutputMode.LAST)
         )
     except BaseException as exc:
         # Completion status without extractable output is insufficient to mark

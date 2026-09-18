@@ -445,6 +445,22 @@ def _has_update_dialog_in_bottom(clean_output: str) -> bool:
     )
 
 
+def _is_codex_process(command: object) -> bool:
+    """Return whether tmux reports the Codex executable as the pane process.
+
+    A freshly-created pane can retain a frame resembling Codex's composer while
+    its shell is still starting the command. Treating that stale frame as ready
+    lets ``_handle_trust_prompt`` return before a delayed workspace-trust
+    dialog appears. An unavailable/non-string value is deliberately treated as
+    unknown/allowed so adapters that cannot expose the process name retain the
+    historical screen-only behaviour.
+    """
+    if not isinstance(command, str):
+        return True
+    executable = os.path.basename(command.strip()).lower()
+    return executable in {"codex", "codex.exe"}
+
+
 def _modal_line_content(line: str) -> Optional[str]:
     """Reduce one line to its modal text, or None if the line reads as prose.
 
@@ -1175,8 +1191,20 @@ class CodexProvider(BaseProvider):
                 or _has_update_dialog_in_bottom(clean_output)
             )
             if has_idle and not has_dialog:
-                logger.info("Codex started — idle prompt visible, no blocking dialog")
-                return
+                try:
+                    current_command = get_backend().get_pane_current_command(
+                        self.session_name, self.window_name
+                    )
+                except Exception:
+                    current_command = None
+                if _is_codex_process(current_command):
+                    logger.info("Codex started — idle prompt visible, no blocking dialog")
+                    return
+                logger.debug(
+                    "Codex-looking startup frame is still owned by %r; waiting for Codex "
+                    "before declaring readiness",
+                    current_command,
+                )
 
             await asyncio.sleep(1.0)
 

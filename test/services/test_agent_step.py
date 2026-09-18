@@ -195,7 +195,11 @@ class TestHappyPath:
             status,
             patch(f"{_MODULE}._wait_for_completion", completion),
         ):
-            asyncio.run(run_agent_step("kiro_cli", "developer", "one side-effecting task", prompt_redelivery=False))
+            asyncio.run(
+                run_agent_step(
+                    "kiro_cli", "developer", "one side-effecting task", prompt_redelivery=False
+                )
+            )
 
         assert completion.await_args.kwargs["prompt_redelivery"] is False
         assert completion.await_args.kwargs["prompt"] == "one side-effecting task"
@@ -597,9 +601,7 @@ class TestFailureRaises:
             status,
             patch(f"{_MODULE}._record_native_child_transition", lifecycle),
         ):
-            result = asyncio.run(
-                run_agent_step("kiro_cli", "dev", "task", caller_id="sup-123")
-            )
+            result = asyncio.run(run_agent_step("kiro_cli", "dev", "task", caller_id="sup-123"))
 
         assert result.status == TerminalStatus.COMPLETED
         states = [call.args[2] for call in lifecycle.await_args_list]
@@ -719,12 +721,10 @@ class TestTeardownIsBestEffort:
 
 
 class TestIdleCompletionSignal:
-    """#409a: a post-input IDLE (after the agent worked) resolves as done, so a
-    provider that settles IDLE instead of emitting COMPLETED no longer hangs."""
+    """#409a: a post-input IDLE completes only with durable turn output."""
 
     def test_idle_after_working_resolves_as_completed(self):
-        """codex-style: PROCESSING (working) then stable IDLE -> COMPLETED,
-        not a hang. The step must extract output and succeed."""
+        """PROCESSING then stable IDLE with extractable output resolves the step."""
         # readiness IDLE is NOT part of this sequence — the readiness wait is the
         # patched wait_until_status(True); get_status is only the completion poll.
         seq = [
@@ -741,6 +741,32 @@ class TestIdleCompletionSignal:
         assert result.status == TerminalStatus.COMPLETED
         assert result.last_message == "the answer"
         m_out.assert_called_once_with("abc12345", OutputMode.LAST)
+
+    def test_stable_idle_without_current_turn_output_keeps_waiting(self):
+        """A stale idle footer cannot terminate a still-streaming provider turn.
+
+        The first stable-IDLE probe has no current-turn marker, so the wait
+        continues until a definitive completion signal. The invariant is
+        provider-neutral: every provider uses its own extractor through the
+        same terminal-service seam.
+        """
+        seq = [
+            TerminalStatus.PROCESSING,
+            TerminalStatus.IDLE,
+            TerminalStatus.IDLE,
+            TerminalStatus.IDLE,
+            TerminalStatus.COMPLETED,
+        ]
+        create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer(
+            status_sequence=seq,
+        )
+        with create, send, delete, get_output as m_out, exit_cli, wait, status:
+            m_out.side_effect = [ValueError("No completion marker found"), "the answer"]
+            result = asyncio.run(run_agent_step("kiro_cli", "dev", "x"))
+
+        assert result.status == TerminalStatus.COMPLETED
+        assert result.last_message == "the answer"
+        assert m_out.call_count == 2
 
     def test_completed_marker_still_resolves_immediately(self):
         """A COMPLETED marker resolves on the first poll (no observed-working

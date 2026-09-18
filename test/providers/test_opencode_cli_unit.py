@@ -13,6 +13,7 @@ from cli_agent_orchestrator.providers.opencode_cli import (
     IDLE_FOOTER_PATTERN,
     PERMISSION_PROMPT_PATTERN,
     PROCESSING_FOOTER_PATTERN,
+    PROVIDER_ERROR_PATTERN,
     TOOL_CALL_IN_FLIGHT_PATTERN,
     USER_MESSAGE_PATTERN,
     OpenCodeCliProvider,
@@ -79,6 +80,13 @@ class TestRegexPatterns:
     def test_permission_prompt_matches_always_allow(self):
         assert re.search(PERMISSION_PROMPT_PATTERN, "△  Always allow")
 
+    def test_provider_error_pattern_matches_open_code_runtime_failure(self):
+        assert re.search(
+            PROVIDER_ERROR_PATTERN,
+            "Error from provider (Console): model is unavailable",
+            re.IGNORECASE,
+        )
+
     def test_tool_call_in_flight_matches_braille_spinner(self):
         assert re.search(TOOL_CALL_IN_FLIGHT_PATTERN, "  ⠋ Read /etc/hostname", re.MULTILINE)
 
@@ -137,6 +145,14 @@ class TestGetStatusFromFixtures:
         output = load_ansi_fixture("opencode_cli_permission.ansi.txt")
         provider = make_provider()
         assert provider.get_status(output) == TerminalStatus.WAITING_USER_ANSWER
+
+    def test_provider_error_wins_over_idle_footer(self):
+        provider = make_provider()
+        output = (
+            "Error from provider (Console): selected model is unavailable\n"
+            "tab agents  ctrl+p commands  • OpenCode"
+        )
+        assert provider.get_status(output) == TerminalStatus.ERROR
 
     def test_idle_post_completion_returns_idle(self):
         # Use plain fixture — ANSI variant reuses the completed frame (see OPENCODE_FIXTURES.md).
@@ -234,6 +250,19 @@ class TestGetStatusFromScreen:
 
         assert provider.get_status_from_screen(["△  Permission required", "Allow command?"]) == (
             TerminalStatus.WAITING_USER_ANSWER
+        )
+
+    def test_provider_error_screen_wins_over_idle_footer(self):
+        provider = make_provider()
+
+        assert (
+            provider.get_status_from_screen(
+                [
+                    "Error from provider (Console): selected model is unavailable",
+                    "tab agents  ctrl+p commands  • OpenCode",
+                ]
+            )
+            == TerminalStatus.ERROR
         )
 
     def test_blank_screen_returns_unknown(self):
@@ -407,7 +436,10 @@ class TestExtractLastMessage:
 
 class TestInitialize:
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready", new_callable=AsyncMock)
+    @patch(
+        "cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready",
+        new_callable=AsyncMock,
+    )
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_success_returns_true(self, mock_tmux, mock_shell, mock_wait):
@@ -417,7 +449,10 @@ class TestInitialize:
         assert await provider.initialize() is True
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready", new_callable=AsyncMock)
+    @patch(
+        "cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready",
+        new_callable=AsyncMock,
+    )
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_uses_120s_timeout(self, mock_tmux, mock_shell, mock_wait):
@@ -428,7 +463,10 @@ class TestInitialize:
         mock_wait.assert_awaited_once_with(timeout=120.0)
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready", new_callable=AsyncMock)
+    @patch(
+        "cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready",
+        new_callable=AsyncMock,
+    )
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_sends_agent_flag(self, mock_tmux, mock_shell, mock_wait):
@@ -440,7 +478,10 @@ class TestInitialize:
         assert "--agent developer" in sent_cmd
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready", new_callable=AsyncMock)
+    @patch(
+        "cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready",
+        new_callable=AsyncMock,
+    )
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_includes_model_when_set(self, mock_tmux, mock_shell, mock_wait):
@@ -452,7 +493,10 @@ class TestInitialize:
         assert "--model anthropic/claude-sonnet-4-6" in sent_cmd
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready", new_callable=AsyncMock)
+    @patch(
+        "cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready",
+        new_callable=AsyncMock,
+    )
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_no_model_flag_when_unset(self, mock_tmux, mock_shell, mock_wait):
@@ -473,7 +517,10 @@ class TestInitialize:
             await provider.initialize()
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready", new_callable=AsyncMock)
+    @patch(
+        "cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready",
+        new_callable=AsyncMock,
+    )
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_raises_on_opencode_timeout(self, mock_tmux, mock_shell, mock_wait):
@@ -484,7 +531,10 @@ class TestInitialize:
             await provider.initialize()
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready", new_callable=AsyncMock)
+    @patch(
+        "cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready",
+        new_callable=AsyncMock,
+    )
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_sets_env_vars_in_command(self, mock_tmux, mock_shell, mock_wait):
@@ -503,7 +553,9 @@ class TestInitialize:
     @pytest.mark.asyncio
     @patch("cli_agent_orchestrator.services.status_monitor.status_monitor")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
-    async def test_initial_viewport_readiness_publishes_the_observed_state(self, mock_backend, mock_monitor):
+    async def test_initial_viewport_readiness_publishes_the_observed_state(
+        self, mock_backend, mock_monitor
+    ):
         mock_monitor.get_status.return_value = TerminalStatus.UNKNOWN
         mock_monitor.observe_initial_screen_snapshot.return_value = TerminalStatus.IDLE
         viewport = "tab agents  ctrl+p commands  • OpenCode"

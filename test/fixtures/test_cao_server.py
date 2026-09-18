@@ -20,6 +20,7 @@ from test.fixtures.cao_server import (
     AuthCaoServer,
     CaoServer,
     _JWKSServer,
+    _fixture_health_timeout,
     _pick_free_port,
     _seed_omp_e2e_state,
     _session_rsa_keys,
@@ -30,6 +31,33 @@ import pytest
 import requests
 
 pytestmark = pytest.mark.e2e
+
+
+def test_fixture_health_timeout_uses_default_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CAO_TEST_SERVER_HEALTH_TIMEOUT", raising=False)
+
+    assert _fixture_health_timeout() == 30.0
+
+
+@pytest.mark.parametrize("value", ("not-a-number", "0", "120.1"))
+def test_fixture_health_timeout_rejects_invalid_override(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("CAO_TEST_SERVER_HEALTH_TIMEOUT", value)
+
+    with pytest.raises(ValueError, match="CAO_TEST_SERVER_HEALTH_TIMEOUT"):
+        _fixture_health_timeout()
+
+
+def test_fixture_health_timeout_accepts_bounded_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CAO_TEST_SERVER_HEALTH_TIMEOUT", "60")
+
+    assert _fixture_health_timeout() == 60.0
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +258,24 @@ def test_auth_accepts_valid_token(cao_server_with_auth: AuthCaoServer) -> None:
 # ---------------------------------------------------------------------------
 # cao_terminal — gated on a provider CLI being available
 # ---------------------------------------------------------------------------
+
+
+def test_provider_unavailable_response_accepts_missing_binary_400() -> None:
+    """All provider identifiers share the same missing-binary fixture gate."""
+    from test.fixtures.cao_server import _provider_is_unavailable_response
+
+    assert _provider_is_unavailable_response(
+        400,
+        "Kiro engine 'v2' cannot start because 'kiro-cli' was not found.",
+    )
+    assert _provider_is_unavailable_response(
+        500,
+        "OpenCode CLI initialization timed out after 120 seconds",
+    )
+    assert not _provider_is_unavailable_response(
+        400,
+        "Agent profile not found: developer",
+    )
 
 
 def test_cao_terminal_create_and_get(

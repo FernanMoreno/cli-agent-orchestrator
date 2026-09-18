@@ -1,0 +1,98 @@
+name: Real Provider Native Matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      parent_provider:
+        description: Parent provider for this matrix cell
+        type: choice
+        required: true
+        default: codex
+        options: [codex, claude_code, opencode_cli]
+      child_provider:
+        description: Child provider for this matrix cell
+        type: choice
+        required: true
+        default: claude_code
+        options: [codex, claude_code, opencode_cli]
+      parent_model:
+        description: Exact available model for the selected parent provider
+        type: string
+        required: true
+      child_model:
+        description: Exact available model for the selected child provider
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+# Real CLIs share local authentication and can bill the configured account.
+# One cell at a time prevents competing terminal trees from contaminating the
+# result or exhausting a provider's interactive/account quota.
+concurrency:
+  group: cao-real-provider-e2e
+  cancel-in-progress: false
+
+jobs:
+  native-provider-cell:
+    name: ${{ inputs.parent_provider }} -> ${{ inputs.child_provider }}
+    runs-on: [self-hosted, linux, cao-real-e2e]
+    timeout-minutes: 45
+    env:
+      CAO_RUN_LIVE_PROVIDER_TESTS: "1"
+      CAO_REAL_PROVIDER_E2E_PARENT: ${{ inputs.parent_provider }}
+      CAO_REAL_PROVIDER_E2E_CHILD: ${{ inputs.child_provider }}
+      CAO_REAL_PROVIDER_E2E_PARENT_MODEL: ${{ inputs.parent_model }}
+      CAO_REAL_PROVIDER_E2E_CHILD_MODEL: ${{ inputs.child_model }}
+      # Imports on a cold self-hosted runner or a mounted WSL worktree can
+      # exceed the ordinary 30-second test budget before any CLI starts.
+      CAO_TEST_SERVER_HEALTH_TIMEOUT: "60"
+      # A runner may override this with a read-only credential home. When
+      # omitted the test uses the runner user's HOME and symlinks only the one
+      # selected provider credential record into CAO's disposable test HOME.
+      CAO_REAL_PROVIDER_E2E_AUTH_HOME: ${{ vars.CAO_REAL_PROVIDER_E2E_AUTH_HOME }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Verify real-runner prerequisites
+        run: |
+          command -v tmux
+          case "${{ inputs.parent_provider }}" in
+            codex) command -v codex ;;
+            claude_code) command -v claude ;;
+            opencode_cli) command -v opencode ;;
+          esac
+          case "${{ inputs.child_provider }}" in
+            codex) command -v codex ;;
+            claude_code) command -v claude ;;
+            opencode_cli) command -v opencode ;;
+          esac
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Run the selected real-provider cell
+        run: |
+          uv run pytest -o addopts= -m "e2e and live_provider" \
+            test/e2e/test_real_provider_matrix.py -vv
+
+      - name: Upload CAO diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cao-real-provider-${{ inputs.parent_provider }}-${{ inputs.child_provider }}
+          path: /tmp/pytest-of-*/**/server.log
+          if-no-files-found: ignore
+          retention-days: 7

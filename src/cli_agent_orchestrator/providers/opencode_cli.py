@@ -14,6 +14,7 @@ The provider detects the following terminal states:
 - PROCESSING: Agent working (``esc interrupt`` footer)
 - COMPLETED: Agent finished turn (``▣ <agent> · <model> · Ns`` marker + idle footer)
 - WAITING_USER_ANSWER: Permission dialog active (``△ Permission required`` visible)
+- ERROR: OpenCode rendered a provider/runtime failure (``Error from provider``)
 - UNKNOWN: Fallback when no state marker matches (or empty buffer)
 """
 
@@ -56,6 +57,10 @@ IDLE_FOOTER_PATTERN = r"ctrl\+p\s+commands"
 
 # Permission prompt heading — both initial request and "Always allow" sub-confirmation.
 PERMISSION_PROMPT_PATTERN = r"△\s+(?:Permission required|Always allow)\b"
+
+# Provider/runtime failure overlay. It can be rendered above an otherwise normal
+# idle footer, so it must win over every prompt/footer-based state.
+PROVIDER_ERROR_PATTERN = r"\b(?:Error from provider|Provider error)\b"
 
 # Tool-call in-flight spinner (braille animation): "⠋ Read <path>" etc.
 TOOL_CALL_IN_FLIGHT_PATTERN = r"^\s+[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+\S+"
@@ -214,10 +219,14 @@ class OpenCodeCliProvider(BaseProvider):
                     snapshot,
                 )
             except Exception as exc:
-                logger.debug("OpenCode initial viewport probe failed for %s: %s", self.terminal_id, exc)
+                logger.debug(
+                    "OpenCode initial viewport probe failed for %s: %s", self.terminal_id, exc
+                )
                 observed = TerminalStatus.UNKNOWN
             if observed in targets:
-                logger.info("OpenCode initial screen ready for %s: %s", self.terminal_id, observed.value)
+                logger.info(
+                    "OpenCode initial screen ready for %s: %s", self.terminal_id, observed.value
+                )
                 return True
             await asyncio.sleep(min(0.5, remaining))
 
@@ -244,13 +253,14 @@ class OpenCodeCliProvider(BaseProvider):
         """Detect current TUI state from the StatusMonitor buffer string.
 
         Priority order:
-        1. WAITING_USER_ANSWER — permission dialog heading present, no idle footer after it
-        2. PROCESSING — ``esc interrupt`` footer; line-level guard prevents stale-buffer
+        1. ERROR — provider/runtime failure overlay; wins over a stale idle footer
+        2. WAITING_USER_ANSWER — permission dialog heading present, no idle footer after it
+        3. PROCESSING — ``esc interrupt`` footer; line-level guard prevents stale-buffer
            false positives (lesson #16)
-        3. COMPLETED — last full ``▣…·…·…Ns`` marker present, idle footer after it,
+        4. COMPLETED — last full ``▣…·…·…Ns`` marker present, idle footer after it,
            no later ``▣`` token (would indicate a new incomplete turn)
-        4. IDLE — idle footer present, no ``esc interrupt`` anywhere
-        5. UNKNOWN — fallback
+        5. IDLE — idle footer present, no ``esc interrupt`` anywhere
+        6. UNKNOWN — fallback
 
         Args:
             output: StatusMonitor buffer string for this terminal.
@@ -272,7 +282,14 @@ class OpenCodeCliProvider(BaseProvider):
 
         clean = re.sub(ANSI_CODE_PATTERN, "", output)
 
-        # ── 1. WAITING_USER_ANSWER ───────────────────────────────────────────
+        # ── 1. ERROR ─────────────────────────────────────────────────────────
+        # An OpenCode provider/runtime error can leave the normal idle footer in
+        # place. Treating that viewport as IDLE made failed model selections wait
+        # until the step timeout, hiding a definitive error as a monitor lag.
+        if re.search(PROVIDER_ERROR_PATTERN, clean, re.IGNORECASE):
+            return TerminalStatus.ERROR
+
+        # ── 2. WAITING_USER_ANSWER ───────────────────────────────────────────
         perm_matches = list(re.finditer(PERMISSION_PROMPT_PATTERN, clean))
         if perm_matches:
             last_perm_end = perm_matches[-1].end()
@@ -281,7 +298,7 @@ class OpenCodeCliProvider(BaseProvider):
             if not re.search(IDLE_FOOTER_PATTERN, clean[last_perm_end:]):
                 return TerminalStatus.WAITING_USER_ANSWER
 
-        # ── 2. PROCESSING ───────────────────────────────────────────────────
+        # ── 3. PROCESSING ───────────────────────────────────────────────────
         # Line-level position guard: during normal processing, ``esc interrupt``
         # and ``ctrl+p commands`` share the same footer line.  In the stale case
         # (alt-screen remnant), ``esc interrupt`` is on an earlier line and the
@@ -303,7 +320,7 @@ class OpenCodeCliProvider(BaseProvider):
             # Guard fired: esc interrupt is a stale alt-screen remnant.
             esc_is_stale = True
 
-        # ── 3. COMPLETED ─────────────────────────────────────────────────────
+        # ── 4. COMPLETED ─────────────────────────────────────────────────────
         # Requires the last full completion marker (with duration) followed by the
         # idle footer and no subsequent ``▣`` token (which would indicate a new
         # incomplete turn visible in the scrollback).
@@ -314,7 +331,7 @@ class OpenCodeCliProvider(BaseProvider):
             if re.search(IDLE_FOOTER_PATTERN, after) and not re.search(r"▣", after):
                 return TerminalStatus.COMPLETED
 
-        # ── 4. IDLE ──────────────────────────────────────────────────────────
+        # ── 5. IDLE ──────────────────────────────────────────────────────────
         # Allow IDLE when either no esc interrupt is present OR it was flagged stale
         # (position guard fired in step 2 above).
         if re.search(IDLE_FOOTER_PATTERN, clean) and (
@@ -322,7 +339,7 @@ class OpenCodeCliProvider(BaseProvider):
         ):
             return TerminalStatus.IDLE
 
-        # ── 5. UNKNOWN (fallback) ─────────────────────────────────────────────
+        # ── 6. UNKNOWN (fallback) ─────────────────────────────────────────────
         return TerminalStatus.UNKNOWN
 
     # ── Screen-based detection (pyte) ────────────────────────────────────────
@@ -337,11 +354,12 @@ class OpenCodeCliProvider(BaseProvider):
         buffer-eviction or escape-stripping issues.
 
         Precedence mirrors ``get_status``:
-        1. WAITING_USER_ANSWER — permission dialog heading
-        2. PROCESSING — ``esc interrupt`` footer
-        3. COMPLETED — completion marker followed by idle footer
-        4. IDLE — idle footer present
-        5. UNKNOWN — fallback
+        1. ERROR — provider/runtime failure overlay
+        2. WAITING_USER_ANSWER — permission dialog heading
+        3. PROCESSING — ``esc interrupt`` footer
+        4. COMPLETED — completion marker followed by idle footer
+        5. IDLE — idle footer present
+        6. UNKNOWN — fallback
         """
         rows = [ln.rstrip() for ln in screen_lines if ln.strip()]
         if not rows:
@@ -350,14 +368,18 @@ class OpenCodeCliProvider(BaseProvider):
         # Join with newlines so multiline patterns work.
         joined = "\n".join(rows)
 
-        # ── 1. WAITING_USER_ANSWER ───────────────────────────────────────
+        # ── 1. ERROR ─────────────────────────────────────────────────────
+        if re.search(PROVIDER_ERROR_PATTERN, joined, re.IGNORECASE):
+            return TerminalStatus.ERROR
+
+        # ── 2. WAITING_USER_ANSWER ───────────────────────────────────────
         if re.search(PERMISSION_PROMPT_PATTERN, joined):
             # Permission dialog replaces the normal footer; if idle footer
             # also appears the user already dismissed it.
             if not re.search(IDLE_FOOTER_PATTERN, joined):
                 return TerminalStatus.WAITING_USER_ANSWER
 
-        # ── 2. PROCESSING ───────────────────────────────────────────────
+        # ── 3. PROCESSING ───────────────────────────────────────────────
         last_esc_line = -1
         for i, row in enumerate(rows):
             if re.search(PROCESSING_FOOTER_PATTERN, row):
@@ -372,7 +394,7 @@ class OpenCodeCliProvider(BaseProvider):
                 return TerminalStatus.PROCESSING
             esc_is_stale = True
 
-        # ── 3. COMPLETED ────────────────────────────────────────────────
+        # ── 4. COMPLETED ────────────────────────────────────────────────
         completion_matches = list(re.finditer(COMPLETION_MARKER_PATTERN, joined))
         if completion_matches:
             last_end = completion_matches[-1].end()
@@ -380,13 +402,13 @@ class OpenCodeCliProvider(BaseProvider):
             if re.search(IDLE_FOOTER_PATTERN, after) and not re.search(r"▣", after):
                 return TerminalStatus.COMPLETED
 
-        # ── 4. IDLE ─────────────────────────────────────────────────────
+        # ── 5. IDLE ─────────────────────────────────────────────────────
         if re.search(IDLE_FOOTER_PATTERN, joined) and (
             not re.search(PROCESSING_FOOTER_PATTERN, joined) or esc_is_stale
         ):
             return TerminalStatus.IDLE
 
-        # ── 5. UNKNOWN (fallback) ───────────────────────────────────────
+        # ── 6. UNKNOWN (fallback) ───────────────────────────────────────
         return TerminalStatus.UNKNOWN
 
     def extract_last_message_from_script(self, script_output: str) -> str:

@@ -2367,6 +2367,32 @@ class TestCodexProviderTrustPrompt:
     @pytest.mark.asyncio
     @patch(
         "cli_agent_orchestrator.providers.codex.time.time",
+        side_effect=[0.0, 0.0, 2.0],
+    )
+    @patch("cli_agent_orchestrator.providers.codex.asyncio.sleep", new_callable=AsyncMock)
+    @patch("cli_agent_orchestrator.providers.codex.logger.error")
+    @patch("cli_agent_orchestrator.providers.codex.get_backend")
+    async def test_handle_trust_prompt_does_not_accept_stale_composer_from_shell(
+        self, mock_backend, mock_error, mock_sleep, _mock_time
+    ):
+        """A shell-owned stale frame cannot hide a delayed trust dialog."""
+        mock_backend.return_value.get_history.return_value = (
+            "OpenAI Codex (v0.149.0)\n"
+            "» Ask Codex to do anything\n\n"
+            "  gpt-5.6-sol ultra · /private/tmp/cao-smoke\n"
+        )
+        mock_backend.return_value.get_pane_current_command.return_value = "bash"
+
+        provider = CodexProvider("test1234", "test-session", "window-0")
+        await provider._handle_trust_prompt(timeout=1.0)
+
+        mock_sleep.assert_awaited_once_with(1.0)
+        mock_error.assert_called_once()
+        mock_backend.return_value.send_special_key.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch(
+        "cli_agent_orchestrator.providers.codex.time.time",
         side_effect=[0.0, 0.0, 1.0, 2.0, 20.0],
     )
     @patch("cli_agent_orchestrator.providers.codex.asyncio.sleep", new_callable=AsyncMock)
