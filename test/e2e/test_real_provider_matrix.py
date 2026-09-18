@@ -11,9 +11,11 @@ durable receipt rather than from a terminal viewport:
   guessed success.
 
 It is expensive and requires logged-in local CLIs, so it is disabled unless
-``CAO_RUN_LIVE_PROVIDER_TESTS=1`` and an explicit parent/child pair are set.
-The manual GitHub Actions workflow supplies those values on a protected
-self-hosted runner.  See ``docs/real-provider-e2e.md``.
+``CAO_RUN_LIVE_PROVIDER_TESTS=1``.  When enabled, a reviewed JSON manifest
+names the provider CLIs and models that the runner is allowed to charge; the
+harness derives its parent × child cells from that manifest.  This keeps the
+test extensible (for example, for a future Gemini provider) without silently
+discovering and invoking arbitrary local CLIs.  See ``docs/real-provider-e2e.md``.
 """
 
 from __future__ import annotations
@@ -23,13 +25,20 @@ import os
 import shutil
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Iterator
+from test.fixtures.cao_server import (
+    CaoServer,
+    _fixture_health_timeout,
+    _pick_free_port,
+    _start_cao_server,
+)
+from typing import Final, Iterator, NoReturn
 
 import pytest
 import requests
 
-from test.fixtures.cao_server import CaoServer, _fixture_health_timeout, _pick_free_port, _start_cao_server
+from cli_agent_orchestrator.constants import PROVIDERS
 
 pytestmark = [
     pytest.mark.e2e,
@@ -42,40 +51,392 @@ pytestmark = [
 ]
 
 
-_PARENT_ENV: Final = "CAO_REAL_PROVIDER_E2E_PARENT"
-_CHILD_ENV: Final = "CAO_REAL_PROVIDER_E2E_CHILD"
-_PARENT_MODEL_ENV: Final = "CAO_REAL_PROVIDER_E2E_PARENT_MODEL"
-_CHILD_MODEL_ENV: Final = "CAO_REAL_PROVIDER_E2E_CHILD_MODEL"
+_PROVIDERS_ENV: Final = "CAO_REAL_PROVIDER_E2E_PROVIDERS"
+_PAIRS_ENV: Final = "CAO_REAL_PROVIDER_E2E_PAIRS"
+_STRICT_ENV: Final = "CAO_REAL_PROVIDER_E2E_STRICT"
 _AUTH_HOME_ENV: Final = "CAO_REAL_PROVIDER_E2E_AUTH_HOME"
-_PROVIDER_BINARIES: Final = {
-    "codex": "codex",
-    "claude_code": "claude",
-    "opencode_cli": "opencode",
-}
-_PROVIDER_AUTH_ENV: Final = {
-    "codex": ("OPENAI_API_KEY",),
-    "claude_code": ("ANTHROPIC_API_KEY",),
-    # OpenCode can delegate to different upstreams.  A local auth record is
-    # preferred, but these are the common non-interactive credentials.
-    "opencode_cli": ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"),
-}
-_PROVIDER_AUTH_FILES: Final = {
-    "codex": (Path(".codex") / "auth.json",),
-    "claude_code": (Path(".claude") / ".credentials.json", Path(".claude.json")),
-    "opencode_cli": (
-        Path(".local") / "share" / "opencode" / "auth.json",
-        Path(".config") / "opencode" / "auth.json",
-    ),
-}
+_LEGACY_PARENT_ENV: Final = "CAO_REAL_PROVIDER_E2E_PARENT"
+_LEGACY_CHILD_ENV: Final = "CAO_REAL_PROVIDER_E2E_CHILD"
+_MAX_MANIFEST_BYTES: Final = 64 * 1024
+_REQUIRED_CAPABILITIES: Final = frozenset({"native_children"})
 _READY_STATES: Final = {"idle", "completed"}
 _RECEIPT_WAIT_SECONDS: Final = 30.0
 _STEP_TIMEOUT_SECONDS: Final = 180.0
+
+
+@dataclass(frozen=True)
+class MatrixProvider:
+    """One explicitly authorised real-provider endpoint for the matrix.
+
+    Authentication paths are deliberately supplied by the operator rather
+    than inferred from a provider name.  A new provider can therefore join
+    this matrix as soon as CAO supports it, without adding a second hard-coded
+    allowlist to this test module.
+    """
+
+    name: str
+    model: str
+    binary: str
+    auth_env: tuple[str, ...]
+    auth_files: tuple[Path, ...]
+    capabilities: frozenset[str]
+    exclude_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class MatrixCell:
+    """A parent → child real-provider cell plus a non-invasive skip reason."""
+
+    parent: MatrixProvider
+    child: MatrixProvider
+    skip_reason: str | None = None
+
+    @property
+    def id(self) -> str:
+        return f"{self.parent.name}->{self.child.name}"
 
 
 def _configured_auth_home() -> Path:
     """Return the operator home which owns the reusable CLI logins."""
     configured_home = os.environ.get(_AUTH_HOME_ENV, "").strip()
     return Path(configured_home).expanduser() if configured_home else Path.home()
+
+
+def _manifest_failure(message: str) -> NoReturn:
+    pytest.fail(f"Invalid {_PROVIDERS_ENV} manifest: {message}")
+
+
+def _nonempty_string(value: object, *, field: str, provider: str) -> str:
+    if not isinstance(value, str):
+        _manifest_failure(f"provider {provider!r} field {field!r} must be a string")
+    if "\x00" in value or "\r" in value or "\n" in value:
+        _manifest_failure(f"provider {provider!r} field {field!r} must be one line without NUL")
+    result = value.strip()
+    if not result:
+        _manifest_failure(f"provider {provider!r} field {field!r} must not be empty")
+    return result
+
+
+def _string_list(value: object, *, field: str, provider: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        _manifest_failure(f"provider {provider!r} field {field!r} must be a JSON array")
+    values = tuple(_nonempty_string(item, field=field, provider=provider) for item in value)
+    if len(values) != len(set(values)):
+        _manifest_failure(f"provider {provider!r} field {field!r} must not contain duplicates")
+    return values
+
+
+def _auth_files(value: object, *, provider: str) -> tuple[Path, ...]:
+    paths = _string_list(value, field="auth_files", provider=provider)
+    result: list[Path] = []
+    for raw_path in paths:
+        path = Path(raw_path)
+        if path.is_absolute() or ".." in path.parts or "\\" in raw_path:
+            _manifest_failure(
+                f"provider {provider!r} auth_files entries must be safe relative POSIX paths"
+            )
+        result.append(path)
+    return tuple(result)
+
+
+def _load_matrix_providers() -> dict[str, MatrixProvider]:
+    """Load the reviewed, explicit provider manifest for a real matrix run.
+
+    Presence in this manifest is the enablement decision.  We intentionally do
+    not enumerate every provider CAO happens to support or every binary on
+    PATH: doing either could turn a normal authenticated workstation into an
+    unreviewed, billable test run.
+    """
+
+    raw_manifest = os.environ.get(_PROVIDERS_ENV, "")
+    if len(raw_manifest.encode("utf-8")) > _MAX_MANIFEST_BYTES:
+        _manifest_failure(f"must not exceed {_MAX_MANIFEST_BYTES} UTF-8 bytes")
+    raw_manifest = raw_manifest.strip()
+    if not raw_manifest:
+        _manifest_failure(
+            "set it to a JSON object mapping CAO provider ids to reviewed endpoint settings"
+        )
+    try:
+        manifest = json.loads(raw_manifest)
+    except json.JSONDecodeError as exc:
+        _manifest_failure(f"must contain valid JSON ({exc.msg})")
+    if not isinstance(manifest, dict) or not manifest:
+        _manifest_failure("must be a non-empty JSON object")
+
+    providers: dict[str, MatrixProvider] = {}
+    allowed_fields = {
+        "model",
+        "binary",
+        "auth_env",
+        "auth_files",
+        "capabilities",
+        "exclude_reason",
+    }
+    for name, raw_config in manifest.items():
+        if not isinstance(name, str) or not name:
+            _manifest_failure("provider ids must be non-empty strings")
+        if not isinstance(raw_config, dict):
+            _manifest_failure(f"provider {name!r} must map to a JSON object")
+        unexpected = sorted(set(raw_config) - allowed_fields)
+        if unexpected:
+            _manifest_failure(
+                f"provider {name!r} contains unsupported fields: {', '.join(unexpected)}"
+            )
+
+        raw_exclude_reason = raw_config.get("exclude_reason")
+        exclude_reason: str | None = None
+        if raw_exclude_reason is not None:
+            exclude_reason = _nonempty_string(
+                raw_exclude_reason, field="exclude_reason", provider=name
+            )
+
+        if name not in PROVIDERS and exclude_reason is None:
+            _manifest_failure(
+                f"provider {name!r} has no adapter in this CAO checkout; add the adapter first "
+                "or retain it with exclude_reason so its skipped cells stay visible"
+            )
+
+        # An excluded provider is intentionally represented in the resulting
+        # Cartesian product so pytest reports every skipped pair and its reason.
+        # It does not need a working binary, model, or credential configuration.
+        if exclude_reason is not None:
+            providers[name] = MatrixProvider(
+                name=name,
+                model="",
+                binary="",
+                auth_env=(),
+                auth_files=(),
+                capabilities=frozenset(),
+                exclude_reason=exclude_reason,
+            )
+            continue
+
+        # A manifest can name every provider that ought to participate on a
+        # runner even while one is not installed, authenticated, or assigned a
+        # reviewed model yet.  Missing endpoint settings are availability
+        # diagnoses, so affected cells are reported as skips instead of
+        # suppressing the rest of the N×N matrix.  A supplied value, however,
+        # must have a safe, well-defined shape.
+        model = (
+            _nonempty_string(raw_config["model"], field="model", provider=name)
+            if "model" in raw_config
+            else ""
+        )
+        binary = (
+            _nonempty_string(raw_config["binary"], field="binary", provider=name)
+            if "binary" in raw_config
+            else ""
+        )
+        auth_env = (
+            _string_list(raw_config["auth_env"], field="auth_env", provider=name)
+            if "auth_env" in raw_config
+            else ()
+        )
+        auth_files = (
+            _auth_files(raw_config["auth_files"], provider=name)
+            if "auth_files" in raw_config
+            else ()
+        )
+        capabilities = (
+            frozenset(_string_list(raw_config["capabilities"], field="capabilities", provider=name))
+            if "capabilities" in raw_config
+            else frozenset()
+        )
+        providers[name] = MatrixProvider(
+            name=name,
+            model=model,
+            binary=binary,
+            auth_env=auth_env,
+            auth_files=auth_files,
+            capabilities=capabilities,
+        )
+    return providers
+
+
+def _pair_selection(providers: dict[str, MatrixProvider]) -> list[tuple[str, str]]:
+    """Return explicit matrix cells, or the full Cartesian product for ``all``."""
+
+    raw_selection = os.environ.get(_PAIRS_ENV, "").strip()
+    if not raw_selection:
+        # Preserve a cheap local repro for the former one-cell interface while
+        # requiring the new reviewed manifest for binary/model/auth data.  We
+        # deliberately do not reconstruct provider settings from the old
+        # environment variables: that would reintroduce a fixed provider
+        # allowlist and could launch an unreviewed model.
+        legacy_parent = os.environ.get(_LEGACY_PARENT_ENV, "").strip()
+        legacy_child = os.environ.get(_LEGACY_CHILD_ENV, "").strip()
+        if legacy_parent and legacy_child:
+            raw_selection = f"{legacy_parent}->{legacy_child}"
+        elif legacy_parent or legacy_child:
+            pytest.fail(
+                f"{_LEGACY_PARENT_ENV} and {_LEGACY_CHILD_ENV} must be set together, or use "
+                f"{_PAIRS_ENV}"
+            )
+        else:
+            pytest.fail(
+                f"{_PAIRS_ENV} is required with live provider tests; set it to 'all' or "
+                "a comma-separated list such as 'codex->gemini'"
+            )
+    if raw_selection == "all":
+        return [(parent, child) for parent in providers for child in providers]
+
+    pairs: list[tuple[str, str]] = []
+    for raw_pair in raw_selection.split(","):
+        parent, separator, child = raw_pair.partition("->")
+        parent = parent.strip()
+        child = child.strip()
+        if separator != "->" or not parent or not child:
+            pytest.fail(f"{_PAIRS_ENV} entries must use parent->child syntax; got {raw_pair!r}")
+        if parent not in providers or child not in providers:
+            pytest.fail(
+                f"{_PAIRS_ENV} selects {parent!r}->{child!r}, but both must appear in "
+                f"{_PROVIDERS_ENV}"
+            )
+        pair = (parent, child)
+        if pair in pairs:
+            pytest.fail(f"{_PAIRS_ENV} contains duplicate cell {parent!r}->{child!r}")
+        pairs.append(pair)
+    return pairs
+
+
+def _provider_unavailability_reasons(provider: MatrixProvider) -> tuple[str, ...]:
+    """Return every preflight reason a selected provider must not be launched."""
+
+    if provider.exclude_reason is not None:
+        return (f"adapter exclusion: {provider.exclude_reason}",)
+
+    reasons: list[str] = []
+    if not provider.model:
+        reasons.append("no reviewed model configured")
+    missing_capabilities = sorted(_REQUIRED_CAPABILITIES - provider.capabilities)
+    if missing_capabilities:
+        reasons.append("missing required capabilities: " + ", ".join(missing_capabilities))
+    if not provider.binary:
+        reasons.append("no reviewed CLI binary configured")
+    elif shutil.which(provider.binary) is None:
+        reasons.append(f"required binary {provider.binary!r} is not on PATH")
+    if not provider.auth_env and not provider.auth_files:
+        reasons.append("no authentication probe configured")
+        return tuple(reasons)
+    if any(os.environ.get(variable) for variable in provider.auth_env):
+        return tuple(reasons)
+
+    auth_home = _configured_auth_home()
+    if any((auth_home / relative_path).is_file() for relative_path in provider.auth_files):
+        return tuple(reasons)
+
+    variables = " or ".join(provider.auth_env)
+    paths = ", ".join(str(auth_home / path) for path in provider.auth_files)
+    if variables and paths:
+        reasons.append(f"no reusable auth (set {variables} or add a login record at {paths})")
+    elif variables:
+        reasons.append(f"no reusable auth (set {variables})")
+    else:
+        reasons.append(f"no reusable auth (add a login record at {paths})")
+    return tuple(reasons)
+
+
+def _provider_unavailable_reason(provider: MatrixProvider) -> str | None:
+    """Return a compact backwards-compatible unavailable-provider diagnosis."""
+
+    reasons = _provider_unavailability_reasons(provider)
+    return "; ".join(reasons) or None
+
+
+def _strict_mode_enabled() -> bool:
+    """Return whether this run must fail closed on unavailable enabled providers."""
+
+    raw_value = os.environ.get(_STRICT_ENV, "").strip()
+    if raw_value in ("", "0"):
+        return False
+    if raw_value == "1":
+        return True
+    pytest.fail(f"{_STRICT_ENV} must be '1' to enable strict mode or unset/'0' to disable it")
+
+
+def _strict_preflight(providers: dict[str, MatrixProvider], pairs: list[tuple[str, str]]) -> None:
+    """Fail before fixtures when a selected enabled provider is not runnable.
+
+    An ``exclude_reason`` is an explicit operator decision rather than a
+    readiness defect.  It remains a visible skipped cell in strict mode.  All
+    other availability failures are aggregated so a CI operator can fix the
+    complete runner configuration without paying for a partial live matrix.
+    """
+
+    if not _strict_mode_enabled():
+        return
+
+    selected_names = dict.fromkeys(name for pair in pairs for name in pair)
+    preflight_reasons = {
+        name: _provider_unavailability_reasons(providers[name]) for name in selected_names
+    }
+    unavailable: list[str] = []
+    for name in selected_names:
+        provider = providers[name]
+        if provider.exclude_reason is not None:
+            continue
+        reasons = preflight_reasons[name]
+        if reasons:
+            unavailable.append(f"{name!r}: " + "; ".join(reasons))
+    if unavailable:
+        pytest.fail(
+            f"{_STRICT_ENV}=1 refuses to start real providers with incomplete preflight:\n- "
+            + "\n- ".join(unavailable)
+        )
+
+    if any(
+        not preflight_reasons[parent_name] and not preflight_reasons[child_name]
+        for parent_name, child_name in pairs
+    ):
+        return
+
+    blocked_cells: list[str] = []
+    for parent_name, child_name in pairs:
+        reasons: list[str] = []
+        for role, name in (("parent", parent_name), ("child", child_name)):
+            for reason in preflight_reasons[name]:
+                reasons.append(f"{role} {name!r}: {reason}")
+        blocked_cells.append(f"{parent_name}->{child_name}: " + "; ".join(reasons))
+    pytest.fail(
+        f"{_STRICT_ENV}=1 requires at least one selected fully executable parent->child "
+        "cell; all selected cells are intentionally excluded:\n- " + "\n- ".join(blocked_cells)
+    )
+
+
+def _matrix_cells() -> list[pytest.ParameterSet]:
+    """Materialize the selected cells without touching unauthorised CLIs.
+
+    The disabled path deliberately avoids parsing an ambient manifest.  This
+    lets normal unit-test runs coexist with a runner environment that has
+    provider credentials or a matrix configuration exported globally.
+    """
+
+    if os.environ.get("CAO_RUN_LIVE_PROVIDER_TESTS") != "1":
+        return [
+            pytest.param(
+                None,
+                id="live-provider-tests-disabled",
+                marks=pytest.mark.skip(reason="Real provider matrix disabled."),
+            )
+        ]
+
+    providers = _load_matrix_providers()
+    pairs = _pair_selection(providers)
+    _strict_preflight(providers, pairs)
+    result: list[pytest.ParameterSet] = []
+    for parent_name, child_name in pairs:
+        parent = providers[parent_name]
+        child = providers[child_name]
+        reasons: list[str] = []
+        for role, provider in (("parent", parent), ("child", child)):
+            for reason in _provider_unavailability_reasons(provider):
+                description = f"{role} {provider.name!r}: {reason}"
+                if description not in reasons:
+                    reasons.append(description)
+        cell = MatrixCell(parent=parent, child=child, skip_reason="; ".join(reasons) or None)
+        marks = pytest.mark.skip(reason=cell.skip_reason) if cell.skip_reason else ()
+        result.append(pytest.param(cell, id=cell.id, marks=marks))
+    return result
 
 
 @pytest.fixture
@@ -97,38 +458,7 @@ def live_provider_cao_server(tmp_path: Path) -> Iterator[CaoServer]:
         server.stop()
 
 
-def _selected_provider(name: str) -> str:
-    provider = os.environ.get(name, "").strip()
-    if provider not in _PROVIDER_BINARIES:
-        valid = ", ".join(sorted(_PROVIDER_BINARIES))
-        pytest.fail(f"{name} must be one of {valid}; got {provider or '<unset>'!r}")
-    binary = _PROVIDER_BINARIES[provider]
-    if shutil.which(binary) is None:
-        pytest.fail(f"Selected provider {provider!r} requires {binary!r} on PATH")
-    return provider
-
-
-def _selected_model(name: str, provider: str) -> str:
-    """Require an explicit, provider-valid model for each matrix endpoint.
-
-    Provider defaults are operator-local state. They can silently point to an
-    unavailable or retired model (as a real OpenCode run demonstrated), making
-    a lifecycle failure indistinguishable from a model-routing failure. A
-    protected runner supplies a reviewed model per matrix side instead.
-    """
-    raw_model = os.environ.get(name, "")
-    if any(character in raw_model for character in "\r\n"):
-        pytest.fail(f"{name} must be a single-line model identifier")
-    model = raw_model.strip()
-    if not model:
-        pytest.fail(
-            f"{name} is required for {provider!r}; set an installed, currently "
-            "available model accepted by that provider"
-        )
-    return model
-
-
-def _link_auth_material(cao_server: CaoServer, provider: str) -> None:
+def _link_auth_material(cao_server: CaoServer, provider: MatrixProvider) -> None:
     """Expose only the selected provider's auth file to CAO's isolated HOME.
 
     The managed server deliberately redirects HOME to keep its database,
@@ -141,12 +471,12 @@ def _link_auth_material(cao_server: CaoServer, provider: str) -> None:
     interactive browser flow.  API-key based setups need no filesystem link.
     """
 
-    if any(os.environ.get(key) for key in _PROVIDER_AUTH_ENV[provider]):
+    if any(os.environ.get(key) for key in provider.auth_env):
         return
 
     auth_home = _configured_auth_home()
     linked_any = False
-    for relative_path in _PROVIDER_AUTH_FILES[provider]:
+    for relative_path in provider.auth_files:
         source = auth_home / relative_path
         if not source.is_file():
             continue
@@ -163,10 +493,10 @@ def _link_auth_material(cao_server: CaoServer, provider: str) -> None:
     if linked_any:
         return
 
-    searched = ", ".join(str(auth_home / path) for path in _PROVIDER_AUTH_FILES[provider])
-    variables = " or ".join(_PROVIDER_AUTH_ENV[provider])
+    searched = ", ".join(str(auth_home / path) for path in provider.auth_files)
+    variables = " or ".join(provider.auth_env)
     pytest.fail(
-        f"Selected provider {provider!r} has no reusable auth. Set {variables} "
+        f"Selected provider {provider.name!r} has no reusable auth. Set {variables} "
         f"or place its login record under {_AUTH_HOME_ENV} (searched: {searched})."
     )
 
@@ -338,40 +668,45 @@ def _run_cross_provider_step(
     return receipt
 
 
-def test_real_provider_native_child_matrix(live_provider_cao_server: CaoServer) -> None:
-    """Exercise one explicit parent × child cell of the live provider matrix.
+@pytest.mark.parametrize("cell", _matrix_cells())
+def test_real_provider_native_child_matrix(
+    live_provider_cao_server: CaoServer,
+    cell: MatrixCell | None,
+) -> None:
+    """Exercise each explicitly selected parent × child provider cell.
 
-    The workflow schedules all nine cells serially.  Keeping the test itself
-    to one cell makes a local repro cheap and associates any failure with an
-    exact provider pair instead of an ambiguous large suite.
+    ``CAO_REAL_PROVIDER_E2E_PAIRS=all`` creates one pytest case for every
+    ordered pair in the reviewed manifest.  A skipped provider remains visible
+    as skipped cells with its exact availability reason; it is never silently
+    removed from the report.  A comma-separated selector keeps local repros
+    cheap without changing the manifest or the runner's authorisation.
     """
 
+    assert cell is not None  # The disabled placeholder is skipped before fixtures run.
     cao_server = live_provider_cao_server
-    parent_provider = _selected_provider(_PARENT_ENV)
-    child_provider = _selected_provider(_CHILD_ENV)
-    parent_model = _selected_model(_PARENT_MODEL_ENV, parent_provider)
-    child_model = _selected_model(_CHILD_MODEL_ENV, child_provider)
+    parent_provider = cell.parent
+    child_provider = cell.child
     _link_auth_material(cao_server, parent_provider)
-    if child_provider != parent_provider:
+    if child_provider.name != parent_provider.name:
         _link_auth_material(cao_server, child_provider)
 
     suffix = uuid.uuid4().hex[:10]
     parent_profile = f"real_matrix_parent_{suffix}"
     child_profile = f"real_matrix_child_{suffix}"
-    _write_profile(cao_server, parent_profile, parent_provider, parent_model)
-    _write_profile(cao_server, child_profile, child_provider, child_model)
+    _write_profile(cao_server, parent_profile, parent_provider.name, parent_provider.model)
+    _write_profile(cao_server, child_profile, child_provider.name, child_provider.model)
 
     parent_id: str | None = None
     session_name: str | None = None
     try:
-        parent_id, session_name = _create_parent(cao_server, parent_provider, parent_profile)
+        parent_id, session_name = _create_parent(cao_server, parent_provider.name, parent_profile)
 
         # Launch + prompt + cross-provider child + durable success/cleanup.
         _run_cross_provider_step(
             cao_server,
             parent_id=parent_id,
             session_name=session_name,
-            provider=child_provider,
+            provider=child_provider.name,
             profile=child_profile,
         )
 
@@ -382,14 +717,14 @@ def test_real_provider_native_child_matrix(live_provider_cao_server: CaoServer) 
             cao_server,
             session_name=session_name,
             parent_id=parent_id,
-            provider=child_provider,
+            provider=child_provider.name,
             profile=child_profile,
         )
         right_id = _create_native_child(
             cao_server,
             session_name=session_name,
             parent_id=parent_id,
-            provider=child_provider,
+            provider=child_provider.name,
             profile=child_profile,
         )
         sibling_marker = f"CAO_SIBLING_MESSAGE_{uuid.uuid4().hex}"
@@ -418,7 +753,7 @@ def test_real_provider_native_child_matrix(live_provider_cao_server: CaoServer) 
             "POST",
             f"{cao_server.url}/terminals/run-step",
             json={
-                "provider": child_provider,
+                "provider": child_provider.name,
                 "agent": child_profile,
                 "prompt": "Do not produce a final answer; remain active until cancelled.",
                 "session_name": session_name,

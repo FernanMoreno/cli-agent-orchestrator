@@ -3,48 +3,49 @@ name: Real Provider Native Matrix
 on:
   workflow_dispatch:
     inputs:
-      parent_provider:
-        description: Parent provider for this matrix cell
-        type: choice
-        required: true
-        default: codex
-        options: [codex, claude_code, opencode_cli]
-      child_provider:
-        description: Child provider for this matrix cell
-        type: choice
-        required: true
-        default: claude_code
-        options: [codex, claude_code, opencode_cli]
-      parent_model:
-        description: Exact available model for the selected parent provider
+      providers_json:
+        description: >-
+          Optional JSON provider manifest. Empty uses the protected
+          CAO_REAL_PROVIDER_E2E_PROVIDERS Actions variable; it contains no secrets.
+        type: string
+        required: false
+        default: ""
+      pairs:
+        description: >-
+          `all` for every enabled parent->child pair, or a comma-separated
+          list such as `codex->gemini_cli,gemini_cli->claude_code` for a repro.
         type: string
         required: true
-      child_model:
-        description: Exact available model for the selected child provider
-        type: string
-        required: true
+        default: all
 
 permissions:
   contents: read
 
 # Real CLIs share local authentication and can bill the configured account.
-# One cell at a time prevents competing terminal trees from contaminating the
+# One matrix at a time prevents competing terminal trees from contaminating the
 # result or exhausting a provider's interactive/account quota.
 concurrency:
   group: cao-real-provider-e2e
   cancel-in-progress: false
 
 jobs:
-  native-provider-cell:
-    name: ${{ inputs.parent_provider }} -> ${{ inputs.child_provider }}
+  native-provider-matrix:
+    name: Dynamic provider lifecycle matrix (${{ inputs.pairs }})
     runs-on: [self-hosted, linux, cao-real-e2e]
-    timeout-minutes: 45
+    # A full N×N live matrix serializes its provider cells; it may legitimately
+    # outlast the former single-cell 45-minute ceiling.
+    timeout-minutes: 360
     env:
       CAO_RUN_LIVE_PROVIDER_TESTS: "1"
-      CAO_REAL_PROVIDER_E2E_PARENT: ${{ inputs.parent_provider }}
-      CAO_REAL_PROVIDER_E2E_CHILD: ${{ inputs.child_provider }}
-      CAO_REAL_PROVIDER_E2E_PARENT_MODEL: ${{ inputs.parent_model }}
-      CAO_REAL_PROVIDER_E2E_CHILD_MODEL: ${{ inputs.child_model }}
+      # Do not encode provider names, models, or credentials in this workflow.
+      # An operator adds a supported provider by updating the protected
+      # manifest (or this dispatch input), and the harness derives all cells.
+      CAO_REAL_PROVIDER_E2E_PROVIDERS: ${{ inputs.providers_json || vars.CAO_REAL_PROVIDER_E2E_PROVIDERS }}
+      CAO_REAL_PROVIDER_E2E_PAIRS: ${{ inputs.pairs }}
+      # A protected release runner must never turn unavailable enabled
+      # providers into a green all-skipped workflow. This preflights every
+      # selected non-excluded endpoint before any provider terminal launches.
+      CAO_REAL_PROVIDER_E2E_STRICT: "1"
       # Imports on a cold self-hosted runner or a mounted WSL worktree can
       # exceed the ordinary 30-second test budget before any CLI starts.
       CAO_TEST_SERVER_HEALTH_TIMEOUT: "60"
@@ -66,24 +67,48 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Verify real-runner prerequisites
+      - name: Validate dynamic matrix dispatch
+        run: |
+          # GitHub's string inputs have no useful schema or size constraint.
+          # Bound the config before dependency installation, parse only enough
+          # to give a clear dispatch error, and never print auth values/files.
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          raw = os.environ.get("CAO_REAL_PROVIDER_E2E_PROVIDERS", "")
+          if len(raw.encode("utf-8")) > 65_536:
+              sys.exit("CAO_REAL_PROVIDER_E2E_PROVIDERS exceeds the 64 KiB dispatch limit")
+          if not raw.strip():
+              sys.exit(
+                  "CAO_REAL_PROVIDER_E2E_PROVIDERS is required: set the protected "
+                  "Actions variable or provide providers_json."
+              )
+          try:
+              providers = json.loads(raw)
+          except json.JSONDecodeError as exc:
+              sys.exit(f"CAO_REAL_PROVIDER_E2E_PROVIDERS is not valid JSON: {exc.msg}")
+          if not isinstance(providers, dict):
+              sys.exit("CAO_REAL_PROVIDER_E2E_PROVIDERS must be a JSON object")
+          if not providers:
+              sys.exit("CAO_REAL_PROVIDER_E2E_PROVIDERS must not be empty")
+          pairs = os.environ.get("CAO_REAL_PROVIDER_E2E_PAIRS", "").strip()
+          if not pairs:
+              sys.exit("CAO_REAL_PROVIDER_E2E_PAIRS is required")
+          print(f"Configured providers: {', '.join(sorted(providers))}")
+          print(f"Requested pair selection: {pairs}")
+          PY
+
+      - name: Verify runner base prerequisites
         run: |
           command -v tmux
-          case "${{ inputs.parent_provider }}" in
-            codex) command -v codex ;;
-            claude_code) command -v claude ;;
-            opencode_cli) command -v opencode ;;
-          esac
-          case "${{ inputs.child_provider }}" in
-            codex) command -v codex ;;
-            claude_code) command -v claude ;;
-            opencode_cli) command -v opencode ;;
-          esac
+          command -v python3
 
       - name: Install dependencies
         run: uv sync --all-extras --dev
 
-      - name: Run the selected real-provider cell
+      - name: Run selected real-provider matrix cells
         run: |
           uv run pytest -o addopts= -m "e2e and live_provider" \
             test/e2e/test_real_provider_matrix.py -vv
@@ -92,7 +117,9 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: cao-real-provider-${{ inputs.parent_provider }}-${{ inputs.child_provider }}
-          path: /tmp/pytest-of-*/**/server.log
+          name: cao-real-provider-matrix-${{ github.run_id }}
+          path: |
+            /tmp/pytest-of-*/**/server.log
+            /tmp/pytest-of-*/**/logs/*.log
           if-no-files-found: ignore
           retention-days: 7
