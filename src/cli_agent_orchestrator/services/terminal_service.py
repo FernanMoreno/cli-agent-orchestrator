@@ -46,6 +46,8 @@ from cli_agent_orchestrator.clients.database import (
     get_terminal_metadata,
     list_all_terminals,
     list_siblings_by_group_prefix,
+    plan_native_child,
+    transition_native_child,
     update_last_active,
     update_terminal_group,
     update_terminal_metadata,
@@ -167,6 +169,13 @@ TERMINAL_RANGE_MAX_LENGTH = 1024 * 1024
 # delays this one notification — but still bounded so a black-holed node can't
 # pin the thread.
 CROSS_NODE_NOTIFY_TIMEOUT = 10.0
+
+# A native child with no caller-provided step budget still needs a finite
+# recovery window.  Lease expiry never kills a worker; it records
+# ``reconcile`` so the parent has an explicit handle instead of a phantom
+# "completed" task.  Synchronous run-step overrides this with its own
+# ready+completion budget.
+DEFAULT_NATIVE_CHILD_LEASE_SECONDS = 30.0 * 60.0
 
 # Track terminals that have already received memory injection (first message only).
 _memory_injected_terminals: set = set()
@@ -466,7 +475,7 @@ def _request_fingerprint(
     resume_session_id: Optional[str],
     initial_message: Optional[str],
     initial_message_orchestration_type: Optional[OrchestrationType],
-    prompt_redelivery: bool,
+    prompt_redelivery: bool = True,
 ) -> str:
     """Fingerprint the create-terminal request an idempotency key stands for.
 
@@ -675,6 +684,7 @@ async def create_terminal(
     group: Optional[List[str]] = None,
     metadata: Optional[Dict[str, Any]] = None,
     idempotency_key: Optional[str] = None,
+    native_child_lease_seconds: float = DEFAULT_NATIVE_CHILD_LEASE_SECONDS,
 ) -> Terminal:
     """Create a new terminal with an initialized CLI agent.
 
@@ -1093,6 +1103,21 @@ async def create_terminal(
         # Step 1: Generate unique identifiers
         terminal_id = generate_terminal_id()
 
+        # Persist the child receipt BEFORE any tmux/provider side effect.  A
+        # process death in the following creation window leaves ``planned`` and
+        # a deterministic terminal handle; the lease reader turns that into
+        # ``reconcile`` instead of pretending the task completed.  Root
+        # terminals (no caller) intentionally have no native-child receipt.
+        if caller_id is not None:
+            await asyncio.to_thread(
+                plan_native_child,
+                parent_terminal_id=caller_id,
+                terminal_id=terminal_id,
+                provider=provider,
+                agent_profile=agent_profile,
+                lease_seconds=native_child_lease_seconds,
+            )
+
         if not session_name:
             session_name = generate_session_name()
 
@@ -1425,6 +1450,11 @@ async def create_terminal(
         else:
             await provider_instance.initialize()
 
+            # The provider, not merely the tmux window, has acknowledged the
+            # child launch.  This is deliberately after initialize(): a DB row
+            # or a visible shell alone is not a delivery/readiness receipt.
+            await asyncio.to_thread(transition_native_child, terminal_id, "acknowledged")
+
             # Persist shell_command baseline if the provider captured one
             shell_command = provider_instance.shell_baseline
             if not isinstance(shell_command, str):
@@ -1483,6 +1513,17 @@ async def create_terminal(
     except Exception as e:
         # Cleanup on failure: clean up FIFO reader, status monitor, provider, and session
         logger.error(f"Failed to create terminal: {e}")
+        if terminal_id is not None:
+            # Creation has not sent a task yet.  A provider-init timeout is a
+            # failed launch (the rollback below owns the process cleanup), not
+            # a completed child and not an invitation to redeliver a prompt.
+            await asyncio.to_thread(
+                transition_native_child,
+                terminal_id,
+                "failed",
+                error_kind="initialization_timeout" if isinstance(e, TimeoutError) else "create_error",
+                error_summary=str(e),
+            )
         try:
             if terminal_id is not None:
                 fifo_manager.stop_reader(terminal_id)
@@ -1974,6 +2015,10 @@ def _schedule_deferred_init(
         caller_id: Optional[str] = None
         try:
             await provider_instance.initialize()
+            # Deferred assign reaches this point only after the provider is
+            # genuinely initialized.  Keep the child ``planned`` until then;
+            # the fast HTTP 201 is not an acknowledgement from the worker.
+            await asyncio.to_thread(transition_native_child, terminal_id, "acknowledged")
             shell_command = provider_instance.shell_baseline
             if isinstance(shell_command, str) and shell_command:
                 update_terminal_shell_command(terminal_id, shell_command)
@@ -2011,6 +2056,9 @@ def _schedule_deferred_init(
                     sender_id=caller_id,
                     orchestration_type=effective_orchestration_type,
                 )
+                # tmux accepted the send.  This is a durable *sent* receipt,
+                # not a claim that a model is working yet.
+                await asyncio.to_thread(transition_native_child, terminal_id, "sent")
                 # Delivery can be silently dropped (Enter swallowed / paste lost)
                 # when the TUI isn't input-ready. The default confirms pickup and
                 # re-submits as before. An at-most-once caller opts out of that
@@ -2042,6 +2090,13 @@ def _schedule_deferred_init(
                         terminal_id,
                     )
                     await asyncio.to_thread(
+                        transition_native_child,
+                        terminal_id,
+                        "failed",
+                        error_kind="delivery_unconfirmed",
+                        error_summary="initial task was never observed processing after delivery recovery",
+                    )
+                    await asyncio.to_thread(
                         _notify_caller_of_deferred_failure,
                         terminal_id,
                         (
@@ -2053,6 +2108,7 @@ def _schedule_deferred_init(
                         True,  # delete_worker
                     )
                     return
+                await asyncio.to_thread(transition_native_child, terminal_id, "running")
         except TerminalInputBlockedError as e:
             # The worker initialized but is parked on an interactive prompt
             # (WAITING_USER_ANSWER). It is alive and can be driven via
@@ -2064,6 +2120,13 @@ def _schedule_deferred_init(
                 "answer_user_prompt. (%s)",
                 terminal_id,
                 e,
+            )
+            await asyncio.to_thread(
+                transition_native_child,
+                terminal_id,
+                "reconcile",
+                error_kind="input_blocked",
+                error_summary="worker is awaiting interactive input; task delivery was not confirmed",
             )
             await asyncio.to_thread(
                 _notify_caller_of_deferred_failure,
@@ -2086,6 +2149,13 @@ def _schedule_deferred_init(
                 terminal_id,
                 e,
                 exc_info=True,
+            )
+            await asyncio.to_thread(
+                transition_native_child,
+                terminal_id,
+                "failed",
+                error_kind="deferred_initialization_error",
+                error_summary=str(e),
             )
             await asyncio.to_thread(
                 _notify_caller_of_deferred_failure,

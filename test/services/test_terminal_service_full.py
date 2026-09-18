@@ -143,6 +143,7 @@ class TestCreateTerminal:
             "Review the current change",
             OrchestrationType.SEND_MESSAGE,
             None,
+            True,
         )
 
     @pytest.mark.asyncio
@@ -351,9 +352,13 @@ class TestCreateTerminal:
         mock_provider_manager.create_provider.return_value = mock_provider
         mock_fifo_dir.__truediv__ = MagicMock(return_value="fake.fifo")
 
-        result = await create_terminal(
-            "kiro_cli", "developer", new_session=True, caller_id="deadbeef"
-        )
+        with (
+            patch("cli_agent_orchestrator.services.terminal_service.plan_native_child"),
+            patch("cli_agent_orchestrator.services.terminal_service.transition_native_child"),
+        ):
+            result = await create_terminal(
+                "kiro_cli", "developer", new_session=True, caller_id="deadbeef"
+            )
 
         assert result.caller_id == "deadbeef"
         assert mock_db_create.call_args.kwargs.get("caller_id") == "deadbeef"

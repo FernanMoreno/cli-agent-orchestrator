@@ -26,6 +26,8 @@ from cli_agent_orchestrator.utils.orchestration import (
     _assign_impl,
     _cancel_impl,
     _handoff_impl,
+    _join_native_child_impl,
+    _list_native_children_impl,
     _result_impl,
     _send_message_impl,
     _status_impl,
@@ -340,5 +342,25 @@ def cancel_cmd(terminal_id, delete_flag, as_json):
     message points here for cleanup).
     """
     result = _cancel_impl(terminal_id, delete=delete_flag)
+    if not _emit(result, as_json):
+        raise click.exceptions.Exit(1)
+
+
+@agent.command(name="children")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit the result as JSON.")
+def children_cmd(as_json):
+    """List durable native-child receipts for this CAO terminal."""
+    result = _list_native_children_impl()
+    if not _emit(result, as_json):
+        raise click.exceptions.Exit(1)
+
+
+@agent.command(name="join")
+@click.argument("child_id")
+@click.option("--wait", "timeout_seconds", type=click.FloatRange(0, 60), default=0.0)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit the result as JSON.")
+def join_cmd(child_id, timeout_seconds, as_json):
+    """Wait boundedly for a durable child receipt; never guesses from TUI state."""
+    result = _join_native_child_impl(child_id, timeout_seconds)
     if not _emit(result, as_json):
         raise click.exceptions.Exit(1)

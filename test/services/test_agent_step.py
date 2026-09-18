@@ -78,6 +78,7 @@ class TestHappyPath:
             delete,
             get_output,
             exit_cli,
+            get_wd,
             wait,
             status,
             patch(f"{_MODULE}.frozen_run_memory.frozen_memory_for", return_value=""),
@@ -189,6 +190,7 @@ class TestHappyPath:
             delete,
             get_output,
             exit_cli,
+            get_wd,
             wait,
             status,
             patch(f"{_MODULE}._wait_for_completion", completion),
@@ -548,6 +550,61 @@ class TestHappyPath:
 
 
 class TestFailureRaises:
+    def test_native_child_timeout_records_reconcile_without_redelivery(self):
+        """A post-send timeout is uncertain work, never silent cleanup/success."""
+        create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer(
+            final_status=TerminalStatus.PROCESSING,
+        )
+        lifecycle = AsyncMock(return_value=None)
+        with (
+            create,
+            send,
+            delete,
+            get_output,
+            exit_cli,
+            get_wd,
+            wait,
+            status,
+            patch(f"{_MODULE}._record_native_child_transition", lifecycle),
+        ):
+            with pytest.raises(StepExecutionError) as exc_info:
+                asyncio.run(
+                    run_agent_step(
+                        "kiro_cli",
+                        "dev",
+                        "side-effecting task",
+                        caller_id="sup-123",
+                        timeout=0,
+                        prompt_redelivery=False,
+                    )
+                )
+
+        assert exc_info.value.kind == "timeout"
+        states = [call.args[2] for call in lifecycle.await_args_list]
+        assert states == ["sent", "running", "reconcile"]
+
+    def test_native_child_success_records_output_backed_receipt(self):
+        create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer()
+        lifecycle = AsyncMock(return_value=None)
+        with (
+            create,
+            send,
+            delete,
+            get_output,
+            exit_cli,
+            get_wd,
+            wait,
+            status,
+            patch(f"{_MODULE}._record_native_child_transition", lifecycle),
+        ):
+            result = asyncio.run(
+                run_agent_step("kiro_cli", "dev", "task", caller_id="sup-123")
+            )
+
+        assert result.status == TerminalStatus.COMPLETED
+        states = [call.args[2] for call in lifecycle.await_args_list]
+        assert states == ["sent", "succeeded"]
+
     def test_completion_timeout_raises(self):
         """A terminal that never settles (stays PROCESSING) must RAISE a timeout,
         never return a falsy success (the key reliability contract, RD-2.1)."""

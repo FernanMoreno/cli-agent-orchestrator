@@ -2,7 +2,7 @@
 
 import sqlite3
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -18,6 +18,7 @@ from cli_agent_orchestrator.clients.database import (
     IdempotencyKeyModel,
     InboxModel,
     MemoryMetadataModel,
+    NativeChildModel,
     TerminalModel,
     create_flow,
     create_inbox_message,
@@ -39,6 +40,10 @@ from cli_agent_orchestrator.clients.database import (
     list_siblings_by_group_prefix,
     list_terminals_by_session,
     list_terminals_in_sessions,
+    get_native_child,
+    plan_native_child,
+    reconcile_expired_native_children,
+    transition_native_child,
     update_flow_enabled,
     update_flow_run_times,
     update_last_active,
@@ -57,6 +62,69 @@ def test_db():
     Base.metadata.create_all(bind=engine)
     TestSession = sessionmaker(bind=engine)
     return TestSession
+
+
+class TestNativeChildLifecycle:
+    """Receipts must survive terminal cleanup and never infer task success."""
+
+    def test_expired_active_lease_requires_reconciliation(self, test_db):
+        with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
+            child = plan_native_child(
+                parent_terminal_id="parent01",
+                terminal_id="child001",
+                provider="claude_code",
+                agent_profile="reviewer",
+                lease_seconds=30,
+            )
+            assert child["state"] == "planned"
+
+            with test_db() as session:
+                row = session.query(NativeChildModel).filter(NativeChildModel.id == child["id"]).first()
+                row.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+                session.commit()
+
+            reconciled = reconcile_expired_native_children(child_id=child["id"])
+            assert reconciled == [child["id"]]
+            stored = get_native_child(child["id"])
+
+        assert stored is not None
+        assert stored["state"] == "reconcile"
+        assert stored["error_kind"] == "lease_expired"
+        assert stored["cleanup_completed_at"] is None
+
+    def test_terminal_removal_cancels_unsettled_child_but_preserves_receipt(self, test_db):
+        with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
+            create_terminal("child002", "cao-session", "worker", "codex", "developer")
+            child = plan_native_child(
+                parent_terminal_id="parent01",
+                terminal_id="child002",
+                provider="codex",
+                agent_profile="developer",
+                lease_seconds=30,
+            )
+            transition_native_child("child002", "acknowledged")
+            transition_native_child("child002", "sent")
+            assert delete_terminal("child002") is True
+            stored = get_native_child(child["id"])
+
+        assert stored is not None
+        assert stored["state"] == "cancelled"
+        assert stored["cleanup_completed_at"] is not None
+
+    def test_terminal_state_cannot_move_back_to_active(self, test_db):
+        with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
+            child = plan_native_child(
+                parent_terminal_id="parent01",
+                terminal_id="child003",
+                provider="opencode",
+                agent_profile="developer",
+                lease_seconds=30,
+            )
+            transition_native_child("child003", "succeeded")
+            stored = transition_native_child("child003", "running")
+
+        assert stored is not None
+        assert stored["state"] == "succeeded"
 
 
 class TestTerminalOperations:

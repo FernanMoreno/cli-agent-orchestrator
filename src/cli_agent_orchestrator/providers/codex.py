@@ -1251,7 +1251,7 @@ class CodexProvider(BaseProvider):
             timeout=float(get_server_settings()["provider_init_timeout"]),
             polling_interval=1.0,
         ):
-            raise TimeoutError("Codex initialization timed out after 60 seconds")
+            raise TimeoutError(f"Codex initialization timed out after {init_timeout} seconds")
 
         self._initialized = True
         return True

@@ -29,6 +29,9 @@ from typing import Callable, Optional
 from cli_agent_orchestrator.models.kiro_engine import KiroEngine, parse_kiro_engine
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import AgentStepResult, TerminalStatus
+from cli_agent_orchestrator.clients.database import (
+    transition_native_child,
+)
 from cli_agent_orchestrator.plugins import PluginRegistry
 from cli_agent_orchestrator.providers.kiro_capabilities import KiroPhase0KASError
 from cli_agent_orchestrator.services import frozen_run_memory, terminal_service
@@ -70,6 +73,46 @@ _IDLE_STABLE_POLLS = 3
 # startup latency — tune them together.
 _PROMPT_PICKUP_GRACE = 8.0
 _PROMPT_REDELIVER_MAX = 3
+
+# Preserve a small cleanup/reconciliation margin beyond the caller-visible
+# ready+completion budget.  Lease expiry never kills a child; it changes only
+# the durable receipt to ``reconcile``.
+_NATIVE_CHILD_LEASE_MARGIN = 30.0
+
+
+async def _record_native_child_transition(
+    tracked: bool,
+    terminal_id: str,
+    state: str,
+    *,
+    error_kind: Optional[str] = None,
+    error_summary: Optional[str] = None,
+) -> Optional[dict]:
+    """Persist a child receipt without letting reporting mask worker outcome.
+
+    A real child is planned atomically before terminal creation, so a failed
+    transition is an observable storage incident, not a reason to resend input
+    or alter the step's primary error.  Root/ordinary steps never touch this
+    table, preserving the historical no-database dependency of the substrate's
+    unit seam.
+    """
+    if not tracked:
+        return None
+    try:
+        return await asyncio.to_thread(
+            transition_native_child,
+            terminal_id,
+            state,
+            error_kind=error_kind,
+            error_summary=error_summary,
+        )
+    except Exception:  # noqa: BLE001 -- lifecycle evidence must not fake a worker result
+        logger.exception(
+            "run_agent_step: could not persist native child transition %s for %s",
+            state,
+            terminal_id,
+        )
+        return None
 
 
 async def _validate_reused_terminal(
@@ -134,10 +177,12 @@ class StepExecutionError(Exception):
         *,
         kind: str = "timeout",
         terminal_id: Optional[str] = None,
+        native_child_id: Optional[str] = None,
     ) -> None:
         super().__init__(message)
         self.kind = kind
         self.terminal_id = terminal_id
+        self.native_child_id = native_child_id
 
 
 class StepCancelledError(Exception):
@@ -162,6 +207,7 @@ async def _wait_for_completion(
     *,
     prompt: Optional[str] = None,
     prompt_redelivery: bool = True,
+    track_native_child: bool = False,
 ) -> None:
     """Wait for a post-input step to settle, polling ``status_monitor`` (issue #409).
 
@@ -253,6 +299,12 @@ async def _wait_for_completion(
                     )
                     return
         elif current in _WORKING_STATES:
+            if track_native_child and not observed_working:
+                # A provider transition is the first evidence that a terminal
+                # receipt marked ``sent`` was actually picked up.  This does
+                # not infer completion from terminal chrome; it records only
+                # the durable child lifecycle boundary.
+                await _record_native_child_transition(True, terminal_id, "running")
             observed_working = True
             consecutive_idle = 0
         else:
@@ -568,6 +620,8 @@ async def run_agent_step(
     """
     created_here = reuse_terminal_id is None
     terminal_id = reuse_terminal_id
+    native_child_id: Optional[str] = None
+    track_native_child = caller_id is not None
 
     if created_here:
         # Inherit working directory from supervisor when not explicitly set.
@@ -674,6 +728,13 @@ async def run_agent_step(
             engine=engine,
             model=model,
             use_worktree=use_worktree,
+            # A synchronous child owns a precise, caller-visible budget.  The
+            # lease is deliberately longer by only a small reconciliation
+            # margin; it cannot outlive an abandoned timeout indefinitely.
+            native_child_lease_seconds=max(
+                _NATIVE_CHILD_LEASE_MARGIN,
+                ready_timeout + timeout + _NATIVE_CHILD_LEASE_MARGIN,
+            ),
         )
         terminal_id = terminal.id
 
@@ -695,10 +756,19 @@ async def run_agent_step(
             # Surface the live terminal so it can be inspected/cleaned up, then
             # fail fast. We do NOT auto-delete here: leaving the terminal lets
             # the caller decide (handoff surfaces terminal_id on failure).
+            receipt = await _record_native_child_transition(
+                track_native_child,
+                terminal_id,
+                "reconcile",
+                error_kind="readiness_timeout",
+                error_summary=f"terminal did not reach a ready state within {ready_timeout}s",
+            )
+            native_child_id = receipt["id"] if receipt is not None else None
             raise StepExecutionError(
                 f"terminal {terminal_id} did not reach a ready status within " f"{ready_timeout}s",
                 kind="timeout",
                 terminal_id=terminal_id,
+                native_child_id=native_child_id,
             )
     else:
         assert terminal_id is not None
@@ -736,19 +806,34 @@ async def run_agent_step(
         terminal_id,
         prompt,
     )
-    if frozen_memory is None:
-        # The call is left BYTE-IDENTICAL on the no-frozen-block path, rather than passing an extra
-        # `None`. Existing tests assert this exact two-argument shape, and keeping them passing
-        # unchanged is the strongest available evidence for C-1: a non-workflow step reaches
-        # ``send_input`` exactly as it did before this unit.
-        await asyncio.to_thread(terminal_service.send_input, terminal_id, prompt)
-    else:
-        await asyncio.to_thread(
-            terminal_service.send_input,
+    try:
+        if frozen_memory is None:
+            # The call is left BYTE-IDENTICAL on the no-frozen-block path, rather than passing an extra
+            # `None`. Existing tests assert this exact two-argument shape, and keeping them passing
+            # unchanged is the strongest available evidence for C-1: a non-workflow step reaches
+            # ``send_input`` exactly as it did before this unit.
+            await asyncio.to_thread(terminal_service.send_input, terminal_id, prompt)
+        else:
+            await asyncio.to_thread(
+                terminal_service.send_input,
+                terminal_id,
+                prompt,
+                frozen_memory=frozen_memory,
+            )
+    except Exception as exc:
+        # A transport failure after terminal creation is inherently ambiguous:
+        # tmux can have accepted some keys even when the caller did not receive
+        # a clean return.  Preserve the handle for reconciliation; never retry
+        # the prompt from this exception path.
+        await _record_native_child_transition(
+            track_native_child,
             terminal_id,
-            prompt,
-            frozen_memory=frozen_memory,
+            "reconcile",
+            error_kind="input_send_uncertain",
+            error_summary=str(exc),
         )
+        raise
+    await _record_native_child_transition(track_native_child, terminal_id, "sent")
 
     # ``send_input`` arms the monitor before it pastes into tmux, but it
     # deliberately leaves a previously latched ready status visible until a
@@ -782,6 +867,7 @@ async def run_agent_step(
             cancel_event,
             prompt=prompt,
             prompt_redelivery=prompt_redelivery,
+            track_native_child=track_native_child,
         )
     except StepCancelledError:
         # A cancellation is NOT a run-failure. Tear down a terminal this call
@@ -789,6 +875,28 @@ async def run_agent_step(
         # re-raise so the engine converges the run to CANCELLED without retrying.
         if created_here:
             await _best_effort_teardown(terminal_id, registry)
+        await _record_native_child_transition(
+            track_native_child,
+            terminal_id,
+            "cancelled",
+            error_kind="cancelled",
+            error_summary="parent cancelled the in-flight child step",
+        )
+        raise
+    except StepExecutionError as exc:
+        # A provider ERROR is a definite task failure.  A completion/readiness
+        # timeout after delivery is not: the worker may keep running, so retain
+        # it and require a parent reconciliation instead of deleting it or
+        # treating a terminal viewport as success.
+        next_state = "failed" if exc.kind == "error" else "reconcile"
+        receipt = await _record_native_child_transition(
+            track_native_child,
+            terminal_id,
+            next_state,
+            error_kind=exc.kind,
+            error_summary=str(exc),
+        )
+        exc.native_child_id = receipt["id"] if receipt is not None else native_child_id
         raise
 
     # Extract the last agent message via the provider-specific path (mirrors
@@ -802,7 +910,17 @@ async def run_agent_step(
         last_message = await asyncio.to_thread(
             terminal_service.get_output, terminal_id, OutputMode.LAST
         )
-    except BaseException:
+    except BaseException as exc:
+        # Completion status without extractable output is insufficient to mark
+        # the child successful.  Keep a reconciliation receipt even if the
+        # terminal is subsequently cleaned up by the normal ownership policy.
+        await _record_native_child_transition(
+            track_native_child,
+            terminal_id,
+            "reconcile",
+            error_kind="output_extraction_failed",
+            error_summary=str(exc),
+        )
         if teardown and created_here:
             await _best_effort_teardown(terminal_id, registry)
         raise
@@ -812,6 +930,11 @@ async def run_agent_step(
         last_message=last_message,
         status=TerminalStatus.COMPLETED,
     )
+
+    # Output extraction has completed, which is the first durable completion
+    # receipt on this path.  Terminal deletion below is merely resource
+    # cleanup and cannot change task success back into cancellation.
+    await _record_native_child_transition(track_native_child, terminal_id, "succeeded")
 
     if teardown and created_here:
         await _best_effort_teardown(terminal_id, registry)

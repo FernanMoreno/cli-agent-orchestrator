@@ -61,7 +61,7 @@ class AgentProfile(BaseModel):
 
     # CAO-native. Per-profile override for provider initialization timeout (seconds).
     # When set, this value is used as the hard outer cap for CLI agent initialization
-    # instead of the server default (60s from settings_service). Allows containerized
+    # instead of the server default (120s from settings_service). Allows containerized
     # profiles to declare longer init times (e.g., 180s) without changing global config.
     provider_init_timeout: Optional[int] = None
 

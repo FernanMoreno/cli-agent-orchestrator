@@ -47,6 +47,8 @@ from cli_agent_orchestrator.utils.orchestration import (
     _delete_terminal_impl,
     _extract_error_detail,
     _handoff_impl,
+    _join_native_child_impl,
+    _list_native_children_impl,
     _mcp_timeout,
     _send_message_impl,
 )
@@ -634,6 +636,31 @@ else:
             use_worktree=use_worktree,
             target_host=target_host,
         )
+
+
+@mcp.tool()
+async def list_native_children() -> Dict[str, Any]:
+    """List durable child receipts for the calling terminal.
+
+    Use this after ``assign`` to obtain the child receipt ID.  The returned
+    states are evidence-backed; terminal TUI chrome is not used to claim a
+    child succeeded.
+    """
+    return _list_native_children_impl()
+
+
+@mcp.tool()
+async def join_native_child(
+    child_id: str = Field(description="Native child receipt ID returned by list_native_children"),
+    timeout_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=60.0,
+        description="Bounded receipt wait; 0 reads immediately.",
+    ),
+) -> Dict[str, Any]:
+    """Join a child by its durable receipt, without inferring completion from the TUI."""
+    return _join_native_child_impl(child_id, timeout_seconds)
 
 
 def _elastic_broker_config() -> Tuple[str, str]:

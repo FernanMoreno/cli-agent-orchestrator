@@ -56,8 +56,10 @@ from cli_agent_orchestrator.cli.commands.init import seed_default_skills
 from cli_agent_orchestrator.clients.database import (
     create_inbox_message,
     get_inbox_messages,
+    get_native_child,
     get_terminal_metadata,
     init_db,
+    list_native_children,
 )
 from cli_agent_orchestrator.constants import (
     ALLOWED_HOSTS,
@@ -258,6 +260,45 @@ class TerminalOutputRange(BaseModel):
     offset: int
     length: int
     data: str
+
+
+class NativeChildReceipt(BaseModel):
+    """A durable child lifecycle record, intentionally free of prompt content."""
+
+    id: str
+    parent_terminal_id: str
+    terminal_id: str
+    provider: str
+    agent_profile: str
+    state: Literal[
+        "planned",
+        "acknowledged",
+        "sent",
+        "running",
+        "succeeded",
+        "failed",
+        "reconcile",
+        "cancelled",
+    ]
+    lease_expires_at: datetime
+    error_kind: Optional[str] = None
+    error_summary: Optional[str] = None
+    cleanup_completed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    settled_at: Optional[datetime] = None
+
+
+class NativeChildJoinResponse(BaseModel):
+    """A bounded, receipt-only join result.
+
+    ``settled=False`` is a normal outcome: it means no durable terminal result
+    arrived before the requested wait budget.  The API never promotes a TUI
+    status to success merely to make join return ``True``.
+    """
+
+    child: NativeChildReceipt
+    settled: bool
 
 
 class CreateTerminalBody(BaseModel):
@@ -3402,6 +3443,60 @@ async def get_terminal(
         )
 
 
+@app.get("/terminals/{terminal_id}/children", response_model=List[NativeChildReceipt])
+async def list_terminal_children(
+    terminal_id: TerminalId,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
+) -> List[NativeChildReceipt]:
+    """List this terminal's native children from durable lifecycle receipts.
+
+    The response is deliberately independent of the child terminal's current
+    TUI state.  An expired active lease is presented as ``reconcile`` and a
+    deleted child remains visible with ``cleanup_completed_at``.
+    """
+    return [
+        NativeChildReceipt(**row)
+        for row in await asyncio.to_thread(list_native_children, terminal_id)
+    ]
+
+
+@app.get("/native-children/{child_id}", response_model=NativeChildReceipt)
+async def get_native_child_receipt(
+    child_id: str,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
+) -> NativeChildReceipt:
+    """Read one durable child receipt and reconcile an expired active lease."""
+    child = await asyncio.to_thread(get_native_child, child_id)
+    if child is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="native child not found")
+    return NativeChildReceipt(**child)
+
+
+@app.post("/native-children/{child_id}/join", response_model=NativeChildJoinResponse)
+async def join_native_child(
+    child_id: str,
+    timeout_seconds: float = Query(
+        default=0.0,
+        ge=0.0,
+        le=60.0,
+        description="Bounded wait for a durable child result; never infers success from terminal UI.",
+    ),
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
+) -> NativeChildJoinResponse:
+    """Join a child by receipts, not by a terminal screenshot or cached status."""
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while True:
+        child = await asyncio.to_thread(get_native_child, child_id)
+        if child is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="native child not found")
+        receipt = NativeChildReceipt(**child)
+        if receipt.state in {"succeeded", "failed", "reconcile", "cancelled"}:
+            return NativeChildJoinResponse(child=receipt, settled=True)
+        if asyncio.get_running_loop().time() >= deadline:
+            return NativeChildJoinResponse(child=receipt, settled=False)
+        await asyncio.sleep(min(0.25, max(0.01, deadline - asyncio.get_running_loop().time())))
+
+
 @app.patch("/terminals/{terminal_id}/group", response_model=Terminal)
 async def update_terminal_group_endpoint(
     terminal_id: TerminalId,
@@ -4125,14 +4220,19 @@ async def run_step(
         # CRASHED (kind="error" -> 502 Bad Gateway) from one that RAN LONG
         # (kind="timeout" -> 504 Gateway Timeout) so the caller can tell them
         # apart instead of reporting every failure as a timeout. The detail is a
-        # structured object carrying terminal_id, so callers read it as a field
-        # rather than regex-scraping the message (the future engine reads it too).
+        # structured object carrying terminal_id and native_child_id, so callers
+        # read recovery handles as fields rather than regex-scraping the message.
         # Transition the script step RUNNING->FAILED (no-op for non-script callers).
         _settle_step(e.terminal_id, str(e))
         code = status.HTTP_502_BAD_GATEWAY if e.kind == "error" else status.HTTP_504_GATEWAY_TIMEOUT
         raise HTTPException(
             status_code=code,
-            detail={"message": str(e), "kind": e.kind, "terminal_id": e.terminal_id},
+            detail={
+                "message": str(e),
+                "kind": e.kind,
+                "terminal_id": e.terminal_id,
+                "native_child_id": e.native_child_id,
+            },
         )
     except (TimeoutError, TerminalInputBlockedError) as e:
         # TerminalInputBlockedError (PR #539) is kept a DISTINCT type from

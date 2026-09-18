@@ -52,7 +52,7 @@ Every derived path resolves from this value, so one override moves everything �
   "server": {
     "mcp_request_timeout": 30,
     "event_bus_max_queue_size": 1024,
-    "provider_init_timeout": 60,
+    "provider_init_timeout": 120,
     "startup_prompt_handler_timeout": 20,
     "state_buffer_max": 32768
   },
@@ -138,7 +138,7 @@ Timeouts and buffer sizes used by the CAO runtime. All values have safe defaults
 |---------|---------|--------------|
 | `mcp_request_timeout` | `30` | Seconds to wait for HTTP calls between the MCP server process and the CAO API. |
 | `event_bus_max_queue_size` | `1024` | Max events buffered per subscriber queue in the internal event bus. |
-| `provider_init_timeout` | `60` | Seconds to wait for a CLI agent to reach IDLE. Also the hard outer cap on total time a startup-prompt handler (Claude Code, Kimi, Antigravity) may run. Overridable per-profile via `provider_init_timeout` in the agent profile — see [Agent Profile Format](agent-profile.md#optional-fields). |
+| `provider_init_timeout` | `120` | Seconds to wait for a CLI agent to reach IDLE. Also the hard outer cap on total time a startup-prompt handler (Claude Code, Kimi, Antigravity) may run. Overridable per-profile via `provider_init_timeout` in the agent profile — see [Agent Profile Format](agent-profile.md#optional-fields). |
 | `startup_prompt_handler_timeout` | `20` | Idle gap, in seconds, between consecutive startup prompts (e.g. workspace trust / bypass dialogs, Kimi's upgrade dialog, Antigravity's trust/survey dialogs). The handler polls and resets this timer each time it answers a prompt; it only starts counting once the FIRST prompt has been handled, so a first dialog arriving later than this value (e.g. a cold/containerized start) is still caught — before any prompt is seen, only `provider_init_timeout` bounds the wait. Once at least one prompt has been handled, the handler exits after this many seconds pass with no further prompt. |
 | `state_buffer_max` | `32768` | Bytes of raw terminal output `StatusMonitor` keeps per terminal for raw-path status detection and `GET /terminals/{id}/output` (`mode=full`). Not unbounded scrollback — a long, chatty session is truncated to this trailing window; raise it if a still-pending prompt is getting evicted before it's read back. |
 
