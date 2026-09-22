@@ -303,7 +303,7 @@ class TestGetServerSettings:
         assert result == {
             "mcp_request_timeout": 30,
             "event_bus_max_queue_size": 1024,
-            "provider_init_timeout": 60,
+            "provider_init_timeout": 120,
             "startup_prompt_handler_timeout": 20,
             "state_buffer_max": 32768,
         }
@@ -343,7 +343,7 @@ class TestGetServerSettings:
 
         _save({"server": {"provider_init_timeout": -5}})
         result = get_server_settings()
-        assert result["provider_init_timeout"] == 60
+        assert result["provider_init_timeout"] == 120
 
     def test_state_buffer_max_reads_custom_value(self, settings_file):
         from cli_agent_orchestrator.services.settings_service import get_server_settings

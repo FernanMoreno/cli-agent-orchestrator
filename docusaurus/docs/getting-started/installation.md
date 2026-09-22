@@ -12,7 +12,8 @@ sidebar_position: 1
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`) — requires Anthropic API key
   - [Kiro CLI](https://kiro.dev) — requires AWS credentials (this is the default provider)
   - [Codex](https://github.com/openai/codex) — requires OpenAI API key
-  - Or any of: Copilot CLI, Cursor CLI, Kimi CLI, OpenCode CLI, Hermes, Antigravity CLI
+  - Or any of: Copilot CLI, Cursor CLI, Kimi CLI, OpenCode CLI, Hermes,
+    Antigravity CLI, Gemini CLI, Grok Build CLI, or MiniMax Code
 - **uv** (recommended) — a fast Python package manager. Install it with:
   ```bash
   curl -LsSf https://astral.sh/uv/install.sh | sh

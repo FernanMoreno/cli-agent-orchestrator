@@ -56,7 +56,7 @@ class SkillsConfig(BaseModel):
 class ServerConfig(BaseModel):
     mcp_request_timeout: int = 30
     event_bus_max_queue_size: int = 1024
-    provider_init_timeout: int = 60
+    provider_init_timeout: int = 120
     startup_prompt_handler_timeout: int = 20
 
 
@@ -187,7 +187,7 @@ ENV_REGISTRY: Dict[str, Tuple[str, str, Any]] = {
     "CAO_MEMORY_FLUSH_THRESHOLD": ("memory.flush_threshold", "float", 0.85),
     "CAO_MCP_REQUEST_TIMEOUT": ("server.mcp_request_timeout", "int", 30),
     "CAO_EVENT_BUS_MAX_QUEUE_SIZE": ("server.event_bus_max_queue_size", "int", 1024),
-    "CAO_PROVIDER_INIT_TIMEOUT": ("server.provider_init_timeout", "int", 60),
+    "CAO_PROVIDER_INIT_TIMEOUT": ("server.provider_init_timeout", "int", 120),
     "CAO_STARTUP_PROMPT_HANDLER_TIMEOUT": (
         "server.startup_prompt_handler_timeout",
         "int",
@@ -512,7 +512,7 @@ class ConfigService:
                 event_bus_max_queue_size=_get_value(
                     "server.event_bus_max_queue_size", default=1024
                 ),
-                provider_init_timeout=_get_value("server.provider_init_timeout", default=60),
+                provider_init_timeout=_get_value("server.provider_init_timeout", default=120),
                 startup_prompt_handler_timeout=_get_value(
                     "server.startup_prompt_handler_timeout", default=20
                 ),

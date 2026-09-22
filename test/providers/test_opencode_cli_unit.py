@@ -2,7 +2,7 @@
 
 import re
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -13,6 +13,7 @@ from cli_agent_orchestrator.providers.opencode_cli import (
     IDLE_FOOTER_PATTERN,
     PERMISSION_PROMPT_PATTERN,
     PROCESSING_FOOTER_PATTERN,
+    PROVIDER_ERROR_PATTERN,
     TOOL_CALL_IN_FLIGHT_PATTERN,
     USER_MESSAGE_PATTERN,
     OpenCodeCliProvider,
@@ -79,6 +80,13 @@ class TestRegexPatterns:
     def test_permission_prompt_matches_always_allow(self):
         assert re.search(PERMISSION_PROMPT_PATTERN, "△  Always allow")
 
+    def test_provider_error_pattern_matches_open_code_runtime_failure(self):
+        assert re.search(
+            PROVIDER_ERROR_PATTERN,
+            "Error from provider (Console): model is unavailable",
+            re.IGNORECASE,
+        )
+
     def test_tool_call_in_flight_matches_braille_spinner(self):
         assert re.search(TOOL_CALL_IN_FLIGHT_PATTERN, "  ⠋ Read /etc/hostname", re.MULTILINE)
 
@@ -137,6 +145,22 @@ class TestGetStatusFromFixtures:
         output = load_ansi_fixture("opencode_cli_permission.ansi.txt")
         provider = make_provider()
         assert provider.get_status(output) == TerminalStatus.WAITING_USER_ANSWER
+
+    def test_provider_error_wins_over_idle_footer(self):
+        provider = make_provider()
+        output = (
+            "Error from provider (Console): selected model is unavailable\n"
+            "tab agents  ctrl+p commands  • OpenCode"
+        )
+        assert provider.get_status(output) == TerminalStatus.ERROR
+
+    def test_provider_quota_error_is_waiting_quota_not_terminal_error(self):
+        provider = make_provider()
+        output = (
+            "Error from provider (Console): rate limit exceeded; retry after reset\n"
+            "tab agents  ctrl+p commands  • OpenCode"
+        )
+        assert provider.get_status(output) == TerminalStatus.WAITING_QUOTA
 
     def test_idle_post_completion_returns_idle(self):
         # Use plain fixture — ANSI variant reuses the completed frame (see OPENCODE_FIXTURES.md).
@@ -236,6 +260,32 @@ class TestGetStatusFromScreen:
             TerminalStatus.WAITING_USER_ANSWER
         )
 
+    def test_provider_error_screen_wins_over_idle_footer(self):
+        provider = make_provider()
+
+        assert (
+            provider.get_status_from_screen(
+                [
+                    "Error from provider (Console): selected model is unavailable",
+                    "tab agents  ctrl+p commands  • OpenCode",
+                ]
+            )
+            == TerminalStatus.ERROR
+        )
+
+    def test_provider_quota_error_screen_is_waiting_quota(self):
+        provider = make_provider()
+
+        assert (
+            provider.get_status_from_screen(
+                [
+                    "Error from provider (Console): usage limit reached; retry after reset",
+                    "tab agents  ctrl+p commands  • OpenCode",
+                ]
+            )
+            == TerminalStatus.WAITING_QUOTA
+        )
+
     def test_blank_screen_returns_unknown(self):
         provider = make_provider()
 
@@ -305,6 +355,42 @@ class TestExtractLastMessage:
         output = load_fixture("opencode_cli_completed.txt")
         result = provider.extract_last_message_from_script(output)
         assert "Hello" in result
+
+    def test_renderer_safe_turn_receipt_survives_opencode_markdown_rendering(self):
+        """OpenCode preserves a safe receipt even with its information sidebar.
+
+        A receipt is protocol data, not prose.  The generic spelling must avoid
+        Markdown emphasis punctuation so the exact value a model writes is
+        still present in the rendered current viewport used for verification.
+        The separate MCP/LSP information panel shares physical rows with the
+        chat pane, so its right-hand text must not make the receipt look like
+        it has trailing assistant prose.
+        """
+        provider = make_provider()
+        prepared = provider.prepare_input("Return a marker and finish.")
+        receipt = re.search(r"CAO-TURN-RECEIPT-[0-9a-f]{32}", prepared).group(0)
+        output = (
+            "  ┃  Return a marker and finish.\n\n"
+            + "▼ MCP".rjust(101)
+            + "\n"
+            + "     CAO_REAL_PROVIDER_MATRIX_demo".ljust(96)
+            + "github Connected\n"
+            + f"     {receipt}".ljust(96)
+            + "playwright Connected\n\n"
+            + "     ▣  Build · Ling 3.0 Flash Fin Free · 13.6s\n\n"
+            + "LSP".rjust(99)
+            + "\n"
+            + "     ctrl+p commands    • OpenCode 1.18.31\n"
+        )
+
+        result = provider.extract_last_message_from_script(output)
+
+        assert result == f"CAO_REAL_PROVIDER_MATRIX_demo\n{receipt}"
+        assert provider.receipt_result_terminal_status(output, result) == TerminalStatus.COMPLETED
+        assert (
+            provider.receipt_result_viewport_terminal_status(output, result)
+            == TerminalStatus.COMPLETED
+        )
 
     def test_strips_thinking_preamble(self):
         provider = make_provider()
@@ -401,13 +487,16 @@ class TestExtractLastMessage:
 
 
 # ---------------------------------------------------------------------------
-# (e)  initialize() calls wait_until_status with timeout=120.0
+# (e) initialize() requires a provider-approved initial viewport within 120 s
 # ---------------------------------------------------------------------------
 
 
 class TestInitialize:
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.wait_until_status")
+    @patch(
+        "cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready",
+        new_callable=AsyncMock,
+    )
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_success_returns_true(self, mock_tmux, mock_shell, mock_wait):
@@ -417,7 +506,10 @@ class TestInitialize:
         assert await provider.initialize() is True
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.wait_until_status")
+    @patch(
+        "cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready",
+        new_callable=AsyncMock,
+    )
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_uses_120s_timeout(self, mock_tmux, mock_shell, mock_wait):
@@ -425,11 +517,13 @@ class TestInitialize:
         mock_wait.return_value = True
         provider = make_provider()
         await provider.initialize()
-        _args, kwargs = mock_wait.call_args
-        assert kwargs.get("timeout") == 120.0 or _args[2] == 120.0
+        mock_wait.assert_awaited_once_with(timeout=120.0)
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.wait_until_status")
+    @patch(
+        "cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready",
+        new_callable=AsyncMock,
+    )
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_sends_agent_flag(self, mock_tmux, mock_shell, mock_wait):
@@ -441,7 +535,10 @@ class TestInitialize:
         assert "--agent developer" in sent_cmd
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.wait_until_status")
+    @patch(
+        "cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready",
+        new_callable=AsyncMock,
+    )
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_includes_model_when_set(self, mock_tmux, mock_shell, mock_wait):
@@ -453,7 +550,10 @@ class TestInitialize:
         assert "--model anthropic/claude-sonnet-4-6" in sent_cmd
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.wait_until_status")
+    @patch(
+        "cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready",
+        new_callable=AsyncMock,
+    )
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_no_model_flag_when_unset(self, mock_tmux, mock_shell, mock_wait):
@@ -474,7 +574,10 @@ class TestInitialize:
             await provider.initialize()
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.wait_until_status")
+    @patch(
+        "cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready",
+        new_callable=AsyncMock,
+    )
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_raises_on_opencode_timeout(self, mock_tmux, mock_shell, mock_wait):
@@ -485,7 +588,10 @@ class TestInitialize:
             await provider.initialize()
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.providers.opencode_cli.wait_until_status")
+    @patch(
+        "cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready",
+        new_callable=AsyncMock,
+    )
     @patch("cli_agent_orchestrator.providers.opencode_cli.wait_for_shell")
     @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
     async def test_initialize_sets_env_vars_in_command(self, mock_tmux, mock_shell, mock_wait):
@@ -500,6 +606,24 @@ class TestInitialize:
         assert "TERM=xterm-256color" in sent_cmd
         assert "OPENCODE_CONFIG=" in sent_cmd
         assert "OPENCODE_CONFIG_DIR=" in sent_cmd
+
+    @pytest.mark.asyncio
+    @patch("cli_agent_orchestrator.services.status_monitor.status_monitor")
+    @patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
+    async def test_initial_viewport_readiness_publishes_the_observed_state(
+        self, mock_backend, mock_monitor
+    ):
+        mock_monitor.get_status.return_value = TerminalStatus.UNKNOWN
+        mock_monitor.observe_initial_screen_snapshot.return_value = TerminalStatus.IDLE
+        viewport = "tab agents  ctrl+p commands  • OpenCode"
+        mock_backend.return_value.get_history.return_value = viewport
+
+        assert await make_provider()._wait_for_initial_ready(timeout=1.0) is True
+
+        mock_backend.return_value.get_history.assert_called_once_with(
+            "test-session", "window-0", strip_escapes=True, visible_only=True
+        )
+        mock_monitor.observe_initial_screen_snapshot.assert_called_once_with("test-tid", viewport)
 
 
 # ---------------------------------------------------------------------------

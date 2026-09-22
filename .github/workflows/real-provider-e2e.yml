@@ -1,0 +1,129 @@
+name: Real Provider Native Matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      providers_json:
+        description: >-
+          Optional JSON provider manifest. Empty uses the protected
+          CAO_REAL_PROVIDER_E2E_PROVIDERS Actions variable; it contains no secrets.
+        type: string
+        required: false
+        default: ""
+      pairs:
+        description: >-
+          E2E test-cell filter: `all` for every manifest parent->child cell,
+          or a comma-separated list such as
+          `codex->gemini_cli,gemini_cli->claude_code` for a repro. This input
+          name is retained for dispatch compatibility; it is not runtime policy.
+        type: string
+        required: true
+        default: all
+
+permissions:
+  contents: read
+
+# Real CLIs share local authentication and can bill the configured account.
+# One matrix at a time prevents competing terminal trees from contaminating the
+# result or exhausting a provider's interactive/account quota.
+concurrency:
+  group: cao-real-provider-e2e
+  cancel-in-progress: false
+
+jobs:
+  native-provider-matrix:
+    name: Dynamic provider lifecycle matrix (${{ inputs.pairs }})
+    runs-on: [self-hosted, linux, cao-real-e2e]
+    # A full N×N live matrix serializes its provider cells; it may legitimately
+    # outlast the former single-cell 45-minute ceiling.
+    timeout-minutes: 360
+    env:
+      CAO_RUN_LIVE_PROVIDER_TESTS: "1"
+      # Do not encode provider names, models, or credentials in this workflow.
+      # An operator adds a supported provider by updating the protected
+      # manifest (or this dispatch input), and the harness derives all cells.
+      CAO_REAL_PROVIDER_E2E_PROVIDERS: ${{ inputs.providers_json || vars.CAO_REAL_PROVIDER_E2E_PROVIDERS }}
+      # The workflow's historical `pairs` input is only an E2E filter. Map it
+      # to the canonical name so no runner mistakes it for provider admission.
+      CAO_REAL_PROVIDER_E2E_TEST_FILTER: ${{ inputs.pairs }}
+      # A protected release runner must never turn unavailable enabled
+      # providers into a green all-skipped workflow. This preflights every
+      # selected non-excluded endpoint before any provider terminal launches.
+      CAO_REAL_PROVIDER_E2E_STRICT: "1"
+      # Imports on a cold self-hosted runner or a mounted WSL worktree can
+      # exceed the ordinary 30-second test budget before any CLI starts.
+      CAO_TEST_SERVER_HEALTH_TIMEOUT: "60"
+      # A runner may override this with a read-only credential home. When
+      # omitted the test uses the runner user's HOME and symlinks only the one
+      # selected provider credential record into CAO's disposable test HOME.
+      CAO_REAL_PROVIDER_E2E_AUTH_HOME: ${{ vars.CAO_REAL_PROVIDER_E2E_AUTH_HOME }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Validate dynamic matrix dispatch
+        run: |
+          # GitHub's string inputs have no useful schema or size constraint.
+          # Bound the config before dependency installation, parse only enough
+          # to give a clear dispatch error, and never print auth values/files.
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          raw = os.environ.get("CAO_REAL_PROVIDER_E2E_PROVIDERS", "")
+          if len(raw.encode("utf-8")) > 65_536:
+              sys.exit("CAO_REAL_PROVIDER_E2E_PROVIDERS exceeds the 64 KiB dispatch limit")
+          if not raw.strip():
+              sys.exit(
+                  "CAO_REAL_PROVIDER_E2E_PROVIDERS is required: set the protected "
+                  "Actions variable or provide providers_json."
+              )
+          try:
+              providers = json.loads(raw)
+          except json.JSONDecodeError as exc:
+              sys.exit(f"CAO_REAL_PROVIDER_E2E_PROVIDERS is not valid JSON: {exc.msg}")
+          if not isinstance(providers, dict):
+              sys.exit("CAO_REAL_PROVIDER_E2E_PROVIDERS must be a JSON object")
+          if not providers:
+              sys.exit("CAO_REAL_PROVIDER_E2E_PROVIDERS must not be empty")
+          test_filter = os.environ.get("CAO_REAL_PROVIDER_E2E_TEST_FILTER", "").strip()
+          if not test_filter:
+              sys.exit("CAO_REAL_PROVIDER_E2E_TEST_FILTER is required")
+          print(f"Configured providers: {', '.join(sorted(providers))}")
+          print(f"Requested E2E test-cell filter: {test_filter}")
+          PY
+
+      - name: Verify runner base prerequisites
+        run: |
+          command -v tmux
+          command -v python3
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Run selected real-provider matrix cells
+        run: |
+          uv run pytest -o addopts= -m "e2e and live_provider" \
+            test/e2e/test_real_provider_matrix.py -vv
+
+      - name: Upload CAO diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cao-real-provider-matrix-${{ github.run_id }}
+          path: |
+            /tmp/pytest-of-*/**/server.log
+            /tmp/pytest-of-*/**/logs/*.log
+          if-no-files-found: ignore
+          retention-days: 7

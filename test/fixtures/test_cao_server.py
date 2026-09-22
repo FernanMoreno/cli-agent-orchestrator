@@ -15,21 +15,77 @@ import contextlib
 import shutil
 import time
 from pathlib import Path
+from unittest.mock import Mock
 from test.conftest import mint_test_token
 from test.fixtures.cao_server import (
     AuthCaoServer,
     CaoServer,
     _JWKSServer,
+    _fixture_health_timeout,
     _pick_free_port,
     _seed_omp_e2e_state,
     _session_rsa_keys,
     _start_cao_server,
+    _wait_for_health,
 )
 
 import pytest
 import requests
 
 pytestmark = pytest.mark.e2e
+
+
+def test_fixture_health_timeout_uses_default_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CAO_TEST_SERVER_HEALTH_TIMEOUT", raising=False)
+
+    assert _fixture_health_timeout() == 30.0
+
+
+@pytest.mark.parametrize("value", ("not-a-number", "0", "120.1"))
+def test_fixture_health_timeout_rejects_invalid_override(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("CAO_TEST_SERVER_HEALTH_TIMEOUT", value)
+
+    with pytest.raises(ValueError, match="CAO_TEST_SERVER_HEALTH_TIMEOUT"):
+        _fixture_health_timeout()
+
+
+def test_fixture_health_timeout_accepts_bounded_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CAO_TEST_SERVER_HEALTH_TIMEOUT", "60")
+
+    assert _fixture_health_timeout() == 60.0
+
+
+def test_health_wait_allows_a_bounded_localhost_read_window(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A slow cold localhost response is not a failed CAO startup."""
+    response = Mock()
+    response.status_code = 200
+    response.json.return_value = {"status": "ok"}
+    request = Mock(return_value=response)
+    monkeypatch.setattr("test.fixtures.cao_server.requests.get", request)
+
+    process = Mock()
+    process.poll.return_value = None
+    _wait_for_health(
+        "http://127.0.0.1:45678",
+        deadline=1.0,
+        process=process,
+        log_path=tmp_path / "server.log",
+    )
+
+    timeout = request.call_args.kwargs["timeout"]
+    assert isinstance(timeout, tuple)
+    assert timeout[0] <= 0.5
+    assert 0 < timeout[1] <= 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +286,24 @@ def test_auth_accepts_valid_token(cao_server_with_auth: AuthCaoServer) -> None:
 # ---------------------------------------------------------------------------
 # cao_terminal — gated on a provider CLI being available
 # ---------------------------------------------------------------------------
+
+
+def test_provider_unavailable_response_accepts_missing_binary_400() -> None:
+    """All provider identifiers share the same missing-binary fixture gate."""
+    from test.fixtures.cao_server import _provider_is_unavailable_response
+
+    assert _provider_is_unavailable_response(
+        400,
+        "Kiro engine 'v2' cannot start because 'kiro-cli' was not found.",
+    )
+    assert _provider_is_unavailable_response(
+        500,
+        "OpenCode CLI initialization timed out after 120 seconds",
+    )
+    assert not _provider_is_unavailable_response(
+        400,
+        "Agent profile not found: developer",
+    )
 
 
 def test_cao_terminal_create_and_get(

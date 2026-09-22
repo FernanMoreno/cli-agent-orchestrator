@@ -28,7 +28,9 @@ logger = logging.getLogger(__name__)
 # Statuses that represent a stable "ready" state — the agent has finished
 # producing output and is waiting for further input. Once latched, the
 # StatusMonitor will not regress to PROCESSING until ``notify_input_sent``
-# is called (signalling that a new processing cycle is starting).
+# is called (signalling that a new processing cycle is starting). ``WAITING_QUOTA``
+# is intentionally absent: it describes a provider-owned pause of the current
+# turn, which can resume into PROCESSING without CAO sending any new input.
 #
 # Why: the event-driven pipeline derives status from a rolling state buffer,
 # and TUI redraws (cursor positioning, status-bar refreshes) routinely
@@ -245,7 +247,13 @@ class StatusMonitor:
 
         self._schedule_screen_detection(terminal_id, provider)
 
-    def _apply_detection(self, terminal_id: str, detected: TerminalStatus) -> None:
+    def _apply_detection(
+        self,
+        terminal_id: str,
+        detected: TerminalStatus,
+        *,
+        provider: object | None = None,
+    ) -> None:
         """Apply the sticky-latch rules to a freshly detected status and publish
         on change. Shared by the raw and pyte detection paths.
 
@@ -258,6 +266,14 @@ class StatusMonitor:
         (which would block the input's real PROCESSING and let InboxService
         paste into a busy agent).
         """
+        # Every public publication goes through this final receipt gate. Raw
+        # detection, rendered-screen detection, direct startup probes, and
+        # stale capture recovery have different parsers, but none may publish
+        # a visual COMPLETED while its result receipt is still unverified.
+        # Individual detection paths also gate their return value where a
+        # caller can consume it before publication; this final boundary keeps
+        # future paths from reintroducing the split-state bug.
+        detected = self._gate_terminal_completion(terminal_id, provider, detected)
         with self._lock:
             changed = self._apply_detection_locked(terminal_id, detected)
         if changed:
@@ -265,6 +281,87 @@ class StatusMonitor:
             # re-enter StatusMonitor while the latch state is mid-update.
             bus.publish(f"terminal.{terminal_id}.status", {"status": detected.value})
             logger.info(f"Terminal {terminal_id} status changed: {detected.value}")
+
+    def publish_observed_status(self, terminal_id: str, observed: TerminalStatus) -> None:
+        """Publish a provider's direct startup observation through the normal latch.
+
+        Most terminal state arrives via FIFO/pyte detection.  A provider may
+        also make one bounded, direct observation during initialization before
+        the FIFO has delivered its first repaint (for example, a trust or
+        login dialog).  Dropping that observation leaves the monitor at
+        ``UNKNOWN`` and lets an unattended initial task be pasted into the
+        dialog.  Route a concrete observation through the same sticky state
+        machine and event stream as normal detection; ``UNKNOWN`` remains no
+        evidence and is never published.
+        """
+        if observed != TerminalStatus.UNKNOWN:
+            self._apply_detection(terminal_id, observed)
+
+    def observe_initial_screen_snapshot(self, terminal_id: str, snapshot: str) -> TerminalStatus:
+        """Record one provider-approved rendered viewport during initial startup.
+
+        This is deliberately narrower than the stale-PROCESSING recovery path:
+        it is called only before the first prompt is delivered.  It refuses
+        providers without the explicit screen-detection capability, captures no
+        history beyond the supplied visible viewport, and never converts
+        UNKNOWN/PROCESSING into a ready signal.  A confirmed ready state is
+        applied through the normal sticky-latch/event path so all consumers see
+        the same status that allowed input delivery.
+        """
+        if not isinstance(snapshot, str) or not snapshot:
+            return TerminalStatus.UNKNOWN
+        try:
+            provider = provider_manager.get_provider(terminal_id)
+        except Exception:
+            provider = None
+        if provider is None or not getattr(provider, "supports_screen_detection", False):
+            return TerminalStatus.UNKNOWN
+        try:
+            detected = self._gate_terminal_completion(
+                terminal_id,
+                provider,
+                provider.get_status_from_screen(snapshot.splitlines()),
+            )
+        except Exception:
+            logger.exception("Error detecting initial screen status for %s", terminal_id)
+            return TerminalStatus.UNKNOWN
+        if detected != TerminalStatus.UNKNOWN:
+            self._apply_detection(terminal_id, detected, provider=provider)
+        return detected
+
+    def observe_initial_viewport(self, terminal_id: str) -> TerminalStatus:
+        """Read a provider-approved live viewport during initialization only.
+
+        This is the common readiness bridge for every provider that explicitly
+        supports rendered-screen detection. A FIFO can miss a complete first
+        TUI repaint, so initialization must not fail merely because the byte
+        stream did not carry an equivalent status frame. It fails closed for
+        raw-stream providers and, after task dispatch, an idle-looking viewport
+        cannot be mistaken for that turn's completion.
+        """
+        try:
+            provider = provider_manager.get_provider(terminal_id)
+        except Exception:
+            return TerminalStatus.UNKNOWN
+        if (
+            provider is None
+            or not getattr(provider, "supports_screen_detection", False)
+            or getattr(provider, "_task_dispatched", False)
+        ):
+            return TerminalStatus.UNKNOWN
+        try:
+            from cli_agent_orchestrator.backends.registry import get_backend
+
+            snapshot = get_backend().get_history(
+                provider.session_name,
+                provider.window_name,
+                strip_escapes=True,
+                visible_only=True,
+            )
+        except Exception as exc:
+            logger.debug("Initial viewport probe failed for %s: %s", terminal_id, exc)
+            return TerminalStatus.UNKNOWN
+        return self.observe_initial_screen_snapshot(terminal_id, snapshot)
 
     def _apply_detection_locked(self, terminal_id: str, detected: TerminalStatus) -> bool:
         """Sticky-latch core of _apply_detection. Caller MUST hold self._lock.
@@ -371,14 +468,22 @@ class StatusMonitor:
             if provider is None:
                 return TerminalStatus.UNKNOWN
             try:
-                return provider.get_status(fallback_buffer)
+                return self._gate_terminal_completion(
+                    terminal_id,
+                    provider,
+                    provider.get_status(fallback_buffer),
+                )
             except Exception:
                 logger.exception("Error detecting fallback status for %s", terminal_id)
                 return TerminalStatus.UNKNOWN
         if not lines or provider is None:
             return TerminalStatus.UNKNOWN
         try:
-            return provider.get_status_from_screen(lines)
+            return self._gate_terminal_completion(
+                terminal_id,
+                provider,
+                provider.get_status_from_screen(lines),
+            )
         except Exception:
             # Full traceback: screen detectors are new and can trip on
             # unexpected TUI frames; the stack makes such regressions debuggable.
@@ -399,7 +504,11 @@ class StatusMonitor:
         if loop is None:
             # No event loop (unit tests / offline replay): detect immediately
             # on the current screen — deterministic, no timing.
-            self._apply_detection(terminal_id, self._detect_screen(terminal_id, provider))
+            self._apply_detection(
+                terminal_id,
+                self._detect_screen(terminal_id, provider),
+                provider=provider,
+            )
             return
 
         with self._lock:
@@ -409,7 +518,11 @@ class StatusMonitor:
         self._cancel_quiesce_handle(handle)
 
         if not was_bursting:
-            self._apply_detection(terminal_id, self._detect_screen(terminal_id, provider))
+            self._apply_detection(
+                terminal_id,
+                self._detect_screen(terminal_id, provider),
+                provider=provider,
+            )
         else:
             self._midburst_processing_probe(terminal_id, provider)
 
@@ -476,11 +589,15 @@ class StatusMonitor:
 
         async def _detect_and_apply() -> None:
             detected = await asyncio.to_thread(self._detect_screen, terminal_id, provider)
-            self._apply_detection(terminal_id, detected)
+            self._apply_detection(terminal_id, detected, provider=provider)
 
         loop = self._loop or self._running_loop()
         if loop is None:
-            self._apply_detection(terminal_id, self._detect_screen(terminal_id, provider))
+            self._apply_detection(
+                terminal_id,
+                self._detect_screen(terminal_id, provider),
+                provider=provider,
+            )
         else:
             self._spawn_tracked(loop, _detect_and_apply())
 
@@ -518,7 +635,12 @@ class StatusMonitor:
         # While terminal is ready/armed, detect on every chunk so the
         # IDLE→PROCESSING transition is never missed (prevents stale-IDLE
         # delivery by InboxService). Once PROCESSING is observed, debounce.
-        if not was_bursting or last_status in _STICKY_READY_STATUSES or last_status is None:
+        if (
+            not was_bursting
+            or last_status in _STICKY_READY_STATUSES
+            or last_status == TerminalStatus.WAITING_QUOTA
+            or last_status is None
+        ):
             detected = self._detect_status(terminal_id, buffer)
             self._apply_detection(terminal_id, detected)
 
@@ -676,10 +798,85 @@ class StatusMonitor:
             return TerminalStatus.UNKNOWN
 
         try:
-            return provider.get_status(buffer)
+            detected = provider.get_status(buffer)
+            return self._gate_terminal_completion(terminal_id, provider, detected)
         except Exception as e:
             logger.error(f"Error detecting status for {terminal_id}: {e}")
             return TerminalStatus.UNKNOWN
+
+    @staticmethod
+    def _gate_unverified_receipt_completion(
+        terminal_id: str,
+        provider: object,
+        detected: TerminalStatus,
+    ) -> TerminalStatus:
+        """Keep a receipt-bearing task active until its result is durable.
+
+        Terminal renderers can display a completion marker before CAO has
+        extracted the answer and atomically verified its task receipt.  That
+        visual fact is useful to trigger the verifier, but it is not yet a
+        public ``COMPLETED`` state: callers could otherwise start another task
+        or settle a native child with no durable result.  The receipt contract
+        is provider-generic, so this gate protects every adapter that opts in.
+        """
+        if (
+            detected != TerminalStatus.COMPLETED
+            or getattr(provider, "requires_turn_receipt", False) is not True
+        ):
+            return detected
+        try:
+            has_pending_receipt = provider.pending_turn_receipt_state() is not None
+        except Exception:
+            logger.exception(
+                "Could not inspect receipt state while gating completion for %s",
+                terminal_id,
+            )
+            # A receipt implementation that cannot prove its state must fail
+            # closed rather than let a visual marker settle an unverified task.
+            return TerminalStatus.PROCESSING
+        if not has_pending_receipt:
+            return detected
+        try:
+            # Import lazily to avoid terminal_service -> status_monitor module
+            # initialization recursion.  The verifier only reads output and
+            # settles receipts; it never sends a duplicate task.
+            from cli_agent_orchestrator.services.terminal_service import (
+                schedule_receipt_result_verification,
+            )
+
+            schedule_receipt_result_verification(terminal_id, provider)
+        except Exception:
+            logger.exception("Could not schedule receipt verification for %s", terminal_id)
+        return TerminalStatus.PROCESSING
+
+    def _gate_terminal_completion(
+        self,
+        terminal_id: str,
+        provider: object | None,
+        detected: TerminalStatus,
+    ) -> TerminalStatus:
+        """Apply receipt completion semantics to every detector/publication.
+
+        A direct caller can pass the provider it already resolved; the final
+        publication path resolves it lazily only for visual COMPLETED. This
+        keeps ordinary status transitions cheap while making it structurally
+        impossible for screen and stale-capture paths to bypass the receipt
+        contract.
+        """
+        if detected != TerminalStatus.COMPLETED:
+            return detected
+        if provider is None:
+            try:
+                provider = provider_manager.get_provider(terminal_id)
+            except Exception:
+                logger.exception(
+                    "Could not resolve provider while gating completion for %s",
+                    terminal_id,
+                )
+                return TerminalStatus.PROCESSING
+        if provider is None:
+            return TerminalStatus.PROCESSING
+        return self._gate_unverified_receipt_completion(terminal_id, provider, detected)
 
     def clear_terminal(self, terminal_id: str) -> None:
         """Free buffer and status for a deleted terminal."""
@@ -750,7 +947,12 @@ class StatusMonitor:
                     # get_native_status()==None fallback still gets what we have.
                     # provider.get_status may shell out to the herdr CLI — call
                     # it outside the lock.
-                    return provider.get_status(buffer)
+                    detected = provider.get_status(buffer)
+                    return self._gate_terminal_completion(
+                        terminal_id,
+                        provider,
+                        detected,
+                    )
                 except Exception as e:
                     logger.error(f"Error deriving native status for {terminal_id}: {e}")
                     return TerminalStatus.UNKNOWN
@@ -970,6 +1172,11 @@ class StatusMonitor:
         except Exception as e:
             logger.debug(f"_fresh_capture_pane_status [{terminal_id}]: detection failed: {e}")
             return None
+
+        # The stale-capture path can return a candidate directly to
+        # ``get_status`` before the normal publication routine sees it. Apply
+        # the same receipt gate here as well as at the final publish boundary.
+        detected = self._gate_terminal_completion(terminal_id, provider, detected)
 
         if detected == TerminalStatus.PROCESSING or detected == TerminalStatus.UNKNOWN:
             # Not a ready candidate — nothing to confirm. Clear any pending one: a busy

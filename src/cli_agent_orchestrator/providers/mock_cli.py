@@ -27,6 +27,7 @@ from typing import List, Optional
 from cli_agent_orchestrator.backends.registry import get_backend
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
+from cli_agent_orchestrator.utils.text import strip_terminal_escapes
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 
 logger = logging.getLogger(__name__)
@@ -101,7 +102,7 @@ class MockCliProvider(BaseProvider):
         if not buffer:
             return TerminalStatus.UNKNOWN
 
-        clean = re.sub(ANSI_CODE_PATTERN, "", buffer)
+        clean = strip_terminal_escapes(buffer)
 
         if ERROR_INDICATOR in clean:
             return TerminalStatus.ERROR

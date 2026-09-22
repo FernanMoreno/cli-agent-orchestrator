@@ -39,6 +39,12 @@ export const STATUS_CONFIG: Record<string, StatusStyle> = {
     bgClass: "bg-cao-warning/10",
     textClass: "text-cao-warning",
   },
+  WAITING_QUOTA: {
+    label: "Awaiting Quota Reset",
+    dotClass: "bg-cao-warning",
+    bgClass: "bg-cao-warning/10",
+    textClass: "text-cao-warning",
+  },
   ERROR: {
     label: "Error",
     dotClass: "bg-cao-danger",

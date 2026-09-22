@@ -43,8 +43,15 @@ def test_merge_drops_blocked_prefix(caplog):
 
 def test_merge_keeps_allowlisted_claude_auth_var():
     env: dict[str, str] = {}
-    TmuxClient._merge_extra_env(env, {"CLAUDE_CODE_USE_BEDROCK": "1"})
+    TmuxClient._merge_extra_env(
+        env,
+        {
+            "CLAUDE_CODE_USE_BEDROCK": "1",
+            "CLAUDE_CODE_OAUTH_TOKEN": "test-oauth-token",
+        },
+    )
     assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "test-oauth-token"
 
 
 def test_merge_drops_value_at_or_above_cap():
@@ -62,6 +69,7 @@ def test_is_blocked_env_key_classification():
     # in _BLOCKED_PREFIX_ALLOWLIST are exempted from the blocked prefixes.
     assert TmuxClient._is_blocked_env_key("CLAUDE_CODE_USE_BEDROCK") is False
     assert TmuxClient._is_blocked_env_key("CLAUDE_CODE_SKIP_FOUNDRY_AUTH") is False
+    assert TmuxClient._is_blocked_env_key("CLAUDE_CODE_OAUTH_TOKEN") is False
     # Unrelated keys aren't blocked.
     assert TmuxClient._is_blocked_env_key("AWS_REGION") is False
     assert TmuxClient._is_blocked_env_key("MNEMOSYNE_DIR") is False

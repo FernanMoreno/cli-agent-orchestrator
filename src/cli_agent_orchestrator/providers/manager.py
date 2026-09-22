@@ -3,7 +3,11 @@
 import logging
 from typing import Dict, List, Optional
 
-from cli_agent_orchestrator.clients.database import get_terminal_metadata
+from cli_agent_orchestrator.clients.database import (
+    get_terminal_metadata,
+    get_terminal_turn_receipt,
+    settle_terminal_turn_receipt_result,
+)
 from cli_agent_orchestrator.models.kiro_engine import KiroEngine, resolve_kiro_engine
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.providers.antigravity_cli import AntigravityCliProvider
@@ -12,6 +16,7 @@ from cli_agent_orchestrator.providers.claude_code import ClaudeCodeProvider
 from cli_agent_orchestrator.providers.codex import CodexProvider
 from cli_agent_orchestrator.providers.copilot_cli import CopilotCliProvider
 from cli_agent_orchestrator.providers.cursor_cli import CursorCliProvider
+from cli_agent_orchestrator.providers.gemini_cli import GeminiCliProvider
 from cli_agent_orchestrator.providers.grok_cli import GrokCliProvider
 from cli_agent_orchestrator.providers.hermes import HermesProvider
 from cli_agent_orchestrator.providers.kimi_cli import KimiCliProvider
@@ -156,6 +161,16 @@ class ProviderManager:
                     model=model,
                     skill_prompt=skill_prompt,
                 )
+            elif provider_type == ProviderType.GEMINI_CLI.value:
+                provider = GeminiCliProvider(
+                    terminal_id,
+                    tmux_session,
+                    tmux_window,
+                    agent_profile,
+                    allowed_tools,
+                    skill_prompt=skill_prompt,
+                    model=model,
+                )
             elif provider_type == ProviderType.GROK_CLI.value:
                 provider = GrokCliProvider(
                     terminal_id,
@@ -240,8 +255,40 @@ class ProviderManager:
             metadata["tmux_session"],
             metadata["tmux_window"],
             metadata["agent_profile"],
+            allowed_tools=metadata.get("allowed_tools"),
             engine=persisted_engine,
         )
+        if getattr(provider, "requires_turn_receipt", False) is True:
+            # Receipt state is private database state, intentionally separate
+            # from the agent-editable terminal metadata.  A restart has no
+            # plaintext nonce or task body to redeliver, so an active record
+            # restores as reconcile/block until CAO verifies its result.
+            turn_receipt = get_terminal_turn_receipt(terminal_id)
+            if turn_receipt is not None and turn_receipt.get("phase") in {"prepared", "sent"}:
+                provider.restore_turn_receipt_state(turn_receipt)
+            elif (
+                turn_receipt is not None
+                and turn_receipt.get("phase") == "result_verified"
+                and isinstance(turn_receipt.get("result_sha256"), str)
+            ):
+                # A server can crash after an older split receipt-verification
+                # commit but before projecting its native child success. New
+                # result settlement is atomic, yet repair that historic
+                # durable state on provider reconstruction too. The helper
+                # refuses to revive cancelled/failed children or a removed
+                # terminal, so this is proof-based recovery rather than an
+                # inferred completion.
+                settled = settle_terminal_turn_receipt_result(
+                    terminal_id,
+                    turn_receipt["generation"],
+                    turn_receipt["receipt_sha256"],
+                    turn_receipt["result_sha256"],
+                )
+                if not settled:
+                    logger.warning(
+                        "Verified receipt for terminal %s could not safely project completion",
+                        terminal_id,
+                    )
         # Restore shell_command baseline from DB so get_status() can detect kiro exit.
         # The terminal already exists in the DB, so its CLI has long since
         # launched — mark the provider as initialized so KiroCliProvider's
@@ -256,13 +303,12 @@ class ProviderManager:
         return provider
 
     def cleanup_provider(self, terminal_id: str) -> bool:
-        """Cleanup a provider, retaining retryable Grok state on failure.
+        """Cleanup a provider, retaining any retryable private state on failure.
 
-        Grok's private home can only be deleted after its escaped updater has
-        been positively stopped or ruled out.  A ``False`` return therefore
-        deliberately keeps the map entry (and lets the service keep DB
-        metadata) so a later lifecycle retry does not lose the only route to
-        that deterministic home.
+        A provider returning ``False`` deliberately keeps its map entry and
+        lets the service retain DB metadata.  That metadata is the only
+        durable route to retry deterministic provider-private cleanup after a
+        terminal or server restart.
         """
         try:
             provider = self._providers.get(terminal_id)
@@ -299,10 +345,30 @@ class ProviderManager:
                     metadata["tmux_window"],
                     metadata.get("agent_profile"),
                 )
-                restored_minimax_provider.cleanup()
+                if restored_minimax_provider.cleanup() is False:
+                    logger.warning(
+                        "Cleanup deferred for restored MiniMax Code provider: %s", terminal_id
+                    )
+                    return False
                 logger.info(
                     "Cleaned up restored MiniMax Code provider for terminal: %s", terminal_id
                 )
+            elif metadata and metadata.get("provider") == ProviderType.GEMINI_CLI.value:
+                # Gemini keeps only a deterministic, terminal-private settings
+                # overlay.  Restore the minimal adapter so a server restart
+                # cannot leak that overlay during terminal deletion.
+                restored_gemini_provider = GeminiCliProvider(
+                    terminal_id,
+                    metadata["tmux_session"],
+                    metadata["tmux_window"],
+                    metadata.get("agent_profile"),
+                )
+                if restored_gemini_provider.cleanup() is False:
+                    logger.warning(
+                        "Cleanup deferred for restored Gemini CLI provider: %s", terminal_id
+                    )
+                    return False
+                logger.info("Cleaned up restored Gemini CLI provider for terminal: %s", terminal_id)
             return True
         except Exception as e:
             logger.error(f"Failed to cleanup provider for terminal {terminal_id}: {e}")

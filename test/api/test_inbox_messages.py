@@ -39,6 +39,14 @@ def sample_inbox_messages():
             status=MessageStatus.FAILED,
             created_at=datetime(2025, 12, 6, 12, 10, 0),
         ),
+        InboxMessage(
+            id=4,
+            sender_id="sender4",
+            receiver_id="abcdef12",
+            message="Delivery requires reconciliation",
+            status=MessageStatus.RECONCILE,
+            created_at=datetime(2025, 12, 6, 12, 15, 0),
+        ),
     ]
 
 
@@ -54,7 +62,7 @@ class TestGetInboxMessagesEndpoint:
 
             assert response.status_code == 200
             data = response.json()
-            assert len(data) == 3
+            assert len(data) == 4
 
             # Check response format
             for msg_data in data:
@@ -114,7 +122,7 @@ class TestGetInboxMessagesEndpoint:
         data = response.json()
         assert "detail" in data
         assert "Invalid status" in data["detail"]
-        assert "pending, delivered, failed" in data["detail"]
+        assert "pending, delivered, reconcile, failed" in data["detail"]
 
     def test_limit_exceeds_maximum(self, client):
         """Test that limit parameter is properly validated."""
@@ -183,7 +191,7 @@ class TestGetInboxMessagesEndpoint:
 
     def test_all_status_values(self, client, sample_inbox_messages):
         """Test filtering by each possible status value."""
-        for status_value in ["pending", "delivered", "failed"]:
+        for status_value in ["pending", "delivered", "reconcile", "failed"]:
             filtered_messages = [
                 msg for msg in sample_inbox_messages if msg.status.value == status_value
             ]

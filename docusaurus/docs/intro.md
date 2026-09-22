@@ -10,7 +10,7 @@ CLI Agent Orchestrator (CAO) is a lightweight orchestration system for managing 
 
 - **Agent isolation** — Each agent runs in its own tmux window with full context separation
 - **Multiple orchestration patterns** — Handoff (synchronous), Assign (asynchronous), Send Message (direct communication)
-- **Multi-provider support** — Works with 10 CLI agent providers
+- **Multi-provider support** — Works with 13 CLI agent providers
 - **Scheduled flows** — Cron-like task scheduling for automated workflows
 - **MCP Server** — Expose orchestration capabilities to any MCP-compatible client
 - **Web UI** — Monitor and manage agent sessions from a browser dashboard
@@ -30,8 +30,12 @@ CLI Agent Orchestrator (CAO) is a lightweight orchestration system for managing 
 | Hermes | `hermes` |
 | Cursor CLI | `cursor_cli` |
 | Antigravity CLI | `antigravity_cli` |
+| Gemini CLI | `gemini_cli` |
+| Grok Build CLI | `grok_cli` |
+| MiniMax Code | `mcode` |
 
-> **Note:** Antigravity CLI is the Google-backed provider (formerly Gemini CLI).
+> **Note:** `antigravity_cli` and `gemini_cli` are distinct adapters. Select the
+> one whose executable and authentication you have configured.
 
 ## Installation
 

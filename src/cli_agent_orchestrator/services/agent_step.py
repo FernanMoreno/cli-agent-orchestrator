@@ -24,11 +24,19 @@ retry policy (FR-5.3); the HTTP handler maps it to an ``HTTPException``.
 import asyncio
 import logging
 import time
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 
 from cli_agent_orchestrator.models.kiro_engine import KiroEngine, parse_kiro_engine
 from cli_agent_orchestrator.models.provider import ProviderType
-from cli_agent_orchestrator.models.terminal import AgentStepResult, TerminalStatus
+from cli_agent_orchestrator.models.terminal import (
+    AgentStepResult,
+    TerminalInputBlockedError,
+    TerminalStatus,
+)
+from cli_agent_orchestrator.clients.database import (
+    get_terminal_turn_receipt,
+    transition_native_child,
+)
 from cli_agent_orchestrator.plugins import PluginRegistry
 from cli_agent_orchestrator.providers.kiro_capabilities import KiroPhase0KASError
 from cli_agent_orchestrator.services import frozen_run_memory, terminal_service
@@ -56,6 +64,11 @@ DEFAULT_READY_TIMEOUT = 120.0
 # IDLE reads required before a post-input IDLE is accepted as "done" (issue #409a).
 _COMPLETION_POLL_INTERVAL = 1.0
 _IDLE_STABLE_POLLS = 3
+# A post-turn blocker is still a live UI; require the exact receipt-bearing
+# answer to survive a second observation before it can settle the task.  This
+# filters a half-drawn redraw without treating ordinary WAITING prompts as
+# results.
+_POST_TURN_RECEIPT_STABLE_POLLS = 2
 
 # Delivery verification on the synchronous step path (#562). Readiness cannot
 # prove the TUI will accept input — an OpenCode splash frame carries the same
@@ -71,12 +84,75 @@ _IDLE_STABLE_POLLS = 3
 _PROMPT_PICKUP_GRACE = 8.0
 _PROMPT_REDELIVER_MAX = 3
 
+# Preserve a small cleanup/reconciliation margin beyond the caller-visible
+# ready+completion budget.  Lease expiry never kills a child; it changes only
+# the durable receipt to ``reconcile``.
+_NATIVE_CHILD_LEASE_MARGIN = 30.0
+
+
+async def _record_native_child_transition(
+    tracked: bool,
+    terminal_id: str,
+    state: str,
+    *,
+    error_kind: Optional[str] = None,
+    error_summary: Optional[str] = None,
+) -> Optional[dict]:
+    """Persist a child receipt without letting reporting mask worker outcome.
+
+    A real child is planned atomically before terminal creation, so a failed
+    transition is an observable storage incident, not a reason to resend input
+    or alter the step's primary error.  Root/ordinary steps never touch this
+    table, preserving the historical no-database dependency of the substrate's
+    unit seam.
+    """
+    if not tracked:
+        return None
+    try:
+        return await asyncio.to_thread(
+            transition_native_child,
+            terminal_id,
+            state,
+            error_kind=error_kind,
+            error_summary=error_summary,
+        )
+    except Exception:  # noqa: BLE001 -- lifecycle evidence must not fake a worker result
+        logger.exception(
+            "run_agent_step: could not persist native child transition %s for %s",
+            state,
+            terminal_id,
+        )
+        return None
+
+
+async def _must_retain_terminal_for_turn_receipt(terminal_id: str) -> bool:
+    """Return whether a receipt-controlled terminal must stay for recovery.
+
+    A task receipt deliberately stores only opaque hashes, never the model
+    result. If output extraction fails after completion, deleting the terminal
+    would erase both the only transcript that can be retried and the receipt
+    that proves which task it belongs to. This check uses the durable store,
+    rather than a provider-specific type check, so every current or future
+    receipt-capable adapter gets the same safety rule. A store read failure is
+    also fail-closed: keep the terminal rather than guessing that no receipt
+    exists.
+    """
+    try:
+        return await asyncio.to_thread(get_terminal_turn_receipt, terminal_id) is not None
+    except Exception:  # noqa: BLE001 - receipt recovery must fail closed
+        logger.exception(
+            "Could not determine whether terminal %s has a durable turn receipt; retaining it "
+            "for reconciliation",
+            terminal_id,
+        )
+        return True
+
 
 async def _validate_reused_terminal(
     terminal_id: str,
     requested_provider: str,
     requested_engine: Optional[KiroEngine | str],
-) -> None:
+) -> Optional[str]:
     """Require reuse constraints to agree with authoritative terminal metadata."""
     metadata = await asyncio.to_thread(terminal_service.get_terminal_metadata, terminal_id)
     if metadata is None:
@@ -115,17 +191,23 @@ async def _validate_reused_terminal(
 class StepExecutionError(Exception):
     """A step failed to complete successfully.
 
-    Raised for a readiness/completion timeout or a terminal that reached
-    ``TerminalStatus.ERROR``. Narrow by design so the caller (engine) can map
-    it to its retry policy and the API boundary can map it to an HTTPException.
+    Raised for a readiness/completion timeout, a terminal that reached
+    ``TerminalStatus.ERROR``, or a live terminal that must be reconciled before
+    it can receive another automated task. Narrow by design so the caller
+    (engine) can map it to its retry policy and the API boundary can map it to
+    an HTTPException.
 
-    Carries two structured fields so callers never have to scrape the message:
+    Carries structured fields so callers never have to scrape the message:
 
-    - ``kind`` distinguishes a worker that *ran long* (``"timeout"``) from one
-      that *crashed* (``"error"``, i.e. the terminal reached ERROR). The two
-      were previously indistinguishable — both surfaced as a 504 "timed out".
+    - ``kind`` distinguishes a worker that *ran long* (``"timeout"``), one
+      that *crashed* (``"error"``, i.e. the terminal reached ERROR), and a
+      live task that requires durable reconciliation (``"reconcile"``).
     - ``terminal_id`` is the live terminal the step ran on (when known), so a
       failed caller can report/clean it up without regex-scraping the message.
+    - ``action`` and ``delivery_may_have_occurred`` preserve the terminal
+      layer's recovery contract for a blocked input. A parent must not turn a
+      trust-dialog answer into a generic reconcile/retry, nor re-send an input
+      that may already have reached the terminal.
     """
 
     def __init__(
@@ -134,10 +216,20 @@ class StepExecutionError(Exception):
         *,
         kind: str = "timeout",
         terminal_id: Optional[str] = None,
+        native_child_id: Optional[str] = None,
+        action: Optional[
+            Literal["answer_user_prompt", "reconcile", "inspect", "wait_for_quota"]
+        ] = None,
+        delivery_may_have_occurred: bool = False,
+        provider_may_resume: bool = False,
     ) -> None:
         super().__init__(message)
         self.kind = kind
         self.terminal_id = terminal_id
+        self.native_child_id = native_child_id
+        self.action = action
+        self.delivery_may_have_occurred = delivery_may_have_occurred
+        self.provider_may_resume = provider_may_resume
 
 
 class StepCancelledError(Exception):
@@ -161,6 +253,8 @@ async def _wait_for_completion(
     cancel_event: Optional["asyncio.Event"] = None,
     *,
     prompt: Optional[str] = None,
+    prompt_redelivery: bool = True,
+    track_native_child: bool = False,
 ) -> None:
     """Wait for a post-input step to settle, polling ``status_monitor`` (issue #409).
 
@@ -170,15 +264,13 @@ async def _wait_for_completion(
     Completion signals (issue #409a):
 
     - ``COMPLETED`` — definitive done marker; returns immediately (unchanged).
-    - ``IDLE`` — accepted as done ONLY after the agent was observed working (a
-      ``PROCESSING`` / ``WAITING_USER_ANSWER`` read) AND IDLE then persists for
-      ``_IDLE_STABLE_POLLS`` consecutive polls. This is the codex-style case where
-      a provider legitimately settles back to its idle prompt after answering and
-      never emits a ``COMPLETED`` marker — requiring ``COMPLETED`` alone hung the
-      step until timeout and left the whole run stuck ``running``. Gating on
-      observed-working is what keeps the idle-right-after-send window (before the
-      agent picks up the prompt) from returning early with empty output; it mirrors
-      the CLI-side ``poll_until_done`` heuristic exactly.
+    - ``IDLE`` — is provisional. The agent must first have been observed working
+      (a ``PROCESSING`` / ``WAITING_USER_ANSWER`` read), IDLE must persist for
+      ``_IDLE_STABLE_POLLS`` consecutive polls, *and* the provider-specific
+      extractor must recover a non-empty result for this turn. The returned result
+      is the durable completion receipt. This lets a provider legitimately settle
+      at an idle prompt after answering while preventing stale terminal chrome from
+      terminating a still-generating turn.
 
     Delivery verification (issue #562): readiness cannot prove a TUI will accept
     input (an OpenCode splash frame carries the same idle footer as a
@@ -197,6 +289,10 @@ async def _wait_for_completion(
     swallowed (a failed recovery attempt is not a step failure) so this wait
     never escapes with anything but its documented exceptions.
 
+    Set ``prompt_redelivery`` to False for at-most-once delivery. The initial
+    send still happens, but this wait never sends Enter or re-pastes the
+    prompt; an unconfirmed terminal must be reconciled rather than retried.
+
     Interruptibility (issue #409b): if ``cancel_event`` fires mid-wait, raises
     ``StepCancelledError`` PROMPTLY (it does not wait out the poll interval) so an
     in-flight — possibly hung — step becomes cancellable instead of being observed
@@ -204,6 +300,8 @@ async def _wait_for_completion(
 
     Raises:
         StepExecutionError(kind="error"): the terminal reached ``ERROR``.
+        StepExecutionError(kind="quota_wait"): the provider paused the already-delivered
+            turn until a quota reset; the terminal must be reconciled, never re-sent.
         StepExecutionError(kind="timeout"): no completion signal within ``timeout``.
         StepCancelledError: ``cancel_event`` fired while waiting.
     """
@@ -212,11 +310,70 @@ async def _wait_for_completion(
     consecutive_idle = 0
     redeliveries = 0
     delivery_verified = False
+    post_turn_receipt_candidate: Optional[str] = None
+    consecutive_post_turn_receipt = 0
     # Seeded at entry — i.e. AFTER ``send_input`` returned — so the first
     # grace window runs from the start of this wait, not from the send. That
     # reads long, which is the conservative direction: a false "dropped"
     # verdict only costs a wait, a false "delivered" one burns the budget.
     last_send = time.monotonic()
+
+    async def observe_stable_post_turn_receipt() -> Optional[str]:
+        """Settle only a twice-observed receipt from the current task viewport.
+
+        A terminal can honestly report PROCESSING, IDLE, or COMPLETED while
+        its byte-stream monitor is stale.  The durable receipt is the task
+        proof, so every post-send state uses the same observer.  It remains
+        deliberately stricter than a status transition: the exact extracted
+        answer must survive two reads and then pass the terminal-service CAS.
+        """
+        nonlocal post_turn_receipt_candidate, consecutive_post_turn_receipt
+        try:
+            extracted = await asyncio.to_thread(
+                terminal_service.probe_post_turn_receipt_result,
+                terminal_id,
+            )
+        except Exception:  # noqa: BLE001 -- a probe is never a success proof
+            logger.info(
+                "step on terminal %s has no verified current-turn receipt yet; "
+                "continuing to wait",
+                terminal_id,
+                exc_info=True,
+            )
+            extracted = None
+
+        if not isinstance(extracted, str) or not extracted.strip():
+            post_turn_receipt_candidate = None
+            consecutive_post_turn_receipt = 0
+            return None
+
+        if extracted == post_turn_receipt_candidate:
+            consecutive_post_turn_receipt += 1
+        else:
+            post_turn_receipt_candidate = extracted
+            consecutive_post_turn_receipt = 1
+        if consecutive_post_turn_receipt < _POST_TURN_RECEIPT_STABLE_POLLS:
+            return None
+
+        settled = await asyncio.to_thread(
+            terminal_service.settle_post_turn_receipt_result,
+            terminal_id,
+            extracted,
+        )
+        if settled == extracted:
+            logger.info(
+                "step on terminal %s verified its task result from the current "
+                "dispatch buffer despite its terminal state",
+                terminal_id,
+            )
+            return settled
+
+        # The post-turn buffer changed after the second observation or its
+        # durable CAS did not succeed.  Keep the task active and require a
+        # fresh stable pair; never turn an unstable redraw into completion.
+        post_turn_receipt_candidate = None
+        consecutive_post_turn_receipt = 0
+        return None
 
     while True:
         if cancel_event is not None and cancel_event.is_set():
@@ -231,40 +388,132 @@ async def _wait_for_completion(
                 kind="error",
                 terminal_id=terminal_id,
             )
+        if current == TerminalStatus.WAITING_QUOTA:
+            # This is neither a result nor an ordinary user-owned question.
+            # The prompt was sent before this loop began, and a provider may
+            # resume it automatically after its quota window resets. Do not
+            # probe a receipt, type recovery input, or wait until the generic
+            # deadline turns a causal provider pause into a misleading timeout.
+            raise StepExecutionError(
+                f"terminal {terminal_id} is waiting for its provider quota to reset",
+                kind="quota_wait",
+                terminal_id=terminal_id,
+                action="wait_for_quota",
+                delivery_may_have_occurred=True,
+                provider_may_resume=await asyncio.to_thread(
+                    terminal_service.quota_pause_may_auto_resume, terminal_id
+                ),
+            )
         if current == TerminalStatus.COMPLETED:
-            return
-        if current == TerminalStatus.IDLE:
+            # A completed terminal marker is transport telemetry.  Prefer the
+            # current receipt viewport when one is available, because a raw
+            # pipe-pane capture can be less coherent than the rendered TUI.
+            settled = await observe_stable_post_turn_receipt()
+            if settled is not None:
+                return settled
+            # A first receipt observation is not enough to settle.  Keep
+            # polling for its matching second view; if there was no receipt
+            # candidate at all, preserve the historical completed-marker path
+            # and let the normal extractor make the final decision.
+            if post_turn_receipt_candidate is None:
+                return None
+        elif current == TerminalStatus.IDLE:
+            # A fast TUI can emit PROCESSING and return to IDLE entirely
+            # between two one-second monitor polls.  The historical generic
+            # IDLE path still needs observed work before it may extract output,
+            # but a current receipt is stronger evidence than that telemetry:
+            # a new cryptographic nonce cannot come from a previous turn.
+            # Probe it first even when the sampled state never caught the
+            # short working edge.  Two matching observations plus the CAS keep
+            # this from turning an idle shell or stale viewport into success.
+            settled = await observe_stable_post_turn_receipt()
+            if settled is not None:
+                return settled
+
             # Post-input IDLE only counts once the agent has actually started
             # working — otherwise the idle-before-processing window right after
-            # the send would settle immediately with empty/partial output.
+            # the send cannot use the legacy generic extractor.
             if observed_working:
+                # This historical fallback reads raw/history transcript after
+                # the receipt observer has had the chance to use a provider-
+                # owned current viewport.
                 consecutive_idle += 1
                 if consecutive_idle >= _IDLE_STABLE_POLLS:
-                    logger.info(
-                        "step on terminal %s settled IDLE post-input "
-                        "(observed working; %d consecutive idle polls) — done",
-                        terminal_id,
-                        consecutive_idle,
-                    )
-                    return
+                    # A terminal status is a transport observation, not proof
+                    # that this turn produced a result. TUIs can render a stale
+                    # idle footer while a new response is still streaming. Ask
+                    # the provider extractor to prove the current turn instead.
+                    try:
+                        extracted = await asyncio.to_thread(
+                            terminal_service.get_output, terminal_id, OutputMode.LAST
+                        )
+                    except Exception as exc:  # noqa: BLE001 -- IDLE is not a result receipt
+                        logger.info(
+                            "step on terminal %s has stable post-input IDLE but no "
+                            "extractable current-turn result yet (%s); continuing to wait",
+                            terminal_id,
+                            exc,
+                        )
+                        consecutive_idle = 0
+                    else:
+                        if isinstance(extracted, str) and extracted.strip():
+                            logger.info(
+                                "step on terminal %s settled IDLE post-input with durable "
+                                "current-turn output (%d consecutive idle polls)",
+                                terminal_id,
+                                consecutive_idle,
+                            )
+                            return extracted
+                        logger.info(
+                            "step on terminal %s has stable post-input IDLE but the "
+                            "extractor returned no current-turn output; continuing to wait",
+                            terminal_id,
+                        )
+                        consecutive_idle = 0
         elif current in _WORKING_STATES:
+            if track_native_child and not observed_working:
+                # A provider transition is the first evidence that a terminal
+                # receipt marked ``sent`` was actually picked up.  This does
+                # not infer completion from terminal chrome; it records only
+                # the durable child lifecycle boundary.
+                await _record_native_child_transition(True, terminal_id, "running")
             observed_working = True
             consecutive_idle = 0
+            # Terminal state is delivery telemetry, not task truth.  A monitor
+            # can retain PROCESSING after a TUI has returned to its ready
+            # footer, and a post-turn UI can honestly remain WAITING.  Only an
+            # opted-in provider's receipt-valid answer from the current
+            # dispatch buffer may settle the task.
+            settled = await observe_stable_post_turn_receipt()
+            if settled is not None:
+                return settled
         else:
             # UNKNOWN or any other non-ready status: not evidence of work and not
             # a stable idle — reset the idle streak but do not flip observed_working.
             consecutive_idle = 0
+            post_turn_receipt_candidate = None
+            consecutive_post_turn_receipt = 0
 
         if time.monotonic() >= deadline:
             # Defensive: a terminal that flipped to ERROR right at the deadline is
             # a crash, not a slow run (preserve the kind="error" vs "timeout" split).
-            if (
-                await asyncio.to_thread(status_monitor.get_status, terminal_id)
-            ) == TerminalStatus.ERROR:
+            deadline_status = await asyncio.to_thread(status_monitor.get_status, terminal_id)
+            if deadline_status == TerminalStatus.ERROR:
                 raise StepExecutionError(
                     f"terminal {terminal_id} reached ERROR status",
                     kind="error",
                     terminal_id=terminal_id,
+                )
+            if deadline_status == TerminalStatus.WAITING_QUOTA:
+                raise StepExecutionError(
+                    f"terminal {terminal_id} is waiting for its provider quota to reset",
+                    kind="quota_wait",
+                    terminal_id=terminal_id,
+                    action="wait_for_quota",
+                    delivery_may_have_occurred=True,
+                    provider_may_resume=await asyncio.to_thread(
+                        terminal_service.quota_pause_may_auto_resume, terminal_id
+                    ),
                 )
             raise StepExecutionError(
                 f"step on terminal {terminal_id} did not complete within {timeout}s",
@@ -288,6 +537,7 @@ async def _wait_for_completion(
         # which cannot duplicate a task.
         if (
             prompt is not None
+            and prompt_redelivery
             and not delivery_verified
             and not observed_working
             and current == TerminalStatus.IDLE
@@ -439,6 +689,7 @@ async def run_agent_step(
     engine: Optional[KiroEngine | str] = None,
     model: Optional[str] = None,
     use_worktree: bool = False,
+    prompt_redelivery: bool = True,
 ) -> AgentStepResult:
     """Run one agent step and return its result (success only).
 
@@ -542,6 +793,10 @@ async def run_agent_step(
             ``terminal_service.create_terminal``'s own docstring for the
             resolution/teardown mechanics. Ignored when reusing a terminal.
             Default False = behavior unchanged.
+        prompt_redelivery: When False, do not re-submit a prompt after the
+            initial send. This is the at-most-once delivery mode for callers
+            that can reconcile a terminal durably. Default True preserves the
+            historical pickup-recovery behavior.
 
     Returns:
         ``AgentStepResult`` with status COMPLETED — ONLY on success.
@@ -557,6 +812,8 @@ async def run_agent_step(
     """
     created_here = reuse_terminal_id is None
     terminal_id = reuse_terminal_id
+    native_child_id: Optional[str] = None
+    track_native_child = caller_id is not None
 
     if created_here:
         # Inherit working directory from supervisor when not explicitly set.
@@ -663,6 +920,13 @@ async def run_agent_step(
             engine=engine,
             model=model,
             use_worktree=use_worktree,
+            # A synchronous child owns a precise, caller-visible budget.  The
+            # lease is deliberately longer by only a small reconciliation
+            # margin; it cannot outlive an abandoned timeout indefinitely.
+            native_child_lease_seconds=max(
+                _NATIVE_CHILD_LEASE_MARGIN,
+                ready_timeout + timeout + _NATIVE_CHILD_LEASE_MARGIN,
+            ),
         )
         terminal_id = terminal.id
 
@@ -681,13 +945,42 @@ async def run_agent_step(
         # confirm a ready status before sending input (same guard handoff uses).
         ready = await wait_until_status(terminal_id, _READY_STATES, timeout=ready_timeout)
         if not ready:
+            readiness_status = await asyncio.to_thread(status_monitor.get_status, terminal_id)
+            if readiness_status == TerminalStatus.WAITING_QUOTA:
+                receipt = await _record_native_child_transition(
+                    track_native_child,
+                    terminal_id,
+                    "reconcile",
+                    error_kind="quota_wait",
+                    error_summary="provider paused before the task could be delivered",
+                )
+                raise StepExecutionError(
+                    f"terminal {terminal_id} is waiting for its provider quota to reset",
+                    kind="quota_wait",
+                    terminal_id=terminal_id,
+                    native_child_id=receipt["id"] if receipt is not None else None,
+                    action="wait_for_quota",
+                    delivery_may_have_occurred=False,
+                    provider_may_resume=await asyncio.to_thread(
+                        terminal_service.quota_pause_may_auto_resume, terminal_id
+                    ),
+                )
             # Surface the live terminal so it can be inspected/cleaned up, then
             # fail fast. We do NOT auto-delete here: leaving the terminal lets
             # the caller decide (handoff surfaces terminal_id on failure).
+            receipt = await _record_native_child_transition(
+                track_native_child,
+                terminal_id,
+                "reconcile",
+                error_kind="readiness_timeout",
+                error_summary=f"terminal did not reach a ready state within {ready_timeout}s",
+            )
+            native_child_id = receipt["id"] if receipt is not None else None
             raise StepExecutionError(
                 f"terminal {terminal_id} did not reach a ready status within " f"{ready_timeout}s",
                 kind="timeout",
                 terminal_id=terminal_id,
+                native_child_id=native_child_id,
             )
     else:
         assert terminal_id is not None
@@ -725,19 +1018,75 @@ async def run_agent_step(
         terminal_id,
         prompt,
     )
-    if frozen_memory is None:
-        # The call is left BYTE-IDENTICAL on the no-frozen-block path, rather than passing an extra
-        # `None`. Existing tests assert this exact two-argument shape, and keeping them passing
-        # unchanged is the strongest available evidence for C-1: a non-workflow step reaches
-        # ``send_input`` exactly as it did before this unit.
-        await asyncio.to_thread(terminal_service.send_input, terminal_id, prompt)
-    else:
-        await asyncio.to_thread(
-            terminal_service.send_input,
+    try:
+        if frozen_memory is None:
+            # A run-step prompt is always an automated unit of work, including
+            # on a terminal reused by the caller. Mark it explicitly so a
+            # provider trust/login dialog cannot consume the task as an answer.
+            await asyncio.to_thread(
+                terminal_service.send_input,
+                terminal_id,
+                prompt,
+                task_delivery=True,
+            )
+        else:
+            await asyncio.to_thread(
+                terminal_service.send_input,
+                terminal_id,
+                prompt,
+                frozen_memory=frozen_memory,
+                task_delivery=True,
+            )
+    except TerminalInputBlockedError as exc:
+        # A live terminal that has an active receipt or an operator-owned
+        # dialog is not a timeout and must not lose its reconciliation handle.
+        # The caller can inspect the exact terminal and either retrieve the
+        # verified result or answer the prompt before submitting another step.
+        receipt = await _record_native_child_transition(
+            track_native_child,
             terminal_id,
-            prompt,
-            frozen_memory=frozen_memory,
+            "reconcile",
+            error_kind="input_blocked",
+            error_summary=str(exc),
         )
+        raise StepExecutionError(
+            f"terminal {terminal_id} cannot accept this task yet: {exc}",
+            kind="reconcile",
+            terminal_id=terminal_id,
+            native_child_id=receipt["id"] if receipt is not None else native_child_id,
+            action=exc.action,
+            delivery_may_have_occurred=exc.delivery_may_have_occurred,
+        ) from exc
+    except Exception as exc:
+        # A transport failure after terminal creation is inherently ambiguous:
+        # tmux can have accepted some keys even when the caller did not receive
+        # a clean return.  Preserve the handle for reconciliation; never retry
+        # the prompt from this exception path.
+        await _record_native_child_transition(
+            track_native_child,
+            terminal_id,
+            "reconcile",
+            error_kind="input_send_uncertain",
+            error_summary=str(exc),
+        )
+        raise
+    await _record_native_child_transition(track_native_child, terminal_id, "sent")
+
+    # ``send_input`` arms the monitor before it pastes into tmux, but it
+    # deliberately leaves a previously latched ready status visible until a
+    # provider frame arrives.  That is appropriate for a general terminal
+    # dashboard, but a synchronous run-step has a stricter boundary: the
+    # ready status that existed before *this* prompt cannot complete this
+    # prompt.  Publish a post-send in-flight boundary only after the blocking
+    # send succeeded.  It prevents a cached IDLE/COMPLETED value from being
+    # accepted as this turn's result while the worker is already working.
+    #
+    # This is not a success signal and does not relax completion: the wait
+    # below still requires a real subsequent provider transition.  If the
+    # output pipe never proves that transition, an at-most-once caller retains
+    # the terminal for reconciliation rather than re-sending or tearing it
+    # down as if a result existed.
+    status_monitor.notify_input_sent(terminal_id, assume_processing=True)
 
     # Wait for completion — IN-PROCESS poll of status_monitor (NOT the
     # HTTP-polling wait_until_terminal_status, which would reintroduce the
@@ -749,28 +1098,75 @@ async def run_agent_step(
     # StepExecutionError on timeout/ERROR, or StepCancelledError if cancellation
     # fires mid-wait.
     try:
-        await _wait_for_completion(terminal_id, timeout, cancel_event, prompt=prompt)
+        idle_completion_output = await _wait_for_completion(
+            terminal_id,
+            timeout,
+            cancel_event,
+            prompt=prompt,
+            prompt_redelivery=prompt_redelivery,
+            track_native_child=track_native_child,
+        )
     except StepCancelledError:
         # A cancellation is NOT a run-failure. Tear down a terminal this call
         # created (best-effort — never let cleanup mask the cancellation), then
         # re-raise so the engine converges the run to CANCELLED without retrying.
         if created_here:
             await _best_effort_teardown(terminal_id, registry)
+        await _record_native_child_transition(
+            track_native_child,
+            terminal_id,
+            "cancelled",
+            error_kind="cancelled",
+            error_summary="parent cancelled the in-flight child step",
+        )
+        raise
+    except StepExecutionError as exc:
+        # A provider ERROR is a definite task failure.  A completion/readiness
+        # timeout after delivery is not: the worker may keep running, so retain
+        # it and require a parent reconciliation instead of deleting it or
+        # treating a terminal viewport as success.
+        next_state = "failed" if exc.kind == "error" else "reconcile"
+        receipt = await _record_native_child_transition(
+            track_native_child,
+            terminal_id,
+            next_state,
+            error_kind=exc.kind,
+            error_summary=str(exc),
+        )
+        exc.native_child_id = receipt["id"] if receipt is not None else native_child_id
         raise
 
     # Extract the last agent message via the provider-specific path (mirrors
     # how the handoff caller obtained output: get_output in LAST mode runs the
-    # provider's extract_last_message_from_script under the hood). This does a
-    # blocking tmux capture-pane plus regex extraction over the scrollback —
-    # potentially seconds for a large transcript — so run it off the loop.
-    # Clean up a terminal owned by this call if output extraction fails. Reused
-    # terminals remain owned by the caller.
+    # provider's extract_last_message_from_script under the hood). A stable-IDLE
+    # completion has already extracted the durable result; reuse that exact
+    # receipt rather than recapturing a terminal that may already be changing.
+    # A definitive COMPLETED marker follows the normal extraction path. Capture
+    # plus extraction can take seconds for a large transcript, so run it off the
+    # event loop.
+    # Clean up a terminal owned by this call if output extraction fails, except
+    # when it has a durable task receipt. Reused terminals remain owned by the
+    # caller in either case.
     try:
-        last_message = await asyncio.to_thread(
-            terminal_service.get_output, terminal_id, OutputMode.LAST
+        last_message = (
+            idle_completion_output
+            if isinstance(idle_completion_output, str)
+            else await asyncio.to_thread(terminal_service.get_output, terminal_id, OutputMode.LAST)
         )
-    except BaseException:
-        if teardown and created_here:
+    except BaseException as exc:
+        # Completion status without extractable output is insufficient to mark
+        # the child successful. Keep a reconciliation receipt. A receipt-
+        # governed turn also retains its terminal so a later reconciler can
+        # inspect the transcript without losing the receipt row on deletion.
+        await _record_native_child_transition(
+            track_native_child,
+            terminal_id,
+            "reconcile",
+            error_kind="output_extraction_failed",
+            error_summary=str(exc),
+        )
+        retain_for_receipt = await _must_retain_terminal_for_turn_receipt(terminal_id)
+        if teardown and created_here and not retain_for_receipt:
             await _best_effort_teardown(terminal_id, registry)
         raise
 
@@ -779,6 +1175,11 @@ async def run_agent_step(
         last_message=last_message,
         status=TerminalStatus.COMPLETED,
     )
+
+    # Output extraction has completed, which is the first durable completion
+    # receipt on this path.  Terminal deletion below is merely resource
+    # cleanup and cannot change task success back into cancellation.
+    await _record_native_child_transition(track_native_child, terminal_id, "succeeded")
 
     if teardown and created_here:
         await _best_effort_teardown(terminal_id, registry)

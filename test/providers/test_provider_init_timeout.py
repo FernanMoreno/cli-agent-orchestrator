@@ -19,11 +19,12 @@ a longer per-profile override -- see ``TestKimiInitTimeoutWiring`` /
 ``TestAntigravityInitTimeoutWiring`` below.
 """
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from cli_agent_orchestrator.models.agent_profile import AgentProfile
+from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.antigravity_cli import AntigravityCliProvider
 from cli_agent_orchestrator.providers.claude_code import ClaudeCodeProvider
 from cli_agent_orchestrator.providers.kimi_cli import KimiCliProvider
@@ -272,7 +273,16 @@ class TestStartupPromptHandlerHonorsOuterTimeout:
         ]
 
         provider = ClaudeCodeProvider("t1", "sess", "win")
-        await provider._handle_startup_prompts(idle_gap=1000, outer_timeout=180)
+        # A splash is no longer sufficient proof of readiness: a first-run
+        # dialog can render immediately after it.  Supply the independent
+        # rendered-pane witness that the handler now requires so this test
+        # remains focused on the explicit outer-timeout wiring.
+        with patch.object(
+            provider,
+            "_observe_initial_viewport_state",
+            new=AsyncMock(return_value=TerminalStatus.IDLE),
+        ):
+            await provider._handle_startup_prompts(idle_gap=1000, outer_timeout=180)
 
         mock_backend.send_special_key.assert_called_once()
 

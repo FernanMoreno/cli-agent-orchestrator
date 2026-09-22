@@ -131,6 +131,32 @@ class TestRedeliverDroppedMessageHelper:
         key.assert_not_called()
         send.assert_not_called()
 
+    def test_quota_cache_blocks_bare_enter_and_full_redelivery(self):
+        """The recovery helper has its own guard because bare Enter bypasses send_input."""
+        from cli_agent_orchestrator.models.terminal import (
+            TerminalInputBlockedError,
+            TerminalStatus,
+        )
+
+        provider = MagicMock(supports_direct_status_probe=False)
+        with (
+            patch.object(
+                ts.status_monitor,
+                "get_status",
+                return_value=TerminalStatus.WAITING_QUOTA,
+            ),
+            patch.object(ts, "_message_visible_in_box", return_value=True) as box,
+            patch.object(ts, "send_special_key") as key,
+            patch.object(ts, "send_input") as send,
+        ):
+            with pytest.raises(TerminalInputBlockedError) as exc_info:
+                ts.redeliver_dropped_message("t1", "Analyze the logs", 1, provider)
+
+        assert exc_info.value.action == "wait_for_quota"
+        box.assert_not_called()
+        key.assert_not_called()
+        send.assert_not_called()
+
     def test_provider_resolution_failure_falls_through_to_box_check(self):
         # Registry blowup must not lose the redelivery — box check still runs.
         with (
@@ -226,6 +252,33 @@ class TestConfirmWorkerStartedOrResubmit:
                 "t1", "Analyze the logs", None, "sup", None
             )
         assert ok is True
+        key.assert_not_called()
+        send.assert_not_called()
+
+    async def test_quota_observed_on_first_confirm_never_enters_redelivery(self):
+        """A quota-paused first delivery is not evidence that paste was dropped."""
+        from cli_agent_orchestrator.models.terminal import (
+            TerminalInputBlockedError,
+            TerminalStatus,
+        )
+
+        with (
+            patch.object(ts, "wait_until_status", new=AsyncMock(return_value=True)),
+            patch.object(
+                ts.status_monitor,
+                "get_status",
+                return_value=TerminalStatus.WAITING_QUOTA,
+            ),
+            patch.object(ts, "send_special_key") as key,
+            patch.object(ts, "send_input") as send,
+        ):
+            with pytest.raises(TerminalInputBlockedError) as exc_info:
+                await ts._confirm_worker_started_or_resubmit(
+                    "t1", "Analyze the logs", None, "sup", None
+                )
+
+        assert exc_info.value.action == "wait_for_quota"
+        assert exc_info.value.delivery_may_have_occurred is True
         key.assert_not_called()
         send.assert_not_called()
 
@@ -425,6 +478,28 @@ class TestWorkerIsStartedDirect:
             patch.object(ts, "get_backend") as mock_be,
         ):
             assert ts._worker_is_started_direct("t1", provider) is True
+
+    def test_quota_status_raises_without_treating_the_task_as_dropped(self):
+        from cli_agent_orchestrator.models.terminal import (
+            TerminalInputBlockedError,
+            TerminalStatus,
+        )
+
+        provider = MagicMock()
+        provider.get_status.return_value = TerminalStatus.WAITING_QUOTA
+        with (
+            patch.object(
+                ts,
+                "get_terminal_metadata",
+                return_value={"tmux_session": "s1", "tmux_window": "w1"},
+            ),
+            patch.object(ts, "get_backend") as mock_be,
+        ):
+            with pytest.raises(TerminalInputBlockedError) as exc_info:
+                ts._worker_is_started_direct("t1", provider)
+
+        assert exc_info.value.action == "wait_for_quota"
+        mock_be.return_value.get_history.assert_called_once_with("s1", "w1", tail_lines=200)
 
     def test_returns_false_when_status_is_idle(self):
         from cli_agent_orchestrator.models.terminal import TerminalStatus

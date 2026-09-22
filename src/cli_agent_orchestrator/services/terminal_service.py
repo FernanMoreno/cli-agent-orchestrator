@@ -24,6 +24,7 @@ import os
 import re
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -33,6 +34,7 @@ from pydantic import ValidationError
 
 from cli_agent_orchestrator.backends.registry import get_backend
 from cli_agent_orchestrator.clients.database import (
+    begin_terminal_turn_receipt,
     create_inbox_message,
 )
 from cli_agent_orchestrator.clients.database import create_terminal as db_create_terminal
@@ -46,6 +48,10 @@ from cli_agent_orchestrator.clients.database import (
     get_terminal_metadata,
     list_all_terminals,
     list_siblings_by_group_prefix,
+    mark_terminal_turn_receipt_sent,
+    plan_native_child,
+    settle_terminal_turn_receipt_result,
+    transition_native_child,
     update_last_active,
     update_terminal_group,
     update_terminal_metadata,
@@ -168,6 +174,13 @@ TERMINAL_RANGE_MAX_LENGTH = 1024 * 1024
 # pin the thread.
 CROSS_NODE_NOTIFY_TIMEOUT = 10.0
 
+# A native child with no caller-provided step budget still needs a finite
+# recovery window.  Lease expiry never kills a worker; it records
+# ``reconcile`` so the parent has an explicit handle instead of a phantom
+# "completed" task.  Synchronous run-step overrides this with its own
+# ready+completion budget.
+DEFAULT_NATIVE_CHILD_LEASE_SECONDS = 30.0 * 60.0
+
 # Track terminals that have already received memory injection (first message only).
 _memory_injected_terminals: set = set()
 _memory_injected_lock = threading.Lock()
@@ -264,6 +277,215 @@ class OutputMode(str, Enum):
     LAST = "last"
 
 
+# A receipt-backed completion renderer is not, by itself, proof that the
+# terminal's active task has a durable result.  Keep one asynchronous verifier
+# per terminal so raw status detection can remain cheap while the result is
+# extracted and compared with the persisted receipt before we announce
+# COMPLETED.  This deliberately lives in the shared terminal service rather
+# than the Gemini adapter: any future provider with the same receipt contract
+# gets the same lifecycle semantics.
+_receipt_verification_lock = threading.Lock()
+_receipt_verification_inflight: set[str] = set()
+_RECEIPT_VERIFICATION_MAX_AUTOMATIC_ATTEMPTS = 3
+_RECEIPT_VERIFICATION_RETRY_BASE_SECONDS = 2.0
+_RECEIPT_VERIFICATION_RETRY_MAX_SECONDS = 60.0
+
+
+@dataclass
+class _ReceiptVerificationState:
+    """Bounded verifier state for one opaque receipt generation."""
+
+    fingerprint: tuple[str, str]
+    attempts: int = 0
+    next_retry_at: float = 0.0
+    reconciled: bool = False
+
+
+_receipt_verification_state: Dict[str, _ReceiptVerificationState] = {}
+
+
+def _pending_receipt_fingerprint(provider: Any) -> tuple[str, str] | None:
+    """Read one receipt identity without retaining plaintext task data."""
+    receipt_state = provider.pending_turn_receipt_state()
+    if receipt_state is None:
+        return None
+    if not isinstance(receipt_state, dict):
+        raise ValueError("provider returned an invalid pending turn receipt state")
+    generation = receipt_state.get("generation")
+    receipt_sha256 = receipt_state.get("receipt_sha256")
+    if not isinstance(generation, str) or not isinstance(receipt_sha256, str):
+        raise ValueError("provider returned an incomplete pending turn receipt state")
+    return generation, receipt_sha256
+
+
+def _record_receipt_verification_failure(
+    terminal_id: str,
+    fingerprint: tuple[str, str],
+    *,
+    reason: str,
+) -> None:
+    """Back off bounded capture failures, then record durable reconciliation.
+
+    A visual completion marker without an extractable result is uncertain, not
+    a reason to continue spawning capture threads forever.  Keep the pending
+    receipt in place while a small, exponential retry budget is available;
+    then make the uncertainty visible to the parent through the native-child
+    receipt.  The generic lifecycle transition cannot overwrite a cancellation
+    or prior terminal state.
+    """
+    reconcile = False
+    with _receipt_verification_lock:
+        current = _receipt_verification_state.get(terminal_id)
+        if current is None or current.fingerprint != fingerprint or current.reconciled:
+            return
+        current.attempts += 1
+        if current.attempts >= _RECEIPT_VERIFICATION_MAX_AUTOMATIC_ATTEMPTS:
+            current.reconciled = True
+            current.next_retry_at = float("inf")
+            reconcile = True
+        else:
+            delay = min(
+                _RECEIPT_VERIFICATION_RETRY_BASE_SECONDS * (2 ** (current.attempts - 1)),
+                _RECEIPT_VERIFICATION_RETRY_MAX_SECONDS,
+            )
+            current.next_retry_at = time.monotonic() + delay
+
+    if reconcile:
+        try:
+            transition_native_child(
+                terminal_id,
+                "reconcile",
+                error_kind="receipt_result_unverifiable",
+                error_summary=(
+                    "receipt-backed completion could not be verified after "
+                    f"{_RECEIPT_VERIFICATION_MAX_AUTOMATIC_ATTEMPTS} bounded attempts: {reason}"
+                ),
+            )
+        except Exception:
+            # The receipt remains active and the in-memory verifier is sealed,
+            # so a transient reporting failure cannot cause an unbounded
+            # capture storm or a guessed terminal completion.
+            logger.exception(
+                "Could not persist receipt verification reconciliation for %s",
+                terminal_id,
+            )
+
+
+def _clear_receipt_verification_state(
+    terminal_id: str,
+    fingerprint: tuple[str, str],
+) -> None:
+    """Forget only the exact receipt a verifier just proved complete."""
+    with _receipt_verification_lock:
+        current = _receipt_verification_state.get(terminal_id)
+        if current is not None and current.fingerprint == fingerprint:
+            _receipt_verification_state.pop(terminal_id, None)
+
+
+def schedule_receipt_result_verification(terminal_id: str, provider: Any) -> bool:
+    """Verify one receipt-backed completed turn without re-delivering it.
+
+    A provider may recognize its completion marker before CAO has extracted
+    the result text and atomically settled the corresponding receipt row.  In
+    that interval, reporting ``COMPLETED`` would let the API/UI disagree with
+    the durable task lifecycle and could unblock a queued sibling too early.
+    Queue exactly one best-effort verifier instead.  It calls the existing
+    extraction path, which is the sole authority for validating the rendered
+    receipt and CASing the durable result digest; it never sends input.
+
+    ``False`` means that the provider has no active receipt to verify or did
+    not supply a valid receipt identity.  While a receipt remains pending this
+    returns ``True`` even during a cooldown or after reconciliation: callers
+    must still gate visual COMPLETED as PROCESSING rather than bypass its
+    durable task boundary.
+    """
+    if getattr(provider, "requires_turn_receipt", False) is not True:
+        return False
+    try:
+        fingerprint = _pending_receipt_fingerprint(provider)
+    except Exception:
+        logger.exception(
+            "Could not read pending receipt state while scheduling verification for %s",
+            terminal_id,
+        )
+        return False
+    if fingerprint is None:
+        with _receipt_verification_lock:
+            _receipt_verification_state.pop(terminal_id, None)
+        return False
+
+    with _receipt_verification_lock:
+        current = _receipt_verification_state.get(terminal_id)
+        if current is None or current.fingerprint != fingerprint:
+            current = _ReceiptVerificationState(fingerprint=fingerprint)
+            _receipt_verification_state[terminal_id] = current
+        if current.reconciled or time.monotonic() < current.next_retry_at:
+            return True
+        if terminal_id in _receipt_verification_inflight:
+            return True
+        _receipt_verification_inflight.add(terminal_id)
+
+    def _verify() -> None:
+        try:
+            # FULL applies the same receipt validation as LAST while preserving
+            # the normal dashboard transcript contract.  It raises
+            # OutputExtractionError until the active response is genuinely
+            # extractable and receipt-backed.
+            get_output(terminal_id, OutputMode.FULL)
+            current_fingerprint = _pending_receipt_fingerprint(provider)
+            if current_fingerprint is None:
+                # _verify_receipt_bearing_result settled the receipt and the
+                # matching native child in one database transaction. It is now
+                # safe for that function to have published COMPLETED.
+                _clear_receipt_verification_state(terminal_id, fingerprint)
+                return
+            if current_fingerprint != fingerprint:
+                # A different turn began while this read was in flight. It
+                # owns a separate retry budget; never charge it for stale
+                # observations from the earlier receipt.
+                return
+            if current_fingerprint is not None:
+                logger.info(
+                    "Receipt result verification for %s did not settle the active turn",
+                    terminal_id,
+                )
+                _record_receipt_verification_failure(
+                    terminal_id,
+                    fingerprint,
+                    reason="result remained unverified after capture",
+                )
+        except OutputExtractionError as exc:
+            logger.info(
+                "Receipt-backed result for %s is not verifiable yet; keeping it processing",
+                terminal_id,
+            )
+            _record_receipt_verification_failure(
+                terminal_id,
+                fingerprint,
+                reason=str(exc)[:256],
+            )
+        except Exception:
+            # A transient database/history error is not evidence of a failed
+            # task.  Preserve the receipt for reconciliation/retry and avoid
+            # changing terminal or child state based on an observer failure.
+            logger.exception("Receipt result verification failed for %s", terminal_id)
+            _record_receipt_verification_failure(
+                terminal_id,
+                fingerprint,
+                reason="output capture or receipt verification failed",
+            )
+        finally:
+            with _receipt_verification_lock:
+                _receipt_verification_inflight.discard(terminal_id)
+
+    threading.Thread(
+        target=_verify,
+        name=f"cao-receipt-verify-{terminal_id}",
+        daemon=True,
+    ).start()
+    return True
+
+
 # Providers that accept a runtime skill_prompt kwarg and append it to the
 # system prompt at launch time.  Other providers deliver skills differently:
 # Kiro (skill:// resources) and OpenCode (OPENCODE_CONFIG_DIR/skills symlink)
@@ -274,6 +496,7 @@ RUNTIME_SKILL_PROMPT_PROVIDERS = {
     ProviderType.CODEX.value,
     ProviderType.KIMI_CLI.value,
     ProviderType.ANTIGRAVITY_CLI.value,
+    ProviderType.GEMINI_CLI.value,
     ProviderType.OMP.value,
     ProviderType.GROK_CLI.value,
     ProviderType.MINIMAX_CODE.value,
@@ -466,6 +689,7 @@ def _request_fingerprint(
     resume_session_id: Optional[str],
     initial_message: Optional[str],
     initial_message_orchestration_type: Optional[OrchestrationType],
+    prompt_redelivery: bool = True,
 ) -> str:
     """Fingerprint the create-terminal request an idempotency key stands for.
 
@@ -645,10 +869,33 @@ def _request_fingerprint(
         resume_session_id or "",
         initial_message or "",
         orchestration_value,
+        "1" if prompt_redelivery else "0",
     ]
     return hashlib.sha256(
         "\x00".join(_fingerprint_component(part) for part in parts).encode("utf-8")
     ).hexdigest()
+
+
+def _provider_launch_model(
+    provider: str,
+    explicit_model: Optional[str],
+    profile: Optional[AgentProfile],
+) -> Optional[str]:
+    """Return the model value that is safe to pass into a provider constructor.
+
+    Most legacy providers receive the already-resolved profile model.  Gemini
+    is different: its adapter deliberately reads the raw profile before it
+    serializes a model, MCP value, or role prompt into an external process.
+    Passing the resolved profile model here would bypass that boundary and can
+    put a CAO-managed secret in tmux/process arguments.  An explicit request
+    value has not undergone CAO interpolation, so it remains the immutable
+    task override for every provider.
+    """
+    if explicit_model is not None:
+        return explicit_model
+    if provider == ProviderType.GEMINI_CLI.value:
+        return None
+    return profile.model if profile is not None else None
 
 
 async def create_terminal(
@@ -664,6 +911,7 @@ async def create_terminal(
     defer_init: bool = False,
     initial_message: Optional[str] = None,
     initial_message_orchestration_type: Optional[OrchestrationType] = None,
+    prompt_redelivery: bool = True,
     engine: Optional[KiroEngine | str] = None,
     kiro_capability_probe: Optional[Callable[[KiroEngine, set[str]], KiroCapabilities]] = None,
     model: Optional[str] = None,
@@ -672,6 +920,7 @@ async def create_terminal(
     group: Optional[List[str]] = None,
     metadata: Optional[Dict[str, Any]] = None,
     idempotency_key: Optional[str] = None,
+    native_child_lease_seconds: float = DEFAULT_NATIVE_CHILD_LEASE_SECONDS,
 ) -> Terminal:
     """Create a new terminal with an initialized CLI agent.
 
@@ -711,6 +960,9 @@ async def create_terminal(
             (e.g. MCP handoff/assign's own `model` parameter) pin a specific
             model for one worker without needing a dedicated agent profile.
             None = behavior unchanged (profile.model, if any, still applies).
+            Gemini reads that fallback from its raw profile inside the adapter
+            so a CAO-managed environment expansion cannot reach its command
+            line or terminal-private settings file.
         use_worktree: If True, provision an isolated ``git worktree`` (issue
             #100) for this terminal instead of using ``working_directory`` as
             given -- resolves the repo root from ``working_directory`` (or the
@@ -736,7 +988,7 @@ async def create_terminal(
             unprotected behavior every current caller keeps.
 
             The key does NOT identify the request on its own -- it is matched
-            together with a fingerprint of ELEVEN fields (see
+            together with a fingerprint of the request fields (see
             ``_request_fingerprint``). Presenting a key that a DIFFERENT
             request already claimed raises ``IdempotencyKeyConflict``
             (HTTP 409) rather than handing back a terminal that answers
@@ -752,12 +1004,13 @@ async def create_terminal(
             hashed or excluded-with-a-reason. Adding a parameter to either
             endpoint means classifying it here.
 
-            HASHED (11) -- these determine what the terminal IS, or what
-            privileges and context it launches with:
+            HASHED -- these determine what the terminal IS, its delivery
+            policy, or what privileges and context it launches with:
             ``provider``, ``agent_profile``, ``session_name``,
             ``working_directory``, ``caller_id``, ``model``, ``use_worktree``,
             ``engine``, ``allowed_tools``, ``env_vars``,
-            ``resume_session_id``.
+            ``resume_session_id``, ``initial_message``,
+            ``initial_message_orchestration_type`` and ``prompt_redelivery``.
 
             EXCLUDED, each for a checked reason:
 
@@ -768,10 +1021,6 @@ async def create_terminal(
               the ``update_metadata`` MCP tool, so a create-time key is not
               their integrity boundary -- a caller who cares about their value
               cannot rely on creation to fix it anyway.
-            - ``initial_message`` and ``initial_message_orchestration_type``.
-              The delivered payload and its routing, not the terminal: neither
-              is persisted on the row, and a genuine retry re-sends the same
-              message. These create endpoints do not own the prompt.
             - ``defer_init``. Excluded, and this one was decided against the
               instinct that it looks like identity, because three things check
               out against the code:
@@ -779,10 +1028,8 @@ async def create_terminal(
               ``session_service.create_session`` derives it as
               ``defer_init=initial_message is not None``. Hashing it would
               therefore make two otherwise-identical requests conflict purely
-              because one supplied a message and the other did not, i.e. it
-              would partially hash ``initial_message`` through the back door,
-              contradicting the deliberate decision above not to hash the
-              prompt.
+              because one supplied a message and the other did not. The
+              message and its redelivery policy are fingerprinted directly.
               (b) It leaves NO permanent difference in the created terminal.
               The only row column it touches is ``shell_command``, which the
               deferred path sets to ``None`` up front and then writes after
@@ -861,7 +1108,7 @@ async def create_terminal(
             what a fingerprint over those fields can distinguish:
 
             1. Two callers that BOTH have ``caller_id=None`` and are otherwise
-               identical in all eleven fields are indistinguishable by
+               identical in all fingerprinted fields are indistinguishable by
                fingerprint, so the second reuses the first's terminal. At that
                point the two requests are the same request by every property
                the server can observe, and reuse is the defensible answer.
@@ -878,13 +1125,13 @@ async def create_terminal(
                endpoints are not the prompt's owner.
 
             KNOWN DIVERGENCE, stated so the next reader need not rediscover
-            it: even with eleven fields this remains a WEAKER contract than
+            it: even with the complete fingerprint this remains a WEAKER contract than
             the other reuse path in this repo.
             ``agent_step._validate_reused_terminal`` RAISES on a provider or
             engine mismatch against the PERSISTED row, and ``RunStepRequest``
             rejects ``env_vars`` combined with ``reuse_terminal_id`` outright.
             Here a mismatch is refused only insofar as it changes one of the
-            eleven hashed fields, and the comparison is
+            fingerprinted fields, and the comparison is
             request-against-request rather than
             request-against-persisted-metadata. The practical gap: a field
             that is excluded above, or a difference between the request and
@@ -925,6 +1172,7 @@ async def create_terminal(
             resume_session_id,
             initial_message,
             initial_message_orchestration_type,
+            prompt_redelivery,
         )
         existing_record = get_idempotency_record(idempotency_key)
         existing_terminal_id = existing_record.terminal_id if existing_record else None
@@ -1093,6 +1341,21 @@ async def create_terminal(
 
         # Step 1: Generate unique identifiers
         terminal_id = generate_terminal_id()
+
+        # Persist the child receipt BEFORE any tmux/provider side effect.  A
+        # process death in the following creation window leaves ``planned`` and
+        # a deterministic terminal handle; the lease reader turns that into
+        # ``reconcile`` instead of pretending the task completed.  Root
+        # terminals (no caller) intentionally have no native-child receipt.
+        if caller_id is not None:
+            await asyncio.to_thread(
+                plan_native_child,
+                parent_terminal_id=caller_id,
+                terminal_id=terminal_id,
+                provider=provider,
+                agent_profile=agent_profile,
+                lease_seconds=native_child_lease_seconds,
+            )
 
         if not session_name:
             session_name = generate_session_name()
@@ -1401,7 +1664,7 @@ async def create_terminal(
             agent_profile,
             allowed_tools,
             skill_prompt=skill_prompt,
-            model=model or (profile.model if profile else None),
+            model=_provider_launch_model(provider, model, profile),
             engine=resolved_engine,
             resume_session_id=resume_session_id,
         )
@@ -1421,9 +1684,15 @@ async def create_terminal(
                 initial_message,
                 initial_message_orchestration_type,
                 registry,
+                prompt_redelivery,
             )
         else:
             await provider_instance.initialize()
+
+            # The provider, not merely the tmux window, has acknowledged the
+            # child launch.  This is deliberately after initialize(): a DB row
+            # or a visible shell alone is not a delivery/readiness receipt.
+            await asyncio.to_thread(transition_native_child, terminal_id, "acknowledged")
 
             # Persist shell_command baseline if the provider captured one
             shell_command = provider_instance.shell_baseline
@@ -1436,9 +1705,35 @@ async def create_terminal(
         # provider is still initializing on a background task, so the terminal
         # is NOT ready for input yet — report UNKNOWN (not IDLE) so a client
         # can't mistake it for ready and send input early. Callers poll
-        # GET /terminals/{id} for the live status once init completes. The
-        # synchronous path has already reached IDLE by here.
-        initial_status = TerminalStatus.UNKNOWN if defer_init else TerminalStatus.IDLE
+        # GET /terminals/{id} for the live status once init completes.
+        #
+        # A synchronous provider can instead positively report a real state
+        # during initialization. Gemini, for example, can reach an explicit
+        # trust/login dialog and publishes WAITING_USER_ANSWER before
+        # initialize() returns. Never overwrite that observation with a
+        # synthetic IDLE response: the returned DTO, API, and web projection
+        # must all describe the same terminal state. UNKNOWN remains a legacy
+        # fallback for providers that initialize successfully before the
+        # monitor has observed their first frame.
+        if defer_init:
+            initial_status = TerminalStatus.UNKNOWN
+        else:
+            try:
+                observed_status = status_monitor.get_status(terminal_id)
+            except Exception:  # noqa: BLE001 - init success remains usable without a monitor read
+                logger.debug(
+                    "Could not read terminal %s status after provider initialization; "
+                    "returning IDLE fallback",
+                    terminal_id,
+                    exc_info=True,
+                )
+                observed_status = TerminalStatus.UNKNOWN
+            initial_status = (
+                observed_status
+                if isinstance(observed_status, TerminalStatus)
+                and observed_status != TerminalStatus.UNKNOWN
+                else TerminalStatus.IDLE
+            )
         terminal = Terminal(
             id=terminal_id,
             name=window_name,
@@ -1481,8 +1776,44 @@ async def create_terminal(
         return terminal
 
     except Exception as e:
+        if isinstance(e, TerminalInputBlockedError) and e.delivery_may_have_occurred:
+            # A provider can report this before its first task receipt exists:
+            # for example a tmux transport error after pasting the Gemini
+            # launch command. The session/window, FIFO, provider instance and
+            # private runtime file are now the only evidence needed to inspect
+            # a possibly-live process. Do not tear them down from a create
+            # failure path merely because the caller did not get a clean
+            # acknowledgement.
+            logger.warning(
+                "Terminal %s creation has an ambiguous post-dispatch outcome; retaining it "
+                "for reconciliation: %s",
+                terminal_id,
+                e,
+            )
+            if terminal_id is not None:
+                await asyncio.to_thread(
+                    transition_native_child,
+                    terminal_id,
+                    "reconcile",
+                    error_kind="initialization_delivery_uncertain",
+                    error_summary=str(e),
+                )
+            raise
         # Cleanup on failure: clean up FIFO reader, status monitor, provider, and session
         logger.error(f"Failed to create terminal: {e}")
+        if terminal_id is not None:
+            # Creation has not sent a task yet.  A provider-init timeout is a
+            # failed launch (the rollback below owns the process cleanup), not
+            # a completed child and not an invitation to redeliver a prompt.
+            await asyncio.to_thread(
+                transition_native_child,
+                terminal_id,
+                "failed",
+                error_kind=(
+                    "initialization_timeout" if isinstance(e, TimeoutError) else "create_error"
+                ),
+                error_summary=str(e),
+            )
         try:
             if terminal_id is not None:
                 fifo_manager.stop_reader(terminal_id)
@@ -1721,6 +2052,45 @@ _DEFERRED_STARTED_STATUSES = {
     TerminalStatus.COMPLETED,
     TerminalStatus.WAITING_USER_ANSWER,
 }
+# A quota stop proves that the first delivery reached a live provider, but it
+# is not successful pickup: its provider may resume the same turn later. The
+# deferred path must observe it promptly so it never falls through to a
+# redelivery while the original task is still pending.
+_DEFERRED_STARTED_OR_QUOTA_STATUSES = _DEFERRED_STARTED_STATUSES | {
+    TerminalStatus.WAITING_QUOTA
+}
+
+
+def _quota_wait_blocked_error(
+    terminal_id: str, *, delivery_may_have_occurred: bool
+) -> TerminalInputBlockedError:
+    """Return the provider-neutral recovery contract for a quota-paused turn."""
+    return TerminalInputBlockedError(
+        f"Terminal {terminal_id} is waiting for its provider quota to reset. "
+        "Do not send more task input; retain the existing turn for reconciliation.",
+        action="wait_for_quota",
+        delivery_may_have_occurred=delivery_may_have_occurred,
+    )
+
+
+def quota_pause_may_auto_resume(terminal_id: str) -> bool:
+    """Return the provider's explicit auto-resume capability for a quota pause.
+
+    A quota UI always blocks automatic redelivery.  Some providers then resume
+    the already accepted turn at a reset time, while others require an upgrade
+    or a manual retry.  A missing/restoration-failed provider fails closed so
+    API callers never promise automatic recovery without adapter evidence.
+    """
+    try:
+        provider = provider_manager.get_provider(terminal_id)
+    except Exception:  # noqa: BLE001 -- recovery metadata must fail closed
+        logger.info(
+            "Could not resolve provider quota-resume capability for terminal %s",
+            terminal_id,
+            exc_info=True,
+        )
+        return False
+    return bool(getattr(provider, "quota_pause_may_auto_resume", False))
 
 
 def _worker_is_started_direct(terminal_id: str, provider) -> bool:
@@ -1760,6 +2130,11 @@ def _worker_is_started_direct(terminal_id: str, provider) -> bool:
             exc_info=True,
         )
         return False
+    if status == TerminalStatus.WAITING_QUOTA:
+        # A direct rendered-screen probe can lead the FIFO/monitor cache.
+        # Propagate the causal stop rather than returning False and letting a
+        # caller press Enter or paste the same task again.
+        raise _quota_wait_blocked_error(terminal_id, delivery_may_have_occurred=True)
     return status in _DEFERRED_STARTED_STATUSES
 
 
@@ -1853,6 +2228,12 @@ def redeliver_dropped_message(
     Returns True when the worker was found already started and nothing was
     sent; False when a redelivery was attempted (or deliberately skipped).
     """
+    # This guard covers the bare-Enter branch below, which intentionally
+    # bypasses send_input(). It is provider-neutral: any adapter that reports
+    # WAITING_QUOTA gets the same no-redelivery guarantee.
+    if status_monitor.get_status(terminal_id) == TerminalStatus.WAITING_QUOTA:
+        raise _quota_wait_blocked_error(terminal_id, delivery_may_have_occurred=True)
+
     if provider is None:
         try:
             provider = provider_manager.get_provider(terminal_id)
@@ -1864,20 +2245,44 @@ def redeliver_dropped_message(
     if probe_capable:
         if _worker_is_started_direct(terminal_id, provider):
             return True
-    if _message_visible_in_box(terminal_id, message):
+    prepared_redelivery: str | None = None
+    receipt_bearing = (
+        provider is not None and getattr(provider, "requires_turn_receipt", False) is True
+    )
+    if receipt_bearing:
+        prepared_redelivery = provider.prepared_input_for_redelivery()
+    message_for_box = prepared_redelivery if prepared_redelivery is not None else message
+    if _message_visible_in_box(terminal_id, message_for_box):
         logger.warning(
             "Delivery to %s unsubmitted (Enter swallowed); " "re-submitting via Enter (attempt %d)",
             terminal_id,
             attempt,
         )
-        send_special_key(terminal_id, "Enter")
+        try:
+            send_special_key(terminal_id, "Enter")
+        except Exception as exc:
+            # Once a task is visibly composed, a backend error after an Enter
+            # has no atomic "the key was not accepted" witness. The prompt may
+            # now be running. Preserve the child/inbox for reconciliation
+            # rather than letting deferred initialization classify it as a
+            # generic failure and destroy its only live evidence.
+            raise TerminalInputBlockedError(
+                f"Terminal {terminal_id} may have accepted the redelivery submit key; "
+                "reconcile before another task.",
+                action="reconcile",
+                delivery_may_have_occurred=True,
+            ) from exc
         return False
-    if full_resend_requires_probe and not probe_capable:
+    if receipt_bearing or (full_resend_requires_probe and not probe_capable):
         # No probe → cannot rule out a working worker whose prompt left the
         # pane; a full re-send could silently duplicate the task. Skip the
-        # re-send and let the caller's own deadline classify the outcome.
+        # re-send and let the caller's own deadline classify the outcome. A
+        # receipt-bearing provider is stricter even for the deferred-init
+        # path: a nonce proves a response belongs to a turn, not that the
+        # first paste was dropped, so re-pasting it could execute a
+        # side-effecting task twice with the same apparently-valid receipt.
         logger.warning(
-            "Delivery to %s not accepted and provider is not probe-capable; "
+            "Delivery to %s not accepted and provider cannot safely prove a full re-paste; "
             "skipping full re-send to avoid a duplicate task (attempt %d)",
             terminal_id,
             attempt,
@@ -1890,10 +2295,12 @@ def redeliver_dropped_message(
     )
     send_input(
         terminal_id,
-        message,
+        message_for_box,
         registry=registry,
         sender_id=sender_id,
         orchestration_type=orchestration_type,
+        prepared_input=prepared_redelivery is not None,
+        task_delivery=True,
     )
     return False
 
@@ -1912,12 +2319,22 @@ async def _confirm_worker_started_or_resubmit(
     still stuck at IDLE after all resubmit attempts. Blocking tmux/DB I/O runs
     off the loop via to_thread so concurrent deferred inits aren't frozen.
     """
-    if await wait_until_status(
-        terminal_id,
-        _DEFERRED_STARTED_STATUSES,
-        timeout=_DEFERRED_SUBMIT_CONFIRM_TIMEOUT,
-        polling_interval=0.5,
-    ):
+    async def wait_for_pickup_or_quota() -> bool:
+        """Wait for pickup evidence, surfacing quota before retry logic runs."""
+        observed = await wait_until_status(
+            terminal_id,
+            _DEFERRED_STARTED_OR_QUOTA_STATUSES,
+            timeout=_DEFERRED_SUBMIT_CONFIRM_TIMEOUT,
+            polling_interval=0.5,
+        )
+        if not observed:
+            return False
+        current = await asyncio.to_thread(status_monitor.get_status, terminal_id)
+        if current == TerminalStatus.WAITING_QUOTA:
+            raise _quota_wait_blocked_error(terminal_id, delivery_may_have_occurred=True)
+        return True
+
+    if await wait_for_pickup_or_quota():
         return True
 
     for attempt in range(1, _DEFERRED_SUBMIT_MAX_RESUBMITS + 1):
@@ -1936,12 +2353,7 @@ async def _confirm_worker_started_or_resubmit(
         )
         if already_started:
             return True
-        if await wait_until_status(
-            terminal_id,
-            _DEFERRED_STARTED_STATUSES,
-            timeout=_DEFERRED_SUBMIT_CONFIRM_TIMEOUT,
-            polling_interval=0.5,
-        ):
+        if await wait_for_pickup_or_quota():
             return True
 
     return False
@@ -1953,6 +2365,7 @@ def _schedule_deferred_init(
     initial_message: Optional[str],
     orchestration_type: Optional[OrchestrationType],
     registry: PluginRegistry | None,
+    prompt_redelivery: bool = True,
 ) -> None:
     """Kick off provider.initialize() in the background and, on success,
     deliver the initial message via send_input.
@@ -1964,15 +2377,20 @@ def _schedule_deferred_init(
     on a callback that can never arrive and a later inspect 404s. On failure
     we notify the caller's inbox (best-effort) and then tear the worker down.
 
-    ``TerminalInputBlockedError`` (the worker is parked on a WAITING_USER_ANSWER
-    prompt right after init) is NOT a teardown case: the worker is alive and
-    answerable via answer_user_prompt, so we leave it in place and only log.
+    ``TerminalInputBlockedError`` is not a teardown case. Its ``action`` tells
+    us whether an operator must answer a visible dialog or reconcile a receipt
+    whose task may already have reached the worker; neither case may trigger a
+    blind re-send.
     """
 
     async def _run() -> None:
         caller_id: Optional[str] = None
         try:
             await provider_instance.initialize()
+            # Deferred assign reaches this point only after the provider is
+            # genuinely initialized.  Keep the child ``planned`` until then;
+            # the fast HTTP 201 is not an acknowledgement from the worker.
+            await asyncio.to_thread(transition_native_child, terminal_id, "acknowledged")
             shell_command = provider_instance.shell_baseline
             if isinstance(shell_command, str) and shell_command:
                 update_terminal_shell_command(terminal_id, shell_command)
@@ -1988,17 +2406,12 @@ def _schedule_deferred_init(
                 metadata = await asyncio.to_thread(get_terminal_metadata, terminal_id)
                 if metadata:
                     caller_id = metadata.get("caller_id")
-                # Round-3 review fix (call-me-ram): a raw POST /sessions caller that
-                # supplies initial_message with no orchestration_type previously sailed
-                # straight past send_input's WAITING_USER_ANSWER guard entirely -- the
-                # guard only fires for OrchestrationType.ASSIGN/HANDOFF, so an unstated
-                # type meant no protection at all against pasting the initial task into
-                # a live choice prompt. Every call that reaches THIS function is by
-                # construction an unattended initial-task delivery (never an interactive
-                # human answer -- those go through answer_user_prompt's own separate
-                # /terminals/{id}/input call, which never routes through
-                # _schedule_deferred_init), so defaulting an unstated orchestration_type
-                # to ASSIGN here is always correct and cannot affect answer_user_prompt.
+                # Every call that reaches this function is an unattended
+                # initial-task delivery, never an interactive human answer.
+                # Keep its orchestration metadata for observability, but mark
+                # the delivery explicitly so the terminal-service safety gate
+                # remains correct even when new orchestration enum values are
+                # added later.
                 effective_orchestration_type = orchestration_type or OrchestrationType.ASSIGN
                 # send_input is blocking tmux I/O — off the loop so it can't
                 # freeze the server for concurrent requests.
@@ -2009,11 +2422,23 @@ def _schedule_deferred_init(
                     registry=registry,
                     sender_id=caller_id,
                     orchestration_type=effective_orchestration_type,
+                    task_delivery=True,
                 )
+                # tmux accepted the send.  This is a durable *sent* receipt,
+                # not a claim that a model is working yet.
+                await asyncio.to_thread(transition_native_child, terminal_id, "sent")
                 # Delivery can be silently dropped (Enter swallowed / paste lost)
-                # when the TUI isn't input-ready. Confirm the worker actually
-                # started and re-submit if not; if it never starts, surface the
-                # failure so the supervisor re-routes instead of waiting forever.
+                # when the TUI isn't input-ready. The default confirms pickup and
+                # re-submits as before. An at-most-once caller opts out of that
+                # recovery: it owns reconciliation and must not receive a second
+                # copy of a side-effecting task.
+                if not prompt_redelivery:
+                    logger.warning(
+                        "Deferred init for %s: initial prompt sent once; "
+                        "pickup is intentionally not retried",
+                        terminal_id,
+                    )
+                    return
                 started = await _confirm_worker_started_or_resubmit(
                     terminal_id,
                     initial_message,
@@ -2026,44 +2451,151 @@ def _schedule_deferred_init(
                     provider=provider_instance,
                 )
                 if not started:
-                    logger.error(
-                        "Deferred init for %s: worker never started after "
-                        "resubmits; task not delivered — notifying caller and "
-                        "tearing down.",
-                        terminal_id,
+                    receipt_governed = (
+                        getattr(provider_instance, "requires_turn_receipt", False) is True
                     )
-                    await asyncio.to_thread(
-                        _notify_caller_of_deferred_failure,
-                        terminal_id,
-                        (
-                            f"Worker {terminal_id} received the assigned task but "
-                            f"never started processing (input not accepted after "
-                            f"retries). It has been deleted — re-assign the task."
-                        ),
-                        registry,
-                        True,  # delete_worker
-                    )
+                    if receipt_governed:
+                        # A receipt-governed provider intentionally refuses a
+                        # second full paste when the first delivery is
+                        # ambiguous.  No monitor observation is not proof the
+                        # task failed: the worker may already be executing it.
+                        # Preserve its terminal and durable receipt for
+                        # reconciliation rather than deleting possible live
+                        # work just because automatic re-delivery is unsafe.
+                        logger.warning(
+                            "Deferred init for %s: receipt-bearing worker was not observed "
+                            "processing; preserving it for reconciliation.",
+                            terminal_id,
+                        )
+                        await asyncio.to_thread(
+                            transition_native_child,
+                            terminal_id,
+                            "reconcile",
+                            error_kind="delivery_unconfirmed",
+                            error_summary=(
+                                "initial receipt-bearing task was not observed processing; "
+                                "full re-delivery is unsafe"
+                            ),
+                        )
+                        await asyncio.to_thread(
+                            _notify_caller_of_deferred_failure,
+                            terminal_id,
+                            (
+                                f"Worker {terminal_id} received a receipt-bearing assigned "
+                                "task but pickup was not observed. It remains live for "
+                                "reconciliation; inspect its output before retrying."
+                            ),
+                            registry,
+                            False,  # delete_worker
+                        )
+                    else:
+                        logger.error(
+                            "Deferred init for %s: worker never started after "
+                            "resubmits; task not delivered — notifying caller and "
+                            "tearing down.",
+                            terminal_id,
+                        )
+                        await asyncio.to_thread(
+                            transition_native_child,
+                            terminal_id,
+                            "failed",
+                            error_kind="delivery_unconfirmed",
+                            error_summary="initial task was never observed processing after delivery recovery",
+                        )
+                        await asyncio.to_thread(
+                            _notify_caller_of_deferred_failure,
+                            terminal_id,
+                            (
+                                f"Worker {terminal_id} received the assigned task but "
+                                f"never started processing (input not accepted after "
+                                f"retries). It has been deleted — re-assign the task."
+                            ),
+                            registry,
+                            True,  # delete_worker
+                        )
                     return
+                await asyncio.to_thread(transition_native_child, terminal_id, "running")
         except TerminalInputBlockedError as e:
-            # The worker initialized but is parked on an interactive prompt
-            # (WAITING_USER_ANSWER). It is alive and can be driven via
-            # answer_user_prompt — do NOT delete it. Just surface the state to
-            # the supervisor so it knows delivery is pending on a prompt.
-            logger.warning(
-                "Deferred init for terminal %s: worker is waiting on a user "
-                "prompt; task not yet delivered. Leaving worker alive for "
-                "answer_user_prompt. (%s)",
+            # Do not infer the recovery path from exception wording. Receipt
+            # state after a paste is specifically ambiguous: telling the
+            # parent to answer a prompt or re-send would duplicate potentially
+            # side-effecting work. The structured action is shared by every
+            # provider, not a Gemini-specific special case.
+            action = getattr(e, "action", "answer_user_prompt")
+            if action == "answer_user_prompt":
+                logger.warning(
+                    "Deferred init for terminal %s: worker is waiting on a user "
+                    "prompt; task not yet delivered. Leaving worker alive for "
+                    "answer_user_prompt. (%s)",
+                    terminal_id,
+                    e,
+                )
+                error_kind = "input_blocked"
+                error_summary = (
+                    "worker is awaiting interactive input; task delivery was not confirmed"
+                )
+                caller_message = (
+                    f"Worker {terminal_id} is waiting on an interactive prompt; the "
+                    f"assigned task has not been delivered. Use answer_user_prompt to "
+                    f"clear the prompt, then re-send the task yourself (e.g. via "
+                    f"send_message) -- it is not automatically re-delivered once the "
+                    f"prompt is answered."
+                )
+            elif action == "reconcile":
+                logger.warning(
+                    "Deferred init for terminal %s: receipt-governed delivery is "
+                    "ambiguous; preserving worker for reconciliation. (%s)",
+                    terminal_id,
+                    e,
+                )
+                error_kind = "receipt_delivery_uncertain"
+                error_summary = str(e)
+                caller_message = (
+                    f"Worker {terminal_id} may already have received its assigned task, "
+                    "but CAO cannot safely prove delivery state. It remains live for "
+                    "reconciliation: inspect its output and receipt state first; do not "
+                    "use answer_user_prompt and do not re-send the task automatically."
+                )
+            elif action == "wait_for_quota":
+                logger.warning(
+                    "Deferred init for terminal %s: provider paused the delivered task "
+                    "for quota reset; preserving worker for reconciliation. (%s)",
+                    terminal_id,
+                    e,
+                )
+                error_kind = "quota_wait"
+                error_summary = str(e)
+                caller_message = (
+                    f"Worker {terminal_id} is waiting for its provider quota to reset. "
+                    "Its assigned task may already be running and can resume automatically; "
+                    "it remains live for reconciliation. Do not answer its UI or re-send "
+                    "the task."
+                )
+            else:
+                logger.warning(
+                    "Deferred init for terminal %s: terminal cannot safely receive input; "
+                    "preserving worker for inspection. (%s)",
+                    terminal_id,
+                    e,
+                )
+                error_kind = "terminal_input_unavailable"
+                error_summary = str(e)
+                caller_message = (
+                    f"Worker {terminal_id} cannot safely receive its assigned task. It remains "
+                    "live for inspection; do not answer a prompt or re-send work to this "
+                    "terminal until its health is reconciled."
+                )
+            await asyncio.to_thread(
+                transition_native_child,
                 terminal_id,
-                e,
+                "reconcile",
+                error_kind=error_kind,
+                error_summary=error_summary,
             )
             await asyncio.to_thread(
                 _notify_caller_of_deferred_failure,
                 terminal_id,
-                f"Worker {terminal_id} is waiting on an interactive prompt; the "
-                f"assigned task has not been delivered. Use answer_user_prompt to "
-                f"clear the prompt, then re-send the task yourself (e.g. via "
-                f"send_message) -- it is not automatically re-delivered once the "
-                f"prompt is answered.",
+                caller_message,
                 registry,
                 delete_worker=False,
             )
@@ -2077,6 +2609,13 @@ def _schedule_deferred_init(
                 terminal_id,
                 e,
                 exc_info=True,
+            )
+            await asyncio.to_thread(
+                transition_native_child,
+                terminal_id,
+                "failed",
+                error_kind="deferred_initialization_error",
+                error_summary=str(e),
             )
             await asyncio.to_thread(
                 _notify_caller_of_deferred_failure,
@@ -2237,6 +2776,10 @@ def send_input(
     sender_id: str | None = None,
     orchestration_type: OrchestrationType | None = None,
     frozen_memory: str | None = None,
+    *,
+    prepared_input: bool = False,
+    attach_turn_receipt: bool = True,
+    task_delivery: bool = False,
 ) -> bool:
     """Send input to terminal via tmux paste buffer.
 
@@ -2247,9 +2790,17 @@ def send_input(
 
     ``frozen_memory`` is forwarded UNCHANGED to :func:`inject_memory_context` and
     is otherwise none of this function's business — not inspected, not validated,
-    not logged. It is last and defaulted so existing positional callers (notably
-    ``agent_step.run_agent_step``, which passes exactly two arguments) are
-    unaffected.
+    not logged. ``prepared_input`` is an internal redelivery path: it means
+    ``message`` already includes frozen memory and a provider receipt nonce, so
+    it must be pasted byte-for-byte rather than materialised again.
+
+    ``attach_turn_receipt`` is False only for terminal control input (for
+    example ``/quit``). Interactive answers also suppress receipts implicitly
+    while the provider is waiting for a user choice. Both knobs are keyword-only
+    so existing positional callers are unaffected. ``task_delivery`` marks an
+    automated unit of work whose text must never be pasted into a provider
+    trust/authentication dialog; it is intentionally distinct from a human
+    answer sent through ``answer_user_prompt``.
     """
     try:
         metadata = get_terminal_metadata(terminal_id)
@@ -2269,6 +2820,7 @@ def send_input(
             else str(orchestration_type or "")
         )
 
+        current_status: TerminalStatus | None = None
         if provider:
             current_status = status_monitor.get_status(terminal_id)
 
@@ -2278,20 +2830,74 @@ def send_input(
             if current_status == TerminalStatus.ERROR:
                 raise TerminalInputBlockedError(
                     f"Terminal {terminal_id} provider is in ERROR state "
-                    "(provider process may have exited). Refusing to deliver input."
+                    "(provider process may have exited). Refusing to deliver input.",
+                    action="inspect",
+                )
+
+            # Provider quota surfaces are neither ready composers nor
+            # operator-owned prompts. A model-task delivery here can be
+            # interpreted as quota-panel input or be submitted later alongside
+            # an already-running turn, so refuse it for every provider instead
+            # of relying on an adapter-specific interactive-dialog opt-in.
+            if current_status == TerminalStatus.WAITING_QUOTA and (
+                task_delivery or orchestration_type is not None or attach_turn_receipt
+            ):
+                raise _quota_wait_blocked_error(
+                    terminal_id,
+                    delivery_may_have_occurred=False,
                 )
 
             if (
                 provider.blocks_orchestrated_input_while_waiting_user_answer is True
-                and orchestration_value
-                in {OrchestrationType.ASSIGN.value, OrchestrationType.HANDOFF.value}
+                # An explicit orchestration type identifies an automated
+                # dispatch, including SEND_MESSAGE and any future enum value.
+                # The only literal human answer is the direct input endpoint
+                # with neither a type nor task_delivery set.
+                and (task_delivery or orchestration_type is not None)
                 and current_status == TerminalStatus.WAITING_USER_ANSWER
             ):
                 raise TerminalInputBlockedError(
                     f"Terminal {terminal_id} is waiting for a user answer. "
                     "Use answer_user_prompt to submit a selection or approval before "
-                    f"sending {orchestration_value} input."
+                    "sending automated task input."
                 )
+
+        # A receipt-bearing provider may have survived a server restart with
+        # only a private receipt hash, never the task text or plaintext nonce.
+        # Do not overwrite that uncertain turn with a new task.  Control input
+        # (for example /quit) and a real answer to an interactive prompt stay
+        # literal, because neither is a model-task lifecycle transition.
+        receipt_task_delivery = bool(
+            provider
+            and getattr(provider, "requires_turn_receipt", False) is True
+            and attach_turn_receipt
+            and not prepared_input
+            and current_status != TerminalStatus.WAITING_USER_ANSWER
+        )
+        if (
+            receipt_task_delivery
+            and provider is not None
+            and provider.blocks_new_task_input_for_reconciliation
+        ):
+            raise TerminalInputBlockedError(
+                f"Terminal {terminal_id} has an active receipt-bearing task. "
+                "Reconcile or retrieve its verified result before sending another task.",
+                action="reconcile",
+            )
+        if (
+            prepared_input
+            and provider is not None
+            and getattr(provider, "requires_turn_receipt", False) is True
+        ):
+            # A second full paste has no atomic "not accepted" witness.  A
+            # reused nonce would merely make both executions look valid, so
+            # Receipt-bearing turns use a visible-composer bare-Enter retry or
+            # reconciliation, never automatic full redelivery.
+            raise TerminalInputBlockedError(
+                f"Terminal {terminal_id} cannot safely full-redeliver a receipt-bearing task; "
+                "reconcile the existing delivery instead.",
+                action="reconcile",
+            )
 
         # Inject memory context into the very first user message after init.
         # Phase 1 wires injection inline for every provider. The Kiro
@@ -2302,7 +2908,53 @@ def send_input(
         # plugins/webhooks see what the caller sent — not the
         # internal <cao-memory> block that we paste into the TUI.
         original_message = message
-        message = inject_memory_context(message, terminal_id, frozen_memory)
+        receipt_state: dict[str, str] | None = None
+        receipt_claimed = False
+        if not prepared_input:
+            message = inject_memory_context(message, terminal_id, frozen_memory)
+
+            # Providers with an otherwise ambiguous terminal renderer may
+            # attach a unique completion-receipt instruction to this one input
+            # epoch. Do it after memory injection so the receipt governs the
+            # whole materialised task, and before clearing/arming the monitor
+            # so an echoed prompt from an earlier turn can never satisfy the
+            # new receipt contract. A WAITING_USER_ANSWER delivery is a UI
+            # choice, not a model task; likewise terminal control input must
+            # remain literal.
+            if receipt_task_delivery and provider is not None:
+                message = provider.prepare_input(message)
+                receipt_state = provider.pending_turn_receipt_state()
+                if receipt_state is None:
+                    raise TerminalInputBlockedError(
+                        f"Terminal {terminal_id} did not produce durable receipt state for its task",
+                        action="reconcile",
+                    )
+                try:
+                    claimed = begin_terminal_turn_receipt(
+                        terminal_id,
+                        metadata["provider"],
+                        receipt_state["generation"],
+                        receipt_state["receipt_sha256"],
+                    )
+                except Exception as exc:
+                    # No paste has occurred.  Keep the local nonce blocked on
+                    # an uncertain storage error rather than risk generating a
+                    # second task whose durable claim may have succeeded.
+                    raise TerminalInputBlockedError(
+                        f"Terminal {terminal_id} could not durably prepare its task receipt; "
+                        "no input was sent. Reconcile storage before retrying.",
+                        action="reconcile",
+                    ) from exc
+                if claimed is None:
+                    # This path proves that *this* local nonce was never
+                    # claimed, so releasing it cannot erase a delivered task.
+                    provider.abandon_unpersisted_turn_receipt()
+                    raise TerminalInputBlockedError(
+                        f"Terminal {terminal_id} already has an active or removed task receipt; "
+                        "reconcile before delivery.",
+                        action="reconcile",
+                    )
+                receipt_claimed = True
 
         # Check how many Enter keys the provider needs after paste
         enter_count = provider.paste_enter_count if provider else 1
@@ -2340,17 +2992,63 @@ def send_input(
         # frames must be parsed as belonging to this turn, not as a stale
         # post-clear redraw.  StatusMonitor has already armed and cleared the
         # same dispatch boundary above.
-        if provider:
+        if provider and (
+            getattr(provider, "requires_turn_receipt", False) is not True or receipt_claimed
+        ):
             provider.mark_input_received()
 
-        get_backend().send_keys(
-            metadata["tmux_session"],
-            metadata["tmux_window"],
-            message,
-            enter_count=enter_count,
-            force_bracketed_paste=True,
-            submit_delay=provider.paste_submit_delay if provider else 0.3,
-        )
+        try:
+            get_backend().send_keys(
+                metadata["tmux_session"],
+                metadata["tmux_window"],
+                message,
+                enter_count=enter_count,
+                force_bracketed_paste=True,
+                submit_delay=provider.paste_submit_delay if provider else 0.3,
+            )
+        except Exception as exc:
+            if receipt_state is not None or task_delivery:
+                # A backend transport error has no atomic "nothing reached the
+                # pane" witness: tmux may have pasted all or part of an
+                # automated task before the caller saw the failure. This is a
+                # property of the terminal transport, not of a particular provider.
+                # Receipt-backed providers retain their durable handle; every
+                # other task delivery must still stop automatic retry and keep
+                # its worker available for reconciliation rather than marking
+                # the inbox message failed or deleting a live child.
+                raise TerminalInputBlockedError(
+                    f"Terminal {terminal_id} may have accepted input but its delivery "
+                    "outcome is uncertain; reconcile before another task.",
+                    action="reconcile",
+                    delivery_may_have_occurred=True,
+                ) from exc
+            raise
+
+        if receipt_state is not None:
+            try:
+                marked_sent = mark_terminal_turn_receipt_sent(
+                    terminal_id,
+                    receipt_state["generation"],
+                    receipt_state["receipt_sha256"],
+                )
+            except Exception as exc:
+                # tmux may have accepted the task while persistence failed;
+                # leave the prepared record/nonces intact and force an
+                # operator-visible reconciliation rather than redelivery.
+                raise TerminalInputBlockedError(
+                    f"Terminal {terminal_id} accepted input but its sent receipt is uncertain; "
+                    "reconcile before another task.",
+                    action="reconcile",
+                    delivery_may_have_occurred=True,
+                ) from exc
+            if not marked_sent:
+                raise TerminalInputBlockedError(
+                    f"Terminal {terminal_id} accepted input but its receipt was replaced or lost; "
+                    "reconcile before another task.",
+                    action="reconcile",
+                    delivery_may_have_occurred=True,
+                )
+            provider.mark_turn_receipt_sent()
 
         update_last_active(terminal_id)
         logger.info(f"Sent input to terminal: {terminal_id}")
@@ -2442,6 +3140,23 @@ def exit_terminal_cli(terminal_id: str) -> None:
     provider = provider_manager.get_provider(terminal_id)
     if provider is None:
         raise ValueError(f"Provider not found for terminal {terminal_id}")
+    # A CLI command is not a safe escape hatch from an interactive picker.
+    # Sending `/exit` through a WAITING terminal can be interpreted as a menu
+    # choice (or its Enter can accept the default), changing model/authority
+    # instead of closing the process.  Callers that need hard cleanup still
+    # follow this best-effort graceful step with delete_terminal(), which kills
+    # the owned window without answering the UI.  An operator who intends to
+    # answer a prompt must use the explicit answer path.
+    if status_monitor.get_status(terminal_id) in {
+        TerminalStatus.WAITING_USER_ANSWER,
+        TerminalStatus.WAITING_QUOTA,
+    }:
+        logger.warning(
+            "Refusing graceful CLI input for %s while an interactive or provider-owned "
+            "wait is active; delete the terminal to terminate it without changing its UI",
+            terminal_id,
+        )
+        return
     exit_command = provider.exit_cli()
     # Some providers use tmux key sequences (e.g., "C-d" for Ctrl+D) instead of
     # text commands (e.g., "/exit"). Key sequences must be sent via
@@ -2449,7 +3164,211 @@ def exit_terminal_cli(terminal_id: str) -> None:
     if exit_command.startswith(("C-", "M-")):
         send_special_key(terminal_id, exit_command)
     else:
-        send_input(terminal_id, exit_command)
+        # A CLI control command is not an agent task. In particular, do not
+        # append a per-turn receipt instruction to a provider control command.
+        send_input(terminal_id, exit_command, attach_turn_receipt=False)
+
+
+def _verify_receipt_bearing_result(
+    terminal_id: str,
+    provider: Any,
+    transcript: str,
+    result: str,
+    *,
+    rendered_viewport: bool = False,
+) -> str:
+    """Persist a receipt-backed result before releasing a task slot.
+
+    An extractor returning text alone is not enough: it may have found a
+    historical answer while the active turn is still running.  The provider
+    therefore supplies the live terminal state that witnesses its active,
+    receipt-bearing result.  A narrowly-defined post-turn blocker may witness
+    a completed *task* while the terminal stays WAITING_USER_ANSWER; the
+    returned state is published unchanged so no caller mistakes the blocked
+    UI for a free terminal.
+    """
+    if getattr(provider, "requires_turn_receipt", False) is not True:
+        return result
+    receipt_state = provider.pending_turn_receipt_state()
+    if receipt_state is None:
+        # A prior verified result may be read again.  There is no active
+        # receipt to settle, so preserve normal read-only output behavior.
+        return result
+    receipt_witness = (
+        provider.receipt_result_viewport_terminal_status
+        if rendered_viewport
+        else provider.receipt_result_terminal_status
+    )
+    terminal_status = receipt_witness(transcript, result)
+    if terminal_status is None:
+        # A provider may have rendered a specific post-answer dialog over its
+        # normal response.  Do not treat a menu as output: only an override
+        # that can recover a receipt-bearing answer and independently return a
+        # real terminal state gets through this branch.
+        post_turn_result = provider.extract_post_turn_completion_result(transcript)
+        if post_turn_result:
+            result = post_turn_result
+            terminal_status = receipt_witness(transcript, result)
+    if terminal_status is None:
+        raise OutputExtractionError(
+            "output was extractable but its active task receipt was not yet complete"
+        )
+    result_sha256 = hashlib.sha256(result.encode("utf-8")).hexdigest()
+    try:
+        verified = settle_terminal_turn_receipt_result(
+            terminal_id,
+            receipt_state["generation"],
+            receipt_state["receipt_sha256"],
+            result_sha256,
+        )
+    except Exception as exc:
+        raise OutputExtractionError(
+            "result was extracted but its durable receipt could not be verified"
+        ) from exc
+    if not verified:
+        raise OutputExtractionError(
+            "result receipt changed before verification; reconcile the terminal"
+        )
+    provider.mark_turn_receipt_result_verified()
+    # Publish the actual terminal state only after the task CAS succeeds.  For
+    # a normal renderer this is COMPLETED; a post-turn blocker remains WAITING
+    # so the API/web projection cannot claim the terminal is free.
+    status_monitor.publish_observed_status(terminal_id, terminal_status)
+    return result
+
+
+def _post_turn_receipt_candidate(
+    terminal_id: str,
+) -> Optional[tuple[Any, str, str, bool]]:
+    """Return one unpersisted, receipt-valid candidate from the live buffer.
+
+    This is intentionally a pure observation boundary.  The synchronous step
+    runner requires the same candidate on consecutive polls before it calls
+    the durable CAS, so a half-drawn terminal redraw cannot settle a native
+    child merely because it was visible once.  It first accepts a normal final
+    answer whose provider parser independently reports COMPLETED, then falls
+    back to a provider's narrowly-defined post-turn-blocker grammar.  That
+    means a stale StatusMonitor PROCESSING value cannot hide a task receipt,
+    while a receipt merely echoed in a prompt, a login, or an arbitrary menu
+    still has no terminal-state witness and is rejected.
+    """
+    provider = provider_manager.get_provider(terminal_id)
+    if (
+        provider is None
+        or getattr(provider, "requires_turn_receipt", False) is not True
+        or provider.pending_turn_receipt_state() is None
+    ):
+        return None
+    def candidate_from(transcript: str, *, viewport: bool) -> Optional[str]:
+        if not transcript:
+            return None
+        witness = (
+            provider.receipt_result_viewport_terminal_status
+            if viewport
+            else provider.receipt_result_terminal_status
+        )
+        try:
+            result = provider.extract_last_message_from_script(transcript)
+        except (OutputExtractionError, ValueError):
+            result = None
+        if result and witness(transcript, result) is not None:
+            return result
+
+        # A normal extractor may correctly reject a live picker because it is
+        # not task output.  Only an adapter-specific grammar is allowed to
+        # recover the already-complete answer behind such a blocker.
+        result = provider.extract_post_turn_completion_result(transcript)
+        if result and witness(transcript, result) is not None:
+            return result
+        return None
+
+    raw_buffer = status_monitor.get_buffer(terminal_id)
+    result = candidate_from(raw_buffer, viewport=False)
+    if result:
+        return provider, raw_buffer, result, False
+
+    # Raw pipe-pane output includes cursor motion and partial redraws.  For a
+    # provider that explicitly owns a rendered-screen detector, fall back only
+    # to tmux's *visible current viewport* -- never scrollback or a broad
+    # history tail.  The active receipt, provider state witness, two-poll
+    # caller protocol, and durable CAS still apply, so this repairs rendering
+    # transport without weakening task attribution.
+    if getattr(provider, "supports_screen_detection", False) is not True:
+        return None
+    try:
+        viewport = get_backend().get_history(
+            provider.session_name,
+            provider.window_name,
+            strip_escapes=True,
+            visible_only=True,
+        )
+    except Exception as exc:  # noqa: BLE001 -- capture is only a safe fallback witness
+        logger.debug("Could not capture current receipt viewport for %s: %s", terminal_id, exc)
+        return None
+    result = candidate_from(viewport, viewport=True)
+    if result:
+        return provider, viewport, result, True
+    return None
+
+
+def probe_post_turn_receipt_result(terminal_id: str) -> Optional[str]:
+    """Observe one receipt-valid result in the current dispatch buffer.
+
+    This is deliberately narrower than :func:`get_output`: it reads only the
+    status monitor's current post-dispatch buffer, which ``send_input`` clears
+    atomically before the paste.  A stale tmux history entry or an ordinary
+    approval/login prompt cannot satisfy it: the provider must extract a
+    result and independently witness its active durable receipt.  It does not
+    settle the receipt: callers must see the same exact candidate twice, then
+    call :func:`settle_post_turn_receipt_result`.  ``None`` means no proof yet
+    and lets the caller retain normal timeout/reconciliation semantics.
+    """
+    try:
+        candidate = _post_turn_receipt_candidate(terminal_id)
+        return candidate[2] if candidate is not None else None
+    except OutputExtractionError:
+        # A current menu or a partial redraw is not evidence.  Keep the
+        # terminal/task active and let the caller poll or reconcile; never
+        # convert a failed completion probe into success.
+        return None
+
+
+def settle_post_turn_receipt_result(terminal_id: str, expected_result: str) -> Optional[str]:
+    """CAS one already-stable post-turn candidate into the durable receipt.
+
+    The terminal is reread immediately before settlement.  A changed/dropped
+    candidate is not a retryable completion: return ``None`` so the caller
+    resumes observation with the receipt still active.
+    """
+    try:
+        candidate = _post_turn_receipt_candidate(terminal_id)
+        if candidate is None:
+            return None
+        provider, transcript, result, rendered_viewport = candidate
+        if result != expected_result:
+            return None
+        return _verify_receipt_bearing_result(
+            terminal_id,
+            provider,
+            transcript,
+            result,
+            rendered_viewport=rendered_viewport,
+        )
+    except OutputExtractionError:
+        return None
+
+
+def _fixed_extraction_tail_lines(provider: Any) -> int | None:
+    """Return a provider-pinned capture depth only when it is a real positive int.
+
+    Provider implementations are optional/dynamic, so an absent attribute can
+    be a proxy object (notably a mock or wrapper's ``__getattr__`` result).
+    Passing that object through to a backend command changes a reliable
+    fallback into a malformed capture request.  Treat anything except a plain
+    positive integer as "not declared" and use the shared escalation instead.
+    """
+    value = getattr(provider, "extraction_tail_lines", None)
+    return value if type(value) is int and value > 0 else None
 
 
 def get_output(terminal_id: str, mode: OutputMode = OutputMode.FULL) -> str:
@@ -2497,6 +3416,76 @@ def get_output(terminal_id: str, mode: OutputMode = OutputMode.FULL) -> str:
             )
 
         if mode == OutputMode.FULL:
+            # FULL is the public API's default output mode.  It cannot bypass
+            # a receipt-bearing provider's result-verification boundary: a
+            # normal dashboard/API read after Gemini finishes must settle the
+            # exact same durable receipt as LAST mode, otherwise every later
+            # task remains blocked despite the user seeing a completed answer.
+            # Legacy/replayed metadata can contain just the tmux coordinates.
+            # A full transcript read has never needed a provider for those
+            # records, so only reconstruct one when the durable terminal row
+            # actually identifies a provider.  This is deliberately not a
+            # Gemini allowlist: any registered provider can opt into receipts.
+            provider = (
+                provider_manager.get_provider(terminal_id) if metadata.get("provider") else None
+            )
+            if (
+                provider is not None
+                and getattr(provider, "requires_turn_receipt", False) is True
+                and provider.pending_turn_receipt_state() is not None
+                and provider.get_status(full_output) == TerminalStatus.COMPLETED
+            ):
+                try:
+                    result = provider.extract_last_message_from_script(full_output)
+                except ValueError as buffer_error:
+                    # The display buffer deliberately retains only the most
+                    # recent bytes.  It may still contain the active receipt
+                    # and composer while the echoed query, which the Gemini
+                    # extractor needs as its answer boundary, has rolled off.
+                    # Do not strand a completed receipt in that case: use the
+                    # same bounded-to-full history escalation as LAST solely
+                    # to recover the answer.  We continue returning the
+                    # original FULL display transcript and verify completion
+                    # against it, so a historical answer cannot substitute
+                    # for the active receipt witness.
+                    last_error: Exception = buffer_error
+                    result = None
+                    fixed_extract_lines = _fixed_extraction_tail_lines(provider)
+                    if fixed_extract_lines is not None:
+                        history_steps: list[int | None] = [fixed_extract_lines]
+                    else:
+                        history_steps = list(_ESCALATION_STEPS) + [None]
+                    for tail_lines in history_steps:
+                        if tail_lines is None:
+                            extraction_transcript = get_backend().get_history(
+                                metadata["tmux_session"],
+                                metadata["tmux_window"],
+                                full_history=True,
+                            )
+                        else:
+                            extraction_transcript = get_backend().get_history(
+                                metadata["tmux_session"],
+                                metadata["tmux_window"],
+                                tail_lines=tail_lines,
+                            )
+                        try:
+                            result = provider.extract_last_message_from_script(
+                                extraction_transcript
+                            )
+                            logger.debug(
+                                "get_output: %s recovered receipt result from %s history",
+                                terminal_id,
+                                "full" if tail_lines is None else f"{tail_lines}-line",
+                            )
+                            break
+                        except ValueError as exc:
+                            last_error = exc
+                    if result is None:
+                        raise OutputExtractionError(
+                            "Receipt-bearing task is complete but its answer boundary is no "
+                            "longer available; reconcile the terminal"
+                        ) from last_error
+                _verify_receipt_bearing_result(terminal_id, provider, full_output, result)
             return full_output
         elif mode == OutputMode.LAST:
             provider = provider_manager.get_provider(terminal_id)
@@ -2505,7 +3494,7 @@ def get_output(terminal_id: str, mode: OutputMode = OutputMode.FULL) -> str:
 
             # If the provider pins a fixed scrollback depth, honour it and skip
             # escalation — the provider knows what it needs.
-            fixed_extract_lines = getattr(provider, "extraction_tail_lines", None)
+            fixed_extract_lines = _fixed_extraction_tail_lines(provider)
             if fixed_extract_lines is not None:
                 full_output = get_backend().get_history(
                     metadata["tmux_session"],
@@ -2523,7 +3512,10 @@ def get_output(terminal_id: str, mode: OutputMode = OutputMode.FULL) -> str:
                                 metadata["tmux_window"],
                                 tail_lines=fixed_extract_lines,
                             )
-                        return provider.extract_last_message_from_script(full_output)
+                        result = provider.extract_last_message_from_script(full_output)
+                        return _verify_receipt_bearing_result(
+                            terminal_id, provider, full_output, result
+                        )
                     except ValueError as exc:
                         last_err = exc
                         logger.debug(
@@ -2557,7 +3549,9 @@ def get_output(terminal_id: str, mode: OutputMode = OutputMode.FULL) -> str:
                             terminal_id,
                             step_lines,
                         )
-                    return result
+                    return _verify_receipt_bearing_result(
+                        terminal_id, provider, full_output, result
+                    )
                 except ValueError as exc:
                     last_err = exc
                     logger.debug(
@@ -2579,7 +3573,7 @@ def get_output(terminal_id: str, mode: OutputMode = OutputMode.FULL) -> str:
             try:
                 result = provider.extract_last_message_from_script(full_output)
                 logger.debug("get_output: %s marker found in full_history", terminal_id)
-                return result
+                return _verify_receipt_bearing_result(terminal_id, provider, full_output, result)
             except ValueError:
                 pass
 
@@ -2590,6 +3584,17 @@ def get_output(terminal_id: str, mode: OutputMode = OutputMode.FULL) -> str:
             # produced a text response (e.g. only tool calls, crash, or timeout).
             actual_lines = full_output.count("\n") + 1
             overflow_threshold = int(_ESCALATION_STEPS[-1] * 0.9)
+            if (
+                getattr(provider, "requires_turn_receipt", False) is True
+                and provider.pending_turn_receipt_state() is not None
+            ):
+                # A receipt-bearing task cannot turn an extractor fallback
+                # into success.  Those strings are diagnostic evidence only;
+                # returning one would let agent_step mark a child succeeded
+                # while its active task receipt remains unverified.
+                raise OutputExtractionError(
+                    "Receipt-bearing task has no verified result; reconcile the terminal"
+                )
             if actual_lines >= overflow_threshold:
                 logger.warning(
                     "get_output: %s response marker not found, buffer near-full "

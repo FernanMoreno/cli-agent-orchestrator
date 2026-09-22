@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
@@ -19,12 +19,23 @@ class TerminalStatus(str, Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     WAITING_USER_ANSWER = "waiting_user_answer"
+    WAITING_QUOTA = "waiting_quota"
     ERROR = "error"
 
 
 class TerminalInputBlockedError(Exception):
-    """Raised when a terminal is alive but blocked on an interactive prompt that needs a human
-    (or an explicit answer_user_prompt call) to proceed -- never auto-answered.
+    """Stop an automated delivery without guessing a retry action.
+
+    ``action`` is a small, stable recovery contract for callers that must
+    decide what to tell a parent agent.  ``answer_user_prompt`` means a real
+    human-owned dialog is visible.  ``reconcile`` means a durable task receipt
+    may already describe work (including a post-paste persistence failure), so
+    retrying or answering a dialog could duplicate work.  ``inspect`` means
+    the terminal is not healthy enough to receive input. ``wait_for_quota``
+    means the provider itself paused an already-delivered turn and may resume
+    it without more input. Keeping this on the
+    shared exception lets existing callers continue catching one type while
+    preventing textual exception matching from deciding safety.
 
     Defined here (not in services/terminal_service.py, its original home) because
     providers/claude_code.py (and any other provider) needs to raise it from initialize() and
@@ -34,7 +45,15 @@ class TerminalInputBlockedError(Exception):
     unchanged so every existing `from cli_agent_orchestrator.services.terminal_service import
     TerminalInputBlockedError` caller keeps working without edits.
 
-    Three distinct raise sites share this one exception:
+    The original interactive-prompt paths keep the default
+    ``answer_user_prompt`` action. Terminal delivery code must set a more
+    conservative action explicitly whenever it cannot prove the task was not
+    accepted. ``delivery_may_have_occurred`` is narrower than ``action``: it
+    is true only when the current input was already handed to the terminal
+    backend and the caller cannot prove that it was rejected. That includes a
+    post-paste receipt-write failure *and* a transport error raised after a
+    task-delivery paste begins. Queue consumers use it to durably stop
+    automatic retry of that exact message.
     1. services/terminal_service.py's send_input(): the terminal's provider process has exited
        (status ERROR) -- refuse to type into what is now a bare shell, since queued input would
        execute as arbitrary commands.
@@ -50,11 +69,23 @@ class TerminalInputBlockedError(Exception):
        isn't {IDLE, COMPLETED} but IS a recognized "something is asking a question" signal
        (WAITING_USER_ANSWER) -- or, for the outermost fallback, genuinely never resolved within
        the init timeout despite the terminal staying alive and producing output the whole time.
-    All three are "this terminal needs a human, not a teardown" -- see terminal_service.py's own
-    _schedule_deferred_init, which catches this exception specifically to leave the terminal
-    running instead of tearing it down the way any other exception from initialize() (or from the
-    send_input it triggers on the deferred-init path) would.
+    Deferred initialization leaves all these workers alive. It communicates the
+    action rather than deleting a possibly working terminal or recommending a
+    duplicate delivery.
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        action: Literal[
+            "answer_user_prompt", "reconcile", "inspect", "wait_for_quota"
+        ] = "answer_user_prompt",
+        delivery_may_have_occurred: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.action = action
+        self.delivery_may_have_occurred = delivery_may_have_occurred
 
 
 class TerminalLimitError(Exception):

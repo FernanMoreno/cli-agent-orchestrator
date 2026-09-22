@@ -7,9 +7,11 @@ regression where the echoed launch command false-matched the idle prompt).
 
 import re
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from cli_agent_orchestrator.models.terminal import TerminalStatus
 
 
 @pytest.fixture
@@ -95,17 +97,21 @@ class TestHandleStartupPromptsBranches:
             "❯ 1. Yes, I trust this folder\n"
             "  2. No, exit\n"
         )
-        # A third frame is required because accepting trust no longer ends the
-        # handler: the model-upgrade nudge can render after it, so the loop keeps
-        # polling until the banner (or the idle gap). Without the banner frame
-        # here the mock's side_effect list runs dry mid-loop.
+        # A third frame represents the splash after the trust dialog. The
+        # handler now requires the independent rendered-composer witness rather
+        # than treating that banner as readiness, so mock that witness below.
         mock_backend.get_history.side_effect = [
             echoed_launch_cmd,
             trust_frame,
             "Welcome to Claude Code v2.1.235",
         ]
 
-        await provider._handle_startup_prompts(idle_gap=5.0)
+        with patch.object(
+            provider,
+            "_observe_initial_viewport_state",
+            new=AsyncMock(side_effect=[TerminalStatus.UNKNOWN, TerminalStatus.IDLE]),
+        ):
+            await provider._handle_startup_prompts(idle_gap=5.0)
 
         # Trust dialog accepted via Enter — proves we did not early-return on the
         # echoed "> memory_store" marker.
@@ -116,11 +122,18 @@ class TestHandleStartupPromptsBranches:
     @pytest.mark.asyncio
     @patch("cli_agent_orchestrator.providers.claude_code.asyncio.sleep")
     @patch("cli_agent_orchestrator.backends.registry._backend")
-    async def test_welcome_banner_detected_early_return(self, mock_backend, mock_sleep, provider):
-        """When welcome banner is visible, returns immediately."""
+    async def test_welcome_banner_waits_for_rendered_readiness(
+        self, mock_backend, mock_sleep, provider
+    ):
+        """The splash cannot hide a first-run dialog that renders immediately after it."""
         mock_backend.get_history.return_value = "Welcome to Claude Code v2.5.0"
 
-        await provider._handle_startup_prompts(idle_gap=1.0)
+        with patch.object(
+            provider,
+            "_observe_initial_viewport_state",
+            new=AsyncMock(return_value=TerminalStatus.IDLE),
+        ):
+            await provider._handle_startup_prompts(idle_gap=1.0)
 
     @pytest.mark.asyncio
     @patch("cli_agent_orchestrator.providers.claude_code.asyncio.sleep")

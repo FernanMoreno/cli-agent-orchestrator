@@ -249,6 +249,7 @@ def locked_atomic_write(
     lock_timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS,
     overwrite: bool = True,
     must_exist: bool = False,
+    mode: int | None = None,
 ) -> None:
     """Replace ``target``'s entire contents atomically and safely across processes.
 
@@ -281,6 +282,11 @@ def locked_atomic_write(
             a concurrent delete slip between the check and the write, turning an
             intended update back into a create. ``overwrite=False`` with
             ``must_exist=True`` is contradictory and raises ``ValueError``.
+        mode: Optional explicit permission bits for the published file. Applied
+            to the private temp file before ``os.replace``, so sensitive callers
+            never expose a umask-default target between publication and chmod.
+            When omitted, preserves an existing target mode or uses the
+            historical umask-respecting mode for a new file.
 
     Raises:
         FileExistsError: If ``target`` exists and ``overwrite`` is False.
@@ -295,6 +301,8 @@ def locked_atomic_write(
             "overwrite=False with must_exist=True can never succeed: it demands a "
             "target that exists and refuses to replace it."
         )
+    if mode is not None and (not isinstance(mode, int) or isinstance(mode, bool) or mode < 0 or mode > 0o777):
+        raise ValueError("mode must be an integer permission mask between 0 and 0o777")
 
     target.parent.mkdir(parents=True, exist_ok=True)
     lock_path = _lock_path_for(target)
@@ -309,7 +317,10 @@ def locked_atomic_write(
             raise FileExistsError(f"{target} already exists")
         if must_exist and not target.exists():
             raise FileNotFoundError(f"{target} does not exist")
-        _atomic_publish(target, content, encoding)
+        if mode is None:
+            _atomic_publish(target, content, encoding)
+        else:
+            _atomic_publish(target, content, encoding, mode=mode)
 
 
 def locked_atomic_delete(
@@ -367,7 +378,9 @@ def locked_atomic_delete(
         target.unlink()
 
 
-def _atomic_publish(target: Path, content: str, encoding: str) -> None:
+def _atomic_publish(
+    target: Path, content: str, encoding: str, *, mode: int | None = None
+) -> None:
     """Write ``content`` to ``target`` via a unique temp file + ``os.replace``.
 
     Shared by :func:`locked_atomic_rewrite` and :func:`locked_atomic_write`.
@@ -377,7 +390,7 @@ def _atomic_publish(target: Path, content: str, encoding: str) -> None:
     # Capture the mode to apply to the published file BEFORE we write —
     # tempfile.mkstemp creates the temp at 0600, so without this fixup the
     # os.replace below would downgrade a user-authored 0644 file to 0600.
-    mode = _target_mode(target)
+    publish_mode = _target_mode(target) if mode is None else mode
 
     # Unique temp file in the SAME directory as target (same filesystem,
     # so the final os.replace stays atomic) rather than a fixed
@@ -397,7 +410,7 @@ def _atomic_publish(target: Path, content: str, encoding: str) -> None:
             # Restore the target's (or umask-default) mode on the temp file
             # before the replace, so the published file keeps its intended
             # permissions rather than inheriting mkstemp's 0600.
-            os.fchmod(handle.fileno(), mode)
+            os.fchmod(handle.fileno(), publish_mode)
             os.fsync(handle.fileno())
         os.replace(temp_path, target)
     finally:

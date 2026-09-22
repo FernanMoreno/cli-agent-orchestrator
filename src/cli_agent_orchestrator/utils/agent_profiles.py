@@ -276,10 +276,35 @@ def list_agent_profiles() -> List[Dict]:
     return sorted(profiles.values(), key=lambda p: p["name"])
 
 
-def parse_agent_profile_text(resolved_text: str, profile_name: str) -> AgentProfile:
-    """Parse an AgentProfile from already-resolved markdown text."""
+def parse_agent_profile_text(
+    resolved_text: str,
+    profile_name: str,
+    *,
+    resolve_operational_fields: bool = False,
+) -> AgentProfile:
+    """Parse an AgentProfile from markdown text.
+
+    ``resolve_operational_fields`` is deliberately narrower than normal
+    ``cao env`` interpolation.  A downstream provider can need a raw profile
+    for fields it serializes into another process (for example an MCP config
+    or a role prompt) while still needing a typed local setting such as
+    ``provider_init_timeout``.  In that case only the finite operational
+    fields below are expanded before Pydantic validation.  Do not add prompt,
+    model, MCP, or container fields here: expanding those can copy a managed
+    secret across a provider boundary.
+    """
     profile_data = frontmatter.loads(resolved_text)
-    meta = profile_data.metadata
+    meta = dict(profile_data.metadata)
+    if resolve_operational_fields:
+        for field in (
+            "provider_init_timeout",
+            "engine",
+            "useLegacyMcpJson",
+            "grokNativeWorkflows",
+        ):
+            value = meta.get(field)
+            if isinstance(value, str):
+                meta[field] = resolve_env_vars(value)
     meta["system_prompt"] = profile_data.content.strip()
     # Fill in required fields if missing (Kiro profiles don't have frontmatter)
     if "name" not in meta:
@@ -371,6 +396,41 @@ def load_agent_profile(agent_name: str) -> AgentProfile:
         raise
     except Exception as e:
         raise RuntimeError(f"Failed to load agent profile '{agent_name}': {e}")
+
+
+def load_agent_profile_unresolved(
+    agent_name: str,
+    *,
+    resolve_operational_fields: bool = False,
+) -> AgentProfile:
+    """Load an agent profile without interpolating CAO-managed environment values.
+
+    Most providers use :func:`load_agent_profile`, whose interpolation is useful
+    for prompts and provider-specific launch arguments.  A consumer that writes
+    profile content into another tool's configuration must sometimes preserve a
+    ``$VAR`` reference instead: resolving it first would copy the secret from
+    CAO's managed ``.env`` into that new file.  Gemini CLI is such a consumer,
+    because its documented MCP configuration expands environment references at
+    process start.
+
+    This function intentionally performs the same source lookup and schema
+    validation as :func:`load_agent_profile`; only interpolation differs.  It
+    is not a general replacement for the resolved loader.  A consumer may
+    opt into interpolation of the small typed operational field set accepted
+    by :func:`parse_agent_profile_text`; that never expands a value written to
+    a downstream process boundary.
+    """
+    try:
+        raw_text = _read_agent_profile_source(agent_name)
+        return parse_agent_profile_text(
+            raw_text,
+            agent_name,
+            resolve_operational_fields=resolve_operational_fields,
+        )
+    except (FileNotFoundError, ValueError):
+        raise
+    except Exception as e:
+        raise RuntimeError(f"Failed to load unresolved agent profile '{agent_name}': {e}")
 
 
 def resolve_provider(agent_profile_name: str, fallback_provider: str) -> str:

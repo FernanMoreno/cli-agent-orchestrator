@@ -769,7 +769,7 @@ class GrokCliProvider(BaseProvider):
         # marker belongs to the turn that hit the limit and therefore sits
         # BEFORE the picker in the buffer.
         if last_limit_picker > max(last_completion, last_ready, last_processing):
-            return TerminalStatus.ERROR
+            return TerminalStatus.WAITING_QUOTA
 
         if last_waiting > max(last_completion, last_ready):
             return TerminalStatus.WAITING_USER_ANSWER

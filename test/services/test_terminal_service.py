@@ -1,14 +1,19 @@
 """Unit tests for terminal service get_working_directory and send_special_key functions."""
 
-from unittest.mock import MagicMock, patch
+import hashlib
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
+from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.services.terminal_service import (
     exit_terminal_cli,
     get_working_directory,
     list_siblings,
+    probe_post_turn_receipt_result,
+    quota_pause_may_auto_resume,
     send_special_key,
+    settle_post_turn_receipt_result,
 )
 
 
@@ -33,6 +38,26 @@ def test_minimax_code_uses_runtime_skills_with_soft_tool_enforcement():
 
 
 _TS = "cli_agent_orchestrator.services.terminal_service"
+
+
+class TestQuotaPauseCapability:
+    """The recovery hint is adapter data and must fail closed."""
+
+    @patch(f"{_TS}.provider_manager.get_provider")
+    def test_returns_the_provider_declared_auto_resume_capability(self, get_provider):
+        get_provider.return_value = MagicMock(quota_pause_may_auto_resume=True)
+
+        assert quota_pause_may_auto_resume("terminal-claude") is True
+
+    @patch(f"{_TS}.provider_manager.get_provider")
+    def test_manual_recovery_provider_does_not_claim_auto_resume(self, get_provider):
+        get_provider.return_value = MagicMock(quota_pause_may_auto_resume=False)
+
+        assert quota_pause_may_auto_resume("terminal-opencode") is False
+
+    @patch(f"{_TS}.provider_manager.get_provider", side_effect=RuntimeError("not restored"))
+    def test_missing_provider_never_promises_auto_recovery(self, get_provider):
+        assert quota_pause_may_auto_resume("missing-terminal") is False
 
 
 class TestTerminalServiceWorkingDirectory:
@@ -256,7 +281,7 @@ class TestExitTerminalCli:
 
         exit_terminal_cli("abcd1234")
 
-        mock_input.assert_called_once_with("abcd1234", "/exit")
+        mock_input.assert_called_once_with("abcd1234", "/exit", attach_turn_receipt=False)
         mock_special.assert_not_called()
 
     @patch(f"{_TS}.send_input")
@@ -293,6 +318,208 @@ class TestExitTerminalCli:
         mock_pm.get_provider.return_value = None
         with pytest.raises(ValueError, match="Provider not found"):
             exit_terminal_cli("deadbeef")
+
+    @pytest.mark.parametrize(
+        "blocked_status",
+        [TerminalStatus.WAITING_USER_ANSWER, TerminalStatus.WAITING_QUOTA],
+    )
+    @patch(f"{_TS}.send_input")
+    @patch(f"{_TS}.send_special_key")
+    @patch(f"{_TS}.provider_manager")
+    def test_provider_owned_wait_never_receives_exit_or_enter(
+        self,
+        mock_pm,
+        mock_special,
+        mock_input,
+        blocked_status,
+    ):
+        """Graceful cleanup must not alter an interactive or quota-owned UI."""
+        provider = MagicMock()
+        provider.exit_cli.return_value = "/exit"
+        mock_pm.get_provider.return_value = provider
+
+        with patch(f"{_TS}.status_monitor.get_status", return_value=blocked_status):
+            exit_terminal_cli("blocked-terminal")
+
+        provider.exit_cli.assert_not_called()
+        mock_input.assert_not_called()
+        mock_special.assert_not_called()
+
+
+class TestPostTurnReceiptProbe:
+    """The post-turn path observes twice, then persists exactly once."""
+
+    @patch(f"{_TS}.get_backend")
+    @patch(f"{_TS}.settle_terminal_turn_receipt_result")
+    @patch(f"{_TS}.status_monitor.publish_observed_status")
+    @patch(f"{_TS}.status_monitor.get_buffer", return_value="live dispatch buffer")
+    @patch(f"{_TS}.provider_manager")
+    def test_probe_is_read_only_and_settle_rechecks_the_live_buffer(
+        self,
+        mock_pm,
+        mock_buffer,
+        mock_publish,
+        mock_settle,
+        mock_backend,
+    ):
+        provider = MagicMock()
+        provider.requires_turn_receipt = True
+        provider.pending_turn_receipt_state.return_value = {
+            "generation": "a" * 32,
+            "receipt_sha256": "b" * 64,
+        }
+        provider.extract_last_message_from_script.side_effect = ValueError("blocked by picker")
+        provider.extract_post_turn_completion_result.return_value = "finished\nCAO_TURN_RECEIPT_x"
+        provider.receipt_result_terminal_status.return_value = TerminalStatus.WAITING_USER_ANSWER
+        mock_pm.get_provider.return_value = provider
+        mock_settle.return_value = True
+
+        assert probe_post_turn_receipt_result("receipt-terminal") == (
+            "finished\nCAO_TURN_RECEIPT_x"
+        )
+        mock_settle.assert_not_called()
+        provider.mark_turn_receipt_result_verified.assert_not_called()
+
+        assert settle_post_turn_receipt_result(
+            "receipt-terminal", "finished\nCAO_TURN_RECEIPT_x"
+        ) == "finished\nCAO_TURN_RECEIPT_x"
+        assert mock_buffer.call_count == 2
+        mock_settle.assert_called_once_with(
+            "receipt-terminal",
+            "a" * 32,
+            "b" * 64,
+            hashlib.sha256("finished\nCAO_TURN_RECEIPT_x".encode("utf-8")).hexdigest(),
+        )
+        provider.mark_turn_receipt_result_verified.assert_called_once()
+        mock_publish.assert_called_once_with(
+            "receipt-terminal", TerminalStatus.WAITING_USER_ANSWER
+        )
+        mock_backend.assert_not_called()
+
+    @patch(f"{_TS}.get_backend")
+    @patch(f"{_TS}.settle_terminal_turn_receipt_result", return_value=True)
+    @patch(f"{_TS}.status_monitor.publish_observed_status")
+    @patch(f"{_TS}.status_monitor.get_buffer", return_value="current dispatch buffer")
+    @patch(f"{_TS}.provider_manager")
+    def test_probe_accepts_a_normal_receipt_from_the_current_buffer_despite_stale_monitor_state(
+        self,
+        mock_pm,
+        _mock_buffer,
+        mock_publish,
+        mock_settle,
+        mock_backend,
+    ):
+        """A receipt is task evidence even if the monitor has not left PROCESSING."""
+        provider = MagicMock()
+        provider.requires_turn_receipt = True
+        provider.pending_turn_receipt_state.return_value = {
+            "generation": "a" * 32,
+            "receipt_sha256": "b" * 64,
+        }
+        provider.extract_last_message_from_script.return_value = "finished\nCAO_TURN_RECEIPT_x"
+        provider.receipt_result_terminal_status.return_value = TerminalStatus.COMPLETED
+        mock_pm.get_provider.return_value = provider
+
+        assert probe_post_turn_receipt_result("receipt-terminal") == (
+            "finished\nCAO_TURN_RECEIPT_x"
+        )
+        assert settle_post_turn_receipt_result(
+            "receipt-terminal", "finished\nCAO_TURN_RECEIPT_x"
+        ) == "finished\nCAO_TURN_RECEIPT_x"
+
+        provider.extract_post_turn_completion_result.assert_not_called()
+        mock_publish.assert_called_once_with("receipt-terminal", TerminalStatus.COMPLETED)
+        mock_backend.assert_not_called()
+
+    @patch(f"{_TS}.get_backend")
+    @patch(f"{_TS}.settle_terminal_turn_receipt_result", return_value=True)
+    @patch(f"{_TS}.status_monitor.publish_observed_status")
+    @patch(f"{_TS}.status_monitor.get_buffer", return_value="corrupted FIFO redraw")
+    @patch(f"{_TS}.provider_manager")
+    def test_probe_uses_the_current_visible_viewport_when_the_fifo_redraw_is_corrupted(
+        self,
+        mock_pm,
+        _mock_buffer,
+        mock_publish,
+        mock_settle,
+        mock_backend,
+    ):
+        """A visible tmux snapshot repairs byte-stream redraw corruption, not history.
+
+        Codex redraws can split a response line in the pipe-pane stream, while
+        tmux's visible viewport contains the composited, current line.  The
+        fallback is allowed only for adapters that opt into screen detection,
+        and it still requires the current turn's receipt and two caller-side
+        observations before the durable CAS.
+        """
+        provider = MagicMock()
+        provider.requires_turn_receipt = True
+        provider.supports_screen_detection = True
+        provider.pending_turn_receipt_state.return_value = {
+            "generation": "a" * 32,
+            "receipt_sha256": "b" * 64,
+        }
+        provider.session_name = "session"
+        provider.window_name = "window"
+        provider.extract_last_message_from_script.side_effect = [
+            ValueError("raw redraw is incomplete"),
+            "finished\nCAO_TURN_RECEIPT_x",
+            ValueError("raw redraw is incomplete"),
+            "finished\nCAO_TURN_RECEIPT_x",
+        ]
+        provider.extract_post_turn_completion_result.return_value = None
+        provider.receipt_result_terminal_status.return_value = None
+        provider.receipt_result_viewport_terminal_status.return_value = TerminalStatus.COMPLETED
+        mock_pm.get_provider.return_value = provider
+        mock_backend.return_value.get_history.return_value = "visible current viewport"
+
+        assert probe_post_turn_receipt_result("receipt-terminal") == (
+            "finished\nCAO_TURN_RECEIPT_x"
+        )
+        assert settle_post_turn_receipt_result(
+            "receipt-terminal", "finished\nCAO_TURN_RECEIPT_x"
+        ) == "finished\nCAO_TURN_RECEIPT_x"
+
+        mock_backend.return_value.get_history.assert_has_calls(
+            [
+                call(
+                    "session",
+                    "window",
+                    strip_escapes=True,
+                    visible_only=True,
+                ),
+                call(
+                    "session",
+                    "window",
+                    strip_escapes=True,
+                    visible_only=True,
+                ),
+            ]
+        )
+        mock_publish.assert_called_once_with("receipt-terminal", TerminalStatus.COMPLETED)
+        mock_settle.assert_called_once()
+
+    @patch(f"{_TS}.status_monitor.get_buffer", return_value="current dispatch buffer")
+    @patch(f"{_TS}.provider_manager")
+    def test_probe_rejects_an_unwitnessed_result_even_when_it_contains_a_receipt(
+        self,
+        mock_pm,
+        _mock_buffer,
+    ):
+        """An echoed receipt or half-drawn result cannot settle a live task."""
+        provider = MagicMock()
+        provider.requires_turn_receipt = True
+        provider.supports_screen_detection = False
+        provider.pending_turn_receipt_state.return_value = {
+            "generation": "a" * 32,
+            "receipt_sha256": "b" * 64,
+        }
+        provider.extract_last_message_from_script.return_value = "echoed\nCAO_TURN_RECEIPT_x"
+        provider.receipt_result_terminal_status.return_value = None
+        provider.extract_post_turn_completion_result.return_value = None
+        mock_pm.get_provider.return_value = provider
+
+        assert probe_post_turn_receipt_result("receipt-terminal") is None
 
 
 class TestListSiblingsDepthClamping:

@@ -234,7 +234,12 @@ def set_disabled_agent_dirs(dirs: List[str]) -> List[str]:
 _SERVER_DEFAULTS = {
     "mcp_request_timeout": 30,
     "event_bus_max_queue_size": 1024,
-    "provider_init_timeout": 60,
+    # A cold provider launch includes shell warm-up, CLI bootstrap, auth and
+    # MCP registration.  Sixty seconds was routinely shorter than that under
+    # concurrent cross-provider child creation, turning a healthy Claude/Codex
+    # start into a false timeout.  A profile may still choose a stricter or
+    # longer explicit budget.
+    "provider_init_timeout": 120,
     "startup_prompt_handler_timeout": 20,
     # Rolling per-terminal raw-output buffer StatusMonitor keeps for raw-path
     # status detection and GET /terminals/{id}/output (mode=full) — see
@@ -274,7 +279,7 @@ def get_server_settings() -> Dict[str, Any]:
     Returns a dict with the following keys (defaults shown):
       - mcp_request_timeout (30): Seconds to wait for MCP HTTP calls
       - event_bus_max_queue_size (1024): Max events buffered per subscriber
-      - provider_init_timeout (60): Seconds to wait for a CLI agent to reach IDLE.
+      - provider_init_timeout (120): Seconds to wait for a CLI agent to reach IDLE.
         Also the hard outer cap on total time the startup-prompt handler may run.
       - startup_prompt_handler_timeout (20): Idle gap, in seconds, between
         consecutive startup prompts (e.g. workspace trust / bypass dialogs). The

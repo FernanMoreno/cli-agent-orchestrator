@@ -182,6 +182,7 @@ class TerminalBackend(ABC):
         enter_count: int = 1,
         force_bracketed_paste: bool = False,
         submit_delay: float = 0.3,
+        plain_shell: bool = False,
     ) -> None:
         """Send text input to a window.
 
@@ -201,6 +202,9 @@ class TerminalBackend(ABC):
             submit_delay: Seconds to wait after pasting before sending Enter, so
                 a TUI (e.g. Claude Code's Ink renderer) finishes processing the
                 paste before submission. Backends without a paste step may ignore.
+            plain_shell: An explicit shell-command launch. It must be sent without
+                bracketed-paste framing even if a stale terminal mode says otherwise.
+                It is a transport property, not a permission to resend a prompt.
         """
         ...
 

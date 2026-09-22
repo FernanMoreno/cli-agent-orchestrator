@@ -1891,3 +1891,56 @@ def _cancel_impl(terminal_id: str, delete: bool = False) -> Dict[str, Any]:
         }
     except Exception as e:
         return {"success": False, "terminal_id": terminal_id, "error": str(e)}
+
+
+def _list_native_children_impl(parent_terminal_id: Optional[str] = None) -> Dict[str, Any]:
+    """Read a parent's durable child receipts, never terminal-derived guesses."""
+    parent = parent_terminal_id or _current_terminal_id()
+    if not parent:
+        return {
+            "success": False,
+            "error": "CAO_TERMINAL_ID not set — native children are scoped to a parent terminal",
+        }
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/terminals/{parent}/children",
+            headers=_auth_headers() or None,
+            timeout=_mcp_timeout(),
+        )
+        response.raise_for_status()
+        return {"success": True, "parent_terminal_id": parent, "children": response.json()}
+    except requests.HTTPError as exc:
+        detail = _extract_error_detail(exc.response, str(exc)) if exc.response is not None else str(exc)
+        return {"success": False, "parent_terminal_id": parent, "error": detail}
+    except Exception as exc:
+        return {"success": False, "parent_terminal_id": parent, "error": str(exc)}
+
+
+def _join_native_child_impl(child_id: str, timeout_seconds: float = 0.0) -> Dict[str, Any]:
+    """Boundedly join a child by its receipt, never by its rendered TUI state."""
+    if timeout_seconds < 0 or timeout_seconds > 60:
+        return {"success": False, "child_id": child_id, "error": "timeout_seconds must be 0..60"}
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/native-children/{child_id}/join",
+            params={"timeout_seconds": timeout_seconds},
+            headers=_auth_headers() or None,
+            timeout=max(_mcp_timeout(), timeout_seconds + 5.0),
+        )
+        if response.status_code == 404:
+            return {"success": False, "child_id": child_id, "error": "native child not found"}
+        response.raise_for_status()
+        payload = response.json()
+        child = payload.get("child") or {}
+        settled = bool(payload.get("settled"))
+        # Only an output-backed ``succeeded`` receipt is a successful join.
+        return {
+            "success": settled and child.get("state") == "succeeded",
+            "settled": settled,
+            "child": child,
+        }
+    except requests.HTTPError as exc:
+        detail = _extract_error_detail(exc.response, str(exc)) if exc.response is not None else str(exc)
+        return {"success": False, "child_id": child_id, "error": detail}
+    except Exception as exc:
+        return {"success": False, "child_id": child_id, "error": str(exc)}

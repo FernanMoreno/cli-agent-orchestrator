@@ -9,6 +9,8 @@ from cli_agent_orchestrator.clients.database import (
     InboxModel,
     SessionLocal,
     TerminalModel,
+    _delete_terminal_turn_receipt_rows,
+    _record_native_child_cleanup_rows,
 )
 from cli_agent_orchestrator.constants import (
     LOG_DIR,
@@ -16,7 +18,6 @@ from cli_agent_orchestrator.constants import (
     RETENTION_DAYS,
     TERMINAL_LOG_DIR,
 )
-from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services.fifo_reader import fifo_manager
 from cli_agent_orchestrator.services.memory_format import parse_index_entry
@@ -42,24 +43,40 @@ def cleanup_old_data():
             for terminal in old_terminals:
                 fifo_manager.stop_reader(terminal.id)
                 status_monitor.clear_terminal(terminal.id)
-                # A stale Grok terminal can still own a private GROK_HOME. An
-                # explicit deferred cleanup is its retry handle, so retention
-                # housekeeping must not bulk-delete that row underneath it.
-                if (
-                    terminal.provider == ProviderType.GROK_CLI.value
-                    and provider_manager.cleanup_provider(terminal.id) is False
-                ):
+                # Any provider with private runtime state may explicitly defer
+                # cleanup.  Its database row is the retry handle, so retention
+                # housekeeping must not bulk-delete it underneath that state.
+                if provider_manager.cleanup_provider(terminal.id) is False:
                     retained_terminal_ids.add(terminal.id)
                     logger.warning(
-                        "Retaining stale Grok terminal %s while cleanup is deferred", terminal.id
+                        "Retaining stale terminal %s while provider cleanup is deferred",
+                        terminal.id,
                     )
-            terminal_query = db.query(TerminalModel).filter(TerminalModel.last_active < cutoff_date)
-            if retained_terminal_ids:
-                deleted_terminals = terminal_query.filter(
-                    ~TerminalModel.id.in_(retained_terminal_ids)
-                ).delete()
+            # Delete only the identities that were actually eligible in the
+            # first pass.  Retained provider runtimes keep both their terminal
+            # record and any active receipt; every deleted terminal erases its
+            # private receipt in the SAME transaction so a later id reuse can
+            # never inherit stale lifecycle evidence.
+            terminal_ids_to_delete = [
+                terminal.id
+                for terminal in old_terminals
+                if terminal.id not in retained_terminal_ids
+            ]
+            if terminal_ids_to_delete:
+                deleted_terminals = (
+                    db.query(TerminalModel)
+                    .filter(TerminalModel.id.in_(terminal_ids_to_delete))
+                    .delete(synchronize_session=False)
+                )
+                # Keep deletion ordered with ``begin_terminal_turn_receipt``:
+                # remove the parent first, then its private lifecycle rows in
+                # this same transaction.  The receipt claim holds a write lock
+                # on the parent, so a concurrent teardown either wins before
+                # a receipt exists or deletes the receipt after its claim.
+                _record_native_child_cleanup_rows(db, terminal_ids_to_delete)
+                _delete_terminal_turn_receipt_rows(db, terminal_ids_to_delete)
             else:
-                deleted_terminals = terminal_query.delete()
+                deleted_terminals = 0
             db.commit()
             logger.info(f"Deleted {deleted_terminals} old terminals from database")
 

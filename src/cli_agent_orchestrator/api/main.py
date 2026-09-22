@@ -56,8 +56,10 @@ from cli_agent_orchestrator.cli.commands.init import seed_default_skills
 from cli_agent_orchestrator.clients.database import (
     create_inbox_message,
     get_inbox_messages,
+    get_native_child,
     get_terminal_metadata,
     init_db,
+    list_native_children,
 )
 from cli_agent_orchestrator.constants import (
     ALLOWED_HOSTS,
@@ -106,6 +108,7 @@ from cli_agent_orchestrator.models.terminal import Terminal, TerminalId, Termina
 from cli_agent_orchestrator.models.workflow import RecoveryPolicy
 from cli_agent_orchestrator.plugins import PluginRegistry
 from cli_agent_orchestrator.providers.base import OutputExtractionError
+from cli_agent_orchestrator.providers.catalog import registered_provider_descriptors
 from cli_agent_orchestrator.providers.kiro_capabilities import (
     KiroCapabilityError,
     KiroPhase0KASError,
@@ -260,6 +263,45 @@ class TerminalOutputRange(BaseModel):
     data: str
 
 
+class NativeChildReceipt(BaseModel):
+    """A durable child lifecycle record, intentionally free of prompt content."""
+
+    id: str
+    parent_terminal_id: str
+    terminal_id: str
+    provider: str
+    agent_profile: str
+    state: Literal[
+        "planned",
+        "acknowledged",
+        "sent",
+        "running",
+        "succeeded",
+        "failed",
+        "reconcile",
+        "cancelled",
+    ]
+    lease_expires_at: datetime
+    error_kind: Optional[str] = None
+    error_summary: Optional[str] = None
+    cleanup_completed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    settled_at: Optional[datetime] = None
+
+
+class NativeChildJoinResponse(BaseModel):
+    """A bounded, receipt-only join result.
+
+    ``settled=False`` is a normal outcome: it means no durable terminal result
+    arrived before the requested wait budget.  The API never promotes a TUI
+    status to success merely to make join return ``True``.
+    """
+
+    child: NativeChildReceipt
+    settled: bool
+
+
 class CreateTerminalBody(BaseModel):
     """Optional JSON body for POST /sessions/{name}/terminals.
 
@@ -272,6 +314,13 @@ class CreateTerminalBody(BaseModel):
 
     initial_message: Optional[str] = None
     initial_message_orchestration_type: Optional[str] = None
+    prompt_redelivery: bool = Field(
+        default=True,
+        description=(
+            "Whether deferred initial-message delivery may retry after pickup "
+            "cannot be confirmed. False is an explicit at-most-once policy."
+        ),
+    )
 
 
 def _check_group_size(group: Optional[List[str]]) -> Optional[List[str]]:
@@ -492,6 +541,14 @@ class RunStepRequest(BaseModel):
             "Typed as the enum so an unknown value is REJECTED with 422 at the "
             "boundary rather than silently downgraded to undeclared, which "
             "would change the verdict (SR-6)."
+        ),
+    )
+    prompt_redelivery: bool = Field(
+        default=True,
+        description=(
+            "Whether post-send pickup recovery may re-deliver the prompt. "
+            "False provides at-most-once delivery and requires caller-side "
+            "reconciliation if pickup is not observed."
         ),
     )
 
@@ -2713,28 +2770,27 @@ async def get_agent_profile_source_endpoint(
 
 @app.get("/agents/providers")
 async def list_providers_endpoint() -> List[Dict]:
-    """List available providers with installation status."""
+    """List registered adapters with install state and individual capabilities.
+
+    The response intentionally has no parent/child compatibility fields.  Job
+    authorization, rather than a provider-pair catalogue, decides which
+    selected adapters may collaborate.  ``capabilities`` only lets a caller
+    preflight the specific CAO operation it intends to request.
+    """
     import shutil
 
-    provider_binaries = {
-        "kiro_cli": "kiro-cli",
-        "claude_code": "claude",
-        "codex": "codex",
-        "hermes": "hermes",
-        "kimi_cli": "kimi",
-        "copilot_cli": "copilot",
-        "opencode_cli": "opencode",
-        "cursor_cli": "agent",
-        "antigravity_cli": "agy",
-        "omp": "omp",
-        "grok_cli": "grok",
-        "mcode": "mcode",
-    }
-    result = []
-    for provider, binary in provider_binaries.items():
-        installed = shutil.which(binary) is not None
-        result.append({"name": provider, "binary": binary, "installed": installed})
-    return result
+    return [
+        {
+            # Keep the original fields stable for existing AIPM and UI clients.
+            "name": descriptor.name,
+            "binary": descriptor.binary,
+            "installed": shutil.which(descriptor.binary) is not None,
+            # New additive contract: operational facts about this one adapter,
+            # never a list of permitted or prohibited provider partners.
+            "capabilities": descriptor.capabilities(),
+        }
+        for descriptor in registered_provider_descriptors()
+    ]
 
 
 @app.get("/settings/agent-dirs")
@@ -2889,6 +2945,7 @@ async def create_session(
     provider: Optional[str] = None,
     session_name: Optional[str] = None,
     working_directory: Optional[str] = None,
+    caller_id: Optional[TerminalId] = None,
     allowed_tools: Optional[str] = None,
     memory_manager: Optional[str] = None,
     engine: Optional[KiroEngine] = None,
@@ -2953,6 +3010,7 @@ async def create_session(
     """
     initial_message = body.initial_message if body else None
     initial_message_orchestration_type = None
+    prompt_redelivery = body.prompt_redelivery if body else True
     # Structural caps on group/metadata (call-me-ram, PR #433 review) are
     # enforced by CreateSessionBody's own field_validators above — invalid
     # values fail Pydantic body parsing and FastAPI returns 422 automatically,
@@ -2998,12 +3056,14 @@ async def create_session(
             agent_profile=agent_profile,
             session_name=session_name,
             working_directory=working_directory,
+            caller_id=caller_id,
             allowed_tools=allowed_tools_list,
             registry=get_plugin_registry(request),
             env_vars=body.env_vars if body else None,
             engine=engine,
             initial_message=initial_message,
             initial_message_orchestration_type=initial_message_orchestration_type,
+            prompt_redelivery=prompt_redelivery,
             model=model,
             use_worktree=use_worktree,
             idempotency_key=idempotency_key,
@@ -3299,6 +3359,7 @@ async def create_terminal_in_session(
             defer_init=defer_init,
             initial_message=initial_message,
             initial_message_orchestration_type=orch_type,
+            prompt_redelivery=body.prompt_redelivery if body else True,
             engine=engine,
             model=model,
             use_worktree=use_worktree,
@@ -3393,6 +3454,60 @@ async def get_terminal(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get terminal: {str(e)}",
         )
+
+
+@app.get("/terminals/{terminal_id}/children", response_model=List[NativeChildReceipt])
+async def list_terminal_children(
+    terminal_id: TerminalId,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
+) -> List[NativeChildReceipt]:
+    """List this terminal's native children from durable lifecycle receipts.
+
+    The response is deliberately independent of the child terminal's current
+    TUI state.  An expired active lease is presented as ``reconcile`` and a
+    deleted child remains visible with ``cleanup_completed_at``.
+    """
+    return [
+        NativeChildReceipt(**row)
+        for row in await asyncio.to_thread(list_native_children, terminal_id)
+    ]
+
+
+@app.get("/native-children/{child_id}", response_model=NativeChildReceipt)
+async def get_native_child_receipt(
+    child_id: str,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
+) -> NativeChildReceipt:
+    """Read one durable child receipt and reconcile an expired active lease."""
+    child = await asyncio.to_thread(get_native_child, child_id)
+    if child is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="native child not found")
+    return NativeChildReceipt(**child)
+
+
+@app.post("/native-children/{child_id}/join", response_model=NativeChildJoinResponse)
+async def join_native_child(
+    child_id: str,
+    timeout_seconds: float = Query(
+        default=0.0,
+        ge=0.0,
+        le=60.0,
+        description="Bounded wait for a durable child result; never infers success from terminal UI.",
+    ),
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
+) -> NativeChildJoinResponse:
+    """Join a child by receipts, not by a terminal screenshot or cached status."""
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while True:
+        child = await asyncio.to_thread(get_native_child, child_id)
+        if child is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="native child not found")
+        receipt = NativeChildReceipt(**child)
+        if receipt.state in {"succeeded", "failed", "reconcile", "cancelled"}:
+            return NativeChildJoinResponse(child=receipt, settled=True)
+        if asyncio.get_running_loop().time() >= deadline:
+            return NativeChildJoinResponse(child=receipt, settled=False)
+        await asyncio.sleep(min(0.25, max(0.01, deadline - asyncio.get_running_loop().time())))
 
 
 @app.patch("/terminals/{terminal_id}/group", response_model=Terminal)
@@ -3595,7 +3710,18 @@ async def send_terminal_input(
         )
         return {"success": success}
     except TerminalInputBlockedError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        # This is a machine-readable recovery contract, not a display string:
+        # callers must never infer whether a retry is safe from exception text.
+        # ``delivery_may_have_occurred`` tells a broker that re-sending the
+        # current message could duplicate work.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": str(e),
+                "action": e.action,
+                "delivery_may_have_occurred": e.delivery_may_have_occurred,
+            },
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
@@ -4055,6 +4181,7 @@ async def run_step(
             on_step_terminal_ready=on_step_terminal_ready,
             model=body.model,
             use_worktree=body.use_worktree,
+            prompt_redelivery=body.prompt_redelivery,
         )
         # Success -> transition the script step RUNNING->COMPLETED (no-op for
         # non-script callers). Before building the response so a settle failure
@@ -4114,42 +4241,58 @@ async def run_step(
         )
     except StepExecutionError as e:
         # The step did not complete successfully. Distinguish a worker that
-        # CRASHED (kind="error" -> 502 Bad Gateway) from one that RAN LONG
-        # (kind="timeout" -> 504 Gateway Timeout) so the caller can tell them
-        # apart instead of reporting every failure as a timeout. The detail is a
-        # structured object carrying terminal_id, so callers read it as a field
-        # rather than regex-scraping the message (the future engine reads it too).
-        # Transition the script step RUNNING->FAILED (no-op for non-script callers).
-        _settle_step(e.terminal_id, str(e))
-        code = status.HTTP_502_BAD_GATEWAY if e.kind == "error" else status.HTTP_504_GATEWAY_TIMEOUT
+        # CRASHED (kind="error" -> 502), RAN LONG (kind="timeout" -> 504),
+        # or remains LIVE but needs reconciliation (kind="reconcile" /
+        # ``quota_wait`` -> 409). A quota wait is deliberately not settled as
+        # failed: its provider can resume the already delivered task.
+        # The detail carries terminal_id and native_child_id so callers can
+        # inspect the actual worker rather than retrying blind.
+        # A quota pause has no terminal result and no terminal failure. Keep
+        # the script-tier row live for its reconciler rather than recording a
+        # false FAILED outcome that would make a later provider resume
+        # indistinguishable from a retry.
+        if e.kind != "quota_wait":
+            _settle_step(e.terminal_id, str(e))
+        if e.kind in {"reconcile", "quota_wait"}:
+            code = status.HTTP_409_CONFLICT
+        elif e.kind == "error":
+            code = status.HTTP_502_BAD_GATEWAY
+        else:
+            code = status.HTTP_504_GATEWAY_TIMEOUT
         raise HTTPException(
             status_code=code,
-            detail={"message": str(e), "kind": e.kind, "terminal_id": e.terminal_id},
+            detail={
+                "message": str(e),
+                "kind": e.kind,
+                "terminal_id": e.terminal_id,
+                "native_child_id": e.native_child_id,
+                "action": e.action,
+                "delivery_may_have_occurred": e.delivery_may_have_occurred,
+                # The existing task must never be retried blindly: that would
+                # duplicate work. Only an adapter with an explicit
+                # auto-continuation contract may say it can resume by itself.
+                "retryable": False,
+                "provider_may_resume": e.provider_may_resume
+                if e.kind == "quota_wait"
+                else False,
+            },
         )
     except (TimeoutError, TerminalInputBlockedError) as e:
-        # TerminalInputBlockedError (PR #539) is kept a DISTINCT type from
-        # TimeoutError rather than collapsed into it, because
-        # _schedule_deferred_init's async path genuinely needs to tell
-        # "blocked on a recognized user prompt, worker still alive" (leave it
-        # running for answer_user_prompt) apart from "generic failure, worker
-        # dead" (tear down) -- see terminal_service.py's own
-        # _schedule_deferred_init. run_step never goes through that deferred
-        # path, though: run_agent_step calls terminal_service.send_input with
-        # no orchestration_type, so the WAITING_USER_ANSWER guard can never
-        # fire here -- the only producer reachable from run_step is
-        # send_input's ERROR-state guard (a terminal whose provider process
-        # has already exited, or flips to ERROR between the readiness wait
-        # and the send). Since run_step is the SYNCHRONOUS caller (handoff
-        # MCP client's step call, and the future run engine), there is no
-        # deferred worker to keep alive either way -- the call has simply
-        # failed to complete, so this maps to the same kind="timeout" / 504
-        # outcome as a plain TimeoutError. This preserves the pre-PR-#539 504
-        # status code for this exact failure instead of silently falling
-        # through to the generic kind-less 500 below.
+        # ``run_agent_step`` translates post-creation input blocks into a
+        # StepExecutionError carrying the terminal reconciliation handle. This
+        # narrow arm remains for failures before a terminal exists.
         _settle_step(None, str(e))
+        detail = {"message": str(e), "kind": "timeout", "terminal_id": None}
+        if isinstance(e, TerminalInputBlockedError):
+            detail.update(
+                {
+                    "action": e.action,
+                    "delivery_may_have_occurred": e.delivery_may_have_occurred,
+                }
+            )
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail={"message": str(e), "kind": "timeout", "terminal_id": None},
+            detail=detail,
         )
     except (KiroPhase0KASError, KiroCapabilityError) as e:
         # Ordered before the ValueError arm they subclass: an engine rejection is
@@ -6717,7 +6860,8 @@ async def get_inbox_messages_endpoint(
     Args:
         terminal_id: Terminal ID to get messages for
         limit: Maximum number of messages to return (default: 10, max: 100)
-        status_param: Optional filter by message status ('pending', 'delivered', 'failed')
+        status_param: Optional filter by message status ('pending', 'delivered',
+            'reconcile', 'failed')
 
     Returns:
         List of inbox messages with sender_id, message, created_at, status
@@ -6731,7 +6875,10 @@ async def get_inbox_messages_endpoint(
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid status: {status_param}. Valid values: pending, delivered, failed",
+                    detail=(
+                        f"Invalid status: {status_param}. Valid values: pending, delivered, "
+                        "reconcile, failed"
+                    ),
                 )
 
         # Get messages using existing database function

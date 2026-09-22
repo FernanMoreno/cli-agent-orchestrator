@@ -182,9 +182,8 @@ def _raw_processing_frame() -> str:
     )
 
 
-def test_weekly_limit_picker_after_stale_waiting_is_error():
-    """grok 1.0.13's weekly-limit picker classifies as ERROR so a blocking
-    handoff fails immediately instead of reporting PROCESSING until timeout.
+def test_weekly_limit_picker_after_stale_waiting_is_waiting_quota():
+    """Grok's explicit weekly-limit picker is a capacity pause, not a crash.
 
     Guards the issue #756 regression: the stale "Waiting for response…"/
     "Esc:cancel" PROCESSING marker left by the turn that hit the limit still
@@ -193,7 +192,7 @@ def test_weekly_limit_picker_after_stale_waiting_is_error():
     this pane previously reported PROCESSING indefinitely.
     """
     output = "Waiting for response…\nEsc:cancel\n" + _limit_picker()
-    assert make_provider().get_status(output) == TerminalStatus.ERROR
+    assert make_provider().get_status(output) == TerminalStatus.WAITING_QUOTA
 
 
 def test_generic_picker_with_tab_next_answer_is_waiting_user_answer():
@@ -216,8 +215,8 @@ def test_generic_picker_with_tab_next_answer_is_waiting_user_answer():
     assert make_provider().get_status(picker) == TerminalStatus.WAITING_USER_ANSWER
 
 
-def test_raw_limit_picker_after_stale_processing_is_error():
-    """The captured picker still classifies as ERROR when fed as a raw frame.
+def test_raw_limit_picker_after_stale_processing_is_waiting_quota():
+    """The captured picker remains a quota pause when fed as a raw frame.
 
     Positive control for the recency ordering added below: the picker is the
     newest structure in the append-only buffer, so the stale
@@ -225,7 +224,7 @@ def test_raw_limit_picker_after_stale_processing_is_error():
     must not pull the pane back to PROCESSING.
     """
     output = _raw_processing_frame() + _raw_limit_picker()
-    assert make_provider().get_status(output) == TerminalStatus.ERROR
+    assert make_provider().get_status(output) == TerminalStatus.WAITING_QUOTA
 
 
 def test_limit_picker_erased_by_clear_screen_before_processing_is_processing():
