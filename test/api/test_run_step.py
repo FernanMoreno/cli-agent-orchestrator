@@ -248,6 +248,115 @@ class TestRunStepEndpoint:
         assert detail["kind"] == "error"
         assert detail["terminal_id"] == "abc12345"
 
+    def test_reconcile_maps_to_409_with_the_live_terminal_handle(self, client):
+        """A blocked live child must be inspectable, not misreported as a timeout."""
+        with patch(
+            _RUN_STEP,
+            new=AsyncMock(
+                side_effect=StepExecutionError(
+                    "terminal abc12345 cannot accept this task yet",
+                    kind="reconcile",
+                    terminal_id="abc12345",
+                    native_child_id="child-reconcile-1",
+                )
+            ),
+        ):
+            resp = client.post(TERMINALS_RUN_STEP_ROUTE, json=_body())
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert detail["kind"] == "reconcile"
+        assert detail["terminal_id"] == "abc12345"
+        assert detail["native_child_id"] == "child-reconcile-1"
+        assert detail["action"] is None
+        assert detail["delivery_may_have_occurred"] is False
+
+    def test_quota_wait_maps_to_409_without_marking_the_task_retryable(self, client):
+        """The existing task may resume, but repeating this request would duplicate it."""
+        with patch(
+            _RUN_STEP,
+            new=AsyncMock(
+                side_effect=StepExecutionError(
+                    "terminal abc12345 is waiting for its provider quota to reset",
+                    kind="quota_wait",
+                    terminal_id="abc12345",
+                    native_child_id="child-quota-1",
+                    action="wait_for_quota",
+                    delivery_may_have_occurred=True,
+                    provider_may_resume=True,
+                )
+            ),
+        ):
+            response = client.post(TERMINALS_RUN_STEP_ROUTE, json=_body())
+
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert detail["kind"] == "quota_wait"
+        assert detail["terminal_id"] == "abc12345"
+        assert detail["native_child_id"] == "child-quota-1"
+        assert detail["action"] == "wait_for_quota"
+        assert detail["delivery_may_have_occurred"] is True
+        assert detail["retryable"] is False
+        assert detail["provider_may_resume"] is True
+
+    def test_manual_quota_pause_never_claims_the_provider_will_resume(self, client):
+        """A quota UI that needs an upgrade or retry is still not retryable.
+
+        It differs from Claude's auto-continuation panel only in the provider's
+        ability to resume the already-delivered turn by itself.
+        """
+        with patch(
+            _RUN_STEP,
+            new=AsyncMock(
+                side_effect=StepExecutionError(
+                    "terminal abc12345 is waiting for provider capacity",
+                    kind="quota_wait",
+                    terminal_id="abc12345",
+                    action="wait_for_quota",
+                    delivery_may_have_occurred=True,
+                    provider_may_resume=False,
+                )
+            ),
+        ):
+            response = client.post(TERMINALS_RUN_STEP_ROUTE, json=_body())
+
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert detail["kind"] == "quota_wait"
+        assert detail["retryable"] is False
+        assert detail["provider_may_resume"] is False
+
+    @pytest.mark.parametrize(
+        ("action", "delivery_may_have_occurred"),
+        [
+            ("answer_user_prompt", False),
+            ("reconcile", True),
+        ],
+        ids=["operator-dialog", "post-paste-uncertain"],
+    )
+    def test_reconcile_response_preserves_blocked_input_recovery_contract(
+        self, client, action, delivery_may_have_occurred
+    ):
+        """A remote run-step parent gets the same remedy as local callers."""
+        with patch(
+            _RUN_STEP,
+            new=AsyncMock(
+                side_effect=StepExecutionError(
+                    "terminal abc12345 cannot accept this task yet",
+                    kind="reconcile",
+                    terminal_id="abc12345",
+                    action=action,
+                    delivery_may_have_occurred=delivery_may_have_occurred,
+                )
+            ),
+        ):
+            response = client.post(TERMINALS_RUN_STEP_ROUTE, json=_body())
+
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert detail["action"] == action
+        assert detail["delivery_may_have_occurred"] is delivery_may_have_occurred
+
     def test_value_error_maps_to_404(self, client):
         with patch(_RUN_STEP, new=AsyncMock(side_effect=ValueError("Terminal 'x' not found"))):
             resp = client.post(TERMINALS_RUN_STEP_ROUTE, json=_body())
@@ -396,3 +505,5 @@ class TestRunStepEndpoint:
         assert resp.status_code == 504
         detail = resp.json()["detail"]
         assert detail["kind"] == "timeout"
+        assert detail["action"] == "answer_user_prompt"
+        assert detail["delivery_may_have_occurred"] is False

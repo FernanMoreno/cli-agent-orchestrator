@@ -3,7 +3,7 @@
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -37,18 +37,69 @@ class TestCleanupOldData:
         assert mock_db.query.called
         assert mock_db.commit.called
 
+    @patch("cli_agent_orchestrator.services.cleanup_service._delete_terminal_turn_receipt_rows")
+    @patch("cli_agent_orchestrator.services.cleanup_service._record_native_child_cleanup_rows")
     @patch("cli_agent_orchestrator.services.cleanup_service.provider_manager")
     @patch("cli_agent_orchestrator.services.cleanup_service.SessionLocal")
     @patch("cli_agent_orchestrator.services.cleanup_service.TERMINAL_LOG_DIR")
     @patch("cli_agent_orchestrator.services.cleanup_service.LOG_DIR")
     @patch("cli_agent_orchestrator.services.cleanup_service.RETENTION_DAYS", 7)
     def test_cleanup_old_data_retains_grok_row_when_provider_cleanup_is_deferred(
-        self, mock_log_dir, mock_terminal_log_dir, mock_session_local, mock_provider_manager
+        self,
+        mock_log_dir,
+        mock_terminal_log_dir,
+        mock_session_local,
+        mock_provider_manager,
+        mock_record_native_child_cleanup,
+        mock_delete_turn_receipts,
     ):
-        """Retention cleanup keeps the only retry handle for a private Grok home."""
+        """A retained terminal also retains its child-cleanup and receipt state."""
         mock_db = MagicMock()
         mock_session_local.return_value.__enter__.return_value = mock_db
         old_terminal = MagicMock(id="retained-grok", provider="grok_cli")
+        old_terminal_query = MagicMock()
+        inbox_query = MagicMock()
+        idempotency_query = MagicMock()
+        mock_db.query.side_effect = [
+            old_terminal_query,
+            inbox_query,
+            idempotency_query,
+        ]
+        old_terminal_query.filter.return_value.all.return_value = [old_terminal]
+        inbox_query.filter.return_value.delete.return_value = 0
+        idempotency_query.filter.return_value.delete.return_value = 0
+        mock_provider_manager.cleanup_provider.return_value = False
+        mock_log_dir.exists.return_value = False
+        mock_terminal_log_dir.exists.return_value = False
+
+        cleanup_old_data()
+
+        mock_provider_manager.cleanup_provider.assert_called_once_with("retained-grok")
+        mock_record_native_child_cleanup.assert_not_called()
+        mock_delete_turn_receipts.assert_not_called()
+        assert mock_db.query.call_count == 3
+
+    @patch("cli_agent_orchestrator.services.cleanup_service._delete_terminal_turn_receipt_rows")
+    @patch("cli_agent_orchestrator.services.cleanup_service._record_native_child_cleanup_rows")
+    @patch("cli_agent_orchestrator.services.cleanup_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.cleanup_service.SessionLocal")
+    @patch("cli_agent_orchestrator.services.cleanup_service.TERMINAL_LOG_DIR")
+    @patch("cli_agent_orchestrator.services.cleanup_service.LOG_DIR")
+    @patch("cli_agent_orchestrator.services.cleanup_service.RETENTION_DAYS", 7)
+    def test_cleanup_deletes_receipts_and_native_children_for_only_deleted_terminals(
+        self,
+        mock_log_dir,
+        mock_terminal_log_dir,
+        mock_session_local,
+        mock_provider_manager,
+        mock_record_native_child_cleanup,
+        mock_delete_turn_receipts,
+    ):
+        """Provider-deferred terminal rows never leak into destructive cleanup batches."""
+        mock_db = MagicMock()
+        mock_session_local.return_value.__enter__.return_value = mock_db
+        retained_terminal = MagicMock(id="retained-provider", provider="grok_cli")
+        deleted_terminal = MagicMock(id="delete-me", provider="mock_cli")
         old_terminal_query = MagicMock()
         terminal_delete_query = MagicMock()
         inbox_query = MagicMock()
@@ -59,18 +110,30 @@ class TestCleanupOldData:
             inbox_query,
             idempotency_query,
         ]
-        old_terminal_query.filter.return_value.all.return_value = [old_terminal]
-        terminal_delete_query.filter.return_value.filter.return_value.delete.return_value = 0
+        old_terminal_query.filter.return_value.all.return_value = [
+            retained_terminal,
+            deleted_terminal,
+        ]
+        terminal_delete_query.filter.return_value.delete.return_value = 1
         inbox_query.filter.return_value.delete.return_value = 0
         idempotency_query.filter.return_value.delete.return_value = 0
-        mock_provider_manager.cleanup_provider.return_value = False
+        mock_provider_manager.cleanup_provider.side_effect = [False, True]
         mock_log_dir.exists.return_value = False
         mock_terminal_log_dir.exists.return_value = False
 
         cleanup_old_data()
 
-        mock_provider_manager.cleanup_provider.assert_called_once_with("retained-grok")
-        terminal_delete_query.filter.return_value.filter.assert_called_once()
+        mock_provider_manager.cleanup_provider.assert_has_calls(
+            [
+                call("retained-provider"),
+                call("delete-me"),
+            ]
+        )
+        mock_record_native_child_cleanup.assert_called_once_with(mock_db, ["delete-me"])
+        mock_delete_turn_receipts.assert_called_once_with(mock_db, ["delete-me"])
+        terminal_delete_query.filter.return_value.delete.assert_called_once_with(
+            synchronize_session=False
+        )
 
     @patch("cli_agent_orchestrator.services.cleanup_service.status_monitor")
     @patch("cli_agent_orchestrator.services.cleanup_service.fifo_manager")

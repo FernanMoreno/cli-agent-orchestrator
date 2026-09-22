@@ -15,10 +15,18 @@ class OrchestrationType(str, Enum):
 
 
 class MessageStatus(str, Enum):
-    """Message status enumeration."""
+    """Durable delivery state for an inbox message.
+
+    ``RECONCILE`` is deliberately distinct from ``PENDING``. It means a
+    terminal may already have accepted the message, but CAO lost the durable
+    post-paste acknowledgement. Retrying a ``RECONCILE`` message automatically
+    could execute the same task twice, so only an explicit reconciliation flow
+    may resolve it.
+    """
 
     PENDING = "pending"
     DELIVERED = "delivered"
+    RECONCILE = "reconcile"
     FAILED = "failed"
 
 

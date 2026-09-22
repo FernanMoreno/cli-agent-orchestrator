@@ -248,6 +248,53 @@ APPROVAL_MENU_CONTINUATION_PATTERN = r"^[^\S\n]{5,}\S"
 # would reintroduce exactly the enumeration fragility described above.
 APPROVAL_MENU_MIN_OPTIONS = 2
 
+# Codex can offer a model switch *after* it has already rendered the final
+# answer.  This is not an approval for the task: accepting the default changes
+# the model, so CAO must never press Enter.  The grammar is intentionally
+# narrower than the generic numbered-menu detector below.  It is used only as
+# a post-turn receipt witness, never to turn an arbitrary blocking menu into a
+# completion signal.
+RATE_LIMIT_DIALOG_HEADER_PATTERN = r"^\s*Approaching rate limits\s*$"
+RATE_LIMIT_DIALOG_QUESTION_PATTERN = (
+    r"^\s*Switch to (?P<model>\S+) for lower credit usage\?\s*$"
+)
+# This is deliberately not the generic numbered-menu grammar.  It is the
+# exact three-choice rate-limit picker that Codex renders after a response.
+# The matching model token binds the question to option 1, preventing an
+# arbitrary (or quoted) menu from borrowing the title alone.
+RATE_LIMIT_DIALOG_OPTION_1_PATTERN = (
+    r"^(?P<cursor>›[^\S\n]+)?1\.[^\S\n]+Switch to (?P<model>\S+)"
+    r"(?:[^\S\n]{2,}\S.*)?\s*$"
+)
+RATE_LIMIT_DIALOG_OPTION_2_PATTERN = (
+    r"^(?P<cursor>›[^\S\n]+)?2\.[^\S\n]+Keep current model\s*$"
+)
+RATE_LIMIT_DIALOG_OPTION_3_PATTERN = (
+    r"^(?P<cursor>›[^\S\n]+)?3\.[^\S\n]+Keep current model "
+    r"\(never show again\)\s*$"
+)
+RATE_LIMIT_DIALOG_CONFIRM_PATTERN = r"^\s*Press enter to confirm or esc to go back\s*$"
+
+# The interactive Codex TUI distinguishes a proactive model-switch prompt
+# (``Approaching rate limits`` above) from a real
+# ``CodexErrorInfo::UsageLimitExceeded``.  The latter includes one of these
+# protocol-owned sentences, possibly prefixed by the TUI's ``Error:`` label.
+# Keep this to documented complete prefixes instead of treating generic 429,
+# "limit", or "credits" prose as a quota pause: those words occur routinely
+# in task output and server-overload messages.
+CODEX_EXHAUSTED_QUOTA_PATTERN = re.compile(
+    r"^(?:Error:\s*)?(?:"
+    r"You've hit your usage limit(?: for [^.]+)?\."
+    r"|Your workspace is out of credits\. (?:Add credits to continue|"
+    r"Ask your workspace owner to refill in order to continue)\."
+    r"|You hit your spend cap set in your workspace\. "
+    r"Increase your spend cap to continue\."
+    r"|You hit your spend cap set by the owner of your workspace\. "
+    r"Ask an owner to increase your spend cap to continue\."
+    r")",
+    re.IGNORECASE,
+)
+
 # Codex's boxed command-approval modal:
 #   ╭─ Command Approval Required ─╮
 #   │ [a] Accept  [d] Decline     │
@@ -709,6 +756,157 @@ def _has_approval_prompt_in_bottom(clean_output: str) -> bool:
     return options >= APPROVAL_MENU_MIN_OPTIONS
 
 
+def _transcript_before_active_rate_limit_dialog(script_output: str) -> Optional[str]:
+    """Return the transcript before Codex's live post-answer rate-limit picker.
+
+    This is deliberately a parser for one known, bottom-anchored Codex dialog,
+    not a loose search for rate-limit words.  A response which merely discusses
+    quota must not become task success, nor may a normal command/login/model
+    picker be confused with this post-turn UX.  Callers still have to verify
+    the per-turn receipt in the extracted answer before accepting its result.
+    """
+    clean_output = strip_terminal_escapes(script_output)
+    lines = clean_output.splitlines(keepends=True)
+    if not lines:
+        return None
+
+    header_index = next(
+        (
+            index
+            for index in range(len(lines) - 1, -1, -1)
+            if re.fullmatch(RATE_LIMIT_DIALOG_HEADER_PATTERN, lines[index].rstrip("\r\n"), re.I)
+        ),
+        None,
+    )
+    if header_index is None:
+        return None
+
+    dialog_lines = [line.rstrip("\r\n") for line in lines[header_index:]]
+
+    def next_nonempty(index: int) -> Optional[int]:
+        for candidate in range(index, len(dialog_lines)):
+            if dialog_lines[candidate].strip():
+                return candidate
+        return None
+
+    # The rate-limit picker is intentionally parsed as a complete, ordered
+    # grammar.  A broad numbered-menu match is acceptable for the conservative
+    # "WAITING" detector but not for turning a blocked terminal's *task* into
+    # success.  Keep the cursor column-0 rule: indented copied prose must not
+    # impersonate the live TUI selection.
+    question_index = next_nonempty(1)
+    if question_index is None:
+        return None
+    question = re.fullmatch(
+        RATE_LIMIT_DIALOG_QUESTION_PATTERN,
+        dialog_lines[question_index],
+        re.I,
+    )
+    if question is None:
+        return None
+
+    option_1_index = next_nonempty(question_index + 1)
+    if option_1_index is None:
+        return None
+    option_1 = re.fullmatch(
+        RATE_LIMIT_DIALOG_OPTION_1_PATTERN,
+        dialog_lines[option_1_index].lstrip(),
+        re.I,
+    )
+    if option_1 is None or option_1.group("model").casefold() != question.group("model").casefold():
+        return None
+
+    # Codex may wrap the explanatory suffix of option 1.  Those continuation
+    # rows belong to that option only; any other intervening prose rejects the
+    # dialog rather than being silently skipped.
+    option_2_index = next_nonempty(option_1_index + 1)
+    while (
+        option_2_index is not None
+        and re.match(APPROVAL_MENU_CONTINUATION_PATTERN, dialog_lines[option_2_index])
+    ):
+        option_2_index = next_nonempty(option_2_index + 1)
+    if option_2_index is None:
+        return None
+    option_2 = re.fullmatch(
+        RATE_LIMIT_DIALOG_OPTION_2_PATTERN,
+        dialog_lines[option_2_index].lstrip(),
+        re.I,
+    )
+    if option_2 is None:
+        return None
+
+    option_3_index = next_nonempty(option_2_index + 1)
+    if option_3_index is None:
+        return None
+    option_3 = re.fullmatch(
+        RATE_LIMIT_DIALOG_OPTION_3_PATTERN,
+        dialog_lines[option_3_index].lstrip(),
+        re.I,
+    )
+    if option_3 is None:
+        return None
+
+    # A selected choice is rendered at the transcript gutter.  Requiring that
+    # exact position means an indented copy of the menu in an answer cannot
+    # satisfy the post-turn path.  It also permits an operator who has moved
+    # selection from the default option 1 to option 2 or 3.
+    options = (
+        (dialog_lines[option_1_index], option_1),
+        (dialog_lines[option_2_index], option_2),
+        (dialog_lines[option_3_index], option_3),
+    )
+    selected = [
+        line
+        for line, match in options
+        if match.group("cursor") is not None and line.startswith("›")
+    ]
+    if len(selected) != 1:
+        return None
+
+    confirm_index = next_nonempty(option_3_index + 1)
+    if confirm_index is None or not re.fullmatch(
+        RATE_LIMIT_DIALOG_CONFIRM_PATTERN,
+        dialog_lines[confirm_index],
+        re.I,
+    ):
+        return None
+    if not all(_is_chrome_only(line) for line in dialog_lines[confirm_index + 1 :]):
+        return None
+    return "".join(lines[:header_index]).rstrip()
+
+
+def _has_active_exhausted_quota(clean_output: str) -> bool:
+    """Recognise Codex's documented capacity-exhaustion message at the live edge.
+
+    A model can discuss or quote the same words in its answer.  For each
+    candidate we therefore find the preceding user turn *before* considering
+    the candidate line itself: ``You've`` is otherwise indistinguishable from
+    the generic ``You...`` transcript prefix.  If the model has replied since
+    that turn, the candidate is transcript content.  Only the rendered tail is
+    inspected, so stale errors in scrollback cannot park a new turn.
+    """
+    lines = clean_output.splitlines()
+    tail_start = max(0, len(lines) - 25)
+    for index in range(tail_start, len(lines)):
+        line = lines[index].strip()
+        if CODEX_EXHAUSTED_QUOTA_PATTERN.match(line) is None:
+            continue
+
+        preceding = "\n".join(lines[:index])
+        last_user = None
+        for user_match in re.finditer(USER_PREFIX_PATTERN, preceding, re.IGNORECASE | re.MULTILINE):
+            last_user = user_match
+        if last_user is not None:
+            if _find_assistant_marker(preceding[last_user.start() :]) is not None:
+                continue
+        elif not line.casefold().startswith("error:"):
+            # A bare sentence with no active user-turn context can be copied
+            # prose; only Codex's explicit error-labelled form is decisive.
+            continue
+        return True
+    return False
+
+
 def _has_startup_idle_composer(clean_output: str) -> bool:
     """Return True when the bottom of the pane shows Codex's idle composer."""
     all_lines = clean_output.splitlines()
@@ -821,6 +1019,11 @@ class ProviderError(Exception):
 
 class CodexProvider(BaseProvider):
     """Provider for Codex CLI tool integration."""
+
+    # Codex's interactive output can be obscured by a post-turn model-switch
+    # picker.  The shared BaseProvider contract attaches a per-task receipt so
+    # CAO can distinguish a real answer from stale scrollback or menu chrome.
+    requires_turn_receipt = True
 
     # Codex redraws its inline TUI in place. The append-only pipe-pane stream
     # therefore retains transient progress frames (notably MCP startup) after
@@ -1343,6 +1546,16 @@ class CodexProvider(BaseProvider):
             last_user and _find_assistant_marker(output_after_last_user) is not None
         )
 
+        # Codex reports a fully consumed plan/workspace budget through a
+        # documented UsageLimitExceeded message.  It is distinct from the
+        # near-limit model picker below: quota exhaustion pauses the existing
+        # turn and must prevent any automatic task redelivery.  The helper is
+        # tail-anchored and rejects assistant transcript text, so an agent
+        # explaining a quota error cannot falsely park an otherwise completed
+        # task.
+        if _has_active_exhausted_quota(clean_output):
+            return TerminalStatus.WAITING_QUOTA
+
         # Check trust prompt early — the trust menu uses › which matches the idle prompt
         # pattern, and PROCESSING_PATTERN matches "running" in "You are running Codex in..."
         if re.search(TRUST_PROMPT_PATTERN, clean_output):
@@ -1679,6 +1892,84 @@ class CodexProvider(BaseProvider):
             raise ValueError("Empty Codex response - no content found")
 
         return final_answer
+
+    def extract_post_turn_completion_result(self, transcript: str) -> Optional[str]:
+        """Recover a final answer hidden by Codex's active rate-limit picker.
+
+        The visible terminal intentionally remains blocked.  This helper only
+        accepts the exact post-answer picker and extracts an assistant cell
+        ending in the *active* per-turn receipt.  It deliberately does not use
+        :meth:`extract_last_message_from_script`: a raw pipe-pane redraw can
+        contain an echoed multiline prompt with the receipt instruction, and a
+        generic whole-transcript extractor cannot prove whether that copy was
+        input or output.
+        """
+        before_dialog = _transcript_before_active_rate_limit_dialog(transcript)
+        receipt = self._pending_turn_receipt
+        if not before_dialog or receipt is None:
+            return None
+
+        clean_output = strip_terminal_escapes(before_dialog)
+        receipt_matches = list(
+            re.finditer(rf"(?m)^{re.escape(receipt)}$", clean_output)
+        )
+        if not receipt_matches:
+            return None
+        receipt_match = receipt_matches[-1]
+
+        # The receipt also appears in CAO's just-submitted prompt.  Anchor the
+        # result after the last user cell before the *last* active receipt and
+        # require a non-tool assistant cell in between.  If a redraw makes the
+        # cell ordering ambiguous we fail closed and let normal reconciliation
+        # handle it rather than converting an echoed instruction into success.
+        user_cells = [
+            match
+            for match in re.finditer(USER_PREFIX_PATTERN, clean_output, re.IGNORECASE | re.MULTILINE)
+            if match.start() < receipt_match.start()
+        ]
+        if not user_cells:
+            return None
+        current_user = user_cells[-1]
+        after_user = clean_output[current_user.start() : receipt_match.end()]
+        response_marker = _find_response_marker(after_user)
+        if response_marker is None:
+            return None
+        response_start = current_user.start() + response_marker.start()
+        if response_start <= current_user.start() or response_start >= receipt_match.start():
+            return None
+        if any(
+            match.start() > response_start
+            for match in re.finditer(
+                USER_PREFIX_PATTERN,
+                clean_output[: receipt_match.start()],
+                re.IGNORECASE | re.MULTILINE,
+            )
+        ):
+            return None
+
+        result = clean_output[response_start : receipt_match.end()].strip()
+        result = re.sub(r"^(?:assistant|codex|agent)\s*:\s*", "", result, count=1, flags=re.I)
+        result = re.sub(r"^\s*•\s*", "", result, count=1)
+        return result or None
+
+    def receipt_result_terminal_status(
+        self,
+        transcript: str,
+        result: str,
+    ) -> Optional[TerminalStatus]:
+        """Prove an active receipt without falsely freeing a rate-limited TUI."""
+        normal_status = super().receipt_result_terminal_status(transcript, result)
+        if normal_status is not None:
+            return normal_status
+        if self.get_status(transcript) != TerminalStatus.WAITING_USER_ANSWER:
+            return None
+        post_turn_result = self.extract_post_turn_completion_result(transcript)
+        if post_turn_result != result or not self._result_has_active_receipt(result):
+            return None
+        # Keep the terminal projection honest: task success does not answer the
+        # picker or silently change models.  terminal_service CASes the task
+        # receipt, then republishes this actual terminal state.
+        return TerminalStatus.WAITING_USER_ANSWER
 
     def exit_cli(self) -> str:
         """Get the command to exit Codex CLI."""

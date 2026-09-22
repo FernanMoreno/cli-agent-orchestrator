@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, NamedTuple, Optional, cast
@@ -21,6 +22,7 @@ from sqlalchemy import (
     literal_column,
     text,
 )
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, declarative_base, sessionmaker
 
 from cli_agent_orchestrator.constants import DATABASE_URL, DB_DIR, DEFAULT_PROVIDER
@@ -115,6 +117,59 @@ class TerminalModel(Base):
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class TerminalTurnReceiptModel(Base):
+    """Private, durable lifecycle evidence for one provider turn.
+
+    This is deliberately *not* stored in ``terminals.metadata``.  That field
+    is an agent/user-controlled free-form document exposed through the API,
+    whereas a receipt controls whether CAO may send another task after a
+    server restart.  The row contains only opaque identifiers and hashes: no
+    prompt body, nonce, model output, or terminal transcript.
+
+    A terminal has at most one in-flight receipt.  A settled
+    ``result_verified`` row is retained as an audit handle and atomically
+    replaced by the next ``prepared`` turn; an active ``prepared``/``sent``
+    row blocks a second task until it is reconciled or its result is verified.
+    """
+
+    __tablename__ = "terminal_turn_receipts"
+
+    terminal_id = Column(String, primary_key=True)
+    provider = Column(String, nullable=False)
+    # Opaque per-turn generation, distinct from the receipt itself, so state
+    # transitions have a CAS key even though the plaintext nonce is never
+    # persisted.
+    generation = Column(String, nullable=False)
+    receipt_sha256 = Column(String, nullable=False)
+    # prepared | sent | result_verified.  Validation is duplicated at the
+    # repository boundary for existing SQLite databases where a CHECK would
+    # otherwise be absent.
+    phase = Column(String, nullable=False)
+    result_sha256 = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "phase IN ('prepared', 'sent', 'result_verified')",
+            name="ck_terminal_turn_receipts_phase",
+        ),
+        CheckConstraint(
+            "length(generation) = 32",
+            name="ck_terminal_turn_receipts_generation_length",
+        ),
+        CheckConstraint(
+            "length(receipt_sha256) = 64",
+            name="ck_terminal_turn_receipts_receipt_hash_length",
+        ),
+        CheckConstraint(
+            "result_sha256 IS NULL OR length(result_sha256) = 64",
+            name="ck_terminal_turn_receipts_result_hash_length",
+        ),
+    )
 
 
 class NativeChildModel(Base):
@@ -1620,6 +1675,400 @@ def update_terminal_metadata(terminal_id: str, metadata: Optional[Dict[str, Any]
         return True
 
 
+_TURN_RECEIPT_ACTIVE_PHASES = frozenset({"prepared", "sent"})
+_TURN_RECEIPT_SETTLED_PHASE = "result_verified"
+_TURN_RECEIPT_GENERATION_RE = re.compile(r"^[0-9a-f]{32}$")
+_TURN_RECEIPT_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _validate_turn_receipt_value(name: str, value: str, pattern: "re.Pattern[str]") -> None:
+    if not isinstance(value, str) or not pattern.fullmatch(value):
+        raise ValueError(f"invalid terminal turn receipt {name}")
+
+
+def _turn_receipt_row(row: TerminalTurnReceiptModel) -> Dict[str, Any]:
+    """Return internal receipt state without ever exposing prompt/nonce text."""
+    return {
+        "terminal_id": cast(str, row.terminal_id),
+        "provider": cast(str, row.provider),
+        "generation": cast(str, row.generation),
+        "receipt_sha256": cast(str, row.receipt_sha256),
+        "phase": cast(str, row.phase),
+        "result_sha256": cast(Optional[str], row.result_sha256),
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+        "verified_at": row.verified_at,
+    }
+
+
+def begin_terminal_turn_receipt(
+    terminal_id: str,
+    provider: str,
+    generation: str,
+    receipt_sha256: str,
+) -> Optional[Dict[str, Any]]:
+    """Atomically claim a terminal's next turn before any input is pasted.
+
+    ``None`` means an active receipt already owns the terminal or the terminal
+    no longer exists.  Both cases are intentionally non-destructive: callers
+    must reconcile rather than overwrite an uncertain delivery.  A prior
+    ``result_verified`` row can be replaced because it has durable evidence
+    that its earlier task completed.
+    """
+    if not isinstance(provider, str) or not provider.strip() or len(provider) > 128:
+        raise ValueError("invalid terminal turn receipt provider")
+    _validate_turn_receipt_value("generation", generation, _TURN_RECEIPT_GENERATION_RE)
+    _validate_turn_receipt_value("hash", receipt_sha256, _TURN_RECEIPT_HASH_RE)
+    now = _utcnow()
+    try:
+        with SessionLocal() as db:
+            # Claim a write lock on the parent row before looking at or changing
+            # its receipt.  A read-then-insert sequence is not sufficient: a
+            # concurrent terminal teardown can delete the row after the read
+            # and before the receipt commit, leaving private lifecycle state
+            # with no terminal.  This no-op update is portable across the
+            # SQLite and PostgreSQL backends CAO supports: it serializes
+            # SQLite's writer transaction and holds PostgreSQL's row lock.
+            # Terminal deletion follows the complementary order -- parent
+            # first, receipt cleanup second, in the same transaction -- so a
+            # deletion which waits for this claim will erase the receipt it
+            # observes after the claim commits.
+            parent_claimed = (
+                db.query(TerminalModel)
+                .filter(TerminalModel.id == terminal_id)
+                .update(
+                    {TerminalModel.last_active: TerminalModel.last_active},
+                    synchronize_session=False,
+                )
+            )
+            if parent_claimed != 1:
+                return None
+            existing = (
+                db.query(TerminalTurnReceiptModel)
+                .filter(TerminalTurnReceiptModel.terminal_id == terminal_id)
+                .first()
+            )
+            if existing is not None and existing.phase in _TURN_RECEIPT_ACTIVE_PHASES:
+                return None
+            if existing is None:
+                existing = TerminalTurnReceiptModel(
+                    terminal_id=terminal_id,
+                    provider=provider,
+                    generation=generation,
+                    receipt_sha256=receipt_sha256,
+                    phase="prepared",
+                    created_at=now,
+                    updated_at=now,
+                )
+                db.add(existing)
+            else:
+                # A verified result is the only legal replacement boundary.
+                # Do not mutate the loaded ORM object: two senders can both
+                # observe result_verified, and a plain assignment would let
+                # both commit a new task.  This CAS makes exactly one winner
+                # replace the settled generation; the loser sees rowcount=0
+                # and must reconcile rather than paste a second prompt.
+                replaced = (
+                    db.query(TerminalTurnReceiptModel)
+                    .filter(
+                        TerminalTurnReceiptModel.terminal_id == terminal_id,
+                        TerminalTurnReceiptModel.phase == _TURN_RECEIPT_SETTLED_PHASE,
+                        TerminalTurnReceiptModel.generation == existing.generation,
+                    )
+                    .update(
+                        {
+                            "provider": provider,
+                            "generation": generation,
+                            "receipt_sha256": receipt_sha256,
+                            "phase": "prepared",
+                            "result_sha256": None,
+                            "created_at": now,
+                            "updated_at": now,
+                            "verified_at": None,
+                        },
+                        synchronize_session=False,
+                    )
+                )
+                if replaced != 1:
+                    db.rollback()
+                    return None
+            db.commit()
+            stored = (
+                db.query(TerminalTurnReceiptModel)
+                .filter(
+                    TerminalTurnReceiptModel.terminal_id == terminal_id,
+                    TerminalTurnReceiptModel.generation == generation,
+                    TerminalTurnReceiptModel.receipt_sha256 == receipt_sha256,
+                    TerminalTurnReceiptModel.phase == "prepared",
+                )
+                .first()
+            )
+            return _turn_receipt_row(stored) if stored is not None else None
+    except IntegrityError:
+        # A concurrent claim won the primary-key race.  Treat it exactly like
+        # an already-active row; never retry by replacing unknown work.
+        logger.info("Terminal turn receipt claim raced for terminal %s", terminal_id)
+        return None
+    except SQLAlchemyError as exc:
+        logger.exception("Could not persist prepared turn receipt for terminal %s", terminal_id)
+        raise RuntimeError("could not persist prepared terminal turn receipt") from exc
+
+
+def get_terminal_turn_receipt(terminal_id: str) -> Optional[Dict[str, Any]]:
+    """Read private receipt state for recovery; this is not an API projection."""
+    with SessionLocal() as db:
+        row = (
+            db.query(TerminalTurnReceiptModel)
+            .filter(TerminalTurnReceiptModel.terminal_id == terminal_id)
+            .first()
+        )
+        return _turn_receipt_row(row) if row is not None else None
+
+
+def mark_terminal_turn_receipt_sent(
+    terminal_id: str,
+    generation: str,
+    receipt_sha256: str,
+) -> bool:
+    """CAS ``prepared -> sent`` after the backend accepted the paste.
+
+    A very fast CLI can produce and have CAO verify its receipt while
+    ``send_keys`` is still returning from its submit delay.  In that narrow
+    race, accepting only this exact generation's already-verified result is
+    safe and keeps delivery idempotent; a different generation or any other
+    phase still returns ``False`` for reconciliation.
+    """
+    _validate_turn_receipt_value("generation", generation, _TURN_RECEIPT_GENERATION_RE)
+    _validate_turn_receipt_value("hash", receipt_sha256, _TURN_RECEIPT_HASH_RE)
+    try:
+        with SessionLocal() as db:
+            updated = (
+                db.query(TerminalTurnReceiptModel)
+                .filter(
+                    TerminalTurnReceiptModel.terminal_id == terminal_id,
+                    TerminalTurnReceiptModel.generation == generation,
+                    TerminalTurnReceiptModel.receipt_sha256 == receipt_sha256,
+                    TerminalTurnReceiptModel.phase == "prepared",
+                )
+                .update(
+                    {"phase": "sent", "updated_at": _utcnow()},
+                    synchronize_session=False,
+                )
+            )
+            db.commit()
+            if updated == 1:
+                return True
+            settled = (
+                db.query(TerminalTurnReceiptModel)
+                .filter(
+                    TerminalTurnReceiptModel.terminal_id == terminal_id,
+                    TerminalTurnReceiptModel.generation == generation,
+                    TerminalTurnReceiptModel.receipt_sha256 == receipt_sha256,
+                    TerminalTurnReceiptModel.phase == _TURN_RECEIPT_SETTLED_PHASE,
+                )
+                .first()
+            )
+            return settled is not None
+    except SQLAlchemyError as exc:
+        logger.exception("Could not persist sent turn receipt for terminal %s", terminal_id)
+        raise RuntimeError("could not persist sent terminal turn receipt") from exc
+
+
+def verify_terminal_turn_receipt_result(
+    terminal_id: str,
+    generation: str,
+    receipt_sha256: str,
+    result_sha256: str,
+) -> bool:
+    """CAS an active receipt to a durable, content-free result verification."""
+    _validate_turn_receipt_value("generation", generation, _TURN_RECEIPT_GENERATION_RE)
+    _validate_turn_receipt_value("hash", receipt_sha256, _TURN_RECEIPT_HASH_RE)
+    _validate_turn_receipt_value("result hash", result_sha256, _TURN_RECEIPT_HASH_RE)
+    now = _utcnow()
+    try:
+        with SessionLocal() as db:
+            updated = (
+                db.query(TerminalTurnReceiptModel)
+                .filter(
+                    TerminalTurnReceiptModel.terminal_id == terminal_id,
+                    TerminalTurnReceiptModel.generation == generation,
+                    TerminalTurnReceiptModel.receipt_sha256 == receipt_sha256,
+                    TerminalTurnReceiptModel.phase.in_(sorted(_TURN_RECEIPT_ACTIVE_PHASES)),
+                )
+                .update(
+                    {
+                        "phase": _TURN_RECEIPT_SETTLED_PHASE,
+                        "result_sha256": result_sha256,
+                        "updated_at": now,
+                        "verified_at": now,
+                    },
+                    synchronize_session=False,
+                )
+            )
+            db.commit()
+            if updated == 1:
+                return True
+            # The output observer and the delivery path can both see the
+            # same completed turn.  Retrying the exact result receipt is
+            # idempotent, but a different result must never overwrite the
+            # durable evidence for this generation.
+            settled = (
+                db.query(TerminalTurnReceiptModel)
+                .filter(
+                    TerminalTurnReceiptModel.terminal_id == terminal_id,
+                    TerminalTurnReceiptModel.generation == generation,
+                    TerminalTurnReceiptModel.receipt_sha256 == receipt_sha256,
+                    TerminalTurnReceiptModel.phase == _TURN_RECEIPT_SETTLED_PHASE,
+                    TerminalTurnReceiptModel.result_sha256 == result_sha256,
+                )
+                .first()
+            )
+            return settled is not None
+    except SQLAlchemyError as exc:
+        logger.exception("Could not verify terminal turn result for terminal %s", terminal_id)
+        raise RuntimeError("could not persist verified terminal turn result") from exc
+
+
+def settle_terminal_turn_receipt_result(
+    terminal_id: str,
+    generation: str,
+    receipt_sha256: str,
+    result_sha256: str,
+) -> bool:
+    """Atomically settle a receipt and its native-child completion projection.
+
+    A result digest is not enough to safely announce a child as complete: a
+    concurrent terminal teardown can cancel that child and erase the terminal
+    between separate ``verify`` and ``transition`` transactions.  Claim the
+    terminal parent, verify the exact receipt, and settle the child in one
+    transaction instead.  The bool means that a public terminal COMPLETED
+    observation is still safe to publish.
+
+    ``cancelled`` and ``failed`` are final operator/lifecycle decisions.  An
+    already verified result may remain as private audit evidence in that case,
+    but it cannot revive their child or publish a stale completion.  A
+    ``reconcile`` child is intentionally recoverable only through this
+    receipt-backed proof path.
+    """
+    _validate_turn_receipt_value("generation", generation, _TURN_RECEIPT_GENERATION_RE)
+    _validate_turn_receipt_value("hash", receipt_sha256, _TURN_RECEIPT_HASH_RE)
+    _validate_turn_receipt_value("result hash", result_sha256, _TURN_RECEIPT_HASH_RE)
+    now = _utcnow()
+    try:
+        with SessionLocal() as db:
+            # Serialize with terminal deletion.  The teardown path deletes the
+            # parent first and auxiliary receipt rows second in its own
+            # transaction, so either this claim wins and commits the complete
+            # proof/projection, or teardown wins and no stale completion can
+            # be emitted afterwards.
+            parent_claimed = (
+                db.query(TerminalModel)
+                .filter(TerminalModel.id == terminal_id)
+                .update(
+                    {TerminalModel.last_active: TerminalModel.last_active},
+                    synchronize_session=False,
+                )
+            )
+            if parent_claimed != 1:
+                db.rollback()
+                return False
+
+            receipt = (
+                db.query(TerminalTurnReceiptModel)
+                .filter(
+                    TerminalTurnReceiptModel.terminal_id == terminal_id,
+                    TerminalTurnReceiptModel.generation == generation,
+                    TerminalTurnReceiptModel.receipt_sha256 == receipt_sha256,
+                )
+                .first()
+            )
+            if receipt is None:
+                db.rollback()
+                return False
+
+            if receipt.phase in _TURN_RECEIPT_ACTIVE_PHASES:
+                updated = (
+                    db.query(TerminalTurnReceiptModel)
+                    .filter(
+                        TerminalTurnReceiptModel.terminal_id == terminal_id,
+                        TerminalTurnReceiptModel.generation == generation,
+                        TerminalTurnReceiptModel.receipt_sha256 == receipt_sha256,
+                        TerminalTurnReceiptModel.phase.in_(sorted(_TURN_RECEIPT_ACTIVE_PHASES)),
+                    )
+                    .update(
+                        {
+                            "phase": _TURN_RECEIPT_SETTLED_PHASE,
+                            "result_sha256": result_sha256,
+                            "updated_at": now,
+                            "verified_at": now,
+                        },
+                        synchronize_session=False,
+                    )
+                )
+                if updated != 1:
+                    db.rollback()
+                    return False
+            elif not (
+                receipt.phase == _TURN_RECEIPT_SETTLED_PHASE
+                and receipt.result_sha256 == result_sha256
+            ):
+                # Never replace another result or a newer receipt generation.
+                db.rollback()
+                return False
+
+            # Do not load a child and assign to its ORM object: a concurrent
+            # wait/status path could set ``failed`` after that read, and a
+            # stale assignment to ``succeeded`` would erase a final outcome.
+            # The conditional write is the reciprocal CAS to
+            # ``transition_native_child``. Only an active/reconcile child can
+            # become succeeded by this receipt proof; terminal states remain
+            # immutable whichever writer commits first.
+            child_updated = (
+                db.query(NativeChildModel)
+                .filter(
+                    NativeChildModel.terminal_id == terminal_id,
+                    NativeChildModel.state.in_(sorted(_NATIVE_CHILD_ACTIVE_STATES | {"reconcile"})),
+                )
+                .update(
+                    {
+                        "state": "succeeded",
+                        "updated_at": now,
+                        "settled_at": now,
+                        "error_kind": None,
+                        "error_summary": None,
+                    },
+                    synchronize_session=False,
+                )
+            )
+            completion_safe = True
+            if child_updated != 1:
+                winner = (
+                    db.query(NativeChildModel)
+                    .filter(NativeChildModel.terminal_id == terminal_id)
+                    .first()
+                )
+                if winner is not None and winner.state != "succeeded":
+                    # Preserve the result digest for audit/reconciliation but
+                    # never undo a cancellation or terminal failure.
+                    completion_safe = False
+
+            db.commit()
+            return completion_safe
+    except SQLAlchemyError as exc:
+        logger.exception("Could not atomically settle terminal turn result for %s", terminal_id)
+        raise RuntimeError("could not atomically settle verified terminal turn result") from exc
+
+
+def _delete_terminal_turn_receipt_rows(db: Any, terminal_ids: List[str]) -> None:
+    """Erase receipt records only when their terminal is actually removed."""
+    if terminal_ids:
+        (
+            db.query(TerminalTurnReceiptModel)
+            .filter(TerminalTurnReceiptModel.terminal_id.in_(terminal_ids))
+            .delete(synchronize_session=False)
+        )
+
+
 def get_terminal_group(terminal_id: str) -> Optional[List[str]]:
     """Return a terminal's own group array, or None if unset or the terminal doesn't exist."""
     import json as _json
@@ -1955,8 +2404,12 @@ def list_pending_receiver_ids_older_than(min_age_seconds: int) -> List[str]:
 def delete_terminal(terminal_id: str) -> bool:
     """Delete terminal metadata."""
     with SessionLocal() as db:
-        _record_native_child_cleanup_rows(db, [terminal_id])
         deleted = db.query(TerminalModel).filter(TerminalModel.id == terminal_id).delete()
+        # Delete the parent before its auxiliary lifecycle rows.  Receipt
+        # claims acquire the reciprocal parent-row write lock, preventing a
+        # claim from committing after this cleanup sweep has already run.
+        _record_native_child_cleanup_rows(db, [terminal_id])
+        _delete_terminal_turn_receipt_rows(db, [terminal_id])
         db.commit()
         return deleted > 0
 
@@ -1971,6 +2424,12 @@ def delete_terminal(terminal_id: str) -> bool:
 _NATIVE_CHILD_ACTIVE_STATES = {"planned", "acknowledged", "sent", "running"}
 _NATIVE_CHILD_TERMINAL_STATES = {"succeeded", "failed", "reconcile", "cancelled"}
 _NATIVE_CHILD_STATES = _NATIVE_CHILD_ACTIVE_STATES | _NATIVE_CHILD_TERMINAL_STATES
+_NATIVE_CHILD_ACTIVE_ORDER = {
+    "planned": 0,
+    "acknowledged": 1,
+    "sent": 2,
+    "running": 3,
+}
 
 
 def _native_child_row(row: NativeChildModel) -> Dict[str, Any]:
@@ -2046,22 +2505,39 @@ def transition_native_child(
         raise ValueError(f"invalid native child state: {state}")
     now = _utcnow()
     with SessionLocal() as db:
-        row = db.query(NativeChildModel).filter(NativeChildModel.terminal_id == terminal_id).first()
-        if row is None:
-            return None
-        if row.state in _NATIVE_CHILD_TERMINAL_STATES and state in _NATIVE_CHILD_ACTIVE_STATES:
-            return _native_child_row(row)
-        row.state = state
-        row.updated_at = now
+        # This is deliberately a conditional UPDATE rather than a read/ORM
+        # assignment. ``settle_terminal_turn_receipt_result`` can atomically
+        # move an active child to succeeded while a wait/status worker is
+        # about to record ``running`` or ``reconcile``. A stale ORM object
+        # would then overwrite proof-backed success on PostgreSQL's default
+        # isolation level. Restrict this write to still-active states and read
+        # the winner afterwards.
+        allowed_previous_states = set(_NATIVE_CHILD_ACTIVE_STATES)
+        if state in _NATIVE_CHILD_ACTIVE_STATES:
+            # Active lifecycle events are monotonic too: a late acknowledge
+            # cannot regress a child already sent/running.
+            target_order = _NATIVE_CHILD_ACTIVE_ORDER[state]
+            allowed_previous_states = {
+                candidate
+                for candidate, order in _NATIVE_CHILD_ACTIVE_ORDER.items()
+                if order <= target_order
+            }
+
+        values: Dict[str, Any] = {"state": state, "updated_at": now}
         if error_kind is not None:
-            row.error_kind = error_kind
+            values["error_kind"] = error_kind
         if error_summary is not None:
-            row.error_summary = error_summary[:1024]
-        if state in _NATIVE_CHILD_TERMINAL_STATES and row.settled_at is None:
-            row.settled_at = now
+            values["error_summary"] = error_summary[:1024]
+        if state in _NATIVE_CHILD_TERMINAL_STATES:
+            values["settled_at"] = now
+
+        db.query(NativeChildModel).filter(
+            NativeChildModel.terminal_id == terminal_id,
+            NativeChildModel.state.in_(sorted(allowed_previous_states)),
+        ).update(values, synchronize_session=False)
         db.commit()
-        db.refresh(row)
-        return _native_child_row(row)
+        row = db.query(NativeChildModel).filter(NativeChildModel.terminal_id == terminal_id).first()
+        return _native_child_row(row) if row is not None else None
 
 
 def get_native_child(child_id: str) -> Optional[Dict[str, Any]]:
@@ -2117,15 +2593,39 @@ def reconcile_expired_native_children(
             query = query.filter(NativeChildModel.terminal_id == terminal_id)
         if parent_terminal_id is not None:
             query = query.filter(NativeChildModel.parent_terminal_id == parent_terminal_id)
-        rows = query.all()
-        for row in rows:
-            row.state = "reconcile"
-            row.error_kind = "lease_expired"
-            row.error_summary = "child lease expired without a durable result receipt"
-            row.updated_at = now
-            row.settled_at = now
+        # The candidate read is only a convenience for portable return IDs;
+        # it must not authorize a later stale ORM write. A receipt settlement
+        # can atomically change the same child to succeeded between this read
+        # and the write (particularly on PostgreSQL where those transactions
+        # genuinely overlap). Re-check state and lease in a conditional UPDATE
+        # so expiry can never overwrite proof-backed success with reconcile.
+        candidate_ids = [
+            cast(str, row[0]) for row in query.with_entities(NativeChildModel.id).all()
+        ]
+        reconciled_ids: List[str] = []
+        for candidate_id in candidate_ids:
+            updated = (
+                db.query(NativeChildModel)
+                .filter(
+                    NativeChildModel.id == candidate_id,
+                    NativeChildModel.state.in_(sorted(_NATIVE_CHILD_ACTIVE_STATES)),
+                    NativeChildModel.lease_expires_at <= now,
+                )
+                .update(
+                    {
+                        "state": "reconcile",
+                        "error_kind": "lease_expired",
+                        "error_summary": "child lease expired without a durable result receipt",
+                        "updated_at": now,
+                        "settled_at": now,
+                    },
+                    synchronize_session=False,
+                )
+            )
+            if updated == 1:
+                reconciled_ids.append(candidate_id)
         db.commit()
-        return [cast(str, row.id) for row in rows]
+        return reconciled_ids
 
 
 def record_native_child_cleanup(terminal_id: str) -> Optional[Dict[str, Any]]:
@@ -2137,19 +2637,30 @@ def record_native_child_cleanup(terminal_id: str) -> Optional[Dict[str, Any]]:
     """
     now = _utcnow()
     with SessionLocal() as db:
-        row = db.query(NativeChildModel).filter(NativeChildModel.terminal_id == terminal_id).first()
-        if row is None:
-            return None
-        row.cleanup_completed_at = now
-        row.updated_at = now
-        if row.state in _NATIVE_CHILD_ACTIVE_STATES:
-            row.state = "cancelled"
-            row.settled_at = now
-            row.error_kind = "cancelled"
-            row.error_summary = "terminal removed before a durable task result was recorded"
+        # Record cleanup for any durable child, but make cancellation itself a
+        # CAS from an active state. A receipt settlement that wins this race
+        # must remain succeeded rather than being overwritten by a stale ORM
+        # object from cleanup.
+        db.query(NativeChildModel).filter(NativeChildModel.terminal_id == terminal_id).update(
+            {"cleanup_completed_at": now, "updated_at": now},
+            synchronize_session=False,
+        )
+        db.query(NativeChildModel).filter(
+            NativeChildModel.terminal_id == terminal_id,
+            NativeChildModel.state.in_(sorted(_NATIVE_CHILD_ACTIVE_STATES)),
+        ).update(
+            {
+                "state": "cancelled",
+                "settled_at": now,
+                "error_kind": "cancelled",
+                "error_summary": "terminal removed before a durable task result was recorded",
+                "updated_at": now,
+            },
+            synchronize_session=False,
+        )
         db.commit()
-        db.refresh(row)
-        return _native_child_row(row)
+        row = db.query(NativeChildModel).filter(NativeChildModel.terminal_id == terminal_id).first()
+        return _native_child_row(row) if row is not None else None
 
 
 def _record_native_child_cleanup_rows(db: Any, terminal_ids: List[str]) -> None:
@@ -2173,12 +2684,17 @@ def delete_terminals_by_session(tmux_session: str) -> int:
     with SessionLocal() as db:
         terminal_ids = [
             cast(str, row[0])
-            for row in db.query(TerminalModel.id).filter(TerminalModel.tmux_session == tmux_session).all()
+            for row in db.query(TerminalModel.id)
+            .filter(TerminalModel.tmux_session == tmux_session)
+            .all()
         ]
-        _record_native_child_cleanup_rows(db, terminal_ids)
         deleted = (
-            db.query(TerminalModel).filter(TerminalModel.tmux_session == tmux_session).delete()
+            db.query(TerminalModel)
+            .filter(TerminalModel.id.in_(terminal_ids))
+            .delete(synchronize_session=False)
         )
+        _record_native_child_cleanup_rows(db, terminal_ids)
+        _delete_terminal_turn_receipt_rows(db, terminal_ids)
         db.commit()
         return deleted
 
@@ -2195,12 +2711,13 @@ def delete_terminals_by_ids(terminal_ids: List[str]) -> int:
     if not terminal_ids:
         return 0
     with SessionLocal() as db:
-        _record_native_child_cleanup_rows(db, terminal_ids)
         deleted = (
             db.query(TerminalModel)
             .filter(TerminalModel.id.in_(terminal_ids))
             .delete(synchronize_session=False)
         )
+        _record_native_child_cleanup_rows(db, terminal_ids)
+        _delete_terminal_turn_receipt_rows(db, terminal_ids)
         db.commit()
         return deleted
 
@@ -2328,7 +2845,12 @@ def list_aliases_for_project(project_id: str) -> List[Dict[str, Any]]:
 
 
 def update_message_status(message_id: int, status: MessageStatus) -> bool:
-    """Update message status to MessageStatus.DELIVERED or MessageStatus.FAILED."""
+    """Update a message's durable delivery status.
+
+    ``MessageStatus.RECONCILE`` marks an input that may already have reached
+    its terminal. It is intentionally excluded from pending-message queries,
+    so background delivery never replays it automatically.
+    """
     with SessionLocal() as db:
         message = db.query(InboxModel).filter(InboxModel.id == message_id).first()
         if message:

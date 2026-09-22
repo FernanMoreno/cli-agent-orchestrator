@@ -2,7 +2,7 @@
 
 import os
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -80,6 +80,114 @@ class TestCreateTerminal:
         assert result.id == "test1234"
         mock_tmux.create_session.assert_called_once()
         mock_provider.initialize.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("cli_agent_orchestrator.services.terminal_service.delete_terminals_by_session")
+    @patch("cli_agent_orchestrator.services.terminal_service.status_monitor")
+    @patch("cli_agent_orchestrator.services.terminal_service.fifo_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.FIFO_DIR")
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal")
+    @patch("cli_agent_orchestrator.backends.registry._backend")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
+    @patch("cli_agent_orchestrator.services.terminal_service.load_agent_profile")
+    async def test_create_terminal_preserves_synchronous_waiting_user_answer_status(
+        self,
+        mock_load_profile,
+        mock_gen_id,
+        mock_gen_session,
+        mock_gen_window,
+        mock_tmux,
+        mock_db_create,
+        mock_provider_manager,
+        mock_fifo_dir,
+        mock_fifo_manager,
+        mock_status_monitor,
+        mock_delete_terminals_by_session,
+    ):
+        """A Gemini trust dialog is live work, never a synthetic IDLE terminal."""
+        mock_gen_id.return_value = "a1b2c3d4"
+        mock_gen_session.return_value = "cao-gemini"
+        mock_gen_window.return_value = "reviewer-gemini"
+        mock_tmux.session_exists.return_value = False
+        mock_load_profile.return_value = AgentProfile(name="reviewer", description="Review")
+        provider = AsyncMock()
+        provider.initialize.return_value = True
+        provider.shell_baseline = None
+        mock_provider_manager.create_provider.return_value = provider
+        mock_status_monitor.get_status.return_value = TerminalStatus.WAITING_USER_ANSWER
+        mock_fifo_dir.__truediv__ = MagicMock(return_value="fake.fifo")
+
+        result = await create_terminal("gemini_cli", "reviewer", new_session=True)
+
+        assert result.status == TerminalStatus.WAITING_USER_ANSWER
+        mock_status_monitor.get_status.assert_called_once_with("a1b2c3d4")
+
+    @pytest.mark.asyncio
+    @patch("cli_agent_orchestrator.services.terminal_service.delete_terminals_by_session")
+    @patch("cli_agent_orchestrator.services.terminal_service.transition_native_child")
+    @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal")
+    @patch("cli_agent_orchestrator.services.terminal_service.status_monitor")
+    @patch("cli_agent_orchestrator.services.terminal_service.fifo_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.FIFO_DIR")
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal")
+    @patch("cli_agent_orchestrator.backends.registry._backend")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_window_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_session_name")
+    @patch("cli_agent_orchestrator.services.terminal_service.generate_terminal_id")
+    @patch("cli_agent_orchestrator.services.terminal_service.load_agent_profile")
+    async def test_ambiguous_provider_launch_keeps_terminal_and_private_evidence_for_reconciliation(
+        self,
+        mock_load_profile,
+        mock_gen_id,
+        mock_gen_session,
+        mock_gen_window,
+        mock_tmux,
+        mock_db_create,
+        mock_provider_manager,
+        mock_fifo_dir,
+        mock_fifo_manager,
+        mock_status_monitor,
+        mock_db_delete,
+        mock_transition,
+        mock_delete_terminals_by_session,
+    ):
+        """Post-dispatch launch uncertainty is never handled as an ordinary create failure.
+
+        This is deliberately provider-neutral: Gemini exposes the condition
+        today, but any adapter whose launch transport may have pasted a command
+        gets the same preservation/reconciliation behavior.
+        """
+        mock_gen_id.return_value = "a1b2c3d4"
+        mock_gen_session.return_value = "cao-uncertain"
+        mock_gen_window.return_value = "reviewer-uncertain"
+        mock_tmux.session_exists.return_value = False
+        mock_tmux.supports_event_inbox.return_value = False
+        mock_load_profile.return_value = AgentProfile(name="reviewer", description="Review")
+        provider = AsyncMock()
+        provider.initialize.side_effect = TerminalInputBlockedError(
+            "launch may have reached the terminal",
+            action="reconcile",
+            delivery_may_have_occurred=True,
+        )
+        mock_provider_manager.create_provider.return_value = provider
+        mock_fifo_dir.__truediv__ = MagicMock(return_value="fake.fifo")
+
+        with pytest.raises(TerminalInputBlockedError, match="may have reached"):
+            await create_terminal("gemini_cli", "reviewer", new_session=True)
+
+        mock_transition.assert_called_once()
+        assert mock_transition.call_args.args[:2] == ("a1b2c3d4", "reconcile")
+        assert mock_transition.call_args.kwargs["error_kind"] == "initialization_delivery_uncertain"
+        mock_fifo_manager.stop_reader.assert_not_called()
+        mock_status_monitor.clear_terminal.assert_not_called()
+        mock_provider_manager.cleanup_provider.assert_not_called()
+        mock_db_delete.assert_not_called()
+        mock_tmux.kill_session.assert_not_called()
+        mock_tmux.kill_window.assert_not_called()
 
     @pytest.mark.asyncio
     @patch("cli_agent_orchestrator.services.terminal_service.delete_terminals_by_session")
@@ -2178,10 +2286,10 @@ class TestSendInput:
     @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
     @patch("cli_agent_orchestrator.backends.registry._backend")
     @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
-    def test_send_input_blocked_message_uses_enum_value(
+    def test_send_input_blocks_send_message_when_provider_waits_for_user_answer(
         self, mock_get_metadata, mock_tmux, mock_pm, mock_update, mock_status_monitor
     ):
-        """Conflict text should say 'assign', not 'OrchestrationType.ASSIGN'."""
+        """Every explicit orchestration type is automated, not a human answer."""
         mock_get_metadata.return_value = {
             "tmux_session": "cao-session",
             "tmux_window": "developer-abcd",
@@ -2191,10 +2299,39 @@ class TestSendInput:
         mock_status_monitor.get_status.return_value = TerminalStatus.WAITING_USER_ANSWER
 
         with pytest.raises(TerminalInputBlockedError) as exc_info:
-            send_input("test1234", "new task", orchestration_type=OrchestrationType.ASSIGN)
+            send_input("test1234", "new task", orchestration_type=OrchestrationType.SEND_MESSAGE)
 
-        assert "sending assign input" in str(exc_info.value)
-        assert "OrchestrationType.ASSIGN" not in str(exc_info.value)
+        assert "sending automated task input" in str(exc_info.value)
+        mock_tmux.send_keys.assert_not_called()
+        mock_update.assert_not_called()
+
+    @patch("cli_agent_orchestrator.services.terminal_service.status_monitor")
+    @patch("cli_agent_orchestrator.services.terminal_service.update_last_active")
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.backends.registry._backend")
+    @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
+    def test_send_input_blocks_quota_wait_for_every_provider(
+        self, mock_get_metadata, mock_tmux, mock_pm, mock_update, mock_status_monitor
+    ):
+        """Quota safety is a lifecycle rule, not a Claude-only dialog opt-in."""
+        mock_get_metadata.return_value = {
+            "tmux_session": "cao-session",
+            "tmux_window": "developer-abcd",
+        }
+        mock_provider = mock_pm.get_provider.return_value
+        mock_provider.blocks_orchestrated_input_while_waiting_user_answer = False
+        mock_status_monitor.get_status.return_value = TerminalStatus.WAITING_QUOTA
+
+        with pytest.raises(TerminalInputBlockedError) as exc_info:
+            send_input(
+                "test1234",
+                "new task",
+                orchestration_type=OrchestrationType.SEND_MESSAGE,
+                task_delivery=True,
+            )
+
+        assert exc_info.value.action == "wait_for_quota"
+        assert exc_info.value.delivery_may_have_occurred is False
         mock_tmux.send_keys.assert_not_called()
         mock_update.assert_not_called()
 
@@ -3026,6 +3163,108 @@ class TestDeferredInitWaitingUserAnswerSurvival:
         await task
 
         mock_notify.assert_called_once()
+        assert mock_notify.call_args.kwargs["delete_worker"] is False
+
+    @pytest.mark.asyncio
+    @patch("cli_agent_orchestrator.services.terminal_service._notify_caller_of_deferred_failure")
+    @patch("cli_agent_orchestrator.services.terminal_service._confirm_worker_started_or_resubmit")
+    @patch("cli_agent_orchestrator.services.terminal_service.transition_native_child")
+    @patch("cli_agent_orchestrator.services.terminal_service.send_input")
+    @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
+    async def test_unconfirmed_receipt_turn_is_reconciled_without_deleting_the_worker(
+        self,
+        mock_meta,
+        mock_send,
+        mock_transition,
+        mock_confirm,
+        mock_notify,
+    ):
+        """Receipt delivery is at-most-once, so a missed monitor edge is not failure."""
+        from cli_agent_orchestrator.services.terminal_service import (
+            _deferred_init_tasks,
+            _schedule_deferred_init,
+        )
+
+        mock_meta.return_value = {"caller_id": "super123"}
+        mock_confirm.return_value = False
+        provider_instance = AsyncMock()
+        provider_instance.initialize.return_value = True
+        provider_instance.shell_baseline = None
+        provider_instance.requires_turn_receipt = True
+
+        before_tasks = set(_deferred_init_tasks)
+        _schedule_deferred_init(
+            provider_instance, "worker99", "side-effecting task", OrchestrationType.ASSIGN, None
+        )
+        (task,) = set(_deferred_init_tasks) - before_tasks
+        await task
+
+        mock_send.assert_called_once_with(
+            "worker99",
+            "side-effecting task",
+            registry=None,
+            sender_id="super123",
+            orchestration_type=OrchestrationType.ASSIGN,
+            task_delivery=True,
+        )
+        assert [call.args[1] for call in mock_transition.call_args_list] == [
+            "acknowledged",
+            "sent",
+            "reconcile",
+        ]
+        assert mock_transition.call_args_list[-1].kwargs["error_kind"] == "delivery_unconfirmed"
+        mock_notify.assert_called_once()
+        assert mock_notify.call_args.args[-1] is False
+
+    @pytest.mark.asyncio
+    @patch("cli_agent_orchestrator.services.terminal_service._notify_caller_of_deferred_failure")
+    @patch("cli_agent_orchestrator.services.terminal_service._confirm_worker_started_or_resubmit")
+    @patch("cli_agent_orchestrator.services.terminal_service.transition_native_child")
+    @patch("cli_agent_orchestrator.services.terminal_service.send_input")
+    @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
+    async def test_post_paste_receipt_failure_requires_reconciliation_not_a_resend(
+        self,
+        mock_meta,
+        mock_send,
+        mock_transition,
+        mock_confirm,
+        mock_notify,
+    ):
+        """A receipt CAS failure after tmux accepted input may already be live work."""
+        from cli_agent_orchestrator.services.terminal_service import (
+            _deferred_init_tasks,
+            _schedule_deferred_init,
+        )
+
+        mock_meta.return_value = {"caller_id": "super123"}
+        mock_send.side_effect = TerminalInputBlockedError(
+            "Terminal worker99 accepted input but its sent receipt is uncertain; "
+            "reconcile before another task.",
+            action="reconcile",
+        )
+        provider_instance = AsyncMock()
+        provider_instance.initialize.return_value = True
+        provider_instance.shell_baseline = None
+
+        before_tasks = set(_deferred_init_tasks)
+        _schedule_deferred_init(
+            provider_instance, "worker99", "side-effecting task", OrchestrationType.ASSIGN, None
+        )
+        (task,) = set(_deferred_init_tasks) - before_tasks
+        await task
+
+        mock_confirm.assert_not_called()
+        assert [call.args[1] for call in mock_transition.call_args_list] == [
+            "acknowledged",
+            "reconcile",
+        ]
+        assert (
+            mock_transition.call_args_list[-1].kwargs["error_kind"] == "receipt_delivery_uncertain"
+        )
+        caller_message = mock_notify.call_args.args[1]
+        assert "Use answer_user_prompt" not in caller_message
+        assert "do not use answer_user_prompt" in caller_message
+        assert "do not re-send" in caller_message
         assert mock_notify.call_args.kwargs["delete_worker"] is False
 
     @pytest.mark.asyncio

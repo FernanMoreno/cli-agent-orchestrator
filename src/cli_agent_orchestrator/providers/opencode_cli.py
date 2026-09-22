@@ -19,6 +19,7 @@ The provider detects the following terminal states:
 """
 
 import asyncio
+from collections import Counter
 import logging
 import re
 import shlex
@@ -62,8 +63,65 @@ PERMISSION_PROMPT_PATTERN = r"△\s+(?:Permission required|Always allow)\b"
 # idle footer, so it must win over every prompt/footer-based state.
 PROVIDER_ERROR_PATTERN = r"\b(?:Error from provider|Provider error)\b"
 
+# A quota refusal is operationally different from a broken model/provider:
+# the already-delivered turn must be retained and never blindly resent.  Keep
+# this grammar coupled to OpenCode's own provider-error overlay so task prose
+# that merely discusses a rate limit cannot park a worker.
+QUOTA_PROVIDER_ERROR_PATTERN = re.compile(
+    r"\b(?:rate[ -]?limit(?:ed|\s+exceeded)?|quota\s+exceeded|"
+    r"usage\s+limit\s+reached|insufficient\s+credits?|credits?\s+exhausted)\b",
+    re.IGNORECASE,
+)
+
 # Tool-call in-flight spinner (braille animation): "⠋ Read <path>" etc.
 TOOL_CALL_IN_FLIGHT_PATTERN = r"^\s+[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+\S+"
+
+# OpenCode can render an informational right-hand sidebar (MCP / LSP) alongside
+# the conversation.  capture-pane returns both planes on the same physical
+# rows.  A result extractor must not mistake sidebar text after a response line
+# for part of the assistant's answer -- that would turn a standalone receipt
+# into inline prose.  We discover the boundary from two independently rendered
+# sidebar headings at the same column rather than relying on a terminal width.
+_AUXILIARY_SIDEBAR_HEADING_PATTERN = re.compile(r"(?:▼\s*)?MCP\b|LSP\b")
+
+
+def _crop_auxiliary_sidebar(text: str) -> str:
+    """Remove a verified OpenCode information sidebar from a rendered viewport.
+
+    This is deliberately conservative.  A single word such as MCP in a task
+    result is not enough to crop user content: two headings must begin in an
+    otherwise blank right-hand column.  Raw pipe-pane output generally does
+    not satisfy that shape and remains untouched; only a composited snapshot
+    with the actual sidebar is normalized.
+    """
+    lines = text.splitlines()
+    starts: list[int] = []
+    for line in lines:
+        match = _AUXILIARY_SIDEBAR_HEADING_PATTERN.search(line)
+        if match is not None and match.start() > 0 and not line[: match.start()].strip():
+            starts.append(match.start())
+    if len(starts) < 2:
+        return text
+    boundary, observations = Counter(starts).most_common(1)[0]
+    if observations < 2:
+        return text
+    return "\n".join(line[:boundary].rstrip() for line in lines)
+
+
+def _has_current_quota_provider_error(text: str) -> bool:
+    """Return whether OpenCode's current provider-error overlay is a quota stop.
+
+    The raw monitor buffer retains scrollback, so require both OpenCode's
+    provider-error chrome and a quota refusal on one of the current tail rows.
+    A quoted rate-limit sentence, a percentage warning, or an ordinary model
+    failure remains on its existing path.
+    """
+    rows = [row for row in text.splitlines() if row.strip()]
+    return any(
+        re.search(PROVIDER_ERROR_PATTERN, row, re.IGNORECASE)
+        and QUOTA_PROVIDER_ERROR_PATTERN.search(row)
+        for row in rows[-20:]
+    )
 
 
 class OpenCodeCliProvider(BaseProvider):
@@ -79,6 +137,10 @@ class OpenCodeCliProvider(BaseProvider):
         _agent_profile: Name of the installed OpenCode agent to launch
         _model: Optional model override (e.g. ``anthropic/claude-sonnet-4-6``)
     """
+
+    # Uses the same durable receipt implementation as every opted-in adapter;
+    # no provider-pair or scheduler special case is required.
+    requires_turn_receipt = True
 
     def __init__(
         self,
@@ -286,6 +348,8 @@ class OpenCodeCliProvider(BaseProvider):
         # An OpenCode provider/runtime error can leave the normal idle footer in
         # place. Treating that viewport as IDLE made failed model selections wait
         # until the step timeout, hiding a definitive error as a monitor lag.
+        if _has_current_quota_provider_error(clean):
+            return TerminalStatus.WAITING_QUOTA
         if re.search(PROVIDER_ERROR_PATTERN, clean, re.IGNORECASE):
             return TerminalStatus.ERROR
 
@@ -369,6 +433,8 @@ class OpenCodeCliProvider(BaseProvider):
         joined = "\n".join(rows)
 
         # ── 1. ERROR ─────────────────────────────────────────────────────
+        if _has_current_quota_provider_error(joined):
+            return TerminalStatus.WAITING_QUOTA
         if re.search(PROVIDER_ERROR_PATTERN, joined, re.IGNORECASE):
             return TerminalStatus.ERROR
 
@@ -432,7 +498,7 @@ class OpenCodeCliProvider(BaseProvider):
         Raises:
             ValueError: If no user message or completion marker is found.
         """
-        clean = re.sub(ANSI_CODE_PATTERN, "", script_output)
+        clean = _crop_auxiliary_sidebar(re.sub(ANSI_CODE_PATTERN, "", script_output))
 
         # Find the last FULL completion marker to anchor the turn boundary.
         all_completions = list(re.finditer(COMPLETION_MARKER_PATTERN, clean))
@@ -454,7 +520,12 @@ class OpenCodeCliProvider(BaseProvider):
             # Normal path: anchor on the last visible user message bar.
             # Alt-screen redraws each turn in place; earlier turns are not present in the
             # visible frame, so the last ┃  bar is unambiguously the current turn's.
-            response_start = user_matches[-1].end()  # after the ┃  bar
+            # Keep the whole physical row rather than starting immediately
+            # after the bar.  The filtering loop below recognizes user-bar
+            # rows as user content.  Starting after the bar used to leave the
+            # last line of a multiline prompt looking like an assistant
+            # response, which polluted receipt-bearing answers.
+            response_start = clean.rfind("\n", 0, user_matches[-1].start()) + 1
         else:
             # Fallback: user message has scrolled off the top of the 41-line TUI viewport
             # (history_size ≈ 2; alt-screen rendering does not accumulate scrollback).
@@ -507,9 +578,13 @@ class OpenCodeCliProvider(BaseProvider):
             else:
                 dedented.append(line)
 
-        # Clean control chars and trailing whitespace
+        # Clean control chars and trailing whitespace.  Preserve line feeds:
+        # they are semantic response structure, not terminal noise.  In
+        # particular, the CAO receipt contract requires its token to occupy a
+        # standalone final line; deleting newlines here turned a valid OpenCode
+        # result into indistinguishable inline prose after extraction.
         result = "\n".join(dedented).strip()
-        result = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", result)
+        result = re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]", "", result)
         result = re.sub(r"[ \t]+$", "", result, flags=re.MULTILINE)
 
         if not result:

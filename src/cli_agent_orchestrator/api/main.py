@@ -108,6 +108,7 @@ from cli_agent_orchestrator.models.terminal import Terminal, TerminalId, Termina
 from cli_agent_orchestrator.models.workflow import RecoveryPolicy
 from cli_agent_orchestrator.plugins import PluginRegistry
 from cli_agent_orchestrator.providers.base import OutputExtractionError
+from cli_agent_orchestrator.providers.catalog import registered_provider_descriptors
 from cli_agent_orchestrator.providers.kiro_capabilities import (
     KiroCapabilityError,
     KiroPhase0KASError,
@@ -2756,28 +2757,27 @@ async def get_agent_profile_source_endpoint(
 
 @app.get("/agents/providers")
 async def list_providers_endpoint() -> List[Dict]:
-    """List available providers with installation status."""
+    """List registered adapters with install state and individual capabilities.
+
+    The response intentionally has no parent/child compatibility fields.  Job
+    authorization, rather than a provider-pair catalogue, decides which
+    selected adapters may collaborate.  ``capabilities`` only lets a caller
+    preflight the specific CAO operation it intends to request.
+    """
     import shutil
 
-    provider_binaries = {
-        "kiro_cli": "kiro-cli",
-        "claude_code": "claude",
-        "codex": "codex",
-        "hermes": "hermes",
-        "kimi_cli": "kimi",
-        "copilot_cli": "copilot",
-        "opencode_cli": "opencode",
-        "cursor_cli": "agent",
-        "antigravity_cli": "agy",
-        "omp": "omp",
-        "grok_cli": "grok",
-        "mcode": "mcode",
-    }
-    result = []
-    for provider, binary in provider_binaries.items():
-        installed = shutil.which(binary) is not None
-        result.append({"name": provider, "binary": binary, "installed": installed})
-    return result
+    return [
+        {
+            # Keep the original fields stable for existing AIPM and UI clients.
+            "name": descriptor.name,
+            "binary": descriptor.binary,
+            "installed": shutil.which(descriptor.binary) is not None,
+            # New additive contract: operational facts about this one adapter,
+            # never a list of permitted or prohibited provider partners.
+            "capabilities": descriptor.capabilities(),
+        }
+        for descriptor in registered_provider_descriptors()
+    ]
 
 
 @app.get("/settings/agent-dirs")
@@ -3697,7 +3697,18 @@ async def send_terminal_input(
         )
         return {"success": success}
     except TerminalInputBlockedError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        # This is a machine-readable recovery contract, not a display string:
+        # callers must never infer whether a retry is safe from exception text.
+        # ``delivery_may_have_occurred`` tells a broker that re-sending the
+        # current message could duplicate work.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": str(e),
+                "action": e.action,
+                "delivery_may_have_occurred": e.delivery_may_have_occurred,
+            },
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
@@ -4217,14 +4228,24 @@ async def run_step(
         )
     except StepExecutionError as e:
         # The step did not complete successfully. Distinguish a worker that
-        # CRASHED (kind="error" -> 502 Bad Gateway) from one that RAN LONG
-        # (kind="timeout" -> 504 Gateway Timeout) so the caller can tell them
-        # apart instead of reporting every failure as a timeout. The detail is a
-        # structured object carrying terminal_id and native_child_id, so callers
-        # read recovery handles as fields rather than regex-scraping the message.
-        # Transition the script step RUNNING->FAILED (no-op for non-script callers).
-        _settle_step(e.terminal_id, str(e))
-        code = status.HTTP_502_BAD_GATEWAY if e.kind == "error" else status.HTTP_504_GATEWAY_TIMEOUT
+        # CRASHED (kind="error" -> 502), RAN LONG (kind="timeout" -> 504),
+        # or remains LIVE but needs reconciliation (kind="reconcile" /
+        # ``quota_wait`` -> 409). A quota wait is deliberately not settled as
+        # failed: its provider can resume the already delivered task.
+        # The detail carries terminal_id and native_child_id so callers can
+        # inspect the actual worker rather than retrying blind.
+        # A quota pause has no terminal result and no terminal failure. Keep
+        # the script-tier row live for its reconciler rather than recording a
+        # false FAILED outcome that would make a later provider resume
+        # indistinguishable from a retry.
+        if e.kind != "quota_wait":
+            _settle_step(e.terminal_id, str(e))
+        if e.kind in {"reconcile", "quota_wait"}:
+            code = status.HTTP_409_CONFLICT
+        elif e.kind == "error":
+            code = status.HTTP_502_BAD_GATEWAY
+        else:
+            code = status.HTTP_504_GATEWAY_TIMEOUT
         raise HTTPException(
             status_code=code,
             detail={
@@ -4232,32 +4253,33 @@ async def run_step(
                 "kind": e.kind,
                 "terminal_id": e.terminal_id,
                 "native_child_id": e.native_child_id,
+                "action": e.action,
+                "delivery_may_have_occurred": e.delivery_may_have_occurred,
+                # The existing task must never be retried blindly: that would
+                # duplicate work. Only an adapter with an explicit
+                # auto-continuation contract may say it can resume by itself.
+                "retryable": False,
+                "provider_may_resume": e.provider_may_resume
+                if e.kind == "quota_wait"
+                else False,
             },
         )
     except (TimeoutError, TerminalInputBlockedError) as e:
-        # TerminalInputBlockedError (PR #539) is kept a DISTINCT type from
-        # TimeoutError rather than collapsed into it, because
-        # _schedule_deferred_init's async path genuinely needs to tell
-        # "blocked on a recognized user prompt, worker still alive" (leave it
-        # running for answer_user_prompt) apart from "generic failure, worker
-        # dead" (tear down) -- see terminal_service.py's own
-        # _schedule_deferred_init. run_step never goes through that deferred
-        # path, though: run_agent_step calls terminal_service.send_input with
-        # no orchestration_type, so the WAITING_USER_ANSWER guard can never
-        # fire here -- the only producer reachable from run_step is
-        # send_input's ERROR-state guard (a terminal whose provider process
-        # has already exited, or flips to ERROR between the readiness wait
-        # and the send). Since run_step is the SYNCHRONOUS caller (handoff
-        # MCP client's step call, and the future run engine), there is no
-        # deferred worker to keep alive either way -- the call has simply
-        # failed to complete, so this maps to the same kind="timeout" / 504
-        # outcome as a plain TimeoutError. This preserves the pre-PR-#539 504
-        # status code for this exact failure instead of silently falling
-        # through to the generic kind-less 500 below.
+        # ``run_agent_step`` translates post-creation input blocks into a
+        # StepExecutionError carrying the terminal reconciliation handle. This
+        # narrow arm remains for failures before a terminal exists.
         _settle_step(None, str(e))
+        detail = {"message": str(e), "kind": "timeout", "terminal_id": None}
+        if isinstance(e, TerminalInputBlockedError):
+            detail.update(
+                {
+                    "action": e.action,
+                    "delivery_may_have_occurred": e.delivery_may_have_occurred,
+                }
+            )
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail={"message": str(e), "kind": "timeout", "terminal_id": None},
+            detail=detail,
         )
     except (KiroPhase0KASError, KiroCapabilityError) as e:
         # Ordered before the ValueError arm they subclass: an engine rejection is
@@ -6769,7 +6791,8 @@ async def get_inbox_messages_endpoint(
     Args:
         terminal_id: Terminal ID to get messages for
         limit: Maximum number of messages to return (default: 10, max: 100)
-        status_param: Optional filter by message status ('pending', 'delivered', 'failed')
+        status_param: Optional filter by message status ('pending', 'delivered',
+            'reconcile', 'failed')
 
     Returns:
         List of inbox messages with sender_id, message, created_at, status
@@ -6783,7 +6806,10 @@ async def get_inbox_messages_endpoint(
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid status: {status_param}. Valid values: pending, delivered, failed",
+                    detail=(
+                        f"Invalid status: {status_param}. Valid values: pending, delivered, "
+                        "reconcile, failed"
+                    ),
                 )
 
         # Get messages using existing database function

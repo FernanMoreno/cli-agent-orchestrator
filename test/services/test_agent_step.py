@@ -13,10 +13,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from cli_agent_orchestrator.models.kiro_engine import KiroEngine
-from cli_agent_orchestrator.models.terminal import AgentStepResult, TerminalStatus
+from cli_agent_orchestrator.models.terminal import (
+    AgentStepResult,
+    TerminalInputBlockedError,
+    TerminalStatus,
+)
 from cli_agent_orchestrator.providers.kiro_capabilities import KiroPhase0KASError
 from cli_agent_orchestrator.services.agent_step import (
     StepExecutionError,
+    _wait_for_completion,
     run_agent_step,
 )
 from cli_agent_orchestrator.services.terminal_service import OutputMode
@@ -70,6 +75,187 @@ def _patch_terminal_layer(
 
 
 class TestHappyPath:
+    def test_stale_processing_status_requires_two_matching_receipt_observations_before_settling(self):
+        """A monitor may retain PROCESSING after a child has finished its turn.
+
+        The monitor state is transport telemetry, not task truth.  Once work
+        has been observed, an active receipt in the current dispatch buffer
+        can settle the task despite a stale PROCESSING value, but it must be
+        observed twice before the durable CAS.  This pin protects the ordering:
+        settling on the first read clears the active receipt and makes the
+        second read impossible.
+        """
+        with (
+            patch(
+                f"{_MODULE}.status_monitor.get_status",
+                side_effect=[
+                    TerminalStatus.PROCESSING,
+                    TerminalStatus.PROCESSING,
+                    TerminalStatus.PROCESSING,
+                ],
+            ),
+            patch(
+                f"{_MODULE}.terminal_service.probe_post_turn_receipt_result",
+                side_effect=[None, "durable result", "durable result"],
+            ) as probe,
+            patch(
+                f"{_MODULE}.terminal_service.settle_post_turn_receipt_result",
+                return_value="durable result",
+            ) as settle,
+            patch(f"{_MODULE}._COMPLETION_POLL_INTERVAL", 0.001),
+        ):
+            result = asyncio.run(
+                _wait_for_completion(
+                    "receipt-terminal",
+                    timeout=1,
+                    prompt_redelivery=False,
+                )
+        )
+
+        assert result == "durable result"
+        assert probe.call_count == 3
+        settle.assert_called_once_with("receipt-terminal", "durable result")
+
+    def test_stale_idle_status_requires_two_matching_receipt_observations_before_settling(self):
+        """A stale IDLE footer must use the same receipt path as PROCESSING.
+
+        This protects renderer-backed providers where a raw pipe monitor flips
+        to IDLE before its byte stream can be structurally extracted, while the
+        provider's current visible viewport already contains a valid result.
+        """
+        with (
+            patch(
+                f"{_MODULE}.status_monitor.get_status",
+                side_effect=[
+                    TerminalStatus.PROCESSING,
+                    TerminalStatus.IDLE,
+                    TerminalStatus.IDLE,
+                ],
+            ),
+            patch(
+                f"{_MODULE}.terminal_service.probe_post_turn_receipt_result",
+                side_effect=[None, "durable result", "durable result"],
+            ) as probe,
+            patch(
+                f"{_MODULE}.terminal_service.settle_post_turn_receipt_result",
+                return_value="durable result",
+            ) as settle,
+            patch(f"{_MODULE}.terminal_service.get_output") as get_output,
+            patch(f"{_MODULE}._COMPLETION_POLL_INTERVAL", 0.001),
+        ):
+            result = asyncio.run(
+                _wait_for_completion(
+                    "receipt-terminal",
+                    timeout=1,
+                    prompt_redelivery=False,
+                )
+            )
+
+        assert result == "durable result"
+        assert probe.call_count == 3
+        settle.assert_called_once_with("receipt-terminal", "durable result")
+        get_output.assert_not_called()
+
+    def test_fast_turn_missed_by_monitor_still_settles_from_two_current_receipts(self):
+        """A full working edge can occur between two monitor polls.
+
+        The legacy IDLE extractor remains gated on observed work.  An active
+        nonce-bearing receipt is stronger, however: it is bound to the prompt
+        just sent and requires the same two-observation plus CAS protocol.
+        """
+        with (
+            patch(
+                f"{_MODULE}.status_monitor.get_status",
+                side_effect=[TerminalStatus.IDLE, TerminalStatus.IDLE],
+            ),
+            patch(
+                f"{_MODULE}.terminal_service.probe_post_turn_receipt_result",
+                side_effect=["durable result", "durable result"],
+            ) as probe,
+            patch(
+                f"{_MODULE}.terminal_service.settle_post_turn_receipt_result",
+                return_value="durable result",
+            ) as settle,
+            patch(f"{_MODULE}.terminal_service.get_output") as get_output,
+            patch(f"{_MODULE}._COMPLETION_POLL_INTERVAL", 0.001),
+        ):
+            result = asyncio.run(
+                _wait_for_completion(
+                    "receipt-terminal",
+                    timeout=1,
+                    prompt_redelivery=False,
+                )
+            )
+
+        assert result == "durable result"
+        assert probe.call_count == 2
+        settle.assert_called_once_with("receipt-terminal", "durable result")
+        get_output.assert_not_called()
+
+    def test_ordinary_waiting_prompt_never_settles_without_a_post_turn_receipt(self):
+        """A login/approval/menu remains a real wait, not synthetic success."""
+        with (
+            patch(
+                f"{_MODULE}.status_monitor.get_status",
+                return_value=TerminalStatus.WAITING_USER_ANSWER,
+            ),
+            patch(
+                f"{_MODULE}.terminal_service.probe_post_turn_receipt_result",
+                return_value=None,
+            ) as probe,
+            patch(f"{_MODULE}.terminal_service.settle_post_turn_receipt_result") as settle,
+        ):
+            with pytest.raises(StepExecutionError, match="did not complete") as exc_info:
+                asyncio.run(
+                    _wait_for_completion(
+                        "receipt-terminal",
+                        timeout=0,
+                        prompt_redelivery=False,
+                    )
+                )
+
+        assert exc_info.value.kind == "timeout"
+        assert probe.call_count == 1
+        settle.assert_not_called()
+
+    def test_quota_wait_raises_immediately_without_receipt_probe_or_redelivery(self):
+        """Quota is causal provider telemetry, not a generic long-running turn.
+
+        The prompt was already sent, so probing, extracting, or redelivering
+        could turn a provider-owned auto-resume into duplicate work.
+        """
+        with (
+            patch(
+                f"{_MODULE}.status_monitor.get_status",
+                return_value=TerminalStatus.WAITING_QUOTA,
+            ),
+            patch(f"{_MODULE}.terminal_service.probe_post_turn_receipt_result") as probe,
+            patch(f"{_MODULE}.terminal_service.redeliver_dropped_message") as redeliver,
+            patch(f"{_MODULE}.terminal_service.get_output") as get_output,
+            patch(
+                f"{_MODULE}.terminal_service.quota_pause_may_auto_resume",
+                return_value=False,
+            ),
+        ):
+            with pytest.raises(StepExecutionError) as exc_info:
+                asyncio.run(
+                    _wait_for_completion(
+                        "quota-terminal",
+                        timeout=60,
+                        prompt="do not duplicate",
+                    )
+                )
+
+        exc = exc_info.value
+        assert exc.kind == "quota_wait"
+        assert exc.action == "wait_for_quota"
+        assert exc.delivery_may_have_occurred is True
+        assert exc.provider_may_resume is False
+        assert exc.terminal_id == "quota-terminal"
+        probe.assert_not_called()
+        redeliver.assert_not_called()
+        get_output.assert_not_called()
+
     def test_an_empty_frozen_block_is_passed_to_suppress_live_memory(self):
         create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer()
         with (
@@ -92,7 +278,7 @@ class TestHappyPath:
                 )
             )
 
-        m_send.assert_called_once_with("abc12345", "x", frozen_memory="")
+        m_send.assert_called_once_with("abc12345", "x", frozen_memory="", task_delivery=True)
 
     def test_frozen_memory_resolution_is_offloaded_from_the_event_loop(self):
         """A polling frozen-memory resolver must leave the server loop schedulable."""
@@ -148,7 +334,9 @@ class TestHappyPath:
                 release_resolution.set()
                 await step
 
-            m_send.assert_called_once_with("abc12345", "x", frozen_memory=block)
+            m_send.assert_called_once_with(
+                "abc12345", "x", frozen_memory=block, task_delivery=True
+            )
             return event_loop_thread_id
 
         event_loop_thread_id = asyncio.run(_run())
@@ -174,7 +362,7 @@ class TestHappyPath:
         assert result.status == TerminalStatus.COMPLETED
         # Canonical sequence: created, prompt sent, output extracted in LAST mode.
         m_create.assert_awaited_once()
-        m_send.assert_called_once_with("abc12345", "do the task")
+        m_send.assert_called_once_with("abc12345", "do the task", task_delivery=True)
         m_out.assert_called_once_with("abc12345", OutputMode.LAST)
         # Created-here + teardown default -> graceful exit THEN delete.
         m_exit.assert_called_once_with("abc12345")
@@ -243,7 +431,7 @@ class TestHappyPath:
         m_delete.assert_not_called()
         # A reused terminal is owned by the caller — no graceful exit either.
         m_exit.assert_not_called()
-        m_send.assert_called_once_with("reuse99", "x")
+        m_send.assert_called_once_with("reuse99", "x", task_delivery=True)
 
     @pytest.mark.parametrize("engine", [KiroEngine.V2, "v2"])
     def test_reuse_matching_explicit_v2(self, engine):
@@ -273,7 +461,7 @@ class TestHappyPath:
 
         assert result.terminal_id == "reuse99"
         m_create.assert_not_awaited()
-        m_send.assert_called_once_with("reuse99", "x")
+        m_send.assert_called_once_with("reuse99", "x", task_delivery=True)
 
     def test_reuse_conflicting_kas_uses_phase0_guard_before_send(self):
         create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer()
@@ -554,6 +742,46 @@ class TestHappyPath:
 
 
 class TestFailureRaises:
+    def test_input_block_after_terminal_creation_returns_reconciliation_handle(self):
+        """A live trust/login or receipt block is neither a timeout nor a crash."""
+        create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer()
+        lifecycle = AsyncMock(return_value={"id": "child-reconcile-1"})
+        with (
+            create,
+            send as m_send,
+            delete,
+            get_output,
+            exit_cli,
+            get_wd,
+            wait,
+            status,
+            patch(f"{_MODULE}._record_native_child_transition", lifecycle),
+        ):
+            m_send.side_effect = TerminalInputBlockedError("worker needs an operator answer")
+            with pytest.raises(StepExecutionError, match="cannot accept this task") as exc_info:
+                asyncio.run(
+                    run_agent_step(
+                        "kiro_cli",
+                        "dev",
+                        "side-effecting task",
+                        caller_id="sup-123",
+                    )
+                )
+
+        assert exc_info.value.kind == "reconcile"
+        assert exc_info.value.terminal_id == "abc12345"
+        assert exc_info.value.native_child_id == "child-reconcile-1"
+        assert exc_info.value.action == "answer_user_prompt"
+        assert exc_info.value.delivery_may_have_occurred is False
+        m_send.assert_called_once_with("abc12345", "side-effecting task", task_delivery=True)
+        lifecycle.assert_awaited_once_with(
+            True,
+            "abc12345",
+            "reconcile",
+            error_kind="input_blocked",
+            error_summary="worker needs an operator answer",
+        )
+
     def test_native_child_timeout_records_reconcile_without_redelivery(self):
         """A post-send timeout is uncertain work, never silent cleanup/success."""
         create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer(
@@ -586,6 +814,40 @@ class TestFailureRaises:
         assert exc_info.value.kind == "timeout"
         states = [call.args[2] for call in lifecycle.await_args_list]
         assert states == ["sent", "running", "reconcile"]
+
+    def test_native_child_quota_wait_records_reconcile_without_retry(self):
+        """A quota-paused child is live and potentially auto-resumable, not failed."""
+        create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer(
+            final_status=TerminalStatus.WAITING_QUOTA,
+        )
+        lifecycle = AsyncMock(return_value=None)
+        with (
+            create,
+            send,
+            delete,
+            get_output,
+            exit_cli,
+            get_wd,
+            wait,
+            status,
+            patch(f"{_MODULE}._record_native_child_transition", lifecycle),
+        ):
+            with pytest.raises(StepExecutionError) as exc_info:
+                asyncio.run(
+                    run_agent_step(
+                        "kiro_cli",
+                        "dev",
+                        "side-effecting task",
+                        caller_id="sup-123",
+                        timeout=60,
+                    )
+                )
+
+        assert exc_info.value.kind == "quota_wait"
+        assert exc_info.value.action == "wait_for_quota"
+        states = [call.args[2] for call in lifecycle.await_args_list]
+        assert states == ["sent", "reconcile"]
+        assert lifecycle.await_args_list[-1].kwargs["error_kind"] == "quota_wait"
 
     def test_native_child_success_records_output_backed_receipt(self):
         create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer()
@@ -632,6 +894,47 @@ class TestFailureRaises:
         m_send.assert_not_called()
         assert exc_info.value.kind == "timeout"
         assert exc_info.value.terminal_id == "abc12345"
+
+    def test_readiness_quota_wait_is_not_misreported_as_timeout(self):
+        """A provider exhausted before dispatch must retain the child for recovery."""
+        create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer(
+            ready=False,
+            final_status=TerminalStatus.WAITING_QUOTA,
+        )
+        lifecycle = AsyncMock(return_value={"id": "child-quota-ready-1"})
+        with (
+            create,
+            send as m_send,
+            delete,
+            get_output,
+            exit_cli,
+            get_wd,
+            wait,
+            status,
+            patch(f"{_MODULE}._record_native_child_transition", lifecycle),
+        ):
+            with pytest.raises(StepExecutionError) as exc_info:
+                asyncio.run(
+                    run_agent_step(
+                        "kiro_cli",
+                        "dev",
+                        "task",
+                        caller_id="sup-123",
+                    )
+                )
+
+        assert exc_info.value.kind == "quota_wait"
+        assert exc_info.value.action == "wait_for_quota"
+        assert exc_info.value.delivery_may_have_occurred is False
+        assert exc_info.value.native_child_id == "child-quota-ready-1"
+        m_send.assert_not_called()
+        lifecycle.assert_awaited_once_with(
+            True,
+            "abc12345",
+            "reconcile",
+            error_kind="quota_wait",
+            error_summary="provider paused before the task could be delivered",
+        )
 
     def test_error_end_state_raises_with_error_kind(self):
         """A terminal at ERROR during the completion poll -> kind='error' (worker
@@ -883,7 +1186,7 @@ class TestPromptDeliveryVerification:
         m_redeliver.assert_called_once_with("abc12345", "x", 1, full_resend_requires_probe=True)
         # The original send still happened exactly once; only the dropped
         # copy is re-delivered.
-        m_send.assert_called_once_with("abc12345", "x")
+        m_send.assert_called_once_with("abc12345", "x", task_delivery=True)
 
     def test_redelivery_failure_does_not_break_the_raises_contract(self):
         """The redelivery performs tmux I/O and can raise (blocked input,
@@ -1128,6 +1431,7 @@ class TestOutputExtractionTeardown:
             exit_cli as m_exit,
             wait,
             status,
+            patch(f"{_MODULE}.get_terminal_turn_receipt", return_value=None),
         ):
             with pytest.raises(ValueError, match="No completion marker found"):
                 asyncio.run(run_agent_step("kiro_cli", "dev", "x"))
@@ -1161,3 +1465,31 @@ class TestOutputExtractionTeardown:
         m_out.assert_called_once_with("reuse99", OutputMode.LAST)
         m_delete.assert_not_called()
         m_exit.assert_not_called()
+
+    def test_receipt_backed_extraction_failure_retains_created_terminal(self):
+        """Deleting a receipt turn would erase its only reconciliation handle."""
+        create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer(
+            final_status=TerminalStatus.COMPLETED,
+        )
+        with (
+            create,
+            send,
+            delete as m_delete,
+            patch(
+                f"{_MODULE}.terminal_service.get_output",
+                side_effect=ValueError("Gemini output receipt is not yet extractable"),
+            ),
+            exit_cli as m_exit,
+            wait,
+            status,
+            patch(
+                f"{_MODULE}.get_terminal_turn_receipt",
+                return_value={"provider": "gemini_cli", "phase": "sent"},
+            ) as get_receipt,
+        ):
+            with pytest.raises(ValueError, match="not yet extractable"):
+                asyncio.run(run_agent_step("gemini_cli", "reviewer", "x", teardown=True))
+
+        get_receipt.assert_called_once_with("abc12345")
+        m_exit.assert_not_called()
+        m_delete.assert_not_called()

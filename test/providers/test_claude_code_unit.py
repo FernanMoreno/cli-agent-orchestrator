@@ -2768,6 +2768,104 @@ class TestClaudeCodeScreenDetection:
         assert self._p().get_status_from_screen(["", "", ""]) == TerminalStatus.UNKNOWN
 
 
+class TestClaudeCodeQuotaDetection:
+    """Regression coverage for Claude Code's real exhausted-session frame."""
+
+    BOX = "─" * 60
+
+    def _p(self):
+        return ClaudeCodeProvider("test123", "test-session", "window-0")
+
+    def test_raw_captured_quota_frame_beats_completion(self):
+        """The captured raw redraw contains ``Cooked ... done`` and an empty
+        composer, but the final current ⚠ quota footer means it is not done.
+
+        The cursor-positioned final row mirrors the raw pipe-pane capture,
+        rather than only exercising a pre-cleaned synthetic line.
+        """
+        raw = (
+            "  ⎿  \xa0\x1b[38;5;211mYou've hit your session limit · resets 5:30pm "
+            "(Europe/Madrid)\x1b[39m\n"
+            "     \x1b[38;5;246mContinuing automatically at 5:30pm · esc to cancel\x1b[39m\n\n"
+            "●\x1b[39m \x1b[38;5;246mUsage limit reached · continuing automatically at "
+            "5:30pm · esc or type to cancel\x1b[39m\n\n"
+            "✻\x1b[39m \x1b[38;5;246mCooked for 1s · done 4:04 PM\x1b[39m\n\n"
+            + self.BOX
+            + "\n❯\xa0\n"
+            + self.BOX
+            + "\n"
+            "\x1b[3G\x1b[38;5;231m⚠\x1b[5GUsage\x1b[11Glimit\x1b[17Greached\x1b[25G·"
+            "\x1b[27Gcontinuing\x1b[38Gautomatically\x1b[52Gat\x1b[55G5:30pm\x1b[62G·"
+            "\x1b[64Gesc\x1b[68Gto\x1b[71Gcancel\x1b[39m\n"
+            "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n"
+        )
+
+        assert self._p().get_status(raw) == TerminalStatus.WAITING_QUOTA
+
+    def test_screen_captured_quota_frame_beats_completion(self):
+        screen = [
+            "● CAO result receipt was accepted.",
+            "✻ Cooked for 1s · done 4:04 PM",
+            self.BOX,
+            "❯",
+            self.BOX,
+            "  ⚠ Usage limit reached · continuing automatically at 5:30pm · esc to cancel",
+            "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents",
+        ]
+
+        assert self._p().get_status_from_screen(screen) == TerminalStatus.WAITING_QUOTA
+
+    def test_new_spinner_after_quota_frame_is_processing(self):
+        """A later live spinner proves a resumed worker and must not remain
+        parked behind its older quota banner."""
+        output = (
+            "  ⚠ Usage limit reached · continuing automatically at 5:30pm · esc to cancel\n"
+            "✢ Cultivating… (2s · ↓ 8 tokens)\n"
+            + self.BOX
+            + "\n❯\n"
+            + self.BOX
+        )
+
+        assert self._p().get_status(output) == TerminalStatus.PROCESSING
+
+    def test_quote_and_percentage_warning_are_not_quota_waits(self):
+        """Require the full Chrome-shaped quota signature, not task prose or
+        Claude's informational percentage warning."""
+        quote = (
+            "● The documentation quotes: Usage limit reached · continuing automatically at "
+            "5:30pm · esc to cancel.\n"
+            + self.BOX
+            + "\n❯\n"
+            + self.BOX
+        )
+        percentage_warning = (
+            "● Completed the task.\n✻ Cooked for 1s\n"
+            + self.BOX
+            + "\n❯\n"
+            + self.BOX
+            + "\nYou've used 94% of your session limit\n"
+        )
+
+        assert self._p().get_status(quote) == TerminalStatus.COMPLETED
+        assert self._p().get_status(percentage_warning) == TerminalStatus.COMPLETED
+
+    def test_quota_panel_outside_current_tail_is_not_active(self):
+        """A matching historical warning outside the current 15-line region
+        cannot park a later completed turn."""
+        old_quota = "⚠ Usage limit reached · continuing automatically at 5:30pm · esc to cancel"
+        output = (
+            old_quota
+            + "\n"
+            + "\n".join(f"stale line {number}" for number in range(16))
+            + "\n● Completed after a later session.\n✻ Cooked for 2s\n"
+            + self.BOX
+            + "\n❯\n"
+            + self.BOX
+        )
+
+        assert self._p().get_status(output) == TerminalStatus.COMPLETED
+
+
 class TestClaudeCodeBackgroundTaskNotCompleted:
     """A backgrounded task must not read as COMPLETED (GH #392).
 

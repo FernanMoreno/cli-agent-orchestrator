@@ -147,12 +147,29 @@ def test_the_live_path_is_unaffected_when_memory_is_disabled(spy, memory_disable
 # ---------------------------------------------------------------------------
 
 
-def test_both_signatures_take_the_block_last_and_defaulted():
-    """``agent_step.run_agent_step`` calls send_input positionally with two arguments."""
+def test_frozen_block_stays_last_positional_and_defaulted():
+    """Receipt controls cannot displace the legacy positional delivery contract.
+
+    ``agent_step.run_agent_step`` calls ``send_input`` with two positional
+    arguments.  New delivery controls may follow ``frozen_memory`` only as
+    keyword-only arguments, so old callers cannot accidentally bind a control
+    flag as the frozen memory block.
+    """
     for func in (inject_memory_context, terminal_service.send_input):
         params = list(inspect.signature(func).parameters.values())
-        assert params[-1].name == "frozen_memory", f"{func.__name__}: block must come last"
-        assert params[-1].default is None, f"{func.__name__}: block must default to None"
+        positional = [
+            param
+            for param in params
+            if param.kind
+            in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        ]
+        frozen = positional[-1]
+        assert frozen.name == "frozen_memory", f"{func.__name__}: block must stay last positional"
+        assert frozen.default is None, f"{func.__name__}: block must default to None"
+        trailing = params[params.index(frozen) + 1 :]
+        assert all(
+            param.kind is inspect.Parameter.KEYWORD_ONLY for param in trailing
+        ), f"{func.__name__}: controls after frozen_memory must be keyword-only"
 
 
 def test_send_input_forwards_the_block_unchanged(monkeypatch):

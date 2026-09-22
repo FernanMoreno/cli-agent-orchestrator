@@ -154,6 +154,14 @@ class TestGetStatusFromFixtures:
         )
         assert provider.get_status(output) == TerminalStatus.ERROR
 
+    def test_provider_quota_error_is_waiting_quota_not_terminal_error(self):
+        provider = make_provider()
+        output = (
+            "Error from provider (Console): rate limit exceeded; retry after reset\n"
+            "tab agents  ctrl+p commands  • OpenCode"
+        )
+        assert provider.get_status(output) == TerminalStatus.WAITING_QUOTA
+
     def test_idle_post_completion_returns_idle(self):
         # Use plain fixture — ANSI variant reuses the completed frame (see OPENCODE_FIXTURES.md).
         output = load_fixture("opencode_cli_idle_post_completion.txt")
@@ -265,6 +273,19 @@ class TestGetStatusFromScreen:
             == TerminalStatus.ERROR
         )
 
+    def test_provider_quota_error_screen_is_waiting_quota(self):
+        provider = make_provider()
+
+        assert (
+            provider.get_status_from_screen(
+                [
+                    "Error from provider (Console): usage limit reached; retry after reset",
+                    "tab agents  ctrl+p commands  • OpenCode",
+                ]
+            )
+            == TerminalStatus.WAITING_QUOTA
+        )
+
     def test_blank_screen_returns_unknown(self):
         provider = make_provider()
 
@@ -334,6 +355,42 @@ class TestExtractLastMessage:
         output = load_fixture("opencode_cli_completed.txt")
         result = provider.extract_last_message_from_script(output)
         assert "Hello" in result
+
+    def test_renderer_safe_turn_receipt_survives_opencode_markdown_rendering(self):
+        """OpenCode preserves a safe receipt even with its information sidebar.
+
+        A receipt is protocol data, not prose.  The generic spelling must avoid
+        Markdown emphasis punctuation so the exact value a model writes is
+        still present in the rendered current viewport used for verification.
+        The separate MCP/LSP information panel shares physical rows with the
+        chat pane, so its right-hand text must not make the receipt look like
+        it has trailing assistant prose.
+        """
+        provider = make_provider()
+        prepared = provider.prepare_input("Return a marker and finish.")
+        receipt = re.search(r"CAO-TURN-RECEIPT-[0-9a-f]{32}", prepared).group(0)
+        output = (
+            "  ┃  Return a marker and finish.\n\n"
+            + "▼ MCP".rjust(101)
+            + "\n"
+            + "     CAO_REAL_PROVIDER_MATRIX_demo".ljust(96)
+            + "github Connected\n"
+            + f"     {receipt}".ljust(96)
+            + "playwright Connected\n\n"
+            + "     ▣  Build · Ling 3.0 Flash Fin Free · 13.6s\n\n"
+            + "LSP".rjust(99)
+            + "\n"
+            + "     ctrl+p commands    • OpenCode 1.18.31\n"
+        )
+
+        result = provider.extract_last_message_from_script(output)
+
+        assert result == f"CAO_REAL_PROVIDER_MATRIX_demo\n{receipt}"
+        assert provider.receipt_result_terminal_status(output, result) == TerminalStatus.COMPLETED
+        assert (
+            provider.receipt_result_viewport_terminal_status(output, result)
+            == TerminalStatus.COMPLETED
+        )
 
     def test_strips_thinking_preamble(self):
         provider = make_provider()

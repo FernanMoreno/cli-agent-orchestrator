@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from test.e2e import test_real_provider_matrix as matrix
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -62,6 +63,47 @@ def test_manifest_loads_reviewed_registered_provider(
         auth_files=(Path(".matrix/auth.json"),),
         capabilities=frozenset({"native_children"}),
     )
+
+
+def test_quota_wait_matrix_cell_is_verified_then_reported_as_skip() -> None:
+    """A real-provider account quota is an environmental skip, never success.
+
+    The harness must still prove CAO preserved the live child and durable
+    reconciliation before it skips the cell. This keeps a provider reset from
+    hiding a regression in the no-duplicate-delivery contract.
+    """
+    detail = {
+        "kind": "quota_wait",
+        "terminal_id": "quota123",
+        "action": "wait_for_quota",
+        "delivery_may_have_occurred": True,
+        "retryable": False,
+        "provider_may_resume": True,
+    }
+    responses = [
+        SimpleNamespace(status_code=409, json=lambda: {"detail": detail}, text="quota"),
+        SimpleNamespace(status_code=200, json=lambda: {"status": "waiting_quota"}, text="child"),
+    ]
+    server = SimpleNamespace(url="http://matrix.test")
+    with (
+        patch.object(matrix, "_request", side_effect=responses) as request,
+        patch.object(
+            matrix,
+            "_receipt_for_terminal",
+            return_value={"state": "reconcile", "error_kind": "quota_wait"},
+        ) as receipt,
+    ):
+        with pytest.raises(pytest.skip.Exception, match="quota pause verified safely"):
+            matrix._run_cross_provider_step(
+                server,
+                parent_id="parent123",
+                session_name="session123",
+                provider="claude_code",
+                profile="matrix-profile",
+            )
+
+    assert request.call_count == 2
+    receipt.assert_called_once_with(server, "parent123", "quota123")
 
 
 @pytest.mark.parametrize(
@@ -306,6 +348,24 @@ def test_pair_selection_accepts_a_focused_explicit_subset(
     ]
 
 
+def test_test_filter_alias_selects_matrix_cells_without_runtime_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The clearer filter name is an E2E selection alias, not pair admission."""
+    parent, child = _provider_names(2)
+    _set_manifest(
+        monkeypatch,
+        {
+            parent: _provider_config(),
+            child: _provider_config(binary="matrix-test-cli-child"),
+        },
+    )
+    monkeypatch.delenv(matrix._PAIRS_ENV, raising=False)
+    monkeypatch.setenv(matrix._TEST_FILTER_ENV, f"{parent}->{child}")
+
+    assert matrix._pair_selection(matrix._load_matrix_providers()) == [(parent, child)]
+
+
 def test_legacy_parent_child_selects_one_manifest_cell(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -455,14 +515,14 @@ def test_profile_persists_explicit_model_as_frontmatter(tmp_path) -> None:
     assert 'model: "opencode/mimo-v2.5-free"' in profile
 
 
-def test_real_provider_workflow_uses_manifest_and_dynamic_pair_selector() -> None:
+def test_real_provider_workflow_uses_manifest_and_dynamic_test_filter() -> None:
     workflow = (_REPO_ROOT / ".github" / "workflows" / "real-provider-e2e.yml").read_text(
         encoding="utf-8"
     )
 
     assert "providers_json:" in workflow
     assert "CAO_REAL_PROVIDER_E2E_PROVIDERS:" in workflow
-    assert "CAO_REAL_PROVIDER_E2E_PAIRS: ${{ inputs.pairs }}" in workflow
+    assert "CAO_REAL_PROVIDER_E2E_TEST_FILTER: ${{ inputs.pairs }}" in workflow
     assert 'CAO_REAL_PROVIDER_E2E_STRICT: "1"' in workflow
     assert "inputs.providers_json || vars.CAO_REAL_PROVIDER_E2E_PROVIDERS" in workflow
     assert workflow.index('if len(raw.encode("utf-8")) > 65_536:') < workflow.index(
@@ -478,7 +538,9 @@ def test_real_provider_matrix_documentation_explains_dynamic_contract() -> None:
     documentation = (_REPO_ROOT / "docs" / "real-provider-e2e.md").read_text(encoding="utf-8")
 
     assert "CAO_REAL_PROVIDER_E2E_PROVIDERS" in documentation
-    assert "CAO_REAL_PROVIDER_E2E_PAIRS=all" in documentation
+    assert "CAO_REAL_PROVIDER_E2E_TEST_FILTER=all" in documentation
+    assert "**not** a\nruntime compatibility policy" in documentation
+    assert "deprecated alias" in documentation
     assert "CAO_REAL_PROVIDER_E2E_STRICT=1" in documentation
     assert "at least one\nselected parent -> child cell" in documentation
     assert "exclude_reason" in documentation

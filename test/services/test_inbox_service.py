@@ -8,8 +8,8 @@ import pytest
 
 from cli_agent_orchestrator.backends.base import TerminalNotFoundError
 from cli_agent_orchestrator.constants import INBOX_RECONCILE_GRACE_SECONDS
-from cli_agent_orchestrator.models.inbox import InboxMessage, MessageStatus
-from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.models.inbox import InboxMessage, MessageStatus, OrchestrationType
+from cli_agent_orchestrator.models.terminal import TerminalInputBlockedError, TerminalStatus
 from cli_agent_orchestrator.services.inbox_service import InboxService
 
 
@@ -38,7 +38,7 @@ class TestDeliverPending:
         svc = InboxService()
         svc.deliver_pending("term-1")
 
-        mock_term_svc.send_input.assert_called_once_with("term-1", "hello")
+        mock_term_svc.send_input.assert_called_once_with("term-1", "hello", task_delivery=True)
         mock_update.assert_called_once_with(1, MessageStatus.DELIVERED)
 
     @patch("cli_agent_orchestrator.services.inbox_service.update_message_status")
@@ -54,7 +54,7 @@ class TestDeliverPending:
         svc = InboxService()
         svc.deliver_pending("term-1")
 
-        mock_term_svc.send_input.assert_called_once_with("term-1", "hello")
+        mock_term_svc.send_input.assert_called_once_with("term-1", "hello", task_delivery=True)
         mock_update.assert_called_once_with(1, MessageStatus.DELIVERED)
 
     @patch("cli_agent_orchestrator.services.inbox_service.update_message_status")
@@ -115,7 +115,9 @@ class TestDeliverPending:
         svc.deliver_pending("term-1", num_messages=2)
 
         mock_get.assert_called_once_with("term-1", limit=2)
-        mock_term_svc.send_input.assert_called_once_with("term-1", "hello\nworld")
+        mock_term_svc.send_input.assert_called_once_with(
+            "term-1", "hello\nworld", task_delivery=True
+        )
         assert mock_update.call_count == 2
 
     @patch("cli_agent_orchestrator.services.inbox_service.update_message_status")
@@ -133,7 +135,9 @@ class TestDeliverPending:
         svc.deliver_pending("term-1", num_messages=0)
 
         mock_get.assert_called_once_with("term-1", limit=100)
-        mock_term_svc.send_input.assert_called_once_with("term-1", "msg0\nmsg1\nmsg2")
+        mock_term_svc.send_input.assert_called_once_with(
+            "term-1", "msg0\nmsg1\nmsg2", task_delivery=True
+        )
         assert mock_update.call_count == 3
 
     @patch("cli_agent_orchestrator.services.inbox_service.update_message_status")
@@ -209,6 +213,109 @@ class TestDeliverPending:
         # Final status is PENDING (reset after the optimistic DELIVERED), never FAILED.
         assert mock_update.call_args_list[-1] == call(1, MessageStatus.PENDING)
         assert call(1, MessageStatus.FAILED) not in mock_update.call_args_list
+
+    @patch("cli_agent_orchestrator.services.inbox_service.update_message_status")
+    @patch("cli_agent_orchestrator.services.inbox_service.terminal_service")
+    @patch("cli_agent_orchestrator.services.inbox_service.status_monitor")
+    @patch("cli_agent_orchestrator.services.inbox_service.get_pending_messages")
+    def test_active_receipt_block_leaves_message_pending_for_reconciliation(
+        self, mock_get, mock_monitor, mock_term_svc, mock_update
+    ):
+        """A sibling message must survive the short completed-before-verified window."""
+        mock_get.return_value = [_make_message()]
+        mock_monitor.get_status.return_value = TerminalStatus.COMPLETED
+        mock_term_svc.send_input.side_effect = TerminalInputBlockedError(
+            "Terminal term-1 has an active receipt-bearing task"
+        )
+
+        InboxService().deliver_pending("term-1")
+
+        mock_update.assert_has_calls(
+            [
+                call(1, MessageStatus.DELIVERED),
+                call(1, MessageStatus.PENDING),
+            ]
+        )
+        assert call(1, MessageStatus.FAILED) not in mock_update.call_args_list
+
+    @patch("cli_agent_orchestrator.services.inbox_service.update_message_status")
+    @patch("cli_agent_orchestrator.services.inbox_service.terminal_service")
+    @patch("cli_agent_orchestrator.services.inbox_service.status_monitor")
+    @patch("cli_agent_orchestrator.services.inbox_service.get_pending_messages")
+    def test_post_paste_receipt_uncertainty_is_not_returned_to_pending(
+        self, mock_get, mock_monitor, mock_term_svc, mock_update
+    ):
+        """A task possibly pasted into Gemini must never be auto-redelivered.
+
+        The inbox marks it DELIVERED before the send. If the backend accepted
+        the paste but ``prepared -> sent`` persistence failed, the message must
+        settle at RECONCILE, which pending queries and the orphan sweep exclude.
+        """
+        message = _make_message()
+        store = {"status": MessageStatus.PENDING}
+        mock_get.side_effect = lambda *_args, **_kwargs: (
+            [message] if store["status"] is MessageStatus.PENDING else []
+        )
+        mock_update.side_effect = lambda _message_id, new_status: store.update(status=new_status)
+        mock_monitor.get_status.return_value = TerminalStatus.COMPLETED
+        mock_term_svc.send_input.side_effect = TerminalInputBlockedError(
+            "Terminal term-1 accepted input but its sent receipt is uncertain",
+            action="reconcile",
+            delivery_may_have_occurred=True,
+        )
+
+        service = InboxService()
+        service.deliver_pending("term-1")
+        # A later result verification/IDLE event must not put the same inbox
+        # row back through delivery. get_pending_messages only sees PENDING;
+        # the durable RECONCILE state makes the second sweep a no-op.
+        service.deliver_pending("term-1")
+
+        mock_update.assert_has_calls(
+            [
+                call(1, MessageStatus.DELIVERED),
+                call(1, MessageStatus.RECONCILE),
+            ]
+        )
+        assert call(1, MessageStatus.PENDING) not in mock_update.call_args_list
+        assert call(1, MessageStatus.FAILED) not in mock_update.call_args_list
+        assert store["status"] is MessageStatus.RECONCILE
+        assert mock_term_svc.send_input.call_count == 1
+
+    @patch("cli_agent_orchestrator.services.inbox_service.update_message_status")
+    @patch("cli_agent_orchestrator.services.inbox_service.terminal_service")
+    @patch("cli_agent_orchestrator.services.inbox_service.status_monitor")
+    @patch("cli_agent_orchestrator.services.inbox_service.get_pending_messages")
+    def test_sibling_message_is_automated_and_stays_pending_at_a_user_dialog(
+        self, mock_get, mock_monitor, mock_term_svc, mock_update
+    ):
+        """SEND_MESSAGE cannot accidentally answer a Gemini trust/login dialog."""
+        mock_get.return_value = [_make_message()]
+        mock_monitor.get_status.return_value = TerminalStatus.WAITING_USER_ANSWER
+        mock_term_svc.send_input.side_effect = TerminalInputBlockedError(
+            "Terminal term-1 is waiting for a user answer"
+        )
+        registry = MagicMock()
+
+        # A provider may allow mid-turn inbox work, so exercise the delivery
+        # path itself rather than relying on the normal status gate.
+        with patch("cli_agent_orchestrator.services.inbox_service.EAGER_INBOX_DELIVERY", True), patch(
+            "cli_agent_orchestrator.services.inbox_service.provider_manager"
+        ) as mock_provider_manager:
+            provider = MagicMock()
+            provider.accepts_input_while_processing = True
+            mock_provider_manager.get_provider.return_value = provider
+            InboxService().deliver_pending("term-1", registry=registry)
+
+        mock_term_svc.send_input.assert_called_once_with(
+            "term-1",
+            "hello",
+            registry=registry,
+            sender_id="sender-1",
+            orchestration_type=OrchestrationType.SEND_MESSAGE,
+            task_delivery=True,
+        )
+        assert mock_update.call_args_list[-1] == call(1, MessageStatus.PENDING)
 
     @patch("cli_agent_orchestrator.services.inbox_service.update_message_status")
     @patch("cli_agent_orchestrator.services.inbox_service.terminal_service")

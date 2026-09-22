@@ -280,7 +280,16 @@ def _wait_for_health(
                 f"/health became ready.\nLog tail:\n{_tail(log_path)}"
             )
         try:
-            resp = requests.get(f"{url}/health", timeout=0.5)
+            # A Windows-mounted WSL worktree can briefly schedule the freshly
+            # started ASGI process slowly enough that it writes a successful
+            # access log after a 0.5 s client read timeout.  Keep the bounded
+            # startup deadline, but give one localhost response a realistic
+            # read window instead of classifying a healthy server as failed.
+            remaining = max(0.05, end - time.monotonic())
+            resp = requests.get(
+                f"{url}/health",
+                timeout=(min(0.5, remaining), min(2.0, remaining)),
+            )
             if resp.status_code == 200 and resp.json().get("status") == "ok":
                 return
             last_error = f"status={resp.status_code} body={resp.text[:200]}"

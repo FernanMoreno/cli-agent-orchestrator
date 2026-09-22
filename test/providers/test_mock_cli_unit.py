@@ -58,6 +58,12 @@ class TestMockCliProviderStatus:
         buffer = f"\x1b[1mMockCli ready.\x1b[0m\n{_PROMPT}hello\n> MOCK: hello\n{_PROMPT}"
         assert provider.get_status(buffer) == TerminalStatus.COMPLETED
 
+    def test_idle_when_raw_bracketed_paste_csi_follows_prompt(self):
+        # Raw pipe-pane output may append terminal-mode CSI after an idle prompt.
+        provider = MockCliProvider("t1", "sess", "win")
+        buffer = f"MockCli ready.\r\n{_PROMPT}\x1b[?2004h"
+        assert provider.get_status(buffer) == TerminalStatus.IDLE
+
 
 class TestMockCliProviderExtraction:
     """Last-message extraction from full script output."""

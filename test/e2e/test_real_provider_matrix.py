@@ -14,8 +14,9 @@ It is expensive and requires logged-in local CLIs, so it is disabled unless
 ``CAO_RUN_LIVE_PROVIDER_TESTS=1``.  When enabled, a reviewed JSON manifest
 names the provider CLIs and models that the runner is allowed to charge; the
 harness derives its parent × child cells from that manifest.  This keeps the
-test extensible (for example, for a future Gemini provider) without silently
-discovering and invoking arbitrary local CLIs.  See ``docs/real-provider-e2e.md``.
+test extensible (for example, when Gemini CLI is enabled on a reviewed runner)
+without silently discovering and invoking arbitrary local CLIs.  See
+``docs/real-provider-e2e.md``.
 """
 
 from __future__ import annotations
@@ -52,6 +53,10 @@ pytestmark = [
 
 
 _PROVIDERS_ENV: Final = "CAO_REAL_PROVIDER_E2E_PROVIDERS"
+# The canonical name describes its limited purpose: it selects test cells in
+# this E2E harness.  It is never read by CAO runtime authorization or task
+# scheduling.  Keep _PAIRS_ENV as a compatibility alias for existing runners.
+_TEST_FILTER_ENV: Final = "CAO_REAL_PROVIDER_E2E_TEST_FILTER"
 _PAIRS_ENV: Final = "CAO_REAL_PROVIDER_E2E_PAIRS"
 _STRICT_ENV: Final = "CAO_REAL_PROVIDER_E2E_STRICT"
 _AUTH_HOME_ENV: Final = "CAO_REAL_PROVIDER_E2E_AUTH_HOME"
@@ -254,9 +259,23 @@ def _load_matrix_providers() -> dict[str, MatrixProvider]:
 
 
 def _pair_selection(providers: dict[str, MatrixProvider]) -> list[tuple[str, str]]:
-    """Return explicit matrix cells, or the full Cartesian product for ``all``."""
+    """Return test cells, or the full Cartesian product for ``all``.
 
-    raw_selection = os.environ.get(_PAIRS_ENV, "").strip()
+    This function is deliberately kept under its historical private name for
+    test compatibility.  The selector is an E2E *test filter*, not a runtime
+    provider-pair policy: a CAO job still admits providers exclusively through
+    its own authorization allowlist.
+    """
+
+    raw_filter = os.environ.get(_TEST_FILTER_ENV, "").strip()
+    raw_legacy_pairs = os.environ.get(_PAIRS_ENV, "").strip()
+    if raw_filter and raw_legacy_pairs and raw_filter != raw_legacy_pairs:
+        pytest.fail(
+            f"{_TEST_FILTER_ENV} and deprecated {_PAIRS_ENV} disagree; set only "
+            f"{_TEST_FILTER_ENV}"
+        )
+    raw_selection = raw_filter or raw_legacy_pairs
+    selection_env = _TEST_FILTER_ENV if raw_filter else _PAIRS_ENV
     if not raw_selection:
         # Preserve a cheap local repro for the former one-cell interface while
         # requiring the new reviewed manifest for binary/model/auth data.  We
@@ -270,11 +289,11 @@ def _pair_selection(providers: dict[str, MatrixProvider]) -> list[tuple[str, str
         elif legacy_parent or legacy_child:
             pytest.fail(
                 f"{_LEGACY_PARENT_ENV} and {_LEGACY_CHILD_ENV} must be set together, or use "
-                f"{_PAIRS_ENV}"
+                f"{_TEST_FILTER_ENV}"
             )
         else:
             pytest.fail(
-                f"{_PAIRS_ENV} is required with live provider tests; set it to 'all' or "
+                f"{_TEST_FILTER_ENV} is required with live provider tests; set it to 'all' or "
                 "a comma-separated list such as 'codex->gemini'"
             )
     if raw_selection == "all":
@@ -286,15 +305,15 @@ def _pair_selection(providers: dict[str, MatrixProvider]) -> list[tuple[str, str
         parent = parent.strip()
         child = child.strip()
         if separator != "->" or not parent or not child:
-            pytest.fail(f"{_PAIRS_ENV} entries must use parent->child syntax; got {raw_pair!r}")
+            pytest.fail(f"{selection_env} entries must use parent->child syntax; got {raw_pair!r}")
         if parent not in providers or child not in providers:
             pytest.fail(
-                f"{_PAIRS_ENV} selects {parent!r}->{child!r}, but both must appear in "
+                f"{selection_env} selects {parent!r}->{child!r}, but both must appear in "
                 f"{_PROVIDERS_ENV}"
             )
         pair = (parent, child)
         if pair in pairs:
-            pytest.fail(f"{_PAIRS_ENV} contains duplicate cell {parent!r}->{child!r}")
+            pytest.fail(f"{selection_env} contains duplicate cell {parent!r}->{child!r}")
         pairs.append(pair)
     return pairs
 
@@ -641,8 +660,10 @@ def _run_cross_provider_step(
             "provider": provider,
             "agent": profile,
             "prompt": (
-                f"Return only this exact marker and then finish your turn: {marker}. "
-                "Do not call tools, edit files, delegate, or add any other text."
+                f"Return this exact marker on its own line: {marker}. Then follow the "
+                "CAO completion-receipt instruction supplied with this task. Do not call "
+                "tools, edit files, or delegate. Apart from the marker and the required "
+                "receipt, add no other text."
             ),
             "session_name": session_name,
             "caller_id": parent_id,
@@ -651,6 +672,32 @@ def _run_cross_provider_step(
             "prompt_redelivery": False,
         },
     )
+    # Provider-account quota is an external availability condition, not a
+    # failed child lifecycle.  CAO must preserve the already delivered task
+    # without re-sending it; after proving that contract, report this matrix
+    # cell as a transparent skip rather than a false product failure (or a
+    # false success). A later run after the provider resets will exercise the
+    # normal 200/succeeded assertions below.
+    if response.status_code == 409:
+        detail = response.json().get("detail", {})
+        if isinstance(detail, dict) and detail.get("kind") == "quota_wait":
+            terminal_id = detail.get("terminal_id")
+            assert isinstance(terminal_id, str) and terminal_id, detail
+            assert detail.get("action") == "wait_for_quota", detail
+            assert detail.get("delivery_may_have_occurred") is True, detail
+            assert detail.get("retryable") is False, detail
+            assert detail.get("provider_may_resume") is True, detail
+
+            terminal = _request("GET", f"{cao_server.url}/terminals/{terminal_id}")
+            assert terminal.status_code == 200, terminal.text
+            assert terminal.json().get("status") == "waiting_quota", terminal.text
+            receipt = _receipt_for_terminal(cao_server, parent_id, terminal_id)
+            assert receipt["state"] == "reconcile", receipt
+            assert receipt.get("error_kind") == "quota_wait", receipt
+            pytest.skip(
+                f"{provider} provider quota pause verified safely; rerun this cell after its "
+                "account resets to exercise a successful turn"
+            )
     assert response.status_code == 200, response.text
     data = response.json()
     assert marker in data["last_message"], data["last_message"]
@@ -675,11 +722,11 @@ def test_real_provider_native_child_matrix(
 ) -> None:
     """Exercise each explicitly selected parent × child provider cell.
 
-    ``CAO_REAL_PROVIDER_E2E_PAIRS=all`` creates one pytest case for every
+    ``CAO_REAL_PROVIDER_E2E_TEST_FILTER=all`` creates one pytest case for every
     ordered pair in the reviewed manifest.  A skipped provider remains visible
     as skipped cells with its exact availability reason; it is never silently
-    removed from the report.  A comma-separated selector keeps local repros
-    cheap without changing the manifest or the runner's authorisation.
+    removed from the report.  A comma-separated test filter keeps local repros
+    cheap without changing the manifest, runtime authorization, or scheduler.
     """
 
     assert cell is not None  # The disabled placeholder is skipped before fixtures run.

@@ -19,8 +19,10 @@ Each provider must implement pattern matching for its specific CLI's prompt
 and output format to reliably detect status changes.
 """
 
+import hashlib
 import logging
 import re
+import secrets
 import time
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -31,6 +33,30 @@ if TYPE_CHECKING:
     from cli_agent_orchestrator.models.agent_profile import AgentProfile
 
 logger = logging.getLogger(__name__)
+
+# A receipt is cooperative evidence from a task turn, not an authentication
+# primitive.  Its plaintext is placed only in the task prompt/transcript; the
+# durable store receives a digest.  Keep the grammar compact and shared so an
+# adapter restored after a server restart can validate a visible candidate
+# against the persisted digest without recovering the original nonce.
+#
+# The current delimiter deliberately avoids Markdown emphasis punctuation.
+# OpenCode's Rich viewport is allowed to render model prose, but it suppresses
+# underscores inside a bare ``CAO_TURN_RECEIPT_<nonce>`` token.  A protocol
+# token must survive every supported provider's *visible current viewport*, so
+# new turns use hyphens.  Accept the former spelling when restoring a persisted
+# turn: servers can restart while an old prompt is still in flight.
+_TURN_RECEIPT_PREFIX = "CAO-TURN-RECEIPT-"
+_LEGACY_TURN_RECEIPT_PREFIX = "CAO_TURN_RECEIPT_"
+_TURN_RECEIPT_BYTES = 16
+_TURN_RECEIPT_PATTERN = re.compile(
+    rf"(?m)^[ \t]*"
+    rf"((?:{re.escape(_TURN_RECEIPT_PREFIX)}|{re.escape(_LEGACY_TURN_RECEIPT_PREFIX)})"
+    rf"[0-9a-f]{{{_TURN_RECEIPT_BYTES * 2}}})"
+    rf"[ \t]*$"
+)
+_TURN_RECEIPT_HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_TURN_GENERATION_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 
 
 class OutputExtractionError(ValueError):
@@ -95,6 +121,17 @@ class BaseProvider(ABC):
         self._last_dispatch_time: float = 0.0
         self._done_first_detected: float = 0.0
         self._idle_first_detected: float = 0.0
+        # Generic durable-turn receipt state.  Existing adapters retain their
+        # literal input behaviour until they opt into ``requires_turn_receipt``;
+        # this makes the lifecycle reusable for every provider without a
+        # provider-name allowlist.  The plaintext receipt is deliberately
+        # memory-only.  A restart restores only generation/hash and therefore
+        # forces reconciliation rather than a blind re-paste.
+        self._pending_turn_receipt: Optional[str] = None
+        self._pending_turn_receipt_sha256: Optional[str] = None
+        self._pending_turn_generation: Optional[str] = None
+        self._pending_prepared_input: Optional[str] = None
+        self._restored_turn_receipt = False
 
     @property
     def shell_baseline(self) -> Optional[str]:
@@ -190,6 +227,20 @@ class BaseProvider(ABC):
     # never probed: the terminal keeps the status the edges give it.
     supports_midburst_processing_probe: bool = False
 
+    # Opt-in for providers whose current TUI has no reliable native completion
+    # marker.  ``terminal_service.send_input`` invokes ``prepare_input`` only
+    # for these adapters, after memory materialisation and before the input
+    # epoch is armed.  Keeping the default False preserves every established
+    # provider's literal input contract.
+    requires_turn_receipt: bool = False
+
+    # Whether an explicit provider quota pause can continue the already
+    # delivered turn without any CAO or operator input.  The shared terminal
+    # state is ``WAITING_QUOTA`` either way; this capability only keeps the API
+    # recovery contract honest for adapters whose UI instead requires an
+    # upgrade, a model choice, or a later manual retry.
+    quota_pause_may_auto_resume: bool = False
+
     def probe_processing_from_screen(self, screen_lines: List[str]) -> bool:
         """Report whether this half-drawn frame shows the agent actively working.
 
@@ -249,6 +300,217 @@ class BaseProvider(ABC):
         newest Claude Code, whose Ink renderer swallows an Enter sent too soon).
         """
         return 0.3
+
+    def prepare_input(self, message: str) -> str:
+        """Return the exact text to paste for one CAO turn.
+
+        Most providers receive the caller's message unchanged.  A provider may
+        append a provider-specific, per-turn receipt instruction when its TUI
+        otherwise has no trustworthy completion witness.  This hook runs after
+        CAO injects frozen memory and before the terminal's rolling buffer is
+        cleared, so any receipt it creates belongs to exactly the next input
+        epoch.  It must not send keys or mutate durable task state.
+        """
+        if self.requires_turn_receipt is not True:
+            return message
+        if self._pending_turn_receipt_sha256 is not None:
+            raise OutputExtractionError(
+                "provider has an active task receipt; reconcile or verify its result before "
+                "sending another task"
+            )
+        receipt = f"{_TURN_RECEIPT_PREFIX}{secrets.token_hex(_TURN_RECEIPT_BYTES)}"
+        prepared = (
+            f"{message.rstrip()}\n\n"
+            "CAO completion receipt requirement: this delivery contract takes precedence "
+            "over any incompatible output-format instruction in the task. After you have "
+            "fully completed the task and written a concise final result, write one final line containing "
+            f"exactly this receipt: {receipt}\n"
+            "Do not quote or emit that receipt before the task is complete, and do not "
+            "perform further tool calls after it."
+        )
+        self._pending_turn_receipt = receipt
+        self._pending_turn_receipt_sha256 = hashlib.sha256(receipt.encode("utf-8")).hexdigest()
+        self._pending_turn_generation = secrets.token_hex(_TURN_RECEIPT_BYTES)
+        self._pending_prepared_input = prepared
+        self._restored_turn_receipt = False
+        return prepared
+
+    def prepared_input_for_redelivery(self) -> Optional[str]:
+        """Return the exact active-turn paste text for a safe full redelivery.
+
+        Receipt-bearing providers override this to return the already prepared
+        text, including its same per-turn receipt nonce.  ``None`` tells the
+        delivery helper to use its historical caller-supplied message.
+        """
+        if self.requires_turn_receipt is not True:
+            return None
+        return self._pending_prepared_input
+
+    @property
+    def blocks_new_task_input_for_reconciliation(self) -> bool:
+        """Whether an interrupted receipt-bearing task must be reconciled first.
+
+        The default keeps existing providers unchanged.  A provider that loses
+        its in-memory task text across a server restart may restore only a
+        durable receipt hash; it must then block a *new task* rather than
+        overwrite that uncertain turn with a fresh prompt.
+        """
+        return self.requires_turn_receipt is True and self._pending_turn_receipt_sha256 is not None
+
+    def pending_turn_receipt_state(self) -> Optional[dict[str, str]]:
+        """Return opaque state to persist before a receipt-bearing paste.
+
+        Implementations return only a generation and a digest, never the
+        plaintext prompt or receipt nonce.  ``None`` means this input has no
+        durability requirement beyond the historical provider contract.
+        """
+        if self.requires_turn_receipt is not True:
+            return None
+        if self._pending_turn_generation is None or self._pending_turn_receipt_sha256 is None:
+            return None
+        return {
+            "generation": self._pending_turn_generation,
+            "receipt_sha256": self._pending_turn_receipt_sha256,
+        }
+
+    def restore_turn_receipt_state(self, state: dict[str, str]) -> None:
+        """Restore opaque active-turn state after a server restart.
+
+        Providers that do not use receipt persistence intentionally ignore it.
+        An opted-in provider restores no plaintext nonce or prompt body, so it
+        cannot redeliver automatically; it can only verify a visible receipt
+        candidate against the durable digest or reconcile the turn.
+        """
+        if self.requires_turn_receipt is not True:
+            return
+        generation = state.get("generation")
+        receipt_sha256 = state.get("receipt_sha256")
+        phase = state.get("phase")
+        if (
+            not isinstance(generation, str)
+            or not _TURN_GENERATION_PATTERN.fullmatch(generation)
+            or not isinstance(receipt_sha256, str)
+            or not _TURN_RECEIPT_HASH_PATTERN.fullmatch(receipt_sha256)
+            or phase not in {"prepared", "sent"}
+        ):
+            raise OutputExtractionError("invalid persisted provider turn receipt state")
+        self._pending_turn_receipt = None
+        self._pending_turn_generation = generation
+        self._pending_turn_receipt_sha256 = receipt_sha256
+        self._pending_prepared_input = None
+        self._restored_turn_receipt = True
+
+    def mark_turn_receipt_sent(self) -> None:
+        """Record that the provider's current receipt made it past the backend."""
+        if self.requires_turn_receipt is True:
+            self._restored_turn_receipt = False
+
+    def mark_turn_receipt_result_verified(self) -> None:
+        """Release a receipt only after CAO durably verified its extracted result."""
+        if self.requires_turn_receipt is not True:
+            return
+        self._pending_turn_receipt = None
+        self._pending_turn_generation = None
+        self._pending_turn_receipt_sha256 = None
+        self._pending_prepared_input = None
+        self._restored_turn_receipt = False
+
+    def abandon_unpersisted_turn_receipt(self) -> None:
+        """Forget a locally prepared receipt that was never durably claimed."""
+        if self.requires_turn_receipt is True and not self._restored_turn_receipt:
+            self.mark_turn_receipt_result_verified()
+
+    def receipt_result_terminal_status(
+        self,
+        transcript: str,
+        result: str,
+    ) -> Optional[TerminalStatus]:
+        """Return the live terminal state that proves an active task receipt.
+
+        The default accepts only an exact active receipt in an extracted result
+        while the adapter reports a normal ``COMPLETED`` terminal.  A provider
+        may override this narrowly for a *post-turn blocker*: the task can be
+        finished while the terminal remains genuinely blocked (for example, a
+        model-switch picker).  The return value is therefore the terminal's
+        actual state to project after the task CAS -- not a request to repaint
+        a blocked terminal as completed.
+        """
+        if self.requires_turn_receipt is not True or not self._result_has_active_receipt(result):
+            return None
+        return (
+            TerminalStatus.COMPLETED
+            if self.get_status(transcript) == TerminalStatus.COMPLETED
+            else None
+        )
+
+    def receipt_result_viewport_terminal_status(
+        self,
+        viewport: str,
+        result: str,
+    ) -> Optional[TerminalStatus]:
+        """Witness a receipt result from a current rendered terminal viewport.
+
+        Pipe-pane delivers the raw byte stream; cursor-motion redraws can
+        split one visible response line there even though tmux's current
+        viewport is coherent.  Callers use this only for an adapter that has
+        explicitly opted into screen detection, and only after the raw current
+        buffer failed to prove the receipt.  A viewport is not scrollback: it
+        describes exactly what is visible now.
+
+        Subclass-specific blockers (for example Codex's rate-limit picker)
+        retain their stricter grammar through ``receipt_result_terminal_status``.
+        For the ordinary path, a screen-capable adapter may use its purpose-
+        built screen detector to prove a normal completed viewport.  Either
+        branch still requires the active receipt as a standalone extracted
+        result, so presentation repair never turns arbitrary visible text into
+        a task outcome.
+        """
+        direct = self.receipt_result_terminal_status(viewport, result)
+        if direct is not None:
+            return direct
+        if (
+            self.requires_turn_receipt is not True
+            or not self._result_has_active_receipt(result)
+            or getattr(self, "supports_screen_detection", False) is not True
+        ):
+            return None
+        return (
+            TerminalStatus.COMPLETED
+            if self.get_status_from_screen(viewport.splitlines()) == TerminalStatus.COMPLETED
+            else None
+        )
+
+    def extract_post_turn_completion_result(self, transcript: str) -> Optional[str]:
+        """Recover a receipt-bearing answer hidden by a provider-specific blocker.
+
+        The default has no such UI grammar.  It intentionally returns no
+        result rather than guessing from terminal chrome; an override must be
+        both structurally specific and paired with
+        :meth:`receipt_result_terminal_status`.
+        """
+        return None
+
+    def _result_has_active_receipt(self, result: str) -> bool:
+        """Match a standalone receipt line against in-memory or restored state.
+
+        Terminal UIs commonly indent continuation lines below an assistant
+        bullet (Codex renders the second line with two spaces, for example).
+        That presentation whitespace is not model output, so accept horizontal
+        whitespace around an otherwise exact token.  Do not accept other text
+        on the line: a quoted receipt remains insufficient evidence.
+        """
+        if not isinstance(result, str) or not result:
+            return False
+        expected = self._pending_turn_receipt
+        if expected is not None:
+            return bool(re.search(rf"(?m)^[ \t]*{re.escape(expected)}[ \t]*$", result))
+        expected_hash = self._pending_turn_receipt_sha256
+        if expected_hash is None:
+            return False
+        for candidate in _TURN_RECEIPT_PATTERN.findall(result):
+            if hashlib.sha256(candidate.encode("utf-8")).hexdigest() == expected_hash:
+                return True
+        return False
 
     async def wait_until_input_ready(self, timeout: float = 5.0) -> bool:
         """Wait until the provider's input surface actually accepts keystrokes.

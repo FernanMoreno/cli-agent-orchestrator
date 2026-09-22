@@ -89,6 +89,124 @@ class TestGetStatusEventInbox:
         sm = StatusMonitor()
         assert sm.get_status("t1") == TerminalStatus.UNKNOWN
 
+    @patch("cli_agent_orchestrator.services.status_monitor.provider_manager")
+    @patch("cli_agent_orchestrator.backends.registry.get_backend")
+    def test_receipt_completion_stays_processing_until_durable_verifier_settles_it(
+        self, mock_get_backend, mock_pm
+    ):
+        """Native/event-inbox status uses the same receipt gate as tmux output."""
+        mock_get_backend.return_value = _backend(event_inbox=True)
+        provider = MagicMock()
+        provider.get_status.return_value = TerminalStatus.COMPLETED
+        provider.requires_turn_receipt = True
+        provider.pending_turn_receipt_state.return_value = {
+            "generation": "g",
+            "receipt_sha256": "h",
+        }
+        mock_pm.get_provider.return_value = provider
+
+        with patch(
+            "cli_agent_orchestrator.services.terminal_service.schedule_receipt_result_verification"
+        ) as schedule:
+            assert StatusMonitor().get_status("t1") == TerminalStatus.PROCESSING
+
+        schedule.assert_called_once_with("t1", provider)
+
+
+class TestReceiptCompletionGate:
+    """A visual done marker is not a durable task result by itself."""
+
+    @patch("cli_agent_orchestrator.services.status_monitor.provider_manager")
+    def test_raw_provider_completion_schedules_verification_and_remains_processing(self, mock_pm):
+        provider = MagicMock()
+        provider.get_status.return_value = TerminalStatus.COMPLETED
+        provider.requires_turn_receipt = True
+        provider.pending_turn_receipt_state.return_value = {
+            "generation": "g",
+            "receipt_sha256": "h",
+        }
+        mock_pm.get_provider.return_value = provider
+
+        with patch(
+            "cli_agent_orchestrator.services.terminal_service.schedule_receipt_result_verification"
+        ) as schedule:
+            assert StatusMonitor()._detect_status("t1", "receipt completed composer") == (
+                TerminalStatus.PROCESSING
+            )
+
+        schedule.assert_called_once_with("t1", provider)
+
+    @patch("cli_agent_orchestrator.services.status_monitor.provider_manager")
+    def test_verified_receipt_completion_is_exposed_without_rescheduling(self, mock_pm):
+        provider = MagicMock()
+        provider.get_status.return_value = TerminalStatus.COMPLETED
+        provider.requires_turn_receipt = True
+        provider.pending_turn_receipt_state.return_value = None
+        mock_pm.get_provider.return_value = provider
+
+        with patch(
+            "cli_agent_orchestrator.services.terminal_service.schedule_receipt_result_verification"
+        ) as schedule:
+            assert (
+                StatusMonitor()._detect_status("t1", "settled transcript")
+                == TerminalStatus.COMPLETED
+            )
+
+        schedule.assert_not_called()
+
+    @patch("cli_agent_orchestrator.services.status_monitor.provider_manager")
+    def test_rendered_screen_completion_cannot_bypass_the_receipt_gate(self, mock_pm):
+        """Pyte/screen detection publishes the same semantic state as raw output."""
+        provider = MagicMock()
+        provider.requires_turn_receipt = True
+        provider.supports_screen_detection = True
+        provider.pending_turn_receipt_state.return_value = {
+            "generation": "g",
+            "receipt_sha256": "h",
+        }
+        provider.get_status_from_screen.return_value = TerminalStatus.COMPLETED
+        mock_pm.get_provider.return_value = provider
+        sm = StatusMonitor()
+
+        with patch(
+            "cli_agent_orchestrator.services.terminal_service.schedule_receipt_result_verification"
+        ) as schedule:
+            with patch.object(sm, "_screen_lines", return_value=(["completed"], "raw")):
+                assert sm._detect_screen("t1", provider) == TerminalStatus.PROCESSING
+
+        schedule.assert_called_once_with("t1", provider)
+
+    @patch("cli_agent_orchestrator.backends.registry.get_backend")
+    @patch("cli_agent_orchestrator.services.status_monitor.provider_manager")
+    def test_stale_capture_completion_cannot_bypass_the_receipt_gate(
+        self, mock_pm, mock_get_backend
+    ):
+        """The two-read recovery path must not return visual completion early."""
+        provider = MagicMock()
+        provider.session_name = "s1"
+        provider.window_name = "w1"
+        provider.requires_turn_receipt = True
+        provider.supports_screen_detection = False
+        provider.supports_direct_status_probe = True
+        provider.pending_turn_receipt_state.return_value = {
+            "generation": "g",
+            "receipt_sha256": "h",
+        }
+        provider.get_status.return_value = TerminalStatus.COMPLETED
+        mock_pm.get_provider.return_value = provider
+        backend = _backend(event_inbox=False)
+        backend.get_history.return_value = "completed rendered pane"
+        mock_get_backend.return_value = backend
+        sm = StatusMonitor()
+        sm._capture_generation["t1"] = 0
+
+        with patch(
+            "cli_agent_orchestrator.services.terminal_service.schedule_receipt_result_verification"
+        ) as schedule:
+            assert sm._fresh_capture_pane_status("t1", 0) == TerminalStatus.PROCESSING
+
+        schedule.assert_called_once_with("t1", provider)
+
 
 class TestStaleProcessingCapturePane:
     """Stuck-PROCESSING self-heal (#558): a terminal that goes genuinely idle can leave
@@ -948,6 +1066,21 @@ class TestStickyLatching:
         m.feed(TerminalStatus.IDLE)  # prompt cleared, redraw flap
         m.feed(TerminalStatus.PROCESSING)  # agent resumes the task
         assert m.status() == TerminalStatus.PROCESSING
+
+    def test_quota_wait_auto_resumes_to_processing_without_input_arm(self):
+        """A provider-owned quota pause can resolve on its own.
+
+        Unlike a completed/idle ready state, it must not require another CAO
+        input event before a later spinner can move the live terminal back to
+        PROCESSING. Otherwise the UI would remain parked at quota forever even
+        though the provider resumed the original turn.
+        """
+        m = _SequencedMonitor()
+        m.feed(TerminalStatus.WAITING_QUOTA)
+        m.feed(TerminalStatus.PROCESSING)
+
+        assert m.status() == TerminalStatus.PROCESSING
+        assert m.published == ["waiting_quota", "processing"]
 
     def test_arm_consumed_by_init_style_upgrade(self):
         """non-ready → ready latch consumes the arm (CLI launch reaching its

@@ -577,6 +577,28 @@ def test_write_preserves_an_existing_file_mode(tmp_path: Path) -> None:
     assert stat.S_IMODE(target.stat().st_mode) == 0o644
 
 
+def test_write_explicit_mode_is_applied_to_temp_before_atomic_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sensitive callers must not publish a umask-default file then chmod it."""
+    import cli_agent_orchestrator.utils.atomic_file as atomic_file_module
+
+    target = tmp_path / "private.json"
+    observed_temp_modes: list[int] = []
+    real_replace = atomic_file_module.os.replace
+
+    def inspect_before_replace(source, destination):
+        observed_temp_modes.append(stat.S_IMODE(Path(source).stat().st_mode))
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(atomic_file_module.os, "replace", inspect_before_replace)
+
+    locked_atomic_write(target, '{"private":true}\n', mode=0o600)
+
+    assert observed_temp_modes == [0o600]
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
 def test_write_leaves_no_temp_files(tmp_path: Path) -> None:
     target = tmp_path / "profile.md"
 

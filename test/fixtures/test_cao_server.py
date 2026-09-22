@@ -15,6 +15,7 @@ import contextlib
 import shutil
 import time
 from pathlib import Path
+from unittest.mock import Mock
 from test.conftest import mint_test_token
 from test.fixtures.cao_server import (
     AuthCaoServer,
@@ -25,6 +26,7 @@ from test.fixtures.cao_server import (
     _seed_omp_e2e_state,
     _session_rsa_keys,
     _start_cao_server,
+    _wait_for_health,
 )
 
 import pytest
@@ -58,6 +60,32 @@ def test_fixture_health_timeout_accepts_bounded_override(
     monkeypatch.setenv("CAO_TEST_SERVER_HEALTH_TIMEOUT", "60")
 
     assert _fixture_health_timeout() == 60.0
+
+
+def test_health_wait_allows_a_bounded_localhost_read_window(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A slow cold localhost response is not a failed CAO startup."""
+    response = Mock()
+    response.status_code = 200
+    response.json.return_value = {"status": "ok"}
+    request = Mock(return_value=response)
+    monkeypatch.setattr("test.fixtures.cao_server.requests.get", request)
+
+    process = Mock()
+    process.poll.return_value = None
+    _wait_for_health(
+        "http://127.0.0.1:45678",
+        deadline=1.0,
+        process=process,
+        log_path=tmp_path / "server.log",
+    )
+
+    timeout = request.call_args.kwargs["timeout"]
+    assert isinstance(timeout, tuple)
+    assert timeout[0] <= 0.5
+    assert 0 < timeout[1] <= 2.0
 
 
 # ---------------------------------------------------------------------------

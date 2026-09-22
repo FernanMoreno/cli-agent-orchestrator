@@ -13,6 +13,7 @@ class ProviderType(str, Enum):
     HERMES = "hermes"
     CURSOR_CLI = "cursor_cli"
     ANTIGRAVITY_CLI = "antigravity_cli"
+    GEMINI_CLI = "gemini_cli"
     OMP = "omp"
     GROK_CLI = "grok_cli"
     MINIMAX_CODE = "mcode"

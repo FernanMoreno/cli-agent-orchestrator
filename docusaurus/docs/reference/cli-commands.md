@@ -755,6 +755,9 @@ CAO supports multiple agent providers. Specify a provider with the `--provider` 
 | `hermes` | Hermes |
 | `cursor_cli` | Cursor CLI |
 | `antigravity_cli` | Antigravity CLI |
+| `gemini_cli` | Gemini CLI |
+| `grok_cli` | Grok Build CLI |
+| `mcode` | MiniMax Code |
 
 ### Example
 

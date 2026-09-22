@@ -127,7 +127,7 @@ class TestAgentProviders:
 
         assert response.status_code == 200
         data = response.json()
-        assert len(data) == 12
+        assert len(data) == 13
         names = [p["name"] for p in data]
         assert "kiro_cli" in names
         assert "claude_code" in names
@@ -141,6 +141,7 @@ class TestAgentProviders:
         assert "omp" in names
         assert "grok_cli" in names
         assert "mcode" in names
+        assert "gemini_cli" in names
         for p in data:
             assert p["installed"] is True
 
@@ -174,6 +175,7 @@ class TestAgentProviders:
         assert providers_dict["opencode_cli"]["installed"] is False
         assert providers_dict["grok_cli"]["installed"] is False
         assert providers_dict["mcode"]["installed"] is False
+        assert providers_dict["gemini_cli"]["installed"] is False
 
     def test_list_providers_has_binary_field(self, client):
         """Each provider entry has correct binary name."""
@@ -192,6 +194,32 @@ class TestAgentProviders:
         assert providers_dict["omp"]["binary"] == "omp"
         assert providers_dict["grok_cli"]["binary"] == "grok"
         assert providers_dict["mcode"]["binary"] == "mcode"
+        assert providers_dict["gemini_cli"]["binary"] == "gemini"
+
+    def test_list_providers_exposes_individual_adapter_capabilities(self, client):
+        """The catalog reports operational capabilities without pair policy data."""
+        with patch("shutil.which", return_value=None):
+            response = client.get("/agents/providers")
+
+        assert response.status_code == 200
+        providers = {entry["name"]: entry for entry in response.json()}
+
+        # Native child creation and sibling messaging are CAO operations.  They
+        # are deliberately described per adapter, rather than by declaring any
+        # provider pair compatible or incompatible.
+        for name in ("codex", "opencode_cli", "gemini_cli"):
+            capabilities = providers[name]["capabilities"]
+            assert capabilities["native_children"] is True
+            assert capabilities["sibling_messages"] is True
+            assert "compatible_with" not in capabilities
+            assert "incompatible_with" not in capabilities
+
+        # Each currently supported live adapter opts into the same durable
+        # result-receipt protocol.  This is an adapter-local lifecycle fact,
+        # not a provider-pair compatibility rule: it prevents transient TUI
+        # completion chrome from settling a task before its result is durable.
+        for name in ("codex", "claude_code", "opencode_cli", "gemini_cli"):
+            assert providers[name]["capabilities"]["durable_turn_receipts"] is True
 
 
 # ── Skills endpoint ──────────────────────────────────────────────────
@@ -341,12 +369,14 @@ class TestCreateSession:
             agent_profile="developer",
             session_name=None,
             working_directory=None,
+            caller_id=None,
             allowed_tools=None,
             registry=ANY,
             env_vars=None,
             engine=None,
             initial_message=None,
             initial_message_orchestration_type=None,
+            prompt_redelivery=True,
             model=None,
             use_worktree=False,
             idempotency_key=None,
@@ -1357,14 +1387,27 @@ class TestSendTerminalInput:
         assert response.status_code == 404
         assert "Terminal not found" in response.json()["detail"]
 
-    def test_send_input_blocked_returns_conflict(self, client):
-        """POST /terminals/{id}/input returns 409 for protected interactive prompts."""
+    @pytest.mark.parametrize(
+        ("action", "delivery_may_have_occurred"),
+        [
+            ("answer_user_prompt", False),
+            ("reconcile", False),
+            ("inspect", False),
+            ("reconcile", True),
+        ],
+    )
+    def test_send_input_blocked_returns_structured_recovery_contract(
+        self, client, action, delivery_may_have_occurred
+    ):
+        """POST /input exposes stable recovery semantics for every caller."""
         from cli_agent_orchestrator.services.terminal_service import TerminalInputBlockedError
 
         with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
             mock_svc.TerminalInputBlockedError = TerminalInputBlockedError
             mock_svc.send_input.side_effect = TerminalInputBlockedError(
-                "Terminal abcd1234 is waiting for a user answer"
+                "Terminal abcd1234 cannot accept this input",
+                action=action,
+                delivery_may_have_occurred=delivery_may_have_occurred,
             )
 
             response = client.post(
@@ -1373,7 +1416,11 @@ class TestSendTerminalInput:
             )
 
         assert response.status_code == 409
-        assert "waiting for a user answer" in response.json()["detail"]
+        assert response.json()["detail"] == {
+            "message": "Terminal abcd1234 cannot accept this input",
+            "action": action,
+            "delivery_may_have_occurred": delivery_may_have_occurred,
+        }
 
     def test_send_input_server_error(self, client):
         """POST /terminals/{id}/input returns 500 on error."""

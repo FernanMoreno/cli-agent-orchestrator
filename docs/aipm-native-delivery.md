@@ -31,6 +31,21 @@ the separate `aipm_cao` integration. CAO remains a general orchestrator; the
 integration is responsible for deciding which callers are allowed to opt into
 the stricter delivery mode.
 
+## Provider discovery and operation preflight
+
+`GET /agents/providers` returns the existing `name`, `binary`, and `installed`
+fields plus an additive `capabilities` object for every production adapter
+registered in this CAO checkout. The object describes only operations of that
+adapter, such as `native_children`, `sibling_messages`, terminal status probes,
+and `durable_turn_receipts` when a provider needs receipt-verified completion.
+
+It deliberately does **not** include `compatible_with`, `incompatible_with`,
+or any other provider-pair routing field. AIPM (or another caller) may
+preflight the operation it is about to request, but its job allowlist remains
+the authority for which selected providers can collaborate. Write coordination
+continues to come from task/resource leases, not a claim that two CLI brands
+are inherently incompatible.
+
 The accompanying unit tests cover the changed OpenCode readiness path, tmux
 shell readiness, and propagation of the no-redelivery option into a synchronous
 agent step.

@@ -22,7 +22,7 @@ from cli_agent_orchestrator.constants import (
 )
 from cli_agent_orchestrator.models.inbox import MessageStatus, OrchestrationType
 from cli_agent_orchestrator.models.provider import ProviderType
-from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.models.terminal import TerminalInputBlockedError, TerminalStatus
 from cli_agent_orchestrator.plugins import PluginRegistry
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services import terminal_service
@@ -147,8 +147,14 @@ class InboxService:
             batch = list(group)
             combined = "\n".join(m.message for m in batch)
             try:
+                # Inbox rows are always asynchronous agent-to-agent work.  They
+                # must never be treated as an operator's answer merely because
+                # a caller did not supply a plugin registry (for example the
+                # reconcile sweep or a server started without plugins).  The
+                # sole interactive-answer path is the direct terminal-input
+                # endpoint, which does not enqueue an inbox row.
                 if registry is None:
-                    terminal_service.send_input(terminal_id, combined)
+                    terminal_service.send_input(terminal_id, combined, task_delivery=True)
                 else:
                     terminal_service.send_input(
                         terminal_id,
@@ -156,6 +162,7 @@ class InboxService:
                         registry=registry,
                         sender_id=sender_id,
                         orchestration_type=OrchestrationType.SEND_MESSAGE,
+                        task_delivery=True,
                     )
                 logger.info(f"Delivered {len(batch)} message(s) to terminal {terminal_id}")
             except TerminalNotFoundError as e:
@@ -168,6 +175,32 @@ class InboxService:
                 logger.warning(
                     f"Pane not resolvable for terminal {terminal_id}; leaving "
                     f"{len(batch)} message(s) pending for retry: {e}"
+                )
+            except TerminalInputBlockedError as e:
+                # A blocked terminal is a live reconciliation condition, not
+                # a failed message.  Receipt-bearing providers intentionally
+                # reject a follow-up until their prior result is durably
+                # verified; a trust/login dialog similarly requires an
+                # operator answer. A pre-paste block means this batch was
+                # never accepted, so preserve it as PENDING for the normal
+                # status/reconcile paths. A *post-paste* receipt-write
+                # failure is different: the terminal may already be executing
+                # this exact batch. Persist RECONCILE instead of putting it
+                # back in PENDING, because the orphan sweep only retries
+                # PENDING and must never execute an uncertain task twice.
+                final_status = (
+                    MessageStatus.RECONCILE
+                    if e.delivery_may_have_occurred
+                    else MessageStatus.PENDING
+                )
+                for message in batch:
+                    update_message_status(message.id, final_status)
+                logger.info(
+                    "Terminal %s blocked inbox delivery; marking %d message(s) %s: %s",
+                    terminal_id,
+                    len(batch),
+                    final_status.value,
+                    e,
                 )
             except Exception as e:
                 for message in batch:

@@ -31,6 +31,12 @@ describe('StatusBadge', () => {
     expect(screen.getByText('Awaiting Input')).toBeInTheDocument()
   })
 
+  it('renders waiting_quota with the warning token styling', () => {
+    render(<StatusBadge status="waiting_quota" />)
+    expect(screen.getByText('Awaiting Quota Reset')).toBeInTheDocument()
+    expect(screen.getByText('Awaiting Quota Reset').parentElement).toHaveClass('bg-cao-warning/10')
+  })
+
   it('renders null status as unknown', () => {
     render(<StatusBadge status={null} />)
     expect(screen.getByText('Unknown')).toBeInTheDocument()

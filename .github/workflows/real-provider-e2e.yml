@@ -12,8 +12,10 @@ on:
         default: ""
       pairs:
         description: >-
-          `all` for every enabled parent->child pair, or a comma-separated
-          list such as `codex->gemini_cli,gemini_cli->claude_code` for a repro.
+          E2E test-cell filter: `all` for every manifest parent->child cell,
+          or a comma-separated list such as
+          `codex->gemini_cli,gemini_cli->claude_code` for a repro. This input
+          name is retained for dispatch compatibility; it is not runtime policy.
         type: string
         required: true
         default: all
@@ -41,7 +43,9 @@ jobs:
       # An operator adds a supported provider by updating the protected
       # manifest (or this dispatch input), and the harness derives all cells.
       CAO_REAL_PROVIDER_E2E_PROVIDERS: ${{ inputs.providers_json || vars.CAO_REAL_PROVIDER_E2E_PROVIDERS }}
-      CAO_REAL_PROVIDER_E2E_PAIRS: ${{ inputs.pairs }}
+      # The workflow's historical `pairs` input is only an E2E filter. Map it
+      # to the canonical name so no runner mistakes it for provider admission.
+      CAO_REAL_PROVIDER_E2E_TEST_FILTER: ${{ inputs.pairs }}
       # A protected release runner must never turn unavailable enabled
       # providers into a green all-skipped workflow. This preflights every
       # selected non-excluded endpoint before any provider terminal launches.
@@ -93,11 +97,11 @@ jobs:
               sys.exit("CAO_REAL_PROVIDER_E2E_PROVIDERS must be a JSON object")
           if not providers:
               sys.exit("CAO_REAL_PROVIDER_E2E_PROVIDERS must not be empty")
-          pairs = os.environ.get("CAO_REAL_PROVIDER_E2E_PAIRS", "").strip()
-          if not pairs:
-              sys.exit("CAO_REAL_PROVIDER_E2E_PAIRS is required")
+          test_filter = os.environ.get("CAO_REAL_PROVIDER_E2E_TEST_FILTER", "").strip()
+          if not test_filter:
+              sys.exit("CAO_REAL_PROVIDER_E2E_TEST_FILTER is required")
           print(f"Configured providers: {', '.join(sorted(providers))}")
-          print(f"Requested pair selection: {pairs}")
+          print(f"Requested E2E test-cell filter: {test_filter}")
           PY
 
       - name: Verify runner base prerequisites

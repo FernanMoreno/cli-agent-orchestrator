@@ -1,6 +1,6 @@
 //! The static run-policy table: what the TUI offers, and how (issue #321).
 //!
-//! One row per leaf command of the CAO Click tree — **85 of them** — each classified `InApp`,
+//! One row per leaf command of the CAO Click tree — **87 of them** — each classified `InApp`,
 //! `Handoff`, or `Hidden`. Three infallible lookups read that table and nothing else.
 //!
 //! # No I/O, and that is the security property (SR-1)
@@ -64,7 +64,7 @@ use std::vec::Vec;
 
 /// The number of leaf commands in the CAO Click tree.
 ///
-/// **85 as of this branch.** Two separate merges from `main` each brought four new leaf commands
+/// **87 as of this branch.** Two separate merges from `main` each brought four new leaf commands
 /// that this table did not know about, and both were caught by
 /// `test/test_command_catalog_matches_click.py` rather than by review — the second one in CI,
 /// because CI tests the PR MERGED against `main` while a local run only sees the branch. That is
@@ -94,8 +94,9 @@ use std::vec::Vec;
 /// fleet configured" on every machine that has not exported them. `cao fleet shutdown` also
 /// deletes other people's running agent sessions, and `cao worker attach` is an interactive
 /// read/send loop with no terminal semantics — two more things a reviewer should weigh before any
-/// of this reaches navigation. That moves the count from 76 to **85**, and the distribution from
-/// 24/18/34 to 24/18/43.
+/// of this reaches navigation. That moved the count from 76 to 85, and the distribution from
+/// 24/18/34 to 24/18/43. `cao agent {children, join}` then added two more HIDE leaves, for
+/// 24/18/45 = **87**.
 ///
 /// The count below the four additions was **61, not the 60 the design records** — and the discrepancy is a prediction coming true
 /// rather than a defect. `business-logic-model.md` wrote that `cao tui` was "absent from the
@@ -104,7 +105,7 @@ use std::vec::Vec;
 /// must not offer itself — giving **33 IN-APP / 5 HANDOFF / 23 HIDE = 61**. Recorded here
 /// because a reader comparing the design's 60 against this 61 would otherwise suspect drift.
 /// (#321)
-const COMMAND_COUNT: usize = 85;
+const COMMAND_COUNT: usize = 87;
 
 /// What the TUI does with a command.
 ///
@@ -201,7 +202,7 @@ pub struct Command {
 ///
 /// `pub(crate)` since Bolt 3: `server-client`'s route-table tests walk it to assert that every
 /// IN-APP command has a route and that no HANDOFF or HIDE command does. Deriving that set any
-/// other way would mean re-listing 85 commands in a second place, which is a worse trade than
+/// other way would mean re-listing 87 commands in a second place, which is a worse trade than
 /// widening the visibility of a compile-time constant. Still crate-private — no consumer outside
 /// this crate exists, and the table is not a public API. (#321)
 pub(crate) const DISPLAY_ORDER: [CommandId; COMMAND_COUNT] = [
@@ -215,7 +216,9 @@ pub(crate) const DISPLAY_ORDER: [CommandId; COMMAND_COUNT] = [
     CommandId::Update,
     CommandId::AgentAssign,
     CommandId::AgentCancel,
+    CommandId::AgentChildren,
     CommandId::AgentHandoff,
+    CommandId::AgentJoin,
     CommandId::AgentResult,
     CommandId::AgentSendMessage,
     CommandId::AgentStatus,
@@ -292,7 +295,7 @@ pub(crate) const DISPLAY_ORDER: [CommandId; COMMAND_COUNT] = [
     CommandId::WorkflowValidate,
 ];
 
-/// One variant per leaf command — **all 85**.
+/// One variant per leaf command — **all 87**.
 ///
 /// Why an enum rather than a `String` key is the subject of this module's own docs: it is what
 /// makes an unclassified command a **compile error** instead of a runtime `None` (FR-4.2).
@@ -325,8 +328,12 @@ pub enum CommandId {
     AgentAssign,
     /// `cao agent cancel`
     AgentCancel,
+    /// `cao agent children`
+    AgentChildren,
     /// `cao agent handoff`
     AgentHandoff,
+    /// `cao agent join`
+    AgentJoin,
     /// `cao agent result`
     AgentResult,
     /// `cao agent send-message`
@@ -594,7 +601,7 @@ fn entry(id: CommandId) -> Command {
             // HIDE: self-update may replace the binary under a running TUI
         },
 
-        // ── `cao agent *` — all six HIDE ────────────────────────────────────────────────
+        // ── `cao agent *` — all eight HIDE ──────────────────────────────────────────────
         //
         // Added to the CLI by issue #616: a CLI escape hatch for in-session orchestration
         // (assign/handoff/send-message/status/result/cancel) for use when a terminal's
@@ -635,6 +642,15 @@ fn entry(id: CommandId) -> Command {
             ],
             handoff_reason: None,
         },
+        CommandId::AgentChildren => Command {
+            id: CommandId::AgentChildren,
+            parent: Some("agent"),
+            leaf_name: "children",
+            summary: "List durable native-child receipts for this CAO terminal.",
+            policy: Policy::Hidden,
+            params: &[Param { name: "--json", required: false, kind: ParamKind::Flag }],
+            handoff_reason: None,
+        },
         CommandId::AgentHandoff => Command {
             id: CommandId::AgentHandoff,
             parent: Some("agent"),
@@ -650,6 +666,19 @@ fn entry(id: CommandId) -> Command {
                 Param { name: "--model", required: false, kind: ParamKind::Text },
                 Param { name: "--use-worktree", required: false, kind: ParamKind::Flag },
                 Param { name: "--no-wait", required: false, kind: ParamKind::Flag },
+                Param { name: "--json", required: false, kind: ParamKind::Flag },
+            ],
+            handoff_reason: None,
+        },
+        CommandId::AgentJoin => Command {
+            id: CommandId::AgentJoin,
+            parent: Some("agent"),
+            leaf_name: "join",
+            summary: "Wait boundedly for a durable child receipt; never guesses from TUI state.",
+            policy: Policy::Hidden,
+            params: &[
+                Param { name: "child_id", required: true, kind: ParamKind::Text },
+                Param { name: "--wait", required: false, kind: ParamKind::Text },
                 Param { name: "--json", required: false, kind: ParamKind::Flag },
             ],
             handoff_reason: None,
@@ -1566,7 +1595,7 @@ mod tests {
         counts
     }
 
-    /// Test 1 — **the policy distribution is 24 IN-APP / 18 HANDOFF / 43 HIDE, totalling 85.**
+    /// Test 1 — **the policy distribution is 24 IN-APP / 18 HANDOFF / 45 HIDE, totalling 87.**
     ///
     /// Every number here is a **hard-coded literal**, and that is the entire design of the test.
     /// Deriving any of them from the table — `assert_eq!(in_app, TABLE.iter().filter(..).count())`
@@ -1611,29 +1640,31 @@ mod tests {
     /// status, send, sessions, attach, logs, release}`, all HIDE. Unlike every earlier addition,
     /// these are HIDE for a reason beyond "not yet reviewed" — they address a remote cluster
     /// through two environment variables this process cannot read, so an offered row would be a
-    /// row that fails on any machine without them. **24/18/43 = 85**.
+    /// row that fails on any machine without them. `cao agent {children, join}` then added two
+    /// more HIDE leaves for durable native-child receipt inspection and bounded joining, yielding
+    /// **24/18/45 = 87**.
     #[test]
-    fn the_policy_distribution_is_twentyfour_eighteen_fortythree() {
+    fn the_policy_distribution_is_twentyfour_eighteen_fortyfive() {
         let (in_app, handoff, hidden) = distribution();
 
         assert_eq!(in_app, 24, "expected 24 IN-APP commands, found {in_app}");
         assert_eq!(handoff, 18, "expected 18 HANDOFF commands, found {handoff}");
-        assert_eq!(hidden, 43, "expected 43 HIDE commands, found {hidden}");
+        assert_eq!(hidden, 45, "expected 45 HIDE commands, found {hidden}");
         assert_eq!(
             in_app + handoff + hidden,
-            85,
-            "the three policy counts must account for all 85 leaf commands of the Click tree"
+            87,
+            "the three policy counts must account for all 87 leaf commands of the Click tree"
         );
 
-        // The three counts summing to 85 does not prove 85 *distinct* commands were counted: a
+        // The three counts summing to 87 does not prove 87 *distinct* commands were counted: a
         // duplicated entry in DISPLAY_ORDER would inflate one policy while a real command went
         // uncounted, and the arithmetic above would still close. DISPLAY_ORDER is generated, so
         // this is a live hazard rather than a theoretical one.
         let distinct: BTreeSet<CommandId> = DISPLAY_ORDER.iter().copied().collect();
         assert_eq!(
             distinct.len(),
-            85,
-            "DISPLAY_ORDER must list 85 DISTINCT commands; a duplicate would let one command go \
+            87,
+            "DISPLAY_ORDER must list 87 DISTINCT commands; a duplicate would let one command go \
              uncounted while the totals still summed correctly"
         );
     }
@@ -1710,7 +1741,9 @@ mod tests {
                     CommandId::Update => CommandId::Update,
                     CommandId::AgentAssign => CommandId::AgentAssign,
                     CommandId::AgentCancel => CommandId::AgentCancel,
+                    CommandId::AgentChildren => CommandId::AgentChildren,
                     CommandId::AgentHandoff => CommandId::AgentHandoff,
+                    CommandId::AgentJoin => CommandId::AgentJoin,
                     CommandId::AgentResult => CommandId::AgentResult,
                     CommandId::AgentSendMessage => CommandId::AgentSendMessage,
                     CommandId::AgentStatus => CommandId::AgentStatus,
@@ -1800,7 +1833,9 @@ mod tests {
                 CommandId::Update,
                 CommandId::AgentAssign,
                 CommandId::AgentCancel,
+                CommandId::AgentChildren,
                 CommandId::AgentHandoff,
+                CommandId::AgentJoin,
                 CommandId::AgentResult,
                 CommandId::AgentSendMessage,
                 CommandId::AgentStatus,

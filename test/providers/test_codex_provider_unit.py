@@ -1,5 +1,6 @@
 """Unit tests for Codex provider."""
 
+import hashlib
 import logging
 import os
 import re
@@ -1045,6 +1046,49 @@ class TestCodexProviderStatusDetection:
 
         assert status == TerminalStatus.ERROR
 
+    @pytest.mark.parametrize(
+        "quota_message",
+        [
+            "You've hit your usage limit. Try again at 3:15 PM.",
+            "Your workspace is out of credits. Add credits to continue.",
+            "You hit your spend cap set in your workspace. Increase your spend cap to continue.",
+        ],
+    )
+    def test_get_status_exhausted_codex_capacity_is_waiting_quota(self, quota_message):
+        """Exact Codex usage-limit messages are a paused turn, never a failure.
+
+        These are the documented ``UsageLimitExceeded`` messages.  They differ
+        from Codex's *approaching* limit model-switch picker, which remains an
+        operator-owned ``WAITING_USER_ANSWER`` state.
+        """
+        output = (
+            "You Implement the requested change\n"
+            f"Error: {quota_message}\n"
+            "› Ask Codex to do anything\n"
+            "? for shortcuts                     88% context left\n"
+        )
+
+        provider = CodexProvider("test1234", "test-session", "window-0")
+
+        assert provider.get_status(output) == TerminalStatus.WAITING_QUOTA
+
+    def test_get_status_ignores_usage_limit_text_in_an_assistant_answer(self):
+        """A response discussing the message must still be allowed to finish."""
+        output = (
+            "You Explain an account error\n"
+            "assistant: Codex may display this exact message:\n"
+            "You've hit your usage limit. Try again at 3:15 PM.\n"
+            "› Ask Codex to do anything\n"
+            "? for shortcuts                     88% context left\n"
+        )
+
+        provider = CodexProvider("test1234", "test-session", "window-0")
+
+        # The synthetic footer suppresses the copied assistant marker, so this
+        # snapshot is IDLE rather than COMPLETED.  The important invariant is
+        # that quoted provider text never becomes a quota pause.
+        assert provider.get_status(output) == TerminalStatus.IDLE
+
     def test_get_status_empty_output(self):
         # native=None always falls through (no dispatch-timing guess); on tmux
         # the live-read fallback is a pass-through, so an empty buffer hits
@@ -1762,6 +1806,152 @@ class TestCodexProviderMessageExtraction:
 
         with pytest.raises(ValueError, match="Empty Codex response"):
             provider.extract_last_message_from_script(output)
+
+    def test_extracts_a_finished_receipt_before_the_active_rate_limit_dialog(self):
+        """A post-answer rate-limit picker is terminal state, not task output.
+
+        This is the shape captured from a real Codex child: its final answer
+        and unique CAO receipt were written, then Codex rendered a model-switch
+        picker.  The picker must remain a live WAITING_USER_ANSWER terminal,
+        but it must not hide the already-complete task from the native-child
+        lifecycle.
+        """
+        provider = CodexProvider("test1234", "test-session", "window-0")
+        prepared = provider.prepare_input("Return the marker and finish.")
+        receipt_match = re.search(r"CAO-TURN-RECEIPT-[0-9a-f]{32}", prepared)
+        assert receipt_match is not None
+        receipt = receipt_match.group(0)
+        output = (
+            "› Return the marker and finish.\n"
+            "• completed the requested task\n"
+            f"{receipt}\n\n"
+            "  done 1:43 PM\n\n"
+            "  Approaching rate limits\n"
+            "  Switch to gpt-5.6-luna for lower credit usage?\n\n"
+            "› 1. Switch to gpt-5.6-luna                 Fast and affordable model.\n"
+            "  2. Keep current model\n"
+            "  3. Keep current model (never show again)\n\n"
+            "  Press enter to confirm or esc to go back\n"
+        )
+
+        assert provider.get_status(output) == TerminalStatus.WAITING_USER_ANSWER
+        result = provider.extract_post_turn_completion_result(output)
+        assert result == (
+            f"completed the requested task\n{receipt}"
+        )
+        assert provider.receipt_result_terminal_status(output, result) == TerminalStatus.WAITING_USER_ANSWER
+
+    def test_turn_receipt_instruction_overrides_a_conflicting_output_format(self):
+        """The durable receipt is part of CAO's delivery contract, not optional prose.
+
+        A caller can reasonably ask for "only JSON" or "only this marker".  Such
+        a format must not silently make the receipt impossible, because a worker
+        that follows the caller's format then becomes indistinguishable from a
+        worker that stopped before completing its turn.
+        """
+        provider = CodexProvider("test1234", "test-session", "window-0")
+
+        prepared = provider.prepare_input("Return only this exact marker: READY")
+
+        assert "takes precedence over any incompatible output-format instruction" in prepared
+        assert re.search(r"CAO-TURN-RECEIPT-[0-9a-f]{32}", prepared)
+
+    def test_indented_receipt_line_from_codex_tui_still_verifies_the_completed_turn(self):
+        """Codex renders continuation lines under a bullet with two spaces.
+
+        The text model did emit the exact receipt, but the terminal renderer
+        added presentation indentation.  Receipt matching must accept only
+        horizontal renderer whitespace around the standalone token; accepting
+        arbitrary surrounding text would weaken the delivery proof.
+        """
+        provider = CodexProvider("test1234", "test-session", "window-0")
+        prepared = provider.prepare_input("Return a completed result.")
+        receipt = re.search(r"CAO-TURN-RECEIPT-[0-9a-f]{32}", prepared).group(0)
+        output = (
+            "› Return a completed result.\n"
+            "• completed result\n"
+            f"  {receipt}\n\n"
+            "  done 2:46 PM\n\n"
+            "› Ask Codex to do anything\n"
+            "  gpt-5.6-luna default · /repo · Return completion marker\n"
+        )
+
+        result = provider.extract_last_message_from_script(output)
+
+        assert receipt in result
+        assert provider.receipt_result_terminal_status(output, result) == TerminalStatus.COMPLETED
+
+    def test_restored_legacy_underscored_receipt_remains_verifiable(self):
+        """A restart must not strand a turn pasted before the delimiter migration."""
+        provider = CodexProvider("test1234", "test-session", "window-0")
+        legacy_receipt = "CAO_TURN_RECEIPT_" + ("a" * 32)
+        provider.restore_turn_receipt_state(
+            {
+                "generation": "b" * 32,
+                "receipt_sha256": hashlib.sha256(legacy_receipt.encode("utf-8")).hexdigest(),
+                "phase": "sent",
+            }
+        )
+
+        assert provider._result_has_active_receipt(f"result complete\n  {legacy_receipt}\n")
+
+    def test_post_turn_rate_picker_rejects_receipt_that_only_appears_in_user_echo(self):
+        """The per-turn nonce in CAO's input instruction is not a result."""
+        provider = CodexProvider("test1234", "test-session", "window-0")
+        prepared = provider.prepare_input("Return the marker and finish.")
+        receipt = re.search(r"CAO-TURN-RECEIPT-[0-9a-f]{32}", prepared).group(0)
+        output = (
+            "› Return the marker and finish.\n"
+            f"{receipt}\n\n"
+            "  Approaching rate limits\n"
+            "  Switch to gpt-5.6-luna for lower credit usage?\n\n"
+            "› 1. Switch to gpt-5.6-luna                 Fast and affordable model.\n"
+            "  2. Keep current model\n"
+            "  3. Keep current model (never show again)\n\n"
+            "  Press enter to confirm or esc to go back\n"
+        )
+
+        assert provider.extract_post_turn_completion_result(output) is None
+
+    @pytest.mark.parametrize(
+        "replacement",
+        [
+            "› 1. Switch to gpt-5.6-terra                 Fast and affordable model.",
+            "  2. Pause for now",
+            "  3. Keep current model (forever)",
+            "  Press enter to confirm or esc to cancel",
+        ],
+    )
+    def test_post_turn_rate_picker_requires_its_exact_three_choice_grammar(self, replacement):
+        """A heading plus a generic numbered menu never proves completion."""
+        provider = CodexProvider("test1234", "test-session", "window-0")
+        prepared = provider.prepare_input("Return the marker and finish.")
+        receipt = re.search(r"CAO-TURN-RECEIPT-[0-9a-f]{32}", prepared).group(0)
+        output = (
+            "› Return the marker and finish.\n"
+            "• completed the requested task\n"
+            f"{receipt}\n\n"
+            "  Approaching rate limits\n"
+            "  Switch to gpt-5.6-luna for lower credit usage?\n\n"
+            "› 1. Switch to gpt-5.6-luna                 Fast and affordable model.\n"
+            "  2. Keep current model\n"
+            "  3. Keep current model (never show again)\n\n"
+            "  Press enter to confirm or esc to go back\n"
+        ).replace(
+            {
+                "› 1. Switch to gpt-5.6-terra                 Fast and affordable model.": (
+                    "› 1. Switch to gpt-5.6-luna                 Fast and affordable model."
+                ),
+                "  2. Pause for now": "  2. Keep current model",
+                "  3. Keep current model (forever)": "  3. Keep current model (never show again)",
+                "  Press enter to confirm or esc to cancel": (
+                    "  Press enter to confirm or esc to go back"
+                ),
+            }[replacement],
+            replacement,
+        )
+
+        assert provider.extract_post_turn_completion_result(output) is None
 
 
 class TestCodexBulletFormatExtraction:

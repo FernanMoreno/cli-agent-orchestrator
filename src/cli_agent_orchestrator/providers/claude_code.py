@@ -192,6 +192,32 @@ TEXT_STYLE_PROMPT_PATTERN = r"Choose the text style that looks best with your te
 LOGIN_METHOD_PROMPT_PATTERN = r"Select login method:"
 OAUTH_SUBSCRIPTION_SELECTION_PATTERN = r"[>❯]\s*1\.\s*Claude account with subscription"
 _DIALOG_BOTTOM_LINES = 15
+# Claude Code's exhausted-session surface is not a task completion.  The
+# captured live frame has a prior completion summary and an idle-looking boxed
+# composer, then this current footer:
+#
+#   ⚠ Usage limit reached · continuing automatically at 5:30pm · esc to cancel
+#
+# The earlier two-line form begins with ``⎿ You've hit your session limit`` and
+# puts the continuation/cancel wording on the next row.  Keep the signature
+# deliberately conjunctive and Claude-chrome-anchored: generic prose about
+# quotas, a percentage warning ("You've used 94% ..."), or a quoted phrase is
+# not enough to park a worker.
+_QUOTA_BOTTOM_LINES = 15
+_QUOTA_PANEL_LINES = 3
+_QUOTA_LIMIT_LINE_PATTERN = re.compile(
+    r"(?i)^[ \t\xa0]*[⎿●⚠][ \t\xa0]+(?:You've hit your session limit|Usage limit reached)\b"
+)
+_QUOTA_CONTINUING_PATTERN = re.compile(r"(?i)\bcontinuing[ \t\xa0]+automatically[ \t\xa0]+at\b")
+_QUOTA_CANCEL_PATTERN = re.compile(r"(?i)\besc\b[^\n]{0,80}\bcancel\b")
+# A real spinner rendered *after* the quota notice proves that the CLI resumed
+# work.  It must win over the older notice rather than leave a recovered worker
+# parked at WAITING_QUOTA.  This is intentionally the same gerund-first shape
+# used by the composited-screen processing detector, not the loose historical
+# spinner regex that can match markdown bullets.
+_QUOTA_FRESH_SPINNER_LINE_PATTERN = re.compile(
+    r"^[ \t\xa0]*[✶✢✽✻✳·*][ \t\xa0]+\w*ing\b.*…"
+)
 IDLE_PROMPT_PATTERN_LOG = r"[>❯][\s\xa0]"  # Same pattern for log files
 # New Claude Code TUI completion summary, e.g. "✻ Sautéed for 1s" /
 # "✶ Cultivated for 12s". Unlike the active spinner (PROCESSING_PATTERN, which
@@ -272,6 +298,13 @@ class ClaudeCodeProvider(BaseProvider):
     """Provider for Claude Code CLI tool integration."""
 
     _TAIL_HASH_LINES = 30
+    # Uses BaseProvider's provider-neutral per-task receipt contract.  Claude
+    # keeps its own native completion detector; the receipt makes a result
+    # durable before CAO frees a task slot or reuses a terminal.
+    requires_turn_receipt = True
+    # Claude's exact exhausted-session panel says it will continue
+    # automatically at a provider-supplied reset time.
+    quota_pause_may_auto_resume = True
 
     def __init__(
         self,
@@ -318,6 +351,41 @@ class ClaudeCodeProvider(BaseProvider):
         return "\n".join(
             line for line in clean.split("\n") if not EFFORT_FOOTER_LINE_PATTERN.match(line)
         )
+
+    @staticmethod
+    def _recent_quota_status(lines: List[str]) -> Optional[TerminalStatus]:
+        """Return the active Claude quota state from the current tail, if any.
+
+        Both raw pipe-pane data (after escape normalization) and pyte's screen
+        rows feed this helper.  It only accepts the exact live Claude UI
+        signature in the last visible region: a Claude chrome line naming the
+        exhausted session/usage limit plus its own automatic-continuation and
+        cancel contract.  This avoids treating quoted task text, old
+        scrollback, and informational percentage warnings as quota stops.
+
+        A spinner following the newest matching panel is stronger evidence:
+        the provider resumed, so report PROCESSING rather than an old quota
+        banner.  The caller then continues through the ordinary status path.
+        """
+        window_start = max(0, len(lines) - _QUOTA_BOTTOM_LINES)
+        for index in range(len(lines) - 1, window_start - 1, -1):
+            if not _QUOTA_LIMIT_LINE_PATTERN.search(lines[index]):
+                continue
+
+            # Claude uses either a one-line final warning (⚠/●) or the
+            # earlier ⎿ + continuation two-line panel.  Do not join an
+            # arbitrarily old line with unrelated future prose.
+            panel = "\n".join(lines[index : index + _QUOTA_PANEL_LINES])
+            if not (
+                _QUOTA_CONTINUING_PATTERN.search(panel)
+                and _QUOTA_CANCEL_PATTERN.search(panel)
+            ):
+                continue
+
+            if any(_QUOTA_FRESH_SPINNER_LINE_PATTERN.search(line) for line in lines[index + 1 :]):
+                return TerminalStatus.PROCESSING
+            return TerminalStatus.WAITING_QUOTA
+        return None
 
     @staticmethod
     def _extract_last_response_text(output: str) -> Optional[str]:
@@ -1126,6 +1194,14 @@ class ClaudeCodeProvider(BaseProvider):
         if not output.strip():
             return TerminalStatus.UNKNOWN
 
+        # A quota wait must be recognized before the historical completion
+        # summary/prompt logic below.  The live capture contains both of those
+        # completion-shaped signals even while Claude is paused until its quota
+        # reset.  _recent_quota_status also lets a newer spinner win.
+        quota_status = self._recent_quota_status(output.split("\n"))
+        if quota_status is not None:
+            return quota_status
+
         # Issue #407: content-based staleness guard. The tmux sliding window
         # (-S -200) is NOT monotonically growing — Ink composer-collapse and
         # short-line eviction can shrink it. Instead of raw length, compare a
@@ -1396,6 +1472,14 @@ class ClaudeCodeProvider(BaseProvider):
             return TerminalStatus.UNKNOWN
         joined = "\n".join(rows)
         bottom = rows[-25:]
+
+        # Check the precise quota UI before generic spinner/completion rules.
+        # A spinner after the quota panel is handled in the shared helper and
+        # correctly reports PROCESSING; a stale spinner before it cannot mask
+        # the terminal's current quota pause.
+        quota_status = self._recent_quota_status(rows)
+        if quota_status is not None:
+            return quota_status
 
         # Live spinner: "✻ <gerund>… (…)" — the boxed-prompt spinner or a bare
         # spinner line. Visible in a composited frame ⇒ genuinely working.

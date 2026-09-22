@@ -2,12 +2,13 @@
 
 import sqlite3
 import tempfile
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
@@ -20,19 +21,24 @@ from cli_agent_orchestrator.clients.database import (
     MemoryMetadataModel,
     NativeChildModel,
     TerminalModel,
+    TerminalTurnReceiptModel,
+    begin_terminal_turn_receipt,
     create_flow,
     create_inbox_message,
     create_terminal,
     delete_flow,
     delete_idempotency_key,
     delete_terminal,
+    delete_terminals_by_ids,
     delete_terminals_by_session,
     get_flow,
     get_idempotency_record,
     get_inbox_messages,
+    get_native_child,
     get_pending_messages,
     get_terminal_group,
     get_terminal_metadata,
+    get_terminal_turn_receipt,
     init_db,
     list_flows,
     list_pending_receiver_ids_by_provider,
@@ -40,9 +46,10 @@ from cli_agent_orchestrator.clients.database import (
     list_siblings_by_group_prefix,
     list_terminals_by_session,
     list_terminals_in_sessions,
-    get_native_child,
+    mark_terminal_turn_receipt_sent,
     plan_native_child,
     reconcile_expired_native_children,
+    settle_terminal_turn_receipt_result,
     transition_native_child,
     update_flow_enabled,
     update_flow_run_times,
@@ -51,6 +58,7 @@ from cli_agent_orchestrator.clients.database import (
     update_terminal_group,
     update_terminal_metadata,
     update_terminal_shell_command,
+    verify_terminal_turn_receipt_result,
 )
 from cli_agent_orchestrator.models.inbox import MessageStatus
 
@@ -79,7 +87,11 @@ class TestNativeChildLifecycle:
             assert child["state"] == "planned"
 
             with test_db() as session:
-                row = session.query(NativeChildModel).filter(NativeChildModel.id == child["id"]).first()
+                row = (
+                    session.query(NativeChildModel)
+                    .filter(NativeChildModel.id == child["id"])
+                    .first()
+                )
                 row.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
                 session.commit()
 
@@ -125,6 +137,594 @@ class TestNativeChildLifecycle:
 
         assert stored is not None
         assert stored["state"] == "succeeded"
+
+    def test_expiry_sweep_does_not_overwrite_receipt_backed_success(self, test_db):
+        """Lease reconciliation observes state with a CAS instead of stale ORM writes."""
+        terminal_id = "child-expiry-race"
+        generation = "1" * 32
+        receipt = "a" * 64
+        result = "c" * 64
+        with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
+            create_terminal(terminal_id, "cao-session", "worker", "gemini_cli", "reviewer")
+            child = plan_native_child(
+                parent_terminal_id="parent01",
+                terminal_id=terminal_id,
+                provider="gemini_cli",
+                agent_profile="reviewer",
+                lease_seconds=30,
+            )
+            transition_native_child(terminal_id, "sent")
+            with test_db() as session:
+                row = (
+                    session.query(NativeChildModel)
+                    .filter(NativeChildModel.id == child["id"])
+                    .first()
+                )
+                row.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+                session.commit()
+            assert begin_terminal_turn_receipt(terminal_id, "gemini_cli", generation, receipt)
+            assert mark_terminal_turn_receipt_sent(terminal_id, generation, receipt)
+            assert settle_terminal_turn_receipt_result(terminal_id, generation, receipt, result)
+
+            # This models the expiry worker completing its candidate read just
+            # before receipt settlement. Its conditional update now sees the
+            # succeeded state and cannot replace it with reconcile.
+            assert reconcile_expired_native_children(terminal_id=terminal_id) == []
+            stored = get_native_child(child["id"])
+
+        assert stored is not None
+        assert stored["state"] == "succeeded"
+
+    def test_cancelled_child_cannot_be_revived_by_a_late_generic_success_observer(self, test_db):
+        """Delete/cancel wins over a verifier thread that wakes up afterwards."""
+        with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
+            create_terminal("child-cancelled", "cao-session", "worker", "gemini_cli", "reviewer")
+            child = plan_native_child(
+                parent_terminal_id="parent01",
+                terminal_id="child-cancelled",
+                provider="gemini_cli",
+                agent_profile="reviewer",
+                lease_seconds=30,
+            )
+            transition_native_child("child-cancelled", "sent")
+            assert delete_terminal("child-cancelled") is True
+
+            late = transition_native_child("child-cancelled", "succeeded")
+            stored = get_native_child(child["id"])
+
+        assert late is not None
+        assert late["state"] == "cancelled"
+        assert stored is not None
+        assert stored["state"] == "cancelled"
+
+
+class TestTerminalTurnReceiptLifecycle:
+    """A provider turn has private, durable state independent of terminal metadata."""
+
+    _GENERATION_ONE = "1" * 32
+    _GENERATION_TWO = "2" * 32
+    _RECEIPT_ONE = "a" * 64
+    _RECEIPT_TWO = "b" * 64
+    _RESULT_ONE = "c" * 64
+
+    def test_active_receipt_survives_a_fresh_repository_read_and_blocks_next_turn(self, test_db):
+        """Restart recovery must see the active row and refuse a new prompt claim.
+
+        Each helper call opens its own database session, which models the only
+        state a restarted CAO process can rely on.  No provider instance or
+        in-memory pending nonce participates in the second claim.
+        """
+        with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
+            create_terminal("gemini-restart", "session", "window", "gemini_cli", "reviewer")
+            claimed = begin_terminal_turn_receipt(
+                "gemini-restart",
+                "gemini_cli",
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+            )
+            restored = get_terminal_turn_receipt("gemini-restart")
+            next_turn = begin_terminal_turn_receipt(
+                "gemini-restart",
+                "gemini_cli",
+                self._GENERATION_TWO,
+                self._RECEIPT_TWO,
+            )
+
+        assert claimed is not None
+        assert claimed["phase"] == "prepared"
+        assert restored is not None
+        assert restored["generation"] == self._GENERATION_ONE
+        assert restored["receipt_sha256"] == self._RECEIPT_ONE
+        assert restored["phase"] == "prepared"
+        assert next_turn is None
+
+    def test_turn_receipt_hashes_are_private_explicit_values_not_free_metadata(self, test_db):
+        """Conflicting metadata cannot supply, replace, or settle receipt hashes."""
+        attacker_generation = "f" * 32
+        attacker_receipt = "d" * 64
+        attacker_result = "e" * 64
+
+        with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
+            create_terminal("gemini-private", "session", "window", "gemini_cli", "reviewer")
+            update_terminal_metadata(
+                "gemini-private",
+                {
+                    "turn_receipt": "plaintext nonce must never become durable state",
+                    "generation": attacker_generation,
+                    "receipt_sha256": attacker_receipt,
+                    "result_sha256": attacker_result,
+                },
+            )
+            claimed = begin_terminal_turn_receipt(
+                "gemini-private",
+                "gemini_cli",
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+            )
+            assert mark_terminal_turn_receipt_sent(
+                "gemini-private", self._GENERATION_ONE, self._RECEIPT_ONE
+            )
+            assert verify_terminal_turn_receipt_result(
+                "gemini-private",
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+                self._RESULT_ONE,
+            )
+            stored = get_terminal_turn_receipt("gemini-private")
+            next_claimed = begin_terminal_turn_receipt(
+                "gemini-private",
+                "gemini_cli",
+                self._GENERATION_TWO,
+                self._RECEIPT_TWO,
+            )
+
+        assert claimed is not None
+        assert stored is not None
+        assert stored["generation"] == self._GENERATION_ONE
+        assert stored["receipt_sha256"] == self._RECEIPT_ONE
+        assert stored["result_sha256"] == self._RESULT_ONE
+        assert stored["phase"] == "result_verified"
+        assert attacker_generation not in stored.values()
+        assert attacker_receipt not in stored.values()
+        assert attacker_result not in stored.values()
+        assert next_claimed is not None
+        assert next_claimed["generation"] == self._GENERATION_TWO
+
+        private_columns = set(TerminalTurnReceiptModel.__table__.columns.keys())
+        assert {"metadata", "metadata_json", "nonce", "prompt", "transcript"}.isdisjoint(
+            private_columns
+        )
+
+    def test_same_verified_receipt_accepts_a_late_idempotent_sent_transition(self, test_db):
+        """A fast verified turn may race its post-paste sent write, but only exactly once."""
+        with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
+            create_terminal("gemini-fast", "session", "window", "gemini_cli", "reviewer")
+            assert begin_terminal_turn_receipt(
+                "gemini-fast", "gemini_cli", self._GENERATION_ONE, self._RECEIPT_ONE
+            )
+            assert mark_terminal_turn_receipt_sent(
+                "gemini-fast", self._GENERATION_ONE, self._RECEIPT_ONE
+            )
+            assert verify_terminal_turn_receipt_result(
+                "gemini-fast",
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+                self._RESULT_ONE,
+            )
+
+            # The late delivery acknowledgement is safe only for the exact
+            # receipt that is already result-verified.
+            assert mark_terminal_turn_receipt_sent(
+                "gemini-fast", self._GENERATION_ONE, self._RECEIPT_ONE
+            )
+            assert not mark_terminal_turn_receipt_sent(
+                "gemini-fast", self._GENERATION_TWO, self._RECEIPT_ONE
+            )
+            assert not mark_terminal_turn_receipt_sent(
+                "gemini-fast", self._GENERATION_ONE, self._RECEIPT_TWO
+            )
+
+    def test_same_verified_result_receipt_accepts_an_idempotent_retry(self, test_db):
+        """A retry of exactly the already-verified result is safe; another result is not."""
+        different_result = "d" * 64
+        with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
+            create_terminal("gemini-result-retry", "session", "window", "gemini_cli", "reviewer")
+            assert begin_terminal_turn_receipt(
+                "gemini-result-retry", "gemini_cli", self._GENERATION_ONE, self._RECEIPT_ONE
+            )
+            assert mark_terminal_turn_receipt_sent(
+                "gemini-result-retry", self._GENERATION_ONE, self._RECEIPT_ONE
+            )
+            assert verify_terminal_turn_receipt_result(
+                "gemini-result-retry",
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+                self._RESULT_ONE,
+            )
+
+            assert verify_terminal_turn_receipt_result(
+                "gemini-result-retry",
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+                self._RESULT_ONE,
+            )
+            assert not verify_terminal_turn_receipt_result(
+                "gemini-result-retry",
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+                different_result,
+            )
+
+    def test_atomic_settlement_projects_a_child_and_recovers_a_precommit_crash(self, test_db):
+        """A verified receipt cannot strand a child between separate transactions.
+
+        The first raw verification models an older server dying immediately
+        after its receipt commit. Replaying the new atomic settlement during
+        recovery sees the same immutable digest and projects child success in
+        the very transaction that proves it. Once a lease sweep has marked the
+        interrupted child ``reconcile``, only receipt proof — not a generic
+        late observer — may repair that terminal state.
+        """
+        terminal_id = "gemini-atomic-recovery"
+        with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
+            create_terminal(terminal_id, "session", "window", "gemini_cli", "reviewer")
+            child = plan_native_child(
+                parent_terminal_id="parent01",
+                terminal_id=terminal_id,
+                provider="gemini_cli",
+                agent_profile="reviewer",
+                lease_seconds=30,
+            )
+            transition_native_child(terminal_id, "sent")
+            assert begin_terminal_turn_receipt(
+                terminal_id,
+                "gemini_cli",
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+            )
+            assert mark_terminal_turn_receipt_sent(
+                terminal_id,
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+            )
+
+            # Historical split transaction: digest exists, but no child
+            # projection was committed before the process disappeared.
+            assert verify_terminal_turn_receipt_result(
+                terminal_id,
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+                self._RESULT_ONE,
+            )
+            assert get_native_child(child["id"])["state"] == "sent"
+            transition_native_child(terminal_id, "reconcile")
+            assert transition_native_child(terminal_id, "succeeded")["state"] == "reconcile"
+
+            assert settle_terminal_turn_receipt_result(
+                terminal_id,
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+                self._RESULT_ONE,
+            )
+            stored = get_native_child(child["id"])
+            receipt = get_terminal_turn_receipt(terminal_id)
+
+        assert stored is not None
+        assert stored["state"] == "succeeded"
+        assert receipt is not None
+        assert receipt["phase"] == "result_verified"
+
+    def test_atomic_settlement_never_revives_a_child_cancelled_by_terminal_teardown(self, test_db):
+        """An old output observer loses if terminal deletion committed first."""
+        terminal_id = "gemini-atomic-cancelled"
+        with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
+            create_terminal(terminal_id, "session", "window", "gemini_cli", "reviewer")
+            child = plan_native_child(
+                parent_terminal_id="parent01",
+                terminal_id=terminal_id,
+                provider="gemini_cli",
+                agent_profile="reviewer",
+                lease_seconds=30,
+            )
+            assert begin_terminal_turn_receipt(
+                terminal_id,
+                "gemini_cli",
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+            )
+            assert mark_terminal_turn_receipt_sent(
+                terminal_id,
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+            )
+            assert delete_terminal(terminal_id) is True
+
+            assert not settle_terminal_turn_receipt_result(
+                terminal_id,
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+                self._RESULT_ONE,
+            )
+            stored = get_native_child(child["id"])
+
+        assert stored is not None
+        assert stored["state"] == "cancelled"
+
+    def test_late_generic_running_transition_cannot_overwrite_atomic_receipt_success(self, test_db):
+        """A wait/status worker loses its race once durable result proof wins."""
+        terminal_id = "gemini-atomic-running-race"
+        with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
+            create_terminal(terminal_id, "session", "window", "gemini_cli", "reviewer")
+            child = plan_native_child(
+                parent_terminal_id="parent01",
+                terminal_id=terminal_id,
+                provider="gemini_cli",
+                agent_profile="reviewer",
+                lease_seconds=30,
+            )
+            transition_native_child(terminal_id, "sent")
+            assert begin_terminal_turn_receipt(
+                terminal_id,
+                "gemini_cli",
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+            )
+            assert mark_terminal_turn_receipt_sent(
+                terminal_id,
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+            )
+            assert settle_terminal_turn_receipt_result(
+                terminal_id,
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+                self._RESULT_ONE,
+            )
+
+            late = transition_native_child(terminal_id, "running")
+            stored = get_native_child(child["id"])
+
+        assert late is not None
+        assert late["state"] == "succeeded"
+        assert stored is not None
+        assert stored["state"] == "succeeded"
+
+    def test_atomic_receipt_settlement_cannot_overwrite_a_concurrent_final_failure(self, test_db):
+        """Receipt evidence is retained, but a failed child never revives to success."""
+        terminal_id = "gemini-atomic-failed-race"
+        with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
+            create_terminal(terminal_id, "session", "window", "gemini_cli", "reviewer")
+            child = plan_native_child(
+                parent_terminal_id="parent01",
+                terminal_id=terminal_id,
+                provider="gemini_cli",
+                agent_profile="reviewer",
+                lease_seconds=30,
+            )
+            transition_native_child(terminal_id, "sent")
+            assert begin_terminal_turn_receipt(
+                terminal_id,
+                "gemini_cli",
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+            )
+            assert mark_terminal_turn_receipt_sent(
+                terminal_id,
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+            )
+
+            # This is the outcome visible to a settlement CAS if a concurrent
+            # worker has already committed failure after it began its read.
+            transition_native_child(terminal_id, "failed", error_kind="worker_exit")
+            assert not settle_terminal_turn_receipt_result(
+                terminal_id,
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+                self._RESULT_ONE,
+            )
+            stored = get_native_child(child["id"])
+            receipt = get_terminal_turn_receipt(terminal_id)
+
+        assert stored is not None
+        assert stored["state"] == "failed"
+        assert receipt is not None
+        assert receipt["phase"] == "result_verified"
+
+    @pytest.mark.parametrize("delete_mode", ("terminal", "session", "ids"))
+    def test_concurrent_terminal_removal_cannot_leave_a_turn_receipt_orphan(self, delete_mode: str):
+        """A deletion racing a claim must remove the terminal and every receipt together.
+
+        A file-backed SQLite database models independent CAO processes.  The
+        database hook starts teardown immediately after the claim's parent-row
+        write lock.  A correct claim serializes with teardown: whichever wins,
+        the eventual state has neither terminal nor receipt.  A read-then-write
+        claim never emits that lock, and a child-first teardown leaves an
+        orphan when the claim commits after the cleanup sweep.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "receipt-race.db"
+            engine = create_engine(
+                f"sqlite:///{database_path}",
+                connect_args={"check_same_thread": False, "timeout": 5},
+            )
+            Base.metadata.create_all(bind=engine)
+            session_factory = sessionmaker(bind=engine)
+            terminal_id = "gemini-delete-race"
+            deletion_started = threading.Event()
+            deletion_finished = threading.Event()
+            deletion_errors: list[BaseException] = []
+            deletion_thread: list[threading.Thread] = []
+
+            def remove_terminal() -> None:
+                try:
+                    if delete_mode == "terminal":
+                        delete_terminal(terminal_id)
+                    elif delete_mode == "session":
+                        delete_terminals_by_session("session")
+                    else:
+                        delete_terminals_by_ids([terminal_id])
+                except BaseException as exc:  # test thread must surface failures
+                    deletion_errors.append(exc)
+                finally:
+                    deletion_finished.set()
+
+            def start_teardown_after_parent_claim(
+                _connection, _cursor, statement, _parameters, _context, _executemany
+            ) -> None:
+                normalized = " ".join(statement.lower().split())
+                if (
+                    normalized.startswith("update terminals set")
+                    and "last_active" in normalized
+                    and not deletion_started.is_set()
+                ):
+                    deletion_started.set()
+                    thread = threading.Thread(target=remove_terminal, daemon=True)
+                    deletion_thread.append(thread)
+                    thread.start()
+
+            event.listen(engine, "after_cursor_execute", start_teardown_after_parent_claim)
+            try:
+                with patch("cli_agent_orchestrator.clients.database.SessionLocal", session_factory):
+                    create_terminal(terminal_id, "session", "window", "gemini_cli", "reviewer")
+                    begin_terminal_turn_receipt(
+                        terminal_id,
+                        "gemini_cli",
+                        self._GENERATION_ONE,
+                        self._RECEIPT_ONE,
+                    )
+
+                    assert deletion_started.wait(timeout=2), "claim never acquired the parent row"
+                    assert deletion_finished.wait(timeout=5), "concurrent teardown did not finish"
+                    assert get_terminal_metadata(terminal_id) is None
+                    assert get_terminal_turn_receipt(terminal_id) is None
+            finally:
+                event.remove(engine, "after_cursor_execute", start_teardown_after_parent_claim)
+                for thread in deletion_thread:
+                    thread.join(timeout=1)
+                engine.dispose()
+
+            assert not deletion_errors
+
+    def test_concurrent_removal_cannot_orphan_a_replaced_settled_receipt(self):
+        """The parent claim also protects a ``result_verified -> prepared`` replacement."""
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "settled-receipt-race.db"
+            engine = create_engine(
+                f"sqlite:///{database_path}",
+                connect_args={"check_same_thread": False, "timeout": 5},
+            )
+            Base.metadata.create_all(bind=engine)
+            session_factory = sessionmaker(bind=engine)
+            terminal_id = "gemini-settled-delete-race"
+            armed = threading.Event()
+            deletion_started = threading.Event()
+            deletion_finished = threading.Event()
+            deletion_errors: list[BaseException] = []
+            deletion_thread: list[threading.Thread] = []
+
+            def remove_terminal() -> None:
+                try:
+                    delete_terminal(terminal_id)
+                except BaseException as exc:  # test thread must surface failures
+                    deletion_errors.append(exc)
+                finally:
+                    deletion_finished.set()
+
+            def start_teardown_after_replacement_claim(
+                _connection, _cursor, statement, _parameters, _context, _executemany
+            ) -> None:
+                normalized = " ".join(statement.lower().split())
+                if (
+                    armed.is_set()
+                    and normalized.startswith("update terminals set")
+                    and "last_active" in normalized
+                    and not deletion_started.is_set()
+                ):
+                    deletion_started.set()
+                    thread = threading.Thread(target=remove_terminal, daemon=True)
+                    deletion_thread.append(thread)
+                    thread.start()
+
+            event.listen(engine, "after_cursor_execute", start_teardown_after_replacement_claim)
+            try:
+                with patch("cli_agent_orchestrator.clients.database.SessionLocal", session_factory):
+                    create_terminal(terminal_id, "session", "window", "gemini_cli", "reviewer")
+                    assert begin_terminal_turn_receipt(
+                        terminal_id,
+                        "gemini_cli",
+                        self._GENERATION_ONE,
+                        self._RECEIPT_ONE,
+                    )
+                    assert mark_terminal_turn_receipt_sent(
+                        terminal_id,
+                        self._GENERATION_ONE,
+                        self._RECEIPT_ONE,
+                    )
+                    assert verify_terminal_turn_receipt_result(
+                        terminal_id,
+                        self._GENERATION_ONE,
+                        self._RECEIPT_ONE,
+                        self._RESULT_ONE,
+                    )
+
+                    armed.set()
+                    begin_terminal_turn_receipt(
+                        terminal_id,
+                        "gemini_cli",
+                        self._GENERATION_TWO,
+                        self._RECEIPT_TWO,
+                    )
+
+                    assert deletion_started.wait(
+                        timeout=2
+                    ), "replacement never acquired the parent row"
+                    assert deletion_finished.wait(timeout=5), "concurrent teardown did not finish"
+                    assert get_terminal_metadata(terminal_id) is None
+                    assert get_terminal_turn_receipt(terminal_id) is None
+            finally:
+                event.remove(engine, "after_cursor_execute", start_teardown_after_replacement_claim)
+                for thread in deletion_thread:
+                    thread.join(timeout=1)
+                engine.dispose()
+
+            assert not deletion_errors
+
+    def test_stale_turn_cas_loser_cannot_touch_a_replaced_verified_receipt(self, test_db):
+        """A new verified boundary invalidates every stale generation/hash writer."""
+        with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
+            create_terminal("gemini-cas", "session", "window", "gemini_cli", "reviewer")
+            assert begin_terminal_turn_receipt(
+                "gemini-cas", "gemini_cli", self._GENERATION_ONE, self._RECEIPT_ONE
+            )
+            assert mark_terminal_turn_receipt_sent(
+                "gemini-cas", self._GENERATION_ONE, self._RECEIPT_ONE
+            )
+            assert verify_terminal_turn_receipt_result(
+                "gemini-cas",
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+                self._RESULT_ONE,
+            )
+            assert begin_terminal_turn_receipt(
+                "gemini-cas", "gemini_cli", self._GENERATION_TWO, self._RECEIPT_TWO
+            )
+
+            assert not mark_terminal_turn_receipt_sent(
+                "gemini-cas", self._GENERATION_ONE, self._RECEIPT_ONE
+            )
+            assert not verify_terminal_turn_receipt_result(
+                "gemini-cas",
+                self._GENERATION_ONE,
+                self._RECEIPT_ONE,
+                self._RESULT_ONE,
+            )
+            stored = get_terminal_turn_receipt("gemini-cas")
+
+        assert stored is not None
+        assert stored["generation"] == self._GENERATION_TWO
+        assert stored["receipt_sha256"] == self._RECEIPT_TWO
+        assert stored["phase"] == "prepared"
 
 
 class TestTerminalOperations:
