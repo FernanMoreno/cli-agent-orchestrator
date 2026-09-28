@@ -2,8 +2,9 @@
 
 **Severidad:** bloqueante para evidencia
 **Estado:** entorno de aceptación verificado en guest Linux QEMU; la suite T097
-pasó 8/8 sin skips. `ubuntu-24.04` hosted ofrece Landlock ABI 7; falta probar
-un perfil hosted con ABI >= 9 (`ubuntu-26.04`).
+pasó 8/8 sin skips. Native GitHub-hosted `ubuntu-24.04` ofrece ABI 7 y
+`ubuntu-26.04` ABI 8; falta repetir los casos en el workflow hosted que arranca
+el guest QEMU con ABI 11.
 
 ## Entorno original
 
@@ -13,7 +14,7 @@ El checkout de desarrollo corre en WSL2: kernel
 la ruta productiva. El binario scratch anterior no tenía una procedencia
 aprobada y la prueba ABI 9 quedaba sin ejecutar.
 
-## Runner de aceptación reproducible — 2026-09-28
+## Guest de aceptación reproducible — 2026-09-28
 
 Se ejecutó la aceptación dentro de un guest Ubuntu 26.10 en QEMU TCG. Es un
 kernel Linux completo del guest, no el kernel WSL2; no es una máquina física
@@ -59,19 +60,20 @@ root, sin login y sin procesos host ajenos; esa cuenta forma parte de la base
 de confianza. No se afirma aislamiento frente a root ni frente a procesos que
 ejecuten bajo la propia cuenta broker.
 
-## Perfil de referencia GitHub-hosted — pendiente de ejecutar
+## Workflow GitHub-hosted con guest QEMU — pendiente de ejecutar
 
-El workflow `.github/workflows/t097-host-acceptance.yml` ya no requiere un
-runner self-hosted. Usa `ubuntu-26.04`, verifica el SHA upstream del source
-archive Bubblewrap 0.13.0, compila el binario sin privilegios y lo instala como
-root:root 0755. Configura Yama y, si está disponible, el sysctl AppArmor de
-user namespaces dentro de esa VM; crea una cuenta broker `nologin` exclusiva y
-exige Landlock ABI >= 9 antes de ejecutar los ocho casos sin override de timeout
-ni skips. Registra versión de imagen, kernel, ABI y digest resultante.
+El workflow `.github/workflows/t097-host-acceptance.yml` usa un runner
+GitHub-hosted `ubuntu-24.04` para arrancar una imagen cloud Ubuntu 26.10 diaria
+fijada por fecha y SHA-256 en QEMU TCG. Dentro del guest verifica el SHA upstream
+del source archive Bubblewrap 0.13.0, compila e instala el binario root:root
+0755, configura Yama/AppArmor, crea una cuenta broker `nologin` exclusiva,
+exige ABI >= 9 y ejecuta los ocho casos sin skips. Sólo aumenta a 45 s el
+timeout de las pruebas de worker que exceden 10 s bajo TCG. Registra imagen,
+kernel, ABI y digest; no certifica el kernel del runner o de despliegue.
 
-El inventario oficial de imágenes lista el runner estándar `ubuntu-26.04`
-([Ubuntu 26.04](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2604-Readme.md)).
-Para repositorios públicos, GitHub-hosted usa una VM nueva por job
+El inventario oficial de imágenes lista el runner estándar `ubuntu-24.04`
+([imágenes runner](https://github.com/actions/runner-images#readme)). Para
+repositorios públicos, GitHub-hosted usa una VM nueva por job
 ([referencia oficial](https://docs.github.com/en/actions/reference/runners/github-hosted-runners));
 La versión exacta se registra en cada run porque la etiqueta recibe imágenes
 actualizadas.
@@ -83,10 +85,10 @@ debe revisar su procedencia antes de permitirlo y repetir la suite.
 
 ## Resultado
 
-Los requisitos técnicos del guest se probaron sin skips. Esto resuelve el
-bloqueo de ABI/Bubblewrap para esa ejecución y cubre el proxy concurrente y su
-recuperación durable. `ubuntu-24.04` se ejecutó, pero su ABI 7 es insuficiente.
-El perfil hosted `ubuntu-26.04` sigue pendiente; no se autoriza registrar el
-backend. Hasta un run `ubuntu-26.04` verde y digest revisado, `WORK_BACKENDS`
-permanece vacío y T097/T019 continúan
+Los requisitos técnicos del guest se probaron sin skips. Esto cubre el proxy
+concurrente y su recuperación durable en esa imagen. El kernel nativo
+`ubuntu-24.04` dio ABI 7 y `ubuntu-26.04` ABI 8, ambos insuficientes. La
+repetición del workflow QEMU sigue pendiente; no se autoriza registrar el
+backend. Hasta un run QEMU verde y digest revisado, `WORK_BACKENDS` permanece
+vacío y T097/T019 continúan
 `[ ]`.

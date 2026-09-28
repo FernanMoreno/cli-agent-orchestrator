@@ -1,7 +1,7 @@
 # C03 — El proxy usa un socket con nombre en lugar de un socketpair por FD
 
 **Severidad:** alta (contradice el diseño mínimo aceptado del propio módulo)
-**Estado:** endpoint cerrado; la cuenta broker dedicada define la frontera host. El gate global espera la aceptación GitHub-hosted con Landlock ABI >= 9 (`ubuntu-26.04`).
+**Estado:** endpoint cerrado; la cuenta broker dedicada define la frontera host. El gate global espera un run verde del perfil Ubuntu 26.10 en QEMU TCG, sin presentarlo como certificación del kernel del runner o de despliegue.
 
 ## Síntoma
 

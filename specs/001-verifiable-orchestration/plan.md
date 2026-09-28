@@ -128,17 +128,17 @@ contrato con tools exige una fábrica server-owned
 que devuelva un `WorkMcpProxy` nuevo ligado al intento; sin proxy, preflight
 rechaza antes de admitir. El sandbox no recibe red directa.
 
-La aceptación reproducible corre en el runner GitHub-hosted `ubuntu-26.04`, una
-VM efímera separada de runners con credenciales de proveedores. El workflow
-verifica el SHA-256 del source archive upstream, compila e instala Bubblewrap
-0.13.0 como root:root 0755, configura sólo en esa VM los sysctls requeridos y
-crea la cuenta broker no interactiva desde `CAO_WORK_BROKER_ACCOUNT`. Ejecuta
-la suite completa como esa cuenta, con `T097_REQUIRE_HOST_ACCEPTANCE=1`, cero
-skips y sin override del timeout normal. Falta de Bubblewrap/digest admitido,
-Landlock ABI menor que 9, policy, cuenta o namespace debe fallar el job. Este
-perfil acredita el runtime probado en esa imagen hosted; no certifica kernels
-arbitrarios de despliegue, que deben seguir rechazando en preflight si no
-cumplen sus gates.
+La aceptación reproducible corre en un guest Ubuntu 26.10 efímero bajo QEMU TCG,
+orquestado desde el runner GitHub-hosted `ubuntu-24.04`. El workflow fija la
+imagen cloud diaria por fecha y SHA-256, verifica el source archive upstream,
+compila e instala Bubblewrap 0.13.0 como root:root 0755, configura sólo en el
+guest los sysctls requeridos y crea la cuenta broker no interactiva desde
+`CAO_WORK_BROKER_ACCOUNT`. Ejecuta la suite completa como esa cuenta y requiere
+Landlock ABI >= 9, ocho casos sin skips y digest allowlisted. TCG usa
+`T097_TEST_WORKER_TIMEOUT_SECONDS=45` porque dos pruebas exceden el timeout de
+10 s bajo emulación. Esta aceptación valida el guest fijado, no el kernel del
+runner ni hosts de despliegue. Cada despliegue sigue rechazándose en preflight
+si su host no cumple los gates de Bubblewrap, Landlock, namespace y broker.
 
 La aceptación de T097 requiere prueba de rechazo anterior al efecto con
 Bubblewrap 0.11.1 y pruebas Linux aisladas con versión admitida, contratos vacíos y
@@ -179,9 +179,10 @@ deniega memfd y rutas de ejecución por descriptor que salgan del mapping. Un
 loader dinámico invocado directamente y scripts con shebang se rechazan mientras
 el contrato no incluya una clausura verificable de intérprete/cargador. Fork y
 doble fork heredan Landlock/seccomp y permanecen bajo la identidad supervisada.
-Las pruebas scratch prueban esa composición de código, no la aceptación host:
+Las pruebas scratch prueban esa composición de código, no la aceptación QEMU:
 `WORK_BACKENDS` continúa vacío hasta cerrar T097/C08 con Bubblewrap y ABI
-aprobados.
+aprobados en el guest fijado. La aceptación QEMU tampoco registra el backend
+para despliegue ni sustituye la comprobación del host de destino.
 
 El padre autenticado sólo selecciona refs de hijo y receptor preprovisionadas
 por el operador; no recibe sus credenciales ni construye sus `Principals`.

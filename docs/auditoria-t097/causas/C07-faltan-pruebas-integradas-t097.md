@@ -1,10 +1,10 @@
 # C07 — Falta completar la aceptación integrada T097
 
 **Severidad:** alta (gate de registro)
-**Estado:** los casos de proxy concurrente y recuperación pasan en QEMU; falta
-repetir la suite en un runner GitHub-hosted con Landlock ABI >= 9.
+**Estado:** los casos de proxy concurrente y recuperación pasan en Ubuntu
+26.10/QEMU TCG; falta repetirlos mediante el workflow GitHub-hosted de guest.
 
-## Aceptación host — 2026-09-28
+## Aceptación QEMU guest — 2026-09-28
 
 `test/integration/t097/` contiene tres módulos y ocho casos. La suite cruza el
 backend Bubblewrap real, admisión/gateway, bootstrap Landlock/seccomp,
@@ -49,20 +49,22 @@ confiable. Cambiar el `uid_map` por intento no sustituye esta frontera.
 
 ## Pendiente
 
-El workflow `.github/workflows/t097-host-acceptance.yml` usa ahora la VM
-GitHub-hosted `ubuntu-26.04`. `ubuntu-24.04` completó el setup y build, pero
-ofrece Landlock ABI 7 y fue rechazado. El workflow actual verifica el source
-archive upstream, compila Bubblewrap 0.13.0, instala el binario root:root 0755,
-prepara sysctls de aceptación sólo en esa VM efímera, exige ABI >= 9 y crea la
-cuenta broker desde la variable del repositorio. Ejecuta la misma suite como
-broker, con timeout normal, y falla si pytest reporta skips.
+El workflow `.github/workflows/t097-host-acceptance.yml` orquesta QEMU TCG
+desde GitHub-hosted `ubuntu-24.04`. Los intentos de ejecutar en el kernel
+directo confirmaron ABI 7 en `ubuntu-24.04` y ABI 8 en `ubuntu-26.04`, ambos
+inferiores al requisito 9. El workflow QEMU fija la imagen Ubuntu 26.10 por
+fecha y SHA-256; construye Bubblewrap 0.13.0 dentro del guest, prepara allí los
+sysctls, crea la cuenta broker desde la variable del repositorio y ejecuta la
+suite con ABI >= 9. En TCG usa timeout 45 s y falla si pytest informa skips.
+La aceptación sólo acredita ese guest fijado, no el kernel del runner o de
+despliegue.
 
 La primera ejecución remota también fija el digest del binario compilado en
-esa imagen. Si aún no está allowlisted, la suite lo rechaza y el log imprime
-el hash; sólo se añade tras verificar origen/configuración de build, y se exige
-otro run completo verde. Este perfil acredita la imagen de referencia de CI,
-no cualquier host de despliegue. Hasta obtener el run verde y aceptar el
-digest, `WORK_BACKENDS = {}` y T097/T019 siguen `[ ]`.
+ese guest. Si aún no está allowlisted, la suite lo rechaza y el log imprime el
+hash; sólo se añade tras verificar origen/configuración de build, y se exige
+otro run completo verde. El resultado no certifica hosts de despliegue. Hasta
+obtener el run verde y aceptar el digest, `WORK_BACKENDS = {}` y T097/T019
+siguen `[ ]`.
 
 ## Relación
 

@@ -26,17 +26,17 @@ Orden recomendado: S02 → S01 → S03 → S04 → S05 → S06 → S08 → S07.
 | C04 | Cerrada | Proof revalida pidfds, starttime e inode PID namespace en cada guard. |
 | C05 | Cerrada | Recuperación tras muerte confirmada, journal de issues huérfanos, conciliación admin y pruebas SIGKILL/migración. |
 | C06 | Cerrada | Fallos originales del proxy corregidos; suite focal pasa. |
-| C07 | Parcial | Suite QEMU 8/8 sin skips. GitHub-hosted `ubuntu-24.04` pasó permisos y digest, pero ofrece Landlock ABI 7; el gate requiere >= 9 y rechazó el host. `ubuntu-26.04` es el perfil candidato pendiente. |
-| C08 | Verificada en guest Linux; perfil hosted pendiente | Ubuntu 26.10/QEMU TCG, kernel 7.3.0-5, Landlock ABI 11, Bubblewrap 0.13.0 allowlisted; aceptación 8/8. Ubuntu hosted 24.04.5 no cumple ABI 9; falta probar `ubuntu-26.04`. |
+| C07 | Parcial | Suite Ubuntu 26.10/QEMU TCG 8/8 sin skips. Native GitHub-hosted `ubuntu-24.04` dio ABI 7 y `ubuntu-26.04` ABI 8; ambos quedan rechazados por el requisito 9. El workflow QEMU hospedado está pendiente de un run verde. |
+| C08 | Verificada en guest Linux; repetición hosted pendiente | Ubuntu 26.10/QEMU TCG, kernel 7.3.0-5, Landlock ABI 11, Bubblewrap 0.13.0 allowlisted; aceptación 8/8. El workflow fijará la imagen por fecha/SHA y repetirá en QEMU; no certificará el kernel del runner ni uno de despliegue. |
 
-T097 sigue `[ ]` y `WORK_BACKENDS = {}` hasta obtener un run hosted verde con
-0 skips, Landlock ABI >= 9 y timeout predeterminado. El perfil
-`ubuntu-26.04` valida una VM Linux efímera de referencia, no un host arbitrario
-de despliegue. La política elegida confía en el proceso CAO de una cuenta OS
-dedicada, no root, sin login y sin otros procesos; no afirma que Linux aísle
-procesos host arbitrarios con el mismo UID.
+T097 y `WORK_BACKENDS = {}` siguen `[ ]` hasta completar el run QEMU hosted y
+revisar por separado el host de despliegue. La suite guest usa timeout 45 s
+porque TCG excede los 10 s de ejecución en dos pruebas. Ese perfil valida sólo
+la imagen Ubuntu fijada; no certifica kernels arbitrarios. La política confía
+en el proceso CAO de una cuenta OS dedicada, no root, sin login y sin otros
+procesos; no afirma que Linux aísle procesos host arbitrarios con el mismo UID.
 
-El runner candidato es GitHub-hosted `ubuntu-26.04`; para repositorios públicos,
+GitHub-hosted `ubuntu-24.04` sólo orquesta QEMU; para repositorios públicos,
 GitHub describe esos runners estándar como VMs nuevas por job
 ([documentación](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)).
 La suite registra versión de imagen y kernel en el log; cada host de despliegue

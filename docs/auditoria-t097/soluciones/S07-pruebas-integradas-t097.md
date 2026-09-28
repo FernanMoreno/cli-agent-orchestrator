@@ -39,35 +39,39 @@ El fixture requiere Linux, Bubblewrap 0.13.0 con digest aprobado, Landlock ABI
 tener shell `nologin`/`false` y no tener otros procesos host al iniciar la
 aceptación.
 
-## Repetición GitHub-hosted pendiente
+## Repetición GitHub-hosted en QEMU pendiente
 
-El guest QEMU no sustituye una VM Linux hospedada. El workflow
-`.github/workflows/t097-host-acceptance.yml` ejecuta este gate en
-`ubuntu-26.04`, sólo sobre `main` o por dispatch de `main`, con permiso
-`contents: read`. GitHub describe el runner estándar como una VM nueva por job
-para repositorios públicos
+El workflow `.github/workflows/t097-host-acceptance.yml` usa
+GitHub-hosted `ubuntu-24.04` para arrancar un guest Ubuntu 26.10 con QEMU TCG,
+sólo sobre `main` o por dispatch de `main`, con permiso `contents: read`.
+GitHub describe el runner estándar como una VM nueva por job para repositorios
+públicos
 ([documentación](https://docs.github.com/en/actions/reference/runners/github-hosted-runners));
 no reutiliza el runner `cao-real-e2e`, que maneja cuentas y credenciales de
 proveedores.
 
-El workflow prepara el entorno efímero en cada job:
+El script `.github/scripts/t097-qemu-acceptance.sh` prepara un entorno efímero:
 
+- Verifica la imagen cloud Ubuntu 26.10 del 2026-09-19 por SHA-256 y arranca
+  el guest con QEMU TCG; el runner exterior sólo orquesta y transfiere el
+  checkout.
 - Verifica el source archive oficial de Bubblewrap 0.13.0 por SHA-256, compila
-  como usuario `runner` e instala `/usr/bin/bwrap` como root:root 0755.
+  dentro del guest e instala `/usr/bin/bwrap` como root:root 0755.
 - Ajusta `kernel.yama.ptrace_scope=1` y, si existe, desactiva la restricción
   AppArmor de user namespaces sólo dentro de la VM efímera.
 - Crea la cuenta indicada por la variable no secreta
   `CAO_WORK_BROKER_ACCOUNT` con shell `/usr/sbin/nologin`; no precisa una regla
   `sudoers` configurada por el operador.
-- Instala el checkout y `.venv` bajo el usuario runner; el broker sólo necesita
-  lectura/ejecución del checkout. Las pruebas escriben en temporales.
+- Instala el checkout y `.venv` dentro del guest bajo el usuario runner; el
+  broker sólo necesita lectura/ejecución del checkout. Las pruebas escriben
+  en temporales.
 
-El workflow confirma Landlock ABI >= 9, instala dependencias bloqueadas y
-ejecuta la suite como broker, sin `T097_TEST_WORKER_TIMEOUT_SECONDS`; además
-falla si pytest reporta cualquier skip. La compilación imprime el digest. Si
-aún no está allowlisted, el primer run falla de forma esperada; tras revisar el
-source archive y la configuración fijados, se añade el digest aprobado y se
-repite la suite completa hasta obtener 0 skips. Este
-resultado acepta el perfil `ubuntu-26.04` registrado en el log; otros hosts
-deben pasar sus preflight. Hasta el run verde, `WORK_BACKENDS={}` y T097/T019
-permanecen abiertos.
+El workflow confirma Landlock ABI >= 9 dentro del guest, instala dependencias
+bloqueadas y ejecuta la suite como broker con
+`T097_TEST_WORKER_TIMEOUT_SECONDS=45` sólo para compensar TCG; además falla si
+pytest reporta cualquier skip. La compilación imprime el digest. Si aún no está
+allowlisted, el primer run falla de forma esperada; tras revisar el source
+archive y la configuración fijados, se añade el digest aprobado y se repite la
+suite hasta obtener 0 skips. Este resultado acepta sólo la imagen guest
+registrada en el log. Otros hosts deben pasar sus preflight. Hasta el run
+verde, `WORK_BACKENDS={}` y T097/T019 permanecen abiertos.

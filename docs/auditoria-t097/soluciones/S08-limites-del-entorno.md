@@ -6,14 +6,15 @@ Causa: [C08](../causas/C08-limites-del-entorno.md)
 
 El guest temporal resolvió los requisitos técnicos de C08 y ejecutó la suite
 8/8 sin skips. No equivale a un host de despliegue. El workflow
-`.github/workflows/t097-host-acceptance.yml` usa ahora GitHub-hosted
-`ubuntu-26.04`: `ubuntu-24.04` ofreció Landlock ABI 7, menor que el requisito 9.
-Falta obtener un run verde; `WORK_BACKENDS` permanece `{}`.
+`.github/workflows/t097-host-acceptance.yml` usa GitHub-hosted `ubuntu-24.04`
+para arrancar un guest Ubuntu 26.10 con QEMU TCG. Los kernels nativos
+`ubuntu-24.04` y `ubuntu-26.04` ofrecieron ABI 7 y 8, inferiores al requisito 9.
+Falta un run QEMU verde; `WORK_BACKENDS` permanece `{}`.
 
 ## Entorno de aceptación
 
-Guest Ubuntu 26.10 en QEMU TCG (kernel Linux del guest; no WSL2 ni runner CI
-externo):
+Guest Ubuntu 26.10 en QEMU TCG (kernel Linux del guest; no kernel WSL2 ni host
+de despliegue):
 
 - Kernel `7.3.0-5-generic`; Landlock ABI **11**; Yama `ptrace_scope=1`;
   namespaces de usuario/PID/red/IPC disponibles.
@@ -90,15 +91,18 @@ de seccomp no estaba instalado. Un `test-run --file 0` upstream falló porque
 la invocación no montó `/dev`; la composición probada sí usa `--dev /dev`.
 No se presenta la suite upstream completa como verde.
 
-## Pendiente antes de registrar
+## Pendiente antes de cerrar C07/C08
 
-1. Publicar y ejecutar el workflow en el runner GitHub-hosted `ubuntu-26.04`.
-2. Exigir Landlock ABI >= 9, ocho casos sin skips y timeout predeterminado. Si
+1. Publicar y ejecutar el workflow GitHub-hosted que arranca el guest Ubuntu
+   fijado con QEMU TCG.
+2. Exigir Landlock ABI >= 9 dentro del guest, ocho casos sin skips y timeout
+   TCG documentado. Si
    el binario compilado genera otro SHA-256, verificar el archive upstream y la
    configuración fijada antes de permitir ese nuevo digest.
 3. Sólo después de un run verde revisar el registro del backend y actualizar
    estado T097/C07/C08. El resultado no habilita cualquier kernel ni cierra
    los gates propios de T019/T035.
 
-Hasta completar esos puntos, no cambiar `WORK_BACKENDS={}` ni marcar T097/T019
-como completadas.
+El run QEMU no certifica un host de despliegue ni habilita backend. Hasta
+completar esos puntos, no cambiar `WORK_BACKENDS={}` ni marcar T097/T019 como
+completadas.

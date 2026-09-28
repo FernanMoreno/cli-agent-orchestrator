@@ -3340,3 +3340,17 @@ GitHub-hosted `ubuntu-26.04` y se añadió un paso explícito que registra/recha
 ABI menor que 9. El workflow actualizado aún no está publicado ni medido en
 GitHub Actions. `T101` sigue `[ ]`,
 `WORK_BACKENDS={}` y T097/T019 continúan abiertos.
+
+### T097: guest Ubuntu fijado para aceptación hosted — 2026-09-28
+
+La ejecución nativa posterior `36450282433` en `ubuntu-26.04` falló cerrada
+antes de correr la suite: el kernel ofrece Landlock ABI 8, menor que el mínimo
+9. No se rebajó ese requisito.
+
+T100 ahora usa GitHub-hosted `ubuntu-24.04` sólo como orquestador de un guest
+Ubuntu 26.10 efímero bajo QEMU TCG. El script fija SHA-256 de la imagen cloud y
+del source archive Bubblewrap 0.13.0, prepara kernel y cuenta broker dentro del
+guest, y exige ABI >= 9, digest allowlisted y ocho casos sin skips. El run
+QEMU hosted aún no se ha ejecutado; T101 y C08 siguen pendientes. El guest no
+certificará el kernel runner ni uno de despliegue; `WORK_BACKENDS={}` y T097/T019
+siguen abiertos para producción.
