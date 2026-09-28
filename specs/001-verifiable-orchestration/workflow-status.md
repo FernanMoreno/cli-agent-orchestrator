@@ -3362,6 +3362,8 @@ Ubuntu fijado y compiló Bubblewrap. Falló antes de ejecutar pytest: `uv sync`
 no encontró `scripts/hatch_build_tui_tag.py`, declarado como build hook en
 `pyproject.toml`. El archivo del checkout transferido omitía `scripts/`.
 
-El script ahora incluye ese hook en el archive y establece
-`CAO_TUI_AUTOBUILD=0` durante el sync: T097 no necesita compilar el TUI. Falta
-repetir el run; no se cuenta como aceptación y no cambia el estado T101/C08.
+El script ahora incluye el hook, `README.md` (declarado en `pyproject.toml`) y
+`LICENSE` en el archive, y fija `CAO_TUI_AUTOBUILD=0` durante el sync: T097 no
+necesita compilar el TUI. Falta
+repetir el run con ese archive completo; el intento cancelado y el fallido no
+cuentan como aceptación ni cambian el estado T101/C08.

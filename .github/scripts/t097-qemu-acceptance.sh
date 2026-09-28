@@ -143,7 +143,8 @@ ssh "${ssh_args[@]}" -p "$guest_port" "$guest" cat /etc/os-release
 
 git -C "$GITHUB_WORKSPACE" archive --format=tar.gz \
   --output="$work_dir/checkout.tar.gz" \
-  HEAD pyproject.toml uv.lock src test scripts/hatch_build_tui_tag.py
+  HEAD pyproject.toml uv.lock README.md LICENSE src test \
+  scripts/hatch_build_tui_tag.py
 scp "${ssh_args[@]}" -P "$guest_port" \
   "$work_dir/checkout.tar.gz" "$guest:/home/runner/checkout.tar.gz"
 scp "${ssh_args[@]}" -P "$guest_port" \
