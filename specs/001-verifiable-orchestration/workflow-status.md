@@ -3367,3 +3367,19 @@ El script ahora incluye el hook, `README.md` (declarado en `pyproject.toml`) y
 necesita compilar el TUI. Falta
 repetir el run con ese archive completo; el intento cancelado y el fallido no
 cuentan como aceptación ni cambian el estado T101/C08.
+
+### T097: digest revisado en el primer run con archive completo — 2026-09-28
+
+El run [`36457607699`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36457607699)
+(`8d93e018`) arrancó la imagen Ubuntu 26.10 fijada en QEMU, registró kernel
+`7.3.0-5-generic` y Landlock ABI 11, y completó `uv sync`. El checksum del
+source archive oficial Bubblewrap 0.13.0 coincidió con el valor fijado
+`4734237473c0e5d695e4e9034a34e43b2dbf5164655bd13fa59ae376b2b7a765`. El build
+usó GCC `15.3.0-4ubuntu1` y Meson `1.10.1`; instaló `0.13.0` como `root:root
+0755`. Los ocho fixtures rechazaron el digest nuevo
+`15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250` antes de
+ejecutar sus cuerpos. Revisados el source archive y la configuración del build,
+se añadió sólo ese hash exacto a la allowlist. El run no es aceptación: T101 y
+C07/C08 siguen pendientes de una repetición con ocho casos pasados y sin
+skips. `WORK_BACKENDS={}` y T097/T019 siguen sujetos a la aceptación del host
+de despliegue.

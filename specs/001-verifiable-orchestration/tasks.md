@@ -576,3 +576,17 @@ cambió a un guest Ubuntu 26.10 fijado con QEMU TCG, orquestado desde
 checkout parcial omitía el hook Hatch de `pyproject.toml`; se corrigió el
 archivo del workflow y T101 sigue `[ ]` hasta un run verde. `WORK_BACKENDS={}`
 y T097/T019 continúan abiertos.
+
+**Primer run hosted con archive completo — 2026-09-28:** el run
+[`36457607699`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36457607699)
+(`8d93e018`) arrancó el guest Ubuntu 26.10 fijado, confirmó Landlock ABI 11,
+completó `uv sync` y verificó el source archive Bubblewrap 0.13.0
+(`4734237473c0e5d695e4e9034a34e43b2dbf5164655bd13fa59ae376b2b7a765`). Compiló
+con GCC `15.3.0-4ubuntu1` y Meson `1.10.1`, e instaló versión `0.13.0` como
+`root:root 0755`. El digest
+`15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250` fue
+rechazado por no estar aún allowlisted; los ocho casos fallaron en el fixture
+antes de ejecutar sus cuerpos. Se revisaron origen y perfil fijado y se añadió
+ese hash exacto. T101/C07/C08 siguen pendientes de una repetición con ocho
+casos verdes y sin skips; no se registra `WORK_BACKENDS` ni se certifica un
+host de despliegue.

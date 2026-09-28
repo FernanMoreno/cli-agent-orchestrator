@@ -1,10 +1,11 @@
 # C08 — Límites del entorno de validación
 
 **Severidad:** bloqueante para evidencia
-**Estado:** entorno de aceptación verificado en guest Linux QEMU; la suite T097
-pasó 8/8 sin skips. Native GitHub-hosted `ubuntu-24.04` ofrece ABI 7 y
-`ubuntu-26.04` ABI 8; falta repetir los casos en el workflow hosted que arranca
-el guest QEMU con ABI 11.
+**Estado:** la suite local en guest QEMU pasó 8/8 sin skips. El primer workflow
+hosted confirmó ABI 11 y compiló el binario desde la fuente fijada, pero se
+detuvo porque su digest nuevo aún no estaba allowlisted. Se revisó y añadió el
+digest exacto; falta repetir la suite hosted. Native GitHub-hosted
+`ubuntu-24.04` ofrece ABI 7 y `ubuntu-26.04` ABI 8.
 
 ## Entorno original
 
@@ -60,16 +61,26 @@ root, sin login y sin procesos host ajenos; esa cuenta forma parte de la base
 de confianza. No se afirma aislamiento frente a root ni frente a procesos que
 ejecuten bajo la propia cuenta broker.
 
-## Workflow GitHub-hosted con guest QEMU — pendiente de ejecutar
+## Workflow GitHub-hosted con guest QEMU — digest revisado, repetición pendiente
 
-El workflow `.github/workflows/t097-host-acceptance.yml` usa un runner
-GitHub-hosted `ubuntu-24.04` para arrancar una imagen cloud Ubuntu 26.10 diaria
-fijada por fecha y SHA-256 en QEMU TCG. Dentro del guest verifica el SHA upstream
-del source archive Bubblewrap 0.13.0, compila e instala el binario root:root
-0755, configura Yama/AppArmor, crea una cuenta broker `nologin` exclusiva,
-exige ABI >= 9 y ejecuta los ocho casos sin skips. Sólo aumenta a 45 s el
-timeout de las pruebas de worker que exceden 10 s bajo TCG. Registra imagen,
-kernel, ABI y digest; no certifica el kernel del runner o de despliegue.
+El run [`36457607699`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36457607699),
+en `main` (`8d93e018`), usó un runner GitHub-hosted `ubuntu-24.04` para
+arrancar en QEMU TCG la imagen Ubuntu 26.10 del 2026-09-19, fijada por SHA-256
+`6001247f681e87448e3f403b2e5ca859fb23a6cbbf0813f01a456a072b70a529`. El guest
+arrancó con kernel `7.3.0-5-generic`, Landlock ABI **11**, y completó `uv sync`.
+La descarga del release upstream Bubblewrap 0.13.0 coincidió con el SHA-256
+fijado `4734237473c0e5d695e4e9034a34e43b2dbf5164655bd13fa59ae376b2b7a765`;
+Meson compiló el binario con GCC `15.3.0-4ubuntu1`, Meson `1.10.1` y las
+opciones fijadas en el script. Se verificaron versión `0.13.0` e instalación
+root:root 0755.
+
+El digest resultante, `15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250`,
+no figuraba en la allowlist; por eso los ocho casos fallaron cerrados en el
+fixture de aceptación antes de ejecutar sus cuerpos. Revisados el source
+archive, el perfil de compilación y el log del run, se añadió sólo ese digest
+exacto. La repetición debe terminar `8 passed, 0 skipped`. El timeout TCG de
+45 s sólo se aplica a los workers. Este perfil no certifica el kernel del
+runner o de despliegue.
 
 El inventario oficial de imágenes lista el runner estándar `ubuntu-24.04`
 ([imágenes runner](https://github.com/actions/runner-images#readme)). Para
@@ -85,10 +96,10 @@ debe revisar su procedencia antes de permitirlo y repetir la suite.
 
 ## Resultado
 
-Los requisitos técnicos del guest se probaron sin skips. Esto cubre el proxy
-concurrente y su recuperación durable en esa imagen. El kernel nativo
+Los requisitos técnicos del guest local se probaron sin skips. Esto cubre el
+proxy concurrente y su recuperación durable en esa imagen. El kernel nativo
 `ubuntu-24.04` dio ABI 7 y `ubuntu-26.04` ABI 8, ambos insuficientes. La
 repetición del workflow QEMU sigue pendiente; no se autoriza registrar el
-backend. Hasta un run QEMU verde y digest revisado, `WORK_BACKENDS` permanece
-vacío y T097/T019 continúan
-`[ ]`.
+backend. Tras un run QEMU verde se cerrarán C07/C08 para el perfil guest. El
+host de despliegue sigue sujeto a su aceptación específica; `WORK_BACKENDS`
+permanece vacío y T097/T019 continúan `[ ]` hasta validar ese host.

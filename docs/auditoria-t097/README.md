@@ -26,8 +26,8 @@ Orden recomendado: S02 → S01 → S03 → S04 → S05 → S06 → S08 → S07.
 | C04 | Cerrada | Proof revalida pidfds, starttime e inode PID namespace en cada guard. |
 | C05 | Cerrada | Recuperación tras muerte confirmada, journal de issues huérfanos, conciliación admin y pruebas SIGKILL/migración. |
 | C06 | Cerrada | Fallos originales del proxy corregidos; suite focal pasa. |
-| C07 | Parcial | Suite Ubuntu 26.10/QEMU TCG 8/8 sin skips. Native GitHub-hosted `ubuntu-24.04` dio ABI 7 y `ubuntu-26.04` ABI 8; ambos quedan rechazados por el requisito 9. El workflow QEMU hospedado está pendiente de un run verde. |
-| C08 | Verificada en guest Linux; repetición hosted pendiente | Ubuntu 26.10/QEMU TCG, kernel 7.3.0-5, Landlock ABI 11, Bubblewrap 0.13.0 allowlisted; aceptación 8/8. El workflow fijará la imagen por fecha/SHA y repetirá en QEMU; no certificará el kernel del runner ni uno de despliegue. |
+| C07 | Parcial | La suite local Ubuntu 26.10/QEMU TCG pasó 8/8. El primer run hosted verificó guest ABI 11 y fuente/build fijados; revisamos y allowlisteamos el digest resultante. Falta que la repetición hosted pase 8/8. |
+| C08 | Verificada en guest Linux; repetición hosted pendiente | Ubuntu 26.10/QEMU TCG, kernel 7.3.0-5, Landlock ABI 11. Run hosted `36457607699` verificó source archive y toolchain; falló cerrado antes de los casos al encontrar un digest nuevo, ya revisado y allowlisted. Falta el run verde; no certifica el kernel del runner ni uno de despliegue. |
 
 T097 y `WORK_BACKENDS = {}` siguen `[ ]` hasta completar el run QEMU hosted y
 revisar por separado el host de despliegue. La suite guest usa timeout 45 s

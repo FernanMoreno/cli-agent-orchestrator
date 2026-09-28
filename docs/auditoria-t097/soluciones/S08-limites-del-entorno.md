@@ -5,7 +5,9 @@ Causa: [C08](../causas/C08-limites-del-entorno.md)
 ## Decisión
 
 El guest temporal resolvió los requisitos técnicos de C08 y ejecutó la suite
-8/8 sin skips. No equivale a un host de despliegue. El workflow
+8/8 sin skips. El primer workflow hosted confirmó ABI 11 y revisó el digest del
+binario, pero falló cerrado en la allowlist antes de los casos; la repetición
+sigue pendiente. Ninguna de estas pruebas equivale a un host de despliegue. El workflow
 `.github/workflows/t097-host-acceptance.yml` usa GitHub-hosted `ubuntu-24.04`
 para arrancar un guest Ubuntu 26.10 con QEMU TCG. Los kernels nativos
 `ubuntu-24.04` y `ubuntu-26.04` ofrecieron ABI 7 y 8, inferiores al requisito 9.
@@ -60,6 +62,25 @@ añadió el valor exacto. Un run posterior superó ese check, pero confirmó que
 kernel ofrece Landlock ABI 7; el workflow lo rechaza porque exige ABI >= 9. El
 artifact y el preflight de build no se cuentan como aceptación T097.
 
+## Build en guest Ubuntu 26.10 hosted, digest revisado
+
+El run [`36457607699`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36457607699)
+corrió en `main` con la imagen guest del 2026-09-19 fijada por SHA-256
+`6001247f681e87448e3f403b2e5ca859fb23a6cbbf0813f01a456a072b70a529`. Registró
+kernel `7.3.0-5-generic`, Landlock ABI **11** y `uv sync` completo. El SHA-256
+del source archive oficial coincidió con
+`4734237473c0e5d695e4e9034a34e43b2dbf5164655bd13fa59ae376b2b7a765`. Se compiló
+con GCC `15.3.0-4ubuntu1`, Meson `1.10.1` y las opciones del script; la versión
+fue `0.13.0` y el binario quedó como `root:root 0755`.
+
+El binario produjo SHA-256
+`15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250`. Los ocho
+fixtures lo rechazaron porque el digest no estaba aprobado, antes de correr
+los cuerpos de prueba. Tras revisar la descarga upstream, la configuración y
+el log de compilación, se añadió ese valor exacto a la allowlist. Este run no
+cuenta como aceptación; se exige otra ejecución completa con **8 passed, 0
+skipped**.
+
 La aceptación usa un kernel Linux en una VM TCG y sirve como evidencia de las
 interfaces probadas del guest. No equivale a certificar otro kernel. El nuevo
 perfil hosted sirve como referencia reproducible; cada host de despliegue
@@ -91,18 +112,15 @@ de seccomp no estaba instalado. Un `test-run --file 0` upstream falló porque
 la invocación no montó `/dev`; la composición probada sí usa `--dev /dev`.
 No se presenta la suite upstream completa como verde.
 
-## Pendiente antes de cerrar C07/C08
+## Repetición pendiente para cerrar C07/C08 del perfil guest
 
-1. Publicar y ejecutar el workflow GitHub-hosted que arranca el guest Ubuntu
-   fijado con QEMU TCG.
-2. Exigir Landlock ABI >= 9 dentro del guest, ocho casos sin skips y timeout
-   TCG documentado. Si
-   el binario compilado genera otro SHA-256, verificar el archive upstream y la
-   configuración fijada antes de permitir ese nuevo digest.
-3. Sólo después de un run verde revisar el registro del backend y actualizar
-   estado T097/C07/C08. El resultado no habilita cualquier kernel ni cierra
-   los gates propios de T019/T035.
+1. Repetir el workflow desde `main`; exigir Landlock ABI >= 9, Bubblewrap con
+   digest aprobado, ocho casos sin skips y timeout TCG documentado.
+2. Con run verde, cerrar C07/C08 para el perfil guest en las especificaciones
+   y esta auditoría. La prueba no certifica hosts de despliegue ni cierra los
+   gates propios de T019/T035.
 
-El run QEMU no certifica un host de despliegue ni habilita backend. Hasta
-completar esos puntos, no cambiar `WORK_BACKENDS={}` ni marcar T097/T019 como
-completadas.
+El run QEMU no certifica un host de despliegue ni habilita backend. Incluso
+tras cerrar C07/C08 para el perfil guest, mantener `WORK_BACKENDS={}` y dejar
+T097/T019 sujetos a aceptar el host de destino antes de habilitar ejecución
+Work.
