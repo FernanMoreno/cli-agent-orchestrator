@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 import time
 from typing import Annotated, Any, Dict, List, Optional, Tuple, Union
 
@@ -23,6 +24,7 @@ from cli_agent_orchestrator.constants import (
     WORKFLOW_RUN_REQUEST_TIMEOUT,
 )
 from cli_agent_orchestrator.mcp_server import utils as mcp_utils
+from cli_agent_orchestrator.mcp_server.knowledge_tools import knowledge_read, knowledge_instructions
 from cli_agent_orchestrator.mcp_server.models import HandoffResult
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.models.workflow_runtime import ReturnAck, parse_decision
@@ -78,6 +80,9 @@ mcp = FastMCP(
     - Ensure you're running within a CAO terminal (CAO_TERMINAL_ID must be set)
     """,
 )
+
+mcp.tool()(knowledge_read)
+mcp.tool()(knowledge_instructions)
 
 LOAD_SKILL_TOOL_DESCRIPTION = """Retrieve the full Markdown body of an available skill from cao-server.
 
@@ -1478,29 +1483,14 @@ async def memory_store(
     Use this to persist facts, decisions, user preferences, and project conventions
     that should be available across agent sessions.
     """
-    from cli_agent_orchestrator.services.memory_gateway import remote_memory_url, store_memory
-    from cli_agent_orchestrator.services.memory_service import MemoryService
+    from cli_agent_orchestrator.services.memory_gateway import store_memory
 
     try:
         terminal_context = _get_terminal_context_from_env()
-        if remote_memory_url():
-            memory = await store_memory(
-                content=content,
-                scope=scope,
-                memory_type=memory_type,
-                key=key,
-                tags=tags or "",
-                terminal_context=terminal_context,
-            )
-        else:
-            memory = await MemoryService().store(
-                content=content,
-                scope=scope,
-                memory_type=memory_type,
-                key=key,
-                tags=tags or "",
-                terminal_context=terminal_context,
-            )
+        memory = await store_memory(
+            content=content, scope=scope, memory_type=memory_type,
+            key=key, tags=tags or "", terminal_context=terminal_context,
+        )
         return {
             "success": True,
             "key": memory.key,
@@ -1575,8 +1565,7 @@ async def memory_recall(
 
     Use this to check if relevant knowledge already exists before asking the user.
     """
-    from cli_agent_orchestrator.services.memory_gateway import recall_memory, remote_memory_url
-    from cli_agent_orchestrator.services.memory_service import MemoryService
+    from cli_agent_orchestrator.services.memory_gateway import recall_memory
     from cli_agent_orchestrator.services.settings_service import is_memory_enabled
 
     if not is_memory_enabled():
@@ -1601,11 +1590,7 @@ async def memory_recall(
                 bool(include_related) if isinstance(include_related, bool) else False
             ),
         }
-        memories = (
-            await recall_memory(**kwargs)
-            if remote_memory_url()
-            else await MemoryService().recall(**kwargs)
-        )
+        memories = await recall_memory(**kwargs)
         return {
             "success": True,
             "memories": [
@@ -1642,23 +1627,12 @@ async def memory_forget(
 
     Deletes the wiki topic file and removes the entry from index.md.
     """
-    from cli_agent_orchestrator.services.memory_gateway import forget_memory, remote_memory_url
-    from cli_agent_orchestrator.services.memory_service import MemoryService
+    from cli_agent_orchestrator.services.memory_gateway import forget_memory
 
     try:
         terminal_context = _get_terminal_context_from_env()
-        deleted = (
-            await forget_memory(
-                key=key,
-                scope=scope,
-                terminal_context=terminal_context,
-            )
-            if remote_memory_url()
-            else await MemoryService().forget(
-                key=key,
-                scope=scope,
-                terminal_context=terminal_context,
-            )
+        deleted = await forget_memory(
+            key=key, scope=scope, terminal_context=terminal_context,
         )
         return {
             "success": True,
@@ -1876,7 +1850,7 @@ async def store_lesson(
     Requires memory.learning_enabled=true; returns a disabled payload
     otherwise.
     """
-    from cli_agent_orchestrator.services.memory_service import MemoryService
+    from cli_agent_orchestrator.services.memory_gateway import store_memory
     from cli_agent_orchestrator.services.settings_service import is_learning_enabled
 
     try:
@@ -1918,8 +1892,7 @@ async def store_lesson(
         # terminal_id) still identify the actual caller.
         lesson_context = {**terminal_context, "agent_profile": target}
 
-        service = MemoryService()
-        memory = await service.store(
+        memory = await store_memory(
             content=content,
             scope="agent",
             memory_type="feedback",
@@ -2368,6 +2341,365 @@ async def workflow_status(
         "current_step_id": data.get("current_step_id"),
         "steps": data.get("steps", []),
     }
+
+
+async def _work_query(path: str, key: str, **params: Any) -> Dict[str, Any]:
+    """Use the authenticated HTTP boundary; never infer empty data from an outage."""
+    try:
+        value = await asyncio.to_thread(mcp_utils.get_json, path, **params)
+        return {"ok": True, key: value}
+    except requests.HTTPError as error:
+        code = error.response.status_code if error.response is not None else 503
+        return {
+            "ok": False,
+            "code": {401: "work_identity_required", 403: "work_read_forbidden",
+                     404: "work_not_found", 409: "work_revision_conflict",
+                     422: "work_query_invalid"}.get(code, "work_store_unavailable"),
+            "retryable": code >= 500,
+            "required_action": "retry_query" if code >= 500 else "check_query_authority",
+        }
+    except (requests.RequestException, ValueError):
+        return {"ok": False, "code": "work_store_unavailable", "retryable": True,
+                "required_action": "retry_query"}
+
+
+def _work_mutation_error(error: requests.HTTPError) -> Dict[str, Any]:
+    """Return the API's bounded write envelope without inventing a second policy."""
+    response = error.response
+    if response is not None:
+        try:
+            detail = response.json().get("detail")
+        except (AttributeError, ValueError):
+            detail = None
+        if isinstance(detail, dict) and all(
+            isinstance(detail.get(key), expected)
+            for key, expected in (("code", str), ("message", str), ("retryable", bool), ("required_action", str))
+        ):
+            return {"ok": False, **detail}
+        status_code = getattr(response, "status_code", 503)
+    else:
+        status_code = 503
+    return {
+        "ok": False,
+        "code": {
+            401: "work_identity_required",
+            403: "work_decision_forbidden",
+            404: "work_decision_not_found",
+            409: "work_decision_conflict",
+            422: "work_decision_invalid",
+        }.get(status_code, "work_store_unavailable"),
+        "message": "Durable decision request was rejected.",
+        "retryable": status_code >= 500,
+        "required_action": "retry_decision" if status_code >= 500 else "correct_request",
+    }
+
+
+async def _work_mutation(path: str, key: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    """Use only the authenticated HTTP decision boundary from MCP."""
+    try:
+        value = await asyncio.to_thread(mcp_utils.post_body_json, path, body)
+        return {"ok": True, key: value}
+    except requests.HTTPError as error:
+        return _work_mutation_error(error)
+    except (requests.RequestException, ValueError):
+        return {
+            "ok": False,
+            "code": "work_store_unavailable",
+            "message": "Verified work store unavailable.",
+            "retryable": True,
+            "required_action": "retry_decision",
+        }
+
+
+def _work_identity_valid(value: str) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,512}", value) is not None
+
+
+@mcp.tool()
+async def get_work_item(work_item_id: str) -> Dict[str, Any]:
+    """Read the owner's durable work state; ready/idle never means successful work."""
+    if not _work_identity_valid(work_item_id):
+        return {"ok": False, "code": "work_query_invalid", "retryable": False,
+                "required_action": "correct_query"}
+    return await _work_query(f"/work-items/{work_item_id}", "work")
+
+
+@mcp.tool()
+async def get_work_events(job_id: str, after_sequence: int = 0, limit: int = 100) -> Dict[str, Any]:
+    """Read bounded ordered job events, preserving cursor and explicit retention gaps."""
+    if (not _work_identity_valid(job_id) or type(after_sequence) is not int
+            or after_sequence < 0 or type(limit) is not int or not 1 <= limit <= 1000):
+        return {"ok": False, "code": "work_query_invalid", "retryable": False,
+                "required_action": "correct_query"}
+    return await _work_query(
+        f"/jobs/{job_id}/events", "page", after_sequence=after_sequence, limit=limit,
+    )
+
+
+@mcp.tool()
+async def decide_work(
+    work_item_id: str,
+    attempt_id: str,
+    generation: int,
+    idempotency_key: str,
+    evidence_refs: list[str],
+    action: str,
+    reason: str,
+    authorized_effects: list[str],
+) -> Dict[str, Any]:
+    """Record decision evidence through the API as this MCP credential's principal.
+
+    This HTTP-only transport has no independent per-human identity propagation:
+    the configured MCP-to-API credential (or verified loopback operator) is the
+    effective principal.  Caller/user/terminal fields cannot select an actor.
+    """
+    if not _work_identity_valid(work_item_id):
+        return {
+            "ok": False,
+            "code": "work_decision_invalid",
+            "message": "Invalid work item identifier.",
+            "retryable": False,
+            "required_action": "correct_request",
+        }
+    return await _work_mutation(
+        f"/work-items/{work_item_id}/decisions",
+        "decision",
+        {
+            "attempt_id": attempt_id,
+            "generation": generation,
+            "idempotency_key": idempotency_key,
+            "evidence_refs": evidence_refs,
+            "action": action,
+            "reason": reason,
+            "authorized_effects": authorized_effects,
+        },
+    )
+
+
+@mcp.tool()
+async def revoke_work_decision(decision_id: str, reason: str) -> Dict[str, Any]:
+    """Durably revoke an original actor's decision through the API boundary."""
+    if not _work_identity_valid(decision_id):
+        return {
+            "ok": False,
+            "code": "work_decision_invalid",
+            "message": "Invalid decision identifier.",
+            "retryable": False,
+            "required_action": "correct_request",
+        }
+    return await _work_mutation(
+        f"/work-decisions/{decision_id}/revoke", "revocation", {"reason": reason}
+    )
+
+
+_WORK_LAUNCH_RESPONSE_INVALID_ERROR = {
+    "code": "launch_response_invalid",
+    "message": "cao-server returned an invalid launch response.",
+    "retryable": False,
+    "required_action": "inspect_server_configuration",
+}
+_WORK_LAUNCH_INTERNAL_ERROR = {
+    "code": "launch_internal_error",
+    "message": "Unable to process the launch request.",
+    "retryable": False,
+    "required_action": "inspect_server_configuration",
+}
+_WORK_LAUNCH_SAFE_ERROR_DETAILS = frozenset(
+    {
+        (
+            "launch_identity_required",
+            "Verified launch identity is required.",
+            False,
+            "authenticate",
+        ),
+        (
+            "launch_intent_invalid",
+            "Launch intent is invalid.",
+            False,
+            "correct_launch_intent",
+        ),
+        (
+            "launch_idempotency_conflict",
+            "Launch operation conflicts with an existing server-owned identity.",
+            False,
+            "inspect_existing_launch",
+        ),
+        (
+            "launch_context_unavailable",
+            "Trusted launch context is unavailable.",
+            False,
+            "provision_launch_context",
+        ),
+        (
+            "launch_store_unavailable",
+            "Verified work store is unavailable.",
+            True,
+            "retry_same_intent",
+        ),
+        (
+            "launch_runtime_unavailable",
+            "Trusted launch runtime is unavailable.",
+            False,
+            "inspect_server_configuration",
+        ),
+        (
+            "launch_internal_error",
+            "Unable to process the launch request.",
+            False,
+            "inspect_server_configuration",
+        ),
+    }
+    | {
+        (
+            "launch_authority_denied",
+            "Verified launch authority is required.",
+            False,
+            required_action,
+        )
+        for required_action in ("authenticate", "reauthorize")
+    }
+    | {
+        (
+            "launch_context_invalid",
+            "Trusted launch context is no longer valid.",
+            False,
+            required_action,
+        )
+        for required_action in ("refresh_launch_context", "resolve_launch_again")
+    }
+)
+
+
+def _safe_work_launch_error_detail(value: Any) -> Dict[str, Any] | None:
+    """Copy only an exact public launch envelope returned by cao-server."""
+    if not isinstance(value, dict) or set(value) != {
+        "code",
+        "message",
+        "retryable",
+        "required_action",
+    }:
+        return None
+    code = value["code"]
+    message = value["message"]
+    retryable = value["retryable"]
+    required_action = value["required_action"]
+    if not (
+        isinstance(code, str)
+        and isinstance(message, str)
+        and type(retryable) is bool
+        and isinstance(required_action, str)
+    ):
+        return None
+    if (code, message, retryable, required_action) not in _WORK_LAUNCH_SAFE_ERROR_DETAILS:
+        return None
+    return {
+        "code": code,
+        "message": message,
+        "retryable": retryable,
+        "required_action": required_action,
+    }
+
+
+def _work_launch_http_error(error: requests.HTTPError) -> Dict[str, Any]:
+    """Keep only a validated API launch rejection across the MCP hop."""
+    response = error.response
+    status_code = response.status_code if response is not None else None
+    if response is not None:
+        try:
+            payload = response.json()
+        except (ValueError, requests.RequestException):
+            payload = None
+        detail = _safe_work_launch_error_detail(
+            payload.get("detail") if isinstance(payload, dict) else None
+        )
+    else:
+        detail = None
+    if detail is None:
+        detail = dict(_WORK_LAUNCH_RESPONSE_INVALID_ERROR)
+    return {"ok": False, "status_code": status_code, "error": detail}
+
+
+@mcp.tool()
+async def work_launch(
+    selection: Annotated[
+        str,
+        Field(description="Opaque selector for a launch provisioned on cao-server"),
+    ],
+    agent_profile: Annotated[str, Field(description="Requested profile for the launch")],
+    session_name: Annotated[str, Field(description="Requested session name")],
+    message: Annotated[str, Field(description="Unprivileged task message")],
+    allowed_tools: Annotated[
+        List[str], Field(description="Requested tools; server authority limits the effective set")
+    ],
+) -> Dict[str, Any]:
+    """Admit one preprovisioned durable launch through the authenticated HTTP API.
+
+    This returns an admission receipt only. It does not provision authority,
+    dispatch work, or acknowledge that a receiver accepted a task. Caller,
+    child, continuation, grant, and task-receipt fields are not accepted.
+    """
+    body = {
+        "selection": selection,
+        "agent_profile": agent_profile,
+        "session_name": session_name,
+        "message": message,
+        "allowed_tools": allowed_tools,
+    }
+    try:
+        receipt = await asyncio.to_thread(mcp_utils.post_body_json, "/work-launches", body)
+    except requests.HTTPError as error:
+        return _work_launch_http_error(error)
+    except (requests.ConnectionError, requests.Timeout):
+        return {
+            "ok": False,
+            "status_code": None,
+            "error": {
+                "code": "launch_transport_unavailable",
+                "message": "Could not reach cao-server to admit the launch.",
+                "retryable": True,
+                "required_action": "retry_same_intent",
+            },
+        }
+    except (
+        requests.exceptions.InvalidURL,
+        requests.exceptions.InvalidSchema,
+        requests.exceptions.MissingSchema,
+    ):
+        return {
+            "ok": False,
+            "status_code": None,
+            "error": dict(_WORK_LAUNCH_INTERNAL_ERROR),
+        }
+    except ValueError:
+        return {
+            "ok": False,
+            "status_code": None,
+            "error": dict(_WORK_LAUNCH_RESPONSE_INVALID_ERROR),
+        }
+    except Exception:
+        return {
+            "ok": False,
+            "status_code": None,
+            "error": dict(_WORK_LAUNCH_INTERNAL_ERROR),
+        }
+
+    if not isinstance(receipt, dict) or set(receipt) != {
+        "work_item_id",
+        "attempt_id",
+        "generation",
+        "state",
+    }:
+        return {
+            "ok": False,
+            "status_code": None,
+            "error": {
+                "code": "launch_receipt_invalid",
+                "message": "cao-server returned an invalid launch receipt.",
+                "retryable": False,
+                "required_action": "inspect_server_configuration",
+            },
+        }
+    return {"ok": True, "receipt": receipt}
 
 
 @mcp.tool()

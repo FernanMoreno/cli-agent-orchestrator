@@ -26,6 +26,10 @@ import logging
 import time
 from typing import Callable, Literal, Optional
 
+from cli_agent_orchestrator.clients.database import (
+    get_terminal_turn_receipt,
+    transition_native_child,
+)
 from cli_agent_orchestrator.models.kiro_engine import KiroEngine, parse_kiro_engine
 from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import (
@@ -33,12 +37,9 @@ from cli_agent_orchestrator.models.terminal import (
     TerminalInputBlockedError,
     TerminalStatus,
 )
-from cli_agent_orchestrator.clients.database import (
-    get_terminal_turn_receipt,
-    transition_native_child,
-)
 from cli_agent_orchestrator.plugins import PluginRegistry
 from cli_agent_orchestrator.providers.kiro_capabilities import KiroPhase0KASError
+from cli_agent_orchestrator.security.auth import Principal
 from cli_agent_orchestrator.services import frozen_run_memory, terminal_service
 from cli_agent_orchestrator.services.status_monitor import status_monitor
 from cli_agent_orchestrator.services.step_fingerprint import StepCallFields, compute
@@ -247,6 +248,26 @@ class StepCancelledError(Exception):
         self.terminal_id = terminal_id
 
 
+def _guarded_delivery(guard, terminal_id, may_have_delivered, operation, *args, **kwargs):
+    """Check immediately in the I/O worker, not before it enters the thread queue.
+
+    The guard closes its DB snapshot before calling the terminal operation. It
+    cannot make external I/O atomic with concurrent revocation after this check.
+    """
+    if guard is not None:
+        try:
+            guard()
+        except Exception as error:
+            raise StepExecutionError(
+                "step contract no longer permits task delivery",
+                kind="contract_rejected",
+                terminal_id=terminal_id,
+                action="inspect",
+                delivery_may_have_occurred=may_have_delivered,
+            ) from error
+    return operation(*args, **kwargs)
+
+
 async def _wait_for_completion(
     terminal_id: str,
     timeout: float,
@@ -255,6 +276,7 @@ async def _wait_for_completion(
     prompt: Optional[str] = None,
     prompt_redelivery: bool = True,
     track_native_child: bool = False,
+    delivery_guard: Optional[Callable[[], None]] = None,
 ) -> None:
     """Wait for a post-input step to settle, polling ``status_monitor`` (issue #409).
 
@@ -561,12 +583,23 @@ async def _wait_for_completion(
             # StepCancelledError, never a raw terminal exception).
             try:
                 already_started = await asyncio.to_thread(
+                    _guarded_delivery,
+                    delivery_guard,
+                    terminal_id,
+                    True,
                     terminal_service.redeliver_dropped_message,
                     terminal_id,
                     prompt,
                     redeliveries,
                     full_resend_requires_probe=True,
                 )
+            except StepExecutionError as error:
+                if error.kind == "contract_rejected":
+                    raise
+                logger.warning(
+                    "prompt redelivery failed on terminal %s", terminal_id, exc_info=True
+                )
+                already_started = False
             except Exception:
                 logger.warning(
                     "prompt redelivery to %s failed (attempt %d) — continuing to wait",
@@ -670,6 +703,166 @@ async def resolve_effective_working_directory(
     return working_directory
 
 
+async def run_managed_agent_step(binding, payload, snapshot, port):
+    """Deliver one fresh durable agent step under WorkAdmission's live port.
+
+    This is intentionally separate from ``run_agent_step``.  The latter is a
+    legacy, caller-oriented compatibility path with reuse, parent/child
+    bookkeeping and prompt recovery.  A managed delivery has no caller context,
+    never reuses a terminal, and reports only conservative delivery evidence.
+    """
+    from cli_agent_orchestrator.services.work_service import DeliveryObservation
+    from cli_agent_orchestrator.services.work_terminal import managed_terminal_identity
+
+    model = binding.contract.model.value if binding.contract.model.status == "known" else None
+    frozen_memory = snapshot.content.decode("utf-8")
+
+    # Recheck before terminal allocation as well as in the scoped backend's
+    # per-effect guard.  A revocation leaves any created terminal available for
+    # WorkAdmission reconciliation and never triggers a resend.
+    port.revalidate()
+    planned_target = port.expected_target
+    if planned_target is None:
+        raise ValueError("managed agent-step has no reserved terminal target")
+    with managed_terminal_identity(payload.terminal_id), port.backend_scope():
+        terminal = await terminal_service.create_terminal(
+            provider=binding.contract.provider,
+            agent_profile=payload.agent_profile,
+            session_name=planned_target[0],
+            new_session=True,
+            reserved_window_name=planned_target[1],
+            working_directory=binding.contract.resources.checkout_root,
+            allowed_tools=list(binding.contract.permissions.tools),
+            model=model,
+            prompt_redelivery=False,
+        )
+        # Provider readiness can take long enough for authority, capacity, or
+        # reservations to change.  Do not prepare a task receipt or transport
+        # input until the exact short-lived capability validates again.
+        port.revalidate()
+        terminal_service.send_input(
+            terminal.id,
+            payload.message,
+            frozen_memory=frozen_memory,
+            task_delivery=True,
+        )
+    # Terminal status/text is telemetry, never canonical completion evidence.
+    return DeliveryObservation()
+
+
+def _effective_step_fields(
+    *,
+    provider: str,
+    agent: str,
+    allowed_tools: Optional[list[str]],
+    engine: Optional[KiroEngine | str],
+    model: Optional[str],
+    working_directory: Optional[str],
+    use_worktree: bool,
+    created_here: bool,
+    timeout: float,
+    ready_timeout: float,
+    teardown: bool,
+    prompt_redelivery: bool,
+) -> dict:
+    """Capture only launch arguments available before terminal allocation.
+
+    The terminal registry is an observation made after allocation and can be
+    changed independently of this attempt. It must not retroactively supply
+    effective step policy. Values which this seam cannot prove from a direct,
+    immutable call argument remain explicitly unknown instead of being inferred
+    from a profile, provider, terminal, or mutable configuration source.
+    """
+    from cli_agent_orchestrator.services.secret_gate import redact_json_leaves
+
+    def field(value, provenance, *, status="known"):
+        if value is None and status == "known":
+            status = "unknown"
+        if redact_json_leaves(value) != value:
+            return {"status": "unknown", "value": None, "provenance": "redacted"}
+        return {"status": status, "value": value, "provenance": provenance}
+
+    explicit_engine = engine.value if isinstance(engine, KiroEngine) else engine
+    fields = {
+        "provider": field(provider, "step_argument"),
+        "profile": (
+            field(agent, "step_argument")
+            if created_here
+            else field(None, "reuse_not_applicable", status="not_applicable")
+        ),
+        "tools": field(
+            list(allowed_tools) if created_here and allowed_tools is not None else None,
+            (
+                "step_argument"
+                if created_here and allowed_tools is not None
+                else "not_recorded_at_launch" if created_here else "reuse_not_applicable"
+            ),
+            status="known" if created_here else "not_applicable",
+        ),
+        "engine": (
+            field(
+                explicit_engine,
+                "step_argument" if explicit_engine is not None else "not_recorded_at_launch",
+            )
+            if provider == ProviderType.KIRO_CLI.value
+            else field(None, "provider_not_applicable", status="not_applicable")
+        ),
+        "working_directory": field(
+            working_directory if created_here and not use_worktree else None,
+            (
+                "step_argument"
+                if created_here and not use_worktree and working_directory is not None
+                else "not_recorded_at_launch" if created_here else "reuse_not_applicable"
+            ),
+            status="known" if created_here else "not_applicable",
+        ),
+        "model": (
+            field(
+                model,
+                "step_argument" if model is not None else "not_recorded_at_launch",
+            )
+            if created_here
+            else field(None, "reuse_not_applicable", status="not_applicable")
+        ),
+        # There is no effort parameter on this legacy entrypoint. Do not read
+        # a mutable profile or provider setting after allocation to fill it in.
+        "effort": field(None, "not_recorded_at_launch"),
+        "timeout_seconds": field(timeout, "step_argument"),
+        "readiness_timeout_seconds": (
+            field(ready_timeout, "step_argument")
+            if created_here
+            else field(None, "reuse_not_applicable", status="not_applicable")
+        ),
+        "teardown": field(teardown and created_here, "step_argument"),
+        "prompt_redelivery": field(prompt_redelivery, "step_argument"),
+        "worktree": (
+            field(use_worktree, "step_argument")
+            if created_here
+            else field(None, "reuse_not_applicable", status="not_applicable")
+        ),
+        # The YAML retry budget remains owned by workflow_service and the
+        # script caller supplies no retry policy through this substrate.
+        "retry_policy": field(None, "caller_owned"),
+        "redelivery_limit": field(_PROMPT_REDELIVER_MAX if prompt_redelivery else 0, "step_policy"),
+        "pickup_grace_seconds": (
+            field(_PROMPT_PICKUP_GRACE, "step_policy")
+            if prompt_redelivery
+            else field(None, "step_policy", status="not_applicable")
+        ),
+    }
+    return fields
+
+
+def _effective_step_contract(terminal_id: str, call_fingerprint: str, fields: dict) -> dict:
+    """Bind pre-allocation fields to the newly allocated terminal identity."""
+    return {
+        "schema_version": 1,
+        "terminal_id": terminal_id,
+        "call_fingerprint": call_fingerprint,
+        "fields": fields,
+    }
+
+
 async def run_agent_step(
     provider: str,
     agent: str,
@@ -685,11 +878,13 @@ async def run_agent_step(
     registry: Optional[PluginRegistry] = None,
     env_vars: Optional[dict[str, str]] = None,
     on_step_terminal_ready: Optional[Callable[[str, str], None]] = None,
+    pre_delivery_recorder: Optional[Callable[[str, dict], None]] = None,
     cancel_event: Optional[asyncio.Event] = None,
     engine: Optional[KiroEngine | str] = None,
     model: Optional[str] = None,
     use_worktree: bool = False,
     prompt_redelivery: bool = True,
+    principal: Optional[Principal] = None,
 ) -> AgentStepResult:
     """Run one agent step and return its result (success only).
 
@@ -732,6 +927,9 @@ async def run_agent_step(
             Also used to inherit the working directory when
             ``working_directory`` is None (best-effort). None for
             operator-launched / engine steps with no supervisor.
+        principal: Server-verified request identity passed through the legacy
+            delegation boundary. It does not authorize or persist legacy child
+            lifecycle rows.
         allowed_tools: Resolved allowed-tools list for the freshly created
             terminal (handoff inheritance). None lets ``create_terminal`` derive
             them from the agent profile.
@@ -770,6 +968,13 @@ async def run_agent_step(
             writes the durable ``running`` row carrying ``call_fingerprint``. A
             callback exception is logged and swallowed — step bookkeeping must
             never fail a live step. Default None = behavior unchanged.
+        pre_delivery_recorder: Optional contract-aware callback for a caller
+            that must persist its effective fields and call identity before a
+            terminal exists. Its ``record_pre_delivery(call_fingerprint,
+            fields)`` hook runs after the direct call arguments have been
+            resolved but before terminal allocation; its ``guard_delivery``
+            hook is rechecked immediately before each input send. A failure is
+            a closed ``contract_rejected`` error and creates no terminal.
         cancel_event: Optional ``asyncio.Event`` the engine sets to interrupt an
             in-flight completion wait (issue #409b). When set mid-wait, the step
             wait is abandoned promptly (not at the next natural boundary) and a
@@ -873,17 +1078,71 @@ async def run_agent_step(
             timeout=timeout,
         )
     )
+    # Capture every value the legacy seam can establish before terminal
+    # allocation. The bound terminal identity is added only after allocation;
+    # policy values are never read back from that mutable registry.
+    contract_fields = _effective_step_fields(
+        provider=provider,
+        agent=agent,
+        allowed_tools=allowed_tools,
+        engine=engine,
+        model=model,
+        working_directory=working_directory,
+        use_worktree=use_worktree,
+        created_here=created_here,
+        timeout=timeout,
+        ready_timeout=ready_timeout,
+        teardown=teardown,
+        prompt_redelivery=prompt_redelivery,
+    )
+
+    record_pre_delivery = getattr(pre_delivery_recorder, "record_pre_delivery", None)
+    if callable(record_pre_delivery):
+        try:
+            record_pre_delivery(call_fingerprint, contract_fields)
+        except Exception as exc:
+            raise StepExecutionError(
+                "step contract could not be committed before terminal allocation",
+                kind="contract_rejected",
+                action="inspect",
+                delivery_may_have_occurred=False,
+            ) from exc
 
     def _notify_terminal_ready(ready_terminal_id: str) -> None:
-        """Fire ``on_step_terminal_ready`` best-effort — bookkeeping never fails a step.
+        """Publish terminal evidence, enforcing contract persistence when supported.
 
-        Called from BOTH paths (BR-3). Kept as one nested helper with one ``try`` so the
-        two call sites cannot diverge in their error posture, while each keeps its own
+        Called from BOTH paths (BR-3). Contract-aware script recorders fail closed;
+        legacy callbacks remain best-effort. Both paths share that posture and their
         position guarantee: on the create path this must run BEFORE the readiness wait
         (BR-31's window), which is why the invocation is not simply hoisted below the
         create/reuse branch.
         """
         if on_step_terminal_ready is None:
+            return
+        record_contract = getattr(on_step_terminal_ready, "record_contract", None)
+        if callable(record_contract):
+            # Contract-aware script callers must commit before the task is
+            # delivered. Terminal allocation has already happened; retain its
+            # handle for cleanup/reconciliation rather than pretending this is
+            # universal pre-launch admission. Never swallow a persistence error.
+            try:
+                record_contract(
+                    ready_terminal_id,
+                    call_fingerprint,
+                    _effective_step_contract(
+                        ready_terminal_id,
+                        call_fingerprint,
+                        contract_fields,
+                    ),
+                )
+            except Exception as exc:
+                raise StepExecutionError(
+                    "step contract could not be committed before task delivery",
+                    kind="contract_rejected",
+                    terminal_id=ready_terminal_id,
+                    action="inspect",
+                    delivery_may_have_occurred=False,
+                ) from exc
             return
         try:
             on_step_terminal_ready(ready_terminal_id, call_fingerprint)
@@ -1018,12 +1277,26 @@ async def run_agent_step(
         terminal_id,
         prompt,
     )
+    terminal_delivery_guard = getattr(on_step_terminal_ready, "guard_delivery", None)
+    pre_delivery_guard = getattr(pre_delivery_recorder, "guard_delivery", None)
+
+    def delivery_guard() -> None:
+        if callable(pre_delivery_guard):
+            pre_delivery_guard()
+        if callable(terminal_delivery_guard):
+            terminal_delivery_guard()
+
+    has_delivery_guard = callable(pre_delivery_guard) or callable(terminal_delivery_guard)
     try:
         if frozen_memory is None:
             # A run-step prompt is always an automated unit of work, including
             # on a terminal reused by the caller. Mark it explicitly so a
             # provider trust/login dialog cannot consume the task as an answer.
             await asyncio.to_thread(
+                _guarded_delivery,
+                delivery_guard if has_delivery_guard else None,
+                terminal_id,
+                False,
                 terminal_service.send_input,
                 terminal_id,
                 prompt,
@@ -1031,6 +1304,10 @@ async def run_agent_step(
             )
         else:
             await asyncio.to_thread(
+                _guarded_delivery,
+                delivery_guard if has_delivery_guard else None,
+                terminal_id,
+                False,
                 terminal_service.send_input,
                 terminal_id,
                 prompt,
@@ -1058,6 +1335,8 @@ async def run_agent_step(
             delivery_may_have_occurred=exc.delivery_may_have_occurred,
         ) from exc
     except Exception as exc:
+        if isinstance(exc, StepExecutionError) and exc.kind == "contract_rejected":
+            raise
         # A transport failure after terminal creation is inherently ambiguous:
         # tmux can have accepted some keys even when the caller did not receive
         # a clean return.  Preserve the handle for reconciliation; never retry
@@ -1098,6 +1377,7 @@ async def run_agent_step(
     # StepExecutionError on timeout/ERROR, or StepCancelledError if cancellation
     # fires mid-wait.
     try:
+        delivery_options = {"delivery_guard": delivery_guard} if has_delivery_guard else {}
         idle_completion_output = await _wait_for_completion(
             terminal_id,
             timeout,
@@ -1105,6 +1385,7 @@ async def run_agent_step(
             prompt=prompt,
             prompt_redelivery=prompt_redelivery,
             track_native_child=track_native_child,
+            **delivery_options,
         )
     except StepCancelledError:
         # A cancellation is NOT a run-failure. Tear down a terminal this call
@@ -1121,6 +1402,9 @@ async def run_agent_step(
         )
         raise
     except StepExecutionError as exc:
+        if exc.kind == "contract_rejected":
+            # A stale invocation must not mutate the current attempt/receipt.
+            raise
         # A provider ERROR is a definite task failure.  A completion/readiness
         # timeout after delivery is not: the worker may keep running, so retain
         # it and require a parent reconciliation instead of deleting it or

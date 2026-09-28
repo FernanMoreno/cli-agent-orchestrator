@@ -11,18 +11,36 @@ Scoped strictly to the maintainer's own suggested Phase 1 (this module +
 global launch flag and the ``cao worktrees clean`` CLI command are Phase 2/3,
 intentionally not built here to keep this PR reviewable-sized.
 
-No new CAO-side persistence: a worktree's path and branch are both derived
+Legacy provisioning needs no CAO-side persistence: path and branch are derived
 deterministically from the terminal_id CAO already generates for every
 terminal (``generate_terminal_id()``, unique and server-controlled, never
 user-supplied), so ``create_terminal``/``delete_terminal`` can locate a
 worktree at teardown time from the terminal_id alone -- git's own
 ``.git/worktrees`` bookkeeping is the single source of truth, matching how
 this project already treats git as authoritative elsewhere.
+
+Protected evidence archival additionally records immutable artifact references
+and audit events in the work repository. Archiving never authorizes deletion.
 """
 
+import difflib
+import hashlib
+import json
 import logging
 import os
+import stat
 import subprocess
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+from cli_agent_orchestrator.services.step_output_store import ArtifactRef, ImmutableResultStore
+from cli_agent_orchestrator.services.work_authority import (
+    AuthorityDenied,
+    Permissions,
+    WorkAuthority,
+)
+from cli_agent_orchestrator.services.work_reservations import StoppedWriter, WorkReservations
 
 logger = logging.getLogger(__name__)
 
@@ -145,37 +163,36 @@ def _ensure_worktree_subdir_gitignored(repo_root: str) -> None:
         logger.warning("worktree setup: failed to write %s: %s", gitignore_path, e)
 
 
-def remove_worktree(repo_root: str, terminal_id: str) -> None:
-    """Best-effort teardown: ``git worktree remove --force`` (agents commonly
-    leave modified/untracked files behind, so a plain ``remove`` would
-    refuse) followed by a SAFE branch delete (``git branch -d``, not
-    ``-D``).
+@dataclass(frozen=True)
+class CleanupOutcome:
+    state: str
+    reason: str
+    artifact: ArtifactRef | None = None
 
-    Deliberately never force-deletes the branch: a worker that committed
-    its results to ``cao/<terminal_id>`` before completing (exactly what
-    agents are usually instructed to do) must not have that history
-    destroyed just because Phase 1 has no merge-back story yet. ``-d``
-    only succeeds when the branch has no commits that would be lost (i.e.
-    it is unchanged, or already merged); a worker that committed real work
-    fails the safe delete and the branch is left behind -- a leak for
-    Phase 3's ``cao worktrees clean`` to sweep up later, not silent data
-    loss. Only the (uncommitted/untracked) working-tree contents of the
-    worktree itself are ever force-discarded.
 
-    Never raises -- called from terminal-teardown paths (``delete_terminal``,
-    and the failure-cleanup path in ``create_terminal``) that must not fail
-    the terminal's own deletion/rollback over a worktree cleanup issue.
-    Failures are logged, not swallowed silently.
+def remove_worktree(repo_root: str, terminal_id: str) -> CleanupOutcome:
+    """Best-effort legacy cleanup; uncertain or dirty work is quarantined in place.
+
+    Includes ignored files because plain Git removal may otherwise discard them.
+    No force/reset/clean is permitted. Branch deletion follows successful removal
+    only, and uses -d so unmerged commits survive. No writer-stop claim is made.
     """
     path = worktree_path_for(repo_root, terminal_id)
     branch = branch_for(terminal_id)
-    result = _run_git(["worktree", "remove", "--force", path], cwd=repo_root)
+    status = _run_git(
+        ["status", "--porcelain", "-z", "--untracked-files=all", "--ignored"], cwd=path
+    )
+    if status.returncode or status.stdout:
+        logger.warning("worktree cleanup quarantined %s: dirty, ignored or uncertain state", path)
+        return CleanupOutcome("quarantined", "dirty_or_uncertain")
+    result = _run_git(["worktree", "remove", path], cwd=repo_root)
     if result.returncode != 0:
         logger.warning(
-            "worktree cleanup: 'git worktree remove --force %s' failed: %s",
+            "worktree cleanup: 'git worktree remove %s' failed: %s",
             path,
             result.stderr.strip(),
         )
+        return CleanupOutcome("quarantined", "git_remove_refused")
     result = _run_git(["branch", "-d", branch], cwd=repo_root)
     if result.returncode != 0:
         logger.warning(
@@ -184,6 +201,239 @@ def remove_worktree(repo_root: str, terminal_id: str) -> None:
             branch,
             result.stderr.strip(),
         )
+    return CleanupOutcome("removed", "clean_checkout")
+
+
+def _archive_text(content: bytes, limit: int) -> str:
+    if len(content) > limit or b"\x00" in content:
+        raise WorktreeError("binary or oversized evidence requires manual preservation")
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise WorktreeError("non-UTF8 evidence requires manual preservation") from exc
+
+
+def _archive_current(root: Path, relative: Path, limit: int) -> str | None:
+    """Anchored no-follow reads; never dereference a checkout symlink or hardlink."""
+    descriptor = os.open(root.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in (*root.parts[1:], *relative.parts[:-1]):
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        try:
+            child = os.open(
+                relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor
+            )
+        except FileNotFoundError:
+            return None
+        with os.fdopen(child, "rb") as source:
+            metadata = os.fstat(source.fileno())
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise WorktreeError("only private regular files may be archived")
+            return _archive_text(source.read(limit + 1), limit)
+    finally:
+        os.close(descriptor)
+
+
+def _archive_blob(root: Path, revision: str, path: str, limit: int) -> str | None:
+    reference = _run_git(["rev-parse", "--verify", f"{revision}:{path}"], str(root))
+    if reference.returncode:
+        return None
+    object_id = reference.stdout.strip()
+    size = _run_git(["cat-file", "-s", object_id], str(root))
+    if size.returncode or not size.stdout.strip().isdigit() or int(size.stdout) > limit:
+        raise WorktreeError("base/index evidence cannot be read within its bound")
+    try:
+        value = subprocess.run(
+            ["git", "cat-file", "blob", object_id],
+            cwd=root,
+            capture_output=True,
+            timeout=_GIT_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise WorktreeError("cannot read immutable Git evidence") from exc
+    if value.returncode:
+        raise WorktreeError("expected a Git blob for authorized evidence")
+    return _archive_text(value.stdout, limit)
+
+
+def archive_worktree(
+    *,
+    repo_root: str,
+    terminal_id: str,
+    repository,
+    artifact_store: ImmutableResultStore,
+    principal,
+    job_id: str,
+    work_item_id: str,
+    attempt_id: str,
+    generation: int,
+    expected_attempt_revision: int,
+    grant_id: str,
+    expected_grant_revision: int,
+    authorized_paths: tuple[str, ...],
+    stop_verifier,
+    max_file_bytes: int = 256 * 1024,
+) -> CleanupOutcome:
+    """Preserve explicitly authorized text evidence; ALWAYS quarantine the checkout.
+
+    This is an internal server API, not a client-supplied stop assertion. The
+    injected backend verifier must attest irreversible cessation. Actual durable
+    grants are checked before reading and again in the publication transaction.
+    Secret-name filtering is conservative, not a content-redaction guarantee;
+    callers must only authorize files approved for evidence retention. No prompts,
+    environment, broad recursive discovery, force removal, reset or clean occur.
+    """
+    if type(max_file_bytes) is not int or not 0 < max_file_bytes <= 1024 * 1024:
+        raise WorktreeError("invalid evidence size bound")
+    if type(authorized_paths) is not tuple or not authorized_paths or len(authorized_paths) > 64:
+        raise WorktreeError("explicit bounded file allowlist required")
+    if not terminal_id or Path(terminal_id).name != terminal_id or terminal_id in {".", ".."}:
+        raise WorktreeError("invalid terminal identity")
+    root = Path(worktree_path_for(repo_root, terminal_id)).absolute()
+    paths = []
+    for name in authorized_paths:
+        if type(name) is not str or not name or "\x00" in name:
+            raise WorktreeError("invalid archive path")
+        path = Path(name)
+        if path.is_absolute() or ".." in path.parts or not path.parts:
+            raise WorktreeError("archive path escapes checkout")
+        lowered = [part.lower() for part in path.parts]
+        if any(
+            part.startswith(".env")
+            or part in {".git", ".ssh", ".aws", "credentials", "secrets", "id_rsa", "id_ed25519"}
+            or part.endswith((".pem", ".key", ".p12"))
+            for part in lowered
+        ):
+            raise WorktreeError("secret or metadata paths require manual preservation")
+        # Resolve only to reject aliases; permission bounds remain frozen strings.
+        if (root / path).resolve() != root / path:
+            raise WorktreeError("symlinked evidence paths are not allowed")
+        paths.append(path)
+    requested = Permissions(
+        paths=frozenset(str(root / path) for path in paths), artifacts={"worktree_evidence"}
+    )
+    authority = WorkAuthority(repository)
+    authority._principal(principal)
+
+    def verify(connection):
+        repository._verify(connection)
+        owner = WorkReservations._owner(
+            connection,
+            job_id=job_id,
+            work_item_id=work_item_id,
+            attempt_id=attempt_id,
+            generation=generation,
+            expected_attempt_revision=expected_attempt_revision,
+            active=False,
+        )
+        chain, job = authority._chain(connection, grant_id, expected_grant_revision)
+        attempt = connection.execute(
+            "SELECT provider,terminal_id FROM work_attempts WHERE id=?", (attempt_id,)
+        ).fetchone()
+        if attempt["terminal_id"] != terminal_id:
+            raise WorktreeError("archive terminal does not match the durable attempt binding")
+        provider = attempt["provider"]
+        if (
+            job["id"] != job_id
+            or chain[0].principal_id != principal.id
+            or provider not in job["allowed_providers"]
+            or not all(
+                provider in grant.providers and requested.is_subset_of(grant.permissions)
+                for grant in chain
+            )
+        ):
+            raise AuthorityDenied("worktree evidence exceeds durable grant")
+        return owner
+
+    with repository.transaction() as connection:
+        owner = verify(connection)
+    proof = stop_verifier(owner)
+    if not isinstance(proof, StoppedWriter) or (
+        proof.attempt_id,
+        proof.generation,
+        proof.attempt_revision,
+    ) != (attempt_id, generation, expected_attempt_revision):
+        raise WorktreeError("server-verified irreversible writer cessation required")
+    head = _run_git(["rev-parse", "--verify", "HEAD"], str(root))
+    if head.returncode:
+        raise WorktreeError("checkout base cannot be established")
+    base_head = head.stdout.strip()
+    files = {}
+    try:
+        for path in sorted(set(paths)):
+            # Read only the exact authorized path; no directory walks or symlink follows.
+            with repository.transaction() as connection:
+                verify(connection)
+            current = _archive_current(root, path, max_file_bytes)
+            base = _archive_blob(root, base_head, path.as_posix(), max_file_bytes)
+            index = _archive_blob(root, "", path.as_posix(), max_file_bytes)
+            files[path.as_posix()] = {
+                "base": base,
+                "index": index,
+                "current": current,
+                "diff": "".join(
+                    difflib.unified_diff(
+                        (base or "").splitlines(True),
+                        (current or "").splitlines(True),
+                        fromfile="base",
+                        tofile="current",
+                    )
+                ),
+            }
+    except AuthorityDenied:
+        raise
+    except OSError as exc:
+        raise WorktreeError("evidence file cannot be read safely; checkout retained") from exc
+    payload = json.dumps(
+        {"version": 1, "base_head": base_head, "files": files},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+
+    def accept(ref):
+        with repository.transaction() as connection:
+            verify(connection)
+            identifier = hashlib.sha256(f"{attempt_id}:{ref.content_hash}".encode()).hexdigest()
+            prior = connection.execute(
+                "SELECT id FROM work_worktree_evidence WHERE id=?", (identifier,)
+            ).fetchone()
+            if not prior:
+                connection.execute(
+                    "INSERT INTO work_worktree_evidence VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        identifier,
+                        job_id,
+                        work_item_id,
+                        attempt_id,
+                        generation,
+                        expected_attempt_revision,
+                        ref.content_hash,
+                        ref.immutable_location,
+                        ref.byte_length,
+                        base_head,
+                        proof.evidence_ref,
+                        grant_id,
+                        expected_grant_revision,
+                        time.time(),
+                    ),
+                )
+                connection.execute(
+                    "UPDATE work_items SET revision=revision+1 WHERE id=?", (work_item_id,)
+                )
+                repository._append_event(
+                    connection,
+                    job_id=job_id,
+                    work_item_id=work_item_id,
+                    attempt_id=attempt_id,
+                    actor_id=principal.id,
+                    event_type="worktree.archived",
+                    metadata={"evidence_id": identifier, "content_hash": ref.content_hash},
+                )
+        return CleanupOutcome("quarantined", "authorized_evidence_archived", ref)
+
+    return artifact_store.publish(payload, accept)
 
 
 def list_worktrees(repo_root: str) -> list[dict[str, str | bool]]:

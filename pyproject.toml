@@ -373,6 +373,9 @@ dev = [
     # with authlib; runtime verification needs only pyjwt[crypto].
     "authlib>=1.7.1",
     "types-psutil>=7.0.0",
+    "import-linter>=2.15",
+    "testcontainers>=4.15.0",
+    "pact-python>=3.4.1",
 ]
 
 [tool.black]
@@ -395,7 +398,8 @@ markers = [
     "integration: marks integration tests",
     "e2e: marks end-to-end tests",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "live_provider: marks tests that need a real cao-server + authenticated provider CLI (gated behind CAO_RUN_LIVE_PROVIDER_TESTS=1, skipped by default)"
+    "live_provider: marks tests that need a real cao-server + authenticated provider CLI (gated behind CAO_RUN_LIVE_PROVIDER_TESTS=1, skipped by default)",
+    "t097_host: host acceptance tests for the real Bubblewrap Work backend (run with T097_REQUIRE_HOST_ACCEPTANCE=1 on the approved Linux runner)"
 ]
 asyncio_mode = "strict"
 testpaths = ["test"]

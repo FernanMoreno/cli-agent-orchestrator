@@ -22,11 +22,14 @@ import hashlib
 import logging
 import os
 import re
+import sqlite3
+from contextlib import closing
 import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
@@ -90,6 +93,11 @@ from cli_agent_orchestrator.providers.kiro_capabilities import (
 )
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services import worktree_service
+from cli_agent_orchestrator.services.work_terminal import (
+    release_terminal_dispatch_lock,
+    terminal_dispatch_lock,
+    with_terminal_dispatch_lock,
+)
 from cli_agent_orchestrator.services.elastic_worker_gateway import (
     elastic_worker_gateway_headers,
 )
@@ -157,6 +165,63 @@ class TerminalRecordCorruptError(Exception):
     endpoint's catch-all and is reported as a 500, which is what a
     server-data fault is, and needs no new ``except`` arm to do it.
     """
+
+
+class WorkOwnedTerminalError(PermissionError):
+    """An ordinary terminal mutation targeted a terminal owned by Work."""
+
+
+class WorkOwnershipStoreUnavailableError(RuntimeError):
+    """Durable Work ownership could not be established safely."""
+
+
+def ensure_terminal_is_not_work_owned(terminal_id: str) -> None:
+    """Reject ordinary mutations of terminals bound in durable Work state.
+
+    A pre-Work installation has no ``work_*`` schema and remains compatible.
+    Once any Work schema exists, verify its ledger before trusting the exact
+    ``work_attempts.terminal_id`` binding. This is deliberately uncached so a
+    restarted process sees ownership persisted by its predecessor.
+    """
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+
+    database_path = Path(DATABASE_FILE)
+    if not database_path.is_file():
+        return
+
+    try:
+        readonly_uri = database_path.resolve().as_uri() + "?mode=ro"
+        with closing(sqlite3.connect(readonly_uri, uri=True, timeout=10)) as connection:
+            work_tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name GLOB 'work_*'"
+                )
+            }
+        if not work_tables:
+            return
+        if "work_migrations" not in work_tables:
+            raise WorkOwnershipStoreUnavailableError(
+                "durable Work ownership store is incomplete"
+            )
+        with WorkRepository(database_path).read_snapshot() as connection:
+            owned = connection.execute(
+                "SELECT 1 FROM work_attempts WHERE terminal_id=? LIMIT 1",
+                (terminal_id,),
+            ).fetchone()
+    except WorkOwnershipStoreUnavailableError:
+        raise
+    except Exception as error:
+        raise WorkOwnershipStoreUnavailableError(
+            "durable Work ownership could not be verified"
+        ) from error
+
+    if owned is not None:
+        raise WorkOwnedTerminalError(
+            f"Terminal '{terminal_id}' is owned by Work; ordinary terminal input is denied"
+        )
 
 
 # Upper bound (bytes) on a single offset-ranged read of a terminal log
@@ -241,6 +306,10 @@ def inject_memory_context(
         from cli_agent_orchestrator.services.settings_service import is_memory_enabled
 
         if not is_memory_enabled():
+            from cli_agent_orchestrator.services.work_terminal import current_managed_terminal_id
+
+            if current_managed_terminal_id() is not None:
+                raise ValueError("memory disabled: admitted work snapshot cannot be delivered")
             return first_message
         # No try/except here on purpose: string concatenation cannot fail on I/O,
         # so the only thing a guard could swallow is a programming error — and
@@ -537,9 +606,9 @@ def _roll_back_backend_create_locked(
     session/window with no row. Both branches matter and they are NOT the same
     teardown:
 
-    * ``created_session=True`` -- this call created the whole session, so kill the
-      session and drop any forwarded env stashed for the name, so secrets don't
-      linger in memory or bleed into a future reuse of the name.
+    * ``created_session=True`` -- this call created the whole session. Work
+      views lack a server-instance-fenced identity, so they leave it live for
+      reconciliation. Ordinary terminal creation retains legacy cleanup.
     * ``created_session=False`` -- this call only added a WINDOW to a session that
       already existed (``new_session=False``: every MCP spawn/assign-into-an-
       existing-session call). Kill ONLY that window, so the pre-existing session
@@ -567,7 +636,18 @@ def _roll_back_backend_create_locked(
         # `finally` still lets a BaseException propagate, which is what we want:
         # a Ctrl-C must not be swallowed here.
         try:
-            if not get_backend().kill_session(session_name):
+            from cli_agent_orchestrator.backends.work_backend import WorkBackendView
+
+            backend = get_backend()
+            if isinstance(backend, WorkBackendView):
+                logger.warning(
+                    "Rollback: Work session %s has no server-instance-fenced identity; "
+                    "leaving it live for reconciliation",
+                    session_name,
+                )
+                return
+            killed = backend.kill_session(session_name)
+            if not killed:
                 # Falsy means the backend could not confirm the kill (or found
                 # nothing to kill). Either way the name may still be live, so say
                 # so -- a silent branch here is how an orphan goes unnoticed.
@@ -639,6 +719,12 @@ async def _finish_and_roll_back_cancelled_create(
     try:
         window_name, session_created, _ = await create_worker
     except BaseException:
+        return
+    from cli_agent_orchestrator.services.work_terminal import current_managed_terminal_id
+
+    if current_managed_terminal_id() is not None:
+        # The durable attempt owns this outcome, including repeated cancellation.
+        # Keep the committed identity and resources available for reconciliation.
         return
     await asyncio.to_thread(
         _roll_back_cancelled_create,
@@ -920,6 +1006,7 @@ async def create_terminal(
     group: Optional[List[str]] = None,
     metadata: Optional[Dict[str, Any]] = None,
     idempotency_key: Optional[str] = None,
+    reserved_window_name: Optional[str] = None,
     native_child_lease_seconds: float = DEFAULT_NATIVE_CHILD_LEASE_SECONDS,
 ) -> Terminal:
     """Create a new terminal with an initialized CLI agent.
@@ -1267,6 +1354,9 @@ async def create_terminal(
                 f"{max_terminals}. Delete a terminal or target a different node."
             )
 
+    from cli_agent_orchestrator.services.work_terminal import current_managed_terminal_id
+
+    managed_terminal_id = current_managed_terminal_id()
     terminal_id: Optional[str] = None
     session_created = False  # tracks whether THIS call created the tmux session
     # harness-control#186: tracks whether THIS call created a new WINDOW in an
@@ -1340,7 +1430,9 @@ async def create_terminal(
             )
 
         # Step 1: Generate unique identifiers
-        terminal_id = generate_terminal_id()
+        if managed_terminal_id is not None and get_terminal_metadata(managed_terminal_id) is not None:
+            raise ValueError("admitted launch terminal identity is already in use")
+        terminal_id = managed_terminal_id or generate_terminal_id()
 
         # Persist the child receipt BEFORE any tmux/provider side effect.  A
         # process death in the following creation window leaves ``planned`` and
@@ -1360,7 +1452,21 @@ async def create_terminal(
         if not session_name:
             session_name = generate_session_name()
 
-        window_name = generate_window_name(agent_profile)
+        if reserved_window_name is None:
+            window_name = generate_window_name(agent_profile)
+        else:
+            from cli_agent_orchestrator.backends.work_backend import WorkBackendView
+            from cli_agent_orchestrator.services.work_terminal import managed_window_name
+
+            current_backend = get_backend()
+            expected_window_name = managed_window_name(agent_profile, terminal_id)
+            if (
+                managed_terminal_id is None
+                or not isinstance(current_backend, WorkBackendView)
+                or reserved_window_name != expected_window_name
+            ):
+                raise ValueError("reserved Work window does not match the active capability")
+            window_name = reserved_window_name
 
         # Step 1b: Provision an isolated git worktree (issue #100, Phase 1) before
         # the tmux session/window below consumes `working_directory` -- the
@@ -1776,6 +1882,12 @@ async def create_terminal(
         return terminal
 
     except Exception as e:
+        if managed_terminal_id is not None:
+            # WorkAdmission owns reconciliation. Legacy cleanup cannot assume
+            # authority after revocation, or ownership of an ID whose INSERT
+            # collided. Preserve evidence and never delete another terminal.
+            logger.warning("Managed terminal creation requires reconciliation: %s", terminal_id)
+            raise
         if isinstance(e, TerminalInputBlockedError) and e.delivery_may_have_occurred:
             # A provider can report this before its first task receipt exists:
             # for example a tmux transport error after pasting the Gemini
@@ -2769,6 +2881,7 @@ def get_working_directory(terminal_id: str) -> Optional[str]:
         raise
 
 
+@with_terminal_dispatch_lock
 def send_input(
     terminal_id: str,
     message: str,
@@ -2806,6 +2919,20 @@ def send_input(
         metadata = get_terminal_metadata(terminal_id)
         if not metadata:
             raise ValueError(f"Terminal '{terminal_id}' not found")
+
+        backend = get_backend()
+        from cli_agent_orchestrator.backends.work_backend import WorkBackendView
+
+        if isinstance(backend, WorkBackendView):
+            # Bind from the persisted terminal row before provider/status/receipt
+            # work. The WorkAdmission guard re-reads both this row and the
+            # active attempt's terminal_id; metadata passed by a caller is not
+            # an authorization source.
+            backend.bind_terminal_target(
+                terminal_id, metadata["tmux_session"], metadata["tmux_window"]
+            )
+        else:
+            ensure_terminal_is_not_work_owned(terminal_id)
 
         if (
             metadata.get("provider") == ProviderType.KIRO_CLI.value
@@ -2899,6 +3026,17 @@ def send_input(
                 action="reconcile",
             )
 
+        # A managed launch can prepare a durable turn receipt before its first
+        # backend key send. Revalidate through the scoped server-owned port
+        # first, so a grant revoked after provider startup cannot leave a new
+        # task receipt behind when the subsequent transport guard rejects it.
+        # Ordinary terminal input never receives a WorkBackendView and retains
+        # its legacy compatibility behavior.
+        if isinstance(backend, WorkBackendView):
+            backend._revalidate_before_effect(
+                terminal_id, metadata["tmux_session"], metadata["tmux_window"]
+            )
+
         # Inject memory context into the very first user message after init.
         # Phase 1 wires injection inline for every provider. The Kiro
         # AgentSpawn hook will replace this path once the plugin
@@ -2922,6 +3060,10 @@ def send_input(
             # choice, not a model task; likewise terminal control input must
             # remain literal.
             if receipt_task_delivery and provider is not None:
+                if isinstance(backend, WorkBackendView):
+                    backend._revalidate_before_effect(
+                        terminal_id, metadata["tmux_session"], metadata["tmux_window"]
+                    )
                 message = provider.prepare_input(message)
                 receipt_state = provider.pending_turn_receipt_state()
                 if receipt_state is None:
@@ -2930,6 +3072,10 @@ def send_input(
                         action="reconcile",
                     )
                 try:
+                    if isinstance(backend, WorkBackendView):
+                        backend._revalidate_before_effect(
+                            terminal_id, metadata["tmux_session"], metadata["tmux_window"]
+                        )
                     claimed = begin_terminal_turn_receipt(
                         terminal_id,
                         metadata["provider"],
@@ -2964,6 +3110,10 @@ def send_input(
         # IDLE/COMPLETED). Without this, sticky ready-status would block
         # the genuine PROCESSING signal that arrives once the agent starts
         # working on the new message.
+        if isinstance(backend, WorkBackendView):
+            backend._revalidate_before_effect(
+                terminal_id, metadata["tmux_session"], metadata["tmux_window"]
+            )
         if provider and provider.assume_processing_on_dispatch is True:
             status_monitor.notify_input_sent(terminal_id, assume_processing=True)
         else:
@@ -2997,8 +3147,14 @@ def send_input(
         ):
             provider.mark_input_received()
 
+        if not isinstance(backend, WorkBackendView):
+            # Work may bind this ordinary terminal while provider/status/receipt
+            # preparation is in progress. Re-read durable ownership at the
+            # transport boundary; managed views enforce their own fresh guard
+            # inside send_keys.
+            ensure_terminal_is_not_work_owned(terminal_id)
         try:
-            get_backend().send_keys(
+            backend.send_keys(
                 metadata["tmux_session"],
                 metadata["tmux_window"],
                 message,
@@ -3050,6 +3206,10 @@ def send_input(
                 )
             provider.mark_turn_receipt_sent()
 
+        # Status updates, telemetry, and plugin handlers can reenter terminal
+        # services. Release coordination after the backend effect and durable
+        # receipt CAS, before running those noncritical callbacks.
+        release_terminal_dispatch_lock(terminal_id)
         update_last_active(terminal_id)
         logger.info(f"Sent input to terminal: {terminal_id}")
         if registry is not None and sender_id is not None and orchestration_type is not None:
@@ -3087,6 +3247,7 @@ def send_input(
         raise
 
 
+@with_terminal_dispatch_lock
 def send_special_key(terminal_id: str, key: str) -> bool:
     """Send a tmux special key sequence (e.g., C-d, C-c) to terminal.
 
@@ -3112,9 +3273,28 @@ def send_special_key(terminal_id: str, key: str) -> bool:
         # prompt, C-c interrupting work, C-d sending EOF) all initiate a new
         # processing cycle that must be allowed to push past any latched
         # ready status.
-        status_monitor.notify_input_sent(terminal_id)
-        get_backend().send_special_key(metadata["tmux_session"], metadata["tmux_window"], key)
+        backend = get_backend()
+        from cli_agent_orchestrator.backends.work_backend import WorkBackendView
 
+        if isinstance(backend, WorkBackendView):
+            backend.bind_terminal_target(
+                terminal_id, metadata["tmux_session"], metadata["tmux_window"]
+            )
+        else:
+            ensure_terminal_is_not_work_owned(terminal_id)
+
+        if isinstance(backend, WorkBackendView):
+            backend._revalidate_before_effect(
+                terminal_id, metadata["tmux_session"], metadata["tmux_window"]
+            )
+        status_monitor.notify_input_sent(terminal_id)
+        if not isinstance(backend, WorkBackendView):
+            # Recheck after monitor work so a late durable Work binding cannot
+            # slip through between the entry guard and the transport call.
+            ensure_terminal_is_not_work_owned(terminal_id)
+        backend.send_special_key(metadata["tmux_session"], metadata["tmux_window"], key)
+
+        release_terminal_dispatch_lock(terminal_id)
         update_last_active(terminal_id)
         logger.info(f"Sent special key '{key}' to terminal: {terminal_id}")
         return True
@@ -3910,8 +4090,8 @@ def delete_terminal_row(
     ``registry=None`` drops the row WITHOUT emitting. Session teardown passes
     None and emits the events itself once it has released the lifecycle lock, so
     that no third-party plugin ever runs inside its critical section; the
-    single-terminal ``delete_terminal`` path holds no such lock and passes its
-    registry straight through.
+    single-terminal ``delete_terminal`` path emits its event after releasing
+    the Work terminal dispatch lock.
     """
     deleted = db_delete_terminal(terminal_id)
     logger.info(f"Deleted terminal: {terminal_id}")
@@ -3929,24 +4109,35 @@ def delete_terminal_row(
 
 
 def delete_terminal(terminal_id: str, registry: PluginRegistry | None = None) -> bool:
-    """Delete terminal and kill its tmux window.
+    """Delete a non-Work terminal under the shared dispatch fence.
 
-    Single-terminal teardown: all three thirds back to back, in the order they
-    have always run. Session teardown does NOT use this -- it interleaves its own
-    tmux kill-confirmation between them (see ``services/session_service.py``).
-
-    Returns False when the teardown was deferred (see
-    ``dismantle_terminal_runtime``), leaving the row in place for a retry.
+    Hold the terminal dispatch lock from durable ownership verification through
+    runtime teardown and registry-row deletion. Plugin callbacks run afterward,
+    outside the lock, so a callback can safely dispatch terminal input.
     """
-    try:
-        metadata = capture_terminal_snapshot(terminal_id)
-        if not dismantle_terminal_runtime(terminal_id, metadata):
-            logger.warning(
-                "Terminal %s cleanup deferred; retaining metadata for a retry", terminal_id
-            )
-            return False
-        return delete_terminal_row(terminal_id, metadata, registry=registry)
+    from cli_agent_orchestrator import constants
 
+    try:
+        with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id):
+            ensure_terminal_is_not_work_owned(terminal_id)
+            metadata = capture_terminal_snapshot(terminal_id)
+            if not dismantle_terminal_runtime(terminal_id, metadata):
+                logger.warning(
+                    "Terminal %s cleanup deferred; retaining metadata for a retry", terminal_id
+                )
+                return False
+            deleted = delete_terminal_row(terminal_id, metadata, registry=None)
+        if deleted and metadata:
+            dispatch_plugin_event(
+                registry,
+                "post_kill_terminal",
+                PostKillTerminalEvent(
+                    session_id=metadata["tmux_session"],
+                    terminal_id=terminal_id,
+                    agent_name=metadata.get("agent_profile"),
+                ),
+            )
+        return deleted
     except Exception as e:
         logger.error(f"Failed to delete terminal {terminal_id}: {e}")
         raise

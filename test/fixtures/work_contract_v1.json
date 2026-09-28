@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "views": [
+    {
+      "job_id": "job-fixture",
+      "work_item_id": "work-fixture",
+      "attempt_id": "attempt-fixture",
+      "job_state": "running",
+      "work_state": "running",
+      "attempt_state": "running",
+      "turn_state": "ready",
+      "process_state": "alive",
+      "revision": 3,
+      "result_ref": null,
+      "cleanup_state": "not_requested",
+      "required_action": null
+    }
+  ],
+  "presentation_expectations": {
+    "schema_version": 1,
+    "work_states": [
+      {
+        "state": "queued",
+        "label": "Queued",
+        "semantic_role": "info",
+        "running_count": 0,
+        "succeeded_count": 0
+      },
+      {
+        "state": "running",
+        "label": "Running",
+        "semantic_role": "info",
+        "running_count": 1,
+        "succeeded_count": 0
+      },
+      {
+        "state": "waiting_children",
+        "label": "Waiting for child work",
+        "semantic_role": "warning",
+        "running_count": 0,
+        "succeeded_count": 0
+      },
+      {
+        "state": "succeeded",
+        "label": "Succeeded",
+        "semantic_role": "accent",
+        "running_count": 0,
+        "succeeded_count": 1
+      },
+      {
+        "state": "failed",
+        "label": "Failed",
+        "semantic_role": "danger",
+        "running_count": 0,
+        "succeeded_count": 0
+      },
+      {
+        "state": "reconcile",
+        "label": "Reconciling",
+        "semantic_role": "warning",
+        "running_count": 0,
+        "succeeded_count": 0
+      },
+      {
+        "state": "cancelled",
+        "label": "Cancelled",
+        "semantic_role": "neutral",
+        "running_count": 0,
+        "succeeded_count": 0
+      }
+    ],
+    "terminal_independence": {
+      "work_state": "running",
+      "turn_state": "ready",
+      "terminal_status": "idle",
+      "semantic_role": "info",
+      "running_count": 1,
+      "succeeded_count": 0
+    },
+    "unknown_selection": {
+      "no_selection": "unknown",
+      "load_error": "unknown",
+      "invalid_schema_version": "unknown"
+    }
+  },
+  "event_page": {
+    "schema_version": 1,
+    "events": [
+      {
+        "schema_version": 1,
+        "event_id": "event-fixture",
+        "job_id": "job-fixture",
+        "work_item_id": "work-fixture",
+        "attempt_id": "attempt-fixture",
+        "sequence": 1,
+        "event_type": "work.admitted",
+        "actor_id": "test-operator",
+        "occurred_at": "2026-09-22T00:00:00Z",
+        "metadata": {}
+      }
+    ],
+    "next_cursor": 1,
+    "high_water": 1,
+    "gaps": []
+  }
+}

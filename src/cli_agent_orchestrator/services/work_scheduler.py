@@ -585,6 +585,7 @@ class WorkScheduler:
             or owner["generation"] != generation
             or owner["revision"] != expected_attempt_revision
             or owner["state"] != "reconcile"
+            or owner["cleanup_state"] == "pending"
             or owner["work_state"] != "reconcile"
             or owner["work_revision"] != expected_work_revision
             or owner["accepted_result_id"] is not None

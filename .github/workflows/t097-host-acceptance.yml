@@ -1,0 +1,98 @@
+name: T097 Native Linux Host Acceptance
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: t097-host-acceptance
+  cancel-in-progress: false
+
+jobs:
+  trusted-main-only:
+    name: Restrict self-hosted execution to main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require trusted main ref
+        env:
+          GITHUB_REF: ${{ github.ref }}
+        run: test "$GITHUB_REF" = refs/heads/main
+
+  t097-host:
+    name: Linux isolation and recovery acceptance
+    needs: trusted-main-only
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, cao-t097-host]
+    timeout-minutes: 30
+    env:
+      CAO_WORK_BROKER_ACCOUNT: ${{ vars.CAO_WORK_BROKER_ACCOUNT }}
+
+    steps:
+      - name: Checkout trusted main source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Validate runner and dedicated broker account
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          import pwd
+          import re
+          import sys
+          from pathlib import Path
+
+          name = os.environ.get("CAO_WORK_BROKER_ACCOUNT", "")
+          if not re.fullmatch(r"[a-z_][a-z0-9_-]*[$]?", name):
+              sys.exit("Set the repository variable CAO_WORK_BROKER_ACCOUNT to a valid account name")
+          try:
+              broker = pwd.getpwnam(name)
+          except KeyError:
+              sys.exit("CAO_WORK_BROKER_ACCOUNT is not present on this runner")
+          shell = Path(os.path.realpath(broker.pw_shell))
+          if broker.pw_uid == 0 or shell.name not in {"nologin", "false"}:
+              sys.exit("The Work broker must be non-root and use nologin/false")
+          if os.geteuid() == 0 or os.geteuid() == broker.pw_uid:
+              sys.exit("The Actions runner must be a separate non-root account")
+          print(f"Broker account configured: {name} (uid {broker.pw_uid})")
+          PY
+          sudo -n -u "$CAO_WORK_BROKER_ACCOUNT" -- test -x "$GITHUB_WORKSPACE/."
+
+      - name: Install locked project dependencies
+        run: uv sync --all-extras --dev --frozen
+
+      - name: Confirm broker can read the checkout and environment
+        run: |
+          sudo -n -u "$CAO_WORK_BROKER_ACCOUNT" -- \
+            test -r "$GITHUB_WORKSPACE/pyproject.toml"
+          sudo -n -u "$CAO_WORK_BROKER_ACCOUNT" -- \
+            test -x "$GITHUB_WORKSPACE/.venv/bin/python"
+
+      - name: Run complete T097 host acceptance as broker
+        shell: bash
+        run: |
+          broker_home="$(getent passwd "$CAO_WORK_BROKER_ACCOUNT" | cut -d: -f6)"
+          test -n "$broker_home"
+          sudo -n -u "$CAO_WORK_BROKER_ACCOUNT" -- env \
+            HOME="$broker_home" \
+            CAO_WORK_BROKER_ACCOUNT="$CAO_WORK_BROKER_ACCOUNT" \
+            T097_REQUIRE_HOST_ACCEPTANCE=1 \
+            PYTHONDONTWRITEBYTECODE=1 \
+            PYTHONPATH="$GITHUB_WORKSPACE/src" \
+            "$GITHUB_WORKSPACE/.venv/bin/python" -m pytest -q \
+              test/integration/t097 -m t097_host \
+              --no-cov --tb=short -p no:cacheprovider

@@ -47,9 +47,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cli_agent_orchestrator.backends import TerminalBackendError, TerminalNotFoundError
+from cli_agent_orchestrator.api.work_routes import router as work_router
+from cli_agent_orchestrator.api.knowledge_routes import (
+    router as knowledge_router, legacy_memory_operator, legacy_graph_memory_operator,
+)
 from cli_agent_orchestrator.backends.herdr_backend import HerdrBackend
 from cli_agent_orchestrator.backends.registry import get_backend
 from cli_agent_orchestrator.cli.commands.init import seed_default_skills
@@ -118,11 +122,14 @@ from cli_agent_orchestrator.security.auth import (
     SCOPE_READ,
     SCOPE_WRITE,
     SCOPES_SUPPORTED,
+    Principal,
     _extract_bearer,
     extract_scopes_from_token,
     get_authorization_servers,
+    get_current_principal,
     get_current_scopes,
     is_auth_enabled,
+    principal_from_token,
     require_any_scope,
 )
 from cli_agent_orchestrator.services import (
@@ -164,8 +171,16 @@ from cli_agent_orchestrator.services.terminal_service import (
     IdempotencyKeyConflict,
     OutputMode,
     TerminalInputBlockedError,
+    WorkOwnedTerminalError,
+    WorkOwnershipStoreUnavailableError,
     _notify_elastic_terminal_ended,
 )
+from cli_agent_orchestrator.services.work_launch_gateway import (
+    DurableLaunchGateway,
+    DurableLaunchGatewayError,
+    DurableLaunchRequest,
+)
+from cli_agent_orchestrator.services.work_launch_runtime import LaunchReceipt
 from cli_agent_orchestrator.services.workflow_journal import (
     _TERMINAL_RUN_STATES as _JOURNAL_TERMINAL_RUN_STATES,
 )
@@ -476,6 +491,18 @@ class UpdateMetadataBody(BaseModel):
         return _check_metadata_size(v)
 
 
+class WorkLaunchBody(BaseModel):
+    """Closed public content for one durable launch admission."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    selection: Optional[str] = None
+    agent_profile: str
+    session_name: str
+    message: str
+    allowed_tools: List[str]
+
+
 class RunStepRequest(BaseModel):
     """Request body for the combined step-execution endpoint (N0, #312)."""
 
@@ -673,6 +700,13 @@ class WorkflowValidateRequest(BaseModel):
     """Request body for ``POST /workflows/validate`` (Bolt 2, N2)."""
 
     path: str = Field(description="Filesystem path to the workflow spec YAML file")
+
+
+class WorkflowUpdateRequest(BaseModel):
+    """An edit is conditional on the exact source revision the editor read."""
+
+    content: str = Field(strict=True)
+    expected_source_hash: str = Field(strict=True, pattern=r"^[0-9a-f]{64}$")
 
 
 class StepOutputRequest(BaseModel):
@@ -1257,6 +1291,22 @@ def _reconcile_memory_at_startup() -> None:
             )
 
 
+def _recover_t097_proxy_effects_at_startup() -> int:
+    """Mark open MCP effects uncertain only when their exact process owner exited."""
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+    from cli_agent_orchestrator.services.work_service import WorkService
+
+    recovered = WorkService(WorkRepository(DATABASE_FILE)).recover_incomplete_proxy_effects()
+    if recovered:
+        logger.warning(
+            "T097 startup recovery marked %d MCP issue/effect record(s) for operator "
+            "reconciliation; redelivery remains blocked",
+            recovered,
+        )
+    return recovered
+
+
 def _seed_default_skills_at_startup() -> None:
     """Seed newly packaged skills without overwriting an existing installation."""
     try:
@@ -1288,6 +1338,22 @@ def _sweep_workflow_runs_at_startup() -> None:
         logger.warning("workflow retention sweep failed at startup: %s", e)
 
 
+async def _run_registered_work_dispatcher(gateway) -> None:
+    """Poll only the server-owned process gateway; admission endpoints never dispatch."""
+    while True:
+        try:
+            dispatched = await gateway.dispatch_registered_next()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # WorkService has already retained the attempt's durable uncertain state.
+            # Do not log exception text supplied by an execution backend.
+            logger.warning("Durable Work dispatch failed; inspect the persisted order")
+            dispatched = None
+        if dispatched is None:
+            await asyncio.sleep(0.5)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
@@ -1307,84 +1373,188 @@ async def lifespan(app: FastAPI):
     init_db()
     _seed_default_skills_at_startup()
     _reconcile_memory_at_startup()
+    try:
+        await asyncio.to_thread(_recover_t097_proxy_effects_at_startup)
+    except Exception:
+        # A failed scan leaves durable intents and their replay fences intact.
+        # Keep startup available and report the unresolved recovery requirement.
+        logger.warning(
+            "T097 startup effect recovery failed; unresolved intents remain blocked",
+            exc_info=True,
+        )
     registry = PluginRegistry()
-    await registry.load()
-    app.state.plugin_registry = registry
+    startup_tasks: list[asyncio.Task] = []
+    herdr_service_registered = False
+    work_dispatcher_task: Optional[asyncio.Task] = None
 
-    # Run cleanup in background
-    asyncio.create_task(asyncio.to_thread(cleanup_old_data))
-    asyncio.create_task(cleanup_expired_memories())
-    # Workflow run-journal retention (#504, NFR-SEC-3). Without this the sweep
-    # had NO production caller and the advertised age/run-count retention never
-    # ran, so the event log grew without bound. Startup-time and best-effort,
-    # matching cleanup_old_data above: sweep_runs never raises (read failures
-    # degrade to a 0-run no-op) and bounds are read from settings.
-    asyncio.create_task(asyncio.to_thread(_sweep_workflow_runs_at_startup))
+    def start_lifespan_task(coroutine):
+        task = asyncio.create_task(coroutine)
+        startup_tasks.append(task)
+        return task
 
-    # Start flow daemon as background task
-    daemon_task = asyncio.create_task(flow_daemon())
+    async def shutdown_lifespan_resources(*, best_effort: bool) -> None:
+        if not best_effort:
+            fifo_manager.stop_watchdog()
+            try:
+                await registry.teardown()
+            finally:
+                try:
+                    shutdown_telemetry()
+                except Exception:
+                    logger.warning("Error shutting down OTel telemetry", exc_info=True)
+            return
 
-    # Register event loop with event bus for thread-safe publishing
-    loop = asyncio.get_running_loop()
-    bus.set_loop(loop)
+        try:
+            fifo_manager.stop_watchdog()
+        except BaseException:
+            logger.warning("Error stopping watchdog during startup cleanup", exc_info=True)
+        try:
+            await registry.teardown()
+        except BaseException:
+            logger.warning("Error tearing down plugins during startup cleanup", exc_info=True)
+        try:
+            shutdown_telemetry()
+        except BaseException:
+            logger.warning("Error shutting down telemetry during startup cleanup", exc_info=True)
 
-    # Start event bus consumers as background tasks
-    status_monitor_task = asyncio.create_task(status_monitor.run())
-    log_writer_task = asyncio.create_task(log_writer.run())
-    inbox_service_task = asyncio.create_task(inbox_service.run(registry))
-    logger.info("Event bus consumers started (StatusMonitor, LogWriter, InboxService)")
+    async def cleanup_failed_startup() -> None:
+        if startup_tasks:
+            try:
+                await asyncio.gather(*startup_tasks, return_exceptions=True)
+            except BaseException:
+                logger.warning("Error awaiting startup tasks during cleanup", exc_info=True)
+        if herdr_service_registered:
+            try:
+                set_herdr_inbox_service(None)
+            except BaseException:
+                logger.warning("Error clearing Herdr inbox service during startup cleanup", exc_info=True)
+        await shutdown_lifespan_resources(best_effort=True)
 
-    # Start ApprovalBridge when AG-UI surface is enabled
-    approval_bridge_task: Optional[asyncio.Task] = None
-    from cli_agent_orchestrator.services.agui_enablement import agui_surface_enabled
+    try:
+        await registry.load()
+        app.state.plugin_registry = registry
 
-    if agui_surface_enabled():
-        from cli_agent_orchestrator.services.agui.approval_bridge import ApprovalBridge
-        from cli_agent_orchestrator.services.agui.base import InProcessUiEmitter
-        from cli_agent_orchestrator.services.agui.handoff_approval import (
-            AgentHandoffWithApproval,
-            TerminalServiceAnswerDelivery,
+        # Run cleanup in background
+        start_lifespan_task(asyncio.to_thread(cleanup_old_data))
+        start_lifespan_task(cleanup_expired_memories())
+        # Workflow run-journal retention (#504, NFR-SEC-3). Without this the sweep
+        # had NO production caller and the advertised age/run-count retention never
+        # ran, so the event log grew without bound. Startup-time and best-effort,
+        # matching cleanup_old_data above: sweep_runs never raises (read failures
+        # degrade to a 0-run no-op) and bounds are read from settings.
+        start_lifespan_task(asyncio.to_thread(_sweep_workflow_runs_at_startup))
+
+        # Start flow daemon as background task
+        daemon_task = start_lifespan_task(flow_daemon())
+
+        # Register event loop with event bus for thread-safe publishing
+        loop = asyncio.get_running_loop()
+        bus.set_loop(loop)
+
+        # Start event bus consumers as background tasks
+        status_monitor_task = start_lifespan_task(status_monitor.run())
+        log_writer_task = start_lifespan_task(log_writer.run())
+        inbox_service_task = start_lifespan_task(inbox_service.run(registry))
+        logger.info("Event bus consumers started (StatusMonitor, LogWriter, InboxService)")
+
+        # Start ApprovalBridge when AG-UI surface is enabled
+        approval_bridge_task: Optional[asyncio.Task] = None
+        from cli_agent_orchestrator.services.agui_enablement import agui_surface_enabled
+
+        if agui_surface_enabled():
+            from cli_agent_orchestrator.clients.work_repository import WorkRepository
+            from cli_agent_orchestrator.constants import DATABASE_FILE
+            from cli_agent_orchestrator.services.agui.approval_bridge import ApprovalBridge
+            from cli_agent_orchestrator.services.agui.base import InProcessUiEmitter
+            from cli_agent_orchestrator.services.agui.handoff_approval import (
+                AgentHandoffWithApproval,
+                TerminalServiceAnswerDelivery,
+            )
+            from cli_agent_orchestrator.services.work_decisions import WorkDecisions
+
+            approval_emitter = InProcessUiEmitter()
+            approval_construct = AgentHandoffWithApproval(
+                emitter=approval_emitter,
+                # Deliver resolved decisions to the waiting CLI via the tmux input
+                # path so approve/deny/edit actually reach the terminal (not just
+                # mark the interrupt resolved).
+                answer_delivery=TerminalServiceAnswerDelivery(),
+                # This permits only an explicit trusted upstream binding.  Bridge
+                # status events still remain unbound and terminal/UI-only.
+                decisions=WorkDecisions(WorkRepository(DATABASE_FILE)),
+            )
+            approval_bridge = ApprovalBridge(construct=approval_construct)
+            app.state.approval_bridge = approval_bridge
+            approval_bridge_task = start_lifespan_task(approval_bridge.run())
+            logger.info("ApprovalBridge started")
+
+        # Start temporary OpenCode inbox poller. GH #115 tracks replacing this
+        # provider-specific wakeup path with a unified delivery engine.
+        opencode_inbox_task = start_lifespan_task(opencode_inbox_delivery_daemon(registry))
+
+        # Start provider-agnostic reconciliation sweep for orphaned PENDING messages
+        # the immediate and event-driven status paths missed (issue #131).
+        inbox_reconcile_task = start_lifespan_task(inbox_reconciliation_daemon(registry))
+
+        # Herdr delivers inbox via its own socket events; the tmux backend uses the
+        # FIFO -> EventBus pipeline (StatusMonitor / LogWriter / InboxService) started
+        # above. Start the herdr inbox service only when the herdr backend is active
+        # (additive; no-op for tmux). See #271.
+        herdr_inbox_task: Optional[asyncio.Task] = None
+        backend = get_backend()
+        from cli_agent_orchestrator.backends import work_registry
+        from cli_agent_orchestrator.clients.work_repository import WorkRepository
+        from cli_agent_orchestrator.constants import DATABASE_FILE
+        from cli_agent_orchestrator.services.work_launch_gateway import (
+            build_durable_launch_gateway,
         )
 
-        approval_emitter = InProcessUiEmitter()
-        approval_construct = AgentHandoffWithApproval(
-            emitter=approval_emitter,
-            # Deliver resolved decisions to the waiting CLI via the tmux input
-            # path so approve/deny/edit actually reach the terminal (not just
-            # mark the interrupt resolved).
-            answer_delivery=TerminalServiceAnswerDelivery(),
+        app.state.durable_launch_gateway = build_durable_launch_gateway(
+            WorkRepository(DATABASE_FILE), backends=work_registry.WORK_BACKENDS
         )
-        approval_bridge = ApprovalBridge(construct=approval_construct)
-        app.state.approval_bridge = approval_bridge
-        approval_bridge_task = asyncio.create_task(approval_bridge.run())
-        logger.info("ApprovalBridge started")
+        if work_registry.WORK_BACKENDS:
+            work_dispatcher_task = start_lifespan_task(
+                _run_registered_work_dispatcher(app.state.durable_launch_gateway)
+            )
+        if isinstance(backend, HerdrBackend):
 
-    # Start temporary OpenCode inbox poller. GH #115 tracks replacing this
-    # provider-specific wakeup path with a unified delivery engine.
-    opencode_inbox_task = asyncio.create_task(opencode_inbox_delivery_daemon(registry))
+            def deliver_inbox(terminal_id: str) -> None:
+                inbox_service.deliver_pending(terminal_id, registry=registry)
 
-    # Start provider-agnostic reconciliation sweep for orphaned PENDING messages
-    # the immediate and event-driven status paths missed (issue #131).
-    inbox_reconcile_task = asyncio.create_task(inbox_reconciliation_daemon(registry))
+            svc = HerdrInboxService(
+                herdr_session=backend.herdr_session,
+                delivery_callback=deliver_inbox,
+            )
+            set_herdr_inbox_service(svc)
+            herdr_service_registered = True
+            herdr_inbox_task = start_lifespan_task(svc.start())
+            logger.info("Herdr inbox service started")
 
-    # Herdr delivers inbox via its own socket events; the tmux backend uses the
-    # FIFO -> EventBus pipeline (StatusMonitor / LogWriter / InboxService) started
-    # above. Start the herdr inbox service only when the herdr backend is active
-    # (additive; no-op for tmux). See #271.
-    herdr_inbox_task: Optional[asyncio.Task] = None
-    backend = get_backend()
-    if isinstance(backend, HerdrBackend):
-
-        def deliver_inbox(terminal_id: str) -> None:
-            inbox_service.deliver_pending(terminal_id, registry=registry)
-
-        svc = HerdrInboxService(
-            herdr_session=backend.herdr_session,
-            delivery_callback=deliver_inbox,
-        )
-        set_herdr_inbox_service(svc)
-        herdr_inbox_task = asyncio.create_task(svc.start())
-        logger.info("Herdr inbox service started")
+    except BaseException:
+        for task in startup_tasks:
+            try:
+                task.cancel()
+            except BaseException:
+                logger.warning("Error cancelling startup task", exc_info=True)
+        cleanup_task = asyncio.get_running_loop().create_task(cleanup_failed_startup())
+        while not cleanup_task.done():
+            try:
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError:
+                current_task = asyncio.current_task()
+                if current_task is not None:
+                    uncancel = getattr(current_task, "uncancel", None)
+                    if uncancel is not None:
+                        uncancel()
+            except BaseException:
+                logger.warning("Startup cleanup failed", exc_info=True)
+                break
+        if cleanup_task.done():
+            try:
+                cleanup_task.result()
+            except BaseException:
+                logger.warning("Startup cleanup failed", exc_info=True)
+        raise
 
     yield
 
@@ -1437,17 +1607,15 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
-    # Stop the pipe-pane liveness watchdog thread (issue #388). It is a plain
-    # threading.Thread (not asyncio), so join it directly rather than via
-    # asyncio.gather with the tasks above.
-    fifo_manager.stop_watchdog()
+    if work_dispatcher_task is not None:
+        work_dispatcher_task.cancel()
+        try:
+            await work_dispatcher_task
+        except asyncio.CancelledError:
+            pass
 
-    await registry.teardown()
-    # OpenTelemetry (ported): flush + shut down exporters (no-op when disabled).
-    try:
-        shutdown_telemetry()
-    except Exception:
-        logger.warning("Error shutting down OTel telemetry", exc_info=True)
+    # Stop the pipe-pane liveness watchdog thread, then release shared services.
+    await shutdown_lifespan_resources(best_effort=False)
     logger.info("Shutting down CLI Agent Orchestrator server...")
 
 
@@ -1486,6 +1654,193 @@ app = FastAPI(
     version=SERVER_VERSION,
     lifespan=lifespan,
 )
+app.include_router(work_router)
+app.include_router(knowledge_router)
+
+
+_WORK_LAUNCH_UNAVAILABLE_DETAIL = {
+    "code": "launch_runtime_unavailable",
+    "message": "Trusted launch runtime is unavailable.",
+    "retryable": False,
+    "required_action": "inspect_server_configuration",
+}
+_WORK_LAUNCH_INTERNAL_DETAIL = {
+    "code": "launch_internal_error",
+    "message": "Unable to process the launch request.",
+    "retryable": False,
+    "required_action": "inspect_server_configuration",
+}
+_WORK_LAUNCH_IDENTITY_REQUIRED_DETAIL = {
+    "code": "launch_identity_required",
+    "message": "Verified launch identity is required.",
+    "retryable": False,
+    "required_action": "authenticate",
+}
+_WORK_LAUNCH_ERROR_STATUS = {
+    "launch_authority_denied": status.HTTP_403_FORBIDDEN,
+    "launch_intent_invalid": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "launch_idempotency_conflict": status.HTTP_409_CONFLICT,
+    "launch_internal_error": status.HTTP_500_INTERNAL_SERVER_ERROR,
+}
+_WORK_LAUNCH_SAFE_ERROR_DETAILS = frozenset(
+    {
+        (
+            "launch_authority_denied",
+            "Verified launch authority is required.",
+            False,
+            required_action,
+        )
+        for required_action in ("authenticate", "reauthorize")
+    }
+    | {
+        (
+            "launch_intent_invalid",
+            "Launch intent is invalid.",
+            False,
+            "correct_launch_intent",
+        ),
+        (
+            "launch_idempotency_conflict",
+            "Launch operation conflicts with an existing server-owned identity.",
+            False,
+            "inspect_existing_launch",
+        ),
+        (
+            "launch_context_unavailable",
+            "Trusted launch context is unavailable.",
+            False,
+            "provision_launch_context",
+        ),
+        (
+            "launch_store_unavailable",
+            "Verified work store is unavailable.",
+            True,
+            "retry_same_intent",
+        ),
+        (
+            "launch_runtime_unavailable",
+            "Trusted launch runtime is unavailable.",
+            False,
+            "inspect_server_configuration",
+        ),
+    }
+    | {
+        (
+            "launch_context_invalid",
+            "Trusted launch context is no longer valid.",
+            False,
+            required_action,
+        )
+        for required_action in ("refresh_launch_context", "resolve_launch_again")
+    }
+)
+
+
+async def get_work_launch_principal(
+    request: Request, authorization: Optional[str] = Header(default=None)
+) -> Principal:
+    """Adapt only this work ingress's identity failure to its durable error envelope."""
+    try:
+        token = _extract_bearer(authorization)
+        if not token:
+            raise ValueError("missing bearer token")
+        return principal_from_token(token)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=dict(_WORK_LAUNCH_IDENTITY_REQUIRED_DETAIL),
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from None
+
+
+def _work_launch_unavailable() -> HTTPException:
+    """Return one fixed envelope when the server has no usable launch gateway."""
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=dict(_WORK_LAUNCH_UNAVAILABLE_DETAIL),
+    )
+
+
+def _work_launch_internal_error() -> HTTPException:
+    """Return one fixed envelope for unexpected or malformed gateway failures."""
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=dict(_WORK_LAUNCH_INTERNAL_DETAIL),
+    )
+
+
+def _work_launch_safe_gateway_detail(
+    error: DurableLaunchGatewayError,
+) -> dict[str, str | bool] | None:
+    """Allow only complete, exact error envelopes from the durable boundary."""
+    detail = error.as_dict()
+    if set(detail) != {"code", "message", "retryable", "required_action"}:
+        return None
+    code = detail["code"]
+    message = detail["message"]
+    retryable = detail["retryable"]
+    required_action = detail["required_action"]
+    if not (
+        isinstance(code, str)
+        and isinstance(message, str)
+        and type(retryable) is bool
+        and isinstance(required_action, str)
+    ):
+        return None
+    if (code, message, retryable, required_action) not in _WORK_LAUNCH_SAFE_ERROR_DETAILS:
+        return None
+    return {
+        "code": code,
+        "message": message,
+        "retryable": retryable,
+        "required_action": required_action,
+    }
+
+
+@app.post("/work-launches", status_code=status.HTTP_202_ACCEPTED)
+def create_work_launch(
+    body: WorkLaunchBody,
+    request: Request,
+    principal: Annotated[Principal, Depends(get_work_launch_principal)],
+) -> Dict[str, Any]:
+    """Adapt verified HTTP launch content to the server-owned durable gateway."""
+    gateway = getattr(request.app.state, "durable_launch_gateway", None)
+    if not isinstance(gateway, DurableLaunchGateway):
+        raise _work_launch_unavailable()
+
+    try:
+        receipt = gateway.admit(
+            principal,
+            DurableLaunchRequest(
+                selection=body.selection,
+                agent_profile=body.agent_profile,
+                session_name=body.session_name,
+                message=body.message,
+                allowed_tools=tuple(body.allowed_tools),
+            ),
+        )
+        if not isinstance(receipt, LaunchReceipt):
+            raise TypeError("durable launch gateway returned an invalid receipt")
+    except DurableLaunchGatewayError as error:
+        detail = _work_launch_safe_gateway_detail(error)
+        if detail is None:
+            raise _work_launch_internal_error()
+        raise HTTPException(
+            status_code=_WORK_LAUNCH_ERROR_STATUS.get(
+                detail["code"], status.HTTP_503_SERVICE_UNAVAILABLE
+            ),
+            detail=detail,
+        )
+    except Exception:
+        raise _work_launch_internal_error()
+
+    return {
+        "work_item_id": receipt.work_item_id,
+        "attempt_id": receipt.attempt_id,
+        "generation": receipt.generation,
+        "state": receipt.state,
+    }
+
 
 # Methods whose request could change server state. The Origin check only
 # guards these — GET/HEAD/OPTIONS stay open (reads leak nothing stateful, and
@@ -2077,6 +2432,8 @@ async def agui_emit_ui(
 
 
 class ResumeInterruptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     decision: str = Field(..., description="One of: approve, deny, edit")
     edited_text: Optional[str] = Field(None, description="Required when decision is 'edit'")
 
@@ -2093,6 +2450,7 @@ class ResumeInterruptRequest(BaseModel):
 async def agui_resume_interrupt(
     interrupt_id: str,
     body: ResumeInterruptRequest,
+    request: Request,
     _enabled: None = Depends(_require_agui_enabled),
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
 ) -> Dict:
@@ -2110,6 +2468,8 @@ async def agui_resume_interrupt(
     from cli_agent_orchestrator.services.agui.handoff_approval import (
         ApprovalDecision,
         DeliveryError,
+        DeliveryUncertain,
+        DurableApprovalConflict,
     )
 
     bridge = getattr(app.state, "approval_bridge", None)
@@ -2135,16 +2495,47 @@ async def agui_resume_interrupt(
             detail=f"Invalid decision: {body.decision}",
         )
 
+    # Existing Bridge-created interrupts remain legacy terminal/UI-only.  A
+    # trusted server integration may register a frozen durable binding, in which
+    # case identity must be resolved from this transport rather than the body or
+    # legacy scope list.  There is deliberately no client binding registration.
+    principal = None
+    if construct.has_durable_binding(interrupt_id):
+        principal = await get_current_principal(
+            request, authorization=request.headers.get("Authorization")
+        )
+
     try:
         result = await construct.resume(
             interrupt_id=interrupt_id,
             decision=decision_enum,
             edited_text=body.edited_text,
+            principal=principal,
+        )
+    except DurableApprovalConflict as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "durable_approval_conflict",
+                "message": str(e),
+                "retryable": False,
+                "required_action": "refresh_bound_approval",
+            },
         )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(e),
+        )
+    except DeliveryUncertain as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "durable_delivery_uncertain",
+                "message": f"Bound delivery may already have reached terminal: {e}",
+                "retryable": False,
+                "required_action": "reconcile_terminal_before_new_decision",
+            },
         )
     except DeliveryError as e:
         # Delivery to the terminal failed; the interrupt is left unresolved and
@@ -3220,6 +3611,13 @@ async def delete_session(
                 ),
             )
         return {"success": True, **result}
+    except WorkOwnedTerminalError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except WorkOwnershipStoreUnavailableError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to verify durable Work terminal ownership",
+        ) from e
     except HTTPException:
         raise
     except ValueError as e:
@@ -3644,7 +4042,7 @@ async def list_terminal_siblings(
         )
 
 
-@app.get("/terminals/{terminal_id}/memory-context")
+@app.get("/terminals/{terminal_id}/memory-context", dependencies=[Depends(legacy_memory_operator)])
 async def get_terminal_memory_context(
     terminal_id: TerminalId,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
@@ -3696,6 +4094,7 @@ async def send_terminal_input(
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
 ) -> Dict:
     try:
+        terminal_service.ensure_terminal_is_not_work_owned(terminal_id)
         # send_input is blocking tmux I/O (bracketed paste + key sends). Run it
         # off the event loop so a slow tmux call can't freeze every other
         # request — including /health and concurrent assign/handoff. Same
@@ -3709,6 +4108,13 @@ async def send_terminal_input(
             orchestration_type=orchestration_type,
         )
         return {"success": success}
+    except WorkOwnedTerminalError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except WorkOwnershipStoreUnavailableError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to verify durable Work terminal ownership",
+        ) from e
     except TerminalInputBlockedError as e:
         # This is a machine-readable recovery contract, not a display string:
         # callers must never infer whether a retry is safe from exception text.
@@ -3748,9 +4154,17 @@ async def send_terminal_key(
         )
 
     try:
+        terminal_service.ensure_terminal_is_not_work_owned(terminal_id)
         # Blocking tmux send-keys — off the loop.
         success = await asyncio.to_thread(terminal_service.send_special_key, terminal_id, key)
         return {"success": success}
+    except WorkOwnedTerminalError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except WorkOwnershipStoreUnavailableError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to verify durable Work terminal ownership",
+        ) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
@@ -3843,6 +4257,13 @@ async def exit_terminal(
         # Blocking tmux I/O — off the loop.
         await asyncio.to_thread(terminal_service.exit_terminal_cli, terminal_id)
         return {"success": True}
+    except WorkOwnedTerminalError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except WorkOwnershipStoreUnavailableError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to verify durable Work terminal ownership",
+        ) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
@@ -3861,6 +4282,15 @@ def _schedule_elastic_terminal_ended(
 ) -> None:
     if teardown and reuse_terminal_id is None:
         background_tasks.add_task(_notify_elastic_terminal_ended, terminal_id)
+
+
+async def _optional_run_step_principal(
+    request: Request, authorization: Optional[str] = Header(default=None)
+) -> Optional[Principal]:
+    """Resolve request identity only when this legacy route authenticates callers."""
+    if not is_auth_enabled():
+        return None
+    return await get_current_principal(request, authorization)
 
 
 @app.post(
@@ -3882,6 +4312,7 @@ async def run_step(
     background_tasks: BackgroundTasks,
     body: RunStepRequest,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
+    principal: Optional[Principal] = Depends(_optional_run_step_principal),
 ) -> RunStepResponse:
     """Run a single agent step through the shared substrate (N0, #312).
 
@@ -3951,6 +4382,8 @@ async def run_step(
         error: Optional[str],
         last_message: Optional[str] = None,
         response_status: Optional[str] = None,
+        *,
+        error_kind: Optional[str] = None,
     ) -> None:
         # ``last_message`` is the step's own text result and defaults to None because
         # every FAILURE arm below has none to give: the step never produced one. Only
@@ -3961,7 +4394,12 @@ async def run_step(
         if on_step_settled is None:
             return
         try:
-            on_step_settled(terminal_id, error, last_message, response_status)
+            if error_kind is None:
+                on_step_settled(terminal_id, error, last_message, response_status)
+            else:
+                on_step_settled(
+                    terminal_id, error, last_message, response_status, error_kind=error_kind
+                )
         except Exception:  # noqa: BLE001 — step bookkeeping is best-effort; never fail the step
             logger.warning("run_step: script step completion bookkeeping failed", exc_info=True)
 
@@ -4174,6 +4612,7 @@ async def run_step(
             # non-script-tier call.
             working_directory=effective_working_directory,
             caller_id=body.caller_id,
+            principal=principal,
             allowed_tools=body.allowed_tools,
             engine=body.engine,
             registry=get_plugin_registry(request),
@@ -4251,9 +4690,9 @@ async def run_step(
         # the script-tier row live for its reconciler rather than recording a
         # false FAILED outcome that would make a later provider resume
         # indistinguishable from a retry.
-        if e.kind != "quota_wait":
-            _settle_step(e.terminal_id, str(e))
-        if e.kind in {"reconcile", "quota_wait"}:
+        if e.kind not in {"quota_wait", "contract_rejected"}:
+            _settle_step(e.terminal_id, str(e), error_kind=e.kind)
+        if e.kind in {"reconcile", "quota_wait", "contract_rejected"}:
             code = status.HTTP_409_CONFLICT
         elif e.kind == "error":
             code = status.HTTP_502_BAD_GATEWAY
@@ -4281,7 +4720,7 @@ async def run_step(
         # ``run_agent_step`` translates post-creation input blocks into a
         # StepExecutionError carrying the terminal reconciliation handle. This
         # narrow arm remains for failures before a terminal exists.
-        _settle_step(None, str(e))
+        _settle_step(None, str(e), error_kind="timeout")
         detail = {"message": str(e), "kind": "timeout", "terminal_id": None}
         if isinstance(e, TerminalInputBlockedError):
             detail.update(
@@ -4502,6 +4941,48 @@ async def get_workflow_endpoint(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     return spec.model_dump()
+
+
+@app.get("/workflows/{name}/source")
+async def get_workflow_source_endpoint(
+    name: str,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
+) -> Dict:
+    """Read exact source plus its revision without changing the legacy spec DTO."""
+    from cli_agent_orchestrator.models.workflow import TierCollisionError
+    from cli_agent_orchestrator.services import workflow_spec_service
+
+    try:
+        return await asyncio.to_thread(workflow_spec_service.get_workflow_source, name)
+    except (KeyError, FileNotFoundError):
+        raise HTTPException(status_code=404, detail=f"unknown workflow '{name}'")
+    except TierCollisionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.put("/workflows/{name}")
+async def update_workflow_endpoint(
+    name: str,
+    request: WorkflowUpdateRequest,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
+) -> Dict:
+    """Publish a validated edit only if its expected source revision is current."""
+    from cli_agent_orchestrator.models.workflow import TierCollisionError
+    from cli_agent_orchestrator.services import workflow_spec_service
+
+    try:
+        return await asyncio.to_thread(
+            workflow_spec_service.update_workflow,
+            name, request.content, request.expected_source_hash,
+        )
+    except (KeyError, FileNotFoundError):
+        raise HTTPException(status_code=404, detail=f"unknown workflow '{name}'")
+    except (workflow_spec_service.WorkflowRevisionConflict, TierCollisionError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.delete("/workflows/{name}")
@@ -6186,20 +6667,7 @@ def _json_or_none(output_json: Optional[str]) -> Optional[Dict[str, Any]]:
 
 
 def _durable_error_kind(steps: List[Any]) -> Optional[str]:
-    """Read the durable ``error_kind`` off the step projection, if present (U9, RP-1).
-
-    The column-first swap target (ADR-5): #504 persists a durable ``error_kind`` on
-    the ``workflow_run_step`` projection. Once that column lands and ``StepRow``
-    surfaces it, this returns the first non-null durable kind found on a step —
-    authoritative over any inference (RP-1). Until then, ``StepRow`` carries no
-    ``error_kind`` attribute, so ``getattr`` yields ``None`` for every row and this
-    helper is INERT (returns ``None``), leaving the inference floor in force (RP-2).
-
-    Reading via ``getattr(step, "error_kind", None)`` makes the rebase a clean swap
-    confined to this one helper (RP-5): when the column arrives no call site changes.
-    """
-    # TODO(#504-rebase): prefer durable step.error_kind once the column lands — the
-    # getattr below activates automatically the moment StepRow surfaces the field.
+    """Read persisted step failure evidence; legacy rows may lack a typed kind."""
     for s in steps:
         durable = getattr(s, "error_kind", None)
         if durable:
@@ -6210,14 +6678,10 @@ def _durable_error_kind(steps: List[Any]) -> Optional[str]:
 def _resolve_error_kind(row: Any, steps: List[Any]) -> Optional[str]:
     """Resolve the terminal ``kind`` for an assembled ``WorkflowRunResult`` (U4 seam).
 
-    U4 shipped the CALL SITE plus the ADR-5 inference FLOOR; U9 enriches this SAME
-    function with column-first precedence (kept a single module-level function so
-    the swap is confined, RP-5). Precedence:
-
-    1. Column-first (RP-1): a durable ``error_kind`` on the step projection wins
-       authoritatively — the inference is NOT consulted. INERT until #504's column
-       lands (``_durable_error_kind`` returns ``None`` for pre-migration rows).
-    2. Inference fallback (RP-2, pre-migration rows only) — the RR-4 floor:
+    Completed/nonterminal runs have no terminal failure kind, even if a script
+    caught an earlier failed call. Reading that projection never deletes the
+    underlying step evidence. For a failed/cancelled run, a durable step kind
+    wins over inference. Legacy/untyped rows retain the compatibility fallback:
 
        - CANCELLED run                                 -> ``"cancelled"``
        - FAILED run with a step error matching /timeout/i -> ``"timeout"``
@@ -6229,17 +6693,18 @@ def _resolve_error_kind(row: Any, steps: List[Any]) -> Optional[str]:
     """
     from cli_agent_orchestrator.models.workflow_runtime import RunState
 
-    # Column-first (RP-1): authoritative when present; inert (None) pre-migration.
-    durable = _durable_error_kind(steps)
-    if durable is not None:
-        return durable
-
-    # Inference fallback (RP-2) — the ADR-5 floor for pre-migration rows.
     try:
         run_state = RunState(row.state)
     except ValueError:
         return None
+    if run_state not in {RunState.FAILED, RunState.CANCELLED}:
+        return None
 
+    durable = _durable_error_kind(steps)
+    if durable is not None:
+        return durable
+
+    # Compatibility only: callers/records without a persisted structured kind.
     if run_state == RunState.CANCELLED:
         return "cancelled"
     if run_state == RunState.FAILED:
@@ -6646,7 +7111,7 @@ async def _project_graph_with_timeout(
         )
 
 
-@app.get("/graph/{provider}")
+@app.get("/graph/{provider}", dependencies=[Depends(legacy_graph_memory_operator)])
 async def get_graph_endpoint(
     provider: str,
     request: Request,
@@ -6702,7 +7167,7 @@ async def get_graph_endpoint(
     return view.to_dict()
 
 
-@app.post("/graph/{provider}/export")
+@app.post("/graph/{provider}/export", dependencies=[Depends(legacy_graph_memory_operator)])
 async def export_graph_endpoint(
     provider: str,
     body: GraphExportRequest,
@@ -6793,6 +7258,13 @@ async def delete_terminal(
         return {"success": True}
     except HTTPException:
         raise
+    except WorkOwnedTerminalError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except WorkOwnershipStoreUnavailableError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to verify durable Work terminal ownership",
+        ) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
@@ -7314,6 +7786,13 @@ async def run_flow(
     try:
         executed = await flow_service.execute_flow(name)
         return {"executed": executed}
+    except WorkOwnedTerminalError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except WorkOwnershipStoreUnavailableError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to verify durable Work terminal ownership",
+        ) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
@@ -7405,7 +7884,7 @@ class InternalMemoryInjectionRequest(BaseModel):
     budget_chars: int = Field(default=3000, ge=0, le=20000)
 
 
-@app.post("/internal/memory/store")
+@app.post("/internal/memory/store", dependencies=[Depends(legacy_memory_operator)])
 async def internal_memory_store(
     body: InternalMemoryStoreRequest,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
@@ -7435,7 +7914,7 @@ async def internal_memory_store(
     }
 
 
-@app.post("/internal/memory/recall")
+@app.post("/internal/memory/recall", dependencies=[Depends(legacy_memory_operator)])
 async def internal_memory_recall(
     body: InternalMemoryRecallRequest,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
@@ -7457,7 +7936,7 @@ async def internal_memory_recall(
     return {"memories": [memory.model_dump(mode="json") for memory in memories]}
 
 
-@app.post("/internal/memory/forget")
+@app.post("/internal/memory/forget", dependencies=[Depends(legacy_memory_operator)])
 async def internal_memory_forget(
     body: InternalMemoryForgetRequest,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
@@ -7474,7 +7953,7 @@ async def internal_memory_forget(
     return {"deleted": deleted}
 
 
-@app.post("/internal/memory/context")
+@app.post("/internal/memory/context", dependencies=[Depends(legacy_memory_operator)])
 async def internal_memory_context(
     body: InternalMemoryInjectionRequest,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
@@ -7541,7 +8020,7 @@ def _to_memory_summary(mem, base_dir: Path) -> MemorySummary:
     )
 
 
-@app.get("/memory", response_model=List[MemorySummary])
+@app.get("/memory", response_model=List[MemorySummary], dependencies=[Depends(legacy_memory_operator)])
 async def list_memories_endpoint(
     scope: Optional[MemoryScope] = None,
     memory_type: Optional[MemoryType] = Query(default=None, alias="type"),
@@ -7575,7 +8054,7 @@ async def list_memories_endpoint(
         )
 
 
-@app.get("/memory/export")
+@app.get("/memory/export", dependencies=[Depends(legacy_memory_operator)])
 async def export_memories_endpoint(
     scope: MemoryScope,
     format: str = Query(default="okf"),
@@ -7694,7 +8173,7 @@ def _relationship_service():
     return MemoryRelationshipService()
 
 
-@app.get("/memory/relationships")
+@app.get("/memory/relationships", dependencies=[Depends(legacy_memory_operator)])
 async def list_relationships_endpoint(
     scope: str,
     scope_id: Optional[str] = None,
@@ -7725,7 +8204,7 @@ async def list_relationships_endpoint(
     return [d.to_dict() for d in dtos[:limit]]
 
 
-@app.post("/memory/relationships")
+@app.post("/memory/relationships", dependencies=[Depends(legacy_memory_operator)])
 async def create_relationship_endpoint(
     body: RelationshipCreateRequest,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
@@ -7753,7 +8232,7 @@ async def create_relationship_endpoint(
     return dto.to_dict()
 
 
-@app.patch("/memory/relationships/{relationship_id}")
+@app.patch("/memory/relationships/{relationship_id}", dependencies=[Depends(legacy_memory_operator)])
 async def patch_relationship_endpoint(
     relationship_id: str,
     body: RelationshipPatchRequest,
@@ -7778,7 +8257,7 @@ async def patch_relationship_endpoint(
     return dto.to_dict()
 
 
-@app.post("/memory/relationships/{relationship_id}/promote")
+@app.post("/memory/relationships/{relationship_id}/promote", dependencies=[Depends(legacy_memory_operator)])
 async def promote_relationship_endpoint(
     relationship_id: str,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
@@ -7794,7 +8273,7 @@ async def promote_relationship_endpoint(
     return dto.to_dict()
 
 
-@app.post("/memory/relationships/{relationship_id}/reject")
+@app.post("/memory/relationships/{relationship_id}/reject", dependencies=[Depends(legacy_memory_operator)])
 async def reject_relationship_endpoint(
     relationship_id: str,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
@@ -7808,7 +8287,7 @@ async def reject_relationship_endpoint(
     return dto.to_dict()
 
 
-@app.delete("/memory/relationships/{relationship_id}")
+@app.delete("/memory/relationships/{relationship_id}", dependencies=[Depends(legacy_memory_operator)])
 async def delete_relationship_endpoint(
     relationship_id: str,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
@@ -7833,7 +8312,7 @@ async def delete_relationship_endpoint(
     return dto.to_dict()
 
 
-@app.get("/memory/{key}", response_model=MemoryDetail)
+@app.get("/memory/{key}", response_model=MemoryDetail, dependencies=[Depends(legacy_memory_operator)])
 async def get_memory_endpoint(
     key: MemoryKey,
     scope: Optional[MemoryScope] = None,
@@ -7872,7 +8351,7 @@ async def get_memory_endpoint(
         )
 
 
-@app.delete("/memory/{key}")
+@app.delete("/memory/{key}", dependencies=[Depends(legacy_memory_operator)])
 async def delete_memory_endpoint(
     key: MemoryKey,
     scope: MemoryScope = MemoryScope.PROJECT,
@@ -7912,7 +8391,7 @@ async def delete_memory_endpoint(
     return {"success": True}
 
 
-@app.delete("/memory")
+@app.delete("/memory", dependencies=[Depends(legacy_memory_operator)])
 async def clear_memories_endpoint(
     scope: MemoryScope,
     scope_id: Optional[MemoryScopeId] = None,

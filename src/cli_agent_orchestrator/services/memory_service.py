@@ -10,6 +10,7 @@ import subprocess
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional, Set
@@ -20,6 +21,10 @@ from cli_agent_orchestrator.constants import (
     MEMORY_SCOPE_BUDGET_CHARS,
 )
 from cli_agent_orchestrator.models.memory import Memory, MemoryScope, MemoryType
+from cli_agent_orchestrator.services.legacy_memory_access import (
+    audited_legacy,
+    propagate_legacy_policy_failure,
+)
 from cli_agent_orchestrator.services.memory_archive.base import ExportReport, ImportReport
 from cli_agent_orchestrator.services.memory_format import (
     normalize_memory_tags,
@@ -265,8 +270,16 @@ class MemoryService:
     lookup. ``index.md`` is regenerated as a human-readable view.
     """
 
-    def __init__(self, base_dir: Optional[Path] = None, db_engine: Any = None):
+    def __init__(
+        self, base_dir: Optional[Path] = None, db_engine: Any = None, *, knowledge_policy=None
+    ):
+        from cli_agent_orchestrator.services.knowledge_policy import KnowledgePolicy
+
+        if knowledge_policy is not None and not isinstance(knowledge_policy, KnowledgePolicy):
+            raise TypeError("server-owned knowledge policy required")
+        self._knowledge_policy = knowledge_policy
         self.base_dir = base_dir or MEMORY_BASE_DIR
+        self._legacy_audit_repository = None
         self._db_engine = db_engine
         self._db_session_factory: Any = None
         # Strong refs to in-flight background compile tasks (event-loop path)
@@ -283,6 +296,115 @@ class MemoryService:
             self._db_session_factory = sessionmaker(
                 autocommit=False, autoflush=False, bind=db_engine
             )
+
+    def _knowledge_call(self, method, action, principal, *args, **kwargs):
+        from cli_agent_orchestrator.services.knowledge_policy import KnowledgeAccessDenied
+        from cli_agent_orchestrator.services.knowledge_revisions import KnowledgeRevisions
+
+        policy = self._knowledge_policy
+        if policy is None:
+            raise KnowledgeAccessDenied("reviewed memory requires a durable knowledge policy")
+        if not _is_memory_enabled():
+            raise MemoryDisabledError(MEMORY_DISABLED_MESSAGE)
+        service = KnowledgeRevisions(policy.repository, authorize=policy)
+        try:
+            return getattr(service, method)(principal, *args, **kwargs)
+        except PermissionError:
+            # The operation's transaction has already rolled back. Record denial
+            # separately, without logging proposal bytes or diagnostic strings.
+            target = [kwargs.get("scope"), kwargs.get("scope_id"), list(args[:2])]
+            policy.audit_denied(principal, action, target)
+            raise
+
+    def propose_revision(self, principal, **kwargs):
+        return self._knowledge_call("propose_revision", "propose", principal, **kwargs)
+
+    def read_revision(self, principal, record_id, revision=None):
+        return self._knowledge_call("read_revision", "read", principal, record_id, revision)
+
+    def recovery_page(self, principal, **kwargs):
+        policy = self._knowledge_policy
+        if policy is None:
+            from cli_agent_orchestrator.services.knowledge_policy import KnowledgeAccessDenied
+
+            raise KnowledgeAccessDenied("reviewed memory requires a durable knowledge policy")
+        return self._knowledge_call(
+            "recovery_page",
+            "read",
+            principal,
+            job_id=policy.job_id,
+            grant_id=policy.grant_id,
+            grant_revision=policy.expected_grant_revision,
+            **kwargs,
+        )
+
+    def review_revision(self, principal, record_id, revision, decision, **kwargs):
+        return self._knowledge_call(
+            "review_revision", "review", principal, record_id, revision, decision, **kwargs
+        )
+
+    def tombstone_revision(self, principal, record_id, revision, **kwargs):
+        return self._knowledge_call(
+            "tombstone_revision", "tombstone", principal, record_id, revision, **kwargs
+        )
+
+    def instructions(self, principal, *, scope, scope_id):
+        return self._knowledge_call(
+            "instructions", "instructions", principal, scope=scope, scope_id=scope_id
+        )
+
+    def _legacy_access(self):
+        from cli_agent_orchestrator.services.knowledge_policy import (
+            KnowledgeAccessDenied,
+            require_legacy_operator,
+        )
+
+        if self._knowledge_policy is not None:
+            raise KnowledgeAccessDenied("reviewed memory cannot fall back to legacy storage")
+        return require_legacy_operator()
+
+    def _legacy_repository(self):
+        """Prepare the actual metadata database once, outside SQLAlchemy transactions."""
+        from cli_agent_orchestrator.clients.work_repository import WorkRepository
+
+        if self._legacy_audit_repository is None:
+            with self._get_db_session() as session:
+                bind = session.get_bind()
+                url = bind.url
+                if session.in_transaction():
+                    raise RuntimeError("legacy audit preparation requires an idle session")
+                if (
+                    url.get_backend_name() != "sqlite"
+                    or not url.database
+                    or url.database == ":memory:"
+                ):
+                    raise RuntimeError("legacy memory requires persistent SQLite audit storage")
+                path = Path(url.database)
+            repository = WorkRepository(path)
+            repository.initialize()
+            self._legacy_audit_repository = repository
+        return self._legacy_audit_repository
+
+    @contextmanager
+    def _legacy_operation(self, action, target):
+        from cli_agent_orchestrator.services.knowledge_policy import legacy_memory_access
+
+        if (
+            action in {"store", "recall", "forget", "context", "curated_context"}
+            and not _is_memory_enabled()
+        ):
+            # Preserve canonical disabled return/error paths without reading memory.
+            yield None
+            return
+        principal = self._legacy_access()
+        try:
+            repository = self._legacy_repository()
+        except Exception:
+            from cli_agent_orchestrator.services.knowledge_policy import LegacyMemoryAuditError
+
+            raise LegacyMemoryAuditError(uuid.uuid4().hex, "authorized") from None
+        with legacy_memory_access(repository, principal, action, target) as operation_id:
+            yield operation_id
 
     # -------------------------------------------------------------------------
     # SQLite metadata operations
@@ -694,6 +816,7 @@ class MemoryService:
             latest_section_at is not None and occurred_at < latest_section_at
         )
 
+    @audited_legacy("store")
     async def store(
         self,
         content: str,
@@ -726,6 +849,7 @@ class MemoryService:
         """
         if not _is_memory_enabled():
             raise MemoryDisabledError(MEMORY_DISABLED_MESSAGE)
+        self._legacy_access()
 
         # Validate
         MemoryScope(scope)
@@ -742,6 +866,11 @@ class MemoryService:
                 # Do not log detector output; emit only a constant event marker.
                 logger.warning("federated_secret_rejected")
                 raise ValueError(f"federated write rejected: matched credential pattern {hit!r}")
+
+        from cli_agent_orchestrator.services.knowledge_policy import redact_knowledge_content
+
+        content, _ = redact_knowledge_content(content)
+        tags, _ = redact_knowledge_content(tags)
 
         # Store-time cross-scope write guard. A caller may
         # only write a scope it is authorised for (SCOPE_RANK). The caller
@@ -825,7 +954,9 @@ class MemoryService:
 
             if is_update:
                 # Read existing file to get original created_at and id from comment
-                existing_content = wiki_path.read_text(encoding="utf-8")
+                existing_content = redact_knowledge_content(wiki_path.read_text(encoding="utf-8"))[
+                    0
+                ]
                 # Try to extract original id
                 id_match = re.search(r"<!-- id: ([a-f0-9\-]+)", existing_content)
                 if id_match:
@@ -1087,6 +1218,7 @@ class MemoryService:
         except Exception as e:  # noqa: BLE001
             logger.debug(f"background compile thread failed (key={key}): {e}")
 
+    @audited_legacy("compact")
     async def _run_background_compile(
         self,
         *,
@@ -1114,6 +1246,7 @@ class MemoryService:
         "fallback:<reason>") — background callers ignore it; the sweep reports it.
         """
         from cli_agent_orchestrator.services import wiki_compiler
+        from cli_agent_orchestrator.services.knowledge_policy import redact_knowledge_content
         from cli_agent_orchestrator.services.settings_service import get_compile_timeout_s
 
         def _audit(event_type: str, summary: str, **fields: str) -> None:
@@ -1124,19 +1257,21 @@ class MemoryService:
             except ImportError:
                 pass
             except Exception as e:  # noqa: BLE001
+                propagate_legacy_policy_failure(e)
                 logger.debug(f"compile audit write failed (key={key}): {e}")
 
         wiki_path = self.get_wiki_path(scope, scope_id, key)
 
         try:
             result = await wiki_compiler.compile(
-                pre_append_content,
-                new_entry,
+                redact_knowledge_content(pre_append_content)[0],
+                redact_knowledge_content(new_entry)[0],
                 topic_key=key,
                 timeout_s=get_compile_timeout_s(),
                 provider_hint=provider_hint,
             )
         except Exception as e:  # noqa: BLE001 — compile is best-effort
+            propagate_legacy_policy_failure(e)
             logger.warning(f"background wiki compile failed (key={key}): {e}")
             _audit("compile_error", "background compile raised")
             return "error"
@@ -1150,7 +1285,7 @@ class MemoryService:
             )
             return f"fallback:{result.fallback_reason}"
 
-        compiled_content = result.compiled_content
+        compiled_content = redact_knowledge_content(result.compiled_content)[0]
 
         # Second-pass cross-reference detection (See-Also). Only runs when
         # the first pass actually used the LLM — append mode and fallbacks
@@ -1184,7 +1319,7 @@ class MemoryService:
                         MemoryRelationshipService,
                     )
 
-                    rel_svc = MemoryRelationshipService()
+                    rel_svc = MemoryRelationshipService(memory_service=self)
                     rel_svc.replace_set(
                         scope,
                         scope_id,
@@ -1201,9 +1336,11 @@ class MemoryService:
                         see_also_targets = rel_svc.active_targets(
                             scope, scope_id, key, type="relates_to"
                         )
-                    except Exception:  # noqa: BLE001
+                    except Exception as _policy_error:  # noqa: BLE001
+                        propagate_legacy_policy_failure(_policy_error)
                         pass
                 except Exception as e:  # noqa: BLE001 — non-blocking; marker already written
+                    propagate_legacy_policy_failure(e)
                     logger.warning(f"relationship replace_set (compiler) failed, ignoring: {e}")
                 if see_also_targets:
                     see_also = self._render_see_also(
@@ -1222,6 +1359,7 @@ class MemoryService:
                 used_llm=str(related_result.used_llm).lower(),
             )
         except Exception as e:  # noqa: BLE001 — non-blocking promise
+            propagate_legacy_policy_failure(e)
             logger.warning(f"find_related raised, ignoring: {e}")
 
         topic_lock_path = wiki_path.parent / f".{wiki_path.stem}.lock"
@@ -1259,6 +1397,7 @@ class MemoryService:
                     preserve_provenance=True,
                 )
             except Exception as e:  # noqa: BLE001
+                propagate_legacy_policy_failure(e)
                 logger.debug(f"compile metadata stamp failed (key={key}): {e}")
             logger.info(f"background compile applied (key={key})")
             _audit(
@@ -1274,6 +1413,7 @@ class MemoryService:
             finally:
                 topic_lock_fd.close()
 
+    @audited_legacy("compact")
     async def compact(
         self,
         scope: str = "global",
@@ -1293,6 +1433,7 @@ class MemoryService:
         them — this is the explicit, interactive path, not the deferred one.
         Returns ``{key: status}`` per topic plus a ``_summary`` count.
         """
+        self._legacy_access()
         from cli_agent_orchestrator.clients.database import MemoryMetadataModel
 
         valid_scopes = {s.value for s in MemoryScope}
@@ -1320,6 +1461,7 @@ class MemoryService:
                             continue
                     candidates.append((row.key, row.scope_id))
         except Exception as e:  # noqa: BLE001
+            propagate_legacy_policy_failure(e)
             logger.warning(f"compact: candidate query failed: {e}")
             return {"_summary": {"error": str(e)}}
 
@@ -1620,8 +1762,9 @@ class MemoryService:
                 MemoryRelationshipService,
             )
 
-            rel_svc = MemoryRelationshipService()
-        except Exception:  # pragma: no cover - import guard
+            rel_svc = MemoryRelationshipService(memory_service=self)
+        except Exception as _policy_error:  # pragma: no cover - import guard
+            propagate_legacy_policy_failure(_policy_error)
             return set()
         groups: dict = {}
         for m in memories:
@@ -1630,7 +1773,8 @@ class MemoryService:
         for (g_scope, g_scope_id), keys in groups.items():
             try:
                 hits = rel_svc.superseded_targets(g_scope, g_scope_id, keys)
-            except Exception:  # noqa: BLE001 — non-blocking
+            except Exception as _policy_error:  # noqa: BLE001 — non-blocking
+                propagate_legacy_policy_failure(_policy_error)
                 continue
             for k in hits:
                 out.add((g_scope, g_scope_id, k))
@@ -1678,8 +1822,9 @@ class MemoryService:
                 MemoryRelationshipService,
             )
 
-            rel_svc: Any = MemoryRelationshipService()
+            rel_svc: Any = MemoryRelationshipService(memory_service=self)
         except Exception as e:  # pragma: no cover - import guard
+            propagate_legacy_policy_failure(e)
             logger.debug(f"related expansion service import failed: {e}")
             rel_svc = None
         # Batch-load the legacy related_keys marker per (scope, scope_id) so the
@@ -1700,6 +1845,7 @@ class MemoryService:
                     member_keys, g_scope, g_scope_id
                 )
             except Exception as e:  # noqa: BLE001 — non-blocking
+                propagate_legacy_policy_failure(e)
                 logger.debug(f"related_keys lookup failed for {g_scope}: {e}")
                 legacy_lookups[(g_scope, g_scope_id)] = {}
             if rel_svc is None:
@@ -1710,6 +1856,7 @@ class MemoryService:
                     g_scope, g_scope_id, member_keys, type="relates_to"
                 )
             except Exception as e:  # noqa: BLE001 — non-blocking
+                propagate_legacy_policy_failure(e)
                 logger.debug(f"active_targets_for failed for {g_scope}: {e}")
                 store_lookups[(g_scope, g_scope_id)] = {}
 
@@ -1846,6 +1993,7 @@ class MemoryService:
     # Recall
     # -------------------------------------------------------------------------
 
+    @audited_legacy("recall")
     async def recall(
         self,
         query: Optional[str] = None,
@@ -1880,6 +2028,7 @@ class MemoryService:
         """
         if not _is_memory_enabled():
             return []
+        self._legacy_access()
 
         if search_mode not in VALID_SEARCH_MODES:
             raise ValueError(
@@ -2063,6 +2212,7 @@ class MemoryService:
                         # cross-project-demote a same-named memory.
                         results.sort(key=lambda m: 1 if self._is_superseded(m, superseded) else 0)
                 except Exception as e:  # noqa: BLE001 — non-blocking
+                    propagate_legacy_policy_failure(e)
                     logger.debug(f"superseded demotion skipped: {e}")
             if not scope:
                 # Stable scope-precedence sort AFTER score/usage preserves
@@ -2075,6 +2225,7 @@ class MemoryService:
         try:
             self._increment_access_count(sliced)
         except Exception as e:  # noqa: BLE001 — non-blocking promise
+            propagate_legacy_policy_failure(e)
             logger.warning(
                 "memory_increment_failed attempted=%d scope=%s",
                 len(sliced),
@@ -2088,9 +2239,20 @@ class MemoryService:
             try:
                 sliced = self._expand_related(sliced)
             except Exception as e:  # noqa: BLE001 — non-blocking promise
+                propagate_legacy_policy_failure(e)
                 logger.warning(f"related expansion failed, returning primaries: {e}")
 
-        return sliced
+        from cli_agent_orchestrator.services.knowledge_policy import redact_knowledge_content
+
+        return [
+            memory.model_copy(
+                update={
+                    "content": redact_knowledge_content(memory.content or "")[0],
+                    "tags": redact_knowledge_content(memory.tags or "")[0],
+                }
+            )
+            for memory in sliced
+        ]
 
     def _identity(self, m) -> tuple:
         """Full memory identity ``(key, scope, scope_id)`` matching SQLite.
@@ -2633,6 +2795,8 @@ class MemoryService:
 
     def _parse_wiki_file(self, wiki_file: Path, file_content: str, entry: dict) -> Optional[Memory]:
         """Parse a wiki topic file into a Memory object."""
+        from cli_agent_orchestrator.services.knowledge_policy import redact_knowledge_content
+
         # Extract id from comment
         id_match = re.search(r"<!-- id: ([a-f0-9\-]+)", file_content)
         memory_id = id_match.group(1) if id_match else str(uuid.uuid4())
@@ -2676,7 +2840,7 @@ class MemoryService:
             scope=scope,
             scope_id=entry.get("scope_id"),
             file_path=str(wiki_file),
-            tags=tags,
+            tags=redact_knowledge_content(tags)[0],
             source_provider=None,
             source_terminal_id=None,
             created_at=created_at,
@@ -2688,6 +2852,7 @@ class MemoryService:
     # Forget
     # -------------------------------------------------------------------------
 
+    @audited_legacy("forget")
     async def forget(
         self,
         key: str,
@@ -2705,6 +2870,7 @@ class MemoryService:
         """
         if not _is_memory_enabled():
             raise MemoryDisabledError(MEMORY_DISABLED_MESSAGE)
+        self._legacy_access()
 
         key = self._sanitize_key(key)
         if scope_id is None:
@@ -2717,6 +2883,7 @@ class MemoryService:
             try:
                 self._delete_metadata(key, scope, scope_id)
             except Exception as e:
+                propagate_legacy_policy_failure(e)
                 logger.warning(f"Memory metadata SQLite delete failed (key={key}): {e}")
             # The relationship rows are just as stale as the metadata row was —
             # purge them on this path too, else a file that vanished out-of-band
@@ -2738,6 +2905,7 @@ class MemoryService:
         try:
             self._delete_metadata(key, scope, scope_id)
         except Exception as e:
+            propagate_legacy_policy_failure(e)
             logger.warning(f"Memory metadata SQLite delete failed (key={key}): {e}")
 
         # Drop the typed relationship rows too (issue #511 / PR #524 review):
@@ -2764,16 +2932,20 @@ class MemoryService:
             # ``scope_id`` here is already the resolved LOGICAL value (forget()
             # resolves it before use); the store maps None to its own NOT-NULL
             # sentinel internally, so it must NOT be pre-mapped here.
-            removed = MemoryRelationshipService().purge_for_key(scope, scope_id, key)
+            removed = MemoryRelationshipService(memory_service=self).purge_for_key(
+                scope, scope_id, key
+            )
             if removed:
                 logger.info(f"Purged {removed} relationship row(s) for forgotten memory: {key}")
         except Exception as e:  # noqa: BLE001 — never fail a completed forget
+            propagate_legacy_policy_failure(e)
             logger.warning(f"Relationship purge failed (key={key}): {e}")
 
     # -------------------------------------------------------------------------
     # Context for terminal injection
     # -------------------------------------------------------------------------
 
+    @audited_legacy("context")
     def get_memory_context_for_terminal(
         self,
         terminal_id: str,
@@ -2791,11 +2963,13 @@ class MemoryService:
         Returns ``""`` when ``memory.enabled`` is False (U5 / SC-6) — never
         reads index.md or wiki files.
         """
+        self._legacy_access()
         terminal_context = self._get_terminal_context(terminal_id)
         if not terminal_context:
             return ""
         return self.get_memory_context(terminal_context, budget_chars=budget_chars)
 
+    @audited_legacy("context")
     def get_memory_context(
         self,
         terminal_context: dict,
@@ -2809,6 +2983,7 @@ class MemoryService:
         """
         if not _is_memory_enabled():
             return ""
+        self._legacy_access()
 
         scopes_in_order = [
             MemoryScope.SESSION.value,
@@ -2880,6 +3055,7 @@ class MemoryService:
                     [m.key for m in scope_memories], scope_val, scope_id
                 )
             except Exception as e:  # noqa: BLE001 — non-blocking
+                propagate_legacy_policy_failure(e)
                 logger.debug(f"related_keys lookup failed: {e}")
                 related_lookup = {}
 
@@ -2907,6 +3083,11 @@ class MemoryService:
             for mem in scope_memories:
                 tag = " [related]" if getattr(mem, "is_related", False) else ""
                 line = f"- [{mem.scope}] {mem.key}{tag}: {mem.content}"
+                from cli_agent_orchestrator.services.knowledge_policy import (
+                    redact_knowledge_content,
+                )
+
+                line, _ = redact_knowledge_content(line)
                 line_len = len(line) + 1
                 if scope_used_chars + line_len > scope_char_cap:
                     if getattr(mem, "is_related", False):
@@ -2948,6 +3129,7 @@ class MemoryService:
             logger.debug(f"_find_context_manager_terminal failed: {e}")
         return None
 
+    @audited_legacy("curated_context")
     def get_curated_memory_context(
         self, terminal_id: str, task_description: Optional[str] = None
     ) -> str:
@@ -2961,6 +3143,7 @@ class MemoryService:
         """
         if not _is_memory_enabled():
             return ""
+        self._legacy_access()
         try:
             ctx = self._get_terminal_context(terminal_id)
             session_name = ctx.get("session_name") if ctx else None
@@ -3014,8 +3197,13 @@ class MemoryService:
                 start = output.rfind("<cao-memory>")
                 end = output.rfind("</cao-memory>")
                 if 0 <= start < end:
-                    return output[start : end + len("</cao-memory>")]
+                    from cli_agent_orchestrator.services.knowledge_policy import (
+                        redact_knowledge_content,
+                    )
+
+                    return redact_knowledge_content(output[start : end + len("</cao-memory>")])[0]
         except Exception as e:
+            propagate_legacy_policy_failure(e)
             logger.debug(f"get_curated_memory_context failed, falling back: {e}")
 
         return self.get_memory_context_for_terminal(terminal_id)
@@ -3024,6 +3212,7 @@ class MemoryService:
     # Archive export/import (#345 D6) — thin delegators, no format logic here
     # -------------------------------------------------------------------------
 
+    @audited_legacy("export")
     def export_memories(
         self,
         fmt: str,
@@ -3039,11 +3228,13 @@ class MemoryService:
         Raises ``ValueError`` on unknown format names (registry contract);
         the CLI/API boundary maps it to a user-facing error.
         """
+        self._legacy_access()
         from cli_agent_orchestrator.services.memory_archive import get_backend
 
         backend = get_backend(fmt)(self)
         return backend.export_bundle(scope, scope_id, dest, include_history, redact, prune=prune)
 
+    @audited_legacy("import")
     def import_memories(
         self,
         fmt: str,
@@ -3054,6 +3245,7 @@ class MemoryService:
         terminal_context: Optional[dict] = None,
     ) -> ImportReport:
         """Import an archive bundle through the backend registered as ``fmt``."""
+        self._legacy_access()
         from cli_agent_orchestrator.services.memory_archive import get_backend
 
         backend = get_backend(fmt)(self)

@@ -19,10 +19,18 @@ state COMPLETED_UNVALIDATED), never raised.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import math
+import os
 import re
+import stat
+import uuid
 from collections import OrderedDict
-from typing import Any, Dict, List, Optional, Tuple
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, TypeVar
 
 import jsonschema  # type: ignore[import-untyped]  # stable Draft 2020-12 API, matches N1
 
@@ -161,3 +169,223 @@ def record_step_output(
     )
     step_output_store.put(run_id, step_id, record)
     return record
+
+
+@dataclass(frozen=True)
+class ArtifactRef:
+    """Immutable reference to exact bytes in one result store, never an arbitrary path."""
+
+    content_hash: str
+    immutable_location: str
+    byte_length: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.content_hash, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", self.content_hash
+        ):
+            raise ValueError("artifact hash must be a lowercase SHA-256 digest")
+        if (
+            not isinstance(self.immutable_location, str)
+            or self.immutable_location != self.content_hash
+        ):
+            raise ValueError("artifact location must be its hash filename")
+        if type(self.byte_length) is not int or self.byte_length < 0:
+            raise ValueError("artifact byte length must be a nonnegative integer")
+
+
+_ResultT = TypeVar("_ResultT")
+
+
+class ImmutableResultStore:
+    """Durable, content-addressed artifacts with serialized reference acceptance.
+
+    A failed acceptance leaves a recoverable orphan. ``accept`` must synchronously
+    commit the durable reference before returning; it may read artifacts, but must
+    not recursively publish or collect from this store. All reference writers and
+    orphan collectors must use this protocol. POSIX locking and fsync are required;
+    unavailable durability or locking never silently degrades to best effort.
+    """
+
+    def __init__(self, root: Path, *, max_bytes: int = 8 * 1024 * 1024) -> None:
+        if type(max_bytes) is not int or max_bytes <= 0:
+            raise ValueError("max_bytes must be a positive integer")
+        root = Path(root)
+        if ".." in root.parts:
+            raise ValueError("result root cannot contain traversal components")
+        self.root = root.absolute()
+        if self.root == Path(self.root.anchor):
+            raise ValueError("result root must be a dedicated directory")
+        self.max_bytes = max_bytes
+        with self._directory(create=True):
+            pass
+
+    @contextmanager
+    def _directory(self, *, create: bool = False) -> Iterator[int]:
+        """Walk without following even ancestor symlinks; use anchored directory FDs."""
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        descriptor = os.open(self.root.anchor, flags)
+        try:
+            for part in self.root.parts[1:]:
+                try:
+                    child = os.open(part, flags, dir_fd=descriptor)
+                except FileNotFoundError:
+                    if not create:
+                        raise
+                    try:
+                        os.mkdir(part, mode=0o700, dir_fd=descriptor)
+                        os.fsync(descriptor)
+                    except FileExistsError:
+                        pass
+                    child = os.open(part, flags, dir_fd=descriptor)
+                os.close(descriptor)
+                descriptor = child
+            info = os.fstat(descriptor)
+            if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o022:
+                raise ValueError("result root must be owned by this user and not publicly writable")
+            yield descriptor
+        finally:
+            os.close(descriptor)
+
+    @staticmethod
+    def _private_file(descriptor: int) -> os.stat_result:
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) & 0o077
+        ):
+            raise ValueError("result files must be owner-only regular files")
+        return info
+
+    @contextmanager
+    def _locked(self) -> Iterator[int]:
+        import fcntl
+
+        with self._directory() as directory:
+            lock = os.open(
+                ".result-store.lock",
+                os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+                0o600,
+                dir_fd=directory,
+            )
+            try:
+                self._private_file(lock)
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                try:
+                    yield directory
+                finally:
+                    fcntl.flock(lock, fcntl.LOCK_UN)
+            finally:
+                os.close(lock)
+
+    def _read_artifact(self, directory: int, ref: ArtifactRef, *, flush: bool = False) -> bytes:
+        if not isinstance(ref, ArtifactRef) or ref.byte_length > self.max_bytes:
+            raise ValueError("artifact reference exceeds the store's size bound")
+        descriptor = os.open(
+            ref.immutable_location,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=directory,
+        )
+        with os.fdopen(descriptor, "rb") as source:
+            info = self._private_file(source.fileno())
+            if info.st_size != ref.byte_length:
+                raise ValueError("artifact size does not match its reference")
+            content = source.read(self.max_bytes + 1)
+            if (
+                len(content) != ref.byte_length
+                or hashlib.sha256(content).hexdigest() != ref.content_hash
+            ):
+                raise ValueError("artifact bytes do not match their content hash")
+            if flush:
+                os.fsync(source.fileno())
+            return content
+
+    def read(self, ref: ArtifactRef) -> bytes:
+        """Read and verify bounded bytes; an open descriptor survives concurrent unlink."""
+        with self._directory() as directory:
+            return self._read_artifact(directory, ref)
+
+    def publish(self, content: bytes, accept: Callable[[ArtifactRef], _ResultT]) -> _ResultT:
+        """Flush immutable bytes before accepting their durable reference under the lock."""
+        if not isinstance(content, bytes) or len(content) > self.max_bytes:
+            raise ValueError("result must be bounded bytes")
+        content_hash = hashlib.sha256(content).hexdigest()
+        ref = ArtifactRef(content_hash, content_hash, len(content))
+        with self._locked() as directory:
+            try:
+                self._read_artifact(directory, ref, flush=True)
+            except FileNotFoundError:
+                temporary = ".publish-" + uuid.uuid4().hex
+                descriptor = os.open(
+                    temporary,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    0o600,
+                    dir_fd=directory,
+                )
+                try:
+                    with os.fdopen(descriptor, "wb") as output:
+                        os.fchmod(output.fileno(), 0o600)
+                        output.write(content)
+                        output.flush()
+                        os.fsync(output.fileno())
+                    try:
+                        os.link(
+                            temporary,
+                            content_hash,
+                            src_dir_fd=directory,
+                            dst_dir_fd=directory,
+                            follow_symlinks=False,
+                        )
+                    except FileExistsError:
+                        # Never overwrite a published inode, even if a non-cooperating
+                        # writer raced the lock. Verification below must still succeed.
+                        pass
+                finally:
+                    os.unlink(temporary, dir_fd=directory)
+                self._read_artifact(directory, ref, flush=True)
+            os.fsync(directory)
+            return accept(ref)
+
+    def collect_orphans(
+        self, referenced_hashes: Callable[[], set[str]], older_than: float
+    ) -> list[str]:
+        """Remove private unreferenced artifacts and crash staging files older than a cutoff.
+
+        Reference lookup happens under the publication lock. Unknown filenames,
+        symlinks, public/foreign-owned files and recent files are preserved. The
+        cutoff is an absolute UNIX timestamp. Errors obtaining references fail
+        before deletion. Returns removed filenames, including eligible staging names.
+        """
+        if (
+            isinstance(older_than, bool)
+            or not isinstance(older_than, (int, float))
+            or not math.isfinite(older_than)
+        ):
+            raise ValueError("older_than must be a finite UNIX timestamp")
+        removed = []
+        with self._locked() as directory:
+            referenced = referenced_hashes()
+            if not isinstance(referenced, set) or any(
+                not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+                for value in referenced
+            ):
+                raise ValueError("reference lookup must return a set of content hashes")
+            for name in sorted(os.listdir(directory)):
+                if (
+                    not re.fullmatch(r"(?:[0-9a-f]{64}|\.publish-[0-9a-f]{32})", name)
+                    or name in referenced
+                ):
+                    continue
+                info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or info.st_uid != os.geteuid()
+                    or stat.S_IMODE(info.st_mode) & 0o077
+                    or info.st_mtime >= older_than
+                ):
+                    continue
+                os.unlink(name, dir_fd=directory)
+                removed.append(name)
+            if removed:
+                os.fsync(directory)
+        return removed

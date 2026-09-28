@@ -26,14 +26,18 @@ avoid changing security-critical resolution behavior in this PR. See
 docs/configuration.md for the full rationale.
 """
 
+import hashlib
+import ipaddress
+import json
 import logging
 import os
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, List, Optional, cast
 
 import jwt
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from jwt import PyJWKClient, PyJWKClientError
 
 from cli_agent_orchestrator.constants import API_BASE_URL
@@ -244,14 +248,8 @@ def _scopes_from_claims(claims: dict) -> List[str]:
     return deduped
 
 
-def extract_scopes_from_token(token: str) -> List[str]:
-    """Validate ``token`` (RS256 + issuer + audience + expiry via JWKS) and
-    return scopes.
-
-    Default-off: when auth is disabled, returns the full scope set without
-    touching the token. When enabled, raises (``jwt.PyJWTError`` subclasses or
-    a generic ``Exception`` from the JWKS fetch) on any validation failure so the
-    caller can map it to HTTP 401.
+def verify_token_claims(token: str) -> dict:
+    """Validate a configured IdP token once and retain its verified claims.
 
     Validation pins the token to the configured authorization server (``iss``)
     and audience (``aud``) in addition to the RS256 signature and ``exp`` so a
@@ -260,11 +258,11 @@ def extract_scopes_from_token(token: str) -> List[str]:
     """
 
     if not is_auth_enabled():
-        return list(FULL_SCOPE_SET)
+        raise jwt.InvalidTokenError("identity provider is not configured")
 
     uri = get_jwks_uri()
     if not uri:  # pragma: no cover - guarded by is_auth_enabled
-        return list(FULL_SCOPE_SET)
+        raise jwt.InvalidTokenError("identity provider is not configured")
 
     client = _jwks_cache.get_client(uri)
     try:
@@ -296,7 +294,14 @@ def extract_scopes_from_token(token: str) -> List[str]:
         issuer=expected_issuer,
         options=cast("Any", options),
     )
-    return _scopes_from_claims(claims)
+    return claims
+
+
+def extract_scopes_from_token(token: str) -> List[str]:
+    """Preserve legacy default-off scopes; otherwise use the verified claims."""
+    if not is_auth_enabled():
+        return list(FULL_SCOPE_SET)
+    return _scopes_from_claims(verify_token_claims(token))
 
 
 def get_scopes_for_local_token() -> List[str]:
@@ -441,3 +446,99 @@ def require_any_scope(*required: str) -> Callable[..., Any]:
         return scopes
 
     return _dep
+
+
+@dataclass(frozen=True, init=False)
+class Principal:
+    """Internal verified identity, constructed only by authentication/local factories.
+
+    This is not a request DTO and deliberately has no public field constructor.
+    """
+
+    id: str
+    issuer: str
+    subject: str
+    scopes: frozenset[str]
+    kind: str
+
+
+_PRINCIPAL_FACTORY_SEAL = object()
+
+
+def is_verified_principal(value: object) -> bool:
+    """Return whether an identity came from this module's validated factories.
+
+    ``Principal`` deliberately has no public constructor, but Python callers can
+    still allocate one with ``object.__new__``.  The private identity seal makes
+    the authority boundary distinguish that lookalike from a token-validated or
+    trusted-loopback factory result without accepting request/body fields.
+    """
+    return (
+        type(value) is Principal
+        and getattr(value, "_factory_seal", None) is _PRINCIPAL_FACTORY_SEAL
+    )
+
+
+def _verified_principal(issuer: str, subject: str, scopes: List[str], kind: str) -> Principal:
+    if not isinstance(issuer, str) or not issuer.strip() or len(issuer) > 2048:
+        raise jwt.InvalidTokenError("missing or invalid issuer")
+    if not isinstance(subject, str) or not subject.strip() or len(subject) > 512:
+        raise jwt.InvalidTokenError("missing or invalid subject")
+    digest = hashlib.sha256(
+        json.dumps([issuer, subject], separators=(",", ":")).encode()
+    ).hexdigest()
+    principal = object.__new__(Principal)
+    for field, value in (
+        ("id", "principal-" + digest),
+        ("issuer", issuer),
+        ("subject", subject),
+        ("scopes", frozenset(scopes)),
+        ("kind", kind),
+    ):
+        object.__setattr__(principal, field, value)
+    object.__setattr__(principal, "_factory_seal", _PRINCIPAL_FACTORY_SEAL)
+    return principal
+
+
+def principal_from_token(token: str) -> Principal:
+    """Derive identity exclusively from signature/issuer/audience/expiry-verified claims."""
+    claims = verify_token_claims(token)
+    return _verified_principal(
+        claims.get("iss"), claims.get("sub"), _scopes_from_claims(claims), "jwt"
+    )
+
+
+def local_operator_principal() -> Principal:
+    """Trusted local CLI factory; callers must not expose this factory to request data."""
+    if is_auth_enabled():
+        raise PermissionError("configured authentication requires a verified token")
+    return _verified_principal(
+        "urn:cao:local-operator", str(os.geteuid()), list(FULL_SCOPE_SET), "local_operator"
+    )
+
+
+async def get_current_principal(
+    request: Request, authorization: Optional[str] = Header(default=None)
+) -> Principal:
+    """Fail-closed identity dependency for new work routes, independent of legacy scopes.
+
+    Local mode trusts only server-provided socket addresses, never Host, forwarded
+    headers, caller_id or bodies. Deployments must keep ASGI peer metadata trusted.
+    """
+    try:
+        if is_auth_enabled():
+            token = _extract_bearer(authorization)
+            if not token:
+                raise jwt.InvalidTokenError("missing bearer token")
+            return principal_from_token(token)
+        for key in ("server", "client"):
+            address = request.scope.get(key)
+            if not address or not ipaddress.ip_address(address[0]).is_loopback:
+                raise PermissionError("local work requires loopback sockets")
+        return local_operator_principal()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=401,
+            detail="verified work identity required",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc

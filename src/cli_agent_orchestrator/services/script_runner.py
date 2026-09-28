@@ -424,9 +424,16 @@ def make_step_terminal_recorder(
        crash in the execution window leaves the row ``running`` rather than
        absent (FR-4 guard 1 / INV-2).
 
-    The journal write is BEST-EFFORT (BR-10/INV-4): ``begin_step`` raises and this
+    The legacy two-argument journal write is BEST-EFFORT: ``begin_step`` raises and this
     caller catches, because failing to record a RUNNING row degrades resumability
     and must never fail a step that is about to run.
+
+    The callable also exposes ``record_contract`` for the step substrate. That
+    hook atomically persists the immutable effective contract and RUNNING row,
+    comparing the generation frozen at callback construction. It fails closed
+    before task delivery and never enters the legacy best-effort path. Terminal
+    allocation precedes this gate; a rejection retains its handle in the typed
+    substrate error and does not replace a competing step's in-memory handle.
     """
     if not env_vars:
         return None
@@ -438,7 +445,7 @@ def make_step_terminal_recorder(
     if not isinstance(record, ScriptRunRecord):
         return None
 
-    def _record(terminal_id: str, call_fingerprint: str) -> None:
+    def _remember(terminal_id: str, call_fingerprint: str) -> None:
         from cli_agent_orchestrator.models.workflow import StepState
 
         st = record.step_states.get(step_id)
@@ -449,6 +456,13 @@ def make_step_terminal_recorder(
         # BR-2: in-memory publication. The durable column is begin_step's to write.
         st.call_fingerprint = call_fingerprint
 
+    # Freeze the generation at callback construction. A resume may replace or
+    # mutate the live record while terminal allocation is still in flight.
+    contract_generation = record.generation
+    contract_identity = None
+
+    def _record(terminal_id: str, call_fingerprint: str) -> None:
+        _remember(terminal_id, call_fingerprint)
         try:
             workflow_journal.begin_step(run_id, step_id, _now(), call_fingerprint)
         except (
@@ -465,6 +479,33 @@ def make_step_terminal_recorder(
                 e,
             )
 
+    def _record_contract(terminal_id: str, call_fingerprint: str, contract: dict) -> None:
+        # Unlike legacy telemetry, contract persistence is a delivery gate.
+        # Do not overwrite a competing attempt's in-memory terminal on rejection.
+        # The substrate's typed rejection carries the new terminal for inspection.
+        nonlocal contract_identity
+        if (
+            contract["terminal_id"] != terminal_id
+            or contract["call_fingerprint"] != call_fingerprint
+        ):
+            raise ValueError("step contract identity does not match its delivery callback")
+        number = workflow_journal.begin_step_with_contract(
+            run_id, step_id, contract_generation, _now(), contract
+        )
+        contract_identity = (number, terminal_id, call_fingerprint)
+        _remember(terminal_id, call_fingerprint)
+
+    def _guard_delivery() -> None:
+        if contract_identity is None:
+            raise ValueError("step delivery requires a committed contract")
+        workflow_journal.assert_step_contract_current(
+            run_id, step_id, contract_generation, *contract_identity
+        )
+
+    # Preserve legacy callable shape without changing API/YAML callers. The
+    # substrate explicitly opts into this stronger hook when it is present.
+    _record.record_contract = _record_contract
+    _record.guard_delivery = _guard_delivery
     return _record
 
 
@@ -726,7 +767,7 @@ def _sanitise_output_json(output_json: Optional[str]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 def record_step_completion(
     env_vars: Optional[Dict[str, str]],
-) -> Optional[Callable[[Optional[str], Optional[str], Optional[str], Optional[str]], None]]:
+) -> Optional[Callable[..., None]]:
     """Build the RUNNING->COMPLETED/FAILED transition for a script-tier step.
 
     Mirrors ``make_step_terminal_recorder``'s guard exactly (BR-31 pattern):
@@ -784,6 +825,10 @@ def record_step_completion(
 
     A journal failure only degrades durable status; it never fails the step
     (INV-4/BR-10).
+
+    The optional ``error_kind`` comes from the failure producer. It survives the
+    durable settlement unchanged; old callers without it retain NULL so text
+    fallback stays a historical read concern, never a new write inference.
     """
     if not env_vars:
         return None
@@ -800,6 +845,8 @@ def record_step_completion(
         error: Optional[str],
         last_message: Optional[str],
         response_status: Optional[str] = None,
+        *,
+        error_kind: Optional[str] = None,
     ) -> None:
         st = record.step_states.get(step_id)
         if st is None:
@@ -861,6 +908,7 @@ def record_step_completion(
                 ),
                 output_json=_sanitise_output_json(raw_output_json),
                 error=_sanitise_error(st.error),
+                error_kind=error_kind if error is not None else None,
             )
             if not existed:
                 # AN OBSERVATION, NEVER A CONCLUSION (BR-7/SR-8, unit 6 TD-2a). The

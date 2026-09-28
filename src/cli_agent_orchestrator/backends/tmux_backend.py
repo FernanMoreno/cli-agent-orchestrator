@@ -6,12 +6,23 @@ no alternative is configured.
 """
 
 import logging
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
-from cli_agent_orchestrator.backends.base import TerminalBackend, TerminalBackendError
-from cli_agent_orchestrator.clients.tmux import TmuxClient
+from cli_agent_orchestrator.backends.base import (
+    ProcessRestrictionContract,
+    TerminalBackend,
+    TerminalBackendError,
+    UnsupportedWorkEnforcement,
+)
+from cli_agent_orchestrator.clients.tmux import TmuxClient, TmuxCreateUncertain
 
 logger = logging.getLogger(__name__)
+
+
+class WorkSessionCreateUncertain(TerminalBackendError):
+    """tmux may hold a Work session whose creation receipt was lost."""
+
+    error_kind = "work_session_create_uncertain"
 
 
 class TmuxBackend(TerminalBackend):
@@ -27,6 +38,20 @@ class TmuxBackend(TerminalBackend):
 
     # --- Session lifecycle ---
 
+    def preflight_work(self, contract: ProcessRestrictionContract) -> None:
+        """tmux transports terminal input; it cannot isolate paths, commands or network."""
+        raise UnsupportedWorkEnforcement(type(self).__name__)
+
+    def create_work_session(
+        self,
+        contract: ProcessRestrictionContract,
+        *args,
+        before_effect: Callable[[], None] | None = None,
+        **kwargs,
+    ) -> str:
+        self._before_work_effect(contract, before_effect)
+        return self.create_session(*args, work_safe=True, **kwargs)
+
     def create_session(
         self,
         session_name: str,
@@ -34,11 +59,26 @@ class TmuxBackend(TerminalBackend):
         terminal_id: str,
         working_directory: Optional[str] = None,
         extra_env: Optional[Dict[str, str]] = None,
+        *,
+        work_safe: bool = False,
     ) -> str:
         try:
+            if work_safe:
+                return self._client.create_session(
+                    session_name,
+                    window_name,
+                    terminal_id,
+                    working_directory,
+                    extra_env=extra_env,
+                    work_safe=True,
+                )
             return self._client.create_session(
                 session_name, window_name, terminal_id, working_directory, extra_env=extra_env
             )
+        except TmuxCreateUncertain as e:
+            raise WorkSessionCreateUncertain(
+                f"Work session '{session_name}' may remain; reconcile before retrying: {e}"
+            ) from e
         except Exception as e:
             raise TerminalBackendError(f"Failed to create session '{session_name}': {e}") from e
 

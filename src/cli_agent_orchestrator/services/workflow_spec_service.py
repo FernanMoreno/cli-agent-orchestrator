@@ -29,8 +29,10 @@ import hashlib
 import logging
 import os
 import re
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import local
 from typing import Dict, List, Optional, Union, cast
 
 import yaml
@@ -54,10 +56,39 @@ from cli_agent_orchestrator.models.workflow import (
 )
 from cli_agent_orchestrator.models.workflow import validate_only as _model_validate_only
 from cli_agent_orchestrator.services.script_lint import lint_script
+from cli_agent_orchestrator.utils import atomic_file
 
 logger = logging.getLogger(__name__)
 
 _NAME_RE = re.compile(WORKFLOW_NAME_RE)
+_authoring_context = local()
+
+
+class WorkflowRevisionConflict(ValueError):
+    """The canonical source changed since the editor read it."""
+
+
+@contextmanager
+def _authoring_lock(scan_dir: Optional[str]):
+    """Serialize cooperating authors and index rebuilds across processes.
+
+    Rebuild/lookup calls nest inside edits. Track nesting per thread so they do
+    not acquire a second flock on the same lock file and deadlock.
+    """
+    safe_dir = _safe_dir(scan_dir)
+    held = getattr(_authoring_context, "held", frozenset())
+    if safe_dir in held:
+        yield safe_dir
+        return
+    if not atomic_file._FCNTL_AVAILABLE:
+        raise RuntimeError("conditional workflow editing requires interprocess locks")
+    lock_path = atomic_file._lock_path_for(Path(safe_dir))
+    with atomic_file._file_lock(lock_path, atomic_file.DEFAULT_LOCK_TIMEOUT_SECONDS):
+        _authoring_context.held = held | {safe_dir}
+        try:
+            yield safe_dir
+        finally:
+            _authoring_context.held = held
 
 
 # ---------------------------------------------------------------------------
@@ -392,6 +423,11 @@ def upsert_index(spec: Union[WorkflowSpec, ScriptSpec], source_path: str) -> Non
 
 
 def rebuild_index_from_files(scan_dir: Optional[str] = None) -> int:
+    with _authoring_lock(scan_dir):
+        return _rebuild_index_from_files(scan_dir)
+
+
+def _rebuild_index_from_files(scan_dir: Optional[str] = None) -> int:
     """Full-rebuild ``workflow_index`` from the spec files in ``scan_dir`` (C1a, A2).
 
     The index is disposable: DELETE everything, then re-materialize from the
@@ -680,6 +716,13 @@ def _read_script_spec(path: str, stem: str, base_dir: Optional[str] = None) -> S
 def get_workflow(
     name_or_path: str, scan_dir: Optional[str] = None
 ) -> Union[WorkflowSpec, ScriptSpec]:
+    with _authoring_lock(scan_dir):
+        return _get_workflow(name_or_path, scan_dir)
+
+
+def _get_workflow(
+    name_or_path: str, scan_dir: Optional[str] = None
+) -> Union[WorkflowSpec, ScriptSpec]:
     """Return the parsed/validated spec for a workflow name or a file path (C4, A1).
 
     Extension-based tier dispatch (FR-4.2): ``.yaml``/``.yml`` resolves via the
@@ -724,7 +767,102 @@ def _load_by_extension(real_path: str, scan_dir: Optional[str]) -> Union[Workflo
     raise ValueError(f"unrecognized spec extension: {ext}")
 
 
+def _source_view(name: str, raw: bytes) -> dict:
+    if len(raw) > WORKFLOW_MAX_SPEC_BYTES:
+        raise ValueError(f"spec exceeds {WORKFLOW_MAX_SPEC_BYTES} bytes (max)")
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("spec is not valid UTF-8") from exc
+    return {"name": name, "content": content, "source_hash": hashlib.sha256(raw).hexdigest()}
+
+
+def get_workflow_source(name: str, scan_dir: Optional[str] = None) -> dict:
+    """Return an exact-byte source revision without changing legacy parsed DTOs."""
+    with _authoring_lock(scan_dir) as safe_dir:
+        path = _resolve_source_path(name, safe_dir)
+        _load_by_extension(path, safe_dir)
+        _, raw = _read_contained_spec_bytes(path, safe_dir)
+        return _source_view(name, raw)
+
+
+def _validate_updated_source(name: str, path: str, raw: bytes) -> Union[WorkflowSpec, ScriptSpec]:
+    source = _source_view(name, raw)["content"]
+    extension = os.path.splitext(path)[1].lower()
+    if extension in (".yaml", ".yml"):
+        result = _model_validate_only(source)
+        if result.status == "fail":
+            raise ValueError("; ".join(result.errors) or "spec failed validation")
+        spec = WorkflowSpec(**yaml.safe_load(source))
+        if spec.name != name:
+            raise ValueError("editing cannot change the workflow name")
+        return spec
+    if extension == ".py":
+        # Parse only: authoring never executes supplied Python.
+        inputs = _extract_inputs(source)
+        findings = lint_script(source, path).findings
+        if any(finding.rule_id == "syntax" for finding in findings):
+            raise ValueError("script contains invalid Python syntax")
+        return ScriptSpec(
+            name=name,
+            path=path,
+            source=source,
+            content_hash=hashlib.sha256(raw).hexdigest(),
+            findings=findings,
+            inputs=inputs,
+        )
+    raise ValueError(f"unrecognized spec extension: {extension}")
+
+
+def update_workflow(
+    name: str, content: str, expected_source_hash: str, scan_dir: Optional[str] = None
+) -> dict:
+    """Compare and publish a validated revision under the authoring lock.
+
+    Files remain canonical and the index remains derived. An index failure
+    restores the prior file before reporting failure. A process crash between
+    publication and indexing is recovered by the existing rebuild-on-read.
+    External editors must use this conditional operation to share its lock.
+    """
+    _validate_name(name)
+    if not isinstance(expected_source_hash, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", expected_source_hash
+    ):
+        raise ValueError("expected_source_hash must be lowercase SHA-256")
+    if not isinstance(content, str):
+        raise ValueError("content must be a UTF-8 string")
+    raw = content.encode("utf-8")
+    _source_view(name, raw)
+    with _authoring_lock(scan_dir) as safe_dir:
+        path = _resolve_source_path(name, safe_dir)
+        path, previous = _read_contained_spec_bytes(path, safe_dir)
+        previous_view = _source_view(name, previous)
+        if previous_view["source_hash"] != expected_source_hash:
+            raise WorkflowRevisionConflict(
+                "workflow source changed; read the current revision before editing"
+            )
+        if os.path.splitext(path)[1].lower() == ".py":
+            _check_tier_collision(_stem_of(path), safe_dir)
+        spec = _validate_updated_source(name, path, raw)
+        # Recheck the configured-root containment immediately before publishing.
+        target = _resolve_contained_spec_path(path, safe_dir)
+        if not target.startswith(safe_dir + os.sep) or target != path:
+            raise ValueError("workflow spec path changed outside its validated directory")
+        atomic_file._atomic_publish(Path(target), content, "utf-8")
+        try:
+            upsert_index(spec, target)
+        except Exception:
+            atomic_file._atomic_publish(Path(target), previous_view["content"], "utf-8")
+            raise
+        return _source_view(name, raw)
+
+
 def delete_workflow(name: str, scan_dir: Optional[str] = None) -> None:
+    with _authoring_lock(scan_dir):
+        return _delete_workflow(name, scan_dir)
+
+
+def _delete_workflow(name: str, scan_dir: Optional[str] = None) -> None:
     """Delete a workflow's canonical YAML file and its index row (FR-2.4, B2-BR-4).
 
     Files are canonical, so removing the YAML is the authoritative act; the index

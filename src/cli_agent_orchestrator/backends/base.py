@@ -5,9 +5,12 @@ Core services depend only on this ABC, never on a concrete backend directly.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Dict, List, Optional
 
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.models.work_contract import ExecutableIdentity
 
 
 class TerminalBackendError(Exception):
@@ -24,6 +27,77 @@ class TerminalNotFoundError(TerminalBackendError):
         super().__init__(message or f"Terminal not found: {terminal_id}")
 
 
+@dataclass(frozen=True)
+class ProcessRestrictionContract:
+    """Required process-boundary restrictions, not authorization or a sandbox.
+
+    ``paths`` retains its historical name for the reserved writable paths.
+    ``read_paths`` carries the effective read-only path ceiling and
+    ``checkout_root`` its canonical work directory. Every dimension is
+    explicit: empty tuples deny all; None is invalid. These are frozen
+    requirements for an enforcing backend, never prompt hints.
+    """
+
+    paths: tuple[str, ...]
+    commands: tuple[str, ...]
+    network: tuple[str, ...]
+    read_paths: tuple[str, ...] = ()
+    checkout_root: str | None = None
+    executable_identities: tuple[ExecutableIdentity, ...] = ()
+    tools: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.executable_identities) is not tuple or any(
+            not isinstance(identity, ExecutableIdentity) for identity in self.executable_identities
+        ):
+            raise ValueError("executable identities require an explicit immutable tuple")
+        if (
+            self.executable_identities
+            and tuple(identity.command_token for identity in self.executable_identities)
+            != self.commands
+        ):
+            raise ValueError("executable identities must match permitted commands")
+        for values in (self.paths, self.commands, self.network, self.tools, self.read_paths):
+            if type(values) is not tuple or any(
+                type(value) is not str or not value.strip() or "\x00" in value for value in values
+            ):
+                raise ValueError(
+                    "restriction dimensions require explicit tuples of nonempty strings"
+                )
+        if self.checkout_root is not None and (
+            type(self.checkout_root) is not str
+            or not self.checkout_root
+            or not self.checkout_root.strip()
+            or "\x00" in self.checkout_root
+            or not Path(self.checkout_root).is_absolute()
+        ):
+            raise ValueError("checkout_root must be a nonempty absolute path or None")
+
+    @property
+    def enforcement_level(self) -> str:
+        return "process_boundary"
+
+
+class UnsupportedWorkEnforcement(TerminalBackendError):
+    """Stable pre-effect rejection; no claimed isolation is available."""
+
+    error_kind = "unsupported_enforcement"
+    required_level = "process_boundary"
+
+    def __init__(self, backend_name: str, reason: str | None = None):
+        self.backend_name = backend_name
+        self.reason = reason or "required process-boundary enforcement is unavailable"
+        super().__init__(
+            f"{backend_name} cannot verify required process-boundary enforcement: {self.reason}"
+        )
+
+
+class WorkEffectAuthorizationRequired(TerminalBackendError):
+    """No server guard freshly authorized this protected external effect."""
+
+    error_kind = "work_effect_authorization_required"
+
+
 class TerminalBackend(ABC):
     """Abstract base class defining the terminal backend contract.
 
@@ -31,6 +105,66 @@ class TerminalBackend(ABC):
     (TmuxBackend, HerdrBackend) implement these methods using their respective
     multiplexer APIs.
     """
+
+    def preflight_work(self, contract: ProcessRestrictionContract) -> None:
+        """Reject protected execution unless a backend truly enforces restrictions.
+
+        Capability dictionaries, allowed_tools, grant allowlists, working directory
+        and prompts are NOT enforcement evidence. Existing terminal transports
+        (including herdr) inherit this rejection. A future backend must implement
+        verified isolation at its effect boundary, not just override a flag here.
+        Legacy methods below retain their historical, unisolated behavior.
+        """
+        raise UnsupportedWorkEnforcement(type(self).__name__)
+
+    def _before_work_effect(
+        self, contract: ProcessRestrictionContract, before_effect: Callable[[], None] | None
+    ) -> None:
+        """Preflight, then fresh server authority; never accept a client boolean.
+
+        The trusted coordinator's synchronous guard must revalidate current
+        grant/resources/snapshot and close its database transaction before
+        returning None. A guard exception or any other result blocks the effect.
+        This callback is not a public request parameter or sandbox capability.
+        """
+        self.preflight_work(contract)
+        if not callable(before_effect):
+            raise WorkEffectAuthorizationRequired("server before-effect guard required")
+        if before_effect() is not None:
+            raise WorkEffectAuthorizationRequired("server guard must authorize without a result")
+
+    def create_work_session(
+        self,
+        contract: ProcessRestrictionContract,
+        *args,
+        before_effect: Callable[[], None] | None = None,
+        **kwargs,
+    ) -> str:
+        """Protected counterpart of create_session; preflight precedes all effects."""
+        self._before_work_effect(contract, before_effect)
+        return self.create_session(*args, **kwargs)
+
+    def create_work_window(
+        self,
+        contract: ProcessRestrictionContract,
+        *args,
+        before_effect: Callable[[], None] | None = None,
+        **kwargs,
+    ) -> str:
+        """Protected counterpart of create_window; no fallback on rejection."""
+        self._before_work_effect(contract, before_effect)
+        return self.create_window(*args, **kwargs)
+
+    def send_work_keys(
+        self,
+        contract: ProcessRestrictionContract,
+        *args,
+        before_effect: Callable[[], None] | None = None,
+        **kwargs,
+    ) -> None:
+        """Protected send/continuation, checked anew before transport access."""
+        self._before_work_effect(contract, before_effect)
+        return self.send_keys(*args, **kwargs)
 
     # --- Session lifecycle ---
 

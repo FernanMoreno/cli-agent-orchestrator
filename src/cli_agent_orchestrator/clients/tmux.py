@@ -63,6 +63,10 @@ class TmuxLookupError(RuntimeError):
     """
 
 
+class TmuxCreateUncertain(RuntimeError):
+    """A Work session may exist after tmux creation failed to return its window."""
+
+
 # ---------------------------------------------------------------------------
 # stderr classification for ``session_exists_strict``.
 #
@@ -716,6 +720,8 @@ class TmuxClient:
         terminal_id: str,
         working_directory: Optional[str] = None,
         extra_env: Optional[Dict[str, str]] = None,
+        *,
+        work_safe: bool = False,
     ) -> str:
         """Create detached tmux session with initial window and return window name."""
         try:
@@ -769,7 +775,7 @@ class TmuxClient:
             # resize a no-op/shrink, which kiro handles correctly. All other
             # providers tolerate wider panes. See issue #216.
             try:
-                session = self.server.new_session(
+                new_session_kwargs = dict(
                     session_name=session_name,
                     window_name=window_name,
                     start_directory=working_directory,
@@ -778,7 +784,13 @@ class TmuxClient:
                     x=220,
                     y=50,
                 )
+                session = self.server.new_session(**new_session_kwargs)
             except ValueError as e:
+                if work_safe:
+                    raise TmuxCreateUncertain(
+                        f"Work session '{session_name}' may remain after creation failed; "
+                        "reconcile before retrying"
+                    ) from e
                 # new_session() lists the server to build its Session object,
                 # so it can fail to PARSE output for a session tmux has
                 # ALREADY created (see TmuxLookupError). tmux refusing a
@@ -798,6 +810,13 @@ class TmuxClient:
                     f"'{session_name}': {e}. Any partially created session has "
                     "been removed; the launch can be retried with the same name."
                 ) from e
+            except Exception as e:
+                if work_safe:
+                    raise TmuxCreateUncertain(
+                        f"Work session '{session_name}' may remain after creation failed; "
+                        "reconcile before retrying"
+                    ) from e
+                raise
 
             # Keep mouse-wheel input inside tmux. With mouse mode disabled,
             # tmux forwards wheel events to the foreground application as
@@ -833,13 +852,23 @@ class TmuxClient:
                 )
                 if window_name_result is None:
                     raise ValueError(f"Window name is None for session {session_name}")
-            except TmuxLookupError:
+            except TmuxLookupError as e:
+                if work_safe:
+                    raise TmuxCreateUncertain(
+                        f"Work session '{session_name}' may remain after window lookup failed; "
+                        "reconcile before retrying"
+                    ) from e
                 # Same half-state, one step later: the session is up but we
                 # cannot confirm its window. Use the parse-free CLI here too —
                 # session.kill() would need the very listing that just failed.
                 self._kill_via_cli(session_name)
                 raise
-            except Exception:
+            except Exception as e:
+                if work_safe:
+                    raise TmuxCreateUncertain(
+                        f"Work session '{session_name}' may remain after window lookup failed; "
+                        "reconcile before retrying"
+                    ) from e
                 # Any other post-creation failure: the session exists and this
                 # method is about to raise, so nothing downstream will ever
                 # learn it needs cleaning up. Kill it here.

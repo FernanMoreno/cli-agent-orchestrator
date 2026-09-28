@@ -16,10 +16,14 @@ Design constraints (functional-design business-logic-model §0/§1, B4-BR-1..5):
   ``_validate_key_part``) BEFORE they reach this layer; the journal does NOT
   re-validate ad-hoc (project Mandated rule, B4-BR-2).
 
-These helpers raise ``sqlite3.Error`` on a DB failure; the **caller** (the engine
+Legacy lifecycle helpers raise ``sqlite3.Error`` on a DB failure; the **caller** (the engine
 write-through, business-logic-model §1) wraps them best-effort per B4-BR-5 — a
 dropped write never raises into the engine drive loop. The read helpers
 (``get_run``/``get_steps``) are used by the rebuild + resume read path.
+
+``begin_step_with_contract`` is a stronger pre-delivery gate: callers must
+propagate its failure, never treat missing durable contract evidence as telemetry.
+The producer owns redaction; the DAL validates the closed schema and stores it.
 
 U3 (issue #312, script-tier journal extension, C3) additively extends this
 module: ``RunRow.tier``/``RunRow.generation`` and ``StepRow.call_fingerprint``
@@ -1099,6 +1103,524 @@ def append_step(
 # nothing in production calls either function until ``settlement-rewire``
 # (unit 8) rewires ``record_step_completion``.
 # ---------------------------------------------------------------------------
+def _serialise_step_contract(contract: dict) -> str:
+    """Closed, bounded v1 evidence; never accept arbitrary prompt/environment fields."""
+    import json
+    import math
+
+    names = {
+        "provider",
+        "profile",
+        "tools",
+        "engine",
+        "working_directory",
+        "model",
+        "effort",
+        "timeout_seconds",
+        "readiness_timeout_seconds",
+        "teardown",
+        "prompt_redelivery",
+        "worktree",
+        "retry_policy",
+        "redelivery_limit",
+        "pickup_grace_seconds",
+    }
+    if (
+        not isinstance(contract, dict)
+        or set(contract) != {"schema_version", "terminal_id", "call_fingerprint", "fields"}
+        or type(contract["schema_version"]) is not int
+        or contract["schema_version"] != 1
+    ):
+        raise ValueError("invalid step contract schema")
+    for name in ("terminal_id", "call_fingerprint"):
+        if not isinstance(contract[name], str) or not 0 < len(contract[name]) <= 256:
+            raise ValueError("invalid step contract identity")
+    if not isinstance(contract["fields"], dict) or set(contract["fields"]) != names:
+        raise ValueError("invalid step contract fields")
+    for name, field in contract["fields"].items():
+        if not isinstance(field, dict) or set(field) != {"status", "value", "provenance"}:
+            raise ValueError("invalid step contract field")
+        if field["status"] not in {"known", "unknown", "not_applicable"}:
+            raise ValueError("invalid step contract field status")
+        if field["provenance"] not in {
+            "terminal_registry",
+            "step_argument",
+            "step_policy",
+            "not_observed",
+            "not_recorded_at_launch",
+            "provider_not_applicable",
+            "reuse_not_applicable",
+            "caller_owned",
+            "redacted",
+        }:
+            raise ValueError("invalid step contract provenance")
+        value = field["value"]
+        if field["status"] != "known":
+            if value is not None:
+                raise ValueError("unknown contract fields cannot carry values")
+            continue
+        if name in {"timeout_seconds", "readiness_timeout_seconds", "pickup_grace_seconds"}:
+            valid = type(value) in {int, float} and math.isfinite(value) and value >= 0
+        elif name == "redelivery_limit":
+            valid = type(value) is int and value >= 0
+        elif name in {"teardown", "prompt_redelivery", "worktree"}:
+            valid = type(value) is bool
+        elif name == "tools":
+            valid = (
+                isinstance(value, list)
+                and len(value) <= 128
+                and all(isinstance(item, str) and 0 < len(item) <= 256 for item in value)
+            )
+        else:
+            valid = isinstance(value, str) and 0 < len(value) <= 4096
+        if not valid:
+            raise ValueError("invalid step contract value")
+    serialised = json.dumps(contract, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    if len(serialised.encode("utf-8")) > 65536:
+        raise ValueError("step contract exceeds byte limit")
+    return serialised
+
+
+def begin_step_with_contract(
+    run_id: str,
+    step_id: str,
+    generation: str,
+    updated_at: str,
+    contract: dict,
+    *,
+    attempt_number: Optional[int] = None,
+) -> int:
+    """Atomically freeze pre-delivery evidence and begin this journal attempt.
+
+    The verified work migration owns DDL. A missing table, stale generation or
+    unresolved attempt raises: this boundary must not degrade to best-effort.
+    Numbers are per step/generation; the legacy settlement count stays separate.
+    Explicit identical persistence retries return the existing number without
+    authorizing another delivery. This is not an admission-before-launch gate.
+    """
+    payload = _serialise_step_contract(contract)
+    if not isinstance(generation, str) or not generation:
+        raise ValueError("step contract generation required")
+    if attempt_number is not None and (type(attempt_number) is not int or attempt_number < 1):
+        raise ValueError("invalid contract attempt number")
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        WorkRepository._verify(conn)
+        run = conn.execute(
+            "SELECT generation,state,tier FROM workflow_run WHERE run_id=?", (run_id,)
+        ).fetchone()
+        if run is None or run != (generation, "running", "script"):
+            raise ValueError("step contract requires a current running script generation")
+        if attempt_number is not None:
+            existing = conn.execute(
+                "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
+                "AND generation=? AND attempt_number=?",
+                (run_id, step_id, generation, attempt_number),
+            ).fetchone()
+            if existing is None or existing[0] != payload:
+                raise ValueError("step contract retry does not match immutable evidence")
+            return attempt_number
+        prior = conn.execute(
+            "SELECT state,error_kind FROM workflow_run_step WHERE run_id=? AND step_id=?",
+            (run_id, step_id),
+        ).fetchone()
+        if prior is not None and prior[0] != "rerun_authorized" and prior != ("failed", "error"):
+            raise ValueError("step requires replay or an explicit recovery decision")
+        number = conn.execute(
+            "SELECT COALESCE(MAX(attempt_number),0)+1 FROM work_step_contracts "
+            "WHERE run_id=? AND step_id=? AND generation=?",
+            (run_id, step_id, generation),
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO work_step_contracts VALUES (?,?,?,?,?,?)",
+            (run_id, step_id, generation, number, payload, updated_at),
+        )
+        conn.execute(
+            "INSERT INTO workflow_run_step "
+            "(run_id,step_id,state,attempts,updated_at,call_fingerprint,terminal_id) "
+            "VALUES (?,?,'running',0,?,?,?) ON CONFLICT(run_id,step_id) DO UPDATE SET "
+            "state='running',updated_at=excluded.updated_at,call_fingerprint=excluded.call_fingerprint,"
+            "terminal_id=excluded.terminal_id,error_kind=NULL,error=NULL,result_json=NULL,output_json=NULL",
+            (run_id, step_id, updated_at, contract["call_fingerprint"], contract["terminal_id"]),
+        )
+        return number
+
+
+def begin_yaml_step_with_contract(
+    run_id: str,
+    step_id: str,
+    generation: str,
+    updated_at: str,
+    call_fingerprint: str,
+    fields: dict,
+    *,
+    attempt_number: Optional[int] = None,
+    allow_contract_change: bool = False,
+) -> int:
+    """Freeze one YAML delivery attempt before a terminal can be allocated.
+
+    YAML has no terminal identity before ``run_agent_step`` allocates one.  The
+    v1 contract shape nevertheless requires an immutable identity, so this DAL
+    creates an opaque *attempt* identity from the durable key; it is never
+    projected as a live terminal id.  Normal retries must reproduce the first
+    attempt's fields and call hash.  The one explicit corrective reprompt is a
+    new declared delivery and opts into ``allow_contract_change`` itself.
+    """
+    import hashlib
+    import json
+
+    if not isinstance(generation, str) or not generation:
+        raise ValueError("YAML step contract generation required")
+    if attempt_number is not None and (type(attempt_number) is not int or attempt_number < 1):
+        raise ValueError("invalid YAML contract attempt number")
+    if not isinstance(call_fingerprint, str) or not call_fingerprint:
+        raise ValueError("YAML step contract fingerprint required")
+
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        WorkRepository._verify(conn)
+        run = conn.execute(
+            "SELECT generation,state,tier FROM workflow_run WHERE run_id=?", (run_id,)
+        ).fetchone()
+        if run != (generation, "running", "yaml"):
+            raise ValueError("YAML step contract requires a current running YAML generation")
+        latest = conn.execute(
+            "SELECT COALESCE(MAX(attempt_number),0) FROM work_step_contracts "
+            "WHERE run_id=? AND step_id=? AND generation=?",
+            (run_id, step_id, generation),
+        ).fetchone()[0]
+        number = latest + 1 if attempt_number is None else attempt_number
+        identity = hashlib.sha256(
+            f"{run_id}\0{step_id}\0{generation}\0{number}".encode("utf-8")
+        ).hexdigest()
+        contract = {
+            "schema_version": 1,
+            "terminal_id": f"yaml-attempt:{identity}",
+            "call_fingerprint": call_fingerprint,
+            "fields": fields,
+        }
+        payload = _serialise_step_contract(contract)
+        existing = conn.execute(
+            "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
+            "AND generation=? AND attempt_number=?",
+            (run_id, step_id, generation, number),
+        ).fetchone()
+        if existing is not None:
+            if existing[0] != payload:
+                raise ValueError("YAML contract retry does not match immutable evidence")
+            return number
+        if number != latest + 1:
+            raise ValueError("YAML contract attempt number is not current")
+
+        step = conn.execute(
+            "SELECT state FROM workflow_run_step WHERE run_id=? AND step_id=?", (run_id, step_id)
+        ).fetchone()
+        if latest:
+            first = conn.execute(
+                "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
+                "AND generation=? ORDER BY attempt_number LIMIT 1",
+                (run_id, step_id, generation),
+            ).fetchone()
+            try:
+                first_contract = json.loads(first[0])
+            except (TypeError, ValueError) as error:
+                raise ValueError("YAML contract history is corrupt") from error
+            if not allow_contract_change and (
+                first_contract.get("call_fingerprint") != call_fingerprint
+                or first_contract.get("fields") != fields
+            ):
+                raise ValueError("YAML retry contract does not match first attempt")
+            if not allow_contract_change and (step is None or step[0] != "failed"):
+                raise ValueError("YAML retry requires a durably failed prior attempt")
+
+        conn.execute(
+            "INSERT INTO work_step_contracts VALUES (?,?,?,?,?,?)",
+            (run_id, step_id, generation, number, payload, updated_at),
+        )
+        conn.execute(
+            "INSERT INTO workflow_run_step "
+            "(run_id,step_id,state,attempts,updated_at,call_fingerprint) "
+            "VALUES (?,?,'running',0,?,?) ON CONFLICT(run_id,step_id) DO UPDATE SET "
+            "state='running',updated_at=excluded.updated_at,call_fingerprint=excluded.call_fingerprint,"
+            "error_kind=NULL,error=NULL,result_json=NULL,output_json=NULL",
+            (run_id, step_id, updated_at, call_fingerprint),
+        )
+        return number
+
+
+def fail_yaml_step_attempt(
+    run_id: str,
+    step_id: str,
+    generation: str,
+    attempt_number: int,
+    call_fingerprint: str,
+    updated_at: str,
+    error: str,
+    error_kind: Optional[str],
+) -> None:
+    """Durably close a YAML attempt before a retry can allocate another terminal."""
+    import json
+
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        WorkRepository._verify(conn)
+        run = conn.execute(
+            "SELECT generation,state,tier FROM workflow_run WHERE run_id=?", (run_id,)
+        ).fetchone()
+        contract = conn.execute(
+            "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
+            "AND generation=? AND attempt_number=?",
+            (run_id, step_id, generation, attempt_number),
+        ).fetchone()
+        latest = conn.execute(
+            "SELECT MAX(attempt_number) FROM work_step_contracts WHERE run_id=? AND step_id=? "
+            "AND generation=?",
+            (run_id, step_id, generation),
+        ).fetchone()[0]
+        if run != (generation, "running", "yaml") or contract is None or latest != attempt_number:
+            raise ValueError("YAML attempt is no longer current")
+        _serialise_step_contract(json.loads(contract[0]))
+        changed = conn.execute(
+            "UPDATE workflow_run_step SET state='failed',attempts=MAX(attempts,?),updated_at=?,"
+            "error=?,error_kind=? WHERE run_id=? AND step_id=? AND state='running' "
+            "AND call_fingerprint=?",
+            (
+                attempt_number,
+                updated_at,
+                error,
+                error_kind,
+                run_id,
+                step_id,
+                call_fingerprint,
+            ),
+        ).rowcount
+        if changed != 1:
+            raise ValueError("YAML attempt is no longer deliverable")
+
+
+def assert_yaml_step_contract_current(
+    run_id: str,
+    step_id: str,
+    generation: str,
+    attempt_number: int,
+    call_fingerprint: str,
+    fields: dict,
+) -> None:
+    """Fence a queued YAML send against a replaced or damaged contract store."""
+    import json
+
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+
+    with WorkRepository(DATABASE_FILE).read_snapshot() as conn:
+        run = conn.execute(
+            "SELECT generation,state,tier FROM workflow_run WHERE run_id=?", (run_id,)
+        ).fetchone()
+        step = conn.execute(
+            "SELECT state,call_fingerprint FROM workflow_run_step WHERE run_id=? AND step_id=?",
+            (run_id, step_id),
+        ).fetchone()
+        latest = conn.execute(
+            "SELECT MAX(attempt_number) FROM work_step_contracts WHERE run_id=? AND step_id=? "
+            "AND generation=?",
+            (run_id, step_id, generation),
+        ).fetchone()[0]
+        row = conn.execute(
+            "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
+            "AND generation=? AND attempt_number=?",
+            (run_id, step_id, generation, attempt_number),
+        ).fetchone()
+    if row is None:
+        raise ValueError("YAML contract is missing")
+    contract = json.loads(row[0])
+    _serialise_step_contract(contract)
+    if (
+        tuple(run) != (generation, "running", "yaml")
+        or tuple(step) != ("running", call_fingerprint)
+        or latest != attempt_number
+        or contract["call_fingerprint"] != call_fingerprint
+        or contract["fields"] != fields
+    ):
+        raise ValueError("YAML contract is no longer the current deliverable attempt")
+
+
+def assert_yaml_contract_history(
+    run_id: str, step_id: str, generation: str, call_fingerprint: Optional[str] = None
+) -> dict:
+    """Read verified YAML attempt evidence for recovery before a new effect."""
+    import json
+
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+
+    with WorkRepository(DATABASE_FILE).read_snapshot() as conn:
+        run = conn.execute("SELECT tier FROM workflow_run WHERE run_id=?", (run_id,)).fetchone()
+        row = conn.execute(
+            "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
+            "AND generation=? ORDER BY attempt_number LIMIT 1",
+            (run_id, step_id, generation),
+        ).fetchone()
+    if run is None or run[0] != "yaml" or row is None:
+        raise ValueError("YAML contract history is missing")
+    contract = json.loads(row[0])
+    _serialise_step_contract(contract)
+    if call_fingerprint is not None and contract["call_fingerprint"] != call_fingerprint:
+        raise ValueError("YAML contract hash is stale")
+    return contract
+
+
+def begin_yaml_replay_contract(
+    run_id: str,
+    step_id: str,
+    generation: str,
+    updated_at: str,
+    call_fingerprint: str,
+    fields: dict,
+) -> int:
+    """Persist one independently delivered replay without mutating the source row.
+
+    A single-step replay deliberately reads the source workflow without changing
+    its lifecycle projection.  It nevertheless creates a fresh external effect,
+    so its nonce-derived generation owns one immutable attempt contract.  Unlike
+    a live workflow attempt, it has no retry lifecycle or source ``running`` row
+    to project; the contract itself is the durable pre-delivery evidence.
+    """
+    import hashlib
+
+    if not isinstance(generation, str) or not generation.startswith("replay:"):
+        raise ValueError("YAML replay contract generation required")
+    if not isinstance(call_fingerprint, str) or not call_fingerprint:
+        raise ValueError("YAML replay contract fingerprint required")
+
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        WorkRepository._verify(conn)
+        source = conn.execute("SELECT tier FROM workflow_run WHERE run_id=?", (run_id,)).fetchone()
+        if source is None or source[0] != "yaml":
+            raise ValueError("YAML replay contract requires a YAML source run")
+        identity = hashlib.sha256(
+            f"{run_id}\0{step_id}\0{generation}\0{1}".encode("utf-8")
+        ).hexdigest()
+        contract = {
+            "schema_version": 1,
+            "terminal_id": f"yaml-replay:{identity}",
+            "call_fingerprint": call_fingerprint,
+            "fields": fields,
+        }
+        payload = _serialise_step_contract(contract)
+        existing = conn.execute(
+            "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
+            "AND generation=? AND attempt_number=1",
+            (run_id, step_id, generation),
+        ).fetchone()
+        if existing is not None:
+            if existing[0] != payload:
+                raise ValueError("YAML replay contract does not match immutable evidence")
+            return 1
+        conn.execute(
+            "INSERT INTO work_step_contracts VALUES (?,?,?,?,?,?)",
+            (run_id, step_id, generation, 1, payload, updated_at),
+        )
+    return 1
+
+
+def assert_yaml_replay_contract_current(
+    run_id: str,
+    step_id: str,
+    generation: str,
+    call_fingerprint: str,
+    fields: dict,
+) -> None:
+    """Fence every controlled replay delivery against damaged replay evidence."""
+    import json
+
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+
+    with WorkRepository(DATABASE_FILE).read_snapshot() as conn:
+        source = conn.execute("SELECT tier FROM workflow_run WHERE run_id=?", (run_id,)).fetchone()
+        row = conn.execute(
+            "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
+            "AND generation=? AND attempt_number=1",
+            (run_id, step_id, generation),
+        ).fetchone()
+    if source is None or source[0] != "yaml" or row is None:
+        raise ValueError("YAML replay contract is missing")
+    contract = json.loads(row[0])
+    _serialise_step_contract(contract)
+    if contract["call_fingerprint"] != call_fingerprint or contract["fields"] != fields:
+        raise ValueError("YAML replay contract is no longer the current deliverable attempt")
+
+
+def assert_step_contract_current(
+    run_id: str,
+    step_id: str,
+    generation: str,
+    attempt_number: int,
+    terminal_id: str,
+    call_fingerprint: str,
+) -> None:
+    """Recheck a frozen attempt at the last controlled delivery boundary.
+
+    Read-only verification closes before terminal I/O. This fences queued stale
+    sends, not revocation racing an external effect after the check returns.
+    The immutable contract number is this legacy journal's attempt fence; the
+    mutable settlement count is deliberately not used as an attempt revision.
+    """
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+
+    with WorkRepository(DATABASE_FILE).read_snapshot() as connection:
+        run = connection.execute(
+            "SELECT generation,state,tier FROM workflow_run WHERE run_id=?", (run_id,)
+        ).fetchone()
+        step = connection.execute(
+            "SELECT state,terminal_id,call_fingerprint FROM workflow_run_step WHERE run_id=? AND step_id=?",
+            (run_id, step_id),
+        ).fetchone()
+        latest = connection.execute(
+            "SELECT max(attempt_number) FROM work_step_contracts WHERE run_id=? AND step_id=? AND generation=?",
+            (run_id, step_id, generation),
+        ).fetchone()[0]
+        if (
+            run is None
+            or tuple(run) != (generation, "running", "script")
+            or step is None
+            or tuple(step) != ("running", terminal_id, call_fingerprint)
+            or latest != attempt_number
+        ):
+            raise ValueError("step contract is no longer the current deliverable attempt")
+
+
+def get_step_contract(
+    run_id: str, step_id: str, generation: str, attempt_number: int
+) -> Optional[dict]:
+    """Read verified frozen evidence without consulting profile or terminal state."""
+    import json
+
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+
+    # Recovery must not return a purportedly immutable contract from a store
+    # whose migration ledger or immutability triggers no longer verify. This
+    # read-only snapshot changes no state and never resolves mutable launch data.
+    with WorkRepository(DATABASE_FILE).read_snapshot() as conn:
+        row = conn.execute(
+            "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
+            "AND generation=? AND attempt_number=?",
+            (run_id, step_id, generation, attempt_number),
+        ).fetchone()
+    return json.loads(row[0]) if row is not None else None
+
+
 def begin_step(run_id: str, step_id: str, updated_at: str, call_fingerprint: str) -> None:
     """Write the durable RUNNING row for a script call, carrying its fingerprint (A).
 
@@ -1110,6 +1632,10 @@ def begin_step(run_id: str, step_id: str, updated_at: str, call_fingerprint: str
     ``attempts`` is absent from the ``DO UPDATE`` clause (BR-8). This function
     never moves the count; :func:`settle_step` owns it. A second ``begin_step``
     on a step already settled three times must not reset it to 0.
+
+    This row projects the current execution, so beginning another attempt clears
+    its prior ``error_kind``. It does not rewrite historical events or attempt
+    records; the attempts counter and existing fingerprint rules remain intact.
 
     **Why ``call_fingerprint`` is written conditionally.** :func:`append_step`
     excludes the column from its conflict clause outright, which fixes the
@@ -1147,6 +1673,7 @@ def begin_step(run_id: str, step_id: str, updated_at: str, call_fingerprint: str
             "VALUES (?, ?, 'running', 0, NULL, NULL, ?, ?) "
             "ON CONFLICT(run_id, step_id) DO UPDATE SET "
             "state = excluded.state, "
+            "error_kind = NULL, "
             "updated_at = excluded.updated_at, "
             "call_fingerprint = CASE "
             "WHEN workflow_run_step.state != 'completed' "
@@ -1164,6 +1691,7 @@ def settle_step(
     result_json: Optional[str],
     output_json: Optional[str],
     error: Optional[str],
+    error_kind: Optional[str] = None,
 ) -> bool:
     """Settle a script call's row — state, count, envelope, output, error — atomically (B).
 
@@ -1242,8 +1770,15 @@ def settle_step(
     worsen, recorded as an accepted residual risk in this unit's
     ``security-requirements.md`` SR-3/SR-4 rather than left implicit.
 
+    ``error_kind`` is supplied by the structured failure producer, never inferred
+    from text here. It is committed in the same statement as the error and state.
+    Legacy callers omit it and retain NULL; successful settlement clears a prior
+    failure kind even if a caller accidentally supplies a stale one.
+
     Raises ``sqlite3.Error`` on a DB failure and swallows nothing (BR-3).
     """
+    if state in {"completed", "completed_unvalidated", "skipped"}:
+        error_kind = None
     with _connect() as conn:
         existed = (
             conn.execute(
@@ -1255,16 +1790,17 @@ def settle_step(
         conn.execute(
             "INSERT INTO workflow_run_step "
             "(run_id, step_id, state, attempts, output_json, error, updated_at, "
-            " result_json) "
-            "VALUES (?, ?, ?, 1, ?, ?, ?, ?) "
+            " result_json, error_kind) "
+            "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?) "
             "ON CONFLICT(run_id, step_id) DO UPDATE SET "
             "state = excluded.state, "
             "attempts = workflow_run_step.attempts + 1, "
             "output_json = excluded.output_json, "
             "error = excluded.error, "
             "updated_at = excluded.updated_at, "
-            "result_json = excluded.result_json",
-            (run_id, step_id, state, output_json, error, updated_at, result_json),
+            "result_json = excluded.result_json, "
+            "error_kind = excluded.error_kind",
+            (run_id, step_id, state, output_json, error, updated_at, result_json, error_kind),
         )
     return existed
 

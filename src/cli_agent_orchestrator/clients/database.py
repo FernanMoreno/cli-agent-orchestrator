@@ -5,6 +5,7 @@ import os
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, cast
 
 from sqlalchemy import (
@@ -25,7 +26,9 @@ from sqlalchemy import (
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, declarative_base, sessionmaker
 
+from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.constants import DATABASE_URL, DB_DIR, DEFAULT_PROVIDER
+from cli_agent_orchestrator.clients.work_inbox_schema import ManagedInboxStoreIdentity
 from cli_agent_orchestrator.models.flow import Flow
 from cli_agent_orchestrator.models.inbox import InboxMessage, MessageStatus
 
@@ -219,6 +222,14 @@ class InboxModel(Base):
     message = Column(String, nullable=False)
     status = Column(String, nullable=False)  # MessageStatus enum value
     created_at = Column(DateTime, default=datetime.now)
+
+
+class ManagedInboxTarget(NamedTuple):
+    """The terminal coordinates needed by the protected managed-inbox adapter."""
+
+    message: InboxMessage
+    tmux_session: str
+    tmux_window: str
 
 
 class MemoryMetadataModel(Base):
@@ -522,6 +533,10 @@ def init_db() -> None:
     # Appended LAST (issue #657). Adds one partial index to memory_metadata;
     # reads no other table, so registry order is immaterial here too.
     _migrate_memory_scope_null_uniqueness()
+    # Work admission requires a verified additive schema; failure must propagate.
+    from cli_agent_orchestrator.clients.work_repository import initialize_work_store
+
+    initialize_work_store()
 
 
 def _restrict_db_file_permissions() -> None:
@@ -2747,6 +2762,108 @@ def create_inbox_message(sender_id: str, receiver_id: str, message: str) -> Inbo
             message=inbox_msg.message,
             status=MessageStatus(inbox_msg.status),
             created_at=inbox_msg.created_at,
+        )
+
+
+def _managed_inbox_store_identity_for_session(
+    db, *, expected: ManagedInboxStoreIdentity | None = None
+) -> ManagedInboxStoreIdentity:
+    """Validate path and UUID using the exact SQLAlchemy connection being used."""
+    connection = db.connection()
+    rows = connection.exec_driver_sql("PRAGMA database_list").fetchall()
+    main = next((row[2] for row in rows if row[1] == "main"), None)
+    if not main:
+        raise RuntimeError("managed inbox requires a file-backed SQLite store")
+    try:
+        store_identity = str(Path(main).resolve(strict=False))
+        configured = str(Path(constants.DATABASE_FILE).resolve(strict=False))
+    except (OSError, RuntimeError) as error:
+        raise RuntimeError("managed inbox store identity cannot be resolved") from error
+    if store_identity != configured:
+        raise RuntimeError("managed inbox configured database differs from SQLAlchemy store")
+    row = connection.exec_driver_sql(
+        "SELECT singleton,store_identity,store_uuid FROM work_inbox_store_context"
+    ).fetchall()
+    if len(row) != 1 or row[0][0] != 1:
+        raise RuntimeError("managed inbox store context is absent or contradictory")
+    context = ManagedInboxStoreIdentity(store_identity=row[0][1], store_uuid=row[0][2])
+    if context.store_identity != store_identity:
+        raise RuntimeError("managed inbox store context names another SQLAlchemy store")
+    if expected is not None:
+        if not isinstance(expected, ManagedInboxStoreIdentity):
+            raise ValueError("verified managed inbox store context required")
+        if context != expected:
+            raise RuntimeError("managed inbox store UUID changed during this server context")
+    return context
+
+
+def _managed_inbox_store_identity(
+    *, expected: ManagedInboxStoreIdentity | None = None
+) -> ManagedInboxStoreIdentity:
+    """Read the logical context from a real SQLAlchemy connection."""
+    with SessionLocal() as db:
+        return _managed_inbox_store_identity_for_session(db, expected=expected)
+
+
+def _create_managed_inbox_message(
+    sender_id: str,
+    receiver_id: str,
+    message: str,
+    *,
+    store_context: ManagedInboxStoreIdentity,
+) -> InboxMessage:
+    """Reserve a managed row outside legacy selection, retained from its first write."""
+    with SessionLocal() as db:
+        _managed_inbox_store_identity_for_session(db, expected=store_context)
+        if not db.query(TerminalModel).filter(TerminalModel.id == receiver_id).first():
+            raise ValueError(f"Terminal '{receiver_id}' not found")
+        inbox_msg = InboxModel(
+            sender_id=sender_id,
+            receiver_id=receiver_id,
+            message=message,
+            status=MessageStatus.RECONCILE.value,
+        )
+        db.add(inbox_msg)
+        db.commit()
+        db.refresh(inbox_msg)
+        return InboxMessage(
+            id=inbox_msg.id,
+            sender_id=inbox_msg.sender_id,
+            receiver_id=inbox_msg.receiver_id,
+            message=inbox_msg.message,
+            status=MessageStatus(inbox_msg.status),
+            created_at=inbox_msg.created_at,
+        )
+
+
+def _managed_inbox_target(
+    inbox_id: int, *, store_context: ManagedInboxStoreIdentity
+) -> ManagedInboxTarget:
+    """Load only a retained managed row and its durable terminal coordinates."""
+    if type(inbox_id) is not int or inbox_id <= 0:
+        raise ValueError("invalid managed inbox id")
+    with SessionLocal() as db:
+        _managed_inbox_store_identity_for_session(db, expected=store_context)
+        row = (
+            db.query(InboxModel, TerminalModel)
+            .join(TerminalModel, TerminalModel.id == InboxModel.receiver_id)
+            .filter(InboxModel.id == inbox_id)
+            .first()
+        )
+        if row is None or row[0].status != MessageStatus.RECONCILE.value:
+            raise ValueError("managed inbox row is absent or not retained")
+        inbox_msg, terminal = row
+        return ManagedInboxTarget(
+            InboxMessage(
+                id=inbox_msg.id,
+                sender_id=inbox_msg.sender_id,
+                receiver_id=inbox_msg.receiver_id,
+                message=inbox_msg.message,
+                status=MessageStatus(inbox_msg.status),
+                created_at=inbox_msg.created_at,
+            ),
+            terminal.tmux_session,
+            terminal.tmux_window,
         )
 
 

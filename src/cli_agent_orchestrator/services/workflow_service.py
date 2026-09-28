@@ -64,6 +64,7 @@ from cli_agent_orchestrator.services.agent_step import (
     _best_effort_teardown,
     run_agent_step,
 )
+from cli_agent_orchestrator.services.step_fingerprint import StepCallFields, compute
 from cli_agent_orchestrator.services.step_output_store import (
     _validate_key_part,
     step_output_store,
@@ -367,6 +368,135 @@ async def _ajournal(fn: Any, *args: Any, **kwargs: Any) -> None:
     positional-only callers are unaffected.
     """
     await asyncio.to_thread(fn, *args, **kwargs)
+
+
+def _yaml_attempt_recorder(
+    run_id: str,
+    step_id: str,
+    generation: str,
+    *,
+    attempt_number: Optional[int] = None,
+    retry_count: Optional[int],
+    allow_contract_change: bool = False,
+):
+    """Build the YAML-only pre-delivery journal gate for one agent invocation.
+
+    The closure owns only the identity returned by the durable journal.  It does
+    not cache effective fields or terminal state: both arrive from
+    ``run_agent_step`` immediately before terminal allocation and are reread
+    from SQLite by ``guard_delivery`` before each external send.
+    """
+    identity: Optional[tuple[int, str, dict]] = None
+
+    def _record_pre_delivery(call_fingerprint: str, fields: dict) -> None:
+        nonlocal identity
+        frozen_fields = {name: dict(value) for name, value in fields.items()}
+        if retry_count is None:
+            frozen_fields["retry_policy"] = {
+                "status": "unknown",
+                "value": None,
+                "provenance": "not_recorded_at_launch",
+            }
+        else:
+            frozen_fields["retry_policy"] = {
+                "status": "known",
+                "value": f"retries={retry_count}",
+                "provenance": "step_argument",
+            }
+        number = workflow_journal.begin_yaml_step_with_contract(
+            run_id,
+            step_id,
+            generation,
+            _now(),
+            call_fingerprint,
+            frozen_fields,
+            attempt_number=attempt_number,
+            allow_contract_change=allow_contract_change,
+        )
+        identity = (number, call_fingerprint, frozen_fields)
+        _record.contract_attempt_number = number
+        _record.contract_call_fingerprint = call_fingerprint
+
+    def _guard_delivery() -> None:
+        if identity is None:
+            raise ValueError("YAML delivery requires a committed contract")
+        workflow_journal.assert_yaml_step_contract_current(run_id, step_id, generation, *identity)
+
+    def _record(*_args: Any, **_kwargs: Any) -> None:
+        """Keep the callback shape callable while the substrate uses its hooks."""
+
+    _record.contract_attempt_number = None
+    _record.contract_call_fingerprint = None
+    _record.record_pre_delivery = _record_pre_delivery
+    _record.guard_delivery = _guard_delivery
+    return _record
+
+
+def _yaml_replay_attempt_recorder(run_id: str, step_id: str, generation: str):
+    """Bind one nonced replay effect to immutable pre-delivery evidence."""
+    identity: Optional[tuple[str, dict]] = None
+
+    def _record_pre_delivery(call_fingerprint: str, fields: dict) -> None:
+        nonlocal identity
+        frozen_fields = {name: dict(value) for name, value in fields.items()}
+        # A replay performs one watched attempt; there is no caller-supplied
+        # retry policy to infer or serialize as an effective value.
+        frozen_fields["retry_policy"] = {
+            "status": "unknown",
+            "value": None,
+            "provenance": "not_recorded_at_launch",
+        }
+        workflow_journal.begin_yaml_replay_contract(
+            run_id,
+            step_id,
+            generation,
+            _now(),
+            call_fingerprint,
+            frozen_fields,
+        )
+        identity = (call_fingerprint, frozen_fields)
+
+    def _guard_delivery() -> None:
+        if identity is None:
+            raise ValueError("YAML replay delivery requires a committed contract")
+        workflow_journal.assert_yaml_replay_contract_current(run_id, step_id, generation, *identity)
+
+    def _record(*_args: Any, **_kwargs: Any) -> None:
+        """Keep the callback shape callable while the substrate uses its hooks."""
+
+    _record.record_pre_delivery = _record_pre_delivery
+    _record.guard_delivery = _guard_delivery
+    return _record
+
+
+def _yaml_call_fingerprint(step: WorkflowStep, prompt: str) -> str:
+    """Recompute the YAML call identity without resolving mutable launch state."""
+    return compute(
+        StepCallFields(
+            provider=step.provider,
+            agent=step.agent,
+            prompt=prompt,
+            model=None,
+            engine=step.engine,
+            allowed_tools=None,
+            effective_working_directory=None,
+            use_worktree=False,
+            reused_terminal=False,
+            timeout=WORKFLOW_STEP_TIMEOUT,
+        )
+    )
+
+
+def _assert_yaml_contract_history(record: RunRecord, step: WorkflowStep, prompt: str) -> None:
+    """Reject an old YAML row before resume or replay can create a terminal."""
+    try:
+        workflow_journal.assert_yaml_contract_history(
+            record.run_id, step.id, "1", _yaml_call_fingerprint(step, prompt)
+        )
+    except Exception as error:
+        raise ResumeCorruptError(
+            f"run '{record.run_id}' step '{step.id}' has no current YAML contract"
+        ) from error
 
 
 # ---------------------------------------------------------------------------
@@ -676,19 +806,43 @@ async def _collect_structured_output(record: RunRecord, step: WorkflowStep) -> S
         # Re-run on a FRESH terminal with a corrective prompt. A crash here is a
         # run-failure: let the StepExecutionError propagate so the OUTER loop
         # consumes an attempt (Q6=A / Trace C).
-        result = await run_agent_step(
-            provider=step.provider,
-            agent=step.agent,
-            prompt=_reprompt_prompt(step),
-            teardown=True,
-            timeout=WORKFLOW_STEP_TIMEOUT,
-            engine=step.engine,
-            env_vars={
-                "CAO_WORKFLOW_RUN_ID": record.run_id,
-                "CAO_WORKFLOW_STEP_ID": step.id,
-            },
-            cancel_event=record.cancel_event,
+        reprompt_recorder = _yaml_attempt_recorder(
+            record.run_id,
+            step.id,
+            "1",
+            retry_count=step.retries,
+            allow_contract_change=True,
         )
+        try:
+            result = await run_agent_step(
+                provider=step.provider,
+                agent=step.agent,
+                prompt=_reprompt_prompt(step),
+                teardown=True,
+                timeout=WORKFLOW_STEP_TIMEOUT,
+                engine=step.engine,
+                env_vars={
+                    "CAO_WORKFLOW_RUN_ID": record.run_id,
+                    "CAO_WORKFLOW_STEP_ID": step.id,
+                },
+                pre_delivery_recorder=reprompt_recorder,
+                cancel_event=record.cancel_event,
+            )
+        except StepExecutionError as error:
+            contract_attempt = reprompt_recorder.contract_attempt_number
+            if contract_attempt is not None:
+                await asyncio.to_thread(
+                    workflow_journal.fail_yaml_step_attempt,
+                    record.run_id,
+                    step.id,
+                    "1",
+                    contract_attempt,
+                    reprompt_recorder.contract_call_fingerprint,
+                    _now(),
+                    str(error),
+                    error.kind,
+                )
+            raise
         st.terminal_id = result.terminal_id
         rec = step_output_store.get(record.run_id, step.id)
         if rec is not None and rec.validated:
@@ -751,6 +905,12 @@ async def _run_step(record: RunRecord, step: WorkflowStep) -> None:
             agent_profile=step.agent,
         )
         prompt = _substitute(step.prompt, record)  # §4 templating
+        attempt_recorder = _yaml_attempt_recorder(
+            record.run_id,
+            step.id,
+            "1",
+            retry_count=step.retries,
+        )
         try:
             result = await run_agent_step(
                 provider=step.provider,
@@ -763,6 +923,7 @@ async def _run_step(record: RunRecord, step: WorkflowStep) -> None:
                     "CAO_WORKFLOW_RUN_ID": record.run_id,
                     "CAO_WORKFLOW_STEP_ID": step.id,
                 },
+                pre_delivery_recorder=attempt_recorder,
                 cancel_event=record.cancel_event,
             )
             st.terminal_id = result.terminal_id
@@ -814,10 +975,35 @@ async def _run_step(record: RunRecord, step: WorkflowStep) -> None:
             last_error_kind = exc.kind
             if exc.terminal_id is not None:
                 st.terminal_id = exc.terminal_id
+            contract_attempt = attempt_recorder.contract_attempt_number
             # BR-6: persist the structured error kind onto the step projection now
             # (still RUNNING between retries) so a cold read mid-retry surfaces it
             # without event replay; cleared when the step later settles COMPLETED.
             await _ajournal(_journal_step, record, step.id, exc.kind)
+            if contract_attempt is not None:
+                try:
+                    await asyncio.to_thread(
+                        workflow_journal.fail_yaml_step_attempt,
+                        record.run_id,
+                        step.id,
+                        "1",
+                        contract_attempt,
+                        attempt_recorder.contract_call_fingerprint,
+                        _now(),
+                        str(exc),
+                        exc.kind,
+                    )
+                except Exception as error:
+                    st.error = "YAML contract could not close the failed delivery attempt"
+                    last_error_kind = "contract_rejected"
+                    logger.warning(
+                        "journal: YAML step '%s/%s' could not close attempt %s: %s",
+                        record.run_id,
+                        step.id,
+                        contract_attempt,
+                        error,
+                    )
+                    break
             # U2 emission: this attempt failed (error_kind distinguishes a crash
             # from a timeout, FR-1.2 / BR-6).
             await _journal_event(
@@ -831,6 +1017,13 @@ async def _run_step(record: RunRecord, step: WorkflowStep) -> None:
                 provider=step.provider,
                 agent_profile=step.agent,
             )
+            if exc.delivery_may_have_occurred:
+                # A terminal may already have accepted this exact prompt.  Its
+                # durable contract remains inspectable, but this drive must not
+                # create a second delivery from an ambiguous continuity signal.
+                break
+            if exc.kind == "contract_rejected" and contract_attempt is None:
+                break
             continue  # consume an attempt, retry the same prompt
         # Settled (COMPLETED or COMPLETED_UNVALIDATED) — neither is a run-failure.
         st.state = outcome
@@ -1571,6 +1764,15 @@ async def resume_from_last_completed(run_id: str) -> WorkflowRunResult:
         # The row existed above but the rebuild degraded it to absent (e.g.
         # corrupt inputs_json) — surface as unknown rather than resuming garbage.
         raise KeyError(f"unknown run_id '{run_id}'")
+    for step in record.spec.steps:
+        st = record.step_states[step.id]
+        if st.attempts:
+            try:
+                _assert_yaml_contract_history(record, step, _substitute(step.prompt, record))
+            except WorkflowEngineError as error:
+                raise ResumeCorruptError(
+                    f"run '{run_id}' step '{step.id}' cannot recover its YAML contract"
+                ) from error
     for st in record.step_states.values():
         if st.state in (StepState.COMPLETED, StepState.COMPLETED_UNVALIDATED):
             continue  # keep done; output reused for {{steps.<id>.output.<field>}}
@@ -1728,6 +1930,8 @@ async def replay_single_step(
         # maps to 400 with the reference named, never to a 500.
         raise ValueError(f"cannot resolve the prompt for step '{step_id}' of run '{run_id}': {e}")
 
+    _assert_yaml_contract_history(record, step, prompt)
+
     # A replayed step still needs ``CAO_WORKFLOW_RUN_ID`` so its ``workflow_return``
     # has somewhere to land — but NOT the source run's key, which would overwrite
     # the recorded step's entry in the in-memory ``step_output_store``. Derive a
@@ -1743,7 +1947,9 @@ async def replay_single_step(
     # The run_id prefix is kept only so the key is legible in a log line; the nonce
     # is what carries the isolation. Nothing reads this key back except the block
     # below, which deletes it when done.
-    replay_run_id = f"{run_id[:40]}-replay-{uuid.uuid4().hex[:16]}"
+    replay_nonce = uuid.uuid4().hex
+    replay_run_id = f"{run_id[:40]}-replay-{replay_nonce[:16]}"
+    replay_recorder = _yaml_replay_attempt_recorder(run_id, step_id, f"replay:{replay_nonce}")
 
     logger.info(
         "replay_single_step: re-running step '%s' of run '%s' (override=%s)",
@@ -1780,6 +1986,7 @@ async def replay_single_step(
                     "CAO_WORKFLOW_RUN_ID": replay_run_id,
                     "CAO_WORKFLOW_STEP_ID": step_id,
                 },
+                pre_delivery_recorder=replay_recorder,
             )
         except StepExecutionError as e:
             # Recorded, not raised (the drive loop's posture). Deliberately NO retry

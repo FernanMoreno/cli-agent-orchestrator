@@ -9,6 +9,7 @@ from typing import Annotated, Optional
 from pydantic import (
     AfterValidator,
     BaseModel,
+    ConfigDict,
     Field,
     StringConstraints,
     field_validator,
@@ -98,6 +99,50 @@ class MemoryScope(str, Enum):
     SESSION = "session"
     AGENT = "agent"
     FEDERATED = "federated"
+
+
+class KnowledgeScope(str, Enum):
+    """Reviewed durable knowledge scopes; independent of legacy memory routing."""
+
+    PROJECT = "project"
+    JOB = "job"
+
+
+class KnowledgeDecision(str, Enum):
+    PROPOSED = "proposed"
+    VERIFIED = "verified"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    SUPERSEDED = "superseded"
+
+
+class KnowledgeRevision(BaseModel):
+    """Immutable history projection, not an authorization or instruction grant."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    schema_version: int = 1
+    record_id: str
+    revision: int
+    record_version: int
+    scope: KnowledgeScope
+    scope_id: str
+    producer_principal_id: str
+    work_item_id: str | None
+    attempt_id: str | None
+    source_artifact_id: str | None
+    source_hash: str
+    delivered_hash: str
+    evidence_refs: tuple[str, ...]
+    confidence: float
+    fresh_until: float
+    decision: KnowledgeDecision
+    supersedes: int | None
+    tombstone: bool
+    legacy: bool
+    content: str | None
+    redacted: bool
+    truncated: bool
+    created_at: float
 
 
 class MemoryType(str, Enum):
