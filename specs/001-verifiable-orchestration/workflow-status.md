@@ -3350,7 +3350,18 @@ antes de correr la suite: el kernel ofrece Landlock ABI 8, menor que el mínimo
 T100 ahora usa GitHub-hosted `ubuntu-24.04` sólo como orquestador de un guest
 Ubuntu 26.10 efímero bajo QEMU TCG. El script fija SHA-256 de la imagen cloud y
 del source archive Bubblewrap 0.13.0, prepara kernel y cuenta broker dentro del
-guest, y exige ABI >= 9, digest allowlisted y ocho casos sin skips. El run
-QEMU hosted aún no se ha ejecutado; T101 y C08 siguen pendientes. El guest no
-certificará el kernel runner ni uno de despliegue; `WORK_BACKENDS={}` y T097/T019
-siguen abiertos para producción.
+guest, y exige ABI >= 9, digest allowlisted y ocho casos sin skips. No hay aún
+run QEMU hosted verde; T101 y C08 siguen pendientes. El guest no certificará
+el kernel runner ni uno de despliegue; `WORK_BACKENDS={}` y T097/T019 siguen
+abiertos para producción.
+
+### T097: primer run QEMU hosted — 2026-09-28
+
+El run `36454812599` pasó el guard de `main`, instaló QEMU, arrancó el guest
+Ubuntu fijado y compiló Bubblewrap. Falló antes de ejecutar pytest: `uv sync`
+no encontró `scripts/hatch_build_tui_tag.py`, declarado como build hook en
+`pyproject.toml`. El archivo del checkout transferido omitía `scripts/`.
+
+El script ahora incluye ese hook en el archive y establece
+`CAO_TUI_AUTOBUILD=0` durante el sync: T097 no necesita compilar el TUI. Falta
+repetir el run; no se cuenta como aceptación y no cambia el estado T101/C08.

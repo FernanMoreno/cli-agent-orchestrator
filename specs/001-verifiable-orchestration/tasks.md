@@ -572,5 +572,7 @@ repetición verifica el preflight nuevo, pero no reemplaza el run del runner
 dedicado. La repetición conserva valor histórico. El intento nativo posterior
 en `ubuntu-26.04` confirmó ABI 8 (`36450282433`), también insuficiente. T100 se
 cambió a un guest Ubuntu 26.10 fijado con QEMU TCG, orquestado desde
-`ubuntu-24.04`; ese workflow aún espera publicación y run remoto. T101 sigue
-`[ ]`; `WORK_BACKENDS={}` y T097/T019 continúan abiertos.
+`ubuntu-24.04`. El primer run `36454812599` falló en `uv sync` porque el
+checkout parcial omitía el hook Hatch de `pyproject.toml`; se corrigió el
+archivo del workflow y T101 sigue `[ ]` hasta un run verde. `WORK_BACKENDS={}`
+y T097/T019 continúan abiertos.

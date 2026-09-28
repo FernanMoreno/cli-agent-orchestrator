@@ -142,7 +142,8 @@ ssh "${ssh_args[@]}" -p "$guest_port" "$guest" uname -a
 ssh "${ssh_args[@]}" -p "$guest_port" "$guest" cat /etc/os-release
 
 git -C "$GITHUB_WORKSPACE" archive --format=tar.gz \
-  --output="$work_dir/checkout.tar.gz" HEAD pyproject.toml uv.lock src test
+  --output="$work_dir/checkout.tar.gz" \
+  HEAD pyproject.toml uv.lock src test scripts/hatch_build_tui_tag.py
 scp "${ssh_args[@]}" -P "$guest_port" \
   "$work_dir/checkout.tar.gz" "$guest:/home/runner/checkout.tar.gz"
 scp "${ssh_args[@]}" -P "$guest_port" \
@@ -199,7 +200,7 @@ tar -xzf /home/runner/checkout.tar.gz -C "$workspace"
 chmod 0755 /home/runner/uv
 /home/runner/uv python install 3.12
 cd "$workspace"
-/home/runner/uv sync --all-extras --dev --frozen
+CAO_TUI_AUTOBUILD=0 /home/runner/uv sync --all-extras --dev --frozen
 
 if [[ ! "$CAO_WORK_BROKER_ACCOUNT" =~ ^[a-z_][a-z0-9_-]*\$?$ ]]; then
   echo "invalid broker account name" >&2
