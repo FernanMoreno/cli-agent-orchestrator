@@ -12,10 +12,10 @@ Covers ``workflow_service.replay_single_step``:
   REAL run whose id happens to be ``<source>-replay``
 - the derived slot is RELEASED after the read-back, so a replay leaves the store
   no larger than it found it
-- the SOURCE run is untouched: its journal rows and its own store entry are
-  byte-identical after a replay
-- ``prompt_override`` replaces the TEMPLATE, and ``{{...}}`` inside the override
-  still resolves against the recorded run; an empty override is rejected
+- the SOURCE run's lifecycle rows and its own store entry are byte-identical
+  after a replay; the separate immutable replay-attempt contract is additional
+- a replay retains the recorded effective contract; a changed ``prompt_override``
+  is rejected before a worker can run, and an empty override is rejected
 - error taxonomy: unknown run / unknown step (KeyError), script tier + unresolvable
   predecessor (ValueError), corrupt snapshot (ResumeCorruptError)
 - a step that fails is reported in the payload, never raised
@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock
@@ -41,6 +42,7 @@ from cli_agent_orchestrator.clients.database import (
     _migrate_workflow_run,
     _migrate_workflow_run_step,
 )
+from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.terminal import AgentStepResult, TerminalStatus
 from cli_agent_orchestrator.models.workflow import (
     InputDecl,
@@ -51,7 +53,7 @@ from cli_agent_orchestrator.models.workflow import (
 )
 from cli_agent_orchestrator.models.workflow_runtime import StepOutputRecord
 from cli_agent_orchestrator.providers.base import OutputExtractionError
-from cli_agent_orchestrator.services import workflow_journal
+from cli_agent_orchestrator.services import agent_step, workflow_journal
 from cli_agent_orchestrator.services import workflow_service as ws
 from cli_agent_orchestrator.services.agent_step import StepExecutionError
 from cli_agent_orchestrator.services.step_output_store import record_step_output
@@ -73,6 +75,7 @@ def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Point the journal at a temp DB, create the tables, clean the registry/store."""
     db_path = tmp_path / "wf.db"
     monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
+    WorkRepository(db_path).initialize()
     _migrate_workflow_run()
     _migrate_workflow_run_step()
     ws.run_registry.clear()
@@ -122,6 +125,7 @@ def _seed_run(
     inputs: Optional[Dict[str, Any]] = None,
     outputs: Optional[Dict[str, Dict[str, Any]]] = None,
     tier: str = "yaml",
+    with_contract: bool = True,
 ) -> None:
     """Journal a finished run: spec snapshot, resolved inputs, one row per step.
 
@@ -131,12 +135,13 @@ def _seed_run(
     """
     spec = spec if spec is not None else _spec()
     outputs = outputs if outputs is not None else {"s1": {"answer": "42"}}
+    resolved_inputs = inputs if inputs is not None else {"topic": "cats"}
     workflow_journal.insert_run(
         run_id=run_id,
         workflow_name=spec.name,
         spec_snapshot=spec.model_dump_json() if spec_snapshot is None else spec_snapshot,
-        inputs_json=json.dumps(inputs if inputs is not None else {"topic": "cats"}),
-        state=RunState.COMPLETED.value,
+        inputs_json=json.dumps(resolved_inputs),
+        state=RunState.RUNNING.value if tier == "yaml" else RunState.COMPLETED.value,
         started_at="2026-01-01T00:00:00Z",
         tier=tier,
     )
@@ -145,6 +150,60 @@ def _seed_run(
         [(step.id, StepState.PENDING.value) for step in spec.steps],
         "2026-01-01T00:00:00Z",
     )
+    if tier == "yaml" and with_contract:
+        recorded = ws.RunRecord(
+            run_id=run_id,
+            workflow_name=spec.name,
+            spec=spec,
+            inputs=resolved_inputs,
+        )
+        recorded.step_states = {
+            step.id: ws.StepRunState(
+                step_id=step.id,
+                state=StepState.COMPLETED,
+                attempts=1,
+                output=(
+                    None
+                    if (out := outputs.get(step.id)) is None
+                    else StepOutputRecord(
+                        run_id=run_id,
+                        step_id=step.id,
+                        output=out,
+                        validated=True,
+                        errors=[],
+                        state=StepState.COMPLETED,
+                    )
+                ),
+            )
+            for step in spec.steps
+        }
+        for step in spec.steps:
+            try:
+                prompt = ws._substitute(step.prompt, recorded)
+            except ws.WorkflowEngineError:
+                continue
+            fields = agent_step._effective_step_fields(
+                provider=step.provider,
+                agent=step.agent,
+                allowed_tools=None,
+                engine=step.engine,
+                model=None,
+                working_directory=None,
+                use_worktree=False,
+                created_here=True,
+                timeout=ws.WORKFLOW_STEP_TIMEOUT,
+                ready_timeout=agent_step.DEFAULT_READY_TIMEOUT,
+                teardown=True,
+                prompt_redelivery=True,
+            )
+            workflow_journal.begin_yaml_step_with_contract(
+                run_id,
+                step.id,
+                "1",
+                "2026-01-01T00:00:01Z",
+                ws._yaml_call_fingerprint(step, prompt),
+                fields,
+            )
     for step in spec.steps:
         out = outputs.get(step.id)
         workflow_journal.update_step(
@@ -155,6 +214,8 @@ def _seed_run(
             updated_at="2026-01-01T00:00:01Z",
             output_json=None if out is None else json.dumps(out),
         )
+    if tier == "yaml":
+        workflow_journal.update_run_state(run_id, RunState.COMPLETED.value, "2026-01-01T00:00:02Z")
 
 
 def _emitting_step(output: Dict[str, Any], *, step_id: str = "s2"):
@@ -187,7 +248,7 @@ def _emitting_step(output: Dict[str, Any], *, step_id: str = "s2"):
 
 
 def _journal_snapshot(run_id: str = _RUN_ID):
-    """Everything the journal holds for a run, as comparable plain data."""
+    """The source run's mutable lifecycle projection, as comparable plain data."""
     row = workflow_journal.get_run(run_id)
     steps = workflow_journal.get_steps(run_id)
     return row, sorted((s.step_id, s.state, s.attempts, s.output_json) for s in steps)
@@ -226,6 +287,96 @@ async def test_replay_resolves_prompt_from_journaled_predecessor(monkeypatch):
     assert _DERIVED_KEY_RE.match(derived), derived
     # The internal key is NOT leaked to the caller: it names nothing they can act on.
     assert "replay_run_id" not in payload
+
+
+@pytest.mark.asyncio
+async def test_replay_commits_its_own_contract_before_terminal_allocation(
+    monkeypatch, _patched_journal
+):
+    """A replay creates a new effect, not merely a read of source evidence."""
+    _seed_run()
+
+    async def create(*_args, **_kwargs):
+        with sqlite3.connect(_patched_journal) as connection:
+            rows = connection.execute(
+                "SELECT generation,contract_json FROM work_step_contracts "
+                "WHERE run_id=? AND step_id=? AND generation<>?",
+                (_RUN_ID, "s2", "1"),
+            ).fetchall()
+        assert len(rows) == 1, "replay reached terminal allocation without its own contract"
+        assert json.loads(rows[0][1])["call_fingerprint"]
+        raise RuntimeError("stop after the replay contract boundary")
+
+    monkeypatch.setattr(agent_step.terminal_service, "create_terminal", create)
+
+    with pytest.raises(RuntimeError, match="replay contract boundary"):
+        await ws.replay_single_step(_RUN_ID, "s2")
+
+
+@pytest.mark.asyncio
+async def test_replay_damaged_contract_store_never_reaches_terminal(monkeypatch, _patched_journal):
+    """A cold damage after source validation still blocks replay allocation."""
+    _seed_run()
+    create = AsyncMock()
+    monkeypatch.setattr(agent_step.terminal_service, "create_terminal", create)
+    real_history = workflow_journal.assert_yaml_contract_history
+
+    def validate_source_then_damage(*args, **kwargs):
+        real_history(*args, **kwargs)
+        with sqlite3.connect(_patched_journal) as connection:
+            connection.execute("DROP TRIGGER work_step_contracts_immutable_update")
+
+    monkeypatch.setattr(
+        workflow_journal, "assert_yaml_contract_history", validate_source_then_damage
+    )
+
+    payload = await ws.replay_single_step(_RUN_ID, "s2")
+
+    assert payload["error_kind"] == "contract_rejected"
+    assert create.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_replay_redelivery_rechecks_its_contract_before_another_prompt(
+    monkeypatch, _patched_journal
+):
+    """A damaged replay contract blocks redelivery, not the first sent prompt."""
+    _seed_run()
+    sent = []
+    redelivered = []
+
+    async def create(*_args, **_kwargs):
+        return type("Terminal", (), {"id": "replay-terminal"})()
+
+    def send(*_args, **_kwargs):
+        sent.append(True)
+        with sqlite3.connect(_patched_journal) as connection:
+            connection.execute("DROP TRIGGER work_step_contracts_immutable_update")
+
+    monkeypatch.setattr(agent_step.terminal_service, "create_terminal", create)
+    monkeypatch.setattr(agent_step.terminal_service, "get_terminal_metadata", lambda _: {})
+    monkeypatch.setattr(agent_step.terminal_service, "send_input", send)
+    monkeypatch.setattr(agent_step.frozen_run_memory, "frozen_memory_for", lambda *_: None)
+    monkeypatch.setattr(agent_step, "wait_until_status", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        agent_step.status_monitor, "notify_input_sent", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(agent_step.status_monitor, "get_status", lambda _: TerminalStatus.IDLE)
+    monkeypatch.setattr(
+        agent_step.terminal_service, "probe_post_turn_receipt_result", lambda _: None
+    )
+    monkeypatch.setattr(
+        agent_step.terminal_service,
+        "redeliver_dropped_message",
+        lambda *_: redelivered.append(True),
+    )
+    monkeypatch.setattr(agent_step, "_PROMPT_PICKUP_GRACE", 0)
+
+    payload = await ws.replay_single_step(_RUN_ID, "s2")
+
+    assert payload["error_kind"] == "contract_rejected"
+    assert sent == [True]
+    assert redelivered == []
 
 
 @pytest.mark.asyncio
@@ -320,8 +471,7 @@ async def test_concurrent_replays_of_one_step_do_not_cross_read(monkeypatch):
     async def _side_effect(*_args, **kwargs):
         nonlocal started
         run_key = kwargs["env_vars"]["CAO_WORKFLOW_RUN_ID"]
-        # The override IS the prompt here, so it doubles as the caller's identity.
-        mine = kwargs["prompt"]
+        mine = run_key
         started += 1
         if started == 2:
             both_in_flight.set()
@@ -343,13 +493,13 @@ async def test_concurrent_replays_of_one_step_do_not_cross_read(monkeypatch):
     monkeypatch.setattr(ws, "run_agent_step", AsyncMock(side_effect=_side_effect))
 
     first, second = await asyncio.gather(
-        ws.replay_single_step(_RUN_ID, "s2", prompt_override="A"),
-        ws.replay_single_step(_RUN_ID, "s2", prompt_override="B"),
+        ws.replay_single_step(_RUN_ID, "s2"),
+        ws.replay_single_step(_RUN_ID, "s2"),
     )
 
     # Each caller gets back what ITS OWN step emitted, not the other's.
-    assert first["prompt"] == "A" and first["output"] == {"answer": "A"}
-    assert second["prompt"] == "B" and second["output"] == {"answer": "B"}
+    assert first["output"] != second["output"]
+    assert first["output"]["answer"] != second["output"]["answer"]
     # Both slots released, so nothing lingers from either.
     assert len(ws.step_output_store) == 0
 
@@ -470,18 +620,17 @@ async def test_failed_replay_does_not_mutate_the_source_run(monkeypatch):
 # prompt override
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_prompt_override_replaces_the_template_and_still_resolves(monkeypatch):
-    """The override wins over the snapshotted prompt; its ``{{...}}`` still resolve."""
+async def test_prompt_override_that_changes_the_contract_is_rejected_before_running(monkeypatch):
+    """An override would change the frozen call hash, so replay fails closed."""
     _seed_run()
     step_mock = AsyncMock(return_value=_ok())
     monkeypatch.setattr(ws, "run_agent_step", step_mock)
 
-    payload = await ws.replay_single_step(
-        _RUN_ID, "s2", prompt_override="be terse about {{steps.s1.output.answer}}"
-    )
-
-    assert payload["prompt"] == "be terse about 42"
-    assert step_mock.await_args.kwargs["prompt"] == "be terse about 42"
+    with pytest.raises(ws.ResumeCorruptError, match="no current YAML contract"):
+        await ws.replay_single_step(
+            _RUN_ID, "s2", prompt_override="be terse about {{steps.s1.output.answer}}"
+        )
+    assert step_mock.await_count == 0
 
 
 @pytest.mark.asyncio
@@ -551,6 +700,18 @@ async def test_corrupt_spec_snapshot_raises_resume_corrupt(monkeypatch):
     monkeypatch.setattr(ws, "run_agent_step", AsyncMock(return_value=_ok()))
     with pytest.raises(ws.ResumeCorruptError, match="no usable spec snapshot"):
         await ws.replay_single_step(_RUN_ID, "s2")
+
+
+@pytest.mark.asyncio
+async def test_legacy_yaml_replay_without_contract_is_rejected_before_running(monkeypatch):
+    """A historical YAML row is evidence only until it has valid contract history."""
+    _seed_run(with_contract=False)
+    step_mock = AsyncMock(return_value=_ok())
+    monkeypatch.setattr(ws, "run_agent_step", step_mock)
+
+    with pytest.raises(ws.ResumeCorruptError, match="no current YAML contract"):
+        await ws.replay_single_step(_RUN_ID, "s2")
+    assert step_mock.await_count == 0
 
 
 @pytest.mark.asyncio

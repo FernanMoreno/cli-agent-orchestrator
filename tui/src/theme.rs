@@ -37,6 +37,7 @@
 //! different piece of work. (#556)
 
 use ratatui::style::{Color, Modifier, Style};
+use crate::work_status_generated::WorkSemanticRole;
 
 /// The number of semantic roles. A seventh role must update [`Theme::roles`], whose return type
 /// is a fixed-size array — so the count and the accessor cannot drift apart silently.
@@ -109,6 +110,21 @@ pub(crate) struct Theme {
 }
 
 impl Theme {
+    /// Resolves generated Work presentation roles through this client's foreground palette.
+    ///
+    /// Work semantics live in the generated shared table; this is the TUI's palette boundary.
+    /// Ratatui status indicators intentionally set only a foreground, leaving the terminal's
+    /// own background untouched.
+    pub(crate) const fn work_status_style(&self, role: WorkSemanticRole) -> Style {
+        match role {
+            WorkSemanticRole::Info => self.focus,
+            WorkSemanticRole::Accent => self.ok,
+            WorkSemanticRole::Warning => self.warn,
+            WorkSemanticRole::Danger => self.error,
+            WorkSemanticRole::Neutral => self.dim,
+        }
+    }
+
     /// The ANSI-16 palette.
     ///
     /// `const` so it is a compile-time constant with no initialisation cost, and so a future

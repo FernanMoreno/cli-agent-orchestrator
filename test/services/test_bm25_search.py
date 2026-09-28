@@ -73,16 +73,9 @@ def make_wiki_file(
 
 
 @pytest.fixture()
-def svc(tmp_path):
-    """MemoryService with tmp_path as base_dir and test DB engine."""
-    from sqlalchemy import create_engine
-
-    from cli_agent_orchestrator.clients.database import Base
-
-    eng = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(eng)
-    service = MemoryService(base_dir=tmp_path, db_engine=eng)
-    return service
+def svc(tmp_path, isolated_memory_db):
+    """MemoryService with persistent, isolated metadata and access audit."""
+    return MemoryService(base_dir=tmp_path, db_engine=isolated_memory_db)
 
 
 # ---------------------------------------------------------------------------
@@ -346,29 +339,27 @@ class TestBm25GracefulFallback:
 
 class TestMcpRecallSearchMode:
     @patch("cli_agent_orchestrator.mcp_server.server._get_terminal_context_from_env")
-    @patch("cli_agent_orchestrator.services.memory_service.MemoryService")
+    @patch("cli_agent_orchestrator.services.memory_gateway.recall_memory", new_callable=AsyncMock)
     def test_mcp_recall_passes_search_mode(self, MockService, mock_ctx):
         from cli_agent_orchestrator.mcp_server.server import memory_recall
 
         mock_ctx.return_value = None
-        instance = MockService.return_value
-        instance.recall = AsyncMock(return_value=[])
+        MockService.return_value = []
 
         result = run_async(memory_recall(query="test", search_mode="bm25"))
 
-        call_kwargs = instance.recall.call_args.kwargs
+        call_kwargs = MockService.call_args.kwargs
         assert call_kwargs["search_mode"] == "bm25"
 
     @patch("cli_agent_orchestrator.mcp_server.server._get_terminal_context_from_env")
-    @patch("cli_agent_orchestrator.services.memory_service.MemoryService")
+    @patch("cli_agent_orchestrator.services.memory_gateway.recall_memory", new_callable=AsyncMock)
     def test_mcp_recall_defaults_to_hybrid(self, MockService, mock_ctx):
         from cli_agent_orchestrator.mcp_server.server import memory_recall
 
         mock_ctx.return_value = None
-        instance = MockService.return_value
-        instance.recall = AsyncMock(return_value=[])
+        MockService.return_value = []
 
         result = run_async(memory_recall(query="test"))
 
-        call_kwargs = instance.recall.call_args.kwargs
+        call_kwargs = MockService.call_args.kwargs
         assert call_kwargs["search_mode"] == "hybrid"

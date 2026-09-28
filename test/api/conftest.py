@@ -38,4 +38,4 @@ class TestClientWithHost(TestClient):
 def client():
     """Test client with proper Host header for security middleware."""
     app.state.plugin_registry = PluginRegistry()
-    return TestClientWithHost(app)
+    return TestClientWithHost(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))

@@ -20,6 +20,7 @@ import logging
 import re
 import subprocess
 import time
+from contextlib import ExitStack
 from typing import Callable, Dict, Optional, Set
 
 logger = logging.getLogger(__name__)
@@ -125,6 +126,45 @@ class HerdrInboxService:
         self._working_since.pop(terminal_id, None)
         logger.info(f"Unregistered terminal {terminal_id}")
 
+    @staticmethod
+    def _delete_ghost_terminal(terminal_id: str) -> None:
+        """Keep a Work binding from racing a legacy registry-row deletion."""
+        from cli_agent_orchestrator import constants
+        from cli_agent_orchestrator.clients.database import delete_terminal
+        from cli_agent_orchestrator.services.terminal_service import (
+            ensure_terminal_is_not_work_owned,
+        )
+        from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
+
+        with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id):
+            ensure_terminal_is_not_work_owned(terminal_id)
+            delete_terminal(terminal_id)
+
+    @staticmethod
+    def _kill_empty_session_if_unowned(session_name: str, terminal_ids: Set[str]) -> bool:
+        """Recheck persisted rows and Work ownership at the backend kill boundary."""
+        from cli_agent_orchestrator import constants
+        from cli_agent_orchestrator.backends.registry import get_backend
+        from cli_agent_orchestrator.clients.database import list_terminals_by_session
+        from cli_agent_orchestrator.services.session_lock import session_lifecycle_lock
+        from cli_agent_orchestrator.services.terminal_service import (
+            ensure_terminal_is_not_work_owned,
+        )
+        from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
+
+        with session_lifecycle_lock(session_name):
+            with ExitStack() as locks:
+                for terminal_id in sorted(terminal_ids):
+                    locks.enter_context(
+                        terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id)
+                    )
+                for terminal_id in terminal_ids:
+                    ensure_terminal_is_not_work_owned(terminal_id)
+                if list_terminals_by_session(session_name):
+                    return False
+                get_backend().kill_session(session_name)
+                return True
+
     async def start(self) -> None:
         """Start the event loop: wait for first terminal, then connect and listen."""
         # Run DB cleanup before starting the socket loop so ghost records from
@@ -145,7 +185,6 @@ class HerdrInboxService:
         from a herdr api snapshot.
         """
         from cli_agent_orchestrator.clients.database import (
-            delete_terminal,
             list_terminals_by_session,
         )
 
@@ -181,7 +220,7 @@ class HerdrInboxService:
                         f"({session_name}:{window}) — tab not in herdr"
                     )
                     try:
-                        delete_terminal(term["id"])
+                        self._delete_ghost_terminal(term["id"])
                         deleted += 1
                     except Exception as e:
                         logger.warning(
@@ -291,7 +330,6 @@ class HerdrInboxService:
         """
         from cli_agent_orchestrator.backends.registry import get_backend
         from cli_agent_orchestrator.clients.database import (
-            delete_terminal,
             get_terminal_metadata,
             list_terminals_by_session,
         )
@@ -340,7 +378,7 @@ class HerdrInboxService:
                         f"({session_name}:{window}) — tab not in herdr"
                     )
                     try:
-                        delete_terminal(term["id"])
+                        self._delete_ghost_terminal(term["id"])
                     except Exception as e:
                         logger.warning(
                             f"Reconcile: failed to delete ghost terminal {term['id']}: {e}"
@@ -363,7 +401,7 @@ class HerdrInboxService:
         live_workspace_labels = set(self._workspace_to_session.values())
 
         # Sessions that genuinely lost a terminal (deleted, not re-mapped).
-        affected_sessions: Set[str] = set()
+        affected_sessions: Dict[str, Set[str]] = {}
         remapped = 0
         deleted = 0
 
@@ -412,21 +450,22 @@ class HerdrInboxService:
                     remapped += 1
                     continue
 
-            # Tab label genuinely gone (or re-resolve failed): prune maps and
-            # delete the orphaned DB record.
+            # A failed durable ownership check must leave the retry handle and
+            # both maps intact. The deletion helper holds the dispatch fence.
+            try:
+                self._delete_ghost_terminal(terminal_id)
+                deleted += 1
+            except Exception as e:
+                logger.warning(f"Reconcile: failed to delete terminal {terminal_id}: {e}")
+                continue
+
             self._pane_to_terminal.pop(pane_id, None)
             self._terminal_to_pane.pop(terminal_id, None)
             self._kiro_terminals.discard(terminal_id)
             self._working_since.pop(terminal_id, None)
 
-            try:
-                delete_terminal(terminal_id)
-                deleted += 1
-            except Exception as e:
-                logger.warning(f"Reconcile: failed to delete terminal {terminal_id}: {e}")
-
             if term_session:
-                affected_sessions.add(term_session)
+                affected_sessions.setdefault(term_session, set()).add(terminal_id)
 
         # Kill a workspace only when its label is gone from herdr AND no managed
         # terminal remains for the session. A live label means the workspace is
@@ -442,8 +481,10 @@ class HerdrInboxService:
             for session_name, remaining in remaining_by_session.items():
                 if remaining == 0 and session_name not in live_workspace_labels:
                     try:
-                        get_backend().kill_session(session_name)
-                        logger.info(f"Reconcile: killed empty workspace {session_name}")
+                        if self._kill_empty_session_if_unowned(
+                            session_name, affected_sessions[session_name]
+                        ):
+                            logger.info(f"Reconcile: killed empty workspace {session_name}")
                     except Exception as e:
                         logger.warning(f"Reconcile: failed to kill workspace {session_name}: {e}")
 
@@ -613,14 +654,17 @@ class HerdrInboxService:
 
     def _handle_lifecycle_event(self, event_type: str, data: dict) -> None:
         """Handle pane.closed and workspace.closed events."""
-        from cli_agent_orchestrator.backends.registry import get_backend
+        from cli_agent_orchestrator import constants
         from cli_agent_orchestrator.clients.database import (
             get_terminal_metadata,
             list_terminals_by_session,
         )
         from cli_agent_orchestrator.services.terminal_service import (
             delete_terminal as teardown_terminal,
+            ensure_terminal_is_not_work_owned,
         )
+        from cli_agent_orchestrator.services.session_lock import session_lifecycle_lock
+        from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
         if event_type == "pane.closed":
             pane_id = data.get("pane_id", "")
@@ -657,20 +701,23 @@ class HerdrInboxService:
                 )
                 return
 
-            # Remove from maps
-            self._pane_to_terminal.pop(pane_id, None)
-            self._terminal_to_pane.pop(terminal_id, None)
-            self._kiro_terminals.discard(terminal_id)
-            self._working_since.pop(terminal_id, None)
-
             # Route pane lifecycle through the normal teardown rather than a
             # direct DB delete, so a Grok private home can return explicit
             # deferred cleanup and retain its terminal row for retry.
             try:
+                with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id):
+                    ensure_terminal_is_not_work_owned(terminal_id)
                 if teardown_terminal(terminal_id) is False:
                     logger.warning("pane.closed: cleanup deferred for terminal %s", terminal_id)
+                    return
             except Exception as e:
                 logger.warning(f"pane.closed: failed to delete terminal {terminal_id}: {e}")
+                return
+
+            self._pane_to_terminal.pop(pane_id, None)
+            self._terminal_to_pane.pop(terminal_id, None)
+            self._kiro_terminals.discard(terminal_id)
+            self._working_since.pop(terminal_id, None)
 
             logger.info(f"pane.closed: cleaned up terminal {terminal_id} (pane={pane_id})")
 
@@ -682,8 +729,8 @@ class HerdrInboxService:
             ]
             if session_name and not remaining_in_session:
                 try:
-                    get_backend().kill_session(session_name)
-                    logger.info(f"pane.closed: killed empty workspace {session_name}")
+                    if self._kill_empty_session_if_unowned(session_name, {terminal_id}):
+                        logger.info(f"pane.closed: killed empty workspace {session_name}")
                 except Exception as e:
                     logger.warning(f"pane.closed: failed to kill workspace {session_name}: {e}")
 
@@ -701,46 +748,58 @@ class HerdrInboxService:
                 if not session_name:
                     return
 
-            # A workspace close is also a terminal lifecycle transition. Route
-            # every persisted terminal through the normal teardown rather than
-            # bulk-deleting rows, so Grok private homes receive their safe,
-            # retryable provider cleanup even when this inbox service was
-            # restored without an in-memory provider map.
-            from cli_agent_orchestrator.services.terminal_service import (
-                delete_terminal as teardown_terminal,
-            )
+            # A workspace close is also a terminal lifecycle transition. Check
+            # all persisted identities before taking any provider snapshot or
+            # removing any in-memory retry handle.
+            try:
+                with session_lifecycle_lock(session_name):
+                    terminals = list_terminals_by_session(session_name)
+                    for terminal in terminals:
+                        terminal_id = terminal["id"]
+                        with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id):
+                            ensure_terminal_is_not_work_owned(terminal_id)
 
-            for terminal in list_terminals_by_session(session_name):
-                terminal_id = terminal["id"]
-                try:
-                    if teardown_terminal(terminal_id) is False:
-                        logger.warning(
-                            "workspace.closed: cleanup deferred for terminal %s", terminal_id
-                        )
-                except Exception as e:
-                    logger.warning(
-                        "workspace.closed: failed to cleanup terminal %s: %s", terminal_id, e
-                    )
+                    # Resolve the map membership before deleting DB rows.
+                    to_remove = [
+                        (pid, tid)
+                        for pid, tid in self._pane_to_terminal.items()
+                        if (m := get_terminal_metadata(tid))
+                        and m.get("tmux_session") == session_name
+                    ]
+                    cleaned = set()
+                    for terminal in terminals:
+                        terminal_id = terminal["id"]
+                        try:
+                            if teardown_terminal(terminal_id) is False:
+                                logger.warning(
+                                    "workspace.closed: cleanup deferred for terminal %s",
+                                    terminal_id,
+                                )
+                            else:
+                                cleaned.add(terminal_id)
+                        except Exception as e:
+                            logger.warning(
+                                "workspace.closed: failed to cleanup terminal %s: %s",
+                                terminal_id,
+                                e,
+                            )
 
-            # Prune maps for terminals belonging to this session. Match on each
-            # terminal's DB session rather than a pane_id/workspace_id string
-            # prefix: herdr renumbers compact pane_ids and does not guarantee
-            # they begin with the workspace_id, so a prefix test is unreliable.
-            # This mirrors the session match used in the pane.closed handler.
-            to_remove = [
-                (pid, tid)
-                for pid, tid in self._pane_to_terminal.items()
-                if (m := get_terminal_metadata(tid)) and m.get("tmux_session") == session_name
-            ]
-            for pid, tid in to_remove:
-                self._pane_to_terminal.pop(pid, None)
-                self._terminal_to_pane.pop(tid, None)
-                self._kiro_terminals.discard(tid)
-                self._working_since.pop(tid, None)
+                    for pid, tid in to_remove:
+                        if tid in cleaned:
+                            self._pane_to_terminal.pop(pid, None)
+                            self._terminal_to_pane.pop(tid, None)
+                            self._kiro_terminals.discard(tid)
+                            self._working_since.pop(tid, None)
 
-            self._workspace_to_session.pop(workspace_id, None)
+                    if len(cleaned) == len(terminals):
+                        self._workspace_to_session.pop(workspace_id, None)
+            except Exception as e:
+                logger.warning("workspace.closed: cleanup blocked for %s: %s", session_name, e)
+                return
             logger.info(
-                f"workspace.closed: cleaned up session {session_name} ({len(to_remove)} terminals)"
+                "workspace.closed: cleaned up session %s (%d terminals)",
+                session_name,
+                len(cleaned),
             )
 
     # TODO: _deliver() calls callback synchronously — if callback is async,

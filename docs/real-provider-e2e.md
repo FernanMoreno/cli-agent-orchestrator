@@ -221,12 +221,51 @@ The environment variables are intentionally mandatory. This prevents an
 ordinary local `pytest` invocation or a pull request from accidentally
 starting authenticated models or charging an account.
 
-## Release use
+## Manual workflow and JUnit evidence
 
-Run the GitHub workflow with its test-cell filter set to `all` before a release
-from the protected self-hosted runner. It obtains the manifest from the dispatch
-input when one is supplied, otherwise from the protected Actions variable. Use
-an explicit `parent->child` cell only to reproduce a failed test. Adding a registered
+The GitHub workflow is exclusively a manual `workflow_dispatch` on the
+protected self-hosted runner. It writes `real-provider-matrix.junit.xml` in the
+workspace and, even when pytest skips or fails, uploads only that file as the
+`cao-real-provider-matrix-junit-<run-id>` artifact. A missing JUnit file is an
+upload failure. It never uploads logs, temporary directories, `$HOME`,
+authentication records, raw provider output, or raw request/response data.
+
+Each cell records one sanitized `matrix_evidence` JUnit property. Its scenario
+evidence distinguishes `validated` (the assertion completed), `skipped` (an
+intentional or environmental non-product condition), and `not_observed` (the
+finite observation window supplied no proof). A quota observation is not a
+successful continuation merely because a terminal appears idle or a receipt is
+settled as `reconcile`; continuation is validated only by the original receipt
+becoming `succeeded` with verified output from that same turn. The JUnit
+property contains the scenario states and allowlisted identifiers/reasons, not
+prompts, markers, output, credentials, auth paths, environment values, or
+logs.
+
+### Quota observation window
+
+Every manual dispatch requires `quota_observation_seconds`: a finite positive
+decimal number of seconds for observing the **same** quota-paused turn. Before
+T084, the operator must review a value that is long enough for the selected
+provider/account's expected quota-reset window but still gives the manual run a
+finite evidence boundary. It is not derived from the 360-minute job timeout,
+does not authorize a retry, and never causes CAO to send the prompt again.
+
+The workflow maps this input only to the matrix pytest step as
+`CAO_REAL_PROVIDER_E2E_QUOTA_OBSERVATION_SECONDS`. The JUnit evidence records
+the configured limit and start time when observation is possible. If the value
+is absent, non-finite, zero, negative, or otherwise invalid, the harness does
+not poll or infer success: it records quota continuation as `not_observed` with
+the typed `observation_window_unconfigured` reason. Re-dispatch with a reviewed
+finite positive value when real-provider execution is authorized; do not use a
+job timeout as a substitute.
+
+T084 is the only authorized real-provider/account execution. T082 provides
+the manual workflow configuration and local contract evidence; do not dispatch
+this workflow or run the live matrix as part of T082. When T084 is explicitly
+authorized, dispatch the workflow with its test-cell filter set to `all` from
+the protected runner. It obtains the manifest from the dispatch input when one
+is supplied, otherwise from the protected Actions variable. Use an explicit
+`parent->child` cell only to reproduce a failed test. Adding a registered
 provider or changing a model happens in the manifest, not by changing workflow
 choices or CAO scheduler code. `gemini_cli` is already a registered adapter;
 once a protected runner has its binary, authentication, exact model, and

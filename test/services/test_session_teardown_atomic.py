@@ -36,6 +36,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.backends.registry import set_backend
+from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.clients import database
 from cli_agent_orchestrator.services import (
     session_env,
@@ -296,6 +297,8 @@ def runtime(monkeypatch):
 @pytest.fixture
 def real_db(tmp_path, monkeypatch):
     """Point ``clients.database`` at a fresh per-test SQLite registry."""
+    monkeypatch.setattr(constants, "DATABASE_FILE", tmp_path / "cao.db")
+    monkeypatch.setattr(constants, "LOCK_DIR", tmp_path / "locks")
     engine = create_engine(
         f"sqlite:///{tmp_path / 'cao.db'}",
         connect_args={"check_same_thread": False},
@@ -1194,7 +1197,7 @@ def test_teardown_does_not_self_deadlock_on_the_lifecycle_lock(real_db, runtime)
     assert session_lock._session_locks == {}
 
 
-def test_no_plugin_code_runs_inside_the_lifecycle_lock(real_db, runtime):
+def test_no_plugin_code_runs_inside_the_lifecycle_lock(real_db, runtime, monkeypatch):
     """Plugin hooks must be dispatched only AFTER the lock is released (#498).
 
     Plugin code is third-party and unbounded, and on the API path it does not
@@ -1217,11 +1220,21 @@ def test_no_plugin_code_runs_inside_the_lifecycle_lock(real_db, runtime):
     _seed(backend, "cao-plug", [("t1", "w1"), ("t2", "w2")], runtime)
 
     observed: List[tuple] = []
+    dispatch_lock_free = []
+
+    from cli_agent_orchestrator.services import work_terminal
+
+    monkeypatch.setattr(work_terminal, "_TERMINAL_DISPATCH_LOCK_TIMEOUT_SECONDS", 0.2)
 
     class ProbingRegistry:
         """A plugin registry whose hook tests whether the lock is still held."""
 
         async def dispatch(self, event_type, event):
+            try:
+                with work_terminal.terminal_dispatch_lock(constants.DATABASE_FILE, "t1"):
+                    dispatch_lock_free.append(True)
+            except work_terminal.TerminalDispatchLockError:
+                dispatch_lock_free.append(False)
             # The registry guard is only ever held for dict bookkeeping, so
             # reading the entry here is safe and non-blocking.
             entry = session_lock._session_locks.get("cao-plug")
@@ -1247,6 +1260,7 @@ def test_no_plugin_code_runs_inside_the_lifecycle_lock(real_db, runtime):
         "these plugin events were dispatched while the lifecycle lock for "
         f"'cao-plug' was still held: {still_locked}"
     )
+    assert dispatch_lock_free == [True, True, True]
     # The teardown itself still did its job.
     assert backend.session_exists("cao-plug") is False
     assert database.list_terminals_by_session("cao-plug") == []

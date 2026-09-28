@@ -54,15 +54,116 @@ no terminal resolves nothing, because an unused block is sensitive text kept for
 """
 
 import logging
-from typing import Optional
+import re
+from typing import Optional, Protocol
 
 from cli_agent_orchestrator.services import execution_manifest, workflow_journal
+from cli_agent_orchestrator.services.secret_gate import scan_for_secrets
 
 logger = logging.getLogger(__name__)
 
 #: What ``source`` records for a block resolved through the ordinary curated path. A fixed token
 #: rather than free text, because it is compared across a resume and read by ``frozen-context-proof``.
 MEMORY_SOURCE_CURATED = "cao-memory:curated"
+_SNAPSHOT_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
+
+
+class FrozenSnapshotMemoryUnavailable(RuntimeError):
+    """An explicit snapshot reference could not safely yield terminal content."""
+
+
+class AuthorizedSnapshotReader(Protocol):
+    """Trusted capability that has already bound authority to a snapshot read."""
+
+    def read_authorized(self, snapshot_id: str) -> str:
+        """Return exact authorized content, including an authorized empty string."""
+
+
+class WorkOrderSnapshotReader:
+    """Read only the snapshot fixed in one currently authorized work-order binding.
+
+    This is a server-composition capability, not a caller callback or authority
+    grant.  It revalidates the stored order in the same read transaction that
+    loads its snapshot, so a principal cannot substitute a snapshot belonging
+    to another job, contract, or binding destination.
+    """
+
+    def __init__(self, contracts, binding):
+        from cli_agent_orchestrator.models.work_contract import WorkContractBinding
+        from cli_agent_orchestrator.services.work_contract import WorkContracts
+
+        if type(contracts) is not WorkContracts or type(binding) is not WorkContractBinding:
+            raise TypeError("durable work-order binding required")
+        self._contracts = contracts
+        self._binding = binding
+
+    def read_authorized(self, snapshot_id: str) -> str:
+        """Return UTF-8 bytes only after revalidating this exact durable order."""
+        if not _is_snapshot_id(snapshot_id):
+            raise FrozenSnapshotMemoryUnavailable("authorized frozen snapshot is unavailable")
+        try:
+            from cli_agent_orchestrator.services.delegation_snapshot import DelegationSnapshots
+
+            with self._contracts.repository.read_snapshot() as connection:
+                current = self._contracts._revalidate_order(
+                    connection,
+                    self._binding.attempt_id,
+                    generation=self._binding.generation,
+                )
+                if current != self._binding or current.contract.snapshot.id != snapshot_id:
+                    raise FrozenSnapshotMemoryUnavailable(
+                        "authorized frozen snapshot is unavailable"
+                    )
+                snapshot = DelegationSnapshots._load_authorized(
+                    connection,
+                    connection.execute(
+                        "SELECT * FROM work_delegation_snapshots WHERE id=?", (snapshot_id,)
+                    ).fetchone(),
+                )
+                if (
+                    snapshot.job_id != current.job_id
+                    or snapshot.id != current.contract.snapshot.id
+                    or snapshot.delivered_hash != current.contract.snapshot.delivered_hash
+                ):
+                    raise FrozenSnapshotMemoryUnavailable(
+                        "authorized frozen snapshot is unavailable"
+                    )
+                return snapshot.content.decode("utf-8")
+        except FrozenSnapshotMemoryUnavailable:
+            raise
+        except Exception:
+            raise FrozenSnapshotMemoryUnavailable(
+                "authorized frozen snapshot is unavailable"
+            ) from None
+
+
+def _is_snapshot_id(value: object) -> bool:
+    return (
+        type(value) is str and bool(_SNAPSHOT_ID.fullmatch(value)) and not scan_for_secrets(value)
+    )
+
+
+def resolve_frozen_memory(
+    legacy_memory: str | None,
+    *,
+    snapshot_id: str | None = None,
+    snapshot_reader: AuthorizedSnapshotReader | None = None,
+) -> str | None:
+    """Choose legacy content or an explicitly authorized snapshot, never a fallback mix."""
+    if snapshot_id is None:
+        return legacy_memory
+    if not _is_snapshot_id(snapshot_id) or snapshot_reader is None:
+        raise FrozenSnapshotMemoryUnavailable("authorized frozen snapshot is unavailable")
+    try:
+        reader = getattr(snapshot_reader, "read_authorized", None)
+        if not callable(reader):
+            raise TypeError("authorized snapshot reader required")
+        content = reader(snapshot_id)
+    except Exception:
+        raise FrozenSnapshotMemoryUnavailable("authorized frozen snapshot is unavailable") from None
+    if type(content) is not str:
+        raise FrozenSnapshotMemoryUnavailable("authorized frozen snapshot is unavailable")
+    return content
 
 
 def _resolve_live(terminal_id: str, task_description: str) -> str:
@@ -81,7 +182,12 @@ def _resolve_live(terminal_id: str, task_description: str) -> str:
 
 
 def frozen_memory_for(
-    run_id: Optional[str], terminal_id: str, task_description: str = ""
+    run_id: Optional[str],
+    terminal_id: str,
+    task_description: str = "",
+    *,
+    snapshot_id: str | None = None,
+    snapshot_reader: AuthorizedSnapshotReader | None = None,
 ) -> Optional[str]:
     """The memory block this run's terminals must be given, or ``None`` for "resolve live".
 
@@ -90,9 +196,21 @@ def frozen_memory_for(
     readable manifest. ``""`` means a manifest existed but its memory block could not be persisted;
     the caller must supply that empty block to prevent the terminal's live-memory fallback.
 
-    TOTAL: never raises. A workflow step must not fail because a memory block could not be frozen;
-    the worst outcome here is a run that proceeds without memory, which is visible in the manifest.
+    The legacy route is TOTAL: it never raises, and a freeze fault returns the explicit empty
+    block rather than unrecorded live memory.  An explicit ``snapshot_id`` is different: a
+    missing, invalid or unauthorized selection raises ``FrozenSnapshotMemoryUnavailable`` so
+    it cannot be silently reclassified as legacy/live content.
     """
+    if snapshot_id is not None:
+        # An explicit snapshot selection is not legacy data.  It either resolves
+        # through a trusted, order-bound port or prevents terminal injection;
+        # it must never become a live-memory fallback.
+        return resolve_frozen_memory(
+            None,
+            snapshot_id=snapshot_id,
+            snapshot_reader=snapshot_reader,
+        )
+
     if not run_id:
         # Not a workflow terminal. Today's behaviour, untouched — C-1.
         return None

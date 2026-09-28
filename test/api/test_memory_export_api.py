@@ -96,6 +96,7 @@ class TestExportEndpointAuth:
     def _clear_overrides(self):
         yield
         app.dependency_overrides.pop(auth.get_current_scopes, None)
+        app.dependency_overrides.pop(auth.get_current_principal, None)
 
     @staticmethod
     def _override_scopes(scopes):
@@ -123,13 +124,20 @@ class TestExportEndpointAuth:
         assert found, "GET /memory/export is missing a require_any_scope dependency"
 
     def test_scopeless_token_forbidden(self, client, real_service, auth_on):
+        app.dependency_overrides[auth.get_current_principal] = lambda: auth._verified_principal(
+            "https://issuer.test", "worker", [], "jwt"
+        )
         app.dependency_overrides[auth.get_current_scopes] = self._override_scopes([])
         with patch(ENABLED_TARGET, return_value=True):
             response = client.get("/memory/export?scope=global")
         assert response.status_code == 403
 
-    def test_read_token_admitted(self, client, real_service, auth_on):
+    def test_read_token_cannot_export_local_legacy(self, client, real_service, auth_on):
+        app.dependency_overrides[auth.get_current_principal] = lambda: auth._verified_principal(
+            "https://issuer.test", "worker", [auth.SCOPE_READ], "jwt"
+        )
         app.dependency_overrides[auth.get_current_scopes] = self._override_scopes([auth.SCOPE_READ])
         with patch(ENABLED_TARGET, return_value=True):
             response = client.get("/memory/export?scope=global")
-        assert response.status_code == 200
+        assert response.status_code == 403
+        assert response.json()["detail"]["code"] == "legacy_memory_local_only"

@@ -25,8 +25,10 @@ under the *nested* schema described in issue #357.
 
 import json
 import logging
+import math
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -58,6 +60,8 @@ class ServerConfig(BaseModel):
     event_bus_max_queue_size: int = 1024
     provider_init_timeout: int = 120
     startup_prompt_handler_timeout: int = 20
+    state_buffer_max: int = 32768
+    max_terminals: Optional[int] = None
 
 
 class MemoryConfig(BaseModel):
@@ -66,6 +70,16 @@ class MemoryConfig(BaseModel):
     flush_threshold: float = 0.85
     compile_timeout_s: float = 120.0
     lint_enabled: bool = True
+    learning_enabled: bool = False
+    instruction_promotion_enabled: bool = False
+    workflow_journal_capture_output: bool = False
+    workflow_journal_output_cap_bytes: int = 8192
+    workflow_journal_retention_days: int = 30
+    workflow_journal_retention_count: int = 100
+
+
+class WorkflowConfig(BaseModel):
+    require_approval: bool = False
 
 
 class TerminalConfig(BaseModel):
@@ -129,6 +143,7 @@ class CAOConfig(BaseModel):
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
 
 
 # Deprecated second surface. Read once for migration, then ignored.
@@ -194,17 +209,260 @@ ENV_REGISTRY: Dict[str, Tuple[str, str, Any]] = {
         20,
     ),
     "CAO_STATE_BUFFER_MAX": ("server.state_buffer_max", "int", 32768),
+    "CAO_MAX_TERMINALS": ("server.max_terminals", "int", None),
+    "CAO_MEMORY_LEARNING_ENABLED": ("memory.learning_enabled", "bool", False),
+    "CAO_MEMORY_INSTRUCTION_PROMOTION_ENABLED": (
+        "memory.instruction_promotion_enabled",
+        "bool",
+        False,
+    ),
+    "CAO_WORKFLOW_REQUIRE_APPROVAL": ("workflow.require_approval", "bool", False),
 }
 
 # Reverse index: dotted path -> env var name, for get()'s env-precedence lookup.
 _PATH_TO_ENV: Dict[str, str] = {path: env for env, (path, _, _) in ENV_REGISTRY.items()}
+
+# Version describes this registry contract, not the user's settings document.
+# Unknown stored keys remain untouched for forward/backward compatibility.
+CONFIG_REGISTRY_VERSION = 1
+
+
+@dataclass(frozen=True)
+class ConfigOption:
+    kind: Literal["str", "bool", "int", "float", "list", "dict"]
+    default: Any
+    env: Optional[str] = None
+    runtime_source: Literal["settings", "environment_only"] = "settings"
+    precedence: str = "override > environment > file > default"
+    application: Literal["next_read", "restart"] = "next_read"
+    # This field describes propagation of process environment. Shared-file
+    # readers can observe later writes; already constructed consumers cannot.
+    existing_workers: str = "inherited_environment_unchanged"
+
+
+@dataclass(frozen=True)
+class ExternalEnvironmentOption:
+    """Inventory, not a new resolver: consumer owns parsing/defaults/enforcement."""
+
+    consumer: str
+    kind: Literal["str", "bool", "int", "float", "list"] = "str"
+    application: Literal["next_read", "restart", "spawn"] = "restart"
+    secret: bool = False
+    runtime_context: bool = False
+    runtime_source: str = "environment_only"
+    existing_workers: str = "unchanged"
+
+
+# Explicit consumer ownership avoids activating inert auth/network file settings
+# or treating injected identity and credentials as editable user preferences.
+EXTERNAL_ENV_REGISTRY: Dict[str, ExternalEnvironmentOption] = {
+    "CAO_HOME_DIR": ExternalEnvironmentOption("constants"),
+    "CAO_AGENTS_DIR": ExternalEnvironmentOption("constants"),
+    "CAO_API_HOST": ExternalEnvironmentOption("constants"),
+    "CAO_API_PORT": ExternalEnvironmentOption("constants", "int"),
+    "CAO_GRAPH_EXPORT_ROOT": ExternalEnvironmentOption("constants", application="next_read"),
+    "CAO_PYTE_STATUS": ExternalEnvironmentOption("constants", "bool"),
+    "CAO_PYTE_MIDBURST_PROBE_S": ExternalEnvironmentOption("constants", "float"),
+    "CAO_EAGER_INBOX_DELIVERY": ExternalEnvironmentOption("constants", "bool"),
+    "CAO_FORWARDED_ALLOW_IPS": ExternalEnvironmentOption("constants", "list"),
+    "CAO_PROFILE_ALLOWED_HOSTS": ExternalEnvironmentOption(
+        "services.install_service", "list", "next_read"
+    ),
+    "AUTH0_DOMAIN": ExternalEnvironmentOption("security.auth", application="next_read"),
+    "AUTH0_AUDIENCE": ExternalEnvironmentOption("security.auth", application="next_read"),
+    "CAO_AUTH_LOCAL_TOKEN": ExternalEnvironmentOption(
+        "security.auth", application="next_read", secret=True
+    ),
+    "CAO_PROJECT_ID": ExternalEnvironmentOption("services.memory_service", application="next_read"),
+    "CAO_MEMORY_API_URL": ExternalEnvironmentOption(
+        "services.memory_gateway", application="next_read"
+    ),
+    "CAO_ENABLE_WORKING_DIRECTORY": ExternalEnvironmentOption("mcp_server.server", "bool"),
+    "CAO_ENABLE_SENDER_ID_INJECTION": ExternalEnvironmentOption("utils.orchestration", "bool"),
+    "CAO_AGUI_ENABLED": ExternalEnvironmentOption("services.agui_enablement", "bool"),
+    "CAO_AGUI_HEARTBEAT_SECONDS": ExternalEnvironmentOption("services.agui.run_plane", "float"),
+    "CAO_ELASTIC_BROKER_URL": ExternalEnvironmentOption("utils.fleet", application="next_read"),
+    "CAO_ELASTIC_BROKER_TOKEN": ExternalEnvironmentOption(
+        "utils.fleet", application="next_read", secret=True
+    ),
+    "CAO_ELASTIC_WORKER_READY_WAIT": ExternalEnvironmentOption(
+        "mcp_server.server", "float", "next_read"
+    ),
+    "CAO_ADVERTISED_URL": ExternalEnvironmentOption("utils.orchestration", application="next_read"),
+    "CAO_ELASTIC_CALLBACK_URL": ExternalEnvironmentOption(
+        "mcp_server.server", application="next_read"
+    ),
+    "CAO_TMP_DIR": ExternalEnvironmentOption("providers.cursor_cli", application="next_read"),
+    "CAO_MOCK_CLI_SCRIPTED_PROMPTS": ExternalEnvironmentOption(
+        "providers.mock_cli", "bool", "next_read"
+    ),
+    "GROK_HOME": ExternalEnvironmentOption("providers.grok_cli", application="next_read"),
+    "GEMINI_CLI_SYSTEM_SETTINGS_PATH": ExternalEnvironmentOption(
+        "providers.gemini_cli", application="next_read"
+    ),
+    "MINIMAX_DATA_DIR": ExternalEnvironmentOption(
+        "providers.minimax_code", application="next_read"
+    ),
+    "CLAUDE_CODE_OAUTH_TOKEN": ExternalEnvironmentOption(
+        "providers.claude_code", application="next_read", secret=True
+    ),
+    "XDG_CONFIG_HOME": ExternalEnvironmentOption("backends.herdr_backend", application="next_read"),
+    "ProgramData": ExternalEnvironmentOption("providers.gemini_cli", application="next_read"),
+    "SHELL": ExternalEnvironmentOption("cli.commands.terminal", application="next_read"),
+    "PATH": ExternalEnvironmentOption(
+        "services.script_runner", application="spawn", runtime_context=True
+    ),
+    "HOME": ExternalEnvironmentOption(
+        "services.script_runner", application="spawn", runtime_context=True
+    ),
+    "OTEL_SDK_DISABLED": ExternalEnvironmentOption("telemetry", "bool"),
+}
+for _name in (
+    "CAO_PIPE_LIVENESS_TAIL_LINES",
+    "CAO_PIPE_LIVENESS_STALL_CHECKS",
+    "CAO_PIPE_LIVENESS_MAX_REARM_FAILURES",
+    "CAO_PIPE_LIVENESS_MAX_COLD_START_ATTEMPTS",
+    "CAO_PIPE_LIVENESS_MAX_PROBE_FAILURES",
+):
+    EXTERNAL_ENV_REGISTRY[_name] = ExternalEnvironmentOption("constants", "int")
+for _name in ("CAO_PIPE_LIVENESS_CHECK_INTERVAL_S", "CAO_PIPE_LIVENESS_COLD_START_GRACE_S"):
+    EXTERNAL_ENV_REGISTRY[_name] = ExternalEnvironmentOption("constants", "float")
+for _name in (
+    "CAO_HERMES_IDLE_PROMPT_REGEX",
+    "CAO_HERMES_IDLE_LOG_REGEX",
+    "CAO_HERMES_PROCESSING_REGEX",
+    "CAO_HERMES_USER_PREFIX_REGEX",
+    "CAO_HERMES_ASSISTANT_HEADER_REGEX",
+):
+    EXTERNAL_ENV_REGISTRY[_name] = ExternalEnvironmentOption("providers.hermes")
+EXTERNAL_ENV_REGISTRY["CAO_HERMES_MAX_STABLE_IDLE_POLLS"] = ExternalEnvironmentOption(
+    "providers.hermes", "int"
+)
+for _name in (
+    "CAO_CALLBACK_URL",
+    "CAO_CALLBACK_TERMINAL_ID",
+    "CAO_ELASTIC_WORKER_ID",
+    "CAO_ELASTIC_RELEASE_TOKEN",
+    "CAO_TERMINAL_ID",
+    "CAO_SESSION_NAME",
+    "CAO_WORKFLOW_RUN_ID",
+    "CAO_WORKFLOW_STEP_ID",
+    "CAO_WORKFLOW_GENERATION",
+    "CAO_API_BASE_URL",
+    "CAO_WORKFLOW_INPUTS",
+    "CAO_WORKFLOW_RESUME",
+):
+    EXTERNAL_ENV_REGISTRY[_name] = ExternalEnvironmentOption(
+        "runtime_context",
+        application="spawn",
+        runtime_context=True,
+        secret=_name == "CAO_ELASTIC_RELEASE_TOKEN",
+    )
+
+
+CONFIG_REGISTRY: Dict[str, ConfigOption] = {
+    path: ConfigOption(kind, default, env) for env, (path, kind, default) in ENV_REGISTRY.items()
+}
+CONFIG_REGISTRY.update(
+    {
+        "agents.dirs": ConfigOption("dict", {}),
+        "agents.extra_dirs": ConfigOption("list", []),
+        "agents.disabled_dirs": ConfigOption("list", []),
+        "agents.roles": ConfigOption("dict", {}),
+        "skills.extra_dirs": ConfigOption("list", []),
+        "memory.compile_timeout_s": ConfigOption("float", 120.0),
+        "memory.workflow_journal_capture_output": ConfigOption("bool", False),
+        "memory.workflow_journal_output_cap_bytes": ConfigOption("int", 8192),
+        "memory.workflow_journal_retention_days": ConfigOption("int", 30),
+        "memory.workflow_journal_retention_count": ConfigOption("int", 100),
+    }
+)
+for _path, _option in tuple(CONFIG_REGISTRY.items()):
+    if _path.startswith(("auth.", "network.")):
+        CONFIG_REGISTRY[_path] = replace(
+            _option,
+            runtime_source="environment_only",
+            precedence="consumer-owned environment; file is schema-only",
+            application="restart" if _path.startswith("network.") else "next_read",
+        )
+    elif _path.startswith(("terminal.", "apps.", "logging.")) or _path in (
+        "server.event_bus_max_queue_size",
+        "server.state_buffer_max",
+    ):
+        CONFIG_REGISTRY[_path] = replace(_option, application="restart")
+for _path, _precedence in {
+    "memory.lint_enabled": "override > either-source-false veto > default",
+    "workflow.require_approval": "override > environment-enable-only > file > default",
+    "memory.learning_enabled": "override > memory parent gate > environment > file > default",
+    "memory.instruction_promotion_enabled": "override > learning parent gate > environment > file > default",
+}.items():
+    CONFIG_REGISTRY[_path] = replace(CONFIG_REGISTRY[_path], precedence=_precedence)
+CONFIG_REGISTRY["server.provider_init_timeout"] = replace(
+    CONFIG_REGISTRY["server.provider_init_timeout"], existing_workers="unchanged"
+)
+
+
+def _validate_value(path: str, value: Any) -> Any:
+    """Validate known writes/overrides before touching storage; keep unknown keys."""
+    option = CONFIG_REGISTRY.get(path)
+    if option is None:
+        return value
+    if value is None and path in ("apps.static_dir", "server.max_terminals"):
+        return None
+    kind = option.kind
+    valid = {
+        "bool": isinstance(value, bool),
+        "int": isinstance(value, int) and not isinstance(value, bool),
+        "float": isinstance(value, (int, float)) and not isinstance(value, bool),
+        "str": isinstance(value, str),
+        "list": isinstance(value, list) and all(isinstance(v, str) for v in value),
+        "dict": isinstance(value, dict),
+    }[kind]
+    if not valid:
+        raise ValueError(f"{path} must be {kind}")
+    if kind in ("int", "float"):
+        if not math.isfinite(value):
+            raise ValueError(f"{path} must be finite")
+        minimum = (
+            0
+            if path
+            in ("memory.workflow_journal_retention_days", "memory.workflow_journal_retention_count")
+            else None
+        )
+        if (minimum == 0 and value < 0) or (minimum is None and value <= 0):
+            raise ValueError(f"{path} is out of range")
+        if path == "memory.flush_threshold" and value > 1:
+            raise ValueError(f"{path} must be <= 1")
+    choices = {
+        "terminal.backend": ("tmux", "herdr"),
+        "memory.compile_mode": ("llm", "append"),
+        "logging.level": (
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "WARN",
+            "ERROR",
+            "CRITICAL",
+            "FATAL",
+            "NOTSET",
+        ),
+    }.get(path)
+    if path == "logging.level":
+        value = value.upper()
+    if choices is not None and value not in choices:
+        raise ValueError(f"{path} must be one of {choices}")
+    return value
+
 
 _migration_logged = False
 
 
 def _coerce_env_value(raw: str, kind: str) -> Any:
     if kind == "bool":
-        return raw.strip().lower() in ("1", "true", "yes")
+        normalized = raw.strip().lower()
+        if normalized not in ("1", "true", "yes", "0", "false", "no"):
+            raise ValueError("expected a boolean")
+        return normalized in ("1", "true", "yes")
     if kind == "int":
         return int(raw)
     if kind == "float":
@@ -332,6 +590,8 @@ def _get_owned_section(path: str, default: Any) -> Any:
     if path == "skills.extra_dirs":
         return settings_service.get_extra_skill_dirs()
     if section == "server":
+        if key == "max_terminals":
+            return settings_service.get_max_terminals()
         return settings_service.get_server_settings().get(key, default)
     if section == "memory":
         if key == "enabled":
@@ -342,11 +602,19 @@ def _get_owned_section(path: str, default: Any) -> Any:
             return settings_service.get_compile_mode()
         if key == "compile_timeout_s":
             return settings_service.get_compile_timeout_s()
+        if key == "learning_enabled":
+            return settings_service.is_learning_enabled()
+        if key == "instruction_promotion_enabled":
+            return settings_service.is_instruction_promotion_enabled()
+        if path in CONFIG_REGISTRY:
+            default = CONFIG_REGISTRY[path].default
         return settings_service.get_memory_settings().get(key, default)
+    if path == "workflow.require_approval":
+        return settings_service.is_workflow_approval_required()
     raise KeyError(path)
 
 
-_OWNED_SECTIONS = frozenset({"agents", "skills", "server", "memory"})
+_OWNED_SECTIONS = frozenset({"agents", "skills", "server", "memory", "workflow"})
 
 
 def _get_value(path: str, default: Any = None, override: Optional[Any] = None) -> Any:
@@ -358,12 +626,21 @@ def _get_value(path: str, default: Any = None, override: Optional[Any] = None) -
     ``None``, always wins.
     """
     if override is not None:
-        return override
+        # BackendFactory owns ConfigurationError (including CLI error handling).
+        # Preserve its fail-fast contract instead of silently selecting tmux.
+        if path == "terminal.backend":
+            return override
+        return _validate_value(path, override)
 
-    if path == "memory.lint_enabled":
-        from cli_agent_orchestrator.services import settings_service
-
-        return settings_service.is_memory_lint_enabled()
+    # Delegate before generic env coercion: these readers own validation and
+    # safety exceptions (lint veto, approval enable-only, learning parent gates).
+    section = path.split(".", 1)[0]
+    if section in _OWNED_SECTIONS:
+        try:
+            value = _get_owned_section(path, default)
+        except KeyError:
+            value = None
+        return value if value is not None else default
 
     env_name = _PATH_TO_ENV.get(path)
     if env_name is not None:
@@ -373,23 +650,21 @@ def _get_value(path: str, default: Any = None, override: Optional[Any] = None) -
         if raw is not None and raw != "":
             _, kind, _ = ENV_REGISTRY[env_name]
             try:
-                return _coerce_env_value(raw, kind)
+                value = _coerce_env_value(raw, kind)
+                return value if path == "terminal.backend" else _validate_value(path, value)
             except ValueError:
                 logger.warning(
                     f"Ignoring invalid {env_name}={raw!r} for {path}; using file/default"
                 )
 
-    section = path.split(".", 1)[0]
-    if section in _OWNED_SECTIONS:
-        try:
-            value = _get_owned_section(path, default)
-        except KeyError:
-            value = None
-        return value if value is not None else default
-
     file_value = _get_from_file(path)
     if file_value is not None:
-        return file_value
+        if path == "terminal.backend":
+            return file_value
+        try:
+            return _validate_value(path, file_value)
+        except ValueError:
+            logger.warning("Ignoring invalid setting %s; using default", path)
     return _OWNED_DEFAULTS.get(path, default)
 
 
@@ -402,6 +677,9 @@ def _set_value(path: str, value: Any) -> Any:
     """
     from cli_agent_orchestrator.services import settings_service
 
+    # Existing memory setters own their validation/error contract.
+    if not path.startswith("memory."):
+        value = _validate_value(path, value)
     if path == "agents.extra_dirs":
         return settings_service.set_extra_agent_dirs(value)
     if path == "agents.disabled_dirs":
@@ -443,25 +721,7 @@ def _set_value(path: str, value: Any) -> Any:
     return value
 
 
-_ALL_PATHS = sorted(
-    set(_PATH_TO_ENV.keys())
-    | {
-        "agents.dirs",
-        "agents.extra_dirs",
-        "agents.disabled_dirs",
-        "agents.roles",
-        "skills.extra_dirs",
-        "server.mcp_request_timeout",
-        "server.event_bus_max_queue_size",
-        "server.provider_init_timeout",
-        "server.startup_prompt_handler_timeout",
-        "memory.enabled",
-        "memory.lint_enabled",
-        "memory.compile_mode",
-        "memory.flush_threshold",
-        "memory.compile_timeout_s",
-    }
-)
+_ALL_PATHS = sorted(CONFIG_REGISTRY)
 
 
 class ConfigService:
@@ -469,8 +729,25 @@ class ConfigService:
 
     Stateless — every method re-resolves from env/file on each call (settings
     files are small and infrequently read; see ``settings_service.get_server_settings``
-    for the one hot-path that still caches on mtime).
+    for the hot-path cache keyed by file identity, mtime and environment).
     """
+
+    @staticmethod
+    def registry() -> Dict[str, Any]:
+        """Describe support and application timing, never effective credentials.
+
+        next_read means a fresh reader observes updates, not that a previously
+        created consumer is mutated. Process environment is inherited at spawn;
+        changing the supervisor environment never updates existing workers.
+        Env-only security consumers retain their own resolution contracts.
+        """
+        return {
+            "version": CONFIG_REGISTRY_VERSION,
+            "options": {path: asdict(option) for path, option in CONFIG_REGISTRY.items()},
+            "external_environment": {
+                name: asdict(option) for name, option in EXTERNAL_ENV_REGISTRY.items()
+            },
+        }
 
     @staticmethod
     def get(path: str, default: Any = None, override: Optional[Any] = None) -> Any:
@@ -508,6 +785,8 @@ class ConfigService:
             ),
             skills=SkillsConfig(extra_dirs=_get_value("skills.extra_dirs", default=[])),
             server=ServerConfig(
+                state_buffer_max=_get_value("server.state_buffer_max", default=32768),
+                max_terminals=_get_value("server.max_terminals"),
                 mcp_request_timeout=_get_value("server.mcp_request_timeout", default=30),
                 event_bus_max_queue_size=_get_value(
                     "server.event_bus_max_queue_size", default=1024
@@ -518,6 +797,20 @@ class ConfigService:
                 ),
             ),
             memory=MemoryConfig(
+                learning_enabled=_get_value("memory.learning_enabled"),
+                instruction_promotion_enabled=_get_value("memory.instruction_promotion_enabled"),
+                workflow_journal_capture_output=_get_value(
+                    "memory.workflow_journal_capture_output"
+                ),
+                workflow_journal_output_cap_bytes=_get_value(
+                    "memory.workflow_journal_output_cap_bytes"
+                ),
+                workflow_journal_retention_days=_get_value(
+                    "memory.workflow_journal_retention_days"
+                ),
+                workflow_journal_retention_count=_get_value(
+                    "memory.workflow_journal_retention_count"
+                ),
                 enabled=_get_value("memory.enabled", default=True),
                 lint_enabled=_get_value("memory.lint_enabled", default=True),
                 compile_mode=_get_value("memory.compile_mode", default="llm"),
@@ -536,6 +829,7 @@ class ConfigService:
                 allowed_hosts=_get_value("network.allowed_hosts", default=[]),
                 cors_origins=_get_value("network.cors_origins", default=[]),
                 ws_allowed_clients=_get_value("network.ws_allowed_clients", default=[]),
+                ws_allowed_origins=_get_value("network.ws_allowed_origins", default=[]),
             ),
             auth=AuthConfig(
                 jwks_uri=_get_value("auth.jwks_uri", default=""),
@@ -543,4 +837,5 @@ class ConfigService:
                 issuer=_get_value("auth.issuer", default=""),
             ),
             logging=LoggingConfig(level=_get_value("logging.level", default="INFO")),
+            workflow=WorkflowConfig(require_approval=_get_value("workflow.require_approval")),
         )

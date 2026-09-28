@@ -216,17 +216,12 @@ class TestU72PlanCases:
         Base.metadata.create_all(bind=engine)
         Session = sessionmaker(bind=engine)
         monkeypatch.setattr(db_mod, "SessionLocal", Session)
-        # MemoryService() default base_dir — point it to tmp_path via env / module
-        # constants. Easiest: patch MemoryService construction in run_lint
-        # directly to return our svc (whose base_dir = tmp_path).
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.services.memory_service.MemoryService",
-            lambda *a, **kw: svc,
-        )
+        # Pass the owner explicitly; replacing the MemoryService class would
+        # poison imports in services first loaded during lint.
         # Disable LLM so contradiction is a no-op.
         monkeypatch.setattr(wiki_lint, "_build_llm_client", lambda: None)
 
-        issues = _run(run_lint("test-project", repo_root=str(tmp_path)))
+        issues = _run(run_lint("test-project", repo_root=str(tmp_path), memory_service=svc))
         # Only the completion summary should be present.
         substantive = [
             i
@@ -1071,10 +1066,6 @@ class TestT9PureRead:
         Base.metadata.create_all(bind=engine)
         Session = sessionmaker(bind=engine)
         monkeypatch.setattr(db_mod, "SessionLocal", Session)
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.services.memory_service.MemoryService",
-            lambda *a, **kw: svc,
-        )
         monkeypatch.setattr(wiki_lint, "_build_llm_client", lambda: None)
 
         store_calls = {"n": 0}
@@ -1093,7 +1084,7 @@ class TestT9PureRead:
         monkeypatch.setattr(MemoryService, "store", _track_store)
         monkeypatch.setattr(MemoryService, "forget", _track_forget)
 
-        _run(run_lint("test-project", repo_root=str(tmp_path)))
+        _run(run_lint("test-project", repo_root=str(tmp_path), memory_service=svc))
         assert store_calls["n"] == 0
         assert forget_calls["n"] == 0
 
@@ -1115,13 +1106,9 @@ class TestT10PartialRunSummary:
         Base.metadata.create_all(bind=engine)
         Session = sessionmaker(bind=engine)
         monkeypatch.setattr(db_mod, "SessionLocal", Session)
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.services.memory_service.MemoryService",
-            lambda *a, **kw: svc,
-        )
         monkeypatch.setattr(wiki_lint, "_build_llm_client", lambda: None)
 
-        issues = _run(run_lint("test-project", repo_root=str(tmp_path)))
+        issues = _run(run_lint("test-project", repo_root=str(tmp_path), memory_service=svc))
         summary = next(
             (
                 i
@@ -1144,10 +1131,6 @@ class TestT10PartialRunSummary:
         Base.metadata.create_all(bind=engine)
         Session = sessionmaker(bind=engine)
         monkeypatch.setattr(db_mod, "SessionLocal", Session)
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.services.memory_service.MemoryService",
-            lambda *a, **kw: svc,
-        )
         monkeypatch.setattr(wiki_lint, "_build_llm_client", lambda: None)
 
         # Force the SQL load itself to raise, which causes the run_lint
@@ -1160,7 +1143,7 @@ class TestT10PartialRunSummary:
 
         monkeypatch.setattr(wiki_lint, "_detect_graph_density", _boom)
 
-        issues = _run(run_lint("test-project", repo_root=str(tmp_path)))
+        issues = _run(run_lint("test-project", repo_root=str(tmp_path), memory_service=svc))
         summary = next(
             (
                 i
@@ -1365,10 +1348,6 @@ class TestContradictionRetraction:
         Session = sessionmaker(bind=db_engine)
         monkeypatch.setattr(db_mod, "SessionLocal", Session)
         monkeypatch.setattr(mrs_mod, "SessionLocal", Session)
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.services.memory_service.MemoryService",
-            lambda *a, **kw: svc,
-        )
         monkeypatch.setattr(settings_service, "is_memory_enabled", lambda: True)
         monkeypatch.setattr(wiki_lint, "_build_llm_client", lambda: None)
 
@@ -1392,8 +1371,123 @@ class TestContradictionRetraction:
             [_row("a", content=body, tags="t")]
         )
 
-        _run(wiki_lint.run_lint("global", scope="global"))
+        _run(wiki_lint.run_lint("global", scope="global", memory_service=svc))
 
         assert rel.active_targets("global", None, "a", type="contradiction") == [
             "b"
         ], "run_lint with no LLM must not retract a real contradiction edge"
+
+
+class TestLintKnowledgePolicy:
+    def test_auth_denial_precedes_metadata_and_llm(self, svc, monkeypatch):
+        from cli_agent_orchestrator.security import auth
+
+        monkeypatch.setattr(auth, "is_auth_enabled", lambda: True)
+        opened = []
+        monkeypatch.setattr(wiki_lint, "_open_readonly_session", lambda *a: opened.append(True))
+        monkeypatch.setattr(wiki_lint, "_build_llm_client", lambda: None)
+        with pytest.raises(PermissionError):
+            _run(run_lint("project", base_dir=svc.base_dir, db_engine=svc._db_engine))
+        assert opened == []
+
+    @pytest.mark.parametrize("phase", ["authorized", "completed"])
+    def test_audit_failure_is_not_a_partial_success(self, svc, monkeypatch, phase):
+        from cli_agent_orchestrator.services.knowledge_policy import LegacyMemoryAuditError
+
+        repository = svc._legacy_repository()
+        with repository.transaction() as connection:
+            connection.execute(
+                "CREATE TRIGGER reject_lint_audit BEFORE INSERT ON work_memory_access_audit "
+                f"WHEN NEW.phase='{phase}' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END"
+            )
+        opened = []
+        original_open = wiki_lint._open_readonly_session
+
+        def track_open(*args):
+            opened.append(True)
+            return original_open(*args)
+
+        monkeypatch.setattr(wiki_lint, "_open_readonly_session", track_open)
+        monkeypatch.setattr(wiki_lint, "_build_llm_client", lambda: None)
+        with pytest.raises(LegacyMemoryAuditError):
+            _run(run_lint("project", base_dir=svc.base_dir, db_engine=svc._db_engine))
+        assert bool(opened) == (phase == "completed")
+
+    def test_disabled_memory_never_opens_audit_or_metadata(self, svc, monkeypatch):
+        monkeypatch.setattr(
+            "cli_agent_orchestrator.services.settings_service.is_memory_enabled", lambda: False
+        )
+        monkeypatch.setattr(
+            MemoryService, "_legacy_repository", lambda self: pytest.fail("audit opened")
+        )
+        monkeypatch.setattr(
+            wiki_lint, "_open_readonly_session", lambda *a: pytest.fail("metadata opened")
+        )
+        assert _run(run_lint("project", base_dir=svc.base_dir, db_engine=svc._db_engine)) == []
+
+    def test_pair_redacts_before_truncation_and_redacts_result(self, monkeypatch):
+        secret = "AKIA1234567890ABCDEF"
+        prompts = []
+        monkeypatch.setattr(wiki_lint, "CONTRADICTION_ARTICLE_MAX_BYTES", 16)
+
+        async def fake_call(client, system, user, *, timeout_s):
+            prompts.append(user)
+            return json.dumps({"contradicts": True, "summary": secret})
+
+        monkeypatch.setattr(wiki_lint, "_llm_call", fake_call)
+        issue = _run(_check_pair(object(), "a", secret, "b", "other", timeout_s=1))
+        assert "1234567890ABCDEF" not in prompts[0]
+        assert secret not in issue.description
+
+    def test_issue_redacts_complete_description_before_character_cap(self):
+        secret = "AKIA1234567890ABCDEF"
+        issue = _make_issue(issue_type="lint_error", key="a", description="x" * 190 + secret)
+        assert "AKIA" not in issue.description
+
+    def test_lint_uses_injected_store_for_relationships_and_audit(self, svc, monkeypatch):
+        from cli_agent_orchestrator.services.memory_relationship_service import (
+            MemoryRelationshipService,
+        )
+
+        with sessionmaker(bind=svc._db_engine)() as session:
+            for key in ("a", "b"):
+                path = svc.base_dir / f"{key}.md"
+                path.write_text("A harmless article body.")
+                session.add(
+                    MemoryMetadataModel(
+                        key=key,
+                        scope="global",
+                        scope_id=None,
+                        memory_type="project",
+                        file_path=str(path),
+                        tags="shared",
+                        token_estimate=0,
+                    )
+                )
+            session.commit()
+
+        async def contradictory(*args, **kwargs):
+            return [
+                _make_issue(
+                    issue_type="contradiction",
+                    key="a",
+                    related_key="b",
+                    description="contradiction",
+                    severity="error",
+                )
+            ]
+
+        monkeypatch.setattr(wiki_lint, "_detect_contradictions", contradictory)
+        _run(run_lint("project", scope="global", base_dir=svc.base_dir, db_engine=svc._db_engine))
+        relationship_service = MemoryRelationshipService(memory_service=svc)
+        assert relationship_service.active_targets("global", None, "a", type="contradiction") == [
+            "b"
+        ]
+        with svc._legacy_repository().connection() as connection:
+            phases = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT phase FROM work_memory_access_audit WHERE action='context' ORDER BY rowid"
+                )
+            ]
+        assert phases == ["authorized", "completed"]

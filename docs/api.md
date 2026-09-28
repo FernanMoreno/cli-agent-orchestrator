@@ -385,3 +385,69 @@ After the connection is accepted:
 Malformed JSON, missing input data, unsupported message types, and other
 forwarding errors do not currently have a documented stable application close
 code.
+
+## Durable work queries (v1)
+
+`GET /work-items/{work_item_id}` returns a versioned `WorkView` from the durable
+work store. It separates job, work, attempt, turn and process states. Process
+state is `unknown` without an independent observation; an uncertain attempt
+reports `required_action: reconcile_attempt`, not a fabricated blocked or
+successful provider state. `result_ref` identifies the accepted durable result,
+not a local filesystem path.
+
+`GET /jobs/{job_id}/events?after_sequence=0&limit=100` returns ordered job events,
+`next_cursor`, `high_water`, and explicit retention `gaps`. Limits are 1–1000;
+a cursor beyond the job's high water returns 409, not an empty successful page.
+
+These new read routes require a verified principal with read, write or admin
+scope and ownership of the job. Admin scope alone does not reveal another
+principal's job. Delegated execution grants do not implicitly grant job-wide
+read access in this version. When authentication is disabled, only trusted
+loopback server/peer addresses identify the local operator; request `caller_id`
+and forwarded headers never supply identity. Missing/inaccessible work returns
+404; an unavailable or unverified schema returns a redacted 503 with
+`retryable: true` and `required_action: retry_query`.
+
+MCP tools `get_work_item` and `get_work_events` use these HTTP routes, forwarding
+the configured internal bearer token. Their successful envelopes contain the
+same DTO under `work` or `page`. They never access SQLite directly, translate an
+outage into an empty result, or retry an uncertain execution.
+
+These routes do not activate universal work admission for legacy launches,
+inbox messages, delegation, or workflows. Those execution integrations remain
+separate from the read-only query contract.
+
+## Reviewed knowledge authority (v1)
+
+New `/v1/knowledge` routes are separate from legacy memory. Every request requires
+`job_id`, `grant_id`, and `grant_revision` query selectors. These select a durable
+grant; they never supply the authenticated principal. The service rechecks the
+grant chain and project/job scope inside each read or write transaction.
+
+| Method and path under `/v1/knowledge` | Operation |
+|---|---|
+| `POST /records/{id}/revisions` | Propose an immutable revision |
+| `GET /records/{id}` | Read current labeled evidence |
+| `GET /records/{id}/revisions/{revision}` | Read a specific historical revision |
+| `POST /records/{id}/revisions/{revision}/review` | Record an authorized review |
+| `POST /records/{id}/revisions/{revision}/tombstone` | Withdraw content from delivery |
+| `GET /instructions?scope=project&scope_id=...` | Read current approved instructions |
+
+Mutation bodies require integer `schema_version: 1` and `expected_version`
+(initially 0). Unknown fields, caller identities and incompatible versions are
+rejected. Stale versions return 409; invalid authority returns 403; inaccessible
+storage returns 503. Validation and storage errors do not echo request content.
+Review and withdrawal require admin scope **and** the corresponding grant
+capability; admin alone does not bypass a revoked grant.
+
+Proposals do not become instructions automatically. New revisions supersede the
+previous head without inheriting its approval. Instruction reads exclude expired,
+unapproved and withdrawn revisions. Evidence reads retain decision labels;
+tombstones return no content but do not physically erase database history.
+Approval records an authorized review, not independent proof of factual truth.
+
+MCP `knowledge_read` and `knowledge_instructions` use these HTTP routes and the
+configured bearer. They do not infer authority from terminal IDs or fall back to
+local memory after a remote failure. These are readers; MCP knowledge mutations,
+versioned checkpoints, paginated synchronization and universal context injection
+are not enabled by this increment.

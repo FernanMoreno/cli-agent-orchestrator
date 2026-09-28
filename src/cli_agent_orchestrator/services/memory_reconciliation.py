@@ -19,6 +19,8 @@ from typing import Any, Iterable, Optional
 
 from cli_agent_orchestrator.constants import MEMORY_BASE_DIR
 from cli_agent_orchestrator.models.memory import MemoryType
+from cli_agent_orchestrator.services.knowledge_policy import redact_knowledge_content
+from cli_agent_orchestrator.services.legacy_memory_access import audited_legacy
 from cli_agent_orchestrator.services.memory_format import (
     TOPIC_HEADER_RE,
     normalize_memory_tags,
@@ -265,7 +267,10 @@ class MemoryReconciliationService:
     """Plan and apply non-destructive repairs from canonical Markdown topics."""
 
     def __init__(self, base_dir: Optional[Path] = None, db_engine: Any = None):
+        from cli_agent_orchestrator.services.memory_service import MemoryService
+
         self.base_dir = Path(base_dir or MEMORY_BASE_DIR)
+        self._memory = MemoryService(base_dir=self.base_dir, db_engine=db_engine)
         self._db_engine = db_engine
         self._db_session_factory: Any = None
         self._strict_index = False
@@ -619,7 +624,7 @@ class MemoryReconciliationService:
             relative_path=candidate.relative_path,
             memory_id=header.group("id"),
             memory_type=memory_type,
-            tags=normalize_memory_tags(header.group("tags")),
+            tags=redact_knowledge_content(normalize_memory_tags(header.group("tags")))[0],
             created_at=min(timestamps),
             updated_at=max(timestamps),
             updated_text=max(timestamp_texts),
@@ -854,8 +859,13 @@ class MemoryReconciliationService:
             ),
         )
 
+    @audited_legacy("repair", owner="_memory")
     def plan(self) -> RepairReport:
-        """Return a deterministic pure-read repair plan."""
+        """Audit a deterministic plan without changing memory projections."""
+        return self._plan()
+
+    def _plan(self) -> RepairReport:
+        """Read the repair plan inside an authorized operation."""
         candidates, records = self._iter_candidates()
         rows = self._load_rows()
         topics: list[_Topic] = []
@@ -1175,9 +1185,14 @@ class MemoryReconciliationService:
             )
         )
 
+    @audited_legacy("repair", owner="_memory")
     def apply(self) -> RepairReport:
-        """Apply valid repairs per record and raise only after all are attempted."""
-        planned = self.plan()
+        """Audit and apply repairs, reporting failures after all records are attempted."""
+        return self._apply()
+
+    def _apply(self) -> RepairReport:
+        """Apply within the outer audit, including planning and index recovery."""
+        planned = self._plan()
         results: list[RepairRecord] = []
         groups: dict[Path, list[tuple[RepairRecord, _Candidate]]] = {}
         records_by_path: dict[Path, list[RepairRecord]] = {}

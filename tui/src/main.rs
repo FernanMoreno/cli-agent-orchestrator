@@ -53,6 +53,11 @@ mod theme;
 /// The wire vocabulary six later units share. Declared here so every consumer imports the
 /// types from one place rather than redeclaring the server's shapes locally. (#321)
 mod types;
+/// Generated Work-state labels, roles, and observed-selection classifications. Clients map the
+/// roles to their own palette; this module names no terminal colours. Luna consumes this module
+/// in the next slice, so this declaration deliberately keeps its contract available meanwhile.
+#[allow(dead_code)]
+mod work_status_generated;
 
 use error::TuiError;
 
@@ -71,21 +76,23 @@ USAGE:
     cao tui [OPTIONS]
 
 OPTIONS:
-    -h, --help       Print this help and exit
-    -V, --version    Print the version and exit
+    -h, --help               Print this help and exit
+    -V, --version            Print the version and exit
+        --work-item-id <id>  Observe a specific durable work item
 
-The TUI takes no other arguments: every command, parameter, and picker is chosen inside it.
+Every command, parameter, and picker other than an explicit work-item selection is chosen inside
+the TUI.
 Set CAO_API_HOST and CAO_API_PORT to reach a cao-server elsewhere than the default
 127.0.0.1:9889.";
 
 /// What the argv asked for.
 ///
-/// A three-variant enum rather than a pair of bools, so `main` cannot accidentally handle
+/// A four-variant enum rather than a pair of bools, so `main` cannot accidentally handle
 /// "help and also start the TUI". Parsing is deliberately hand-rolled and tiny — adding `clap` for
-/// two flags would pull a dependency tree through `cargo-deny` for no gain.
+/// three flags would pull a dependency tree through `cargo-deny` for no gain.
 enum Invocation {
-    /// Start the TUI.
-    Run,
+    /// Start the TUI, optionally observing the explicit durable work ID chosen by the operator.
+    Run { work_item_id: Option<String> },
     /// Print [`HELP`] and exit 0.
     Help,
     /// Print the version and exit 0.
@@ -109,17 +116,33 @@ enum Invocation {
 /// must not print help and exit 0, because that reports success for a command line it did not
 /// honour — the same silent-acceptance failure this function exists to remove.
 fn parse_args<I: Iterator<Item = String>>(args: I) -> Invocation {
-    let mut invocation = Invocation::Run;
-    for arg in args {
+    let mut args = args.peekable();
+    let mut requested_info = None;
+    let mut work_item_id = None;
+
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "-h" | "--help" => {
-                if matches!(invocation, Invocation::Run) {
-                    invocation = Invocation::Help;
+                if requested_info.is_none() {
+                    requested_info = Some(Invocation::Help);
                 }
             }
             "-V" | "--version" => {
-                if matches!(invocation, Invocation::Run) {
-                    invocation = Invocation::Version;
+                if requested_info.is_none() {
+                    requested_info = Some(Invocation::Version);
+                }
+            }
+            "--work-item-id" => {
+                let Some(id) = args.next().filter(|id| !id.is_empty()) else {
+                    return Invocation::Unknown(
+                        "--work-item-id requires a non-empty work item ID".to_string(),
+                    );
+                };
+
+                if work_item_id.replace(id).is_some() {
+                    return Invocation::Unknown(
+                        "--work-item-id may only be supplied once".to_string(),
+                    );
                 }
             }
             // Returns immediately: an argument this binary cannot honour is the answer, whatever
@@ -127,7 +150,8 @@ fn parse_args<I: Iterator<Item = String>>(args: I) -> Invocation {
             other => return Invocation::Unknown(other.to_string()),
         }
     }
-    invocation
+
+    requested_info.unwrap_or(Invocation::Run { work_item_id })
 }
 
 /// Exits 0 on success. Returning `Err` exits non-zero and prints one line, which is the
@@ -157,7 +181,7 @@ fn parse_args<I: Iterator<Item = String>>(args: I) -> Invocation {
 /// contract exists to avoid. `run_app` returns the error and this function renders it.
 /// (Reported by review on PR #547.)
 fn main() {
-    match parse_args(std::env::args().skip(1)) {
+    let work_item_id = match parse_args(std::env::args().skip(1)) {
         Invocation::Help => {
             println!("{HELP}");
             return;
@@ -172,12 +196,12 @@ fn main() {
             eprintln!("Run `cao tui --help` to see what it accepts.");
             std::process::exit(2);
         }
-        Invocation::Run => {}
-    }
+        Invocation::Run { work_item_id } => work_item_id,
+    };
 
     install_panic_hook();
 
-    if let Err(error) = run_app() {
+    if let Err(error) = run_app(work_item_id) {
         // ONE styled line naming the failure, never a `Debug` rendering. `TuiError`'s own
         // `Display` is the operator-facing sentence; the variant name is not part of it.
         eprintln!("cao-tui: {error}");
@@ -252,13 +276,14 @@ fn panic_report(payload: &str, location: Option<String>) -> String {
 }
 
 /// The real work, split out of [`main`] so its error can be rendered rather than `Debug`-printed.
-fn run_app() -> Result<(), TuiError> {
+fn run_app(work_item_id: Option<String>) -> Result<(), TuiError> {
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let interactive = io::stdout().is_terminal();
 
     let server = Arc::new(server::ServerClient::from_env());
     let host = handoff::RealHost::new();
     let mut shell = renderer::Renderer::new(server.as_ref(), &host, cols, rows)
+        .with_work_item_id(work_item_id)
         .with_concurrent_pickers(Arc::clone(&server));
 
     // `NO_COLOR` is read exactly ONCE, here, and the resolved palette is threaded down (#556).
@@ -329,7 +354,10 @@ mod tests {
     /// (Reported by review on PR #547.)
     #[test]
     fn argv_is_classified_and_an_unknown_argument_is_refused_by_name() {
-        assert!(matches!(classify(&[]), Invocation::Run));
+        assert!(matches!(
+            classify(&[]),
+            Invocation::Run { work_item_id: None }
+        ));
         assert!(matches!(classify(&["--help"]), Invocation::Help));
         assert!(matches!(classify(&["-h"]), Invocation::Help));
         assert!(matches!(classify(&["--version"]), Invocation::Version));
@@ -346,7 +374,7 @@ mod tests {
                 "an unrecognised argument must be refused, not silently accepted — accepting it \
                  is what made the forwarding contract a coincidence. Got: {}",
                 match other {
-                    Invocation::Run => "Run",
+                    Invocation::Run { .. } => "Run",
                     Invocation::Help => "Help",
                     Invocation::Version => "Version",
                     Invocation::Unknown(_) => unreachable!(),
@@ -359,11 +387,62 @@ mod tests {
         assert!(matches!(classify(&["planner"]), Invocation::Unknown(_)));
     }
 
+    #[test]
+    fn argv_accepts_an_explicit_work_item_selection() {
+        match classify(&["--work-item-id", "work-fixture"]) {
+            Invocation::Run { work_item_id } => {
+                assert_eq!(work_item_id.as_deref(), Some("work-fixture"));
+            }
+            _ => panic!("an explicit work item ID must start the TUI"),
+        }
+    }
+
+    /// The selection flag cannot be silently ignored: an absent, empty, or repeated ID leaves
+    /// the operator with no unambiguous work to observe.
+    #[test]
+    fn argv_rejects_a_missing_empty_or_duplicate_work_item_selection() {
+        for (args, expected_problem) in [
+            (
+                vec!["--work-item-id"],
+                "requires a non-empty work item ID",
+            ),
+            (
+                vec!["--work-item-id", ""],
+                "requires a non-empty work item ID",
+            ),
+            (
+                vec![
+                    "--work-item-id",
+                    "work-one",
+                    "--work-item-id",
+                    "work-two",
+                ],
+                "may only be supplied once",
+            ),
+        ] {
+            match classify(&args) {
+                Invocation::Unknown(argument) => assert!(
+                    argument.contains(expected_problem),
+                    "the refusal must make {expected_problem:?} visible, got {argument:?}"
+                ),
+                _ => panic!(
+                    "a malformed --work-item-id selection must be rejected: {args:?}"
+                ),
+            }
+        }
+    }
+
     /// The help text names the two things an operator can actually change from outside.
     #[test]
     fn the_help_text_states_the_usage_and_the_two_environment_variables() {
         assert!(HELP.contains("USAGE"), "help must have a usage section");
-        for needle in ["--help", "--version", "CAO_API_HOST", "CAO_API_PORT"] {
+        for needle in [
+            "--help",
+            "--version",
+            "--work-item-id",
+            "CAO_API_HOST",
+            "CAO_API_PORT",
+        ] {
             assert!(
                 HELP.contains(needle),
                 "help must mention {needle:?} — those flags and those two variables are the whole \

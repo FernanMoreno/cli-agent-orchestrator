@@ -5,8 +5,7 @@ Covers:
 - ``create_worktree`` / ``remove_worktree``: real ``git worktree add``/
   ``remove``/branch-delete against a real local repo -- no subprocess mocking,
   same posture as ``test_project_identity.py``'s own real-git tests.
-- ``remove_worktree`` tolerates uncommitted/untracked content left behind
-  (agents commonly leave modified files -- ``--force`` is required for this).
+- ``remove_worktree`` quarantines modified, untracked and ignored content.
 - ``list_worktrees`` reflects real ``git worktree`` state, including entries
   ``create_worktree`` did not itself create.
 - ``parse_worktree_path`` round-trips against paths ``worktree_path_for``
@@ -15,7 +14,10 @@ Covers:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -171,8 +173,8 @@ class TestCreateAndRemoveWorktree:
     def test_remove_worktree_retains_a_branch_with_unmerged_commits(self, repo: Path) -> None:
         """A worker that committed real work to its branch before completing
         must not have that history destroyed just because Phase 1 has no
-        merge-back story -- the worktree's working-tree contents are force
-        -discarded, but the branch itself is only safe-deleted (``git branch
+        merge-back story -- this clean checkout can be removed, but the
+        branch itself is only safe-deleted (``git branch
         -d``), which refuses when there are commits that would be lost."""
         terminal_id = "term_committed01"
         path = create_worktree(str(repo), terminal_id)
@@ -198,7 +200,7 @@ class TestCreateAndRemoveWorktree:
         # Branch survives -- a leak for Phase 3 to sweep, not data loss.
         assert branch_for(terminal_id) in branch_result.stdout
 
-    def test_remove_worktree_force_removes_uncommitted_and_untracked_content(
+    def test_remove_worktree_quarantines_uncommitted_and_untracked_content(
         self, repo: Path
     ) -> None:
         """Agents commonly leave modified/untracked files behind -- a plain
@@ -212,7 +214,20 @@ class TestCreateAndRemoveWorktree:
 
         remove_worktree(str(repo), terminal_id)  # must not raise
 
-        assert not Path(path).exists()
+        assert (Path(path) / "scratch.txt").read_text() == "uncommitted work\n"
+        assert (Path(path) / "README.md").read_text() == "modified\n"
+
+    def test_ignored_files_are_quarantined(self, repo: Path) -> None:
+        path = Path(create_worktree(str(repo), "term_ignored"))
+        (path / ".gitignore").write_text("secret.txt\n")
+        subprocess.run(["git", "add", ".gitignore"], cwd=path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-qm", "ignore"], cwd=path, check=True, capture_output=True
+        )
+        (path / "secret.txt").write_text("private")
+        outcome = remove_worktree(str(repo), "term_ignored")
+        assert (path / "secret.txt").read_text() == "private"
+        assert outcome.state == "quarantined"
 
     def test_remove_worktree_on_an_already_removed_worktree_does_not_raise(
         self, repo: Path
@@ -299,3 +314,186 @@ class TestParseWorktreePath:
             "/home/user/myrepo/.cao/worktrees/term_a",
             "term_b",
         )
+
+
+def archive_context(repo, tmp_path, monkeypatch):
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.security.auth import local_operator_principal
+    from cli_agent_orchestrator.services import worktree_service as service
+    from cli_agent_orchestrator.services.step_output_store import ImmutableResultStore
+    from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
+    from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
+    from cli_agent_orchestrator.services.work_reservations import StoppedWriter
+
+    assert hasattr(service, "archive_worktree"), "protected archival missing"
+    monkeypatch.delenv("AUTH0_DOMAIN", raising=False)
+    monkeypatch.delenv("CAO_AUTH_JWKS_URI", raising=False)
+    actor = local_operator_principal()
+    db = WorkRepository(tmp_path / "work.sqlite3")
+    db.initialize()
+    path = Path(create_worktree(str(repo), "archived"))
+    job = db.create_job(
+        project_id="project",
+        principal_id=actor.id,
+        allowed_providers=["mock_cli"],
+        grant_id="grant",
+    )
+    WorkAuthority(db).issue_root(
+        actor,
+        job_id=job["id"],
+        providers={"mock_cli"},
+        permissions=Permissions(paths={str(path)}, artifacts={"worktree_evidence"}),
+        expires_at=time.time() + 300,
+    )
+    work = db.admit_work(
+        job_id=job["id"],
+        operation_kind="test",
+        idempotency_key="one",
+        request_hash=hashlib.sha256(b"one").hexdigest(),
+        contract_id="contract",
+        snapshot_id=None,
+        provider="mock_cli",
+        actor_id=actor.id,
+    )
+    attempt = work["attempts"][-1]
+    # Trusted fixture arrangement; production binding belongs to dispatch T017.
+    with db.transaction() as connection:
+        connection.execute(
+            "UPDATE work_attempts SET terminal_id='archived' WHERE id=?", (attempt["id"],)
+        )
+    db.transition_attempt(
+        attempt_id=attempt["id"],
+        generation=1,
+        expected_revision=1,
+        expected_state="planned",
+        target="cancelled",
+        actor_id=actor.id,
+        event_id="cancel",
+        evidence=TransitionEvidence(generation=1, expected_generation=1),
+    )
+    arguments = dict(
+        repo_root=str(repo),
+        terminal_id="archived",
+        repository=db,
+        artifact_store=ImmutableResultStore(tmp_path / "artifacts"),
+        principal=actor,
+        job_id=job["id"],
+        work_item_id=work["id"],
+        attempt_id=attempt["id"],
+        generation=1,
+        expected_attempt_revision=2,
+        grant_id="grant",
+        expected_grant_revision=1,
+        authorized_paths=("README.md", "scratch.txt"),
+        stop_verifier=lambda owner: StoppedWriter(
+            owner.attempt_id, owner.generation, owner.revision, "backend-stopped"
+        ),
+    )
+    return service, db, path, arguments
+
+
+def test_archive_preserves_authorized_diff_base_and_untracked_durably(repo, tmp_path, monkeypatch):
+    service, db, path, args = archive_context(repo, tmp_path, monkeypatch)
+    (path / "README.md").write_text("changed\n")
+    (path / "scratch.txt").write_text("new evidence\n")
+    outcome = service.archive_worktree(**args)
+    assert outcome.state == "quarantined"
+    assert path.exists()
+    data = json.loads(args["artifact_store"].read(outcome.artifact))
+    assert data["files"]["README.md"]["base"] == "hello\n"
+    assert "+changed" in data["files"]["README.md"]["diff"]
+    assert data["files"]["scratch.txt"]["current"] == "new evidence\n"
+    assert outcome.artifact.content_hash in db.referenced_artifact_hashes()
+    with db.connection() as connection:
+        assert connection.execute("SELECT count(*) FROM work_worktree_evidence").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("kind", ["binary", "symlink", "secret", "unapproved"])
+def test_archive_rejects_unsafe_files_without_deleting_checkout(repo, tmp_path, monkeypatch, kind):
+    service, db, path, args = archive_context(repo, tmp_path, monkeypatch)
+    if kind == "binary":
+        (path / "scratch.txt").write_bytes(b"secret\x00binary")
+    elif kind == "symlink":
+        (path / "scratch.txt").symlink_to(tmp_path / "outside")
+    elif kind == "secret":
+        (path / ".env").write_text("PASSWORD=secret")
+        args["authorized_paths"] = (".env",)
+    else:
+        args["authorized_paths"] = ("../outside",)
+    with pytest.raises(service.WorktreeError):
+        service.archive_worktree(**args)
+    assert path.exists()
+    with db.connection() as connection:
+        assert connection.execute("SELECT count(*) FROM work_worktree_evidence").fetchone()[0] == 0
+
+
+def test_archive_rejects_live_writer_without_copying(repo, tmp_path, monkeypatch):
+    service, db, path, args = archive_context(repo, tmp_path, monkeypatch)
+    args["stop_verifier"] = lambda owner: None
+    with pytest.raises(service.WorktreeError):
+        service.archive_worktree(**args)
+    assert path.exists()
+
+
+@pytest.mark.parametrize("terminal_binding", [None, "different-terminal"])
+def test_archive_requires_exact_durable_terminal_binding(
+    repo, tmp_path, monkeypatch, terminal_binding
+):
+    service, db, path, args = archive_context(repo, tmp_path, monkeypatch)
+    with db.transaction() as connection:
+        connection.execute(
+            "UPDATE work_attempts SET terminal_id=? WHERE id=?",
+            (terminal_binding, args["attempt_id"]),
+        )
+    with pytest.raises(service.WorktreeError, match="terminal"):
+        service.archive_worktree(**args)
+    assert path.exists()
+    with db.connection() as connection:
+        assert connection.execute("SELECT count(*) FROM work_worktree_evidence").fetchone()[0] == 0
+
+
+def test_revocation_during_stop_check_prevents_file_read(repo, tmp_path, monkeypatch):
+    from cli_agent_orchestrator.services.work_authority import AuthorityDenied, WorkAuthority
+
+    service, db, path, args = archive_context(repo, tmp_path, monkeypatch)
+    original = args["stop_verifier"]
+
+    def revoke(owner):
+        WorkAuthority(db).revoke(
+            args["principal"], grant_id="grant", expected_grant_revision=1, reason="stop archive"
+        )
+        return original(owner)
+
+    def forbidden_read(*unused):
+        pytest.fail("file read after grant revoked")
+
+    args["stop_verifier"] = revoke
+    monkeypatch.setattr(service, "_archive_current", forbidden_read)
+    with pytest.raises(AuthorityDenied):
+        service.archive_worktree(**args)
+    assert path.exists()
+
+
+def test_archive_event_failure_leaves_no_reference_and_preserves_files(repo, tmp_path, monkeypatch):
+    import sqlite3
+
+    service, db, path, args = archive_context(repo, tmp_path, monkeypatch)
+    (path / "scratch.txt").write_text("retained")
+    with db.transaction() as connection:
+        connection.execute(
+            "CREATE TRIGGER fail_archive BEFORE INSERT ON work_events WHEN NEW.event_type='worktree.archived' BEGIN SELECT RAISE(ABORT,'no archive event'); END"
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="no archive event"):
+        service.archive_worktree(**args)
+    assert (path / "scratch.txt").read_text() == "retained"
+    with db.connection() as connection:
+        assert connection.execute("SELECT count(*) FROM work_worktree_evidence").fetchone()[0] == 0
+
+
+def test_archive_never_reads_unapproved_untracked_content(repo, tmp_path, monkeypatch):
+    service, db, path, args = archive_context(repo, tmp_path, monkeypatch)
+    (path / "unauthorized.txt").write_bytes(b"DO NOT COPY\x00")
+    outcome = service.archive_worktree(**args)
+    content = args["artifact_store"].read(outcome.artifact)
+    assert b"DO NOT COPY" not in content
+    assert (path / "unauthorized.txt").exists()

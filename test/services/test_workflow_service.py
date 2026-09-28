@@ -176,6 +176,179 @@ async def test_trace_b_worker_crashes_twice_then_succeeds(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_yaml_retry_reuses_the_first_durable_contract_hash(monkeypatch, tmp_path):
+    """A retry may run only after its new attempt proves the original evidence."""
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.services import agent_step, workflow_journal
+
+    connection = workflow_journal._connect()
+    connection.close()
+    WorkRepository(tmp_path / "wf.db").initialize()
+    calls = 0
+
+    async def preflighted_step(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        fields = agent_step._effective_step_fields(
+            provider=kwargs["provider"],
+            agent=kwargs["agent"],
+            allowed_tools=None,
+            engine=kwargs["engine"],
+            model=None,
+            working_directory=None,
+            use_worktree=False,
+            created_here=True,
+            timeout=kwargs["timeout"],
+            ready_timeout=agent_step.DEFAULT_READY_TIMEOUT,
+            teardown=True,
+            prompt_redelivery=True,
+        )
+        kwargs["pre_delivery_recorder"].record_pre_delivery("v2:yaml-stable", fields)
+        if calls == 1:
+            raise StepExecutionError("first attempt failed before delivery", kind="error")
+        return _ok("retry-terminal")
+
+    monkeypatch.setattr(ws, "run_agent_step", AsyncMock(side_effect=preflighted_step))
+
+    result = await ws.start_run(_spec(retries=1), {}, "yaml-retry")
+
+    assert result.state == RunState.COMPLETED
+    assert calls == 2
+    contracts = [
+        workflow_journal.get_step_contract("yaml-retry", "s1", "1", attempt) for attempt in (1, 2)
+    ]
+    assert [item["call_fingerprint"] for item in contracts] == ["v2:yaml-stable"] * 2
+    assert contracts[0]["fields"] == contracts[1]["fields"]
+
+
+@pytest.mark.asyncio
+async def test_yaml_replay_without_a_verified_contract_never_reaches_agent_step(monkeypatch):
+    """Historical YAML rows are history, never authority for a new delivery."""
+    from cli_agent_orchestrator.services import workflow_journal
+
+    connection = workflow_journal._connect()
+    connection.close()
+    spec = _spec()
+    workflow_journal.insert_run(
+        "yaml-historical",
+        spec.name,
+        spec.model_dump_json(),
+        "{}",
+        "completed",
+        "now",
+        tier="yaml",
+    )
+    workflow_journal.insert_steps("yaml-historical", [("s1", "completed")], "now")
+    called = AsyncMock(return_value=_ok())
+    monkeypatch.setattr(ws, "run_agent_step", called)
+
+    with pytest.raises(ws.ResumeCorruptError, match="contract"):
+        await ws.replay_single_step("yaml-historical", "s1")
+
+    assert called.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_yaml_continuity_failure_never_creates_a_second_delivery(monkeypatch, tmp_path):
+    """An uncertain first send is a reconciliation boundary, not a retry budget."""
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.services import agent_step, workflow_journal
+
+    connection = workflow_journal._connect()
+    connection.close()
+    WorkRepository(tmp_path / "wf.db").initialize()
+    calls = 0
+
+    async def uncertain_step(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        fields = agent_step._effective_step_fields(
+            provider=kwargs["provider"],
+            agent=kwargs["agent"],
+            allowed_tools=None,
+            engine=kwargs["engine"],
+            model=None,
+            working_directory=None,
+            use_worktree=False,
+            created_here=True,
+            timeout=kwargs["timeout"],
+            ready_timeout=agent_step.DEFAULT_READY_TIMEOUT,
+            teardown=True,
+            prompt_redelivery=True,
+        )
+        kwargs["pre_delivery_recorder"].record_pre_delivery("v2:yaml-continuity", fields)
+        raise StepExecutionError(
+            "send outcome is ambiguous", kind="reconcile", delivery_may_have_occurred=True
+        )
+
+    monkeypatch.setattr(ws, "run_agent_step", AsyncMock(side_effect=uncertain_step))
+
+    result = await ws.start_run(_spec(retries=3), {}, "yaml-continuity")
+
+    assert result.state == RunState.FAILED
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_cold_yaml_resume_rejects_a_contract_store_with_deleted_trigger(
+    monkeypatch, tmp_path
+):
+    """A cold process cannot expose a historical attempt after its proof is damaged."""
+    import sqlite3
+
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.services import agent_step, workflow_journal
+
+    connection = workflow_journal._connect()
+    connection.close()
+    database = tmp_path / "wf.db"
+    WorkRepository(database).initialize()
+    spec = _spec(retries=0)
+    workflow_journal.insert_run(
+        "yaml-cold",
+        spec.name,
+        spec.model_dump_json(),
+        "{}",
+        "running",
+        "now",
+        tier="yaml",
+    )
+    workflow_journal.insert_steps("yaml-cold", [("s1", "running")], "now")
+    fields = agent_step._effective_step_fields(
+        provider="claude_code",
+        agent="dev",
+        allowed_tools=None,
+        engine=None,
+        model=None,
+        working_directory=None,
+        use_worktree=False,
+        created_here=True,
+        timeout=ws.WORKFLOW_STEP_TIMEOUT,
+        ready_timeout=agent_step.DEFAULT_READY_TIMEOUT,
+        teardown=True,
+        prompt_redelivery=True,
+    )
+    fingerprint = ws._yaml_call_fingerprint(spec.steps[0], "go")
+    attempt = workflow_journal.begin_yaml_step_with_contract(
+        "yaml-cold", "s1", "1", "now", fingerprint, fields
+    )
+    workflow_journal.fail_yaml_step_attempt(
+        "yaml-cold", "s1", "1", attempt, fingerprint, "later", "failed", "error"
+    )
+    workflow_journal.update_run_state("yaml-cold", "failed", "later")
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TRIGGER work_step_contracts_immutable_update")
+    ws.run_registry.clear()
+    called = AsyncMock(return_value=_ok())
+    monkeypatch.setattr(ws, "run_agent_step", called)
+
+    with pytest.raises(ws.ResumeCorruptError, match="YAML contract"):
+        await ws.resume_from_last_completed("yaml-cold")
+
+    assert called.await_count == 0
+
+
+@pytest.mark.asyncio
 async def test_trace_c_reprompt_then_crash_consumes_attempt(monkeypatch):
     """Trace C: attempt1 COMPLETED+invalid -> reprompt RAISES -> consumes attempt;
     attempt2 COMPLETED, reprompted already -> COMPLETED_UNVALIDATED."""

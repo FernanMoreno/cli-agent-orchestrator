@@ -1,4 +1,4 @@
-"""Per-(provider, scope, scope_id, lint_enabled) GraphView cache.
+"""Per-owner and projection GraphView cache.
 
 Issue #348, perf follow-up.
 
@@ -33,7 +33,7 @@ import asyncio
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Hashable, Optional
 
 from cli_agent_orchestrator.graph.models import GraphView
 
@@ -43,11 +43,10 @@ from cli_agent_orchestrator.graph.models import GraphView
 # write-invalidation (see module docstring).
 DEFAULT_TTL_S = 300.0
 
-# Cache key: (provider name, scope, scope_id, lint_enabled). scope_id is
-# normalized to a string-or-None so ``("memory","global",None,True)`` and a
-# project projection never collide, a global request never serves a
-# project-scope entry, and lint-enabled/disabled graph projections stay isolated.
-CacheKey = tuple[str, str, Optional[str], bool]
+# Providers include persistent owner identity as well as normalized projection
+# parameters (scope, scope_id, lint_enabled). The cache is agnostic to the
+# provider's identity fields; the complete key also partitions single-flight.
+CacheKey = tuple[Hashable, ...]
 
 
 @dataclass

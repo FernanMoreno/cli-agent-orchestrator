@@ -178,24 +178,46 @@ def _hermetic_cao_env(monkeypatch, tmp_path):
     monkeypatch.delenv("CAO_SESSION_NAME", raising=False)
 
 
-@pytest.fixture
-def isolated_memory_db(tmp_path, monkeypatch):
+@pytest.fixture(autouse=True)
+def isolated_memory_db(tmp_path_factory, monkeypatch):
     """Route default memory sessions to an initialized per-test SQLite database."""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
     from cli_agent_orchestrator.clients import database
 
+    metadata_dir = tmp_path_factory.mktemp("memory-metadata")
+    database_path = metadata_dir / "cli-agent-orchestrator.db"
     engine = create_engine(
-        f"sqlite:///{tmp_path / 'memory-metadata.db'}",
+        f"sqlite:///{database_path}",
         connect_args={"check_same_thread": False},
     )
     database.Base.metadata.create_all(bind=engine)
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator import constants
+
+    WorkRepository(database_path).initialize()
+    monkeypatch.setattr(constants, "DATABASE_FILE", database_path)
+    # The derived workflow index is created by raw SQL, outside Base.metadata.
+    # Workflow reads now share this isolated database and need its schema too.
+    database._migrate_workflow_index()
+    monkeypatch.setattr(constants, "MEMORY_BASE_DIR", metadata_dir / "memory")
     monkeypatch.setattr(
         database,
         "SessionLocal",
         sessionmaker(autocommit=False, autoflush=False, bind=engine),
     )
+    # Legacy access audit writes to the metadata database, including read paths.
+    # Imported aliases must also remain isolated from the operator database.
+    import sys
+
+    for module_name in ("memory_service", "audit_log", "wiki_lint"):
+        module = sys.modules.get("cli_agent_orchestrator.services." + module_name)
+        if module is not None and hasattr(module, "MEMORY_BASE_DIR"):
+            monkeypatch.setattr(module, "MEMORY_BASE_DIR", metadata_dir / "memory")
+    relationships = sys.modules.get("cli_agent_orchestrator.services.memory_relationship_service")
+    if relationships is not None:
+        monkeypatch.setattr(relationships, "SessionLocal", database.SessionLocal)
     try:
         yield engine
     finally:

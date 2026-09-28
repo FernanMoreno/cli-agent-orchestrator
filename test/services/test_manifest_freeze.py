@@ -13,6 +13,8 @@ Two of these carry the unit's load:
 """
 
 import json
+import os
+import subprocess
 
 import pytest
 
@@ -22,10 +24,48 @@ from cli_agent_orchestrator.services import (
     execution_manifest,
     manifest_freeze,
 )
+from cli_agent_orchestrator.utils import git_baseline
 
 SECRET = "AKIAIOSFODNN7EXAMPLE"  # matches secret_gate's ``aws_access_key`` pattern
 
 OMITTED = ("provider", "model", "profile", "permissions", "limits", "retry_policy")
+
+
+@pytest.fixture(autouse=True)
+def manifest_repository(tmp_path, monkeypatch):
+    """Exercise real baseline capture without inspecting the developer checkout.
+
+    Keep production limits and inclusion policy intact. Git state, identity and
+    hooks belong to this disposable fixture, not the invoking user's settings.
+    """
+    for key in tuple(os.environ):
+        if key.startswith("GIT_"):
+            monkeypatch.delenv(key)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    repository = tmp_path / "manifest-repository"
+    repository.mkdir()
+    git = ["git", "-c", "core.hooksPath=" + os.devnull, "-c", "commit.gpgsign=false"]
+    subprocess.run([*git, "init", "-q"], cwd=repository, check=True, capture_output=True)
+    (repository / "tracked.txt").write_text("baseline\n", encoding="utf-8")
+    subprocess.run([*git, "add", "tracked.txt"], cwd=repository, check=True, capture_output=True)
+    subprocess.run(
+        [
+            *git,
+            "-c",
+            "user.name=Manifest Test",
+            "-c",
+            "user.email=manifest@example.invalid",
+            "commit",
+            "-qm",
+            "fixture baseline",
+        ],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    monkeypatch.chdir(repository)
+    return repository
 
 
 def _frozen(**overrides) -> dict:
@@ -139,14 +179,59 @@ def test_the_plan_id_does_not_depend_on_the_working_directory(monkeypatch, tmp_p
     assert a == b
 
 
-def test_a_missing_baseline_still_freezes():
+def test_a_missing_baseline_returns_no_manifest(tmp_path, caplog):
     """An unavailable baseline has no identifier that could be approved or replayed."""
+    non_repository = tmp_path / "not-a-repository"
+    non_repository.mkdir()
+    assert git_baseline.derive_baseline(str(non_repository)) == {"available": False}
     assert (
         manifest_freeze.build_manifest_json(
-            source_hash="abc123", inputs={"k": "v"}, cwd="/nonexistent/path/for/test"
+            source_hash="abc123", inputs={"k": "v"}, cwd=str(non_repository)
         )
         is None
     )
+    assert "unavailable repository baseline" in caplog.text
+
+
+def test_real_tracked_and_untracked_changes_both_change_the_plan(manifest_repository):
+    clean = _frozen()
+    assert clean["repo_baseline"]["worktree_state"] == {"status": "clean"}
+    (manifest_repository / "tracked.txt").write_text("modified\n", encoding="utf-8")
+    tracked = _frozen()
+    (manifest_repository / "untracked.txt").write_text("new content\n", encoding="utf-8")
+    untracked = _frozen()
+    assert len({document["plan_id"] for document in (clean, tracked, untracked)}) == 3
+    assert tracked["repo_baseline"]["worktree_state"]["status"] == "dirty"
+    assert untracked["repo_baseline"]["worktree_state"]["status"] == "dirty"
+
+
+def test_real_over_budget_baseline_cannot_reuse_an_approved_plan(
+    manifest_repository, monkeypatch, caplog
+):
+    approved = _frozen()
+    monkeypatch.setattr(approval_gate, "is_workflow_approval_required", lambda: True)
+    monkeypatch.setattr(
+        approval_store,
+        "approval_state",
+        lambda plan_id: (
+            approval_store.APPROVED if plan_id == approved["plan_id"] else approval_store.ABSENT
+        ),
+    )
+    approval_gate.ensure_plan_approved(tier="script", manifest_json=json.dumps(approved))
+    # Sparse allocation exercises the real unchanged limit without allocating
+    # or hashing a large payload. A partial snapshot must never become a plan.
+    with (manifest_repository / "over-budget.bin").open("wb") as handle:
+        handle.truncate(git_baseline._UNTRACKED_HASH_BUDGET_BYTES + 1)
+    baseline = git_baseline.derive_baseline(str(manifest_repository))
+    assert baseline["available"] is False
+    assert baseline["worktree_state"] == {"status": "unavailable"}
+    assert baseline["commit"] == approved["repo_baseline"]["commit"]
+    manifest = manifest_freeze.build_manifest_json(source_hash="abc123", inputs={"k": "v"})
+    assert manifest is None
+    assert "unavailable repository baseline" in caplog.text
+    with pytest.raises(approval_gate.PlanApprovalRequiredError) as error:
+        approval_gate.ensure_plan_approved(tier="script", manifest_json=manifest)
+    assert error.value.plan_id is None
 
 
 def test_an_unavailable_worktree_snapshot_has_no_approvable_plan_id(monkeypatch):

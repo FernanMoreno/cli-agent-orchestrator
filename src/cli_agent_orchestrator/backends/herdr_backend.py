@@ -570,6 +570,36 @@ class HerdrBackend(TerminalBackend):
             return ""
         return cast(str, result.stdout)
 
+    def get_non_native_status_observation(
+        self, session_name: str, window_name: str
+    ) -> Optional[str]:
+        """Return an opaque pane observation for a non-native provider.
+
+        Herdr's ``agent_status`` is unavailable for providers it does not
+        recognise.  In that case the backend may still transport the current
+        pane text to the registered provider, which alone owns interpretation
+        of its TUI.  This method deliberately makes no status or Work-result
+        inference from the text: unavailable, empty, or malformed transport
+        yields ``None`` so callers can fail closed to ``UNKNOWN``.
+
+        The observation keeps the backend's normal, unmodified history shape;
+        each provider's ``get_status`` contract decides whether that format is
+        usable.  No rendered terminal snapshot is itself evidence of work.
+        """
+        try:
+            observation = self.get_history(session_name, window_name)
+        except Exception as e:
+            logger.debug(
+                "herdr non-native status observation failed for %s:%s: %s",
+                session_name,
+                window_name,
+                e,
+            )
+            return None
+        if not isinstance(observation, str) or not observation.strip():
+            return None
+        return observation
+
     def get_pane_working_directory(self, session_name: str, window_name: str) -> Optional[str]:
         """Get pane CWD via herdr pane get."""
         pane_id = self._resolve_pane_id_from_window(session_name, window_name)

@@ -6,10 +6,14 @@ in the issue.
 """
 
 import json
+import os
+import subprocess
+import sys
 
 import pytest
 
 from cli_agent_orchestrator.services import config_service as cs
+from cli_agent_orchestrator.services import settings_service as ss
 from cli_agent_orchestrator.services.config_service import ConfigService
 
 
@@ -28,6 +32,7 @@ def _isolated_settings(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("cli_agent_orchestrator.services.settings_service.CAO_HOME_DIR", tmp_path)
     monkeypatch.setattr(cs, "LEGACY_CONFIG_FILE", fake_legacy)
+    monkeypatch.setattr(ss, "_server_settings_cache", None)
     for env_name in cs.ENV_REGISTRY:
         monkeypatch.delenv(env_name, raising=False)
     return {"settings": fake_settings, "legacy": fake_legacy}
@@ -158,3 +163,148 @@ class TestListAll:
         assert "memory.compile_mode" in result
         assert "server.mcp_request_timeout" in result
         assert result["terminal.backend"] == "tmux"
+
+
+class TestVersionedResolution:
+    @pytest.mark.parametrize(
+        "path,env,raw,expected",
+        [
+            ("server.provider_init_timeout", "CAO_PROVIDER_INIT_TIMEOUT", "-2", 120),
+            ("server.state_buffer_max", "CAO_STATE_BUFFER_MAX", "0", 32768),
+            ("memory.flush_threshold", "CAO_MEMORY_FLUSH_THRESHOLD", "2", 0.85),
+            ("memory.compile_mode", "CAO_MEMORY_COMPILE_MODE", "bogus", "llm"),
+            ("memory.compile_mode", "CAO_MEMORY_COMPILE_MODE", " APPEND ", "append"),
+        ],
+    )
+    def test_registry_does_not_bypass_runtime_validation(
+        self, monkeypatch, path, env, raw, expected
+    ):
+        monkeypatch.setenv(env, raw)
+        assert ConfigService.get(path) == expected
+
+    def test_server_env_change_invalidates_cache(self, monkeypatch):
+        assert ss.get_server_settings()["provider_init_timeout"] == 120
+        monkeypatch.setenv("CAO_PROVIDER_INIT_TIMEOUT", "41")
+        assert ss.get_server_settings()["provider_init_timeout"] == 41
+        assert ConfigService.get("server.provider_init_timeout") == 41
+
+    def test_invalid_app_env_falls_back_to_file(self, _isolated_settings, monkeypatch):
+        _isolated_settings["settings"].write_text('{"apps": {"enabled": true}}')
+        monkeypatch.setenv("CAO_MCP_APPS_ENABLED", "typo")
+        assert ConfigService.get("apps.enabled") is True
+
+    def test_logging_case_remains_compatible_with_runtime(self, monkeypatch):
+        monkeypatch.setenv("CAO_LOG_LEVEL", "debug")
+        assert str(ConfigService.get("logging.level")).upper() == "DEBUG"
+
+    def test_auth_file_remains_inert_and_auth0_precedence_unchanged(self, monkeypatch):
+        from cli_agent_orchestrator.security import auth
+
+        monkeypatch.delenv("AUTH0_DOMAIN", raising=False)
+        ConfigService.set("auth.jwks_uri", "https://file.invalid/jwks")
+        assert auth.is_auth_enabled() is False
+        monkeypatch.setenv("AUTH0_DOMAIN", "tenant.example")
+        assert auth.get_jwks_uri() == "https://tenant.example/.well-known/jwks.json"
+        monkeypatch.setenv("CAO_AUTH_JWKS_URI", "https://generic.example/jwks")
+        assert auth.get_jwks_uri() == "https://generic.example/jwks"
+
+    @pytest.mark.parametrize(
+        "path,value",
+        [
+            ("server.state_buffer_max", 0),
+            ("server.mcp_request_timeout", True),
+            ("server.max_terminals", -1),
+            ("terminal.backend", "unknown"),
+            ("apps.enabled", "false"),
+            ("logging.level", "invalid"),
+            ("memory.compile_timeout_s", float("inf")),
+            ("memory.compile_mode", "invalid"),
+        ],
+    )
+    def test_invalid_write_preserves_file(self, _isolated_settings, path, value):
+        file = _isolated_settings["settings"]
+        file.write_text('{"future": {"opaque": [1, 2]}}')
+        before = file.read_bytes()
+        with pytest.raises(ValueError):
+            ConfigService.set(path, value)
+        assert file.read_bytes() == before
+
+    def test_new_file_settings_round_trip_preserving_unknown_keys(self, _isolated_settings):
+        file = _isolated_settings["settings"]
+        file.write_text('{"memory": {"future_option": [1]}, "future": {"opaque": true}}')
+        ConfigService.set("memory.compile_mode", "append")
+        ConfigService.set("memory.compile_timeout_s", 12.5)
+        ConfigService.set("server.max_terminals", 2)
+        ConfigService.set("workflow.require_approval", True)
+        assert json.loads(file.read_text())["memory"]["future_option"] == [1]
+        assert json.loads(file.read_text())["future"] == {"opaque": True}
+        assert ConfigService.get("memory.compile_timeout_s") == 12.5
+        assert ConfigService.get("server.max_terminals") == 2
+        assert ConfigService.get("workflow.require_approval") is True
+
+    def test_typed_view_includes_effective_parent_gates_and_registered_settings(self, monkeypatch):
+        monkeypatch.setenv("CAO_MAX_TERMINALS", "2")
+        monkeypatch.setenv("CAO_STATE_BUFFER_MAX", "50000")
+        monkeypatch.setenv("CAO_MEMORY_ENABLED", "false")
+        monkeypatch.setenv("CAO_MEMORY_LEARNING_ENABLED", "true")
+        monkeypatch.setenv("CAO_MEMORY_INSTRUCTION_PROMOTION_ENABLED", "true")
+        cfg = ConfigService.get_config()
+        assert cfg.server.state_buffer_max == 50000
+        assert cfg.server.max_terminals == 2
+        assert cfg.memory.learning_enabled is False
+        assert cfg.memory.instruction_promotion_enabled is False
+        assert cfg.memory.workflow_journal_retention_days == 30
+        assert cfg.workflow.require_approval is False
+        values = ConfigService.list_all()
+        assert values["server.max_terminals"] == 2
+        assert values["memory.learning_enabled"] is False
+
+    def test_security_exceptions_survive_unification(self, monkeypatch):
+        ConfigService.set("memory.lint_enabled", False)
+        ConfigService.set("workflow.require_approval", True)
+        monkeypatch.setenv("CAO_MEMORY_LINT_ENABLED", "true")
+        monkeypatch.setenv("CAO_WORKFLOW_REQUIRE_APPROVAL", "false")
+        assert ConfigService.get("memory.lint_enabled") is False
+        assert ConfigService.get("workflow.require_approval") is True
+
+    def test_registry_reports_security_and_worker_lifecycle_without_credentials(self, monkeypatch):
+        monkeypatch.setenv("CAO_AUTH_LOCAL_TOKEN", "do-not-export-this-secret")
+        manifest = ConfigService.registry()
+        assert manifest["version"] >= 1
+        entries = manifest["options"]
+        assert entries["server.max_terminals"]["env"] == "CAO_MAX_TERMINALS"
+        assert entries["auth.jwks_uri"]["runtime_source"] == "environment_only"
+        assert entries["terminal.backend"]["application"] == "restart"
+        assert entries["server.provider_init_timeout"]["existing_workers"] == "unchanged"
+        external = manifest["external_environment"]
+        assert external["CAO_AUTH_LOCAL_TOKEN"]["secret"] is True
+        assert external["CAO_HOME_DIR"]["application"] == "restart"
+        assert external["CAO_WORKFLOW_RUN_ID"]["runtime_context"] is True
+        assert external["CAO_PROFILE_ALLOWED_HOSTS"]["consumer"] == "services.install_service"
+        assert "do-not-export-this-secret" not in json.dumps(manifest)
+
+    def test_restarted_reader_sees_file_and_new_env_existing_process_keeps_its_env(
+        self, _isolated_settings, monkeypatch
+    ):
+        ConfigService.set("server.provider_init_timeout", 44)
+        code = (
+            "import sys; from pathlib import Path; "
+            "from cli_agent_orchestrator.services import settings_service as s; "
+            "from cli_agent_orchestrator.services.config_service import ConfigService as C; "
+            "s.SETTINGS_FILE=Path(sys.argv[1]); "
+            "print(C.get('server.provider_init_timeout'), flush=True); "
+            "input(); print(C.get('server.provider_init_timeout'), flush=True)"
+        )
+        with subprocess.Popen(
+            [sys.executable, "-c", code, str(_isolated_settings["settings"])],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            env=dict(os.environ),
+        ) as worker:
+            assert worker.stdout.readline().strip() == "44"
+            monkeypatch.setenv("CAO_PROVIDER_INIT_TIMEOUT", "55")
+            assert ConfigService.get("server.provider_init_timeout") == 55
+            output, _ = worker.communicate("\n", timeout=10)
+            assert output.strip() == "44"
+            assert worker.returncode == 0

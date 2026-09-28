@@ -1,5 +1,6 @@
 """Plugin discovery, registration, dispatch, and lifecycle management."""
 
+import asyncio
 import importlib.metadata
 import inspect
 import logging
@@ -37,7 +38,27 @@ class PluginRegistry:
                     continue
 
                 plugin = plugin_class()
-                await plugin.setup()
+                try:
+                    await plugin.setup()
+                except BaseException:
+                    cleanup_task = asyncio.create_task(plugin.teardown())
+                    while not cleanup_task.done():
+                        try:
+                            await asyncio.shield(cleanup_task)
+                        except asyncio.CancelledError:
+                            continue
+                        except BaseException:
+                            break
+
+                    try:
+                        cleanup_task.result()
+                    except BaseException:
+                        logger.warning(
+                            "Plugin setup cleanup failed for %s",
+                            type(plugin).__name__,
+                            exc_info=True,
+                        )
+                    raise
                 self._register(plugin)
                 logger.info("Loaded CAO plugin: %s", entry_point.name)
             except Exception:
@@ -76,15 +97,87 @@ class PluginRegistry:
     async def teardown(self) -> None:
         """Call teardown() on every loaded plugin, continuing after failures."""
 
+        caller_cancellation: asyncio.CancelledError | None = None
+
         for plugin in self._plugins:
+            teardown_started: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+
+            async def run_teardown() -> asyncio.CancelledError | None:
+                teardown_started.set_result(None)
+                try:
+                    await plugin.teardown()
+                except asyncio.CancelledError as error:
+                    return error
+                return None
+
+            teardown_task = asyncio.create_task(run_teardown())
             try:
-                await plugin.teardown()
+                plugin_cancellation = await asyncio.shield(teardown_task)
+            except asyncio.CancelledError as error:
+                if caller_cancellation is None:
+                    caller_cancellation = error
+
+                pending_cancellations = 1
+                while not teardown_started.done() and not teardown_task.done():
+                    try:
+                        await asyncio.shield(teardown_started)
+                    except asyncio.CancelledError:
+                        pending_cancellations += 1
+
+                for _ in range(pending_cancellations):
+                    teardown_task.cancel()
+
+                while not teardown_task.done():
+                    try:
+                        await asyncio.shield(teardown_task)
+                    except asyncio.CancelledError:
+                        teardown_task.cancel()
+                        continue
+                    except Exception:
+                        break
+
+                try:
+                    plugin_cancellation = teardown_task.result()
+                except asyncio.CancelledError as plugin_error:
+                    plugin_cancellation = plugin_error
+                except Exception:
+                    logger.warning(
+                        "Plugin teardown failed for %s",
+                        type(plugin).__name__,
+                        exc_info=True,
+                    )
+                    plugin_cancellation = None
+                if plugin_cancellation is not None:
+                    logger.warning(
+                        "Plugin teardown failed for %s",
+                        type(plugin).__name__,
+                        exc_info=(
+                            type(plugin_cancellation),
+                            plugin_cancellation,
+                            plugin_cancellation.__traceback__,
+                        ),
+                    )
+                continue
             except Exception:
                 logger.warning(
                     "Plugin teardown failed for %s",
                     type(plugin).__name__,
                     exc_info=True,
                 )
+            else:
+                if plugin_cancellation is not None:
+                    logger.warning(
+                        "Plugin teardown failed for %s",
+                        type(plugin).__name__,
+                        exc_info=(
+                            type(plugin_cancellation),
+                            plugin_cancellation,
+                            plugin_cancellation.__traceback__,
+                        ),
+                    )
+
+        if caller_cancellation is not None:
+            raise caller_cancellation
 
 
 def register_mcp_server_surfaces(mcp: Any) -> None:

@@ -32,6 +32,7 @@ from cli_agent_orchestrator.clients.database import (
     _migrate_workflow_run,
     _migrate_workflow_run_step,
 )
+from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.terminal import AgentStepResult, TerminalStatus
 from cli_agent_orchestrator.models.workflow import (
     RunState,
@@ -40,7 +41,7 @@ from cli_agent_orchestrator.models.workflow import (
     WorkflowStep,
 )
 from cli_agent_orchestrator.models.workflow_runtime import StepOutputRecord
-from cli_agent_orchestrator.services import workflow_journal
+from cli_agent_orchestrator.services import agent_step, workflow_journal
 from cli_agent_orchestrator.services import workflow_service as ws
 
 _SCHEMA = {"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}
@@ -51,6 +52,7 @@ def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Point the journal at a temp DB, create the tables, clean the registry."""
     db_path = tmp_path / "wf.db"
     monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
+    WorkRepository(db_path).initialize()
     _migrate_workflow_run()
     _migrate_workflow_run_step()
     ws.run_registry.clear()
@@ -98,6 +100,39 @@ def _put_valid(run_id: str, step_id: str) -> None:
             errors=[],
             state=StepState.COMPLETED,
         ),
+    )
+
+
+def _begin_valid_yaml_attempt(run_id: str, spec: WorkflowSpec, step_id: str) -> None:
+    """Seed durable first-attempt evidence before the fixture settles its row."""
+    row = workflow_journal.get_run(run_id)
+    assert row is not None
+    if row.state != RunState.RUNNING.value:
+        workflow_journal.update_run_state(run_id, RunState.RUNNING.value, None)
+    record = ws._rebuild_record_from_journal(run_id)
+    assert record is not None
+    step = next(step for step in spec.steps if step.id == step_id)
+    fields = agent_step._effective_step_fields(
+        provider=step.provider,
+        agent=step.agent,
+        allowed_tools=None,
+        engine=step.engine,
+        model=None,
+        working_directory=None,
+        use_worktree=False,
+        created_here=True,
+        timeout=ws.WORKFLOW_STEP_TIMEOUT,
+        ready_timeout=agent_step.DEFAULT_READY_TIMEOUT,
+        teardown=True,
+        prompt_redelivery=True,
+    )
+    workflow_journal.begin_yaml_step_with_contract(
+        run_id,
+        step_id,
+        row.generation,
+        "2026-01-01T00:00:00Z",
+        ws._yaml_call_fingerprint(step, ws._substitute(step.prompt, record)),
+        fields,
     )
 
 
@@ -284,9 +319,12 @@ def _seed_killed_after_step2(spec: WorkflowSpec, run_id: str) -> None:
     workflow_journal.insert_steps(
         run_id, [(s.id, StepState.PENDING.value) for s in spec.steps], "2026-01-01T00:00:00Z"
     )
+    _begin_valid_yaml_attempt(run_id, spec, "s1")
     workflow_journal.update_step(run_id, "s1", StepState.COMPLETED.value, 1, "2026-01-01T00:00:01Z")
+    _begin_valid_yaml_attempt(run_id, spec, "s2")
     workflow_journal.update_step(run_id, "s2", StepState.COMPLETED.value, 1, "2026-01-01T00:00:02Z")
-    workflow_journal.update_step(run_id, "s3", StepState.RUNNING.value, 1, "2026-01-01T00:00:03Z")
+    _begin_valid_yaml_attempt(run_id, spec, "s3")
+    workflow_journal.update_step(run_id, "s3", StepState.FAILED.value, 1, "2026-01-01T00:00:03Z")
     workflow_journal.update_run_current_step(run_id, "s3")
 
 
@@ -338,7 +376,9 @@ async def test_resume_failed_run_reruns_failed_step(monkeypatch, _patched_journa
     workflow_journal.insert_steps(
         "runFa", [(s.id, StepState.PENDING.value) for s in spec.steps], "2026-01-01T00:00:00Z"
     )
+    _begin_valid_yaml_attempt("runFa", spec, "s1")
     workflow_journal.update_step("runFa", "s1", StepState.COMPLETED.value, 1, "t")
+    _begin_valid_yaml_attempt("runFa", spec, "s2")
     workflow_journal.update_step("runFa", "s2", StepState.FAILED.value, 4, "t", error="boom")
     workflow_journal.update_run_state("runFa", RunState.FAILED.value, "2026-01-01T00:00:05Z")
 
@@ -370,7 +410,9 @@ async def test_resume_reopen_persists_cleared_current_step(monkeypatch, _patched
     workflow_journal.insert_steps(
         "runCur", [(s.id, StepState.PENDING.value) for s in spec.steps], "2026-01-01T00:00:00Z"
     )
+    _begin_valid_yaml_attempt("runCur", spec, "s1")
     workflow_journal.update_step("runCur", "s1", StepState.COMPLETED.value, 1, "t")
+    _begin_valid_yaml_attempt("runCur", spec, "s2")
     workflow_journal.update_step("runCur", "s2", StepState.FAILED.value, 4, "t", error="boom")
     workflow_journal.update_run_current_step("runCur", "s2")  # stale pointer
     workflow_journal.update_run_state("runCur", RunState.FAILED.value, "2026-01-01T00:00:05Z")
@@ -531,6 +573,25 @@ async def test_resume_corrupt_snapshot_raises_corrupt(_patched_journal):
 
 
 @pytest.mark.asyncio
+async def test_resume_legacy_yaml_attempt_without_contract_is_rejected_before_running(
+    monkeypatch, _patched_journal
+):
+    """Historical rows never regain effect authority without durable evidence."""
+    spec = _spec(step_ids=("s1",))
+    workflow_journal.insert_run(
+        "runLegacy", spec.name, spec.model_dump_json(), "{}", RunState.FAILED.value, "t"
+    )
+    workflow_journal.insert_steps("runLegacy", [("s1", StepState.FAILED.value)], "t")
+    workflow_journal.update_step("runLegacy", "s1", StepState.FAILED.value, 1, "t")
+    step_mock = AsyncMock(return_value=_ok())
+    monkeypatch.setattr(ws, "run_agent_step", step_mock)
+
+    with pytest.raises(ws.ResumeCorruptError, match="no current YAML contract"):
+        await ws.resume_from_last_completed("runLegacy")
+    assert step_mock.await_count == 0
+
+
+@pytest.mark.asyncio
 async def test_start_run_rejects_journaled_run_id_and_keeps_row(monkeypatch, _patched_journal):
     # A durable journal row claims the run_id even after a restart (empty
     # registry): start_run must 409 (KeyError) and must NOT clobber the row.
@@ -582,6 +643,7 @@ async def test_resume_templates_from_rebuilt_kept_step_output(monkeypatch, _patc
     workflow_journal.insert_steps(
         "runTpl", [(s.id, StepState.PENDING.value) for s in spec.steps], "2026-01-01T00:00:00Z"
     )
+    _begin_valid_yaml_attempt("runTpl", spec, "s1")
     workflow_journal.update_step(
         "runTpl",
         "s1",
@@ -682,8 +744,8 @@ async def test_resume_engine_error_settles_failed_and_clears_drive_mark(
     workflow_journal.insert_steps(
         "runEngErr", [(s.id, StepState.PENDING.value) for s in spec.steps], "t"
     )
+    _begin_valid_yaml_attempt("runEngErr", spec, "s1")
     workflow_journal.update_step("runEngErr", "s1", StepState.COMPLETED.value, 1, "t")
-    workflow_journal.update_step("runEngErr", "s2", StepState.FAILED.value, 4, "t", error="boom")
     workflow_journal.update_run_state("runEngErr", RunState.FAILED.value, "t2")
 
     monkeypatch.setattr(ws, "run_agent_step", AsyncMock(return_value=_ok()))
@@ -729,7 +791,9 @@ async def test_resume_mixed_on_failure_continue_run(monkeypatch, _patched_journa
     workflow_journal.insert_steps(
         "runMix", [(s.id, StepState.PENDING.value) for s in spec.steps], "t"
     )
+    _begin_valid_yaml_attempt("runMix", spec, "s1")
     workflow_journal.update_step("runMix", "s1", StepState.COMPLETED.value, 1, "t")
+    _begin_valid_yaml_attempt("runMix", spec, "s2")
     workflow_journal.update_step("runMix", "s2", StepState.FAILED.value, 4, "t", error="boom")
 
     ran: List[str] = []

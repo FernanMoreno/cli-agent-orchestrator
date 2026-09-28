@@ -927,32 +927,61 @@ class StatusMonitor:
         EventBus → _process_chunk pipeline. Event-inbox backends (herdr) don't
         feed that pipeline (no FIFO reader is started for them), so _last_status
         would stay UNKNOWN forever; for those we derive status on demand from the
-        provider, whose get_status() consults backend.get_native_status(). Doing
-        it here means every caller (API status, init waits, busy checks, curator
+        provider, whose get_status() consults backend.get_native_status(). A
+        Herdr-specific non-native observation transports opaque pane text only;
+        the provider owns its interpretation, and a verified TerminalStatus is
+        still routed through the normal latch/publication path. Doing it here
+        means every caller (API status, init waits, busy checks, curator
         liveness) works on herdr without each having to special-case the backend.
         """
         from cli_agent_orchestrator.backends.registry import get_backend
 
-        if get_backend().supports_event_inbox():
+        backend = get_backend()
+        if backend.supports_event_inbox():
             try:
                 provider = provider_manager.get_provider(terminal_id)
             except Exception:
                 provider = None
             if provider is not None:
+                # Herdr may not recognise a wrapped/non-native provider.  Its
+                # pane text is only transport for that provider's parser; it is
+                # never a generic claim that Work is running or completed.
+                # Check the class surface rather than instance getattr so a
+                # generic mock/event-inbox backend retains its established
+                # provider-driven behavior.
+                observation_reader = getattr(
+                    type(backend), "get_non_native_status_observation", None
+                )
                 with self._lock:
                     buffer = self._buffers.get(terminal_id, "")
                 try:
+                    if callable(observation_reader):
+                        native = backend.get_native_status(
+                            provider.session_name, provider.window_name
+                        )
+                        if native is not None and not isinstance(native, TerminalStatus):
+                            return TerminalStatus.UNKNOWN
+                        if native is None:
+                            observation = observation_reader(
+                                backend, provider.session_name, provider.window_name
+                            )
+                            if not isinstance(observation, str) or not observation.strip():
+                                return TerminalStatus.UNKNOWN
+                            buffer = observation
                     # The native (herdr) path ignores the buffer arg; pass the
-                    # rolling buffer (empty for herdr) so the rare
-                    # get_native_status()==None fallback still gets what we have.
+                    # generic observation only after Herdr reported no native
+                    # state.  The provider owns the fallback parser and may
+                    # still choose UNKNOWN.
                     # provider.get_status may shell out to the herdr CLI — call
                     # it outside the lock.
                     detected = provider.get_status(buffer)
-                    return self._gate_terminal_completion(
-                        terminal_id,
-                        provider,
-                        detected,
-                    )
+                    if not isinstance(detected, TerminalStatus):
+                        return TerminalStatus.UNKNOWN
+                    if detected == TerminalStatus.UNKNOWN:
+                        return TerminalStatus.UNKNOWN
+                    self._apply_detection(terminal_id, detected, provider=provider)
+                    with self._lock:
+                        return self._last_status.get(terminal_id, TerminalStatus.UNKNOWN)
                 except Exception as e:
                     logger.error(f"Error deriving native status for {terminal_id}: {e}")
                     return TerminalStatus.UNKNOWN

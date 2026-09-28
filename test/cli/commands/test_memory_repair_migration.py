@@ -251,15 +251,17 @@ def test_repair_surfaces_lock_failed_index_creation_and_recovers(tmp_path: Path)
             sys.executable,
             "-c",
             textwrap.dedent("""
-                import sqlite3, sys, time
+                import sqlite3, sys
                 conn = sqlite3.connect(sys.argv[1], timeout=30)
                 conn.execute("BEGIN EXCLUSIVE")
                 print("locked", flush=True)
-                time.sleep(30)
+                sys.stdin.read()
                 conn.rollback()
+                conn.close()
                 """),
             str(db_file),
         ],
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
     )
@@ -268,8 +270,12 @@ def test_repair_surfaces_lock_failed_index_creation_and_recovers(tmp_path: Path)
         result = _run_repair(home, "--apply")
         assert result.returncode != 0, "repair under lock must not report success"
     finally:
-        holder.kill()
-        holder.wait(timeout=10)
+        try:
+            # EOF releases the lock only after the repair attempt has finished.
+            holder.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            holder.kill()
+            holder.communicate(timeout=10)
 
     # BEGIN EXCLUSIVE blocks readers too, so probe only after the release.
     assert "uq_memory_key_scope_null" not in _index_names(db_file)

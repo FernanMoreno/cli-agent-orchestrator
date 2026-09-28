@@ -219,8 +219,8 @@ class TestStoreLessonMcpTool:
             ),
             patch.object(srv, "_get_terminal_context_from_env", return_value=self._retro_ctx()),
             patch(
-                "cli_agent_orchestrator.services.memory_service.MemoryService",
-                return_value=svc,
+                "cli_agent_orchestrator.services.memory_gateway.store_memory",
+                new=svc.store,
             ),
         ):
             result = asyncio.run(
@@ -343,8 +343,8 @@ class TestStoreLessonAuthorization:
             ),
             patch.object(srv, "_caller_has_store_lesson_capability", return_value=False),
             patch(
-                "cli_agent_orchestrator.services.memory_service.MemoryService",
-                return_value=svc,
+                "cli_agent_orchestrator.services.memory_gateway.store_memory",
+                new=svc.store,
             ),
         ):
             result = asyncio.run(

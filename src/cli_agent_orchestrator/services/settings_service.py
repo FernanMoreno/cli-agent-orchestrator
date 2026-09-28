@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import os
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Set
@@ -269,10 +270,11 @@ _SERVER_ENV_VARS = {
 
 _server_settings_cache: Optional[Dict[str, Any]] = None
 _server_settings_mtime_ns: int = -1
+_server_settings_context: Any = None
 
 
 def get_server_settings() -> Dict[str, Any]:
-    """Get server tuning settings (cached; re-reads only when file changes).
+    """Get server tuning settings (cached by file identity, mtime and env).
 
     Precedence per key: CAO_* env var > settings.json > built-in default.
 
@@ -304,13 +306,22 @@ def get_server_settings() -> Dict[str, Any]:
           }
         }
     """
-    global _server_settings_cache, _server_settings_mtime_ns
-    # Cache: only re-read when the file has changed
+    global _server_settings_cache, _server_settings_mtime_ns, _server_settings_context
+    # Include the path and env overlay: neither a path switch nor an in-process
+    # env change necessarily changes the file's timestamp.
     try:
         mtime_ns = SETTINGS_FILE.stat().st_mtime_ns if SETTINGS_FILE.exists() else -1
     except OSError:
         mtime_ns = -1
-    if _server_settings_cache is not None and mtime_ns == _server_settings_mtime_ns:
+    context = (
+        str(SETTINGS_FILE),
+        tuple(os.environ.get(name) for name in _SERVER_ENV_VARS.values()),
+    )
+    if (
+        _server_settings_cache is not None
+        and mtime_ns == _server_settings_mtime_ns
+        and context == _server_settings_context
+    ):
         return dict(_server_settings_cache)
 
     settings = _load()
@@ -353,6 +364,7 @@ def get_server_settings() -> Dict[str, Any]:
     result["state_buffer_max"] = int(result["state_buffer_max"])
     _server_settings_cache = result
     _server_settings_mtime_ns = mtime_ns
+    _server_settings_context = context
     return dict(result)
 
 
@@ -727,6 +739,7 @@ def set_memory_setting(key: str, value: Any) -> Dict[str, Any]:
     """Update a single memory setting.
 
     Supported keys:
+        ``compile_mode`` (llm/append), ``compile_timeout_s`` (positive finite number).
         ``enabled`` (bool) — master switch for the memory subsystem.
         ``flush_threshold`` (float, 0.0 < x ≤ 1.0) — context-usage trigger.
         ``lint_enabled`` (bool) — expensive wiki lint enrichment switch.
@@ -742,12 +755,23 @@ def set_memory_setting(key: str, value: Any) -> Dict[str, Any]:
         ``workflow_journal_retention_count`` (int ≥ 0) — most-recent run-count
             retention bound (U7; default 100, NFR-SEC-3).
     """
+    if key == "compile_mode" and value not in ("llm", "append"):
+        raise ValueError("compile_mode must be llm or append")
+    if key == "compile_timeout_s" and (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        raise ValueError("compile_timeout_s must be a positive finite number")
     settings = _load()
     memory = settings.get("memory", {})
     if not isinstance(memory, dict):
         memory = {}
 
-    if key == "enabled":
+    if key in ("compile_mode", "compile_timeout_s"):
+        memory[key] = value
+    elif key == "enabled":
         if not isinstance(value, bool):
             raise ValueError(f"enabled must be a bool, got {type(value).__name__}")
         memory[key] = value

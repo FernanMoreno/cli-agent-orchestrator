@@ -161,6 +161,67 @@ pub struct Terminal {
     pub status: Option<TerminalStatus>,
 }
 
+/// The v1 durable work projection returned by `GET /work-items/{work_item_id}`.
+///
+/// This identity and its states belong to the durable work record. They are deliberately separate
+/// from [`Terminal`] and its live readiness status. The fields mirror `models/work.py:143-156`;
+/// counters and execution foreground/background are not part of this response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkView {
+    /// The wire schema version. Unknown versions fail deserialisation rather than being rendered
+    /// with v1 semantics.
+    #[serde(deserialize_with = "deserialize_work_schema_version")]
+    pub schema_version: u32,
+    /// Durable job identifier.
+    pub job_id: String,
+    /// Explicit durable work identifier selected by the operator.
+    pub work_item_id: String,
+    /// Current attempt, when one has been admitted.
+    #[serde(default)]
+    pub attempt_id: Option<String>,
+    /// Durable job state.
+    pub job_state: String,
+    /// Durable work-item state.
+    pub work_state: String,
+    /// Durable attempt state, when an attempt exists.
+    #[serde(default)]
+    pub attempt_state: Option<String>,
+    /// Durable turn state, when reported.
+    #[serde(default)]
+    pub turn_state: Option<String>,
+    /// Durable process state. The server's v1 default is `unknown`.
+    #[serde(default = "unknown_process_state")]
+    pub process_state: String,
+    /// Durable projection revision.
+    pub revision: u64,
+    /// Durable result reference, when one exists.
+    #[serde(default)]
+    pub result_ref: Option<String>,
+    /// Durable cleanup state.
+    pub cleanup_state: String,
+    /// Action required from the operator, when present.
+    #[serde(default)]
+    pub required_action: Option<String>,
+}
+
+fn deserialize_work_schema_version<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let version = u32::deserialize(deserializer)?;
+    if version == 1 {
+        Ok(version)
+    } else {
+        Err(serde::de::Error::custom(format!(
+            "unsupported work schema version {version}"
+        )))
+    }
+}
+
+fn unknown_process_state() -> String {
+    "unknown".to_string()
+}
+
 /// The server's six terminal states, mirrored verbatim from `models/terminal.py:13-21`.
 ///
 /// All six are mirrored rather than collapsed at the wire boundary (BR-7): collapsing
@@ -325,7 +386,7 @@ pub struct Health {
 
 #[cfg(test)]
 mod tests {
-    use super::{Health, Profile, Provider, Readiness, SessionParams, Terminal, TerminalStatus};
+    use super::{Health, Profile, Provider, Readiness, SessionParams, Terminal, TerminalStatus, WorkView};
     use std::collections::{BTreeMap, BTreeSet};
 
     /// A fully-populated `Profile`. Every field is `Some`/non-empty on purpose: the key-set
@@ -350,6 +411,34 @@ mod tests {
             .keys()
             .cloned()
             .collect()
+    }
+
+    #[test]
+    fn work_view_deserializes_v1_projection_and_rejects_unknown_schema_version() {
+        let envelope: serde_json::Value = serde_json::from_str(include_str!(
+            "../../test/fixtures/work_contract_v1.json"
+        ))
+        .expect("the checked-in work contract fixture must be JSON");
+        let mut view = envelope["views"][0].clone();
+        view["schema_version"] = envelope["schema_version"].clone();
+
+        let decoded: WorkView = serde_json::from_value(view.clone())
+            .expect("the HTTP WorkView with envelope version injected must decode as v1");
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.work_item_id, "work-fixture");
+        assert_eq!(decoded.job_id, "job-fixture");
+        assert_eq!(decoded.attempt_id.as_deref(), Some("attempt-fixture"));
+        assert_eq!(decoded.job_state, "running");
+        assert_eq!(decoded.work_state, "running");
+        assert_eq!(decoded.attempt_state.as_deref(), Some("running"));
+        assert_eq!(decoded.turn_state.as_deref(), Some("ready"));
+        assert_eq!(decoded.process_state, "alive");
+
+        view["schema_version"] = serde_json::json!(2);
+        assert!(
+            serde_json::from_value::<WorkView>(view).is_err(),
+            "a client that does not understand a future schema must not decode it as v1"
+        );
     }
 
     /// Test 1 — `Profile` has exactly the eight projected keys.

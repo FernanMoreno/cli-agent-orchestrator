@@ -19,6 +19,13 @@ on:
         type: string
         required: true
         default: all
+      quota_observation_seconds:
+        description: >-
+          Required finite positive decimal seconds to observe the same
+          quota-paused turn. This is an evidence window, not a retry deadline
+          or the job timeout; review it for the selected provider/account.
+        type: number
+        required: true
 
 permissions:
   contents: read
@@ -113,17 +120,18 @@ jobs:
         run: uv sync --all-extras --dev
 
       - name: Run selected real-provider matrix cells
+        env:
+          CAO_REAL_PROVIDER_E2E_QUOTA_OBSERVATION_SECONDS: ${{ inputs.quota_observation_seconds }}
         run: |
           uv run pytest -o addopts= -m "e2e and live_provider" \
-            test/e2e/test_real_provider_matrix.py -vv
+            test/e2e/test_real_provider_matrix.py -vv \
+            --junitxml=real-provider-matrix.junit.xml
 
-      - name: Upload CAO diagnostics on failure
-        if: failure()
+      - name: Upload sanitized matrix JUnit evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cao-real-provider-matrix-${{ github.run_id }}
-          path: |
-            /tmp/pytest-of-*/**/server.log
-            /tmp/pytest-of-*/**/logs/*.log
-          if-no-files-found: ignore
+          name: cao-real-provider-matrix-junit-${{ github.run_id }}
+          path: real-provider-matrix.junit.xml
+          if-no-files-found: error
           retention-days: 7

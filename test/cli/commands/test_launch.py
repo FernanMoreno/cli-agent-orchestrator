@@ -1023,3 +1023,647 @@ def test_minimax_code_requires_workspace_access_confirmation():
     )
 
     assert "mcode" in PROVIDERS_REQUIRING_WORKSPACE_ACCESS
+
+
+# ── Explicit queued Work launch admission (T017 partial) ───────────────────
+
+
+def _queued_work_args(*extra):
+    return [
+        "--agents",
+        "test-agent",
+        "--queue-work",
+        "--work-selection",
+        "opaque-selection",
+        "--session-name",
+        "queued-session",
+        "--allowed-tools",
+        "fs_read",
+        "do queued work",
+        *extra,
+    ]
+
+
+def test_queue_work_launch_posts_intent_and_displays_only_receipt():
+    runner = CliRunner()
+    receipt = {
+        "work_item_id": "work-123",
+        "attempt_id": "attempt-456",
+        "generation": 1,
+        "state": "queued",
+    }
+
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            create=True,
+            return_value="verified-local-token",
+        ) as mock_bearer,
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.get") as mock_get,
+        patch("cli_agent_orchestrator.cli.commands.launch.get_server_settings") as mock_settings,
+        patch("cli_agent_orchestrator.cli.commands.launch.get_backend") as mock_backend,
+        patch("cli_agent_orchestrator.cli.commands.launch.sync_backend_from_server") as mock_sync,
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.wait_until_terminal_status"
+        ) as mock_wait,
+        patch(
+            "cli_agent_orchestrator.utils.agent_profiles.resolve_provider"
+        ) as mock_provider,
+    ):
+        mock_settings.return_value = {"mcp_request_timeout": 9}
+        mock_post.return_value.json.return_value = receipt
+        mock_post.return_value.raise_for_status.return_value = None
+
+        result = runner.invoke(launch, _queued_work_args())
+
+    assert result.exit_code == 0, result.output
+    mock_bearer.assert_called_once()
+    mock_post.assert_called_once()
+    assert mock_post.call_args.args[0].endswith("/work-launches")
+    assert mock_post.call_args.kwargs["headers"] == {
+        "Authorization": "Bearer verified-local-token"
+    }
+    assert mock_post.call_args.kwargs["timeout"] == 9
+    assert mock_post.call_args.kwargs["json"] == {
+        "selection": "opaque-selection",
+        "agent_profile": "test-agent",
+        "session_name": "queued-session",
+        "message": "do queued work",
+        "allowed_tools": ["fs_read"],
+    }
+    for value in receipt.values():
+        assert str(value) in result.output
+    assert "Session created:" not in result.output
+    assert "Terminal created:" not in result.output
+    assert "ACK" not in result.output
+    mock_get.assert_not_called()
+    mock_backend.assert_not_called()
+    mock_sync.assert_not_called()
+    mock_wait.assert_not_called()
+    mock_provider.assert_not_called()
+
+
+def test_queue_work_launch_allows_omitted_selector_and_posts_only_intent():
+    runner = CliRunner()
+    receipt = {
+        "work_item_id": "work-789",
+        "attempt_id": "attempt-012",
+        "generation": 1,
+        "state": "queued",
+    }
+    args = [
+        "--agents",
+        "test-agent",
+        "--queue-work",
+        "--session-name",
+        "queued-session",
+        "--allowed-tools",
+        "fs_read",
+        "do queued work",
+    ]
+
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            create=True,
+            return_value="verified-local-token",
+        ),
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+        patch("cli_agent_orchestrator.cli.commands.launch.get_server_settings") as mock_settings,
+    ):
+        mock_settings.return_value = {"mcp_request_timeout": 9}
+        mock_post.return_value.json.return_value = receipt
+        mock_post.return_value.raise_for_status.return_value = None
+
+        result = runner.invoke(launch, args)
+
+    assert result.exit_code == 0, result.output
+    assert mock_post.call_args.args[0].endswith("/work-launches")
+    assert mock_post.call_args.kwargs["json"] == {
+        "agent_profile": "test-agent",
+        "session_name": "queued-session",
+        "message": "do queued work",
+        "allowed_tools": ["fs_read"],
+    }
+    assert "selection" not in mock_post.call_args.kwargs["json"]
+    assert "work-789" in result.output
+    assert "attempt-012" in result.output
+    assert "queued" in result.output
+
+
+def test_queue_work_launch_requires_bearer_before_network():
+    runner = CliRunner()
+
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            create=True,
+            return_value=None,
+        ),
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+    ):
+        result = runner.invoke(launch, _queued_work_args())
+
+    assert result.exit_code != 0
+    assert "bearer" in result.output.lower() or "auth" in result.output.lower()
+    mock_post.assert_not_called()
+
+
+def test_queue_work_launch_requires_session_name_before_bearer_or_network():
+    runner = CliRunner()
+    args = [
+        "--agents",
+        "test-agent",
+        "--queue-work",
+        "--work-selection",
+        "opaque-selection",
+        "do queued work",
+    ]
+
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            create=True,
+        ) as mock_bearer,
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+    ):
+        result = runner.invoke(launch, args)
+
+    assert result.exit_code != 0
+    assert "--session-name" in result.output
+    mock_bearer.assert_not_called()
+    mock_post.assert_not_called()
+
+
+def test_queue_work_launch_requires_message_before_bearer_or_network():
+    runner = CliRunner()
+    args = [
+        "--agents",
+        "test-agent",
+        "--queue-work",
+        "--work-selection",
+        "opaque-selection",
+        "--session-name",
+        "queued-session",
+    ]
+
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            create=True,
+        ) as mock_bearer,
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+    ):
+        result = runner.invoke(launch, args)
+
+    assert result.exit_code != 0
+    assert "message is required" in result.output.lower()
+    mock_bearer.assert_not_called()
+    mock_post.assert_not_called()
+
+
+def test_queue_work_launch_never_falls_back_to_legacy_after_error():
+    import requests
+
+    runner = CliRunner()
+
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            create=True,
+            return_value="verified-local-token",
+        ),
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+        patch("cli_agent_orchestrator.cli.commands.launch.get_backend") as mock_backend,
+        patch("cli_agent_orchestrator.cli.commands.launch.sync_backend_from_server") as mock_sync,
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.wait_until_terminal_status"
+        ) as mock_wait,
+    ):
+        mock_post.side_effect = requests.exceptions.ConnectionError("offline")
+
+        result = runner.invoke(launch, _queued_work_args())
+
+    assert result.exit_code != 0
+    assert "Failed to connect to cao-server" in result.output
+    mock_post.assert_called_once()
+    assert mock_post.call_args.args[0].endswith("/work-launches")
+    mock_backend.assert_not_called()
+    mock_sync.assert_not_called()
+    mock_wait.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("status_code", "code", "message", "required_action"),
+    [
+        (
+            409,
+            "launch_idempotency_conflict",
+            "Launch operation conflicts with an existing server-owned identity.",
+            "inspect_existing_launch",
+        ),
+        (
+            503,
+            "launch_runtime_unavailable",
+            "Trusted launch runtime is unavailable.",
+            "inspect_server_configuration",
+        ),
+    ],
+)
+def test_queue_work_http_error_displays_server_message_and_required_action(
+    status_code, code, message, required_action
+):
+    import requests
+
+    detail = {
+        "code": code,
+        "message": message,
+        "retryable": False,
+        "required_action": required_action,
+    }
+    response = MagicMock()
+    response.status_code = status_code
+    response.json.return_value = {"detail": detail}
+    http_error = requests.exceptions.HTTPError(
+        f"HTTP {status_code}", response=response
+    )
+
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            create=True,
+            return_value="verified-local-token",
+        ),
+        patch("cli_agent_orchestrator.cli.commands.launch.get_server_settings") as mock_settings,
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+        patch("cli_agent_orchestrator.cli.commands.launch.get_backend") as mock_backend,
+    ):
+        mock_settings.return_value = {"mcp_request_timeout": 9}
+        mock_post.return_value.raise_for_status.side_effect = http_error
+
+        result = CliRunner().invoke(launch, _queued_work_args())
+
+    assert result.exit_code != 0
+    assert message in result.output
+    assert required_action in result.output
+    assert "Failed to connect to cao-server" not in result.output
+    mock_post.assert_called_once()
+    assert mock_post.call_args.args[0].endswith("/work-launches")
+    mock_backend.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("body", "invalid_json"),
+    [
+        ({"detail": "Work admission is unavailable."}, False),
+        ({"error": "Work admission is unavailable."}, False),
+        ({"detail": {"message": "Missing action"}}, False),
+        (None, True),
+    ],
+    ids=["detail-is-text", "detail-missing", "action-missing", "invalid-json"],
+)
+def test_queue_work_unstructured_http_error_reports_rejection_status(body, invalid_json):
+    import requests
+
+    response = MagicMock()
+    response.status_code = 503
+    if invalid_json:
+        response.json.side_effect = ValueError("invalid JSON")
+    else:
+        response.json.return_value = body
+    http_error = requests.exceptions.HTTPError("HTTP 503", response=response)
+
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            create=True,
+            return_value="verified-local-token",
+        ),
+        patch("cli_agent_orchestrator.cli.commands.launch.get_server_settings") as mock_settings,
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+        patch("cli_agent_orchestrator.cli.commands.launch.get_backend") as mock_backend,
+    ):
+        mock_settings.return_value = {"mcp_request_timeout": 9}
+        mock_post.return_value.raise_for_status.side_effect = http_error
+
+        result = CliRunner().invoke(launch, _queued_work_args())
+
+    assert result.exit_code != 0
+    assert "cao-server rejected queued Work (HTTP 503)" in result.output
+    assert "Failed to connect to cao-server" not in result.output
+    mock_post.assert_called_once()
+    assert mock_post.call_args.args[0].endswith("/work-launches")
+    mock_backend.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        {
+            "code": "private_launch_failure",
+            "message": "PRIVATE_LAUNCH_DETAIL_7F3A\x1b[31m",
+            "retryable": False,
+            "required_action": "leak_PRIVATE_LAUNCH_DETAIL_7F3A\x1b[0m",
+        },
+        {
+            "code": "launch_runtime_unavailable",
+            "message": "PRIVATE_LAUNCH_DETAIL_7F3A\x1b[31m",
+            "retryable": False,
+            "required_action": "leak_PRIVATE_LAUNCH_DETAIL_7F3A\x1b[0m",
+        },
+        {
+            "code": "launch_runtime_unavailable",
+            "message": "Trusted launch runtime is unavailable.",
+            "retryable": True,
+            "required_action": "inspect_server_configuration",
+        },
+        {
+            "code": "launch_runtime_unavailable",
+            "message": "Trusted launch runtime is unavailable.",
+            "retryable": False,
+            "required_action": "inspect_server_configuration",
+            "debug": "PRIVATE_LAUNCH_DETAIL_7F3A\x1b[31m",
+        },
+    ],
+    ids=["unknown-envelope", "known-code-private-message", "wrong-retryable", "extra-field"],
+)
+def test_queue_work_http_error_hides_details_outside_safe_envelopes(detail):
+    import requests
+
+    response = MagicMock()
+    response.status_code = 503
+    response.json.return_value = {"detail": detail}
+    http_error = requests.exceptions.HTTPError("HTTP 503", response=response)
+
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            create=True,
+            return_value="verified-local-token",
+        ),
+        patch("cli_agent_orchestrator.cli.commands.launch.get_server_settings") as mock_settings,
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+    ):
+        mock_settings.return_value = {"mcp_request_timeout": 9}
+        mock_post.return_value.raise_for_status.side_effect = http_error
+
+        result = CliRunner().invoke(launch, _queued_work_args())
+
+    assert result.exit_code != 0
+    assert "cao-server rejected queued Work (HTTP 503)" in result.output
+    assert "PRIVATE_LAUNCH_DETAIL_7F3A" not in result.output
+    assert "\x1b" not in result.output
+    assert "Trusted launch runtime is unavailable." not in result.output
+    assert "inspect_server_configuration" not in result.output
+
+
+def test_legacy_launch_http_error_keeps_connection_error_message():
+    import requests
+
+    response = MagicMock()
+    response.status_code = 503
+    response.json.return_value = {
+        "detail": {
+            "message": "Trusted launch runtime is unavailable.",
+            "required_action": "inspect_server_configuration",
+        }
+    }
+    http_error = requests.exceptions.HTTPError("HTTP 503", response=response)
+
+    with (
+        patch("cli_agent_orchestrator.cli.commands.launch.get_server_settings") as mock_settings,
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+    ):
+        mock_settings.return_value = {"mcp_request_timeout": 9}
+        mock_post.return_value.raise_for_status.side_effect = http_error
+
+        result = CliRunner().invoke(
+            launch,
+            ["--agents", "test-agent", "--provider", "claude_code", "--yolo"],
+        )
+
+    assert result.exit_code != 0
+    assert "Failed to connect to cao-server" in result.output
+    assert "inspect_server_configuration" not in result.output
+
+
+@pytest.mark.parametrize("generation", [0, -1])
+def test_queue_work_rejects_nonpositive_generation_receipt(generation):
+    receipt = {
+        "work_item_id": "work-123",
+        "attempt_id": "attempt-456",
+        "generation": generation,
+        "state": "queued",
+    }
+
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            create=True,
+            return_value="verified-local-token",
+        ),
+        patch("cli_agent_orchestrator.cli.commands.launch.get_server_settings") as mock_settings,
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+    ):
+        mock_settings.return_value = {"mcp_request_timeout": 9}
+        mock_post.return_value.json.return_value = receipt
+        mock_post.return_value.raise_for_status.return_value = None
+
+        result = CliRunner().invoke(launch, _queued_work_args())
+
+    assert result.exit_code != 0
+    assert "invalid queued Work receipt" in result.output
+    mock_post.assert_called_once()
+    assert mock_post.call_args.args[0].endswith("/work-launches")
+
+
+def test_launch_without_queue_work_keeps_legacy_sessions_endpoint():
+    runner = CliRunner()
+
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            create=True,
+        ) as mock_bearer,
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+    ):
+        mock_post.return_value.json.return_value = {
+            "session_name": "legacy-session",
+            "id": "terminal-id",
+            "name": "terminal-name",
+        }
+        mock_post.return_value.raise_for_status.return_value = None
+
+        result = runner.invoke(
+            launch, ["--agents", "test-agent", "--headless", "--yolo"]
+        )
+
+    assert result.exit_code == 0
+    assert mock_post.call_args.args[0].endswith("/sessions")
+    mock_bearer.assert_not_called()
+
+
+def test_launch_help_describes_queued_work_as_admission_only():
+    result = CliRunner().invoke(launch, ["--help"])
+
+    assert result.exit_code == 0
+    assert "--queue-work" in result.output
+    assert "queued" in result.output.lower()
+    assert "provider" in result.output.lower()
+
+
+@pytest.mark.parametrize(
+    ("option", "value"),
+    [
+        ("--provider", "claude_code"),
+        ("--engine", "v2"),
+        ("--headless", None),
+        ("--async", None),
+        ("--auto-approve", None),
+        ("--yolo", None),
+        ("--working-directory", "/tmp/work"),
+        ("--memory", None),
+        ("--env", "KEY=value"),
+        ("--resume-session-id", "resume-123"),
+    ],
+)
+def test_queue_work_rejects_legacy_launch_options_before_auth_or_network(option, value):
+    args = _queued_work_args()
+    args.extend([option] if value is None else [option, value])
+
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            create=True,
+        ) as mock_bearer,
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+    ):
+        result = CliRunner().invoke(launch, args)
+
+    assert result.exit_code != 0
+    assert option in result.output
+    assert "--queue-work" in result.output
+    mock_bearer.assert_not_called()
+    mock_post.assert_not_called()
+
+
+def test_work_selection_without_queue_work_is_rejected_before_auth_or_network():
+    args = [
+        "--agents",
+        "test-agent",
+        "--work-selection",
+        "opaque-selection",
+        "--session-name",
+        "queued-session",
+        "do queued work",
+    ]
+
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            create=True,
+        ) as mock_bearer,
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+    ):
+        result = CliRunner().invoke(launch, args)
+
+    assert result.exit_code != 0
+    assert "--work-selection requires --queue-work" in result.output
+    mock_bearer.assert_not_called()
+    mock_post.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("--agents", "invalid profile"),
+        ("--agents", "a" * 129),
+        ("--work-selection", "invalid selector"),
+        ("--work-selection", "s" * 129),
+        ("--session-name", "invalid session"),
+        ("--session-name", "s" * 129),
+        ("--allowed-tools", "invalid tool"),
+        ("--allowed-tools", "t" * 129),
+        ("--allowed-tools", "*"),
+        ("MESSAGE", "m" * 32769),
+    ],
+    ids=[
+        "profile-invalid-characters",
+        "profile-too-long",
+        "selection-invalid-characters",
+        "selection-too-long",
+        "session-invalid-characters",
+        "session-too-long",
+        "tool-invalid-characters",
+        "tool-too-long",
+        "wildcard-tool",
+        "message-too-long",
+    ],
+)
+def test_queue_work_rejects_invalid_identity_or_oversize_message_before_auth(
+    field, invalid_value
+):
+    args = _queued_work_args()
+    if field == "MESSAGE":
+        args[-1] = invalid_value
+    elif field == "--allowed-tools":
+        args[args.index(field) + 1] = invalid_value
+    else:
+        args[args.index(field) + 1] = invalid_value
+
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            create=True,
+        ) as mock_bearer,
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+    ):
+        result = CliRunner().invoke(launch, args)
+
+    assert result.exit_code != 0
+    assert field.lower() in result.output.lower() or "invalid" in result.output.lower()
+    mock_bearer.assert_not_called()
+    mock_post.assert_not_called()
+
+
+def test_queue_work_accepts_identity_and_message_maximum_lengths():
+    receipt = {
+        "work_item_id": "work-123",
+        "attempt_id": "attempt-456",
+        "generation": 1,
+        "state": "queued",
+    }
+    args = [
+        "--agents",
+        "a" * 128,
+        "--queue-work",
+        "--work-selection",
+        "s" * 128,
+        "--session-name",
+        "n" * 128,
+        "--allowed-tools",
+        "fs_read",
+        "m" * 32768,
+    ]
+
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            create=True,
+            return_value="verified-local-token",
+        ),
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+        patch("cli_agent_orchestrator.cli.commands.launch.get_server_settings") as mock_settings,
+    ):
+        mock_settings.return_value = {"mcp_request_timeout": 9}
+        mock_post.return_value.json.return_value = receipt
+        mock_post.return_value.raise_for_status.return_value = None
+
+        result = CliRunner().invoke(launch, args)
+
+    assert result.exit_code == 0, result.output
+    assert mock_post.call_args.kwargs["json"]["agent_profile"] == "a" * 128
+    assert mock_post.call_args.kwargs["json"]["selection"] == "s" * 128
+    assert mock_post.call_args.kwargs["json"]["session_name"] == "n" * 128
+    assert mock_post.call_args.kwargs["json"]["message"] == "m" * 32768

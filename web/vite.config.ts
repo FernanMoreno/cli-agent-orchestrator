@@ -33,6 +33,7 @@ export default defineConfig({
     proxy: {
       '/sessions': { target: 'http://localhost:9889', changeOrigin: true },
       '/terminals': { target: 'http://localhost:9889', changeOrigin: true, ws: true },
+      '/work-items': { target: 'http://localhost:9889', changeOrigin: true },
       '/health': { target: 'http://localhost:9889', changeOrigin: true },
       '/agents': { target: 'http://localhost:9889', changeOrigin: true },
       '/settings': { target: 'http://localhost:9889', changeOrigin: true },

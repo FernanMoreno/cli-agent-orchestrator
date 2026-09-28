@@ -6,7 +6,7 @@ CAO stores user configuration in a single file, `~/.aws/cli-agent-orchestrator/s
 CLI flag  >  CAO_* environment variable  >  settings.json  >  built-in default
 ```
 
-`ConfigService` (`services/config_service.py`) is the single reader/writer behind this precedence chain. `agents`, `skills`, `server`, `memory`, `terminal`, and `apps` are fully wired: setting any of their keys in `settings.json` (or the mapped `CAO_*` env var) has a real runtime effect. `network` and `auth` are schema-only for now — see the "env-var only" callouts in those sections below and in the env-var reference.
+`ConfigService` (`services/config_service.py`) exposes this precedence chain and delegates many reads to `settings_service`. Runtime readers still differ in validation, caching, and supported keys; see the [source-verified inventory](#source-verified-configuration-inventory-t075) below. `network` and `auth` are schema-only for now — see the "env-var only" callouts in those sections below and in the env-var reference.
 
 > `.env` file handling (`utils/env.py`, forwarded provider env vars) is a separate, out-of-scope surface — unaffected by this doc.
 
@@ -168,8 +168,8 @@ Timeouts and buffer sizes used by the CAO runtime. All values have safe defaults
 >
 > That retained text is served, in full, by `GET /workflows/runs/{run_id}`. Its only
 > protection is a scope requirement (`cao:read`/`cao:write`/`cao:admin`), and that
-> requirement is **inert unless you enable authentication**: with `CAO_AUTH_ENABLED`
-> unset — the default — the dependency returns the full scope set and enforces
+> requirement is **inert unless you enable authentication**: with both `CAO_AUTH_JWKS_URI`
+> and `AUTH0_DOMAIN` unset or blank — the default — the dependency returns the full scope set and enforces
 > nothing. A default local CAO server therefore serves step output and error text to
 > anything that can reach its port.
 >
@@ -268,7 +268,7 @@ Default-off OAuth 2.1 auth core; see [security/auth.py](../src/cli_agent_orchest
 
 ### Wired through ConfigService
 
-Every `CAO_*` variable below maps 1:1 to a `settings.json` key and is resolved through the standard precedence chain — the env var beats the file, and both lose to an explicit CLI flag where one exists. Setting either the env var or the `settings.json` key has a real runtime effect.
+Every `CAO_*` variable below maps to a `settings.json` key. An explicit caller override wins where supported; otherwise env beats file, except for the documented lint veto. Validation and caching differences are recorded in the source-verified inventory below.
 
 | Env var | Config path | Type |
 |---|---|---|
@@ -278,14 +278,16 @@ Every `CAO_*` variable below maps 1:1 to a `settings.json` key and is resolved t
 | `CAO_MCP_APPS_STATIC_DIR` | `apps.static_dir` | str |
 | `CAO_LOG_LEVEL` | `logging.level` | str |
 | `CAO_MEMORY_ENABLED` | `memory.enabled` | bool |
+| `CAO_MEMORY_LINT_ENABLED` | `memory.lint_enabled` | bool; either source can disable |
 | `CAO_MEMORY_COMPILE_MODE` | `memory.compile_mode` | str (`llm`/`append`) |
 | `CAO_MEMORY_FLUSH_THRESHOLD` | `memory.flush_threshold` | float |
 | `CAO_MCP_REQUEST_TIMEOUT` | `server.mcp_request_timeout` | int |
 | `CAO_EVENT_BUS_MAX_QUEUE_SIZE` | `server.event_bus_max_queue_size` | int |
 | `CAO_PROVIDER_INIT_TIMEOUT` | `server.provider_init_timeout` | int |
 | `CAO_STARTUP_PROMPT_HANDLER_TIMEOUT` | `server.startup_prompt_handler_timeout` | int |
+| `CAO_STATE_BUFFER_MAX` | `server.state_buffer_max` | int |
 
-The full table lives in `ConfigService.ENV_REGISTRY` (`services/config_service.py`) — the source of truth this doc mirrors.
+The registered table lives in the module-level `ENV_REGISTRY` in `services/config_service.py`. It does not yet contain every runtime setting or direct env reader.
 
 ### Env-var only (settings.json value not yet honored)
 
@@ -326,6 +328,71 @@ The `cao fleet` / `cao worker` commands ([control planes](control-planes.md#remo
 |---|---|---|---|
 | `CAO_ELASTIC_BROKER_URL` | *(none)* | str (URL) | Base URL of the fleet's worker broker, e.g. `http://127.0.0.1:9890` after a port-forward. |
 | `CAO_ELASTIC_BROKER_TOKEN` | *(none)* | str | Shared secret sent as `X-CAO-Broker-Token`. It authorizes releasing workers and sending input to their agents, so treat it as a write credential. |
+
+## Source-verified configuration inventory (T075)
+
+This inventory records the implementation reviewed for FR-021 in `001-verifiable-orchestration`, before T076 changes resolution. Source evidence: [config_service.py](../src/cli_agent_orchestrator/services/config_service.py), [settings_service.py](../src/cli_agent_orchestrator/services/settings_service.py), [auth.py](../src/cli_agent_orchestrator/security/auth.py), and the direct consumers linked below. A displayed `cao config` value is not proof that every runtime consumer uses it.
+
+### Precedence and security exceptions
+
+| Surface | Current resolution and lifecycle |
+|---|---|
+| `ConfigService.get(path, override=...)` | A non-`None` override wins, including `False` and `0`. Registered, nonempty env values are coerced before file/default lookup. Empty strings fall through; whitespace handling depends on type. There is no CLI flag for every path. |
+| Server tuning | `settings_service.get_server_settings()` overlays env on file/default, validates positive numeric values, and caches the result by settings-file mtime. Changing only the environment does not invalidate that cache. A registered env value read via `ConfigService` bypasses this validation/cache. Restart processes after changing startup configuration. |
+| Agents and skills | Nested `agents`/`skills` reads retain legacy flat-key compatibility (`agent_dirs`, `extra_agent_dirs`, `disabled_agent_dirs`, `roles`, `extra_skill_dirs`). Setters may retain both representations; this is still one settings file. |
+| `memory.lint_enabled` | Explicit false in either file or `CAO_MEMORY_LINT_ENABLED` disables lint; env true cannot override file false. Invalid values are ignored, default is true. `ConfigService` delegates this exception, though an explicit `override` still wins first. |
+| Learning and promotion | `CAO_MEMORY_LEARNING_ENABLED` and `CAO_MEMORY_INSTRUCTION_PROMOTION_ENABLED` override their file keys, default false. Enforcement helpers additionally require memory enabled, and promotion requires learning enabled. Raw settings values do not express these parent gates. |
+| Workflow approval | `CAO_WORKFLOW_REQUIRE_APPROVAL` can enable the gate; false/blank cannot disable `workflow.require_approval=true`. Without a truthy env override, unreadable settings resolve to disabled with a warning. Default false; this is not a fail-closed read-error policy. |
+| Auth activation | Only nonblank `CAO_AUTH_JWKS_URI` or `AUTH0_DOMAIN` enables enforcement. `CAO_AUTH_ENABLED` is not consumed. `auth.*` file values and `CAO_AUTH_LOCAL_TOKEN` do not enable auth. With auth disabled, scope dependencies return the full scope set. |
+| Auth endpoint and audience | JWKS: `CAO_AUTH_JWKS_URI` wins over the URI derived from `AUTH0_DOMAIN`. Audience when enabled: `CAO_AUTH_AUDIENCE` > `AUTH0_AUDIENCE` > `API_BASE_URL`. Issuer advertisement: `CAO_AUTH_ISSUER` > Auth0 issuer > issuer derived from generic JWKS URI. These are direct env reads. |
+| Local service credential | `CAO_AUTH_LOCAL_TOKEN` supplies bearer credentials for internal API calls when auth is enabled. The local scope pre-check can defer to HTTP enforcement; it is not the authorization boundary. Keep token values out of inventories and diagnostics. |
+| Network | `constants.py` resolves comma-separated env allowlists at import time. Host, CORS, WS client and forwarded-IP lists extend defaults; WS extra origins begin empty and same-origin checking is separate. `CAO_WS_ALLOWED_ORIGINS=*` disables the WS Origin check. Settings-file network values do not alter these lists. |
+| Profile downloads | `CAO_PROFILE_ALLOWED_HOSTS` is read by [install_service.py](../src/cli_agent_orchestrator/services/install_service.py). A nonempty parsed list **replaces** the default GitHub host set; it does not extend it. Treat this as an SSRF boundary. |
+
+### Runtime variables outside the central registry
+
+Rows group related variables by owner. These are runtime inputs, not a promise of settings-file support. Provider credentials and the general environment forwarded through `.env` remain a separate surface.
+
+| Variables | Owner and current behavior |
+|---|---|
+| `CAO_HOME_DIR`, `CAO_AGENTS_DIR`, `CAO_API_HOST`, `CAO_API_PORT` | [constants.py](../src/cli_agent_orchestrator/constants.py): import-time paths/bind defaults; port uses direct `int()` conversion. `CAO_AGENTS_DIR` changes the Kiro directory constant. |
+| `CAO_GRAPH_EXPORT_ROOT` | `constants.graph_export_root()`: call-time graph export confinement root, default `<CAO_HOME_DIR>/graph-exports`. |
+| `CAO_MAX_TERMINALS` | `settings_service.get_max_terminals()`: env > `server.max_terminals` > unlimited. Invalid/nonpositive explicit values resolve to unlimited, not the lower-priority file value. |
+| `CAO_MEMORY_LEARNING_ENABLED`, `CAO_MEMORY_INSTRUCTION_PROMOTION_ENABLED`, `CAO_WORKFLOW_REQUIRE_APPROVAL` | `settings_service`: dedicated readers and security exceptions described above. |
+| `CAO_PROJECT_ID`, `CAO_MEMORY_API_URL` | [memory_service.py](../src/cli_agent_orchestrator/services/memory_service.py): env project ID precedes `memory.project_id`; [memory_gateway.py](../src/cli_agent_orchestrator/services/memory_gateway.py): nonblank remote memory URL selects remote routing. |
+| `CAO_FORWARDED_ALLOW_IPS`, `CAO_PROFILE_ALLOWED_HOSTS`, `AUTH0_DOMAIN`, `AUTH0_AUDIENCE`, `CAO_AUTH_LOCAL_TOKEN` | Direct network/download/auth boundaries above; no central registry entries. |
+| `CAO_PYTE_STATUS`, `CAO_PYTE_MIDBURST_PROBE_S`, `CAO_EAGER_INBOX_DELIVERY` | `constants.py`: import-time status/delivery tuning; defaults true, 1.0 seconds, false respectively. The two boolean readers accept case-insensitive `true` only. |
+| `CAO_PIPE_LIVENESS_CHECK_INTERVAL_S`, `CAO_PIPE_LIVENESS_TAIL_LINES`, `CAO_PIPE_LIVENESS_STALL_CHECKS`, `CAO_PIPE_LIVENESS_MAX_REARM_FAILURES`, `CAO_PIPE_LIVENESS_COLD_START_GRACE_S`, `CAO_PIPE_LIVENESS_MAX_COLD_START_ATTEMPTS`, `CAO_PIPE_LIVENESS_MAX_PROBE_FAILURES` | `constants.py`: import-time watchdog tuning. The first six defaults are listed above; max probe failures defaults to 5. Numeric fallback/range behavior follows the individual helper. |
+| `CAO_ENABLE_WORKING_DIRECTORY`, `CAO_ENABLE_SENDER_ID_INJECTION` | [mcp_server/server.py](../src/cli_agent_orchestrator/mcp_server/server.py) and [utils/orchestration.py](../src/cli_agent_orchestrator/utils/orchestration.py): import-time boolean switches, defaults false and true; accept case-insensitive `true` only. |
+| `CAO_AGUI_ENABLED`, `CAO_AGUI_HEARTBEAT_SECONDS` | [agui_enablement.py](../src/cli_agent_orchestrator/services/agui_enablement.py): truthy AG-UI env or resolved `apps.enabled` enables the shared surface. [agui/run_plane.py](../src/cli_agent_orchestrator/services/agui/run_plane.py): heartbeat uses import-time `float()`, default 15.0 seconds. |
+| `CAO_ELASTIC_BROKER_URL`, `CAO_ELASTIC_BROKER_TOKEN`, `CAO_ELASTIC_WORKER_READY_WAIT` | MCP server and [utils/fleet.py](../src/cli_agent_orchestrator/utils/fleet.py): broker URL/token and readiness wait (default 120 seconds, clamped at zero). Broker token is a write credential, not a node API token. |
+| `CAO_ADVERTISED_URL`, `CAO_ELASTIC_CALLBACK_URL`, `CAO_CALLBACK_URL`, `CAO_CALLBACK_TERMINAL_ID`, `CAO_ELASTIC_WORKER_ID`, `CAO_ELASTIC_RELEASE_TOKEN` | Orchestration, MCP, terminal service and [elastic_worker_gateway.py](../src/cli_agent_orchestrator/services/elastic_worker_gateway.py): cross-node routing and worker credentials. Release tokens are secrets; callback identity is runtime context. |
+| `CAO_TERMINAL_ID`, `CAO_SESSION_NAME`, `CAO_WORKFLOW_RUN_ID`, `CAO_WORKFLOW_STEP_ID`, `CAO_WORKFLOW_GENERATION` | Injected terminal/session/workflow identity, not operator preferences. Readers include MCP, CLI info, orchestration and persisted terminal environments. Preserve propagation and reserved-key protections when consolidating settings. |
+| `CAO_HERMES_IDLE_PROMPT_REGEX`, `CAO_HERMES_IDLE_LOG_REGEX`, `CAO_HERMES_PROCESSING_REGEX`, `CAO_HERMES_USER_PREFIX_REGEX`, `CAO_HERMES_ASSISTANT_HEADER_REGEX`, `CAO_HERMES_MAX_STABLE_IDLE_POLLS` | [providers/hermes.py](../src/cli_agent_orchestrator/providers/hermes.py): import-time regex overrides and integer stable-idle limit (default 8); regex defaults are provider-specific source patterns. |
+| `CAO_TMP_DIR`, `CAO_MOCK_CLI_SCRIPTED_PROMPTS` | [cursor_cli.py](../src/cli_agent_orchestrator/providers/cursor_cli.py): temporary directory override, default `<CAO_HOME_DIR>/tmp`; [mock_cli.py](../src/cli_agent_orchestrator/providers/mock_cli.py): scripted test prompts, default off. |
+| `GROK_HOME`, `GEMINI_CLI_SYSTEM_SETTINGS_PATH`, `MINIMAX_DATA_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, `XDG_CONFIG_HOME`, `ProgramData`, `SHELL`, `PATH`, `HOME`, `OTEL_SDK_DISABLED` | Provider-native storage/auth, OS execution context, and telemetry inputs; retain their owning provider/platform semantics. Telemetry is disabled unless `OTEL_SDK_DISABLED=false` (case-insensitive). These are not CAO settings aliases. |
+
+### Pre-T076 consolidation findings (historical)
+
+- The registry has primitive type labels and defaults, but no version metadata or shared validators. `ConfigService.get()` can return negative server integers, out-of-range memory thresholds, and unknown compile-mode strings from env before the stricter `settings_service` helpers run. Generic bool coercion recognizes `1/true/yes`; other nonempty strings become false rather than a validation error.
+- The typed schema and `list_all()` are incomplete inventories: `ServerConfig` omits `state_buffer_max` and `max_terminals`; `MemoryConfig` omits learning, promotion and journal settings. The first buffer key is registered; terminal capacity, learning/promotion and workflow approval are not. `compile_timeout_s` has a file reader but no env mapping. Do not infer an env name merely from a file key.
+- Unknown keys are not uniformly rejected: generic `ConfigService.set()` paths can be persisted, while memory setters validate their supported names. `get_config()` constructs selected fields, so it does not validate the whole stored document. Typed introspection must distinguish supported, legacy, unknown and env-only keys.
+- The module-level `constants.EVENT_BUS_MAX_QUEUE_SIZE` default is 16384, whereas the settings registry/default is 1024. A source search found no runtime importer of that constant; consolidate definitions without assuming it is the effective queue size.
+- A unified reader must preserve the explicit lint veto, approval enable-only rule, learning parent gates, auth activation/credential rules, network startup semantics, and runtime identity propagation. Central introspection must not turn schema-only security fields into active enforcement settings implicitly.
+
+### Registry v1 after T076
+
+`ConfigService` now exposes a versioned registry of 35 supported/schema-only options and
+61 descriptors for externally owned environment inputs. Configuration writes validate
+known values before changing storage; unknown existing fields survive supported writes.
+Effective reads delegate to the owning settings helpers, and the server-settings cache
+is invalidated by environment and file-path changes as well as file mtime.
+
+The historical findings above describe the baseline, not the current registry. Auth and
+network schema-only fields remain inert; descriptors never expose credential values.
+Lint veto, approval enable-only, and learning parent gates retain their special rules.
+Consumers that read configuration at import/startup still require restart or a new worker;
+changing a parent process environment does not reconfigure already running children.
 
 ## API Endpoints
 

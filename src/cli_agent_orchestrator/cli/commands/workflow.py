@@ -20,6 +20,7 @@ reaches its data over the REST surface only.
 """
 
 import json as _json
+import re
 import sys
 import time
 from pathlib import Path
@@ -37,11 +38,24 @@ from cli_agent_orchestrator.constants import (
     WORKFLOW_RUN_REQUEST_TIMEOUT,
     WORKFLOW_STEP_REQUEST_TIMEOUT,
 )
+from cli_agent_orchestrator.security.auth import get_local_bearer
 from cli_agent_orchestrator.utils.workflow_events import SseFrame, parse_sse_frames
 
 # Whole-run states that end the follow/poll loop (mirror ``RunState``'s terminal
 # members without importing the engine model — C-2 keeps this a thin HTTP client).
 _TERMINAL_RUN_STATES = frozenset({"completed", "failed", "cancelled"})
+
+
+def _work_identity_valid(value: str) -> bool:
+    """Keep CLI work-query URL segments within the MCP identity contract."""
+    return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,512}", value) is not None
+
+
+def _require_work_identity(value: str) -> str:
+    """Reject an invalid work identifier before creating an HTTP request target."""
+    if not _work_identity_valid(value):
+        raise click.ClickException("invalid work identifier")
+    return value
 
 
 def _extract_detail(response: requests.Response, fallback: str) -> str:
@@ -174,6 +188,121 @@ def get_cmd(name, as_json):
     click.echo(f"Steps:       {len(spec.get('steps', []))}")
     for step in spec.get("steps", []):
         click.echo(f"  - {step['id']} ({step['provider']}/{step['agent']})")
+
+
+def _work_query_headers():
+    """Attach only the configured loopback bearer to the API read boundary."""
+    token = get_local_bearer()
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def _work_query_error(status_code: int) -> click.ClickException:
+    """Keep API query failures bounded without reflecting response diagnostics."""
+    message = {
+        401: "work query requires authentication",
+        403: "work query is forbidden",
+        404: "work query target was not found",
+        409: "work query conflicts with the current revision",
+        503: "work query is temporarily unavailable",
+    }.get(status_code, "work query failed")
+    return click.ClickException(message)
+
+
+def _get_work_projection(path: str, params=None):
+    """Read an opaque Work projection from its sole API authority."""
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}{path}",
+            params=params,
+            headers=_work_query_headers(),
+            timeout=MCP_REQUEST_TIMEOUT,
+        )
+    except requests.exceptions.RequestException:
+        raise click.ClickException("could not reach cao-server")
+    if response.status_code != 200:
+        raise _work_query_error(response.status_code)
+    try:
+        return response.json()
+    except ValueError:
+        raise click.ClickException("invalid response from cao-server")
+
+
+def _render_work_view(view):
+    """Render state levels without collapsing API-owned Work semantics."""
+    click.echo(f"Work item:      {view.get('work_item_id')}")
+    click.echo(f"Job:            {view.get('job_id')}")
+    click.echo(f"Attempt:        {view.get('attempt_id')}")
+    click.echo(f"Work state:     {view.get('work_state')}")
+    click.echo(f"Attempt state:  {view.get('attempt_state')}")
+    click.echo(f"Turn state:     {view.get('turn_state')}")
+    click.echo(f"Process state:  {view.get('process_state')}")
+    click.echo(f"Result:         {view.get('result_ref')}")
+    click.echo(f"Required action: {view.get('required_action')}")
+
+
+def _render_work_events(page):
+    """Render event metadata without hiding bounded-page retention gaps."""
+    click.echo(f"Next cursor: {page.get('next_cursor')}")
+    click.echo(f"High-water:  {page.get('high_water')}")
+    gaps = page.get("gaps", [])
+    if gaps:
+        click.echo("Gaps:")
+        for gap in gaps:
+            click.echo(f"  {gap.get('from_sequence')} through {gap.get('through_sequence')}")
+    else:
+        click.echo("Gaps: none")
+    events = page.get("events", [])
+    if not events:
+        click.echo("Events: none")
+        return
+    click.echo("Events:")
+    for event in events:
+        click.echo(
+            f"  [{event.get('sequence')}] {event.get('event_type')} "
+            f"work={event.get('work_item_id')} attempt={event.get('attempt_id')}"
+        )
+
+
+@workflow.command(name="work")
+@click.argument("work_item_id")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit the WorkView as JSON.")
+def work_cmd(work_item_id, as_json):
+    """Show the API-owned durable work projection."""
+    work_item_id = _require_work_identity(work_item_id)
+    view = _get_work_projection(f"/work-items/{work_item_id}")
+    if as_json:
+        click.echo(_json.dumps(view, indent=2))
+        return
+    _render_work_view(view)
+
+
+@workflow.command(name="work-events")
+@click.argument("job_id")
+@click.option(
+    "--after-sequence",
+    type=click.IntRange(min=0),
+    default=0,
+    show_default=True,
+    help="Return events strictly after this API cursor.",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(min=1, max=1000),
+    default=100,
+    show_default=True,
+    help="Maximum events in the bounded API page.",
+)
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit the EventPage as JSON.")
+def work_events_cmd(job_id, after_sequence, limit, as_json):
+    """Show the API-owned bounded durable event page for a job."""
+    job_id = _require_work_identity(job_id)
+    page = _get_work_projection(
+        f"/jobs/{job_id}/events", {"after_sequence": after_sequence, "limit": limit}
+    )
+    if as_json:
+        click.echo(_json.dumps(page, indent=2))
+        return
+    _render_work_events(page)
 
 
 @workflow.command(name="approve")

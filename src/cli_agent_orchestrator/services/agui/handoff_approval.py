@@ -149,6 +149,14 @@ class DeliveryError(RuntimeError):
     """
 
 
+class DurableApprovalConflict(ValueError):
+    """A bound approval no longer names its immutable durable target."""
+
+
+class DeliveryUncertain(DeliveryError):
+    """A claimed bound effect cannot safely be delivered a second time."""
+
+
 # Per-terminal delivery lock with reference counting. Incremented before any
 # await (loop-atomic with get/create) so queued waiters keep the entry alive;
 # popped only at zero refs (no holder AND no waiters); decrement→pop has no
@@ -159,6 +167,30 @@ class _RefCountedLock:
     def __init__(self) -> None:
         self.lock: asyncio.Lock = asyncio.Lock()
         self.refs: int = 0
+
+
+@dataclass(frozen=True)
+class _DurableApprovalBinding:
+    """Private server-registered target for one process-local interrupt.
+
+    This record is never derived from terminal metadata, UI props, edited text,
+    or a resume payload.  Registration is an internal server integration seam,
+    not a transport endpoint.
+    """
+
+    interrupt_id: str
+    terminal_id: str
+    provider: str
+    work_item_id: str
+    attempt_id: str
+    generation: int
+    job_id: str
+    grant_id: str
+    grant_revision: int
+    contract_hash: str
+    evidence_refs: tuple[str, ...]
+    idempotency_key: str
+    effect: str
 
 
 # Deliveries run to completion (no hard timeout): asyncio.wait_for would cancel
@@ -391,9 +423,11 @@ class AgentHandoffWithApproval(AguiConstruct):
         self,
         emitter: UiEmitter,
         answer_delivery: Optional[AnswerDelivery] = None,
+        decisions: Optional[Any] = None,
     ) -> None:
         super().__init__(emitter)
         self._answer_delivery = answer_delivery
+        self._decisions = decisions
         self._interrupts: Dict[str, Interrupt] = {}
         # Map terminal_id -> interrupt_id for quick lookup of open interrupts
         self._terminal_to_interrupt: Dict[str, str] = {}
@@ -423,6 +457,11 @@ class AgentHandoffWithApproval(AguiConstruct):
         # construct-wide blast radius. Bounded by the count of distinct terminals
         # that ever received an approval delivery.
         self._delivery_locks: Dict[str, _RefCountedLock] = {}
+        self._durable_bindings: Dict[str, _DurableApprovalBinding] = {}
+        # Validate this before legacy resolved/in-flight shortcuts, otherwise a
+        # contrary bound request could silently join the first request.
+        self._durable_requests: Dict[str, tuple[str, str]] = {}
+        self._durable_uncertain: set[str] = set()
 
     def handle_frame(
         self, agui_type: str, data: Dict[str, Any], event_id: Optional[str] = None
@@ -498,11 +537,117 @@ class AgentHandoffWithApproval(AguiConstruct):
 
         return interrupt
 
+    @staticmethod
+    def _binding_text(value: Any, label: str, maximum: int = 512) -> str:
+        if not isinstance(value, str) or not value or value != value.strip() or len(value) > maximum:
+            raise DurableApprovalConflict(f"{label} must be a bounded nonempty string")
+        return value
+
+    @classmethod
+    def _binding_tokens(cls, value: Any) -> tuple[str, ...]:
+        if not isinstance(value, (tuple, list)) or not value or len(value) > 128:
+            raise DurableApprovalConflict("evidence_refs must be a bounded nonempty sequence")
+        tokens = tuple(cls._binding_text(item, "evidence_refs", 4096) for item in value)
+        if len(set(tokens)) != len(tokens):
+            raise DurableApprovalConflict("evidence_refs cannot contain duplicates")
+        return tokens
+
+    def register_durable_binding(
+        self,
+        *,
+        interrupt_id: str,
+        work_item_id: str,
+        attempt_id: str,
+        generation: int,
+        job_id: str,
+        grant_id: str,
+        grant_revision: int,
+        contract_hash: str,
+        evidence_refs: tuple[str, ...] | list[str],
+        idempotency_key: str,
+        effect: str,
+    ) -> None:
+        """Pin a trusted upstream work order to a pending local interrupt.
+
+        This has no HTTP/MCP entry point.  The upstream caller is responsible for
+        selecting the key/effect; this method proves all remaining work
+        coordinates against WorkContracts before retaining the frozen mapping.
+        """
+        if self._decisions is None:
+            raise DurableApprovalConflict("durable approval integration is unavailable")
+        interrupt = self._interrupts.get(interrupt_id)
+        if interrupt is None or interrupt.resolved:
+            raise DurableApprovalConflict("only a pending server interrupt can be bound")
+        if interrupt_id in self._durable_bindings:
+            raise DurableApprovalConflict("an interrupt cannot be rebound")
+        if type(generation) is not int or not 0 < generation <= 2**63 - 1:
+            raise DurableApprovalConflict("generation must be a positive bounded integer")
+        if type(grant_revision) is not int or not 0 < grant_revision <= 2**63 - 1:
+            raise DurableApprovalConflict("grant_revision must be a positive bounded integer")
+
+        candidate = _DurableApprovalBinding(
+            interrupt_id=self._binding_text(interrupt_id, "interrupt_id"),
+            terminal_id=self._binding_text(interrupt.metadata.get("terminal_id"), "terminal_id"),
+            provider=self._binding_text(interrupt.metadata.get("provider"), "provider"),
+            work_item_id=self._binding_text(work_item_id, "work_item_id"),
+            attempt_id=self._binding_text(attempt_id, "attempt_id"),
+            generation=generation,
+            job_id=self._binding_text(job_id, "job_id"),
+            grant_id=self._binding_text(grant_id, "grant_id"),
+            grant_revision=grant_revision,
+            contract_hash=self._binding_text(contract_hash, "contract_hash", 4096),
+            evidence_refs=self._binding_tokens(evidence_refs),
+            idempotency_key=self._binding_text(idempotency_key, "idempotency_key"),
+            effect=self._binding_text(effect, "effect", 4096),
+        )
+        try:
+            from cli_agent_orchestrator.services.work_contract import WorkContracts
+
+            current = WorkContracts(self._decisions.repository).revalidate_order(
+                candidate.attempt_id, generation=candidate.generation
+            )
+        except Exception as error:
+            raise DurableApprovalConflict("durable work binding cannot be proven") from error
+        if (
+            current.work_item_id,
+            current.job_id,
+            current.grant_id,
+            current.grant_revision,
+            current.contract_hash,
+        ) != (
+            candidate.work_item_id,
+            candidate.job_id,
+            candidate.grant_id,
+            candidate.grant_revision,
+            candidate.contract_hash,
+        ):
+            raise DurableApprovalConflict("durable work binding does not match registered target")
+        self._durable_bindings[interrupt_id] = candidate
+
+    def has_durable_binding(self, interrupt_id: str) -> bool:
+        """Whether an API resume must resolve a verified principal first."""
+        return interrupt_id in self._durable_bindings
+
+    def _bound_interrupt(self, interrupt: Interrupt, binding: _DurableApprovalBinding) -> None:
+        # A matching request is permitted to read the retained process-local
+        # result after success/expiry.  _resume_bound compares its principal and
+        # decision fingerprint immediately afterwards, before returning it.
+        if interrupt.resolved:
+            return
+        if (
+            interrupt.id != binding.interrupt_id
+            or interrupt.metadata.get("terminal_id") != binding.terminal_id
+            or interrupt.metadata.get("provider") != binding.provider
+            or self._terminal_to_interrupt.get(binding.terminal_id) != interrupt.id
+        ):
+            raise DurableApprovalConflict("bound approval target changed before delivery")
+
     async def resume(
         self,
         interrupt_id: str,
         decision: ApprovalDecision,
         edited_text: Optional[str] = None,
+        principal: Any = None,
     ) -> Interrupt:
         """Resolve an interrupt with the user's decision.
 
@@ -522,6 +667,11 @@ class AgentHandoffWithApproval(AguiConstruct):
             ValueError: if decision is invalid for this interrupt
             DeliveryError: if delivering the decision to the terminal failed
         """
+        binding = self._durable_bindings.get(interrupt_id)
+        if binding is not None:
+            return await self._resume_bound(
+                interrupt_id, decision, edited_text, principal, binding
+            )
         async with self._lock:
             interrupt = self._interrupts.get(interrupt_id)
             if interrupt is None:
@@ -591,6 +741,163 @@ class AgentHandoffWithApproval(AguiConstruct):
         # and let a retry deliver a contrary decision (P1); the task runs to
         # completion regardless of the awaiter's fate.
         return await asyncio.shield(task)
+
+    async def _resume_bound(
+        self,
+        interrupt_id: str,
+        decision: ApprovalDecision,
+        edited_text: Optional[str],
+        principal: Any,
+        binding: _DurableApprovalBinding,
+    ) -> Interrupt:
+        """Validate a durable request before every legacy fast path."""
+        if principal is None or not isinstance(getattr(principal, "id", None), str):
+            raise DurableApprovalConflict("verified principal required for bound approval")
+        if decision == ApprovalDecision.EDIT:
+            # T053 has no frozen target-payload contract for arbitrary edit text.
+            raise DurableApprovalConflict("bound edited approvals are unsupported")
+        fingerprint = (principal.id, decision.value)
+        async with self._lock:
+            interrupt = self._interrupts.get(interrupt_id)
+            if interrupt is None:
+                raise KeyError(f"Unknown interrupt: {interrupt_id}")
+            self._bound_interrupt(interrupt, binding)
+            if decision.value not in interrupt.options:
+                raise ValueError(
+                    f"Decision '{decision.value}' not supported for this interrupt. "
+                    f"Allowed: {interrupt.options}"
+                )
+            prior = self._durable_requests.get(interrupt_id)
+            if prior is not None and prior != fingerprint:
+                raise DurableApprovalConflict("bound approval request conflicts with first request")
+            self._durable_requests.setdefault(interrupt_id, fingerprint)
+            if interrupt_id in self._durable_uncertain:
+                raise DeliveryUncertain("bound effect was claimed; terminal delivery is uncertain")
+            if interrupt.resolved:
+                return interrupt
+            task = self._inflight.get(interrupt_id)
+            if task is None:
+                action = _translate_decision(binding.provider, decision)
+                task = asyncio.ensure_future(
+                    self._deliver_bound_and_commit(interrupt, binding, decision, principal, action)
+                )
+                self._inflight[interrupt_id] = task
+
+                def _cleanup(_task: "asyncio.Future[Interrupt]", _iid: str = interrupt_id) -> None:
+                    self._inflight.pop(_iid, None)
+                    if not _task.cancelled():
+                        _task.exception()
+
+                task.add_done_callback(_cleanup)
+        return await asyncio.shield(task)
+
+    async def _bound_delivery(self, binding: _DurableApprovalBinding, action: Dict[str, Any]) -> None:
+        """Run terminal I/O only after decision/claim transactions have committed."""
+        if self._answer_delivery is None:
+            raise DeliveryUncertain("bound terminal delivery target is unavailable")
+        if action["type"] == "text":
+            result = await asyncio.to_thread(
+                self._answer_delivery.send_input, binding.terminal_id, action["value"]
+            )
+            if result is False:
+                raise DeliveryUncertain("terminal rejected bound text delivery")
+            return
+        keys = [action["value"]] if action["type"] == "key" else list(action["value"])
+        for key in keys:
+            result = await asyncio.to_thread(
+                self._answer_delivery.send_special_key, binding.terminal_id, key
+            )
+            if result is False:
+                raise DeliveryUncertain("terminal rejected bound key delivery")
+
+    async def _deliver_bound_and_commit(
+        self,
+        interrupt: Interrupt,
+        binding: _DurableApprovalBinding,
+        decision: ApprovalDecision,
+        principal: Any,
+        action: Dict[str, Any],
+    ) -> Interrupt:
+        """Claim is the linearization point; post-claim delivery is never retried."""
+        entry = self._delivery_locks.get(binding.terminal_id)
+        if entry is None:
+            entry = self._delivery_locks[binding.terminal_id] = _RefCountedLock()
+        entry.refs += 1
+        try:
+            async with entry.lock:
+                self._bound_interrupt(interrupt, binding)
+                if interrupt.resolved:
+                    return interrupt
+                try:
+                    durable_decision = self._decisions.decide_work(
+                        principal=principal,
+                        work_item_id=binding.work_item_id,
+                        attempt_id=binding.attempt_id,
+                        generation=binding.generation,
+                        idempotency_key=binding.idempotency_key,
+                        evidence_refs=binding.evidence_refs,
+                        action=decision.value,
+                        reason=f"agui approval {binding.interrupt_id}: {decision.value}",
+                        authorized_effects=(binding.effect,),
+                    )
+                    claimed = self._decisions.consume_effect(
+                        principal=principal,
+                        decision_id=durable_decision.id,
+                        attempt_id=binding.attempt_id,
+                        generation=binding.generation,
+                        effect=binding.effect,
+                    )
+                except Exception as error:
+                    # WorkDecisions owns both SQLite transactions and rechecks the
+                    # current binding/grant during consume_effect.  No transaction
+                    # can survive to the terminal call below.
+                    raise DurableApprovalConflict("bound durable effect could not be claimed") from error
+                if not claimed:
+                    self._durable_uncertain.add(interrupt.id)
+                    raise DeliveryUncertain("bound effect was already claimed; delivery is unknown")
+                try:
+                    await self._bound_delivery(binding, action)
+                except asyncio.CancelledError:
+                    # Preserve cancellation semantics.  The consumed claim still
+                    # fences a later replay, which will report uncertainty.
+                    self._durable_uncertain.add(interrupt.id)
+                    raise
+                except DeliveryUncertain:
+                    self._durable_uncertain.add(interrupt.id)
+                    raise
+                except Exception as error:
+                    # A false acknowledgement, partial multi-key delivery, or a
+                    # backend exception after claim is non-retryable: an external
+                    # terminal may already have acted even though this caller did
+                    # not receive confirmation.
+                    self._durable_uncertain.add(interrupt.id)
+                    raise DeliveryUncertain("bound terminal delivery is uncertain") from error
+
+                interrupt.resolved = True
+                interrupt.outcome = decision.value
+                self._resolved_at[interrupt.id] = time.monotonic()
+                if self._terminal_to_interrupt.get(binding.terminal_id) == interrupt.id:
+                    del self._terminal_to_interrupt[binding.terminal_id]
+                try:
+                    self.emit(
+                        "approval_card",
+                        {
+                            "interrupt_id": interrupt.id,
+                            "resolved": True,
+                            "outcome": decision.value,
+                            "provider": binding.provider,
+                            "terminal_id": binding.terminal_id,
+                        },
+                        terminal_id=binding.terminal_id,
+                        session_name=interrupt.metadata.get("session_name"),
+                    )
+                except (ValueError, RuntimeError):
+                    logger.debug("Failed to emit durable resolution for interrupt %s", interrupt.id)
+                return interrupt
+        finally:
+            entry.refs -= 1
+            if entry.refs == 0:
+                self._delivery_locks.pop(binding.terminal_id, None)
 
     async def _deliver_and_commit(
         self,
@@ -801,6 +1108,12 @@ class AgentHandoffWithApproval(AguiConstruct):
         """Return an interrupt by ID, or None if not found."""
         return self._interrupts.get(interrupt_id)
 
+    def _evict_durable_state(self, interrupt_id: str) -> None:
+        """Remove process-local authority retained for an evicted terminal interrupt."""
+        self._durable_bindings.pop(interrupt_id, None)
+        self._durable_requests.pop(interrupt_id, None)
+        self._durable_uncertain.discard(interrupt_id)
+
     def _evict_if_needed(self) -> None:
         """Evict resolved entries beyond the TTL, then oldest resolved if over cap."""
         now = time.monotonic()
@@ -814,6 +1127,7 @@ class AgentHandoffWithApproval(AguiConstruct):
         for iid in expired_ids:
             self._interrupts.pop(iid, None)
             self._resolved_at.pop(iid, None)
+            self._evict_durable_state(iid)
 
         # Second pass: if still over cap, evict oldest resolved first
         while len(self._interrupts) > _REGISTRY_CAP:
@@ -827,6 +1141,7 @@ class AgentHandoffWithApproval(AguiConstruct):
             if oldest_id:
                 self._interrupts.pop(oldest_id, None)
                 self._resolved_at.pop(oldest_id, None)
+                self._evict_durable_state(oldest_id)
             else:
                 break  # No resolved entries to evict
 

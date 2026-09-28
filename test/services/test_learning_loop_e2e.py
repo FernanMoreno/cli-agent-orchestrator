@@ -136,8 +136,8 @@ def test_full_learning_loop(stack: Any) -> None:
         ),
         patch.object(srv, "_get_terminal_context_from_env", return_value=retro_ctx),
         patch(
-            "cli_agent_orchestrator.services.memory_service.MemoryService",
-            return_value=mem,
+            "cli_agent_orchestrator.services.memory_gateway.store_memory",
+            new=mem.store,
         ),
     ):
         result = asyncio.run(

@@ -847,21 +847,31 @@ class TestT9SortByValidation:
         """
         # Patch MemoryService used inside the tool to our test instance.
         monkeypatch.setattr(
-            "cli_agent_orchestrator.services.memory_service.MemoryService",
-            lambda *a, **kw: svc,
+            "cli_agent_orchestrator.services.memory_gateway.recall_memory",
+            svc.recall,
         )
         from cli_agent_orchestrator.mcp_server import server as mcp_srv
 
+        # Direct .fn calls bypass FastMCP's FieldInfo default normalization.
+        arguments = {
+            "query": "x",
+            "scope": None,
+            "memory_type": None,
+            "limit": 10,
+            "include_related": False,
+            "sort_by": "bogus",
+        }
+
         async def _drive():
             return await mcp_srv.memory_recall.fn(
-                query="x", sort_by="bogus"
+                **arguments
             )  # FastMCP exposes underlying coro on .fn
 
         try:
             result = asyncio.run(_drive())
         except AttributeError:
             # Older fastmcp variant — call object directly.
-            result = asyncio.run(mcp_srv.memory_recall(query="x", sort_by="bogus"))
+            result = asyncio.run(mcp_srv.memory_recall(**arguments))
         assert isinstance(result, dict)
         assert result.get("success") is False
         assert "sort_by" in (result.get("error") or "")

@@ -23,8 +23,10 @@ lock in ``services/session_lock.py`` — see ``delete_session`` for why.
 """
 
 import logging
+from contextlib import ExitStack
 from typing import Any, Dict, List, Optional, Tuple
 
+from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.backends.base import TerminalBackend
 from cli_agent_orchestrator.backends.registry import get_backend
 from cli_agent_orchestrator.clients.database import (
@@ -46,6 +48,7 @@ from cli_agent_orchestrator.services.plugin_dispatch import dispatch_plugin_even
 from cli_agent_orchestrator.services.session_env import clear_session_env
 from cli_agent_orchestrator.services.session_lock import session_lifecycle_lock
 from cli_agent_orchestrator.services.terminal_service import create_terminal
+from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 from cli_agent_orchestrator.utils.agent_profiles import resolve_provider
 
 logger = logging.getLogger(__name__)
@@ -416,9 +419,17 @@ def delete_session(session_name: str, registry: PluginRegistry | None = None) ->
         # plugin dispatch never touch session lifecycle, so there is no
         # self-deadlock path. Guaranteed released on every exit, exceptions
         # included (context manager).
-        with session_lifecycle_lock(session_name):
+        with session_lifecycle_lock(session_name), ExitStack() as terminal_locks:
             terminals = list_terminals_by_session(session_name)
             incarnation_ids = [t["id"] for t in terminals]
+            # Creation uses the same session lifecycle lock, so this set cannot
+            # grow while we acquire the dispatch locks and finish teardown.
+            for terminal_id in sorted(set(incarnation_ids)):
+                terminal_locks.enter_context(
+                    terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id)
+                )
+            for terminal_id in sorted(set(incarnation_ids)):
+                terminal_service.ensure_terminal_is_not_work_owned(terminal_id)
 
             # Step 2: read-only scrollback/metadata capture, which has to happen
             # while the panes still exist. ``metadata`` is kept because both

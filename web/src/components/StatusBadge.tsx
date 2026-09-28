@@ -4,6 +4,9 @@
 // (design-tokens/status.json + tokens.json) via `node design-tokens/gen.mjs`.
 // Do not hand-edit the status taxonomy here — edit the JSON and regenerate.
 import { STATUS_CONFIG, UNKNOWN_CONFIG } from '../status.generated'
+import type { StatusStyle } from '../status.generated'
+import type { WorkView } from '../api'
+import { workStatusSemantics, type WorkSemanticRole } from '../work-status.generated'
 
 export { STATUS_CONFIG }
 
@@ -17,9 +20,25 @@ type TerminalStatus =
   | string
   | null
 
-export function StatusBadge({ status }: { status: TerminalStatus }) {
+const WORK_ROLE_CONFIG: Record<WorkSemanticRole, StatusStyle> = {
+  info: STATUS_CONFIG.PROCESSING,
+  accent: STATUS_CONFIG.COMPLETED,
+  warning: STATUS_CONFIG.WAITING_USER_ANSWER,
+  danger: STATUS_CONFIG.ERROR,
+  neutral: STATUS_CONFIG.STOPPED,
+}
+
+export function StatusBadge({ status, workView }: { status: TerminalStatus; workView?: WorkView | null }) {
   const normalized = status ? status.toUpperCase() : null
-  const config = (normalized && STATUS_CONFIG[normalized]) || UNKNOWN_CONFIG
+  const workSemantics = workView ? workStatusSemantics(workView.work_state) : undefined
+  // Work text and color role come from generated Work semantics. The legacy
+  // status table supplies only the client's palette for each semantic role.
+  const workStyle = workSemantics && WORK_ROLE_CONFIG[workSemantics.semanticRole]
+  const config = workView
+    ? workSemantics && workStyle
+      ? { ...workStyle, label: workSemantics.label, pulse: false }
+      : UNKNOWN_CONFIG
+    : (normalized && STATUS_CONFIG[normalized]) || UNKNOWN_CONFIG
 
   return (
     <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full ${config.bgClass}`}>

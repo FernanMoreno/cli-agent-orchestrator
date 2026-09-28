@@ -96,6 +96,10 @@ const SOURCES: &[(&str, &str)] = &[
     // this entry was in fact FORCED by that cross-check, which reddened the moment `main.rs`
     // declared `mod theme;` — the asymmetry the `env_guard` comment above describes, working. (#556)
     ("src/theme.rs", include_str!("../src/theme.rs")),
+    (
+        "src/work_status_generated.rs",
+        include_str!("../src/work_status_generated.rs"),
+    ),
 ];
 
 /// Strips `//`-comments so the needles named in prose are not counted as code.
@@ -378,9 +382,9 @@ fn no_rust_source_calls_either_backend_attach_session() {
     // (#321)
     assert_eq!(
         SOURCES.len(),
-        11,
-        "expected exactly 11 Rust sources under src/ (main, error, handoff, types, env_guard, \
-         catalog, results_pane, server, guided_flow, renderer, theme); a new module must be added \
+        12,
+        "expected exactly 12 Rust sources under src/ (main, error, handoff, types, env_guard, \
+         catalog, results_pane, server, guided_flow, renderer, theme, work_status_generated); a new module must be added \
          to SOURCES or this tripwire silently stops covering it"
     );
 

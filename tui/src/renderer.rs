@@ -83,7 +83,8 @@ use crate::guided_flow::{self, Field, FieldKind, GuidedFlow, PickerState, UNLOAD
 use crate::handoff::{HandoffDriver, Host, ServerRead};
 use crate::results_pane::{PaneState, ResultsPane};
 use crate::theme::Theme;
-use crate::types::{Health, Profile, Provider, Readiness, SessionParams, Terminal, TerminalStatus};
+use crate::work_status_generated::{work_status_semantics, WorkSemanticRole};
+use crate::types::{Health, Profile, Provider, Readiness, SessionParams, Terminal, TerminalStatus, WorkView};
 
 /// The minimum terminal the two-column layout needs (NFR-6). Below either bound the layout
 /// **stacks** — degraded but fully usable, never an error state.
@@ -332,6 +333,9 @@ pub trait ServerApi: ServerRead {
     /// `GET /agents/providers` — unfiltered (FR-1.2, FR-1.7).
     fn providers(&self) -> Result<Vec<Provider>, TuiError>;
 
+    /// `GET /work-items/{work_item_id}` — an explicit durable work selection.
+    fn work(&self, work_item_id: &str) -> Result<WorkView, TuiError>;
+
     /// `POST /sessions`, expecting **201** (`launch()` step 2).
     fn create_session(&self, params: &SessionParams) -> Result<Terminal, TuiError>;
 
@@ -574,6 +578,12 @@ pub struct Renderer<'a, S: ServerApi, H: Host> {
     pending_action: Option<PendingAction>,
     /// The live picker feed, when one is in flight.
     picker_feed: Option<guided_flow::PickerFeed>,
+    /// Explicit durable identity selected by the operator, independent of terminal state.
+    work_item_id: Option<String>,
+    /// Last selected work read, or its visible error. `None` means no selection/read yet.
+    work_view: Option<Result<WorkView, String>>,
+    /// Highest valid selected revision seen; the bool records a same-revision contradiction.
+    work_revision: Option<(u64, String, bool)>,
     /// Production launches both picker reads concurrently. Tests may omit this and use the
     /// deterministic injected `ServerApi` path below.
     picker_launcher: Option<PickerLauncher<'a>>,
@@ -637,6 +647,9 @@ impl<'a, S: ServerApi, H: Host> Renderer<'a, S, H> {
             retryable: None,
             pending_action: None,
             picker_feed: None,
+            work_item_id: None,
+            work_view: None,
+            work_revision: None,
             picker_launcher: None,
             health: None,
             running: false,
@@ -648,6 +661,78 @@ impl<'a, S: ServerApi, H: Host> Renderer<'a, S, H> {
             // `NO_COLOR` set, which somebody reports, rather than as a permanently monochrome TUI,
             // which looks like working code. (#556)
             theme: Theme::default(),
+        }
+    }
+
+    /// Selects an optional durable work item explicitly and performs its initial read.
+    ///
+    /// `None` preserves the legacy TUI path and performs no WorkView request. A selected value
+    /// is shown independently of terminal readiness; use [`Self::refresh_work_item`] to fetch it
+    /// again while the renderer is alive.
+    pub fn with_work_item_id(mut self, work_item_id: Option<String>) -> Self {
+        self.work_item_id = work_item_id;
+        self.refresh_work_item();
+        self
+    }
+
+    /// Refreshes the explicitly selected WorkView, retaining failures as visible renderer state.
+    ///
+    /// With no selected ID this clears any prior WorkView state and performs no request.
+    pub fn refresh_work_item(&mut self) {
+        let Some(work_item_id) = self.work_item_id.as_deref() else {
+            self.work_view = None;
+            self.work_revision = None;
+            return;
+        };
+
+        match self.server.work(work_item_id) {
+            Ok(work) if work.work_item_id != work_item_id => {
+                self.work_view = Some(Err(format!(
+                    "server returned work item {:?} for selected ID {:?}",
+                    work.work_item_id, work_item_id
+                )));
+            }
+            Ok(work) if work.schema_version != 1 => {
+                self.work_view = Some(Err(format!(
+                    "unsupported work schema version {}",
+                    work.schema_version
+                )));
+            }
+            Ok(work) if work_status_semantics(&work.work_state).is_none() => {
+                self.work_view = Some(Err(format!("unknown work state {:?}", work.work_state)));
+            }
+            Ok(work) => {
+                if let Some((revision, accepted_state, conflicted)) = &mut self.work_revision {
+                    if work.revision < *revision {
+                        return;
+                    }
+                    if work.revision == *revision {
+                        if *conflicted {
+                            self.work_view = Some(Err(format!(
+                                "work revision {} is already invalidated by contradictory states",
+                                work.revision
+                            )));
+                            return;
+                        }
+                        if work.work_state != *accepted_state {
+                            *conflicted = true;
+                            self.work_view = Some(Err(format!(
+                                "work revision {} reports contradictory states",
+                                work.revision
+                            )));
+                            return;
+                        }
+                    } else {
+                        *revision = work.revision;
+                        *accepted_state = work.work_state.clone();
+                        *conflicted = false;
+                    }
+                } else {
+                    self.work_revision = Some((work.revision, work.work_state.clone(), false));
+                }
+                self.work_view = Some(Ok(work));
+            }
+            Err(error) => self.work_view = Some(Err(error.to_string())),
         }
     }
 
@@ -797,7 +882,11 @@ impl<'a, S: ServerApi, H: Host> Renderer<'a, S, H> {
             // Unstyled here: the pane styles ITSELF (T-4). These lines are read back out of the
             // pane's own rendered buffer, so restyling them would be a second opinion about a
             // decision the pane already made — and the two could disagree.
-            results: plain(self.results_lines()),
+            results: self
+                .work_lines()
+                .into_iter()
+                .chain(plain(self.results_lines()))
+                .collect(),
             banner: plain(self.banner.as_ref().map(Banner::lines).unwrap_or_default()),
             footer: self.style_footer(self.footer_lines()),
         }
@@ -1307,6 +1396,92 @@ impl<'a, S: ServerApi, H: Host> Renderer<'a, S, H> {
     /// crate renders at, so an expanded picker always shows *something*.
     fn picker_window(&self) -> usize {
         usize::from(self.rows / 4).max(2)
+    }
+
+    fn work_status_line(
+        &self,
+        label: &str,
+        running_count: &str,
+        succeeded_count: &str,
+        role: WorkSemanticRole,
+    ) -> Line<'static> {
+        let line = format!(
+            "Work: {label} · Observed running: {running_count} · Observed succeeded: \
+             {succeeded_count}"
+        );
+        split_styled(&line, label, self.theme.work_status_style(role))
+    }
+
+    fn unknown_work_lines(&self, selected_id: &str, reason: &str) -> Vec<Line<'static>> {
+        vec![
+            Line::raw(format!("selected work: {selected_id}")),
+            self.work_status_line("Unknown", "—", "—", WorkSemanticRole::Neutral),
+            Line::raw(format!("work {selected_id}: unavailable — {reason}")),
+        ]
+    }
+
+    /// Durable identity and state from the explicitly selected work item, if any.
+    fn work_lines(&self) -> Vec<Line<'static>> {
+        let Some(selected_id) = self.work_item_id.as_deref() else {
+            return vec![Line::raw("No work selected")];
+        };
+
+        match self.work_view.as_ref() {
+            Some(Ok(work))
+                if work.work_item_id == selected_id && work.schema_version == 1 =>
+            {
+                if let Some(semantics) = work_status_semantics(&work.work_state) {
+                    vec![
+                        Line::raw(format!(
+                            "selected work: {} · job {} · attempt {}",
+                            work.work_item_id,
+                            work.job_id,
+                            work.attempt_id.as_deref().unwrap_or("none")
+                        )),
+                        self.work_status_line(
+                            semantics.label,
+                            &semantics.observed_running_count.to_string(),
+                            &semantics.observed_succeeded_count.to_string(),
+                            semantics.semantic_role,
+                        ),
+                        Line::raw(format!(
+                            "durable state: job={} work={} attempt={} turn={} process={} \
+                             revision={}",
+                            work.job_state,
+                            work.work_state,
+                            work.attempt_state.as_deref().unwrap_or("none"),
+                            work.turn_state.as_deref().unwrap_or("none"),
+                            work.process_state,
+                            work.revision
+                        )),
+                        Line::raw(format!(
+                            "durable result: result_ref={} cleanup={} required_action={}",
+                            work.result_ref.as_deref().unwrap_or("none"),
+                            work.cleanup_state,
+                            work.required_action.as_deref().unwrap_or("none")
+                        )),
+                    ]
+                } else {
+                    self.unknown_work_lines(
+                        selected_id,
+                        &format!("unknown work state {:?}", work.work_state),
+                    )
+                }
+            }
+            Some(Ok(work)) => {
+                let reason = if work.work_item_id != selected_id {
+                    format!(
+                        "server returned work item {:?} for selected ID {:?}",
+                        work.work_item_id, selected_id
+                    )
+                } else {
+                    format!("unsupported work schema version {}", work.schema_version)
+                };
+                self.unknown_work_lines(selected_id, &reason)
+            }
+            Some(Err(error)) => self.unknown_work_lines(selected_id, error),
+            None => self.unknown_work_lines(selected_id, "not loaded"),
+        }
     }
 
     /// The pane's region, as the operator sees it, plus its state as text.
@@ -2666,16 +2841,31 @@ impl<'a, S: ServerApi, H: Host> Renderer<'a, S, H> {
         if area.is_empty() {
             return;
         }
+        let work_lines = self.work_lines();
         if area.height < 2 {
+            let summary = work_lines
+                .first()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("results [{}]", pane_state_word(self.pane.state())));
             buf.set_string(
                 area.x,
                 area.y,
-                format!("results [{}]", pane_state_word(self.pane.state())),
+                summary,
                 Style::default(),
             );
             return;
         }
-        (&self.pane).render(area, buf);
+        let work_height = wrapped_heights(&work_lines, area.width)
+            .iter()
+            .sum::<usize>()
+            .min(usize::from(area.height - 1)) as u16;
+        let [work_area, pane_area] = Layout::vertical([
+            Constraint::Length(work_height),
+            Constraint::Min(1),
+        ])
+        .areas(area);
+        paragraph(&work_lines).render(work_area, buf);
+        (&self.pane).render(pane_area, buf);
     }
 }
 
@@ -3241,6 +3431,10 @@ impl ServerApi for crate::server::ServerClient {
         crate::server::ServerClient::providers(self)
     }
 
+    fn work(&self, work_item_id: &str) -> Result<WorkView, TuiError> {
+        crate::server::ServerClient::work(self, work_item_id)
+    }
+
     fn create_session(&self, params: &SessionParams) -> Result<Terminal, TuiError> {
         crate::server::ServerClient::create_session(self, params)
     }
@@ -3298,7 +3492,7 @@ mod tests {
     use crate::handoff::{Host, ServerRead};
     use crate::results_pane::PaneState;
     use crate::theme::Theme;
-    use crate::types::{Health, Profile, Provider, SessionParams, Terminal, TerminalStatus};
+    use crate::types::{Health, Profile, Provider, SessionParams, Terminal, TerminalStatus, WorkView};
     use crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::style::Color;
     use ratatui::text::Line;
@@ -3397,6 +3591,8 @@ mod tests {
         session: RefCell<VecDeque<SessionAnswer>>,
         terminal_script: RefCell<VecDeque<Reply>>,
         run_answer: RefCell<Option<RunAnswer>>,
+        work_calls: RefCell<Vec<String>>,
+        work_answer: RefCell<Result<WorkView, String>>,
         create_session_calls: Cell<usize>,
         create_session_params: RefCell<Vec<SessionParams>>,
         run_calls: RefCell<Vec<CommandId>>,
@@ -3429,6 +3625,22 @@ mod tests {
                 session: RefCell::new(VecDeque::new()),
                 terminal_script: RefCell::new(VecDeque::new()),
                 run_answer: RefCell::new(None),
+                work_calls: RefCell::new(Vec::new()),
+                work_answer: RefCell::new(Ok(WorkView {
+                    schema_version: 1,
+                    job_id: "job-fixture".to_string(),
+                    work_item_id: "work-fixture".to_string(),
+                    attempt_id: Some("attempt-fixture".to_string()),
+                    job_state: "running".to_string(),
+                    work_state: "running".to_string(),
+                    attempt_state: Some("running".to_string()),
+                    turn_state: Some("ready".to_string()),
+                    process_state: "alive".to_string(),
+                    revision: 3,
+                    result_ref: None,
+                    cleanup_state: "not_requested".to_string(),
+                    required_action: None,
+                })),
                 create_session_calls: Cell::new(0),
                 create_session_params: RefCell::new(Vec::new()),
                 run_calls: RefCell::new(Vec::new()),
@@ -3553,6 +3765,16 @@ mod tests {
         fn providers(&self) -> Result<Vec<Provider>, TuiError> {
             match self.providers.borrow().as_ref() {
                 Ok(providers) => Ok(providers.clone()),
+                Err(message) => Err(TuiError::Unreachable(message.clone())),
+            }
+        }
+
+        fn work(&self, work_item_id: &str) -> Result<WorkView, TuiError> {
+            self.work_calls
+                .borrow_mut()
+                .push(work_item_id.to_string());
+            match self.work_answer.borrow().as_ref() {
+                Ok(work) => Ok(work.clone()),
                 Err(message) => Err(TuiError::Unreachable(message.clone())),
             }
         }
@@ -3741,6 +3963,376 @@ mod tests {
             .set("--agents", "planner")
             .expect("`planner` is a loadable profile in the fake's answer");
         shell
+    }
+
+    fn set_work_state(server: &FakeServer, work_state: &str, revision: u64) {
+        let mut work = server
+            .work_answer
+            .borrow()
+            .as_ref()
+            .expect("the fixture starts with a valid WorkView")
+            .clone();
+        work.work_state = work_state.to_string();
+        work.revision = revision;
+        *server.work_answer.borrow_mut() = Ok(work);
+    }
+
+    fn expected_work_role_colour(role: &str) -> Color {
+        let theme = Theme::colour();
+        match role {
+            "info" => theme.focus.fg,
+            "accent" => theme.ok.fg,
+            "warning" => theme.warn.fg,
+            "danger" => theme.error.fg,
+            "neutral" => theme.dim.fg,
+            other => panic!("the fixture must name a supported semantic role, got {other:?}"),
+        }
+        .expect("the selected semantic role must have a foreground in the colour theme")
+    }
+
+    #[test]
+    fn running_work_with_terminal_idle_renders_observed_counts_and_info_role() {
+        let server = FakeServer::healthy().with_terminal_script(vec![
+            Reply::Status(Some(TerminalStatus::Idle)),
+            Reply::Status(Some(TerminalStatus::Completed)),
+        ]);
+        let terminal = ServerRead::terminal(&server, "terminal-1").expect("terminal status reads");
+        assert_eq!(terminal.status, Some(TerminalStatus::Idle));
+        let terminal = ServerRead::terminal(&server, "terminal-1").expect("terminal status reads");
+        assert_eq!(terminal.status, Some(TerminalStatus::Completed));
+        server
+            .work_answer
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .attempt_state = Some("finished".to_string());
+
+        let host = FakeHost::outside_tmux();
+        let mut shell = Renderer::new(&server, &host, MIN_COLS, MIN_ROWS)
+            .with_work_item_id(Some("work-fixture".to_string()));
+        shell.set_theme(Theme::colour());
+
+        let frame = shell.render();
+        let frame_text = joined(&frame.results, "\n");
+        assert!(frame_text.contains("Work: Running"), "got {frame_text:?}");
+        assert!(frame_text.contains("Observed running: 1"), "got {frame_text:?}");
+        assert!(frame_text.contains("Observed succeeded: 0"), "got {frame_text:?}");
+        assert_eq!(
+            drawn_foreground(&shell, 120, 90, "Running"),
+            Theme::colour().focus.fg.expect("info uses the theme foreground"),
+            "running Work must use the Info role even when terminal status is idle"
+        );
+
+        let drawn_right = drawn_cells(&shell, MIN_COLS, MIN_ROWS)
+            .chunks(MIN_COLS as usize)
+            .map(|row| {
+                row[48..]
+                    .iter()
+                    .map(|(symbol, _)| symbol.as_str())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let drawn_flat = drawn_right.split_whitespace().collect::<Vec<_>>().join(" ");
+        for marker in [
+            "work-fixture",
+            "Work: Running",
+            "Observed running: 1 · Observed succeeded: 0",
+        ] {
+            assert!(
+                drawn_flat.contains(marker),
+                "the Ratatui results buffer must show {marker:?}:\n{drawn_right}"
+            );
+        }
+    }
+
+    #[test]
+    fn succeeded_work_with_terminal_processing_renders_counts_and_accent_role() {
+        let server = FakeServer::healthy().with_terminal_script(vec![
+            Reply::Status(Some(TerminalStatus::Processing)),
+        ]);
+        let terminal = ServerRead::terminal(&server, "terminal-1").expect("terminal status reads");
+        assert_eq!(terminal.status, Some(TerminalStatus::Processing));
+        set_work_state(&server, "succeeded", 4);
+
+        let host = FakeHost::outside_tmux();
+        let mut shell = Renderer::new(&server, &host, MIN_COLS, MIN_ROWS)
+            .with_work_item_id(Some("work-fixture".to_string()));
+        shell.set_theme(Theme::colour());
+
+        let frame_text = joined(&shell.render().results, "\n");
+        assert!(frame_text.contains("Work: Succeeded"), "got {frame_text:?}");
+        assert!(frame_text.contains("Observed running: 0"), "got {frame_text:?}");
+        assert!(frame_text.contains("Observed succeeded: 1"), "got {frame_text:?}");
+        assert_eq!(
+            drawn_foreground(&shell, 120, 90, "Succeeded"),
+            Theme::colour().ok.fg.expect("accent uses the theme foreground"),
+            "succeeded Work must use Accent regardless of terminal processing"
+        );
+    }
+
+    #[test]
+    fn fixture_work_states_render_their_labels_counts_and_semantic_roles() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../test/fixtures/work_contract_v1.json"
+        ))
+        .expect("the shared WorkView contract fixture is JSON");
+        let expected_states = fixture["presentation_expectations"]["work_states"]
+            .as_array()
+            .expect("the shared fixture contains presentation expectations");
+        let host = FakeHost::outside_tmux();
+
+        for expected in expected_states {
+            let state = expected["state"].as_str().expect("fixture state is text");
+            let label = expected["label"].as_str().expect("fixture label is text");
+            let role = expected["semantic_role"]
+                .as_str()
+                .expect("fixture role is text");
+            let running = expected["running_count"]
+                .as_u64()
+                .expect("fixture running count is numeric");
+            let succeeded = expected["succeeded_count"]
+                .as_u64()
+                .expect("fixture succeeded count is numeric");
+            let server = FakeServer::healthy();
+            set_work_state(&server, state, 3);
+            let mut shell = Renderer::new(&server, &host, MIN_COLS, MIN_ROWS)
+                .with_work_item_id(Some("work-fixture".to_string()));
+            shell.set_theme(Theme::colour());
+
+            let expected_line = format!(
+                "Work: {label} · Observed running: {running} · Observed succeeded: {succeeded}"
+            );
+            let frame_text = joined(&shell.render().results, "\n");
+            assert!(
+                frame_text.contains(&expected_line),
+                "state {state:?} must follow the fixture: expected {expected_line:?}; got \
+                 {frame_text:?}"
+            );
+            assert_eq!(
+                drawn_foreground(&shell, 120, 90, label),
+                expected_work_role_colour(role),
+                "state {state:?} must resolve its {role:?} role through the TUI theme"
+            );
+        }
+    }
+
+    #[test]
+    fn unavailable_or_invalid_work_observation_renders_unknown_counts_not_zero() {
+        let host = FakeHost::outside_tmux();
+        let cases = ["load error", "wrong ID", "invalid version", "unknown state"];
+
+        for case in cases {
+            let server = FakeServer::healthy();
+            match case {
+                "load error" => {
+                    *server.work_answer.borrow_mut() =
+                        Err("cao-server returned HTTP 401".to_string());
+                }
+                "wrong ID" => {
+                    server
+                        .work_answer
+                        .borrow_mut()
+                        .as_mut()
+                        .unwrap()
+                        .work_item_id = "other".to_string();
+                }
+                "invalid version" => {
+                    server.work_answer.borrow_mut().as_mut().unwrap().schema_version = 2;
+                }
+                "unknown state" => {
+                    server
+                        .work_answer
+                        .borrow_mut()
+                        .as_mut()
+                        .unwrap()
+                        .work_state = "future_state".to_string();
+                }
+                _ => unreachable!(),
+            }
+            let shell = Renderer::new(&server, &host, MIN_COLS, MIN_ROWS)
+                .with_work_item_id(Some("work-fixture".to_string()));
+
+            let frame_text = joined(&shell.render().results, "\n");
+            assert!(
+                frame_text.contains("Work: Unknown"),
+                "{case} must render Unknown: {frame_text:?}"
+            );
+            assert!(
+                frame_text.contains("Observed running: —")
+                    && frame_text.contains("Observed succeeded: —"),
+                "{case} must render unknown counts, never apparent zeros: {frame_text:?}"
+            );
+            assert_eq!(
+                drawn_foreground(&shell, 120, 90, "Unknown"),
+                expected_work_role_colour("neutral"),
+                "{case} must use the neutral role"
+            );
+        }
+    }
+
+    #[test]
+    fn lower_revision_is_ignored_and_equal_revision_conflict_invalidates_work() {
+        let server = FakeServer::healthy();
+        let host = FakeHost::outside_tmux();
+        let mut shell = Renderer::new(&server, &host, MIN_COLS, MIN_ROWS)
+            .with_work_item_id(Some("work-fixture".to_string()));
+
+        set_work_state(&server, "succeeded", 2);
+        shell.refresh_work_item();
+        let stale_text = joined(&shell.render().results, "\n");
+        assert!(
+            stale_text.contains("Work: Running"),
+            "lower revision replaced current state: {stale_text:?}"
+        );
+        assert!(stale_text.contains("Observed running: 1"), "got {stale_text:?}");
+        assert!(stale_text.contains("Observed succeeded: 0"), "got {stale_text:?}");
+
+        set_work_state(&server, "succeeded", 3);
+        shell.refresh_work_item();
+        let conflict_text = joined(&shell.render().results, "\n");
+        assert!(
+            conflict_text.contains("Work: Unknown"),
+            "equal-revision contradiction must invalidate: {conflict_text:?}"
+        );
+        assert!(
+            conflict_text.contains("Observed running: —")
+                && conflict_text.contains("Observed succeeded: —"),
+            "equal-revision contradiction cannot render stale or fabricated counts: \
+             {conflict_text:?}"
+        );
+    }
+
+    #[test]
+    fn no_selection_states_no_work_and_no_numeric_totals() {
+        let server = FakeServer::healthy();
+        let host = FakeHost::outside_tmux();
+        let shell = Renderer::new(&server, &host, MIN_COLS, MIN_ROWS).with_work_item_id(None);
+        let text = shell.render().plain_lines().join("\n");
+
+        assert!(text.contains("No work selected"), "got {text:?}");
+        assert!(!text.contains("Observed running:"), "no selection has no totals: {text:?}");
+        assert!(!text.contains("Observed succeeded:"), "no selection has no totals: {text:?}");
+    }
+
+    #[test]
+    fn no_color_keeps_work_text_and_counts_while_resetting_status_style() {
+        let server = FakeServer::healthy();
+        let host = FakeHost::outside_tmux();
+        let mut shell = Renderer::new(&server, &host, MIN_COLS, MIN_ROWS)
+            .with_work_item_id(Some("work-fixture".to_string()));
+        shell.set_theme(Theme::monochrome());
+
+        let text = joined(&shell.render().results, "\n");
+        assert!(text.contains("Work: Running"), "got {text:?}");
+        assert!(text.contains("Observed running: 1"), "got {text:?}");
+        assert!(text.contains("Observed succeeded: 0"), "got {text:?}");
+        assert_eq!(
+            drawn_foreground(&shell, 120, 90, "Running"),
+            Theme::monochrome()
+                .dim
+                .fg
+                .expect("monochrome semantic styles resolve to Reset"),
+            "NO_COLOR removes only the status decoration"
+        );
+    }
+
+    #[test]
+    fn explicit_work_selection_loads_durable_identity_and_states_independent_of_terminal_status() {
+        let server = FakeServer::healthy().with_terminal_script(vec![
+            Reply::Status(Some(TerminalStatus::Idle)),
+            Reply::Status(Some(TerminalStatus::Completed)),
+        ]);
+        let idle = ServerRead::terminal(&server, "terminal-1").expect("terminal status is readable");
+        let completed =
+            ServerRead::terminal(&server, "terminal-1").expect("terminal status is readable");
+        assert_eq!(idle.status, Some(TerminalStatus::Idle));
+        assert_eq!(completed.status, Some(TerminalStatus::Completed));
+
+        let host = FakeHost::outside_tmux();
+        let shell = Renderer::new(&server, &host, MIN_COLS, MIN_ROWS)
+            .with_work_item_id(Some("work-fixture".to_string()));
+        let text = shell.render().plain_lines().join("\n");
+
+        assert_eq!(
+            *server.work_calls.borrow(),
+            vec!["work-fixture".to_string()],
+            "selection must perform one explicit WorkView read"
+        );
+        for expected in [
+            "work-fixture",
+            "job-fixture",
+            "attempt-fixture",
+            "job=running",
+            "work=running",
+            "attempt=running",
+            "turn=ready",
+            "process=alive",
+        ] {
+            assert!(
+                text.contains(expected),
+                "selected durable identity/state {expected:?} must remain visible; got:\n{text}"
+            );
+        }
+
+        let drawn = screen(&shell, MIN_COLS, MIN_ROWS);
+        for expected in ["work-fixture", "job-fixture", "work=running", "process=alive"] {
+            assert!(
+                drawn.contains(expected),
+                "selected WorkView data must reach the actual drawn results area: {expected:?}; \
+                 screen was:\n{drawn}"
+            );
+        }
+    }
+
+    #[test]
+    fn renderer_without_explicit_work_selection_does_not_request_or_display_work() {
+        let server = FakeServer::healthy();
+        let host = FakeHost::outside_tmux();
+        let shell = Renderer::new(&server, &host, MIN_COLS, MIN_ROWS).with_work_item_id(None);
+
+        assert!(
+            server.work_calls.borrow().is_empty(),
+            "absence of an explicit work ID must not trigger WorkView discovery"
+        );
+        assert!(
+            !shell.render().plain_lines().join("\n").contains("work-fixture"),
+            "legacy readiness rendering stays independent when no durable work was selected"
+        );
+    }
+
+    #[test]
+    fn selected_work_refresh_reloads_and_renders_server_failure_as_unavailable() {
+        let server = FakeServer::healthy();
+        let host = FakeHost::outside_tmux();
+        let mut shell = Renderer::new(&server, &host, MIN_COLS, MIN_ROWS)
+            .with_work_item_id(Some("work-fixture".to_string()));
+        assert_eq!(server.work_calls.borrow().len(), 1);
+
+        *server.work_answer.borrow_mut() = Err("cao-server returned HTTP 401".to_string());
+        shell.refresh_work_item();
+
+        let text = joined(&shell.render().results, "\n");
+        assert_eq!(
+            server.work_calls.borrow().len(),
+            2,
+            "refresh must reread the explicitly selected ID"
+        );
+        assert!(
+            text.contains("work work-fixture: unavailable")
+                && text.contains("HTTP 401"),
+            "a failed selected read must stay visible as unavailable with its cause; got {text:?}"
+        );
+        assert!(
+            text.contains("Work: Unknown")
+                && text.contains("Observed running: —")
+                && text.contains("Observed succeeded: —"),
+            "a failed selected read must render unknown counts, not zeros: {text:?}"
+        );
+        assert!(
+            !text.contains("durable state: job=running"),
+            "a failed refresh must not silently present an old success as current"
+        );
     }
 
     /// The production half of this module's source: everything before `#[cfg(test)]`.
@@ -5080,6 +5672,11 @@ mod tests {
             fn providers(&self) -> Result<Vec<Provider>, TuiError> {
                 Ok(Vec::new())
             }
+            fn work(&self, work_item_id: &str) -> Result<WorkView, TuiError> {
+                Err(TuiError::Validation(format!(
+                    "unexpected work lookup {work_item_id:?}"
+                )))
+            }
             fn create_session(&self, _params: &SessionParams) -> Result<Terminal, TuiError> {
                 Ok(terminal("t-1"))
             }
@@ -5893,6 +6490,11 @@ mod tests {
             fn providers(&self) -> Result<Vec<Provider>, TuiError> {
                 Ok(Vec::new())
             }
+            fn work(&self, work_item_id: &str) -> Result<WorkView, TuiError> {
+                Err(TuiError::Validation(format!(
+                    "unexpected work lookup {work_item_id:?}"
+                )))
+            }
             fn create_session(&self, _params: &SessionParams) -> Result<Terminal, TuiError> {
                 Ok(terminal("t-1"))
             }
@@ -6639,10 +7241,15 @@ mod tests {
     ) -> Color {
         assert!(needle.is_ascii(), "row indexing here is by byte offset");
         let cells = drawn_cells(shell, width, height);
+        let needle_cells: Vec<String> = needle.chars().map(|character| character.to_string()).collect();
         for row in cells.chunks(width as usize) {
-            let text: String = row.iter().map(|(symbol, _)| symbol.as_str()).collect();
-            if let Some(start) = text.find(needle) {
-                let colours: Vec<Color> = row[start..start + needle.len()]
+            if let Some(start) = row.windows(needle_cells.len()).position(|window| {
+                window
+                    .iter()
+                    .zip(&needle_cells)
+                    .all(|((symbol, _), expected)| symbol == expected)
+            }) {
+                let colours: Vec<Color> = row[start..start + needle_cells.len()]
                     .iter()
                     .map(|(_, fg)| *fg)
                     .collect();

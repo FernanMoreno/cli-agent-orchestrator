@@ -527,6 +527,43 @@ cao terminal
 
 ---
 
+## cao tui
+
+Open the terminal UI in the foreground:
+
+```bash
+cao tui
+cao tui --work-item-id <id>
+```
+
+Without `--work-item-id`, the TUI does not query durable Work. With an explicit ID, it reads
+`GET /work-items/{id}` as `WorkView` v1. The view keeps durable job, work, attempt, turn and
+process states separate from terminal readiness and status.
+
+The selected Work state is shown with these labels and semantic roles:
+
+| Work state | Label | Role |
+|------------|-------|------|
+| `queued` | Queued | info |
+| `running` | Running | info |
+| `waiting_children` | Waiting for child work | warning |
+| `succeeded` | Succeeded | accent |
+| `failed` | Failed | danger |
+| `reconcile` | Reconciling | warning |
+| `cancelled` | Cancelled | neutral |
+
+`Observed running` and `Observed succeeded` count only the selected Work: `running` contributes
+`1` to the former, `succeeded` contributes `1` to the latter, and every other valid state shows
+`0` for both. An invalid or unavailable observation is displayed as `Unknown` with `—` for both
+counts. The TUI resolves semantic roles to foreground colors only, leaves the terminal background
+unchanged, and respects `NO_COLOR`.
+
+This is a single selected-item observation: it does not associate a terminal with Work, list Work
+items or calculate global totals, or follow changes continuously. It does not supply a remote
+credential or guarantee that a backend or provider is available.
+
+---
+
 ## cao workflow
 
 Workflow management for complex multi-step operations.
@@ -534,6 +571,28 @@ Workflow management for complex multi-step operations.
 ```bash
 cao workflow
 ```
+
+### cao workflow work
+
+Read a Work item or a page of its events from the API:
+
+```bash
+cao workflow work WORK_ITEM_ID [--json]
+cao workflow work-events JOB_ID [--after-sequence N] [--limit N] [--json]
+```
+
+`work` reads the API's `WorkView`; `work-events` reads a page from the API's event endpoint.
+Both commands use only the locally configured bearer. IDs must contain 1–512 ASCII letters,
+digits, underscores, or hyphens. They are validated before URL construction or bearer access.
+`--after-sequence` must be at least `0`, and `--limit` must be from `1` through `1000`.
+
+With `--json`, each command preserves the API response. Human output keeps work, attempt, turn,
+and process states distinct, and shows the result and required action. Event output retains its
+cursor, high-water mark, and gaps.
+
+These are point-in-time HTTP reads: they do not infer state from a terminal or use local Work
+state. They do not follow changes continuously, call a real backend or provider, mutate or
+dispatch Work, or implement the universal state transition described by SC-007.
 
 ---
 

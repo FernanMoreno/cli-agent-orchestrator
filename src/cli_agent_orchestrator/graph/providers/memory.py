@@ -15,6 +15,11 @@ from cli_agent_orchestrator.graph.models import Edge, EdgeType, GraphView, Node
 from cli_agent_orchestrator.graph.providers.base import GraphProvider, register_provider
 from cli_agent_orchestrator.services import settings_service, wiki_lint
 from cli_agent_orchestrator.services.memory_service import MemoryService
+from cli_agent_orchestrator.services.legacy_memory_access import (
+    audited_legacy,
+    propagate_legacy_policy_failure,
+)
+from cli_agent_orchestrator.services.knowledge_policy import redact_knowledge_data
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +28,8 @@ logger = logging.getLogger(__name__)
 # per-instance cache would never hit). DELIBERATE reversal of the original
 # "lint-on-demand, no caching" ADR — see graph/cache.py for the perf finding
 # (ripgrep stale_claim ~20s + LLM ~8.5s ⇒ ~30s typical, up to ~148s under
-# load, past the frontend's 120s timeout). Keyed by (provider, scope, scope_id).
+# load, past the frontend's 120s timeout). Keys also identify the persistent
+# wiki and metadata stores: authorization of one owner cannot serve another's data.
 _CACHE = GraphViewCache()
 
 
@@ -49,6 +55,7 @@ class MemoryGraphProvider(GraphProvider):
         self._svc = memory_service or MemoryService()
         self._lint_enabled = lint_enabled or settings_service.is_memory_lint_enabled
 
+    @audited_legacy("graph", owner="_svc")
     async def project(self, **filters: Any) -> GraphView:
         """Return this scope's GraphView, served from cache when fresh.
 
@@ -63,18 +70,29 @@ class MemoryGraphProvider(GraphProvider):
         scope_id: Optional[str] = None if raw_scope_id is None else str(raw_scope_id)
 
         lint_enabled = self._lint_enabled()
-        key = ("memory", scope, scope_id, lint_enabled)
+        # The audited wrapper has already authorized this owner and prepared its
+        # repository. Use persistent identities so fresh facades share their own
+        # cache, while either a different wiki or SQLite store remains isolated.
+        key = (
+            "memory",
+            str(self._svc.base_dir.resolve()),
+            str(self._svc._legacy_repository().path.resolve()),
+            scope,
+            scope_id,
+            lint_enabled,
+        )
         view, cached, as_of = await _CACHE.get_or_build(
             key,
             lambda: self._build(scope, scope_id, lint_enabled),
         )
         # Re-wrap with fresh cache provenance without mutating the cached
         # instance's own meta (the same GraphView object is served to every hit).
-        return GraphView(
+        result = GraphView(
             nodes=view.nodes,
             edges=view.edges,
             meta=make_meta(view.meta, cached=cached, as_of=as_of),
         )
+        return GraphView.model_validate(redact_knowledge_data(result.model_dump(mode="json")))
 
     async def _build(self, scope: str, scope_id: Optional[str], lint_enabled: bool) -> GraphView:
         """Project the scope's wiki into a GraphView (the uncached, ~148s path)."""
@@ -146,10 +164,13 @@ class MemoryGraphProvider(GraphProvider):
                 # lookup — `project()` has no cwd/terminal_context to resolve
                 # the real project id (resolve_project_id), so this is a
                 # placeholder.
-                issues = await wiki_lint.run_lint(scope_id or scope, scope=scope)
+                issues = await wiki_lint.run_lint(
+                    scope_id or scope, scope=scope, memory_service=self._svc
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as e:
+                propagate_legacy_policy_failure(e)
                 logger.warning("memory graph provider: run_lint failed: %r", e, exc_info=True)
                 meta["lint_error"] = type(e).__name__
 
@@ -176,10 +197,11 @@ class MemoryGraphProvider(GraphProvider):
             # node set may legitimately point at a target outside it, and
             # dropping that edge is what enforces FR-9 (never a cross-scope
             # edge) and keeps GraphView's endpoint validation satisfied.
-            active = MemoryRelationshipService().list_relationships(
+            active = MemoryRelationshipService(memory_service=self._svc).list_relationships(
                 scope, scope_id, status="active", source_keys=keys
             )
         except Exception as e:  # degrade to a relationship-free graph, never 500
+            propagate_legacy_policy_failure(e)
             logger.warning("memory graph provider: relationship read failed: %r", e)
             meta["relationship_error"] = type(e).__name__
             active = []

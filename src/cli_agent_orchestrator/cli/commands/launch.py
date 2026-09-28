@@ -1,6 +1,7 @@
 """Launch command for CLI Agent Orchestrator CLI."""
 
 import os
+import re
 import time
 
 import click
@@ -15,6 +16,7 @@ from cli_agent_orchestrator.constants import (
     SERVER_PORT,
 )
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.security.auth import get_local_bearer
 from cli_agent_orchestrator.services.settings_service import get_server_settings
 from cli_agent_orchestrator.utils.forwarded_env import (
     ForwardedEnvError,
@@ -25,6 +27,98 @@ from cli_agent_orchestrator.utils.terminal import (
     sync_backend_from_server,
     wait_until_terminal_status,
 )
+
+# Match the complete public error envelopes accepted by the API and MCP boundaries.
+_SAFE_WORK_LAUNCH_ERROR_DETAILS = frozenset(
+    {
+        (
+            "launch_identity_required",
+            "Verified launch identity is required.",
+            False,
+            "authenticate",
+        ),
+        (
+            "launch_intent_invalid",
+            "Launch intent is invalid.",
+            False,
+            "correct_launch_intent",
+        ),
+        (
+            "launch_idempotency_conflict",
+            "Launch operation conflicts with an existing server-owned identity.",
+            False,
+            "inspect_existing_launch",
+        ),
+        (
+            "launch_context_unavailable",
+            "Trusted launch context is unavailable.",
+            False,
+            "provision_launch_context",
+        ),
+        (
+            "launch_store_unavailable",
+            "Verified work store is unavailable.",
+            True,
+            "retry_same_intent",
+        ),
+        (
+            "launch_runtime_unavailable",
+            "Trusted launch runtime is unavailable.",
+            False,
+            "inspect_server_configuration",
+        ),
+        (
+            "launch_internal_error",
+            "Unable to process the launch request.",
+            False,
+            "inspect_server_configuration",
+        ),
+    }
+    | {
+        (
+            "launch_authority_denied",
+            "Verified launch authority is required.",
+            False,
+            required_action,
+        )
+        for required_action in ("authenticate", "reauthorize")
+    }
+    | {
+        (
+            "launch_context_invalid",
+            "Trusted launch context is no longer valid.",
+            False,
+            required_action,
+        )
+        for required_action in ("refresh_launch_context", "resolve_launch_again")
+    }
+)
+
+
+def _safe_cli_work_launch_detail(detail):
+    """Return only the message and action from an exact public Work error envelope."""
+    if not isinstance(detail, dict) or set(detail) != {
+        "code",
+        "message",
+        "retryable",
+        "required_action",
+    }:
+        return None
+    code = detail["code"]
+    message = detail["message"]
+    retryable = detail["retryable"]
+    required_action = detail["required_action"]
+    if not (
+        isinstance(code, str)
+        and isinstance(message, str)
+        and type(retryable) is bool
+        and isinstance(required_action, str)
+    ):
+        return None
+    if (code, message, retryable, required_action) not in _SAFE_WORK_LAUNCH_ERROR_DETAILS:
+        return None
+    return message, required_action
+
 
 # Providers that require workspace folder access
 PROVIDERS_REQUIRING_WORKSPACE_ACCESS = {
@@ -76,6 +170,17 @@ def _parse_env_pairs(pairs):
 @click.argument("message", required=False, default=None)
 @click.option("--agents", required=True, help="Agent profile to launch")
 @click.option("--session-name", help="Name of the session (default: auto-generated)")
+@click.option(
+    "--queue-work",
+    is_flag=True,
+    help="Admit queued Work only; does not launch a provider or terminal. "
+    "Requires --session-name and MESSAGE; omitted selectors use one active provision.",
+)
+@click.option(
+    "--work-selection",
+    metavar="SELECTOR",
+    help="Opaque server-provisioned Work selector used with --queue-work.",
+)
 @click.option("--headless", is_flag=True, help="Launch in detached mode")
 @click.option(
     "--provider",
@@ -144,6 +249,8 @@ def launch(
     message,
     agents,
     session_name,
+    queue_work,
+    work_selection,
     headless,
     is_async,
     provider,
@@ -158,6 +265,45 @@ def launch(
 ):
     """Launch cao session with specified agent profile."""
     try:
+        if work_selection is not None and not queue_work:
+            raise click.ClickException("--work-selection requires --queue-work")
+        if queue_work:
+            incompatible_options = (
+                ("--provider", provider is not None),
+                ("--engine", engine is not None),
+                ("--headless", headless),
+                ("--async", is_async),
+                ("--auto-approve", auto_approve),
+                ("--yolo", yolo),
+                ("--working-directory", working_directory is not None),
+                ("--memory", memory),
+                ("--env", bool(env_pairs)),
+                ("--resume-session-id", resume_session_id is not None),
+            )
+            for option, supplied in incompatible_options:
+                if supplied:
+                    raise click.ClickException(
+                        f"{option} cannot be used with --queue-work; queued admission does not launch a provider or terminal"
+                    )
+            if not session_name:
+                raise click.ClickException("--session-name is required for --queue-work")
+            if message is None:
+                raise click.ClickException("MESSAGE is required for --queue-work")
+
+            identity_pattern = r"[A-Za-z0-9._:-]+"
+            identities = [("agent profile", agents)]
+            if work_selection is not None:
+                identities.append(("work selection", work_selection))
+            identities.append(("session name", session_name))
+            for label, value in identities:
+                if len(value) > 128 or re.fullmatch(identity_pattern, value) is None:
+                    raise click.ClickException(
+                        f"Invalid {label} for --queue-work; expected 1 to 128 letters, digits, '.', '_', ':', or '-'."
+                    )
+            if len(message) > 32768:
+                raise click.ClickException(
+                    "Invalid MESSAGE for --queue-work; maximum length is 32768 characters"
+                )
         display_dir = working_directory or os.path.realpath(os.getcwd())
         explicit_provider = provider is not None  # True only when --provider was passed
         forwarded_env = _parse_env_pairs(env_pairs) if env_pairs else {}
@@ -189,6 +335,62 @@ def launch(
                 # Profile not found — use developer defaults (backward compatible)
                 no_role_set = True
                 resolved_allowed_tools = resolve_allowed_tools(None, None, None)
+
+        if queue_work:
+            work_tools = list(resolved_allowed_tools or [])
+            if len(work_tools) > 128:
+                raise click.ClickException(
+                    "Invalid allowed tools for --queue-work; maximum is 128 tools"
+                )
+            for tool in work_tools:
+                if (
+                    not isinstance(tool, str)
+                    or len(tool) > 128
+                    or re.fullmatch(r"[A-Za-z0-9._:-]+", tool) is None
+                ):
+                    raise click.ClickException(
+                        "Invalid allowed tool for --queue-work; expected a 1 to 128 character Work identity"
+                    )
+            work_bearer = get_local_bearer()
+            if not work_bearer:
+                raise click.ClickException(
+                    "--queue-work requires a configured bearer token for authenticated Work admission"
+                )
+            request_timeout = get_server_settings()["mcp_request_timeout"]
+            work_launch_body = {
+                "agent_profile": agents,
+                "session_name": session_name,
+                "message": message,
+                "allowed_tools": work_tools,
+            }
+            if work_selection is not None:
+                work_launch_body["selection"] = work_selection
+            response = requests.post(
+                f"{API_BASE_URL}/work-launches",
+                json=work_launch_body,
+                headers={"Authorization": f"Bearer {work_bearer}"},
+                timeout=request_timeout,
+            )
+            response.raise_for_status()
+            receipt = response.json()
+            if (
+                not isinstance(receipt, dict)
+                or not isinstance(receipt.get("work_item_id"), str)
+                or not receipt["work_item_id"]
+                or not isinstance(receipt.get("attempt_id"), str)
+                or not receipt["attempt_id"]
+                or isinstance(receipt.get("generation"), bool)
+                or not isinstance(receipt.get("generation"), int)
+                or receipt["generation"] <= 0
+                or receipt.get("state") != "queued"
+            ):
+                raise click.ClickException("cao-server returned an invalid queued Work receipt")
+            click.echo("Queued Work receipt:")
+            click.echo(f"  work_item_id: {receipt['work_item_id']}")
+            click.echo(f"  attempt_id: {receipt['attempt_id']}")
+            click.echo(f"  generation: {receipt['generation']}")
+            click.echo(f"  state: {receipt['state']}")
+            return
 
         # Honour profile.provider whenever the user did not pass --provider
         # explicitly. This runs regardless of which permission-resolution
@@ -364,6 +566,28 @@ def launch(
             if output:
                 click.echo(output)
 
+    except requests.exceptions.HTTPError as e:
+        if queue_work and e.response is not None:
+            try:
+                error_payload = e.response.json()
+            except (ValueError, TypeError, AttributeError):
+                error_payload = None
+            detail = (
+                error_payload.get("detail")
+                if isinstance(error_payload, dict)
+                else None
+            )
+            safe_detail = _safe_cli_work_launch_detail(detail)
+            if safe_detail is not None:
+                message, required_action = safe_detail
+                raise click.ClickException(
+                    f"cao-server rejected queued Work (HTTP {e.response.status_code}): "
+                    f"{message} Required action: {required_action}"
+                ) from e
+            raise click.ClickException(
+                f"cao-server rejected queued Work (HTTP {e.response.status_code})"
+            ) from e
+        raise click.ClickException(f"Failed to connect to cao-server: {str(e)}")
     except requests.exceptions.RequestException as e:
         raise click.ClickException(f"Failed to connect to cao-server: {str(e)}")
     except click.ClickException:

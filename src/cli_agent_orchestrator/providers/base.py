@@ -88,6 +88,37 @@ class BaseProvider(ABC):
         _allowed_tools: CAO-vocabulary tool names this agent is allowed to use
     """
 
+    @classmethod
+    def operation_capabilities(cls, operation: str) -> Dict[str, Any]:
+        """Describe an operation conservatively, without probing or authorizing it.
+
+        Configuration transport is not evidence of an installed/authenticated CLI,
+        an available model, accepted effort values, or enforced permissions. The
+        catalog may refine launch metadata from an inspected adapter branch.
+        Each result is independent so callers cannot mutate later preflight reads.
+        """
+        if operation not in {"launch", "send_input", "observe", "continuation"}:
+            raise ValueError(f"unknown provider operation: {operation!r}")
+        return {
+            "schema_version": 1,
+            "operation": operation,
+            "availability": "not_probed",
+            "authentication": "not_probed",
+            "model_selection": "unverified",
+            "model_source": None,
+            "model_transport": None,
+            "model_precedence": [],
+            "model_override_ignored": None,
+            "model_names": None,
+            "effort_selection": "unverified",
+            "effort_source": None,
+            "effort_transport": None,
+            "effort_values": None,
+            "enforcement": "unverified",
+            "enforcement_owner": "backend",
+            "continuity": "unverified",
+        }
+
     def __init__(
         self,
         terminal_id: str,

@@ -1,5 +1,6 @@
 """Integration tests for plugin registry FastAPI lifespan wiring."""
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock, patch
 
@@ -168,3 +169,67 @@ class TestPluginRegistryLifespan:
 
                 assert isinstance(registry, PluginRegistry)
                 assert len(registry._plugins) == 1
+
+    @pytest.mark.asyncio
+    async def test_lifespan_cancellation_during_plugin_teardown_still_stops_telemetry(
+        self,
+    ) -> None:
+        """Caller cancellation propagates after plugin teardown and telemetry shutdown."""
+
+        teardown_started = asyncio.Event()
+        teardown_order: list[str] = []
+
+        class BlockingPlugin(CaoPlugin):
+            async def teardown(self) -> None:
+                teardown_order.append("blocking")
+                teardown_started.set()
+                await asyncio.Future()
+
+        class HealthyPlugin(CaoPlugin):
+            async def teardown(self) -> None:
+                teardown_order.append("healthy")
+
+        async def install_plugins(registry: PluginRegistry) -> None:
+            registry._plugins.extend([BlockingPlugin(), HealthyPlugin()])
+
+        status_run, log_run, inbox_run, opencode_daemon = _consumer_patches()
+
+        with (
+            patch("cli_agent_orchestrator.api.main.setup_logging"),
+            patch("cli_agent_orchestrator.api.main.init_telemetry"),
+            patch("cli_agent_orchestrator.api.main.init_db"),
+            patch(
+                "cli_agent_orchestrator.services.memory_reconciliation.reconcile_memory_startup",
+                return_value=None,
+            ),
+            patch("cli_agent_orchestrator.api.main.cleanup_old_data"),
+            patch(
+                "cli_agent_orchestrator.api.main.cleanup_expired_memories",
+                new_callable=AsyncMock,
+            ),
+            patch("cli_agent_orchestrator.api.main.flow_daemon", fake_flow_daemon),
+            patch("cli_agent_orchestrator.api.main.bus.set_loop"),
+            status_run,
+            log_run,
+            inbox_run,
+            opencode_daemon,
+            patch.object(PluginRegistry, "load", new=install_plugins),
+            patch(
+                "cli_agent_orchestrator.api.main.shutdown_telemetry",
+                side_effect=lambda: teardown_order.append("telemetry"),
+            ) as shutdown_telemetry,
+        ):
+            lifespan_context = lifespan(app)
+            await lifespan_context.__aenter__()
+            shutdown_task = asyncio.create_task(
+                lifespan_context.__aexit__(None, None, None)
+            )
+            await teardown_started.wait()
+            shutdown_task.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await shutdown_task
+
+            assert teardown_order[:2] == ["blocking", "healthy"]
+            shutdown_telemetry.assert_called_once_with()
+            assert teardown_order == ["blocking", "healthy", "telemetry"]

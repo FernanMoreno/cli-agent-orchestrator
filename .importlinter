@@ -1,0 +1,67 @@
+# AI-PROJECT-MANAGER-COMPOSITION-V2
+#
+# Baseline universal rule: no dependency cycles between sibling packages.
+# Domain/layer/forbidden/independence contracts must be refined from the real
+# architecture with project-composition-configure.
+
+[importlinter]
+root_packages =
+    cao_workflow
+    cli_agent_orchestrator
+    cli_agent_orchestrator.services
+    cli_agent_orchestrator.clients
+
+[importlinter:contract:acyclic-siblings]
+name = Sibling packages must remain acyclic
+type = acyclic_siblings
+ancestors = cao_workflow
+depth = 10
+
+[importlinter:contract:models-independent]
+name = Domain models must not depend on application or infrastructure
+type = forbidden
+source_modules =
+    cli_agent_orchestrator.models
+forbidden_modules =
+    cli_agent_orchestrator.services
+    cli_agent_orchestrator.clients
+    cli_agent_orchestrator.providers
+    cli_agent_orchestrator.backends
+    cli_agent_orchestrator.api
+    cli_agent_orchestrator.cli
+    cli_agent_orchestrator.mcp_server
+
+[importlinter:contract:work-reducer-pure]
+name = Work reducer must not depend on entrypoints or effect owners
+type = forbidden
+source_modules =
+    cli_agent_orchestrator.services.work_reducer
+forbidden_modules =
+    cli_agent_orchestrator.clients
+    cli_agent_orchestrator.api
+    cli_agent_orchestrator.cli
+    cli_agent_orchestrator.mcp_server
+    cli_agent_orchestrator.providers
+    cli_agent_orchestrator.backends
+    cli_agent_orchestrator.services.work_service
+    cli_agent_orchestrator.services.work_admission
+    cli_agent_orchestrator.services.terminal_service
+    cli_agent_orchestrator.services.workflow_journal
+    cli_agent_orchestrator.services.memory_service
+
+[importlinter:contract:work-repository-entry-runtime-boundary]
+name = Work repository must not depend on entrypoints or effect runtimes
+type = forbidden
+source_modules =
+    cli_agent_orchestrator.clients.work_repository
+forbidden_modules =
+    cli_agent_orchestrator.api
+    cli_agent_orchestrator.cli
+    cli_agent_orchestrator.mcp_server
+    cli_agent_orchestrator.providers
+    cli_agent_orchestrator.backends
+    cli_agent_orchestrator.services.work_service
+    cli_agent_orchestrator.services.work_admission
+    cli_agent_orchestrator.services.terminal_service
+    cli_agent_orchestrator.services.workflow_journal
+    cli_agent_orchestrator.services.memory_service

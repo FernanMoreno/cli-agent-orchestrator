@@ -15,6 +15,7 @@ from cli_agent_orchestrator.providers.base import BaseProvider
 from cli_agent_orchestrator.providers.claude_code import ClaudeCodeProvider
 from cli_agent_orchestrator.providers.codex import CodexProvider
 from cli_agent_orchestrator.providers.copilot_cli import CopilotCliProvider
+from cli_agent_orchestrator.providers.catalog import registered_provider_descriptor
 from cli_agent_orchestrator.providers.cursor_cli import CursorCliProvider
 from cli_agent_orchestrator.providers.gemini_cli import GeminiCliProvider
 from cli_agent_orchestrator.providers.grok_cli import GrokCliProvider
@@ -52,6 +53,9 @@ class ProviderManager:
         """Create and store provider instance."""
         try:
             provider: BaseProvider
+            descriptor = registered_provider_descriptor(provider_type)
+            if descriptor is not None:
+                descriptor.preflight("launch", model=model)
             if resume_session_id and provider_type != ProviderType.CLAUDE_CODE.value:
                 raise ValueError(
                     "resume_session_id is only supported by the claude_code provider "

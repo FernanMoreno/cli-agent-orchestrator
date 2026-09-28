@@ -145,14 +145,14 @@ def test_get_graph_private_scope_refused_400(client, auth_on, scope):
     assert "private" in resp.json()["detail"]
 
 
-def test_get_graph_private_scope_refused_before_provider_resolution(client, auth_on, monkeypatch):
+def test_memory_graph_requires_identity_before_provider_resolution(client, auth_on, monkeypatch):
     app.dependency_overrides[auth.get_current_scopes] = _override_scopes([auth.SCOPE_READ])
     get_provider_spy = MagicMock()
     monkeypatch.setattr(api_main, "get_provider", get_provider_spy)
 
     resp = client.get("/graph/memory?scope=session")
 
-    assert resp.status_code == 400
+    assert resp.status_code == 401
     get_provider_spy.assert_not_called()
 
 

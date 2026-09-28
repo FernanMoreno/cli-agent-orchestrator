@@ -3,15 +3,25 @@
 import asyncio
 import inspect
 import json
+import sqlite3
 import time
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import pytest
+
+from cli_agent_orchestrator import constants
+from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.services.herdr_inbox_service import HerdrInboxService
 
 
 def _run_async(coro):
     """Run an async coroutine synchronously."""
     return asyncio.run(coro)
+
+
+@pytest.fixture(autouse=True)
+def isolated_herdr_locks(tmp_path, monkeypatch):
+    monkeypatch.setattr(constants, "LOCK_DIR", tmp_path / "locks")
 
 
 class TestHerdrInboxServiceRegistration:
@@ -1331,3 +1341,173 @@ class TestHerdrInboxServiceSocketPath:
         """The 'default' session should use ~/.config/herdr/herdr.sock (no subdir)."""
         path = HerdrInboxService._default_socket_path("default")
         assert path == "/custom/config/herdr/herdr.sock"
+
+
+@pytest.fixture(params=["owned", "unavailable"])
+def fenced_work_store(tmp_path, monkeypatch, request):
+    """Use only a temporary Work store for lifecycle ownership checks."""
+    path = tmp_path / "work.sqlite3"
+    monkeypatch.setattr(constants, "DATABASE_FILE", path)
+    monkeypatch.setattr(constants, "LOCK_DIR", tmp_path / "locks")
+    if request.param == "unavailable":
+        with sqlite3.connect(path) as connection:
+            connection.execute("CREATE TABLE work_attempts (terminal_id TEXT)")
+    else:
+        repository = WorkRepository(path)
+        repository.initialize()
+        now = time.time()
+        with repository.transaction() as connection:
+            connection.execute(
+                "INSERT INTO work_jobs "
+                "(id,project_id,principal_id,allowed_providers,grant_id,created_at) "
+                "VALUES (?,?,?,?,?,?)",
+                ("job", "project", "principal", '["mock_cli"]', "grant", now),
+            )
+            connection.execute(
+                "INSERT INTO work_items "
+                "(id,job_id,operation_kind,idempotency_key,request_hash,contract_id,created_at) "
+                "VALUES (?,?,?,?,?,?,?)",
+                ("item", "job", "launch", "request", "hash", "contract", now),
+            )
+            connection.execute(
+                "INSERT INTO work_attempts "
+                "(id,work_item_id,attempt_number,generation,provider,terminal_id,state,"
+                "lease_expires_at,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                ("attempt", "item", 1, 1, "mock_cli", "work-terminal", "planned", now + 60, now),
+            )
+    return request.param
+
+
+@pytest.mark.usefixtures("fenced_work_store")
+class TestHerdrWorkLifecycleFence:
+    def test_startup_ghost_cleanup_preserves_work_row(self):
+        service = HerdrInboxService(socket_path="/tmp/test.sock")
+        snapshot = {
+            "panes": [],
+            "tabs": [],
+            "workspaces": [{"workspace_id": "ws", "label": "session"}],
+        }
+        with (
+            patch.object(service, "_fetch_snapshot", return_value=snapshot),
+            patch(
+                "cli_agent_orchestrator.clients.database.list_terminals_by_session",
+                return_value=[{"id": "work-terminal", "tmux_window": "missing-tab"}],
+            ),
+            patch("cli_agent_orchestrator.clients.database.delete_terminal") as delete,
+        ):
+            _run_async(service._startup_db_cleanup())
+        delete.assert_not_called()
+
+    def test_reconcile_ghost_preserves_work_row(self):
+        service = HerdrInboxService(socket_path="/tmp/test.sock")
+        snapshot = {
+            "panes": [],
+            "tabs": [],
+            "workspaces": [{"workspace_id": "ws", "label": "session"}],
+        }
+        with (
+            patch.object(service, "_fetch_snapshot", return_value=snapshot),
+            patch(
+                "cli_agent_orchestrator.clients.database.list_terminals_by_session",
+                return_value=[{"id": "work-terminal", "tmux_window": "missing-tab"}],
+            ),
+            patch("cli_agent_orchestrator.clients.database.delete_terminal") as delete,
+        ):
+            _run_async(service._reconcile())
+        delete.assert_not_called()
+
+    def test_reconcile_stale_pane_preserves_work_and_session(self):
+        service = HerdrInboxService(socket_path="/tmp/test.sock")
+        service.register_terminal("work-terminal", "pane", is_kiro=True)
+        service._working_since["work-terminal"] = 1.0
+        with (
+            patch.object(
+                service, "_fetch_snapshot", return_value={"panes": [], "tabs": [], "workspaces": []}
+            ),
+            patch.object(service, "_label_still_live", return_value=False),
+            patch(
+                "cli_agent_orchestrator.clients.database.get_terminal_metadata",
+                return_value={"tmux_session": "session", "tmux_window": "window"},
+            ),
+            patch("cli_agent_orchestrator.clients.database.delete_terminal") as delete,
+            patch("cli_agent_orchestrator.backends.registry.get_backend") as backend,
+        ):
+            _run_async(service._reconcile())
+        delete.assert_not_called()
+        backend.return_value.kill_session.assert_not_called()
+        assert service._pane_to_terminal == {"pane": "work-terminal"}
+        assert service._terminal_to_pane == {"work-terminal": "pane"}
+        assert service._kiro_terminals == {"work-terminal"}
+        assert service._working_since == {"work-terminal": 1.0}
+
+    @pytest.mark.parametrize("fenced_work_store", ["owned"], indirect=True)
+    def test_reconcile_rechecks_every_removed_terminal_before_kill(self, fenced_work_store):
+        repository = WorkRepository(constants.DATABASE_FILE)
+        service = HerdrInboxService(socket_path="/tmp/test.sock")
+        service.register_terminal("first", "pane-first")
+        service.register_terminal("second", "pane-second")
+        removed = []
+
+        def delete_and_bind_first(terminal_id):
+            removed.append(terminal_id)
+            if len(removed) == 1:
+                with repository.transaction() as connection:
+                    connection.execute(
+                        "UPDATE work_attempts SET terminal_id=? WHERE id='attempt'",
+                        (terminal_id,),
+                    )
+            return True
+
+        with (
+            patch.object(
+                service, "_fetch_snapshot", return_value={"panes": [], "tabs": [], "workspaces": []}
+            ),
+            patch.object(service, "_label_still_live", return_value=False),
+            patch(
+                "cli_agent_orchestrator.clients.database.get_terminal_metadata",
+                return_value={"tmux_session": "session", "tmux_window": "window"},
+            ),
+            patch(
+                "cli_agent_orchestrator.clients.database.delete_terminal",
+                side_effect=delete_and_bind_first,
+            ),
+            patch("cli_agent_orchestrator.backends.registry.get_backend") as backend,
+        ):
+            _run_async(service._reconcile())
+        assert len(removed) == 2
+        backend.return_value.kill_session.assert_not_called()
+
+    @pytest.mark.parametrize("event", ["pane.closed", "workspace.closed"])
+    def test_closed_event_preserves_work_without_snapshot_or_teardown(self, event):
+        service = HerdrInboxService(socket_path="/tmp/test.sock")
+        service.register_terminal("work-terminal", "pane", is_kiro=True)
+        service._working_since["work-terminal"] = 1.0
+        service._workspace_to_session["ws"] = "session"
+        data = {"pane_id": "pane"} if event == "pane.closed" else {"workspace_id": "ws"}
+        with (
+            patch.object(service, "_label_still_live", return_value=False),
+            patch(
+                "cli_agent_orchestrator.clients.database.get_terminal_metadata",
+                return_value={"tmux_session": "session", "tmux_window": "window"},
+            ),
+            patch(
+                "cli_agent_orchestrator.clients.database.list_terminals_by_session",
+                return_value=[{"id": "work-terminal", "tmux_window": "window"}],
+            ),
+            patch(
+                "cli_agent_orchestrator.services.terminal_service.capture_terminal_snapshot"
+            ) as snapshot,
+            patch(
+                "cli_agent_orchestrator.services.terminal_service.dismantle_terminal_runtime"
+            ) as teardown,
+            patch("cli_agent_orchestrator.backends.registry.get_backend") as backend,
+        ):
+            service._handle_lifecycle_event(event, data)
+        snapshot.assert_not_called()
+        teardown.assert_not_called()
+        backend.return_value.kill_session.assert_not_called()
+        assert service._pane_to_terminal == {"pane": "work-terminal"}
+        assert service._terminal_to_pane == {"work-terminal": "pane"}
+        assert service._kiro_terminals == {"work-terminal"}
+        assert service._working_since == {"work-terminal": 1.0}
+        assert service._workspace_to_session == {"ws": "session"}

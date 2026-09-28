@@ -75,8 +75,8 @@ def test_mcp_memory_store_serializes_partial_write_envelope() -> None:
 
     with (
         patch(
-            "cli_agent_orchestrator.services.memory_service.MemoryService",
-            return_value=fake_service,
+            "cli_agent_orchestrator.services.memory_gateway.store_memory",
+            new=fake_service.store,
         ),
         patch(
             "cli_agent_orchestrator.mcp_server.server._get_terminal_context_from_env",

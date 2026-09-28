@@ -131,6 +131,10 @@ const SOURCES: &[(&str, &str)] = &[
     // in. Nothing in a palette wants HTTP, which is the point — the file judged least interesting
     // is the one an omission hides in. (#556)
     ("src/theme.rs", include_str!("../src/theme.rs")),
+    (
+        "src/work_status_generated.rs",
+        include_str!("../src/work_status_generated.rs"),
+    ),
     // Test targets and shared test infrastructure.
     (
         "tests/binary_exits_zero.rs",
@@ -882,9 +886,9 @@ fn every_needle_is_actually_findable_in_stripped_code() {
 fn the_scan_set_covers_every_source_in_the_crate() {
     assert_eq!(
         SOURCES.len(),
-        18,
-        "expected 18 Rust sources: 11 under src/ (main, error, handoff, types, env_guard, catalog, \
-         results_pane, server, guided_flow, renderer, theme) and 7 under tests/ \
+        19,
+        "expected 19 Rust sources: 12 under src/ (main, error, handoff, types, env_guard, catalog, \
+         results_pane, server, guided_flow, renderer, theme, work_status_generated) and 7 under tests/ \
          (binary_exits_zero, endpoint_contract, no_backend_attach_call, pty, pty_harness/mod, \
          hermeticity_tripwire, no_colour_literal_outside_theme). A new file must be added to \
          SOURCES or the tripwire silently stops covering it"
@@ -894,7 +898,7 @@ fn the_scan_set_covers_every_source_in_the_crate() {
         .iter()
         .filter(|(path, _)| path.starts_with("src/"))
         .count();
-    assert_eq!(production, 11, "11 production sources");
+    assert_eq!(production, 12, "12 production sources");
 
     let test_sources = SOURCES
         .iter()
@@ -939,8 +943,8 @@ fn the_scan_set_covers_every_source_in_the_crate() {
     }
 
     assert_eq!(
-        declared, 10,
-        "expected 10 `mod` declarations in src/main.rs (every production source except main.rs \
+        declared, 11,
+        "expected 11 `mod` declarations in src/main.rs (every production source except main.rs \
          itself). If this is 0 the loop above matched nothing and its assertion is vacuous"
     );
 

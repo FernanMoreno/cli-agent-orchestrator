@@ -51,7 +51,7 @@ use std::time::Duration;
 
 use crate::catalog::{self, CommandId, ParamKind};
 use crate::error::TuiError;
-use crate::types::{Health, Profile, Provider, SessionParams, Terminal};
+use crate::types::{Health, Profile, Provider, SessionParams, Terminal, WorkView};
 
 /// The documented default host, used **only** when `CAO_API_HOST` is unset.
 ///
@@ -1174,6 +1174,24 @@ impl ServerClient {
         }
     }
 
+    /// `GET /work-items/{work_item_id}` — the explicitly selected durable work projection.
+    ///
+    /// The identifier is encoded as one path segment, and a successful response must name the
+    /// requested work item. `get_json` keeps the existing response-size bound and typed transport
+    /// handling; 404/auth statuses remain `Http`, connection failures remain `Unreachable`, and
+    /// unknown v1 schema versions become `Decode` through [`WorkView`].
+    pub fn work(&self, work_item_id: &str) -> Result<WorkView, TuiError> {
+        let path = format!("/work-items/{}", encode_path_segment(work_item_id));
+        let work: WorkView = self.get_json(&path)?;
+        if work.work_item_id != work_item_id {
+            return Err(TuiError::Validation(format!(
+                "requested work item {work_item_id:?}, but cao-server returned {:?}",
+                work.work_item_id
+            )));
+        }
+        Ok(work)
+    }
+
     /// Runs an IN-APP command's route, streaming the response body into `sink` as it arrives.
     ///
     /// Returns the HTTP status once the body is exhausted. **Streams incrementally** (BR-17):
@@ -1775,6 +1793,68 @@ mod tests {
     }
 
     // ── Mandatory assertion 1 (SR-2, VR-3) ───────────────────────────────────────────────
+
+    fn fixture_http_work_view(work_item_id: &str, schema_version: u64) -> String {
+        let envelope: serde_json::Value = serde_json::from_str(include_str!(
+            "../../test/fixtures/work_contract_v1.json"
+        ))
+        .expect("the checked-in work contract fixture must be JSON");
+        let mut view = envelope["views"][0].clone();
+        view["schema_version"] = serde_json::json!(schema_version);
+        view["work_item_id"] = serde_json::json!(work_item_id);
+        serde_json::to_string(&view).expect("an HTTP WorkView fixture must serialize")
+    }
+
+    #[test]
+    fn work_reads_v1_projection_using_exact_encoded_path_and_checks_identity() {
+        let stub = StubServer::new(200, &fixture_http_work_view("other-work", 1));
+        let error = stub
+            .client()
+            .work("work/fixture & #1")
+            .expect_err("a response for another work item must never count as success");
+        let request = stub.next_request();
+
+        assert_eq!(request.method, "GET");
+        assert_eq!(request.path, "/work-items/work%2Ffixture%20%26%20%231");
+        assert!(
+            matches!(error, TuiError::Validation(_)),
+            "a mismatched durable ID must be a visible typed validation error; got {error:?}"
+        );
+    }
+
+    #[test]
+    fn work_rejects_unknown_versions_and_preserves_http_and_network_errors() {
+        let stub = StubServer::new(200, &fixture_http_work_view("work-fixture", 2));
+        let error = stub
+            .client()
+            .work("work-fixture")
+            .expect_err("an unknown schema version must not be reported as a v1 work item");
+        assert!(matches!(error, TuiError::Decode(_)), "got {error:?}");
+
+        for status in [404, 401, 403] {
+            let stub = StubServer::new(status, "{\"detail\":\"request rejected\"}");
+            let error = stub
+                .client()
+                .work("work-fixture")
+                .expect_err("HTTP errors must remain errors at the WorkView boundary");
+            assert!(
+                matches!(error, TuiError::Http(actual) if actual == status),
+                "HTTP {status} must remain a typed visible error; got {error:?}"
+            );
+        }
+
+        let listener = TcpListener::bind(format!("{LOOPBACK}:0"))
+            .expect("reserve an ephemeral loopback port for the unavailable-server case");
+        let addr = listener
+            .local_addr()
+            .expect("the bound listener has an address")
+            .to_string();
+        drop(listener);
+        let error = ServerClient::with_base_url(http_url(&addr))
+            .work("work-fixture")
+            .expect_err("an unavailable server must remain an error");
+        assert!(matches!(error, TuiError::Unreachable(_)), "got {error:?}");
+    }
 
     /// **`env_vars` is in the BODY and ABSENT from the query string** (SR-1/SR-2, VR-3, #248).
     ///

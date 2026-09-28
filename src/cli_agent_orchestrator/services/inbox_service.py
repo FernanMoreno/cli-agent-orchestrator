@@ -11,6 +11,7 @@ from typing import Dict
 
 from cli_agent_orchestrator.backends.base import TerminalNotFoundError
 from cli_agent_orchestrator.clients.database import (
+    _managed_inbox_target,
     get_pending_messages,
     list_pending_receiver_ids_by_provider,
     list_pending_receiver_ids_older_than,
@@ -206,6 +207,15 @@ class InboxService:
                 for message in batch:
                     logger.error(f"Failed to deliver message {message.id} to {terminal_id}: {e}")
                     update_message_status(message.id, MessageStatus.FAILED)
+
+    def deliver_managed(self, inbox_id: int, port, *, store_context) -> None:
+        """Send one bridge-selected retained row through the active protected port.
+
+        Managed rows never enter the legacy PENDING query and remain RECONCILE
+        after an effect because a terminal paste is not a completion receipt.
+        """
+        target = _managed_inbox_target(inbox_id, store_context=store_context)
+        port.send_keys(target.tmux_session, target.tmux_window, target.message.message)
 
     def poll_opencode_pending_messages(self, registry: PluginRegistry | None = None) -> None:
         """Poll OpenCode terminals for pending inbox messages.

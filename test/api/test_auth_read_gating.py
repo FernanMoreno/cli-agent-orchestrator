@@ -14,8 +14,10 @@ These tests pin BOTH halves of the fix:
 * **Enforcement** — with auth enabled (JWKS stubbed to an in-process key, the
   same hermetic pattern as ``test/security/test_auth.py``), a missing token is
   401, a token holding none of the cao: scopes is 403, and a ``cao:read`` token
-  is admitted past the gate; with auth disabled every one of these endpoints
-  still behaves exactly as before the change.
+  is admitted past the gate on scoped routes. Legacy memory instead requires
+  the local operator with auth disabled: verified JWT readers and admins are
+  rejected with ``legacy_memory_local_only``, and tokens without identity are
+  rejected with 401.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -33,6 +35,12 @@ ISSUER = "https://example.auth0.com/"
 
 # A terminal id that passes the TerminalId path pattern (^[a-f0-9]{8}$).
 TERMINAL_ID = "abcdef12"
+
+_LEGACY_MEMORY_URLS = [
+    f"/terminals/{TERMINAL_ID}/memory-context",
+    "/memory",
+    "/memory/sample-key",
+]
 
 # Every sensitive read endpoint gated by this change, as (method, route path).
 # Literal paths (not derived from the route table) so a renamed/removed route
@@ -92,7 +100,13 @@ def _make_token(private_key, claims):
 
 def _base_claims(extra):
     now = datetime.now(timezone.utc)
-    claims = {"aud": AUDIENCE, "iss": ISSUER, "exp": now + timedelta(hours=1), "iat": now}
+    claims = {
+        "aud": AUDIENCE,
+        "iss": ISSUER,
+        "sub": "read-gating-user",
+        "exp": now + timedelta(hours=1),
+        "iat": now,
+    }
     claims.update(extra)
     return claims
 
@@ -185,7 +199,8 @@ def test_scopeless_token_is_403_when_auth_enabled(
     """A token holding none of cao:read/write/admin is 403 on every gated read.
 
     403 (not 401) is the correct expectation: the token authenticates fine, but
-    ``require_any_scope`` denies the missing authorization.
+    scoped routes deny the missing authorization. Legacy memory rejects the
+    verified JWT principal because it requires the local operator.
     """
     _enable_auth(monkeypatch, rsa_key)
     token = _make_token(rsa_key, _base_claims({"scope": "cao:metrics"}))
@@ -195,9 +210,12 @@ def test_scopeless_token_is_403_when_auth_enabled(
     assert resp.status_code == 403
 
 
-@pytest.mark.parametrize("method,url,kwargs", _sample_requests())
+@pytest.mark.parametrize(
+    "method,url,kwargs",
+    [request for request in _sample_requests() if request[1] not in _LEGACY_MEMORY_URLS],
+)
 def test_read_token_admitted_when_auth_enabled(client, monkeypatch, rsa_key, method, url, kwargs):
-    """A valid cao:read token passes the gate (never 401/403).
+    """A valid cao:read token passes scoped routes (never 401/403).
 
     The underlying service may return empty lists, 404s, or 500s depending on
     the test environment — the assertion that matters is that the read-scoped
@@ -209,6 +227,28 @@ def test_read_token_admitted_when_auth_enabled(client, monkeypatch, rsa_key, met
         url, headers={"Authorization": f"Bearer {token}"}, **kwargs
     )
     assert resp.status_code not in (401, 403)
+
+
+@pytest.mark.parametrize("url", _LEGACY_MEMORY_URLS)
+@pytest.mark.parametrize("scope", ["cao:read", "cao:admin"])
+def test_legacy_memory_rejects_verified_jwt_principal(client, monkeypatch, rsa_key, url, scope):
+    """Legacy memory remains local-only even for authenticated administrators."""
+    _enable_auth(monkeypatch, rsa_key)
+    token = _make_token(rsa_key, _base_claims({"scope": scope}))
+    resp = client.get(url, headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "legacy_memory_local_only"
+
+
+@pytest.mark.parametrize("url", _LEGACY_MEMORY_URLS)
+def test_legacy_memory_rejects_token_without_identity(client, monkeypatch, rsa_key, url):
+    """A valid signature and read scope cannot replace a verified subject."""
+    _enable_auth(monkeypatch, rsa_key)
+    claims = _base_claims({"scope": "cao:read"})
+    claims.pop("sub")
+    token = _make_token(rsa_key, claims)
+    resp = client.get(url, headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 401
 
 
 def test_wrong_audience_token_is_401_when_auth_enabled(client, monkeypatch, rsa_key):

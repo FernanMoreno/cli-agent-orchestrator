@@ -40,6 +40,8 @@ from cli_agent_orchestrator.clients.database import (
     _utcnow,
 )
 from cli_agent_orchestrator.services.memory_service import MemoryService
+from cli_agent_orchestrator.services.legacy_memory_access import audited_legacy
+from cli_agent_orchestrator.services.knowledge_policy import redact_knowledge_data
 
 logger = logging.getLogger(__name__)
 
@@ -182,10 +184,27 @@ def _rank_then_created(row: Any) -> tuple:
 class MemoryRelationshipService:
     """Sole reader/writer of the ``memory_relationships`` table."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, memory_service=None) -> None:
+        self._memory_owner = memory_service
+        self._audit_memory = memory_service
         # Reuse MemoryService's static sanitizers; no instance state shared.
         self._sanitize_key = MemoryService._sanitize_key
         self._sanitize_scope_id = MemoryService._sanitize_scope_id
+
+    def _get_db_session(self):
+        return (
+            self._memory_owner._get_db_session()
+            if self._memory_owner is not None
+            else SessionLocal()
+        )
+
+    @property
+    def _policy_memory(self):
+        if self._audit_memory is None:
+            with self._get_db_session() as session:
+                engine = session.get_bind()
+            self._audit_memory = MemoryService(db_engine=engine)
+        return self._audit_memory
 
     # ------------------------------------------------------------------ #
     # scope_id normalisation (sentinel is scoped to memory_relationships)
@@ -263,6 +282,11 @@ class MemoryRelationshipService:
             raise ValueError(
                 f"attributes exceed {MAX_ATTRIBUTES_BYTES} bytes ({encoded_bytes} bytes)"
             )
+        encoded = json.dumps(
+            redact_knowledge_data(json.loads(encoded)), separators=(",", ":"), sort_keys=True
+        )
+        if len(encoded.encode("utf-8")) > MAX_ATTRIBUTES_BYTES:
+            raise ValueError("redacted attributes exceed byte limit")
         return encoded
 
     def _sanitize_endpoints(self, source_key: str, target_key: str) -> tuple:
@@ -302,7 +326,7 @@ class MemoryRelationshipService:
         attrs = None
         if row.attributes_json:
             try:
-                attrs = json.loads(row.attributes_json)
+                attrs = redact_knowledge_data(json.loads(row.attributes_json))
             except (ValueError, TypeError):
                 attrs = None
         stale = False
@@ -350,6 +374,7 @@ class MemoryRelationshipService:
     # ------------------------------------------------------------------ #
     # write operations
     # ------------------------------------------------------------------ #
+    @audited_legacy("relationships", owner="_policy_memory")
     def create(
         self,
         scope: str,
@@ -376,7 +401,7 @@ class MemoryRelationshipService:
         src, tgt = self._sanitize_endpoints(source_key, target_key)
         sentinel = self._to_sentinel(scope_id)
 
-        with SessionLocal() as db:
+        with self._get_db_session() as db:
             self._assert_endpoint_exists(db, scope, scope_id, src)
             self._assert_endpoint_exists(db, scope, scope_id, tgt)
             existing = self._find_existing(db, scope, sentinel, src, tgt, type, origin)
@@ -468,6 +493,7 @@ class MemoryRelationshipService:
             .first()
         )
 
+    @audited_legacy("relationships", owner="_policy_memory")
     def replace_set(
         self,
         scope: str,
@@ -504,7 +530,7 @@ class MemoryRelationshipService:
         # Validate + resolve the incoming set first (fail-closed); collect valid
         # targets, report the rest (FR-1.5-style) without aborting the whole op.
         valid: Dict[str, EdgeInput] = {}
-        with SessionLocal() as db:
+        with self._get_db_session() as db:
             for edge in edges:
                 try:
                     tgt = self._sanitize_key(edge.target_key)
@@ -679,6 +705,7 @@ class MemoryRelationshipService:
             raise ValueError(f"relationship not found: {id!r}")
         return row
 
+    @audited_legacy("relationships", owner="_policy_memory")
     def patch(
         self,
         id: str,
@@ -694,7 +721,7 @@ class MemoryRelationshipService:
         a future dedicated call; #511 has no clear-to-null API requirement)."""
         if status is not None:
             self._validate_status(status)
-        with SessionLocal() as db:
+        with self._get_db_session() as db:
             row = self._get_row(db, id)
             if status is not None:
                 row.status = status
@@ -710,9 +737,10 @@ class MemoryRelationshipService:
             self._audit("patch", row)
             return self._to_dto(row)
 
+    @audited_legacy("relationships", owner="_policy_memory")
     def promote(self, id: str) -> RelationshipDTO:
         """proposal -> active (FR-2.2)."""
-        with SessionLocal() as db:
+        with self._get_db_session() as db:
             row = self._get_row(db, id)
             if row.status in ("rejected", "deleted"):
                 raise ValueError(f"cannot promote a {row.status} relationship; re-create it")
@@ -723,9 +751,10 @@ class MemoryRelationshipService:
             self._audit("promote", row)
             return self._to_dto(row)
 
+    @audited_legacy("relationships", owner="_policy_memory")
     def reject(self, id: str) -> RelationshipDTO:
         """-> rejected (FR-2.2)."""
-        with SessionLocal() as db:
+        with self._get_db_session() as db:
             row = self._get_row(db, id)
             row.status = "rejected"
             row.updated_at = _utcnow()
@@ -734,9 +763,10 @@ class MemoryRelationshipService:
             self._audit("reject", row)
             return self._to_dto(row)
 
+    @audited_legacy("relationships", owner="_policy_memory")
     def soft_delete(self, id: str) -> RelationshipDTO:
         """-> deleted (auditable soft-delete; row retained, FR-2.4)."""
-        with SessionLocal() as db:
+        with self._get_db_session() as db:
             row = self._get_row(db, id)
             row.status = "deleted"
             row.updated_at = _utcnow()
@@ -745,6 +775,7 @@ class MemoryRelationshipService:
             self._audit("soft_delete", row)
             return self._to_dto(row)
 
+    @audited_legacy("relationships", owner="_policy_memory")
     def purge_for_key(self, scope: str, scope_id: Optional[str], key: str) -> int:
         """HARD-delete every row touching ``key`` in either direction.
 
@@ -770,7 +801,7 @@ class MemoryRelationshipService:
 
         k = self._sanitize_key(key)
         sentinel = self._to_sentinel(scope_id)
-        with SessionLocal() as db:
+        with self._get_db_session() as db:
             rows = (
                 db.query(MemoryRelationshipModel)
                 .filter(
@@ -810,6 +841,7 @@ class MemoryRelationshipService:
             q = q.filter(MemoryMetadataModel.scope_id.is_(None))
         return {m.key: m.updated_at for m in q.all() if m.updated_at is not None}
 
+    @audited_legacy("relationships", owner="_policy_memory")
     def list_relationships(
         self,
         scope: str,
@@ -835,7 +867,7 @@ class MemoryRelationshipService:
         legitimately point at a key outside the set).
         """
         sentinel = self._to_sentinel(scope_id)
-        with SessionLocal() as db:
+        with self._get_db_session() as db:
             q = db.query(MemoryRelationshipModel).filter(
                 MemoryRelationshipModel.scope == scope,
                 MemoryRelationshipModel.scope_id == sentinel,
@@ -876,8 +908,9 @@ class MemoryRelationshipService:
             dtos = [d for d in dtos if d.stale]
         return dtos
 
+    @audited_legacy("relationships", owner="_policy_memory")
     def get(self, id: str) -> Optional[RelationshipDTO]:
-        with SessionLocal() as db:
+        with self._get_db_session() as db:
             row = db.query(MemoryRelationshipModel).filter(MemoryRelationshipModel.id == id).first()
             if row is None:
                 return None
@@ -886,6 +919,7 @@ class MemoryRelationshipService:
             )
             return self._to_dto(row, src_map.get(row.source_key))
 
+    @audited_legacy("relationships", owner="_policy_memory")
     def active_targets(
         self,
         scope: str,
@@ -896,7 +930,7 @@ class MemoryRelationshipService:
         """Active edge targets of ``type`` from the source, in (rank, created_at)
         order — the See-Also / recall projection helper (FR-4.1/4.2)."""
         sentinel = self._to_sentinel(scope_id)
-        with SessionLocal() as db:
+        with self._get_db_session() as db:
             rows = (
                 db.query(MemoryRelationshipModel)
                 .filter(
@@ -911,6 +945,7 @@ class MemoryRelationshipService:
         rows.sort(key=_rank_then_created)
         return [r.target_key for r in rows]
 
+    @audited_legacy("relationships", owner="_policy_memory")
     def active_targets_for(
         self,
         scope: str,
@@ -938,7 +973,7 @@ class MemoryRelationshipService:
         # Map sanitized -> caller's original, as superseded_targets does. A dict
         # also collapses duplicate inputs, so the IN list carries no repeats.
         sanitized = {self._sanitize_key(k): k for k in source_keys}
-        with SessionLocal() as db:
+        with self._get_db_session() as db:
             rows = (
                 db.query(MemoryRelationshipModel)
                 .filter(
@@ -962,12 +997,13 @@ class MemoryRelationshipService:
             out[original] = [r.target_key for r in group]
         return out
 
+    @audited_legacy("relationships", owner="_policy_memory")
     def is_superseded(self, scope: str, scope_id: Optional[str], key: str) -> bool:
         """True iff an ACTIVE ``supersedes`` edge TARGETS ``key`` (FR-4.6 ranking
         input): some memory supersedes this one, so it must not outrank active
         guidance."""
         sentinel = self._to_sentinel(scope_id)
-        with SessionLocal() as db:
+        with self._get_db_session() as db:
             hit = (
                 db.query(MemoryRelationshipModel)
                 .filter(
@@ -981,6 +1017,7 @@ class MemoryRelationshipService:
             )
         return hit is not None
 
+    @audited_legacy("relationships", owner="_policy_memory")
     def superseded_targets(self, scope: str, scope_id: Optional[str], keys: List[str]) -> set:
         """BATCH form of is_superseded (FR-4.6): given many candidate keys in one
         (scope, scope_id), return the subset that are the TARGET of an ACTIVE
@@ -990,7 +1027,7 @@ class MemoryRelationshipService:
             return set()
         sentinel = self._to_sentinel(scope_id)
         sanitized = {self._sanitize_key(k): k for k in keys}
-        with SessionLocal() as db:
+        with self._get_db_session() as db:
             rows = (
                 db.query(MemoryRelationshipModel.target_key)
                 .filter(
@@ -1005,6 +1042,7 @@ class MemoryRelationshipService:
         # Map sanitized targets back to the caller's original key strings.
         return {sanitized[r[0]] for r in rows if r[0] in sanitized}
 
+    @audited_legacy("relationships", owner="_policy_memory")
     def contradictions_for(
         self, scope: str, scope_id: Optional[str], key: str
     ) -> List[RelationshipDTO]:
@@ -1023,7 +1061,7 @@ class MemoryRelationshipService:
 
         sentinel = self._to_sentinel(scope_id)
         sk = self._sanitize_key(key)
-        with SessionLocal() as db:
+        with self._get_db_session() as db:
             rows = (
                 db.query(MemoryRelationshipModel)
                 .filter(

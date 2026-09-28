@@ -61,6 +61,15 @@ def _store(svc, key, content, scope="global", memory_type="reference", tags="", 
     )
 
 
+def _store_historical_secret(svc, key, content):
+    """Emulate a pre-redaction wiki without disabling the current store policy."""
+    marker = "historical-secret-marker"
+    memory = _store(svc, key, content.replace(PLANTED_AWS_KEY, marker))
+    path = svc.get_wiki_path("global", None, key)
+    path.write_text(path.read_text().replace(marker, PLANTED_AWS_KEY))
+    return memory
+
+
 def _frontmatter(path):
     # Parsed with python-frontmatter (already a declared dependency) rather
     # than importing yaml, which the project only pulls in transitively.
@@ -167,7 +176,7 @@ class TestSecretGate:
 
     def test_default_skips_topic_with_pattern_name_only(self, svc, backend, dest, caplog):
         _store(svc, "clean-topic", "Nothing sensitive here.")
-        _store(svc, "leaky-topic", f"My key is {PLANTED_AWS_KEY} do not share.")
+        _store_historical_secret(svc, "leaky-topic", f"My key is {PLANTED_AWS_KEY} do not share.")
         with caplog.at_level("DEBUG"):
             report = backend.export_bundle("global", None, dest, False, False)
         assert report.exported == 1
@@ -179,7 +188,7 @@ class TestSecretGate:
         assert PLANTED_AWS_KEY not in caplog.text
 
     def test_redact_exports_with_marker(self, svc, backend, dest):
-        _store(svc, "leaky-topic", f"My key is {PLANTED_AWS_KEY} do not share.")
+        _store_historical_secret(svc, "leaky-topic", f"My key is {PLANTED_AWS_KEY} do not share.")
         report = backend.export_bundle("global", None, dest, False, True)
         assert report.redacted == 1
         assert report.skipped_secret == 0
@@ -188,7 +197,7 @@ class TestSecretGate:
         assert "[REDACTED:aws_access_key]" in text
 
     def test_skipped_topic_absent_from_index(self, svc, backend, dest):
-        _store(svc, "leaky-topic", f"key {PLANTED_AWS_KEY}")
+        _store_historical_secret(svc, "leaky-topic", f"key {PLANTED_AWS_KEY}")
         _store(svc, "clean-topic", "fine")
         backend.export_bundle("global", None, dest, False, False)
         index = (dest / "index.md").read_text(encoding="utf-8")
@@ -196,8 +205,11 @@ class TestSecretGate:
         assert "clean-topic" in index
 
     def test_history_sections_gated_when_included(self, svc, backend, dest):
-        _store(svc, "old-leak", f"old entry with {PLANTED_AWS_KEY}")
+        _store(svc, "old-leak", "old entry with historical-secret-marker")
         _store(svc, "old-leak", "latest entry is clean")
+        # Plant the legacy bytes after modern writes, which sanitize existing history.
+        path = svc.get_wiki_path("global", None, "old-leak")
+        path.write_text(path.read_text().replace("historical-secret-marker", PLANTED_AWS_KEY))
         # Without history the latest-only content is clean → exports.
         report = backend.export_bundle("global", None, dest, False, False)
         assert report.exported == 1
@@ -341,7 +353,7 @@ class TestSeeAlso:
 
     def test_link_to_skipped_topic_degrades_to_text(self, svc, backend, dest):
         _store(svc, "source-topic", "links out")
-        _store(svc, "secret-topic", f"key {PLANTED_AWS_KEY}")
+        _store_historical_secret(svc, "secret-topic", f"key {PLANTED_AWS_KEY}")
         self._append_see_also(svc, "source-topic", "secret-topic")
         report = backend.export_bundle("global", None, dest, False, False)
         assert report.links_dropped == 1
@@ -446,3 +458,16 @@ class TestImportImplemented:
         assert report.imported == 0
         assert report.rejected == 0
         assert report.target_scope == "global"
+
+
+def test_historical_metadata_redacted_before_frontmatter(svc, backend, dest):
+    """Historical metadata must pass the shared redactor independently of body gating."""
+    _store(svc, "old-metadata", "Clean topic body.", tags="old-marker")
+    path = svc.get_wiki_path("global", None, "old-metadata")
+    path.write_text(path.read_text().replace("tags: old-marker", f"tags: {PLANTED_AWS_KEY}"))
+    report = backend.export_bundle("global", None, dest, False, False)
+    assert report.exported == 1
+    assert report.skipped_secret == 0
+    assert PLANTED_AWS_KEY not in (dest / "old-metadata.md").read_text()
+    metadata, _ = _frontmatter(dest / "old-metadata.md")
+    assert isinstance(metadata["type"], str)

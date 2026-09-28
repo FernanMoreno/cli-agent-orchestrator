@@ -508,7 +508,9 @@ def test_settle_step_signature_has_no_attempts_parameter_and_returns_bool():
         "result_json",
         "output_json",
         "error",
+        "error_kind",
     ]
+    assert sig.parameters["error_kind"].default is None
     assert "attempts" not in sig.parameters
     assert sig.return_annotation in (bool, "bool")
 

@@ -11,6 +11,7 @@ Guard matrix:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -388,3 +389,149 @@ def test_leading_newline_edit_returns_422(client, monkeypatch):
     finally:
         if hasattr(app.state, "approval_bridge"):
             del app.state.approval_bridge
+
+
+def test_bound_resume_forwards_only_verified_principal_and_rejects_extra_fields(monkeypatch):
+    """The existing scope guard is not an identity substitute for a bound effect."""
+    import cli_agent_orchestrator.api.main as main_mod
+
+    captured = {}
+    principal = object()
+
+    class BoundConstruct:
+        def get_interrupt(self, _interrupt_id):
+            return object()
+
+        def has_durable_binding(self, _interrupt_id):
+            return True
+
+        async def resume(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(id=kwargs["interrupt_id"], resolved=True, outcome="approve")
+
+    async def verified(_request, authorization=None):
+        assert authorization is None
+        return principal
+
+    monkeypatch.setattr(main_mod, "get_current_principal", verified)
+    app.state.approval_bridge = SimpleNamespace(construct=BoundConstruct())
+    try:
+        response = client.post(
+            "/agui/v1/interrupts/bound-one/resume", json={"decision": "approve"}
+        )
+        extra = client.post(
+            "/agui/v1/interrupts/bound-one/resume",
+            json={"decision": "approve", "principal_id": "forged"},
+        )
+    finally:
+        if hasattr(app.state, "approval_bridge"):
+            del app.state.approval_bridge
+
+    assert response.status_code == 200
+    assert captured["principal"] is principal
+    assert extra.status_code == 422
+
+
+def test_bound_conflict_is_a_structured_409_not_a_value_error_422(monkeypatch):
+    """A stale durable binding is a conflict, not malformed client input."""
+    import cli_agent_orchestrator.api.main as main_mod
+    from cli_agent_orchestrator.services.agui.handoff_approval import DurableApprovalConflict
+
+    class BoundConstruct:
+        def get_interrupt(self, _interrupt_id):
+            return object()
+
+        def has_durable_binding(self, _interrupt_id):
+            return True
+
+        async def resume(self, **_kwargs):
+            raise DurableApprovalConflict("registered binding is stale")
+
+    async def verified(_request, authorization=None):
+        return object()
+
+    monkeypatch.setattr(main_mod, "get_current_principal", verified)
+    app.state.approval_bridge = SimpleNamespace(construct=BoundConstruct())
+    try:
+        response = client.post(
+            "/agui/v1/interrupts/bound-conflict/resume", json={"decision": "approve"}
+        )
+    finally:
+        if hasattr(app.state, "approval_bridge"):
+            del app.state.approval_bridge
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "durable_approval_conflict",
+        "message": "registered binding is stale",
+        "retryable": False,
+        "required_action": "refresh_bound_approval",
+    }
+
+
+def test_bound_backend_failure_is_502_uncertain_and_replay_is_fenced(monkeypatch, tmp_path):
+    """Post-claim backend failures have one non-retryable REST outcome."""
+    import cli_agent_orchestrator.api.main as main_mod
+    from cli_agent_orchestrator.services.work_decisions import WorkDecisions
+    from test.services.test_work_decisions import EFFECT, EVIDENCE, _decision_context
+
+    context = _decision_context(tmp_path)
+    deliveries = []
+
+    class ExplodingDelivery:
+        def send_special_key(self, terminal_id, key):
+            deliveries.append((terminal_id, key))
+            raise RuntimeError("backend disconnected after claim")
+
+        def send_input(self, terminal_id, text, **_kwargs):
+            deliveries.append((terminal_id, text))
+            raise RuntimeError("backend disconnected after claim")
+
+    construct = AgentHandoffWithApproval(
+        emitter=RecordingUiEmitter(),
+        answer_delivery=ExplodingDelivery(),
+        decisions=WorkDecisions(context.repository),
+    )
+    interrupt = construct.on_provider_waiting("t-bound-failure", "claude_code", "Approve?")
+    construct.register_durable_binding(
+        interrupt_id=interrupt.id,
+        work_item_id=context.original.work_item_id,
+        attempt_id=context.original.attempt_id,
+        generation=context.original.generation,
+        job_id=context.job["id"],
+        grant_id=context.grant.id,
+        grant_revision=context.grant.revision,
+        contract_hash=context.original.contract_hash,
+        evidence_refs=EVIDENCE,
+        idempotency_key="endpoint-bound-failure",
+        effect=EFFECT,
+    )
+
+    async def verified(_request, authorization=None):
+        return context.actor
+
+    monkeypatch.setattr(main_mod, "get_current_principal", verified)
+    app.state.approval_bridge = SimpleNamespace(construct=construct)
+    try:
+        first = client.post(
+            f"/agui/v1/interrupts/{interrupt.id}/resume", json={"decision": "approve"}
+        )
+        replay = client.post(
+            f"/agui/v1/interrupts/{interrupt.id}/resume", json={"decision": "approve"}
+        )
+    finally:
+        if hasattr(app.state, "approval_bridge"):
+            del app.state.approval_bridge
+
+    expected = {
+        "code": "durable_delivery_uncertain",
+        "retryable": False,
+        "required_action": "reconcile_terminal_before_new_decision",
+    }
+    assert first.status_code == replay.status_code == 502
+    assert {key: first.json()["detail"][key] for key in expected} == expected
+    assert {key: replay.json()["detail"][key] for key in expected} == expected
+    assert deliveries == [("t-bound-failure", "Enter")]
+    with context.repository.read_snapshot() as connection:
+        assert connection.execute("SELECT count(*) FROM work_human_decisions").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM work_human_decision_claims").fetchone()[0] == 1

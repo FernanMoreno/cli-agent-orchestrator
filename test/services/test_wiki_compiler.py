@@ -143,7 +143,7 @@ class TestU17PlanCases:
         assert "## 20" in result.compiled_content  # ## YYYY-...
         assert NEW_ENTRY in result.compiled_content
 
-    def test_compile_mode_append_bypasses_llm(self, fake_llm, monkeypatch):
+    def test_compile_mode_append_bypasses_llm(self, fake_llm, monkeypatch, tmp_path):
         """U1.7: ``compile_mode=append`` causes ``MemoryService.store()`` to skip
         the compiler entirely — so the LLM is never called.
 
@@ -177,9 +177,9 @@ class TestU17PlanCases:
         from cli_agent_orchestrator.clients.database import Base
         from cli_agent_orchestrator.services.memory_service import MemoryService
 
-        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+        engine = create_engine(f"sqlite:///{tmp_path / 'metadata.db'}", connect_args={"check_same_thread": False})
         Base.metadata.create_all(bind=engine)
-        svc = MemoryService(base_dir=None, db_engine=engine)  # base_dir picked by service
+        svc = MemoryService(base_dir=tmp_path / "memory", db_engine=engine)  # base_dir picked by service
         ctx = {
             "terminal_id": "t1",
             "session_name": "s1",
@@ -773,7 +773,7 @@ class TestT10ModeFlagBypass:
             "Ignoring unknown CAO_MEMORY_COMPILE_MODE" in r.getMessage() for r in caplog.records
         )
 
-    def test_compile_mode_append_does_not_construct_llm_client(self, monkeypatch):
+    def test_compile_mode_append_does_not_construct_llm_client(self, monkeypatch, tmp_path):
         """T10: ``compile_mode=append`` means the SDK client is never built.
 
         We monkeypatch ``_build_llm_client`` to record calls. ``MemoryService``
@@ -793,9 +793,9 @@ class TestT10ModeFlagBypass:
         from cli_agent_orchestrator.clients.database import Base
         from cli_agent_orchestrator.services.memory_service import MemoryService
 
-        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+        engine = create_engine(f"sqlite:///{tmp_path / 'metadata.db'}", connect_args={"check_same_thread": False})
         Base.metadata.create_all(bind=engine)
-        svc = MemoryService(base_dir=None, db_engine=engine)
+        svc = MemoryService(base_dir=tmp_path / "memory", db_engine=engine)
         ctx = {
             "terminal_id": "t1",
             "session_name": "s1",

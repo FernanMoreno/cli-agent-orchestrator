@@ -11,9 +11,9 @@ Pure-read auditor producing a list of ``LintIssue`` records. Detectors:
 - ``graph_density`` — U2 forward contract; ``related_keys`` references
   funneling > 5 distinct articles into the same key.
 
-Pure-read invariant: no ``store``, no
-``forget``, no ``compile``, no ``find_related``, no SQL writes. A
-SQLAlchemy event listener aborts the session on any attempted flush.
+Metadata inspection never calls ``store``, ``forget`` or ``compile``; its
+SQLAlchemy session aborts on any attempted flush. Access audit and derived
+relationship persistence use their own owners and transactions.
 """
 
 import asyncio
@@ -28,6 +28,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from cli_agent_orchestrator.services.knowledge_policy import redact_knowledge_content
+from cli_agent_orchestrator.services.legacy_memory_access import propagate_legacy_policy_failure
 from cli_agent_orchestrator.services.wiki_compiler import (
     SEE_ALSO_LINK_RE,
     _build_llm_client,
@@ -146,12 +148,16 @@ def _make_issue(
     log-rendered string); the healer matches it against the run's target so a
     finding never crosses containers.
     """
-    sanitized = _sanitize_for_log(description, max_len=DESCRIPTION_MAX_CHARS)
+    sanitized = _sanitize_for_log(
+        redact_knowledge_content(description)[0], max_len=DESCRIPTION_MAX_CHARS
+    )
     return LintIssue(
         issue_type=issue_type,
-        key=_sanitize_for_log(key, max_len=DESCRIPTION_MAX_CHARS),
+        key=_sanitize_for_log(redact_knowledge_content(key)[0], max_len=DESCRIPTION_MAX_CHARS),
         related_key=(
-            _sanitize_for_log(related_key, max_len=DESCRIPTION_MAX_CHARS)
+            _sanitize_for_log(
+                redact_knowledge_content(related_key)[0], max_len=DESCRIPTION_MAX_CHARS
+            )
             if related_key is not None
             else None
         ),
@@ -374,8 +380,8 @@ async def _check_pair(
     Caller filters out ``contradicts=False`` non-suspicion outcomes and
     converts those to None upstream.
     """
-    sanitised_a = _strip_sentinels(_truncate_for_pair(body_a))
-    sanitised_b = _strip_sentinels(_truncate_for_pair(body_b))
+    sanitised_a = _strip_sentinels(_truncate_for_pair(redact_knowledge_content(body_a)[0]))
+    sanitised_b = _strip_sentinels(_truncate_for_pair(redact_knowledge_content(body_b)[0]))
 
     user_prompt = (
         "ARTICLE_A:\n"
@@ -956,6 +962,46 @@ async def run_lint(
     repo_root: Optional[str] = None,
     base_dir: Optional[Path] = None,
     db_engine: Any = None,
+    memory_service: Any = None,
+) -> list:
+    """Authorize and audit inspection before reading metadata or calling a model.
+
+    Lint consumes memory as context, so the existing ``context`` audit action
+    applies; ``operation=run_lint`` distinguishes it without a new vocabulary.
+    Metadata remains read-only; audit and derived relationships have separate
+    transactions against this same service's database.
+    """
+    from cli_agent_orchestrator.services.memory_service import MemoryService
+    from cli_agent_orchestrator.services.settings_service import is_memory_enabled
+
+    if not is_memory_enabled():
+        return []
+    svc = (
+        memory_service
+        if memory_service is not None
+        else MemoryService(base_dir=base_dir, db_engine=db_engine)
+    )
+    with svc._legacy_operation(
+        "context", {"operation": "run_lint", "project_hash": project_hash, "scope": scope}
+    ):
+        return await _run_lint(
+            project_hash,
+            scope=scope,
+            timeout_s=timeout_s,
+            max_pairs=max_pairs,
+            repo_root=repo_root,
+            memory_service=svc,
+        )
+
+
+async def _run_lint(
+    project_hash: str,
+    *,
+    scope: Optional[str],
+    timeout_s: float,
+    max_pairs: int,
+    repo_root: Optional[str],
+    memory_service: Any,
 ) -> list:
     """Run all detectors and return a list of LintIssue.
 
@@ -980,7 +1026,8 @@ async def run_lint(
 
         if not is_memory_enabled():
             return []
-    except Exception:
+    except Exception as _policy_error:
+        propagate_legacy_policy_failure(_policy_error)
         pass
 
     repo_root_resolved = os.path.realpath(repo_root or os.getcwd())
@@ -993,11 +1040,11 @@ async def run_lint(
     scope_dirs: dict = {}
     base_resolved: Optional[Path] = None
     try:
-        from cli_agent_orchestrator.services.memory_service import MemoryService
-
-        svc = MemoryService(base_dir=base_dir, db_engine=db_engine)
+        svc = memory_service
         base_resolved = svc.base_dir.resolve()
-        session = _open_readonly_session(db_engine)
+        with svc._get_db_session() as owner_session:
+            engine = owner_session.get_bind()
+        session = _open_readonly_session(engine)
         try:
             q = session.query(MemoryMetadataModel)
             if scope is not None:
@@ -1030,6 +1077,7 @@ async def run_lint(
                 container,
             )
     except Exception as e:
+        propagate_legacy_policy_failure(e)
         logger.warning(f"lint SQL load failed: {e}")
         issues.append(
             _make_issue(
@@ -1052,7 +1100,7 @@ async def run_lint(
                 ):
                     continue
             if fp.exists():
-                r["content"] = fp.read_text(encoding="utf-8")
+                r["content"] = redact_knowledge_content(fp.read_text(encoding="utf-8"))[0]
         except OSError:
             continue
         rows_by_scope.setdefault((r["scope"], r["scope_id"]), []).append(r)
@@ -1078,6 +1126,7 @@ async def run_lint(
                 issues.extend(_detect_orphan_pages(pdir, sc, sc_id, db_keys, base_resolved))
         completion["orphan_page"] = True
     except Exception as e:
+        propagate_legacy_policy_failure(e)
         logger.warning(f"orphan_page detector failed: {e}")
         issues.append(
             _make_issue(
@@ -1093,6 +1142,7 @@ async def run_lint(
         issues.extend(await asyncio.to_thread(_detect_stale_claims, rows, repo_root_resolved))
         completion["stale_claim"] = True
     except Exception as e:
+        propagate_legacy_policy_failure(e)
         logger.warning(f"stale_claim detector failed: {e}")
         issues.append(
             _make_issue(
@@ -1108,6 +1158,7 @@ async def run_lint(
         issues.extend(_detect_poison_frequency(rows_by_scope))
         completion["poison_frequency"] = True
     except Exception as e:
+        propagate_legacy_policy_failure(e)
         logger.warning(f"poison_frequency detector failed: {e}")
         issues.append(
             _make_issue(
@@ -1123,6 +1174,7 @@ async def run_lint(
         issues.extend(_detect_graph_density(rows_by_scope))
         completion["graph_density"] = True
     except Exception as e:
+        propagate_legacy_policy_failure(e)
         logger.warning(f"graph_density detector failed: {e}")
         issues.append(
             _make_issue(
@@ -1165,6 +1217,7 @@ async def run_lint(
                     )
                 )
     except Exception as e:
+        propagate_legacy_policy_failure(e)
         logger.warning(f"contradiction detector failed: {e}")
         issues.append(
             _make_issue(
@@ -1208,6 +1261,7 @@ async def run_lint(
             n_errors=str(n_errors),
         )
     except Exception as e:
+        propagate_legacy_policy_failure(e)
         logger.debug(f"audit_log lint write failed: {e}")
 
     # Persist contradiction findings through the single relationship service
@@ -1232,15 +1286,21 @@ async def run_lint(
             issues,
             scope,
             linted_sources=_contradiction_candidates(rows) if _exhaustive else None,
+            memory_service=svc,
         )
     except Exception as e:  # noqa: BLE001 — non-blocking
+        propagate_legacy_policy_failure(e)
         logger.debug(f"contradiction persistence skipped: {e}")
 
     return issues
 
 
 def _persist_contradictions(
-    issues: list, scope: Optional[str], *, linted_sources: Optional[set] = None
+    issues: list,
+    scope: Optional[str],
+    *,
+    linted_sources: Optional[set] = None,
+    memory_service: Any = None,
 ) -> None:
     """Route wiki_lint contradiction findings into the relationship store.
 
@@ -1270,7 +1330,7 @@ def _persist_contradictions(
     for issue in issues:
         if issue.issue_type != "contradiction" or issue.related_key is None:
             continue
-        desc = (issue.description or "")[:512]
+        desc = redact_knowledge_content(issue.description or "")[0][:512]
         grouped.setdefault((issue.scope_id, issue.key), []).append((issue.related_key, desc))
     # Every EXAMINED source with no finding this run gets an empty edge set, so
     # replace_set retracts whatever it held. Without this a resolved source is
@@ -1280,7 +1340,7 @@ def _persist_contradictions(
     if not grouped:
         return
 
-    rel_svc = MemoryRelationshipService()
+    rel_svc = MemoryRelationshipService(memory_service=memory_service)
     for (scope_id, source_key), targets in grouped.items():
         eff_scope = scope or "global"
         edges = [
@@ -1292,4 +1352,5 @@ def _persist_contradictions(
                 eff_scope, scope_id, source_key, "wiki_lint", "contradiction", edges
             )
         except Exception as e:  # noqa: BLE001 — per-source best-effort
+            propagate_legacy_policy_failure(e)
             logger.debug(f"contradiction replace_set failed for {source_key}: {e}")

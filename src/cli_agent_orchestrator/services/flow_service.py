@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import subprocess
+from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, cast
@@ -28,14 +29,23 @@ from cli_agent_orchestrator.clients.database import update_flow_enabled as db_up
 from cli_agent_orchestrator.clients.database import (
     update_flow_run_times as db_update_flow_run_times,
 )
+from cli_agent_orchestrator.clients.work_repository import WorkRepository
+from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.constants import DEFAULT_PROVIDER, PROVIDERS
 from cli_agent_orchestrator.models.flow import Flow
 from cli_agent_orchestrator.models.kiro_engine import parse_kiro_engine
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services.fifo_reader import fifo_manager
+from cli_agent_orchestrator.services.session_lock import session_lifecycle_lock
 from cli_agent_orchestrator.services.status_monitor import status_monitor
-from cli_agent_orchestrator.services.terminal_service import create_terminal, send_input
+from cli_agent_orchestrator.services.terminal_service import (
+    WorkOwnedTerminalError,
+    WorkOwnershipStoreUnavailableError,
+    create_terminal,
+    send_input,
+)
+from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 from cli_agent_orchestrator.utils.template import render_template
 
 logger = logging.getLogger(__name__)
@@ -208,6 +218,100 @@ def _is_terminal_busy(terminal_id: str) -> bool:
         return False
 
 
+def _verify_flow_terminal_ownership(terminal_ids: list[str]) -> None:
+    """Check current pane IDs against a verified existing Work store."""
+    try:
+        with WorkRepository(constants.DATABASE_FILE).read_snapshot() as connection:
+            for terminal_id in terminal_ids:
+                if connection.execute(
+                    "SELECT 1 FROM work_attempts WHERE terminal_id=? LIMIT 1",
+                    (terminal_id,),
+                ).fetchone():
+                    raise WorkOwnedTerminalError(
+                        f"Terminal '{terminal_id}' is owned by Work; Flow execution is denied"
+                    )
+    except WorkOwnedTerminalError:
+        raise
+    except Exception as error:
+        raise WorkOwnershipStoreUnavailableError(
+            "durable Work ownership could not be verified"
+        ) from error
+
+
+def _verified_flow_terminal_rows(session_name: str, terminal_locks: ExitStack):
+    """Enumerate and fence current panes, mapping uncertain ownership to 503."""
+    try:
+        terminals = list_terminals_by_session(session_name)
+        terminal_ids = sorted({terminal["id"] for terminal in terminals})
+        for terminal_id in terminal_ids:
+            terminal_locks.enter_context(
+                terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id)
+            )
+        _verify_flow_terminal_ownership(terminal_ids)
+        return terminals
+    except (WorkOwnedTerminalError, WorkOwnershipStoreUnavailableError):
+        raise
+    except Exception as error:
+        raise WorkOwnershipStoreUnavailableError(
+            "durable Work ownership could not be verified"
+        ) from error
+
+
+def _preflight_flow_session_ownership(session_name: str) -> None:
+    """Verify the durable owner of every current pane before running a Flow script."""
+    with session_lifecycle_lock(session_name), ExitStack() as terminal_locks:
+        _verified_flow_terminal_rows(session_name, terminal_locks)
+
+
+def _recycle_flow_session(name: str, session_name: str) -> bool:
+    """Guard the current incarnation before changing any of its runtime state."""
+    with session_lifecycle_lock(session_name), ExitStack() as terminal_locks:
+        # create_terminal uses the same lifecycle lock, so no new row for this
+        # session can appear between enumeration and the destructive effects.
+        # Reopen the store after the script. An empty row list cannot authorize
+        # a kill when the Work database disappeared or was replaced meanwhile.
+        terminals = _verified_flow_terminal_rows(session_name, terminal_locks)
+
+        if get_backend().session_exists(session_name):
+            conductor = terminals[0] if terminals else None
+            if conductor and _is_terminal_busy(conductor["id"]):
+                logger.info("Flow %s: session %s is busy, skipping", name, session_name)
+                return False
+            for terminal in terminals:
+                try:
+                    fifo_manager.stop_reader(terminal["id"])
+                except Exception as error:
+                    logger.warning("Failed to stop FIFO reader for %s: %s", terminal["id"], error)
+                try:
+                    status_monitor.clear_terminal(terminal["id"])
+                except Exception as error:
+                    logger.warning(
+                        "Failed to clear status buffers for %s: %s", terminal["id"], error
+                    )
+            get_backend().kill_session(session_name)
+            cleanup_complete = True
+            for terminal in terminals:
+                if provider_manager.cleanup_provider(terminal["id"]) is False:
+                    cleanup_complete = False
+            if not cleanup_complete:
+                logger.warning(
+                    "Flow %s recycling cleanup deferred; retaining terminal metadata for retry",
+                    name,
+                )
+                return False
+            delete_terminals_by_session(session_name)
+        elif terminals:
+            cleanup_complete = True
+            for terminal in terminals:
+                if provider_manager.cleanup_provider(terminal["id"]) is False:
+                    cleanup_complete = False
+            if not cleanup_complete:
+                logger.warning("Flow %s has retained terminal cleanup; deferring next run", name)
+                return False
+            delete_terminals_by_session(session_name)
+        return True
+
+
 async def execute_flow(name: str) -> bool:
     """Execute flow: run script, render prompt, launch session."""
     try:
@@ -223,6 +327,9 @@ async def execute_flow(name: str) -> bool:
         # re-validate the raw value here: at the execution boundary a rejected
         # engine must fail rather than fall back to the default.
         parse_kiro_engine(metadata.get("engine"))
+
+        session_name = f"cao-flow-{flow.name}"
+        await asyncio.to_thread(_preflight_flow_session_ownership, session_name)
 
         # If no script, always execute with empty output
         if not flow.script:
@@ -273,7 +380,6 @@ async def execute_flow(name: str) -> bool:
         rendered_prompt = render_template(prompt_template, output_dict)
 
         # Launch session
-        session_name = f"cao-flow-{flow.name}"
         terminals = list_terminals_by_session(session_name)
         if get_backend().session_exists(session_name):
             # Only check the first (conductor) terminal for busy status.
@@ -286,10 +392,9 @@ async def execute_flow(name: str) -> bool:
             # not reorder that read. This is the consumer with real blast radius:
             # if index 0 is a quiet WORKER rather than the conductor, the busy
             # check passes and the kill_session below tears down a session whose
-            # conductor is mid-run. Two documented ways index 0 can be a worker
-            # (both pre-existing, both listed on that function): the conductor's
-            # own row was deleted, or a row was inserted during flow recycling,
-            # which does not hold ``session_lifecycle_lock``.
+            # conductor is mid-run. The conductor's row may already have been
+            # deleted, leaving a worker at index 0. The locked recycle below
+            # re-enumerates and rechecks before changing the session.
             conductor = terminals[0] if terminals else None
             # Off the loop: get_status() can fork a tmux capture-pane for a
             # PROCESSING terminal (status_monitor.py's stale-PROCESSING
@@ -297,51 +402,8 @@ async def execute_flow(name: str) -> bool:
             if conductor and await asyncio.to_thread(_is_terminal_busy, conductor["id"]):
                 logger.info(f"Flow {name}: session {session_name} is busy, skipping")
                 return False
-            for t in terminals:
-                # Tear down the event-driven pipeline for each recycled terminal:
-                # stop the FIFO reader thread (and unlink its *.fifo file) and clear
-                # the StatusMonitor buffers. Without this, repeated flow runs leak
-                # background reader threads and stale FIFO files / status entries.
-                try:
-                    fifo_manager.stop_reader(t["id"])
-                except Exception as e:
-                    logger.warning(f"Failed to stop FIFO reader for {t['id']}: {e}")
-                try:
-                    status_monitor.clear_terminal(t["id"])
-                except Exception as e:
-                    logger.warning(f"Failed to clear status buffers for {t['id']}: {e}")
-            get_backend().kill_session(session_name)
-            # A provider's private state must outlive the process that owns
-            # it.  Grok cleanup confirms any escaped updater has stopped
-            # before recursively deleting its private GROK_HOME.
-            cleanup_complete = True
-            for t in terminals:
-                # Do not bulk-delete DB rows if a Grok private home is still
-                # owned by a process we cannot safely inspect. Retained rows
-                # are the retry handle for a later terminal cleanup.
-                if provider_manager.cleanup_provider(t["id"]) is False:
-                    cleanup_complete = False
-            if not cleanup_complete:
-                logger.warning(
-                    "Flow %s recycling cleanup deferred; retaining terminal metadata for retry",
-                    name,
-                )
-                return False
-            delete_terminals_by_session(session_name)
-        elif terminals:
-            # A previous recycle can have killed the backend session but safely
-            # retained its terminal rows because a Grok-owned private home was
-            # still in use.  Do not create a same-named flow session until those
-            # rows have been retried: doing so would abandon their only cleanup
-            # handle and could collide with the deterministic GROK_HOME path.
-            cleanup_complete = True
-            for terminal_metadata in terminals:
-                if provider_manager.cleanup_provider(terminal_metadata["id"]) is False:
-                    cleanup_complete = False
-            if not cleanup_complete:
-                logger.warning("Flow %s has retained terminal cleanup; deferring next run", name)
-                return False
-            delete_terminals_by_session(session_name)
+        if not await asyncio.to_thread(_recycle_flow_session, name, session_name):
+            return False
         terminal = await create_terminal(
             session_name=session_name,
             provider=flow.provider,

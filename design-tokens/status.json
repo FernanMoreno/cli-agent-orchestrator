@@ -9,5 +9,14 @@
     "error": { "label": "Error", "semanticRole": "danger", "pulse": false },
     "stopped": { "label": "Stopped", "semanticRole": "neutral", "pulse": false },
     "unknown": { "label": "Unknown", "semanticRole": "neutral", "pulse": false }
+  },
+  "work_states": {
+    "queued": { "label": "Queued", "semanticRole": "info" },
+    "running": { "label": "Running", "semanticRole": "info" },
+    "waiting_children": { "label": "Waiting for child work", "semanticRole": "warning" },
+    "succeeded": { "label": "Succeeded", "semanticRole": "accent" },
+    "failed": { "label": "Failed", "semanticRole": "danger" },
+    "reconcile": { "label": "Reconciling", "semanticRole": "warning" },
+    "cancelled": { "label": "Cancelled", "semanticRole": "neutral" }
   }
 }

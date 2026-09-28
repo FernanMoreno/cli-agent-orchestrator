@@ -4,7 +4,8 @@ Two layers of assurance:
 
 * a **guard test** that enumerates the live FastAPI route table and asserts every
   mutating route (POST/PUT/PATCH/DELETE) carries a ``require_any_scope``
-  dependency, so a future route cannot silently regress the coverage;
+  dependency or an explicitly recognized verified-work authority boundary, so a
+  future route cannot silently regress the coverage;
 * **enforcement tests** that, with auth enabled, a ``cao:read`` token is 403'd on
   a write route and a ``cao:write`` token is 403'd on an admin (delete) route,
   while the matching scope is admitted past the dependency.
@@ -16,7 +17,8 @@ with no auth configured.
 
 import pytest
 
-from cli_agent_orchestrator.api.main import app
+from cli_agent_orchestrator.api.knowledge_routes import authority as knowledge_authority
+from cli_agent_orchestrator.api.main import app, get_work_launch_principal
 from cli_agent_orchestrator.security import auth
 
 # Mutating HTTP methods that must be scope-gated when present on a route.
@@ -49,6 +51,32 @@ def _has_scope_dependency(route) -> bool:
     return False
 
 
+def _has_knowledge_authority(route) -> bool:
+    """Versioned knowledge checks scopes plus live grants in its service transaction."""
+    calls = set()
+    stack = list(getattr(route.dependant, "dependencies", []))
+    while stack:
+        dep = stack.pop()
+        calls.add(getattr(dep, "call", None))
+        stack.extend(getattr(dep, "dependencies", []))
+    return {auth.get_current_principal, knowledge_authority}.issubset(calls)
+
+
+def _has_verified_work_launch_authority(route) -> bool:
+    """Only the durable launch ingress may use verified work identity without legacy scopes."""
+    if getattr(route, "path", None) != "/work-launches" or getattr(route, "methods", None) != {
+        "POST"
+    }:
+        return False
+    calls = set()
+    stack = list(getattr(route.dependant, "dependencies", []))
+    while stack:
+        dep = stack.pop()
+        calls.add(getattr(dep, "call", None))
+        stack.extend(getattr(dep, "dependencies", []))
+    return get_work_launch_principal in calls
+
+
 def _mutating_routes():
     for route in app.routes:
         methods = getattr(route, "methods", None)
@@ -60,16 +88,21 @@ def _mutating_routes():
         yield route, mutating
 
 
-def test_every_mutating_route_is_scope_gated():
-    """No mutating route may be missing a scope dependency (regression guard)."""
+def test_every_mutating_route_is_scope_or_verified_work_authority_gated():
+    """No mutating route may bypass scopes or an explicit verified-work authority boundary."""
     missing = []
     for route, mutating in _mutating_routes():
         if any((m, route.path) in _EXEMPT for m in mutating):
             continue
-        if not _has_scope_dependency(route):
+        if not (
+            _has_scope_dependency(route)
+            or _has_knowledge_authority(route)
+            or _has_verified_work_launch_authority(route)
+        ):
             missing.append(f"{sorted(mutating)} {route.path}")
-    assert not missing, "mutating routes missing a require_any_scope dependency: " + ", ".join(
-        missing
+    assert not missing, (
+        "mutating routes missing scope, verified knowledge authority, or verified work authority: "
+        + ", ".join(missing)
     )
 
 
@@ -90,6 +123,7 @@ def auth_on(monkeypatch):
 def _clear_overrides():
     yield
     app.dependency_overrides.pop(auth.get_current_scopes, None)
+    app.dependency_overrides.pop(auth.get_current_principal, None)
 
 
 def test_read_token_forbidden_on_write_route(client, auth_on):
@@ -109,15 +143,22 @@ def test_write_token_admitted_on_write_route(client, auth_on):
 def test_write_token_forbidden_on_admin_route(client, auth_on):
     """A cao:write token is 403'd on an admin (delete) route (DELETE /memory/{key})."""
     app.dependency_overrides[auth.get_current_scopes] = _override_scopes([auth.SCOPE_WRITE])
+    app.dependency_overrides[auth.get_current_principal] = lambda: auth._verified_principal(
+        "https://issuer.test", "worker", [auth.SCOPE_WRITE], "jwt"
+    )
     resp = client.delete("/memory/some-key")
     assert resp.status_code == 403
 
 
-def test_admin_token_admitted_on_admin_route(client, auth_on):
-    """A cao:admin token passes the admin-gated dependency (not 403)."""
+def test_admin_token_cannot_delete_local_legacy_memory(client, auth_on):
+    """Even admin scopes cannot bypass the local legacy authority boundary."""
     app.dependency_overrides[auth.get_current_scopes] = _override_scopes([auth.SCOPE_ADMIN])
+    app.dependency_overrides[auth.get_current_principal] = lambda: auth._verified_principal(
+        "https://issuer.test", "worker", [auth.SCOPE_ADMIN], "jwt"
+    )
     resp = client.delete("/memory/some-key")
-    assert resp.status_code != 403
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "legacy_memory_local_only"
 
 
 # ---------------------------------------------------------------------------

@@ -72,6 +72,10 @@ const SOURCES: &[(&str, &str)] = &[
     ("src/guided_flow.rs", include_str!("../src/guided_flow.rs")),
     ("src/renderer.rs", include_str!("../src/renderer.rs")),
     ("src/theme.rs", include_str!("../src/theme.rs")),
+    (
+        "src/work_status_generated.rs",
+        include_str!("../src/work_status_generated.rs"),
+    ),
 ];
 
 /// The one module allowed to name a colour.
@@ -474,8 +478,8 @@ fn the_scan_set_covers_every_module_the_crate_root_declares() {
     }
 
     assert_eq!(
-        declared, 10,
-        "expected 10 `mod` declarations in src/main.rs. If this is 0 the loop above matched \
+        declared, 11,
+        "expected 11 `mod` declarations in src/main.rs. If this is 0 the loop above matched \
          nothing and its assertion never ran"
     );
 

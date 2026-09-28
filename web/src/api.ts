@@ -106,6 +106,23 @@ export interface Terminal {
   last_active: string | null
 }
 
+/** Durable v1 projection returned by GET /work-items/{work_item_id}. */
+export interface WorkView {
+  schema_version: 1
+  job_id: string
+  work_item_id: string
+  attempt_id: string | null
+  job_state: 'planning' | 'running' | 'waiting' | 'completed' | 'failed' | 'revoked'
+  work_state: 'queued' | 'running' | 'waiting_children' | 'succeeded' | 'failed' | 'reconcile' | 'cancelled'
+  attempt_state: 'planned' | 'sent' | 'acknowledged' | 'running' | 'finished' | 'failed' | 'reconcile' | 'cancelled' | null
+  turn_state: 'ready' | 'input_sent' | 'acknowledged' | 'processing' | 'blocked' | null
+  process_state: 'alive' | 'dead' | 'unknown'
+  revision: number
+  result_ref: string | null
+  cleanup_state: string
+  required_action: string | null
+}
+
 export interface SessionDetail {
   session: Session
   terminals: TerminalMeta[]
@@ -583,6 +600,8 @@ export const api = {
   // Terminals
   getTerminalStatus: (id: string) =>
     fetchJSON<Terminal>(`/terminals/${id}`).then(t => t.status),
+  getWorkItem: (workItemId: string) =>
+    fetchJSON<WorkView>(`/work-items/${encodeURIComponent(workItemId)}`),
   getTerminalOutput: (id: string, mode: 'full' | 'last' = 'full') =>
     fetchJSON<{ output: string; mode: string }>(`/terminals/${id}/output?mode=${mode}`),
   sendInput: (id: string, message: string) =>

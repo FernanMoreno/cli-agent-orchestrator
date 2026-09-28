@@ -11,6 +11,8 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from cli_agent_orchestrator import constants
+from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.flow import Flow
 from cli_agent_orchestrator.models.kiro_engine import KiroEngine
 from cli_agent_orchestrator.models.terminal import TerminalStatus
@@ -26,6 +28,13 @@ from cli_agent_orchestrator.services.flow_service import (
     list_flows,
     remove_flow,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolated_work_guard_paths(tmp_path, monkeypatch):
+    monkeypatch.setattr(constants, "DATABASE_FILE", tmp_path / "cao.db")
+    monkeypatch.setattr(constants, "LOCK_DIR", tmp_path / "locks")
+    WorkRepository(constants.DATABASE_FILE).initialize()
 
 
 class TestGetNextRunTime:
@@ -720,9 +729,13 @@ Prompt.
                 stderr="",
             )
 
-            result = await execute_flow("skip-flow")
+            with patch(
+                "cli_agent_orchestrator.services.flow_service._recycle_flow_session"
+            ) as mock_recycle:
+                result = await execute_flow("skip-flow")
 
             assert result is False  # Flow was skipped
+            mock_recycle.assert_not_called()
 
     @pytest.mark.asyncio
     @patch("cli_agent_orchestrator.services.flow_service.db_get_flow")
@@ -768,8 +781,12 @@ Prompt.
 
             mock_subprocess.return_value = MagicMock(returncode=1, stdout="", stderr="Script error")
 
-            with pytest.raises(ValueError, match="Script failed"):
-                await execute_flow("fail-flow")
+            with patch(
+                "cli_agent_orchestrator.services.flow_service._recycle_flow_session"
+            ) as mock_recycle:
+                with pytest.raises(ValueError, match="Script failed"):
+                    await execute_flow("fail-flow")
+            mock_recycle.assert_not_called()
 
     @pytest.mark.asyncio
     @patch("cli_agent_orchestrator.services.flow_service.subprocess.run")

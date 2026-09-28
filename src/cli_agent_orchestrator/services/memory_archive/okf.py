@@ -39,7 +39,12 @@ from cli_agent_orchestrator.services.memory_archive.base import (
     ImportReport,
     MemoryArchiveBackend,
 )
-from cli_agent_orchestrator.services.secret_gate import redact_secrets, scan_for_secrets
+from cli_agent_orchestrator.services.secret_gate import scan_for_secrets
+from cli_agent_orchestrator.services.knowledge_policy import (
+    redact_knowledge_content,
+    redact_knowledge_data,
+)
+from cli_agent_orchestrator.services.legacy_memory_access import audited_legacy
 from cli_agent_orchestrator.utils.path_validation import resolve_and_validate_path
 
 if TYPE_CHECKING:
@@ -111,6 +116,7 @@ class OkfArchiveBackend(MemoryArchiveBackend):
     # Export
     # -------------------------------------------------------------------------
 
+    @audited_legacy("export", owner="_svc")
     def export_bundle(
         self,
         scope: str,
@@ -181,6 +187,7 @@ class OkfArchiveBackend(MemoryArchiveBackend):
         )
         return report
 
+    @audited_legacy("import", owner="_svc")
     def import_bundle(
         self,
         src: Path,
@@ -605,13 +612,16 @@ class OkfArchiveBackend(MemoryArchiveBackend):
                 continue
             latest_text, history_text = gated
 
+            # Metadata from historical headers is independent of the body gate.
+            # Sanitize the complete values before splitting tags or serializing YAML.
+            metadata = redact_knowledge_data({"tags": memory.tags or ""})
             topics.append(
                 _Topic(
                     key=entry["key"],
                     scope_id=entry_scope_id if scope in _NESTED_SCOPES else None,
                     nested=scope in _NESTED_SCOPES and entry_scope_id is not None,
                     memory_type=memory.memory_type,
-                    tags=[t for t in (memory.tags or "").split(",") if t],
+                    tags=[t for t in metadata["tags"].split(",") if t],
                     description=self._derive_description(latest_text),
                     created_iso=memory.created_at.strftime(_ISO_FORMAT),
                     updated_iso=memory.updated_at.strftime(_ISO_FORMAT),
@@ -660,9 +670,9 @@ class OkfArchiveBackend(MemoryArchiveBackend):
         ever logged — never content bytes.
         """
         if redact:
-            latest_text, fired = redact_secrets(latest_text)
+            latest_text, fired = redact_knowledge_content(latest_text)
             if history_text:
-                history_text, history_fired = redact_secrets(history_text)
+                history_text, history_fired = redact_knowledge_content(history_text)
                 fired.extend(n for n in history_fired if n not in fired)
             if fired:
                 report.redacted += 1
