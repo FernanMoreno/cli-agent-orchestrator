@@ -121,6 +121,25 @@ jobs:
 
           sudo useradd --create-home --shell /usr/sbin/nologin "$CAO_WORK_BROKER_ACCOUNT"
 
+          workspace_group=cao-t097-workspace
+          if getent group "$workspace_group" >/dev/null; then
+            echo "The ephemeral runner already has the T097 workspace group" >&2
+            exit 1
+          fi
+          sudo groupadd --system "$workspace_group"
+          sudo usermod --append --groups "$workspace_group" "$CAO_WORK_BROKER_ACCOUNT"
+          sudo chgrp -R "$workspace_group" "$GITHUB_WORKSPACE"
+          sudo chmod -R g+rX "$GITHUB_WORKSPACE"
+
+          # GitHub keeps the checkout below /home/runner/work. The broker
+          # needs traversal on parent directories and shared access only to
+          # the checkout; it does not need to list the runner's home.
+          workspace_parent="$(dirname "$GITHUB_WORKSPACE")"
+          while [[ "$workspace_parent" != / ]]; do
+            sudo chmod o+x "$workspace_parent"
+            workspace_parent="$(dirname "$workspace_parent")"
+          done
+
           python3 - <<'PY'
           import os
           import pwd
@@ -151,6 +170,9 @@ jobs:
 
       - name: Confirm broker can read checkout and environment
         run: |
+          workspace_group=cao-t097-workspace
+          sudo chgrp -R "$workspace_group" "$GITHUB_WORKSPACE/.venv"
+          sudo chmod -R g+rX "$GITHUB_WORKSPACE/.venv"
           sudo -n -u "$CAO_WORK_BROKER_ACCOUNT" -- \
             test -r "$GITHUB_WORKSPACE/pyproject.toml"
           sudo -n -u "$CAO_WORK_BROKER_ACCOUNT" -- \

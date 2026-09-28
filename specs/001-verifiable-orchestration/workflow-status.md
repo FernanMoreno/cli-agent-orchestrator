@@ -3320,7 +3320,10 @@ del archive descargado coincidió con el valor fijado.
 `project-composition-check caos` → **289 archivos, 1072 dependencias, 4
 contratos conservados, 0 rotos**. `git diff --check` pasó.
 
-El workflow actualizado todavía no está publicado en `origin/main`; no hay run
-GitHub-hosted ni aceptación `ubuntu-24.04` en esta sesión. `T101` sigue `[ ]`,
-`WORK_BACKENDS={}` y T097/T019 continúan abiertos hasta un run remoto verde y
-revisión del digest compilado.
+El workflow se publicó en `origin/main` como `19922123`. El primer run hosted,
+`36445140172`, construyó Bubblewrap y configuró el kernel, pero falló al validar
+el acceso del usuario broker al checkout; la suite T097 todavía no se ejecutó.
+Se corrigió el workflow para dar al broker acceso de grupo de solo lectura al
+checkout y permiso de recorrido en sus directorios padre. Falta repetir el run
+y revisar el digest del binario compilado. `T101` sigue `[ ]`,
+`WORK_BACKENDS={}` y T097/T019 continúan abiertos.
