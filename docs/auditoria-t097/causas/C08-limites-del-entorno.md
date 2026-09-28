@@ -1,11 +1,10 @@
 # C08 — Límites del entorno de validación
 
 **Severidad:** bloqueante para evidencia
-**Estado:** la suite hosted del guest QEMU pasó 8/8 sin skips en el run
-`36460464186`, con ABI 11 y el digest revisado. El workflow quedó rojo después
-de pytest: `setup-uv` falló al guardar una caché vacía del host, porque `uv`
-instala dentro del guest. Se desactiva esa caché y se repite el workflow.
-Native GitHub-hosted `ubuntu-24.04` ofrece ABI 7 y `ubuntu-26.04` ABI 8.
+**Estado:** cerrada para el perfil guest en el run hosted [`36463930292`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36463930292),
+con workflow global verde, suite 8/8 sin skips y Landlock ABI 11. Los runners
+nativos `ubuntu-24.04` y `ubuntu-26.04` ofrecieron ABI 7 y ABI 8; la aceptación
+QEMU acredita el guest fijado, no un host de despliegue.
 
 ## Entorno original
 
@@ -61,7 +60,7 @@ root, sin login y sin procesos host ajenos; esa cuenta forma parte de la base
 de confianza. No se afirma aislamiento frente a root ni frente a procesos que
 ejecuten bajo la propia cuenta broker.
 
-## Workflow GitHub-hosted con guest QEMU — digest revisado, repetición pendiente
+## Primeros runs GitHub-hosted con guest QEMU — digest revisado
 
 El run [`36457607699`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36457607699),
 en `main` (`8d93e018`), usó un runner GitHub-hosted `ubuntu-24.04` para
@@ -83,10 +82,10 @@ en el commit `48909237`, reutilizó el digest y terminó la suite con **8 passed
 0 skipped en 201,67 s** bajo el broker configurado. Landlock ABI fue 11. La
 acción `setup-uv` falló después, durante el guardado de caché: el directorio
 `/home/runner/work/_temp/setup-uv-cache` no existía en el host, porque el
-proyecto y las dependencias se instalan dentro del guest. El workflow
-desactivará el cache de host, que no aporta a este job, y debe repetirse para
-obtener un estado global verde. El timeout TCG de 45 s sólo se aplica a los
-workers. Este perfil no certifica el kernel del runner o de despliegue.
+proyecto y las dependencias se instalan dentro del guest. El commit `7135d91a`
+desactivó ese cache host; la ejecución final verde consta en la sección de
+resultado. El timeout TCG de 45 s sólo se aplica a los workers. Este perfil no
+certifica el kernel del runner o de despliegue.
 
 El inventario oficial de imágenes lista el runner estándar `ubuntu-24.04`
 ([imágenes runner](https://github.com/actions/runner-images#readme)). Para
@@ -102,11 +101,11 @@ debe revisar su procedencia antes de permitirlo y repetir la suite.
 
 ## Resultado
 
-Los requisitos técnicos del guest local se probaron sin skips. Esto cubre el
-proxy concurrente y su recuperación durable en esa imagen. El kernel nativo
-`ubuntu-24.04` dio ABI 7 y `ubuntu-26.04` ABI 8, ambos insuficientes. La
-repetición del workflow QEMU sigue pendiente tras los ocho casos verdes; no se
-autoriza registrar el backend. Con el workflow global en verde se cerrarán
-C07/C08 para el perfil guest. El
-host de despliegue sigue sujeto a su aceptación específica; `WORK_BACKENDS`
-permanece vacío y T097/T019 continúan `[ ]` hasta validar ese host.
+El run [`36463930292`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36463930292)
+(`7135d91a`) terminó con workflow global verde. El guest Ubuntu 26.10 registró
+kernel `7.3.0-5-generic`, Landlock ABI 11 y Bubblewrap 0.13.0 con digest
+`15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250`; la suite
+terminó **8 passed, 0 skipped en 288,11 s**. C07/C08 quedan cerradas para este
+perfil guest reproducible. El host de despliegue sigue sujeto a su aceptación
+específica; `WORK_BACKENDS` permanece vacío y T097/T019 continúan `[ ]` hasta
+validarlo.

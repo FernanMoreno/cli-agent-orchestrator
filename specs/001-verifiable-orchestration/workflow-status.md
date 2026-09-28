@@ -3350,8 +3350,9 @@ antes de correr la suite: el kernel ofrece Landlock ABI 8, menor que el mínimo
 T100 ahora usa GitHub-hosted `ubuntu-24.04` sólo como orquestador de un guest
 Ubuntu 26.10 efímero bajo QEMU TCG. El script fija SHA-256 de la imagen cloud y
 del source archive Bubblewrap 0.13.0, prepara kernel y cuenta broker dentro del
-guest, y exige ABI >= 9, digest allowlisted y ocho casos sin skips. No hay aún
-run QEMU hosted verde; T101 y C08 siguen pendientes. El guest no certificará
+guest, y exige ABI >= 9, digest allowlisted y ocho casos sin skips. En el
+momento de esta entrada aún no había run QEMU hosted verde; T101 y C08 seguían
+pendientes. El guest no certificará
 el kernel runner ni uno de despliegue; `WORK_BACKENDS={}` y T097/T019 siguen
 abiertos para producción.
 
@@ -3364,7 +3365,7 @@ no encontró `scripts/hatch_build_tui_tag.py`, declarado como build hook en
 
 El script ahora incluye el hook, `README.md` (declarado en `pyproject.toml`) y
 `LICENSE` en el archive, y fija `CAO_TUI_AUTOBUILD=0` durante el sync: T097 no
-necesita compilar el TUI. Falta
+necesita compilar el TUI. En ese punto faltaba
 repetir el run con ese archive completo; el intento cancelado y el fallido no
 cuentan como aceptación ni cambian el estado T101/C08.
 
@@ -3379,8 +3380,8 @@ usó GCC `15.3.0-4ubuntu1` y Meson `1.10.1`; instaló `0.13.0` como `root:root
 0755`. Los ocho fixtures rechazaron el digest nuevo
 `15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250` antes de
 ejecutar sus cuerpos. Revisados el source archive y la configuración del build,
-se añadió sólo ese hash exacto a la allowlist. El run no es aceptación: T101 y
-C07/C08 siguen pendientes de una repetición con ocho casos pasados y sin
+se añadió sólo ese hash exacto a la allowlist. Ese run aún no era aceptación:
+T101 y C07/C08 seguían pendientes de una repetición con ocho casos pasados y sin
 skips. `WORK_BACKENDS={}` y T097/T019 siguen sujetos a la aceptación del host
 de despliegue.
 
@@ -3392,7 +3393,22 @@ El run [`36460464186`](https://github.com/FernanMoreno/cli-agent-orchestrator/ac
 201,67 s** bajo la cuenta broker configurada. El workflow falló después, en el
 post-job de `setup-uv`, porque quiso guardar
 `/home/runner/work/_temp/setup-uv-cache`, que no existe en el host: uv y las
-dependencias se usan dentro del guest QEMU. Se desactiva el cache de host y se
-repetirá para obtener un resultado global verde. T101 y el cierre de C07/C08
-del perfil guest esperan ese run; `WORK_BACKENDS={}` y T097/T019 siguen sujetos
-a la aceptación del host de despliegue.
+dependencias se usan dentro del guest QEMU. El commit `7135d91a` desactivó el
+cache de host; el resultado final consta a continuación. T101 y el cierre de
+C07/C08 esperaban ese run; `WORK_BACKENDS={}` y T097/T019 siguen sujetos a la
+aceptación del host de despliegue.
+
+### T097: aceptación hosted final en guest QEMU — 2026-09-28
+
+El run [`36463930292`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36463930292)
+(`7135d91a`) terminó con **workflow global verde**. Se desactivó la caché host
+de `setup-uv`, que no se usa porque la instalación ocurre dentro del guest.
+Ubuntu 26.10 en QEMU registró kernel `7.3.0-5-generic`, Landlock ABI 11 y
+Bubblewrap 0.13.0, instalado `root:root 0755`, con digest revisado
+`15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250`.
+La suite `test/integration/t097 -m t097_host` pasó como cuenta broker:
+**8 passed, 0 skipped en 288,11 s**.
+
+T101 y C07/C08 quedan cerradas para el perfil guest reproducible. El guest no
+certifica un kernel de despliegue: `WORK_BACKENDS={}` permanece vacío y T097/T019
+siguen sujetos a la aceptación específica del host destino.

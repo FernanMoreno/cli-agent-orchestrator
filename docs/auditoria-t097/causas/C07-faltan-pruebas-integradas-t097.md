@@ -1,10 +1,7 @@
-# C07 — Falta completar la aceptación integrada T097
+# C07 — Aceptación integrada T097
 
 **Severidad:** alta (gate de registro)
-**Estado:** la suite hosted Ubuntu 26.10/QEMU TCG pasó 8/8 sin skips en el run
-`36460464186`. El workflow quedó rojo después de pytest porque `setup-uv`
-intentó guardar una caché vacía del host. Se desactiva esa caché y se repite
-para completar T101.
+**Estado:** cerrada para el perfil guest por el run hosted [`36463930292`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36463930292): workflow global verde, 8/8 sin skips. El host de despliegue conserva su aceptación propia como gate de T097.
 
 ## Aceptación QEMU guest — 2026-09-28
 
@@ -39,7 +36,8 @@ definir.
 Tras imponer en el preflight la cuenta broker configurada, se volvió a copiar
 el código actual al guest y repetir la aceptación como `caos-work-broker` con
 `CAO_WORK_BROKER_ACCOUNT=caos-work-broker`: **8 passed, 0 skipped en 327,65 s**.
-Esto valida el nuevo control en QEMU; el gate del runner hosted sigue pendiente.
+Esto validó el nuevo control en QEMU; en ese momento la aceptación hosted aún
+estaba pendiente.
 
 ## Decisión sobre el UID host
 
@@ -49,7 +47,7 @@ ejecutar el proceso CAO que crea namespaces/proxies como una cuenta OS dedicada,
 no root, sin login interactivo ni otros procesos host. Esa cuenta se considera
 confiable. Cambiar el `uid_map` por intento no sustituye esta frontera.
 
-## Pendiente
+## Workflow hosted y alcance
 
 El workflow `.github/workflows/t097-host-acceptance.yml` orquesta QEMU TCG
 desde GitHub-hosted `ubuntu-24.04`. Los intentos de ejecutar en el kernel
@@ -65,17 +63,32 @@ La primera ejecución remota también fija el digest del binario compilado en
 ese guest. Si aún no está allowlisted, la suite lo rechaza y el log imprime el
 hash; sólo se añade tras verificar origen/configuración de build, y se exige
 un workflow completo verde. El resultado no certifica hosts de despliegue.
-Hasta el run global verde, `WORK_BACKENDS = {}` y T097/T019 siguen `[ ]`.
+En ese punto, `WORK_BACKENDS = {}` y T097/T019 seguían `[ ]`; el estado
+posterior al run verde consta en «Cierre de la aceptación guest».
 
 El run [`36460464186`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36460464186)
 (`48909237`) ejecutó esos ocho casos como `caos-work-broker`: **8 passed, 0
 skipped en 201,67 s**, con Landlock ABI 11 y Bubblewrap SHA-256
 `15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250`. El job
 falló después, al guardar la caché de `setup-uv`; esa acción corre en el host,
-pero `uv` instaló dentro del guest. El workflow desactivará su cache host y
-debe repetirse para estado global verde. La suite prueba el perfil guest; no
-certifica el host de despliegue.
+pero `uv` instaló dentro del guest. El commit `7135d91a` desactivó su cache
+host; el estado global verde posterior consta en «Cierre de la aceptación
+guest». La suite prueba el perfil guest; no certifica el host de despliegue.
 
 ## Relación
 
 - Solución: [S07](../soluciones/S07-pruebas-integradas-t097.md).
+
+## Cierre de la aceptación guest — 2026-09-28
+
+El run [`36463930292`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36463930292),
+commit `7135d91a`, terminó con **workflow global verde**. El guard de `main`,
+la instalación de `uv`, el arranque del guest y los pasos de post-job
+completaron correctamente. Dentro del guest Ubuntu 26.10, kernel
+`7.3.0-5-generic`, Landlock ABI 11 y Bubblewrap 0.13.0 con SHA-256
+`15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250`, la suite
+como cuenta broker terminó **8 passed, 0 skipped en 288,11 s**.
+
+Quedan cerradas C07/C08 para este perfil reproducible. No se certifica el
+kernel de despliegue: T097/T019 siguen sujetos a la aceptación específica del
+host destino y `WORK_BACKENDS = {}` permanece vacío.

@@ -551,16 +551,17 @@ cuenta OS dedicada, no root, `nologin` y sin otros procesos. No se afirma que
 
 - [x] C07: proxy real por intento, concurrencia y recuperación tras reabrir el store.
 - [x] C03: frontera de identidad del broker documentada y comprobada en la aceptación.
-- [ ] C08: repetir aceptación sin skips y con Landlock ABI >= 9 en el guest Ubuntu 26.10 fijado, arrancado con QEMU TCG desde GitHub-hosted `ubuntu-24.04`; documentar que no certifica el kernel de despliegue.
+- [x] C08: aceptación sin skips y Landlock ABI >= 9 en el guest Ubuntu 26.10 fijado, arrancado con QEMU TCG desde GitHub-hosted `ubuntu-24.04`; el perfil guest no certifica el kernel de despliegue.
 
-El run QEMU hosted de C08/T101 sigue pendiente. T097/T019 y
-`WORK_BACKENDS={}` permanecen abiertos hasta aceptar el host de despliegue.
+La aceptación QEMU hosted de C08/T101 está cerrada para el perfil guest.
+T097/T019 y `WORK_BACKENDS={}` permanecen abiertos hasta aceptar el host de
+despliegue.
 
 ## Phase 16: Cierre de identidad broker y aceptación de runner
 
 - [x] T099 [US2] Enforzar en `BubblewrapWorkBackend.preflight_work` que `CAO_WORK_BROKER_ACCOUNT` nombre una cuenta local existente, no root, con shell no interactiva y UID igual al eUID; rechazar configuración ausente, root, shell de login o mismatch antes de cualquier probe Landlock/Bubblewrap. Añadir pruebas RED/GREEN para cada condición y para rechazo sin probes en `test/backends/test_work_broker_identity.py`; la aceptación host de `test/integration/t097/test_host_acceptance.py` debe usar y comprobar la misma configuración (FR-003/FR-006, SC-001, US2/AC13, C03; partial).
 - [x] T100 [US2] Añadir `.github/workflows/t097-host-acceptance.yml` para orquestar desde GitHub-hosted `ubuntu-24.04` un guest Ubuntu 26.10 efímero con QEMU TCG, sólo desde `main` y `workflow_dispatch` de `main`, permisos `contents: read` y timeout acotado. Fijar y verificar SHA-256 de la imagen cloud y del source archive Bubblewrap 0.13.0; compilar e instalar Bubblewrap root:root 0755 dentro del guest; preparar sysctls allí; crear la cuenta broker no interactiva indicada por `CAO_WORK_BROKER_ACCOUNT`; exigir Landlock ABI >= 9; correr los ocho casos como broker sin skips, con timeout 45 s exclusivo de TCG; documentar que el guest no certifica el runner ni un host de despliegue (C07/C08; partial).
-- [ ] T101 [US2] Ejecutar el workflow de aceptación QEMU desde `main`; exigir Landlock ABI >= 9, ocho casos sin skips, timeout TCG documentado y Bubblewrap 0.13.0 con digest revisado. Si el build genera un digest nuevo, verificarlo contra el source archive y configuración fijada, allowlistar sólo ese valor y repetir hasta run verde. Con ese resultado cerrar C07/C08 del perfil guest en `specs/001-verifiable-orchestration/` y `docs/auditoria-t097/`, sin afirmar compatibilidad de hosts de despliegue ni registrar `WORK_BACKENDS`. T097/T019 permanecen sujetos a aceptación del host de destino antes de habilitar ejecución Work (C07/C08, T097; partial).
+- [x] T101 [US2] Ejecutar el workflow de aceptación QEMU desde `main`; exigir Landlock ABI >= 9, ocho casos sin skips, timeout TCG documentado y Bubblewrap 0.13.0 con digest revisado. El run global verde cierra C07/C08 para el perfil guest en `specs/001-verifiable-orchestration/` y `docs/auditoria-t097/`, sin afirmar compatibilidad de hosts de despliegue ni registrar `WORK_BACKENDS`. T097/T019 permanecen sujetos a aceptación del host de destino antes de habilitar ejecución Work (C07/C08, T097; partial).
 
 **Repetición tras enforcement de broker — 2026-09-28:** copié el `src/` y
 `test/` actualizados a un guest Ubuntu/QEMU Linux y ejecuté toda la suite como
@@ -574,8 +575,8 @@ en `ubuntu-26.04` confirmó ABI 8 (`36450282433`), también insuficiente. T100 s
 cambió a un guest Ubuntu 26.10 fijado con QEMU TCG, orquestado desde
 `ubuntu-24.04`. El primer run `36454812599` falló en `uv sync` porque el
 checkout parcial omitía el hook Hatch de `pyproject.toml`; se corrigió el
-archivo del workflow y T101 sigue `[ ]` hasta un run verde. `WORK_BACKENDS={}`
-y T097/T019 continúan abiertos.
+archivo del workflow. En ese punto T101 aún esperaba un run global verde;
+`WORK_BACKENDS={}` y T097/T019 continuaban abiertos.
 
 **Primer run hosted con archive completo — 2026-09-28:** el run
 [`36457607699`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36457607699)
@@ -587,10 +588,10 @@ con GCC `15.3.0-4ubuntu1` y Meson `1.10.1`, e instaló versión `0.13.0` como
 `15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250` fue
 rechazado por no estar aún allowlisted; los ocho casos fallaron en el fixture
 antes de ejecutar sus cuerpos. Se revisaron origen y perfil fijado y se añadió
-ese hash exacto. T101/C07/C08 siguen pendientes de un workflow global verde;
-la suite pasa en el run siguiente, pero `setup-uv` falla al guardar la caché
-vacía del host. No se registra `WORK_BACKENDS` ni se certifica un host de
-despliegue.
+ese hash exacto. En esa fase T101/C07/C08 aún esperaban un workflow global
+verde; la suite pasó en el run siguiente, pero `setup-uv` falló al guardar la
+caché vacía del host. No se registra `WORK_BACKENDS` ni se certifica un host
+de despliegue.
 
 **Suite hosted pasada; limpieza de caché pendiente — 2026-09-28:** el run
 [`36460464186`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36460464186)
@@ -598,5 +599,15 @@ despliegue.
 `test/integration/t097 -m t097_host` como broker: **8 passed, 0 skipped en
 201,67 s**. El workflow quedó rojo después de la suite, cuando `setup-uv`
 intentó guardar una caché del host que no existe porque `uv` corre dentro del
-guest. Se desactiva el cache host y se repetirá para obtener run global verde;
-T101 sigue `[ ]` hasta entonces.
+guest. El commit `7135d91a` desactivó el cache host; el run global verde
+posterior consta a continuación.
+
+**Aceptación final hosted en QEMU — 2026-09-28:** el run
+[`36463930292`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36463930292)
+(`7135d91a`) terminó con workflow global verde. El guest registró kernel
+`7.3.0-5-generic`, Landlock ABI 11 y Bubblewrap 0.13.0 con el digest revisado
+`15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250`.
+`test/integration/t097 -m t097_host` pasó **8 casos, 0 skips, en 288,11 s**
+bajo la cuenta broker. T101 y C07/C08 se cierran para el guest reproducible;
+el host de despliegue requiere aceptación independiente. `WORK_BACKENDS={}` y
+T097/T019 permanecen abiertos hasta ese gate.
