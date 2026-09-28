@@ -387,7 +387,7 @@ edición obsoleta y ejecutar gates aplicables en un entorno controlado.
   ordinario `/sessions`; T017/T019/T035 siguen sujetos a sus gates separados.
 - T097 es un prerrequisito abierto de T019: el backend Linux permanece sin
   registrar hasta pasar la aceptación adversarial en el perfil GitHub-hosted
-  `ubuntu-24.04` descrito en plan.md. Una prueba de separación de mounts en WSL
+  `ubuntu-26.04` descrito en plan.md. Una prueba de separación de mounts en WSL
   no acredita restricciones de proceso, aislamiento de IPC/red, secreto del
   proxy ni el ciclo de vida Work. Si utiliza Bubblewrap, debe exigir versión
   >=0.12.0 y rechazar versiones anteriores antes de cualquier efecto;

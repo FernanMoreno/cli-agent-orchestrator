@@ -551,15 +551,15 @@ cuenta OS dedicada, no root, `nologin` y sin otros procesos. No se afirma que
 
 - [x] C07: proxy real por intento, concurrencia y recuperación tras reabrir el store.
 - [x] C03: frontera de identidad del broker documentada y comprobada en la aceptación.
-- [ ] C08: repetir aceptación sin skips en GitHub-hosted `ubuntu-24.04`.
+- [ ] C08: repetir aceptación sin skips y con Landlock ABI >= 9 en GitHub-hosted `ubuntu-26.04`.
 
 T097/T019 siguen `[ ]` y `WORK_BACKENDS={}` hasta ese último gate.
 
 ## Phase 16: Cierre de identidad broker y aceptación de runner
 
 - [x] T099 [US2] Enforzar en `BubblewrapWorkBackend.preflight_work` que `CAO_WORK_BROKER_ACCOUNT` nombre una cuenta local existente, no root, con shell no interactiva y UID igual al eUID; rechazar configuración ausente, root, shell de login o mismatch antes de cualquier probe Landlock/Bubblewrap. Añadir pruebas RED/GREEN para cada condición y para rechazo sin probes en `test/backends/test_work_broker_identity.py`; la aceptación host de `test/integration/t097/test_host_acceptance.py` debe usar y comprobar la misma configuración (FR-003/FR-006, SC-001, US2/AC13, C03; partial).
-- [x] T100 [US2] Añadir `.github/workflows/t097-host-acceptance.yml` para el runner GitHub-hosted `ubuntu-24.04`, limitado a `main` y `workflow_dispatch` de `main`, con permisos `contents: read` y timeout acotado. Verificar el SHA-256 del source archive Bubblewrap 0.13.0, compilarlo sin privilegios, instalar `/usr/bin/bwrap` root:root 0755, preparar sysctls requeridos sólo en la VM efímera y crear allí la cuenta broker no interactiva indicada por `CAO_WORK_BROKER_ACCOUNT`. Ejecutar `test/integration/t097 -m t097_host` como esa cuenta, sin `T097_TEST_WORKER_TIMEOUT_SECONDS` y hacer fallar cualquier skip; documentar el perfil y su límite frente a otros hosts (C07/C08; partial).
-- [ ] T101 [US2] Ejecutar el workflow T097 en `ubuntu-24.04` desde `main`; exigir 0 skips y timeout normal. Si el binario compilado tiene un SHA-256 nuevo, comprobarlo contra la source archive y configuración de build fijadas, añadir sólo el digest revisado a la allowlist y repetir hasta obtener una ejecución verde. Sólo con ese resultado registrar el backend permitido y actualizar T097/C07/C08 en `specs/001-verifiable-orchestration/` y `docs/auditoria-t097/`. El perfil hosted valida esa imagen de referencia; no se presume compatibilidad de cualquier kernel. No habilitar `WORK_BACKENDS` desde QEMU, scratch o un runner de proveedores (C07/C08, T097; partial).
+- [x] T100 [US2] Añadir `.github/workflows/t097-host-acceptance.yml` para el runner GitHub-hosted `ubuntu-26.04`, limitado a `main` y `workflow_dispatch` de `main`, con permisos `contents: read` y timeout acotado. Verificar el SHA-256 del source archive Bubblewrap 0.13.0, compilarlo sin privilegios, instalar `/usr/bin/bwrap` root:root 0755, preparar sysctls requeridos sólo en la VM efímera y crear allí la cuenta broker no interactiva indicada por `CAO_WORK_BROKER_ACCOUNT`. Rechazar kernels con Landlock ABI < 9. Ejecutar `test/integration/t097 -m t097_host` como esa cuenta, sin `T097_TEST_WORKER_TIMEOUT_SECONDS` y hacer fallar cualquier skip; documentar el perfil y su límite frente a otros hosts (C07/C08; partial).
+- [ ] T101 [US2] Ejecutar el workflow T097 en `ubuntu-26.04` desde `main`; exigir Landlock ABI >= 9, 0 skips y timeout normal. Si el binario compilado tiene un SHA-256 nuevo, comprobarlo contra la source archive y configuración de build fijadas, añadir sólo el digest revisado a la allowlist y repetir hasta obtener una ejecución verde. Sólo con ese resultado registrar el backend permitido y actualizar T097/C07/C08 en `specs/001-verifiable-orchestration/` y `docs/auditoria-t097/`. El perfil hosted valida esa imagen de referencia; no se presume compatibilidad de cualquier kernel. No habilitar `WORK_BACKENDS` desde QEMU, scratch o un runner de proveedores (C07/C08, T097; partial).
 
 **Repetición tras enforcement de broker — 2026-09-28:** copié el `src/` y
 `test/` actualizados a un guest Ubuntu/QEMU Linux y ejecuté toda la suite como
@@ -568,6 +568,7 @@ T097/T019 siguen `[ ]` y `WORK_BACKENDS={}` hasta ese último gate.
 El guest usó `T097_TEST_WORKER_TIMEOUT_SECONDS=45` por la lentitud de TCG; el
 workflow no establece esa variable y conserva el timeout normal de 10 s. Esta
 repetición verifica el preflight nuevo, pero no reemplaza el run del runner
-dedicado. La repetición conserva valor histórico; el workflow ahora usa el
-perfil GitHub-hosted `ubuntu-24.04` descrito en T100. T101 sigue `[ ]` hasta un
+dedicado. La repetición conserva valor histórico; el workflow ahora usa
+`ubuntu-26.04` tras comprobar que el kernel hosted `ubuntu-24.04` sólo ofrece
+Landlock ABI 7. T101 sigue `[ ]` hasta un
 run remoto verde; `WORK_BACKENDS={}` y T097/T019 continúan abiertos.

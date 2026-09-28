@@ -6,9 +6,9 @@ Causa: [C08](../causas/C08-limites-del-entorno.md)
 
 El guest temporal resolvió los requisitos técnicos de C08 y ejecutó la suite
 8/8 sin skips. No equivale a un host de despliegue. El workflow
-`.github/workflows/t097-host-acceptance.yml` se adaptó al runner
-GitHub-hosted `ubuntu-24.04`; falta obtener allí un run verde. `WORK_BACKENDS`
-permanece `{}`.
+`.github/workflows/t097-host-acceptance.yml` usa ahora GitHub-hosted
+`ubuntu-26.04`: `ubuntu-24.04` ofreció Landlock ABI 7, menor que el requisito 9.
+Falta obtener un run verde; `WORK_BACKENDS` permanece `{}`.
 
 ## Entorno de aceptación
 
@@ -44,7 +44,7 @@ externo):
   10 s. Repetir en despliegue sin la variable. Ver detalle en
   [C07](../causas/C07-faltan-pruebas-integradas-t097.md).
 
-## Binario medido en el runner hosted
+## Build en `ubuntu-24.04`, ABI insuficiente
 
 El run `36447165686` en la imagen `ubuntu-24.04` `20260920.314.1`
 (`24.04.5`) verificó el source archive fijado
@@ -53,10 +53,11 @@ Bubblewrap `0.13.0` como release con GCC `13.3.0` y Meson `1.3.2`, y comprobó
 `/usr/bin/bwrap` como `root:root 0755`. El digest medido fue
 `a5882b87c0b8105a5d9e81db5f64a4f8d373affc36f531e5df7409db5b1af8f6`.
 
-La suite falló cerrado antes de ejecutar casos porque ese digest aún no estaba
-allowlisted. Tras revisar las comprobaciones de origen y compilación, se añadió
-el valor exacto a la allowlist. La repetición hosted sigue pendiente; este
-preflight no se cuenta como aceptación T097.
+El segundo run falló cerrado antes de ejecutar casos porque ese digest aún no
+estaba allowlisted. Tras revisar las comprobaciones de origen y compilación, se
+añadió el valor exacto. Un run posterior superó ese check, pero confirmó que el
+kernel ofrece Landlock ABI 7; el workflow lo rechaza porque exige ABI >= 9. El
+artifact y el preflight de build no se cuentan como aceptación T097.
 
 La aceptación usa un kernel Linux en una VM TCG y sirve como evidencia de las
 interfaces probadas del guest. No equivale a certificar otro kernel. El nuevo
@@ -91,10 +92,9 @@ No se presenta la suite upstream completa como verde.
 
 ## Pendiente antes de registrar
 
-1. Repetir el workflow publicado en `main` y obtener un run verde en el runner
-   GitHub-hosted `ubuntu-24.04`.
-2. Exigir ocho casos sin skips y timeout predeterminado. Si el binario
-   compilado genera otro SHA-256, verificar el archive upstream y la
+1. Publicar y ejecutar el workflow en el runner GitHub-hosted `ubuntu-26.04`.
+2. Exigir Landlock ABI >= 9, ocho casos sin skips y timeout predeterminado. Si
+   el binario compilado genera otro SHA-256, verificar el archive upstream y la
    configuración fijada antes de permitir ese nuevo digest.
 3. Sólo después de un run verde revisar el registro del backend y actualizar
    estado T097/C07/C08. El resultado no habilita cualquier kernel ni cierra

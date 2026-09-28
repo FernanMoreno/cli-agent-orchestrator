@@ -3306,7 +3306,7 @@ cambios por ser ajeno a esta auditoría.
 ### T097: migración de aceptación a runner GitHub-hosted — 2026-09-28
 
 Se actualizó `T100` y `.github/workflows/t097-host-acceptance.yml` para usar
-`ubuntu-24.04`: verifica el SHA-256 upstream del source archive Bubblewrap
+primero `ubuntu-24.04`: verifica el SHA-256 upstream del source archive Bubblewrap
 0.13.0, compila sin privilegios, instala `/usr/bin/bwrap` root:root 0755,
 prepara los sysctls requeridos sólo dentro de la VM efímera y crea la cuenta
 broker no interactiva. La suite corre como broker con timeout normal; el job
@@ -3333,5 +3333,10 @@ versión `0.13.0`, instalación `root:root 0755`, GCC `13.3.0` y Meson `1.3.2`
 en Ubuntu `24.04.5` image `20260920.314.1`. Tras revisar esas comprobaciones,
 se añadió a la allowlist el digest resultante
 `a5882b87c0b8105a5d9e81db5f64a4f8d373affc36f531e5df7409db5b1af8f6`. Falta
-repetir hasta obtener un run verde. `T101` sigue `[ ]`,
+repetir hasta obtener un run verde. El tercer run `36448339608` confirmó que
+esa imagen ofrece Landlock ABI 7; el código exige ABI >= 9, por lo que los ocho
+casos fallaron cerrados antes de ejecutarse. Se cambió el job de aceptación a
+GitHub-hosted `ubuntu-26.04` y se añadió un paso explícito que registra/rechaza
+ABI menor que 9. El workflow actualizado aún no está publicado ni medido en
+GitHub Actions. `T101` sigue `[ ]`,
 `WORK_BACKENDS={}` y T097/T019 continúan abiertos.

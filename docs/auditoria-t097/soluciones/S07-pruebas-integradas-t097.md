@@ -43,7 +43,7 @@ aceptación.
 
 El guest QEMU no sustituye una VM Linux hospedada. El workflow
 `.github/workflows/t097-host-acceptance.yml` ejecuta este gate en
-`ubuntu-24.04`, sólo sobre `main` o por dispatch de `main`, con permiso
+`ubuntu-26.04`, sólo sobre `main` o por dispatch de `main`, con permiso
 `contents: read`. GitHub describe el runner estándar como una VM nueva por job
 para repositorios públicos
 ([documentación](https://docs.github.com/en/actions/reference/runners/github-hosted-runners));
@@ -62,11 +62,12 @@ El workflow prepara el entorno efímero en cada job:
 - Instala el checkout y `.venv` bajo el usuario runner; el broker sólo necesita
   lectura/ejecución del checkout. Las pruebas escriben en temporales.
 
-El workflow instala dependencias bloqueadas y ejecuta la suite como broker, sin
-`T097_TEST_WORKER_TIMEOUT_SECONDS`; además falla si pytest reporta cualquier
-skip. La compilación imprime el digest. Si aún no está allowlisted, el primer
-run falla de forma esperada; tras revisar source archive/configuración y añadir
-el digest aprobado, se exige repetir la suite completa y obtener 0 skips. Este
-resultado acepta el perfil `ubuntu-24.04` registrado en el log; otros hosts
+El workflow confirma Landlock ABI >= 9, instala dependencias bloqueadas y
+ejecuta la suite como broker, sin `T097_TEST_WORKER_TIMEOUT_SECONDS`; además
+falla si pytest reporta cualquier skip. La compilación imprime el digest. Si
+aún no está allowlisted, el primer run falla de forma esperada; tras revisar el
+source archive y la configuración fijados, se añade el digest aprobado y se
+repite la suite completa hasta obtener 0 skips. Este
+resultado acepta el perfil `ubuntu-26.04` registrado en el log; otros hosts
 deben pasar sus preflight. Hasta el run verde, `WORK_BACKENDS={}` y T097/T019
 permanecen abiertos.
