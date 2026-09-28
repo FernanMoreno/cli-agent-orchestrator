@@ -36,12 +36,16 @@ _EXECUTABLE_TOKEN_RE = re.compile(r"^/[A-Za-z0-9._/+@-]+$")
 _BWRAP_VERSION_RE = re.compile(
     r"^bubblewrap (0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})$"
 )
-# Ubuntu Stonking acceptance artifact: official Bubblewrap 0.13.0 source
-# release, built with the toolchain recorded in docs/auditoria-t097/soluciones/
-# S08-limites-del-entorno.md. T097/C08 host acceptance must still pass before
-# this backend is registered in WORK_BACKENDS.
+# Approved Bubblewrap 0.13.0 builds from the checksum-pinned upstream source
+# archive, recorded with their build profiles in
+# docs/auditoria-t097/soluciones/S08-limites-del-entorno.md. The hosted digest
+# was measured on ubuntu-24.04 image 20260920.314.1 (Ubuntu 24.04.5, GCC 13.3.0,
+# Meson 1.3.2); T097/C08 acceptance must pass before registry activation.
 _BWRAP_SHA256_ALLOWLIST: frozenset[str] = frozenset(
-    {"f41ba3f7be0280df0afe201f0e2eeb16a17e969782491e830e6753c67f78d70d"}
+    {
+        "f41ba3f7be0280df0afe201f0e2eeb16a17e969782491e830e6753c67f78d70d",
+        "a5882b87c0b8105a5d9e81db5f64a4f8d373affc36f531e5df7409db5b1af8f6",
+    }
 )
 _BWRAP_MAX_BYTES = 64 * 1024 * 1024
 _CANONICAL_BWRAP_EXECUTABLE = Path("/usr/bin/bwrap")

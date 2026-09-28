@@ -44,6 +44,20 @@ externo):
   10 s. Repetir en despliegue sin la variable. Ver detalle en
   [C07](../causas/C07-faltan-pruebas-integradas-t097.md).
 
+## Binario medido en el runner hosted
+
+El run `36447165686` en la imagen `ubuntu-24.04` `20260920.314.1`
+(`24.04.5`) verificó el source archive fijado
+`4734237473c0e5d695e4e9034a34e43b2dbf5164655bd13fa59ae376b2b7a765`, compiló
+Bubblewrap `0.13.0` como release con GCC `13.3.0` y Meson `1.3.2`, y comprobó
+`/usr/bin/bwrap` como `root:root 0755`. El digest medido fue
+`a5882b87c0b8105a5d9e81db5f64a4f8d373affc36f531e5df7409db5b1af8f6`.
+
+La suite falló cerrado antes de ejecutar casos porque ese digest aún no estaba
+allowlisted. Tras revisar las comprobaciones de origen y compilación, se añadió
+el valor exacto a la allowlist. La repetición hosted sigue pendiente; este
+preflight no se cuenta como aceptación T097.
+
 La aceptación usa un kernel Linux en una VM TCG y sirve como evidencia de las
 interfaces probadas del guest. No equivale a certificar otro kernel. El nuevo
 perfil hosted sirve como referencia reproducible; cada host de despliegue
@@ -77,11 +91,11 @@ No se presenta la suite upstream completa como verde.
 
 ## Pendiente antes de registrar
 
-1. Publicar el workflow actualizado en `main` y ejecutarlo en el runner
+1. Repetir el workflow publicado en `main` y obtener un run verde en el runner
    GitHub-hosted `ubuntu-24.04`.
 2. Exigir ocho casos sin skips y timeout predeterminado. Si el binario
    compilado genera otro SHA-256, verificar el archive upstream y la
-   configuración de compilación, añadir el digest revisado y repetir el gate.
+   configuración fijada antes de permitir ese nuevo digest.
 3. Sólo después de un run verde revisar el registro del backend y actualizar
    estado T097/C07/C08. El resultado no habilita cualquier kernel ni cierra
    los gates propios de T019/T035.

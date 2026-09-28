@@ -3324,6 +3324,14 @@ El workflow se publicó en `origin/main` como `19922123`. El primer run hosted,
 `36445140172`, construyó Bubblewrap y configuró el kernel, pero falló al validar
 el acceso del usuario broker al checkout; la suite T097 todavía no se ejecutó.
 Se corrigió el workflow para dar al broker acceso de grupo de solo lectura al
-checkout y permiso de recorrido en sus directorios padre. Falta repetir el run
-y revisar el digest del binario compilado. `T101` sigue `[ ]`,
+checkout y permiso de recorrido en sus directorios padre. El segundo run,
+`36447165686`, pasó el acceso al checkout y falló cerrado en el preflight
+compartido por los ocho casos porque el Bubblewrap compilado aún no estaba
+allowlisted. El log confirma archive
+SHA-256 `4734237473c0e5d695e4e9034a34e43b2dbf5164655bd13fa59ae376b2b7a765`,
+versión `0.13.0`, instalación `root:root 0755`, GCC `13.3.0` y Meson `1.3.2`
+en Ubuntu `24.04.5` image `20260920.314.1`. Tras revisar esas comprobaciones,
+se añadió a la allowlist el digest resultante
+`a5882b87c0b8105a5d9e81db5f64a4f8d373affc36f531e5df7409db5b1af8f6`. Falta
+repetir hasta obtener un run verde. `T101` sigue `[ ]`,
 `WORK_BACKENDS={}` y T097/T019 continúan abiertos.

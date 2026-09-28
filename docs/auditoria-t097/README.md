@@ -26,11 +26,11 @@ Orden recomendado: S02 → S01 → S03 → S04 → S05 → S06 → S08 → S07.
 | C04 | Cerrada | Proof revalida pidfds, starttime e inode PID namespace en cada guard. |
 | C05 | Cerrada | Recuperación tras muerte confirmada, journal de issues huérfanos, conciliación admin y pruebas SIGKILL/migración. |
 | C06 | Cerrada | Fallos originales del proxy corregidos; suite focal pasa. |
-| C07 | Parcial | Suite QEMU 8/8 sin skips. El workflow usa ahora `ubuntu-24.04`, compila Bubblewrap desde source archive con SHA fijado, provisiona broker efímero y rechaza skips. Falta ejecutarlo desde `main`; un digest nuevo requiere revisión y repetición verde. |
-| C08 | Verificada en guest Linux; perfil hosted pendiente | Ubuntu 26.10/QEMU TCG, kernel 7.3.0-5, Landlock ABI 11, Bubblewrap 0.13.0 allowlisted; aceptación 8/8. Falta comprobar ese mismo gate en una VM GitHub-hosted `ubuntu-24.04`. |
+| C07 | Parcial | Suite QEMU 8/8 sin skips. En GitHub-hosted `ubuntu-24.04`, la primera ejecución falló en permisos del checkout; la siguiente llegó al preflight y falló cerrado por un digest de build aún no allowlisted. El digest se revisó y añadió; falta un run verde. |
+| C08 | Verificada en guest Linux; perfil hosted pendiente | Ubuntu 26.10/QEMU TCG, kernel 7.3.0-5, Landlock ABI 11, Bubblewrap 0.13.0 allowlisted; aceptación 8/8. Ubuntu hosted 24.04.5 construyó el mismo source archive con digest revisado; falta que pase la suite completa. |
 
 T097 sigue `[ ]` y `WORK_BACKENDS = {}` hasta obtener un run hosted verde con
-0 skips y timeout predeterminado, y revisar el digest del binario. El perfil
+0 skips y timeout predeterminado. El perfil
 `ubuntu-24.04` valida una VM Linux efímera de referencia, no un host arbitrario
 de despliegue. La política elegida confía en el proceso CAO de una cuenta OS
 dedicada, no root, sin login y sin otros procesos; no afirma que Linux aísle
