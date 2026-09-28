@@ -5,9 +5,10 @@ Causa: [C08](../causas/C08-limites-del-entorno.md)
 ## Decisión
 
 El guest temporal resolvió los requisitos técnicos de C08 y ejecutó la suite
-8/8 sin skips. El primer workflow hosted confirmó ABI 11 y revisó el digest del
-binario, pero falló cerrado en la allowlist antes de los casos; la repetición
-sigue pendiente. Ninguna de estas pruebas equivale a un host de despliegue. El workflow
+8/8 sin skips. El run hosted también pasó los ocho casos; el workflow quedó
+rojo sólo después, al intentar guardar una caché de host vacía. Se desactiva
+esa caché y se repite para obtener un estado global verde. Ninguna prueba
+equivale a un host de despliegue. El workflow
 `.github/workflows/t097-host-acceptance.yml` usa GitHub-hosted `ubuntu-24.04`
 para arrancar un guest Ubuntu 26.10 con QEMU TCG. Los kernels nativos
 `ubuntu-24.04` y `ubuntu-26.04` ofrecieron ABI 7 y 8, inferiores al requisito 9.
@@ -75,11 +76,18 @@ fue `0.13.0` y el binario quedó como `root:root 0755`.
 
 El binario produjo SHA-256
 `15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250`. Los ocho
-fixtures lo rechazaron porque el digest no estaba aprobado, antes de correr
-los cuerpos de prueba. Tras revisar la descarga upstream, la configuración y
-el log de compilación, se añadió ese valor exacto a la allowlist. Este run no
-cuenta como aceptación; se exige otra ejecución completa con **8 passed, 0
-skipped**.
+fixtures rechazaron ese hash en el primer run, antes de correr los cuerpos de
+prueba. Tras revisar la descarga upstream, la configuración y el log de
+compilación, se añadió ese valor exacto a la allowlist.
+
+El run [`36460464186`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36460464186),
+commit `48909237`, confirmó Landlock ABI **11** y terminó con **8 passed, 0
+skipped en 201,67 s**. La suite pasó como broker con el digest aprobado. El
+workflow falló después, en `Post Install uv`, porque `setup-uv` intentó guardar
+`/home/runner/work/_temp/setup-uv-cache`, una ruta que no existe en el host:
+uv corre dentro del guest QEMU. Se desactiva la caché host para esta acción y
+se repetirá el workflow. El run demuestra los ocho casos, pero T101 requiere
+además un run global verde.
 
 La aceptación usa un kernel Linux en una VM TCG y sirve como evidencia de las
 interfaces probadas del guest. No equivale a certificar otro kernel. El nuevo
@@ -114,11 +122,12 @@ No se presenta la suite upstream completa como verde.
 
 ## Repetición pendiente para cerrar C07/C08 del perfil guest
 
-1. Repetir el workflow desde `main`; exigir Landlock ABI >= 9, Bubblewrap con
-   digest aprobado, ocho casos sin skips y timeout TCG documentado.
-2. Con run verde, cerrar C07/C08 para el perfil guest en las especificaciones
-   y esta auditoría. La prueba no certifica hosts de despliegue ni cierra los
-   gates propios de T019/T035.
+1. Repetir el workflow desde `main` con la caché host de `uv` desactivada;
+   exigir Landlock ABI >= 9, digest aprobado, ocho casos sin skips y timeout
+   TCG documentado.
+2. Con run global verde, cerrar C07/C08 para el perfil guest en las
+   especificaciones y esta auditoría. La prueba no certifica hosts de
+   despliegue ni cierra los gates propios de T019/T035.
 
 El run QEMU no certifica un host de despliegue ni habilita backend. Incluso
 tras cerrar C07/C08 para el perfil guest, mantener `WORK_BACKENDS={}` y dejar

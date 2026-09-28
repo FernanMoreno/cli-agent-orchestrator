@@ -39,7 +39,7 @@ El fixture requiere Linux, Bubblewrap 0.13.0 con digest aprobado, Landlock ABI
 tener shell `nologin`/`false` y no tener otros procesos host al iniciar la
 aceptación.
 
-## Repetición GitHub-hosted en QEMU pendiente
+## Repetición GitHub-hosted en QEMU — suite pasada, caché por corregir
 
 El workflow `.github/workflows/t097-host-acceptance.yml` usa
 GitHub-hosted `ubuntu-24.04` para arrancar un guest Ubuntu 26.10 con QEMU TCG,
@@ -69,9 +69,16 @@ El script `.github/scripts/t097-qemu-acceptance.sh` prepara un entorno efímero:
 El workflow confirma Landlock ABI >= 9 dentro del guest, instala dependencias
 bloqueadas y ejecuta la suite como broker con
 `T097_TEST_WORKER_TIMEOUT_SECONDS=45` sólo para compensar TCG; además falla si
-pytest reporta cualquier skip. La compilación imprime el digest. Si aún no está
-allowlisted, el primer run falla de forma esperada; tras revisar el source
-archive y la configuración fijados, se añade el digest aprobado y se repite la
-suite hasta obtener 0 skips. Este resultado acepta sólo la imagen guest
-registrada en el log. Otros hosts deben pasar sus preflight. Hasta el run
+pytest reporta cualquier skip. La compilación imprime el digest. El primer run
+con el archive completo detectó un hash nuevo; tras revisar origen y perfil, se
+allowlisteó el valor exacto.
+
+El run [`36460464186`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36460464186)
+pasó `test/integration/t097 -m t097_host`: **8 passed, 0 skipped en 201,67 s**,
+Landlock ABI 11 y Bubblewrap SHA-256
+`15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250`. El job
+falló después en el guardado de caché de `setup-uv`, porque el cache configurado
+pertenece al host y `uv` corre dentro de QEMU. El workflow desactiva esa caché y
+se repetirá para registrar un estado global verde. La aceptación cubre sólo la
+imagen guest registrada; otros hosts deben pasar su preflight. Hasta ese run
 verde, `WORK_BACKENDS={}` y T097/T019 permanecen abiertos.

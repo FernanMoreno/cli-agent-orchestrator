@@ -587,6 +587,16 @@ con GCC `15.3.0-4ubuntu1` y Meson `1.10.1`, e instaló versión `0.13.0` como
 `15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250` fue
 rechazado por no estar aún allowlisted; los ocho casos fallaron en el fixture
 antes de ejecutar sus cuerpos. Se revisaron origen y perfil fijado y se añadió
-ese hash exacto. T101/C07/C08 siguen pendientes de una repetición con ocho
-casos verdes y sin skips; no se registra `WORK_BACKENDS` ni se certifica un
-host de despliegue.
+ese hash exacto. T101/C07/C08 siguen pendientes de un workflow global verde;
+la suite pasa en el run siguiente, pero `setup-uv` falla al guardar la caché
+vacía del host. No se registra `WORK_BACKENDS` ni se certifica un host de
+despliegue.
+
+**Suite hosted pasada; limpieza de caché pendiente — 2026-09-28:** el run
+[`36460464186`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36460464186)
+(`48909237`) usó el digest revisado, Landlock ABI 11 y ejecutó
+`test/integration/t097 -m t097_host` como broker: **8 passed, 0 skipped en
+201,67 s**. El workflow quedó rojo después de la suite, cuando `setup-uv`
+intentó guardar una caché del host que no existe porque `uv` corre dentro del
+guest. Se desactiva el cache host y se repetirá para obtener run global verde;
+T101 sigue `[ ]` hasta entonces.

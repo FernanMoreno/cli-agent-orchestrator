@@ -1,8 +1,10 @@
 # C07 — Falta completar la aceptación integrada T097
 
 **Severidad:** alta (gate de registro)
-**Estado:** los casos de proxy concurrente y recuperación pasan en Ubuntu
-26.10/QEMU TCG; falta repetirlos mediante el workflow GitHub-hosted de guest.
+**Estado:** la suite hosted Ubuntu 26.10/QEMU TCG pasó 8/8 sin skips en el run
+`36460464186`. El workflow quedó rojo después de pytest porque `setup-uv`
+intentó guardar una caché vacía del host. Se desactiva esa caché y se repite
+para completar T101.
 
 ## Aceptación QEMU guest — 2026-09-28
 
@@ -62,9 +64,17 @@ despliegue.
 La primera ejecución remota también fija el digest del binario compilado en
 ese guest. Si aún no está allowlisted, la suite lo rechaza y el log imprime el
 hash; sólo se añade tras verificar origen/configuración de build, y se exige
-otro run completo verde. El resultado no certifica hosts de despliegue. Hasta
-obtener el run verde y aceptar el digest, `WORK_BACKENDS = {}` y T097/T019
-siguen `[ ]`.
+un workflow completo verde. El resultado no certifica hosts de despliegue.
+Hasta el run global verde, `WORK_BACKENDS = {}` y T097/T019 siguen `[ ]`.
+
+El run [`36460464186`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36460464186)
+(`48909237`) ejecutó esos ocho casos como `caos-work-broker`: **8 passed, 0
+skipped en 201,67 s**, con Landlock ABI 11 y Bubblewrap SHA-256
+`15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250`. El job
+falló después, al guardar la caché de `setup-uv`; esa acción corre en el host,
+pero `uv` instaló dentro del guest. El workflow desactivará su cache host y
+debe repetirse para estado global verde. La suite prueba el perfil guest; no
+certifica el host de despliegue.
 
 ## Relación
 

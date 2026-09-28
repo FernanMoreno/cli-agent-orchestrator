@@ -41,8 +41,8 @@ _BWRAP_VERSION_RE = re.compile(
 # docs/auditoria-t097/soluciones/S08-limites-del-entorno.md. Hosted builds:
 # ubuntu-24.04 image 20260920.314.1 (GCC 13.3.0, Meson 1.3.2), and pinned
 # Ubuntu 26.10 QEMU guest image 20260919 (GCC 15.3.0-4ubuntu1, Meson 1.10.1).
-# The guest digest was reviewed from run 36457607699; its retry must pass T097
-# acceptance before registry activation.
+# The guest digest passed all eight cases in run 36460464186. Production
+# registry activation still requires acceptance on the deployment host.
 _BWRAP_SHA256_ALLOWLIST: frozenset[str] = frozenset(
     {
         "f41ba3f7be0280df0afe201f0e2eeb16a17e969782491e830e6753c67f78d70d",

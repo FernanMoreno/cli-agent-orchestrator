@@ -26,8 +26,8 @@ Orden recomendado: S02 → S01 → S03 → S04 → S05 → S06 → S08 → S07.
 | C04 | Cerrada | Proof revalida pidfds, starttime e inode PID namespace en cada guard. |
 | C05 | Cerrada | Recuperación tras muerte confirmada, journal de issues huérfanos, conciliación admin y pruebas SIGKILL/migración. |
 | C06 | Cerrada | Fallos originales del proxy corregidos; suite focal pasa. |
-| C07 | Parcial | La suite local Ubuntu 26.10/QEMU TCG pasó 8/8. El primer run hosted verificó guest ABI 11 y fuente/build fijados; revisamos y allowlisteamos el digest resultante. Falta que la repetición hosted pase 8/8. |
-| C08 | Verificada en guest Linux; repetición hosted pendiente | Ubuntu 26.10/QEMU TCG, kernel 7.3.0-5, Landlock ABI 11. Run hosted `36457607699` verificó source archive y toolchain; falló cerrado antes de los casos al encontrar un digest nuevo, ya revisado y allowlisted. Falta el run verde; no certifica el kernel del runner ni uno de despliegue. |
+| C07 | Parcial | La aceptación hosted en Ubuntu 26.10/QEMU TCG pasó 8/8, 0 skips. El workflow quedó rojo después de los tests porque `setup-uv` intentó guardar una caché vacía del host; se desactiva antes de repetir. |
+| C08 | Verificada en guest Linux; workflow por repetir | Run hosted `36460464186`: kernel 7.3.0-5, ABI 11, digest revisado y suite 8/8. El paso de caché posterior falló porque `uv` instala dentro del guest y deja vacío el directorio de caché del host. El perfil guest no certifica el kernel del runner ni uno de despliegue. |
 
 T097 y `WORK_BACKENDS = {}` siguen `[ ]` hasta completar el run QEMU hosted y
 revisar por separado el host de despliegue. La suite guest usa timeout 45 s

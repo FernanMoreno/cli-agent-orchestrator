@@ -3383,3 +3383,16 @@ se añadió sólo ese hash exacto a la allowlist. El run no es aceptación: T101
 C07/C08 siguen pendientes de una repetición con ocho casos pasados y sin
 skips. `WORK_BACKENDS={}` y T097/T019 siguen sujetos a la aceptación del host
 de despliegue.
+
+### T097: suite guest hosted pasada, post-job de caché falla — 2026-09-28
+
+El run [`36460464186`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36460464186)
+(`48909237`) usó el digest revisado y registró Landlock ABI 11. La suite
+`test/integration/t097 -m t097_host` terminó **8 passed, 0 skipped en
+201,67 s** bajo la cuenta broker configurada. El workflow falló después, en el
+post-job de `setup-uv`, porque quiso guardar
+`/home/runner/work/_temp/setup-uv-cache`, que no existe en el host: uv y las
+dependencias se usan dentro del guest QEMU. Se desactiva el cache de host y se
+repetirá para obtener un resultado global verde. T101 y el cierre de C07/C08
+del perfil guest esperan ese run; `WORK_BACKENDS={}` y T097/T019 siguen sujetos
+a la aceptación del host de despliegue.
