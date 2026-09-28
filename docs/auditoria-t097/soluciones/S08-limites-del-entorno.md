@@ -5,9 +5,10 @@ Causa: [C08](../causas/C08-limites-del-entorno.md)
 ## Decisión
 
 El guest temporal resolvió los requisitos técnicos de C08 y ejecutó la suite
-8/8 sin skips. No es el runner de despliegue. El workflow dedicado ya existe en
-`.github/workflows/t097-host-acceptance.yml`; falta provisionar su runner
-`cao-t097-host` y obtener allí un run verde. `WORK_BACKENDS` permanece `{}`.
+8/8 sin skips. No equivale a un host de despliegue. El workflow
+`.github/workflows/t097-host-acceptance.yml` se adaptó al runner
+GitHub-hosted `ubuntu-24.04`; falta obtener allí un run verde. `WORK_BACKENDS`
+permanece `{}`.
 
 ## Entorno de aceptación
 
@@ -44,8 +45,9 @@ externo):
   [C07](../causas/C07-faltan-pruebas-integradas-t097.md).
 
 La aceptación usa un kernel Linux en una VM TCG y sirve como evidencia de las
-interfaces probadas del guest. No equivale a certificar otro kernel ni una
-instalación CI/producción; éstos deben repetir el mismo gate.
+interfaces probadas del guest. No equivale a certificar otro kernel. El nuevo
+perfil hosted sirve como referencia reproducible; cada host de despliegue
+sigue sujeto a los gates del preflight.
 
 ## Alcance de seguridad observado
 
@@ -75,11 +77,14 @@ No se presenta la suite upstream completa como verde.
 
 ## Pendiente antes de registrar
 
-1. Provisionar un runner Linux sin credenciales de proveedores, con label
-   `cao-t097-host`, cuenta broker dedicada y permisos `sudo -n -u` configurados
-   según [S07](S07-pruebas-integradas-t097.md).
-2. Ejecutar el workflow en `main`; debe terminar sin skips, sin override de
-   timeout y con el digest de Bubblewrap aprobado para ese host.
+1. Publicar el workflow actualizado en `main` y ejecutarlo en el runner
+   GitHub-hosted `ubuntu-24.04`.
+2. Exigir ocho casos sin skips y timeout predeterminado. Si el binario
+   compilado genera otro SHA-256, verificar el archive upstream y la
+   configuración de compilación, añadir el digest revisado y repetir el gate.
+3. Sólo después de un run verde revisar el registro del backend y actualizar
+   estado T097/C07/C08. El resultado no habilita cualquier kernel ni cierra
+   los gates propios de T019/T035.
 
 Hasta completar esos puntos, no cambiar `WORK_BACKENDS={}` ni marcar T097/T019
 como completadas.

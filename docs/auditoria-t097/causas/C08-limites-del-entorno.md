@@ -2,7 +2,7 @@
 
 **Severidad:** bloqueante para evidencia
 **Estado:** entorno de aceptación verificado en guest Linux QEMU; la suite T097
-pasó 8/8 sin skips. Falta repetir en el runner Linux de despliegue.
+pasó 8/8 sin skips. Falta validar el perfil GitHub-hosted `ubuntu-24.04`.
 
 ## Entorno original
 
@@ -58,12 +58,34 @@ root, sin login y sin procesos host ajenos; esa cuenta forma parte de la base
 de confianza. No se afirma aislamiento frente a root ni frente a procesos que
 ejecuten bajo la propia cuenta broker.
 
+## Perfil de referencia GitHub-hosted — pendiente de ejecutar
+
+El workflow `.github/workflows/t097-host-acceptance.yml` ya no requiere un
+runner self-hosted. Usa `ubuntu-24.04`, verifica el SHA upstream del source
+archive Bubblewrap 0.13.0, compila el binario sin privilegios y lo instala como
+root:root 0755. Configura Yama y, si está disponible, el sysctl AppArmor de
+user namespaces dentro de esa VM; crea una cuenta broker `nologin` exclusiva y
+ejecuta los ocho casos sin override de timeout ni skips. Registra versión de
+imagen, kernel y digest resultante.
+
+GitHub documenta que el runner estándar `ubuntu-24.04` para repositorios
+públicos usa una VM nueva por job
+([referencia oficial](https://docs.github.com/en/actions/reference/runners/github-hosted-runners));
+el inventario publica las versiones de Ubuntu y kernel de la imagen
+([Ubuntu 24.04](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md)).
+La versión exacta se registra en cada run porque la etiqueta recibe imágenes
+actualizadas.
+
+Esta VM es un perfil de referencia separado de cuentas de proveedores, no el
+host de despliegue. Su aceptación no sustituye los preflight de runtime en
+otros kernels. Si el digest compilado no está allowlisted, el run falla; se
+debe revisar su procedencia antes de permitirlo y repetir la suite.
+
 ## Resultado
 
 Los requisitos técnicos del guest se probaron sin skips. Esto resuelve el
 bloqueo de ABI/Bubblewrap para esa ejecución y cubre el proxy concurrente y su
-recuperación durable. No aprueba el runner de despliegue ni autoriza registrar
-el backend. El workflow dedicado está definido en
-`.github/workflows/t097-host-acceptance.yml`; requiere un runner provisionado
-con label `cao-t097-host`, cuenta broker y configuración sudo de sólo ejecución
-como esa cuenta. `WORK_BACKENDS` permanece vacío y T097/T019 continúan `[ ]`.
+recuperación durable. El nuevo perfil hosted está preparado, pero todavía no se
+ha ejecutado; no se autoriza registrar el backend. Hasta un run `ubuntu-24.04`
+verde y digest revisado, `WORK_BACKENDS` permanece vacío y T097/T019 continúan
+`[ ]`.

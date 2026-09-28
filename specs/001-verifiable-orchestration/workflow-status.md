@@ -3302,3 +3302,25 @@ Regresión local focal: **71 passed**. La selección ampliada terminó 420 passe
 espera que `send_keys` omita `plain_shell=False`, pero el `TmuxBackend`
 actual (ya modificado antes de este trabajo) sí lo envía. Se conserva sin
 cambios por ser ajeno a esta auditoría.
+
+### T097: migración de aceptación a runner GitHub-hosted — 2026-09-28
+
+Se actualizó `T100` y `.github/workflows/t097-host-acceptance.yml` para usar
+`ubuntu-24.04`: verifica el SHA-256 upstream del source archive Bubblewrap
+0.13.0, compila sin privilegios, instala `/usr/bin/bwrap` root:root 0755,
+prepara los sysctls requeridos sólo dentro de la VM efímera y crea la cuenta
+broker no interactiva. La suite corre como broker con timeout normal; el job
+falla salvo `8 passed` y rechaza skips/xfails. La aceptación cubre este perfil
+de referencia, no declara compatibles kernels de despliegue arbitrarios.
+
+Verificación local: el YAML parseó con dos jobs y los scripts embebidos pasaron
+`bash -n`; no hay override de `T097_TEST_WORKER_TIMEOUT_SECONDS`. El SHA-256
+del archive descargado coincidió con el valor fijado.
+`test/backends/test_work_broker_identity.py` → **11 passed**.
+`project-composition-check caos` → **289 archivos, 1072 dependencias, 4
+contratos conservados, 0 rotos**. `git diff --check` pasó.
+
+El workflow actualizado todavía no está publicado en `origin/main`; no hay run
+GitHub-hosted ni aceptación `ubuntu-24.04` en esta sesión. `T101` sigue `[ ]`,
+`WORK_BACKENDS={}` y T097/T019 continúan abiertos hasta un run remoto verde y
+revisión del digest compilado.

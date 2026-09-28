@@ -94,7 +94,8 @@ rechazo antes de asignar recursos, reparto justo y revocación durante ejecució
     Loader invocado, shebang, `execveat`, memfd, fork/doble fork y FDs se rechazan o
     quedan confinados de forma comprobable; Tmux/Herdr no son fallback. Un cleanup
     incierto requiere conciliación y nunca redelivery automática. El backend permanece
-    sin registrar hasta la aceptación host de T097/C08.
+    sin registrar hasta la aceptación completa de T097/C08 en el perfil Linux
+    hosted documentado en el plan.
 12. **Given** un host Linux que ejecuta Bubblewrap Work, **When** se crean namespaces
     y proxies por intento, **Then** el componente Work corre con una cuenta de servicio
     no root, no interactiva y exclusiva; herramientas autorizadas cruzan sólo por un
@@ -384,13 +385,15 @@ edición obsoleta y ejecutar gates aplicables en un entorno controlado.
 - La decisión T019 del 2026-09-25 acota una credencial interna por intento y un
   proxy MCP server-owned. Su diseño no activa MCP público ni cambia el ingreso
   ordinario `/sessions`; T017/T019/T035 siguen sujetos a sus gates separados.
-- T097 es un prerrequisito abierto de T019: un backend Linux dedicado y no
-  registrado puede evaluarse con Bubblewrap, pero una prueba de separación de
-  mounts en WSL no acredita restricciones de proceso, aislamiento de IPC/red,
-  secreto del proxy ni el ciclo de vida Work. Si utiliza Bubblewrap, debe exigir
-  versión >=0.12.0 y rechazar versiones anteriores antes de cualquier efecto;
-  `/usr/bin/bwrap` 0.11.1 de este host no es apto. Sólo evidencia adversarial y
-  de efectos reales para el contrato completo permite registrar ese backend.
+- T097 es un prerrequisito abierto de T019: el backend Linux permanece sin
+  registrar hasta pasar la aceptación adversarial en el perfil GitHub-hosted
+  `ubuntu-24.04` descrito en plan.md. Una prueba de separación de mounts en WSL
+  no acredita restricciones de proceso, aislamiento de IPC/red, secreto del
+  proxy ni el ciclo de vida Work. Si utiliza Bubblewrap, debe exigir versión
+  >=0.12.0 y rechazar versiones anteriores antes de cualquier efecto;
+  `/usr/bin/bwrap` 0.11.1 de este host no es apto. El resultado hosted valida
+  sólo esa imagen de referencia; otros hosts deben satisfacer sus gates de
+  runtime antes de admitir Work.
 - La aprobación de corte offline T069 del 2026-09-24 limita la garantía a
   writers Work registrados por el runtime. Un bundle v1 sólo prueba integridad
   estructural; ningún lease autoriza restore T070, proveedor, transporte o DB

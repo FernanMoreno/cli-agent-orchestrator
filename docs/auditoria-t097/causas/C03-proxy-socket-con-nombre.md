@@ -1,7 +1,7 @@
 # C03 — El proxy usa un socket con nombre en lugar de un socketpair por FD
 
 **Severidad:** alta (contradice el diseño mínimo aceptado del propio módulo)
-**Estado:** endpoint cerrado; la cuenta broker dedicada define la frontera host. El gate global espera el runner de despliegue.
+**Estado:** endpoint cerrado; la cuenta broker dedicada define la frontera host. El gate global espera la aceptación GitHub-hosted `ubuntu-24.04`.
 
 ## Síntoma
 

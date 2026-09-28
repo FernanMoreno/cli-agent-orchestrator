@@ -128,12 +128,16 @@ contrato con tools exige una fábrica server-owned
 que devuelva un `WorkMcpProxy` nuevo ligado al intento; sin proxy, preflight
 rechaza antes de admitir. El sandbox no recibe red directa.
 
-La aceptación reproducible corre en un runner Linux self-hosted dedicado con
-label `cao-t097-host`, separado del runner con credenciales de proveedores. El
-workflow instala dependencias sin elevar privilegios y ejecuta la suite completa
-como la cuenta configurada, con `T097_REQUIRE_HOST_ACCEPTANCE=1` y sin override
-del timeout normal. Falta de Bubblewrap/digest admitido, ABI, policy, cuenta o
-namespace debe fallar el job; no se permiten skips como aceptación.
+La aceptación reproducible corre en el runner GitHub-hosted `ubuntu-24.04`, una
+VM efímera separada de runners con credenciales de proveedores. El workflow
+verifica el SHA-256 del source archive upstream, compila e instala Bubblewrap
+0.13.0 como root:root 0755, configura sólo en esa VM los sysctls requeridos y
+crea la cuenta broker no interactiva desde `CAO_WORK_BROKER_ACCOUNT`. Ejecuta
+la suite completa como esa cuenta, con `T097_REQUIRE_HOST_ACCEPTANCE=1`, cero
+skips y sin override del timeout normal. Falta de Bubblewrap/digest admitido,
+ABI, policy, cuenta o namespace debe fallar el job. Este perfil acredita el
+runtime probado en esa imagen hosted; no certifica kernels arbitrarios de
+despliegue, que deben seguir rechazando en preflight si no cumplen sus gates.
 
 La aceptación de T097 requiere prueba de rechazo anterior al efecto con
 Bubblewrap 0.11.1 y pruebas Linux aisladas con versión admitida, contratos vacíos y

@@ -2,7 +2,7 @@
 
 **Severidad:** alta (gate de registro)
 **Estado:** los casos de proxy concurrente y recuperación pasan en QEMU; falta
-repetir la suite en el runner Linux de despliegue.
+repetir la suite en el runner GitHub-hosted `ubuntu-24.04`.
 
 ## Aceptación host — 2026-09-28
 
@@ -31,14 +31,13 @@ redelivery.
 
 En TCG, cada revalidación completa del proof de aislamiento tarda 8–9 s. Sólo
 para esa ejecución emulada se usó `T097_TEST_WORKER_TIMEOUT_SECONDS=45`; el
-fixture conserva 10 s por defecto. La repetición en el runner nativo debe dejar
-esa variable sin definir.
+fixture conserva 10 s por defecto. La repetición hosted deja esa variable sin
+definir.
 
 Tras imponer en el preflight la cuenta broker configurada, se volvió a copiar
 el código actual al guest y repetir la aceptación como `caos-work-broker` con
 `CAO_WORK_BROKER_ACCOUNT=caos-work-broker`: **8 passed, 0 skipped en 327,65 s**.
-Esto valida el nuevo control en QEMU; el gate del runner dedicado sigue
-pendiente.
+Esto valida el nuevo control en QEMU; el gate del runner hosted sigue pendiente.
 
 ## Decisión sobre el UID host
 
@@ -50,11 +49,19 @@ confiable. Cambiar el `uid_map` por intento no sustituye esta frontera.
 
 ## Pendiente
 
-La suite QEMU no equivale al runner de despliegue. El workflow
-`.github/workflows/t097-host-acceptance.yml` ya define el gate, pero falta
-provisionar el runner dedicado `cao-t097-host`, configurar la cuenta broker y
-obtener allí un resultado sin skips y con el timeout predeterminado de 10 s.
-Hasta entonces, `WORK_BACKENDS = {}` y T097/T019 siguen `[ ]`.
+El workflow `.github/workflows/t097-host-acceptance.yml` usa ahora la VM
+GitHub-hosted `ubuntu-24.04`. En cada job verifica el source archive upstream,
+compila Bubblewrap 0.13.0, instala el binario root:root 0755, prepara sysctls
+de aceptación sólo en esa VM efímera y crea la cuenta broker desde la variable
+del repositorio. Ejecuta la misma suite como broker, con timeout normal, y
+falla si pytest reporta skips.
+
+La primera ejecución remota también fija el digest del binario compilado en
+esa imagen. Si aún no está allowlisted, la suite lo rechaza y el log imprime
+el hash; sólo se añade tras verificar origen/configuración de build, y se exige
+otro run completo verde. Este perfil acredita la imagen de referencia de CI,
+no cualquier host de despliegue. Hasta obtener el run verde y aceptar el
+digest, `WORK_BACKENDS = {}` y T097/T019 siguen `[ ]`.
 
 ## Relación
 

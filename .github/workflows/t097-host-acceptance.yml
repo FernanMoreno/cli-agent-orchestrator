@@ -1,4 +1,4 @@
-name: T097 Native Linux Host Acceptance
+name: T097 Bubblewrap Host Acceptance
 
 on:
   push:
@@ -14,8 +14,8 @@ concurrency:
 
 jobs:
   trusted-main-only:
-    name: Restrict self-hosted execution to main
-    runs-on: ubuntu-latest
+    name: Restrict host acceptance to main
+    runs-on: ubuntu-24.04
     steps:
       - name: Require trusted main ref
         env:
@@ -26,7 +26,7 @@ jobs:
     name: Linux isolation and recovery acceptance
     needs: trusted-main-only
     if: github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, linux, cao-t097-host]
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       CAO_WORK_BROKER_ACCOUNT: ${{ vars.CAO_WORK_BROKER_ACCOUNT }}
@@ -37,6 +37,106 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install Bubblewrap build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential \
+            curl \
+            libcap-dev \
+            meson \
+            ninja-build \
+            pkg-config \
+            xz-utils
+
+      - name: Build and install checksum-pinned Bubblewrap 0.13.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha256=4734237473c0e5d695e4e9034a34e43b2dbf5164655bd13fa59ae376b2b7a765
+          work_dir="$(mktemp -d "${RUNNER_TEMP}/t097-bwrap.XXXXXX")"
+          trap 'rm -rf "$work_dir"' EXIT
+          archive="$work_dir/bubblewrap-0.13.0.tar.xz"
+          source_dir="$work_dir/bubblewrap-0.13.0"
+          build_dir="$work_dir/build"
+
+          curl --fail --location --silent --show-error --retry 3 \
+            "https://github.com/containers/bubblewrap/releases/download/v0.13.0/bubblewrap-0.13.0.tar.xz" \
+            --output "$archive"
+          printf '%s  %s\n' "$source_sha256" "$archive" | sha256sum --check
+          tar -xJf "$archive" -C "$work_dir"
+
+          meson setup "$build_dir" "$source_dir" \
+            --prefix=/usr \
+            --buildtype=release \
+            -Dtests=false \
+            -Dman=disabled \
+            -Dselinux=disabled \
+            -Dbash_completion=disabled \
+            -Dzsh_completion=disabled
+          meson compile -C "$build_dir"
+          sudo install -o root -g root -m 0755 "$build_dir/bwrap" /usr/bin/bwrap
+
+          test "$(/usr/bin/bwrap --version)" = "bubblewrap 0.13.0"
+          test "$(stat -c '%u:%g:%a' /usr/bin/bwrap)" = "0:0:755"
+          sha256sum /usr/bin/bwrap
+          gcc --version | head -n 1
+          meson --version
+
+      - name: Prepare required kernel policy on ephemeral runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo sysctl -w kernel.yama.ptrace_scope=1
+          apparmor_userns=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [[ -e "$apparmor_userns" ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          printf 'Runner image: %s %s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+          printf 'Kernel: %s\n' "$(uname -r)"
+          cat /etc/os-release
+
+      - name: Provision and validate ephemeral broker account
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import pwd
+          import re
+          import sys
+
+          name = os.environ.get("CAO_WORK_BROKER_ACCOUNT", "")
+          if not re.fullmatch(r"[a-z_][a-z0-9_-]*[$]?", name):
+              sys.exit("Set repository variable CAO_WORK_BROKER_ACCOUNT to a valid account name")
+          try:
+              pwd.getpwnam(name)
+          except KeyError:
+              pass
+          else:
+              sys.exit("The ephemeral runner already has the requested broker account")
+          if os.geteuid() == 0:
+              sys.exit("The Actions runner must execute as a separate non-root account")
+          PY
+
+          sudo useradd --create-home --shell /usr/sbin/nologin "$CAO_WORK_BROKER_ACCOUNT"
+
+          python3 - <<'PY'
+          import os
+          import pwd
+          from pathlib import Path
+
+          name = os.environ["CAO_WORK_BROKER_ACCOUNT"]
+          broker = pwd.getpwnam(name)
+          shell = Path(os.path.realpath(broker.pw_shell))
+          if broker.pw_uid == 0 or shell.name != "nologin":
+              raise SystemExit("The ephemeral Work broker must be non-root with nologin")
+          if os.geteuid() == broker.pw_uid:
+              raise SystemExit("The Actions runner must be a separate account")
+          print(f"Ephemeral broker account configured: {name} (uid {broker.pw_uid})")
+          PY
+          sudo -n -u "$CAO_WORK_BROKER_ACCOUNT" -- test -x "$GITHUB_WORKSPACE/."
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
@@ -46,47 +146,25 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Validate runner and dedicated broker account
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import os
-          import pwd
-          import re
-          import sys
-          from pathlib import Path
-
-          name = os.environ.get("CAO_WORK_BROKER_ACCOUNT", "")
-          if not re.fullmatch(r"[a-z_][a-z0-9_-]*[$]?", name):
-              sys.exit("Set the repository variable CAO_WORK_BROKER_ACCOUNT to a valid account name")
-          try:
-              broker = pwd.getpwnam(name)
-          except KeyError:
-              sys.exit("CAO_WORK_BROKER_ACCOUNT is not present on this runner")
-          shell = Path(os.path.realpath(broker.pw_shell))
-          if broker.pw_uid == 0 or shell.name not in {"nologin", "false"}:
-              sys.exit("The Work broker must be non-root and use nologin/false")
-          if os.geteuid() == 0 or os.geteuid() == broker.pw_uid:
-              sys.exit("The Actions runner must be a separate non-root account")
-          print(f"Broker account configured: {name} (uid {broker.pw_uid})")
-          PY
-          sudo -n -u "$CAO_WORK_BROKER_ACCOUNT" -- test -x "$GITHUB_WORKSPACE/."
-
-      - name: Install locked project dependencies
+      - name: Sync locked project dependencies
         run: uv sync --all-extras --dev --frozen
 
-      - name: Confirm broker can read the checkout and environment
+      - name: Confirm broker can read checkout and environment
         run: |
           sudo -n -u "$CAO_WORK_BROKER_ACCOUNT" -- \
             test -r "$GITHUB_WORKSPACE/pyproject.toml"
           sudo -n -u "$CAO_WORK_BROKER_ACCOUNT" -- \
             test -x "$GITHUB_WORKSPACE/.venv/bin/python"
 
-      - name: Run complete T097 host acceptance as broker
+      - name: Run complete T097 acceptance as broker with zero skips
         shell: bash
         run: |
+          set -euo pipefail
           broker_home="$(getent passwd "$CAO_WORK_BROKER_ACCOUNT" | cut -d: -f6)"
           test -n "$broker_home"
+          log_file="$(mktemp "${RUNNER_TEMP}/t097-pytest.XXXXXX")"
+          trap 'rm -f "$log_file"' EXIT
+
           sudo -n -u "$CAO_WORK_BROKER_ACCOUNT" -- env \
             HOME="$broker_home" \
             CAO_WORK_BROKER_ACCOUNT="$CAO_WORK_BROKER_ACCOUNT" \
@@ -95,4 +173,15 @@ jobs:
             PYTHONPATH="$GITHUB_WORKSPACE/src" \
             "$GITHUB_WORKSPACE/.venv/bin/python" -m pytest -q \
               test/integration/t097 -m t097_host \
-              --no-cov --tb=short -p no:cacheprovider
+              --no-cov --tb=short -rA -p no:cacheprovider | tee "$log_file"
+
+          summary="$(grep -E '^[0-9]+ (passed|failed|error|skipped|xfailed|xpassed)' "$log_file" | tail -n 1)"
+          test -n "$summary" || { echo "Pytest summary missing" >&2; exit 1; }
+          if [[ "$summary" != 8\ passed* ]]; then
+            echo "T097 host acceptance must pass all eight cases: $summary" >&2
+            exit 1
+          fi
+          if grep -Eq '(^|, )[1-9][0-9]* (skipped|xfailed|xpassed)' <<<"$summary"; then
+            echo "T097 host acceptance must have no skipped or expected-failure cases: $summary" >&2
+            exit 1
+          fi

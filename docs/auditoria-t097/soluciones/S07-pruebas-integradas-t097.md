@@ -25,7 +25,7 @@ sudo -u caos-work-broker env \
 
 El valor `45` permite terminar los dos casos de proxy bajo emulación TCG: las
 revalidaciones completas del proof tardan hasta 17 s allí. El fixture usa 10 s
-si la variable no está definida; así debe repetirse en el runner de despliegue.
+si la variable no está definida; el workflow hosted la deja sin definir.
 
 | Módulo | Casos |
 |---|---|
@@ -39,30 +39,34 @@ El fixture requiere Linux, Bubblewrap 0.13.0 con digest aprobado, Landlock ABI
 tener shell `nologin`/`false` y no tener otros procesos host al iniciar la
 aceptación.
 
-## Repetición de despliegue pendiente
+## Repetición GitHub-hosted pendiente
 
-El guest QEMU no es el runner de despliegue. El workflow
-`.github/workflows/t097-host-acceptance.yml` ejecuta este gate en el runner
-self-hosted Linux dedicado con label `cao-t097-host`, sólo sobre `main` o por
-dispatch de `main`. No reutiliza el runner `cao-real-e2e`, que maneja cuentas y
-credenciales de proveedores.
+El guest QEMU no sustituye una VM Linux hospedada. El workflow
+`.github/workflows/t097-host-acceptance.yml` ejecuta este gate en
+`ubuntu-24.04`, sólo sobre `main` o por dispatch de `main`, con permiso
+`contents: read`. GitHub describe el runner estándar como una VM nueva por job
+para repositorios públicos
+([documentación](https://docs.github.com/en/actions/reference/runners/github-hosted-runners));
+no reutiliza el runner `cao-real-e2e`, que maneja cuentas y credenciales de
+proveedores.
 
-Provisionamiento requerido en ese host:
+El workflow prepara el entorno efímero en cada job:
 
-- Crear `caos-work-broker` como cuenta OS no root, shell `nologin`/`false`, sin
-  procesos ajenos; ejecutar CAO con `CAO_WORK_BROKER_ACCOUNT=caos-work-broker`.
-- La variable no secreta de GitHub Actions
-  `CAO_WORK_BROKER_ACCOUNT=caos-work-broker` ya está configurada en el
-  repositorio. Crear esa misma cuenta en el host y permitir al usuario del
-  runner `sudo -n -u caos-work-broker` sin contraseña.
-- Instalar el Bubblewrap 0.13.0 aprobado, Landlock ABI ≥9, Yama
-  `ptrace_scope=1`, política AppArmor compatible con userns, compilador `cc`,
-  `readelf` y namespaces requeridos por la suite.
-- Hacer que el work directory del runner y sus padres sean atravesables y que
-  el checkout/`.venv` sean legibles y ejecutables por el broker. El broker no
-  necesita permisos de escritura en el checkout; las pruebas escriben en tmp.
+- Verifica el source archive oficial de Bubblewrap 0.13.0 por SHA-256, compila
+  como usuario `runner` e instala `/usr/bin/bwrap` como root:root 0755.
+- Ajusta `kernel.yama.ptrace_scope=1` y, si existe, desactiva la restricción
+  AppArmor de user namespaces sólo dentro de la VM efímera.
+- Crea la cuenta indicada por la variable no secreta
+  `CAO_WORK_BROKER_ACCOUNT` con shell `/usr/sbin/nologin`; no precisa una regla
+  `sudoers` configurada por el operador.
+- Instala el checkout y `.venv` bajo el usuario runner; el broker sólo necesita
+  lectura/ejecución del checkout. Las pruebas escriben en temporales.
 
-El workflow valida la cuenta, instala dependencias bloqueadas y ejecuta la suite
-como el broker sin `T097_TEST_WORKER_TIMEOUT_SECONDS`. Cualquier fallo, digest
-distinto, prerrequisito ausente o skip deja abierto el gate. Hasta un run verde
-en ese runner, `WORK_BACKENDS={}` y T097/T019 permanecen abiertos.
+El workflow instala dependencias bloqueadas y ejecuta la suite como broker, sin
+`T097_TEST_WORKER_TIMEOUT_SECONDS`; además falla si pytest reporta cualquier
+skip. La compilación imprime el digest. Si aún no está allowlisted, el primer
+run falla de forma esperada; tras revisar source archive/configuración y añadir
+el digest aprobado, se exige repetir la suite completa y obtener 0 skips. Este
+resultado acepta el perfil `ubuntu-24.04` registrado en el log; otros hosts
+deben pasar sus preflight. Hasta el run verde, `WORK_BACKENDS={}` y T097/T019
+permanecen abiertos.
