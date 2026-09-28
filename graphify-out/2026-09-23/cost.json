@@ -1,0 +1,54 @@
+{
+  "runs": [
+    {
+      "date": "2026-09-22T18:15:53.410371+00:00",
+      "old_nodes": 27863,
+      "new_nodes": 30154,
+      "new_edges": 59555,
+      "semantic_cached_files": 435,
+      "ast_without_nodes": [
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.coverage-baseline.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.devcontainer/features/cao/devcontainer-feature.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.specify/init-options.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.specify/integration.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.specify/integrations/claude.manifest.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.specify/integrations/codex.manifest.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.specify/integrations/speckit.manifest.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.specify/memory/.constitution-template.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.specify/workflows/workflow-registry.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/design-tokens/status.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/docusaurus/tsconfig.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/examples/ag-ui/ag-ui-meta-dogfood/dashboard.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/examples/ag-ui/ag-ui-meta-dogfood/timeline.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/examples/aws/cloudwatch-logs/config.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/examples/aws/dynamodb-delete/config.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/examples/aws/dynamodb-query/config.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/examples/aws/sqs-dlq-check/config.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/examples/aws/sqs-monitor/config.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/examples/aws/sqs-send/config.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/examples/aws/stepfunction/config.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/examples/fleet/fleet.example.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/examples/fleet/panel/test/fixture_fleet.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/examples/workflow/fixtures/inputs.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/skills/agui-author/evals/evals.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/skills/cao-mcp-apps/evals/evals.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/skills/mcp-apps-builder/evals/evals.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/skills/plugin.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/src/cli_agent_orchestrator/skills/agui-author/evals/evals.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/src/cli_agent_orchestrator/skills/cao-mcp-apps/evals/evals.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/src/cli_agent_orchestrator/skills/mcp-apps-builder/evals/evals.json",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/test/fixtures/work_contract_v1.json"
+      ],
+      "input_tokens": null,
+      "output_tokens": null,
+      "token_usage_status": "not exposed by host agent tools",
+      "pending_videos": [
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/docs/media/mcp-apps-demo.mp4",
+        "/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/docs/media/mcp-apps-demo.webm"
+      ]
+    }
+  ],
+  "total_input_tokens": null,
+  "total_output_tokens": null,
+  "token_usage_status": "unknown: host-agent usage unavailable; no estimated savings"
+}

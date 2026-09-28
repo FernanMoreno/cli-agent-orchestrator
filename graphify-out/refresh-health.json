@@ -1,0 +1,250 @@
+{
+  "node_count": 30327,
+  "unverified_node_count": 0,
+  "raw_edge_count": 66534,
+  "non_object_edges": 0,
+  "missing_endpoint_edges": 0,
+  "dangling_endpoint_edges": 3864,
+  "self_loop_edges": 0,
+  "valid_candidate_edges": 62670,
+  "exact_duplicate_edges": 258,
+  "directed_unique_endpoint_pairs": 59478,
+  "directed_same_endpoint_collapsed_edges": 3192,
+  "undirected_unique_endpoint_pairs": 59465,
+  "undirected_same_endpoint_collapsed_edges": 3205,
+  "same_endpoint_group_count": 1746,
+  "relation_variant_groups": 777,
+  "source_file_variant_groups": 0,
+  "source_location_variant_groups": 764,
+  "context_variant_groups": 150,
+  "post_build_graph_type": "Graph",
+  "post_build_node_count": 30327,
+  "post_build_edge_count": 59560,
+  "post_build_error": "",
+  "producer_suppression": {
+    "path": "/home/felni/.local/share/uv/tools/graphifyy/lib/python3.12/site-packages/graphify/extract.py",
+    "total_sites": 12,
+    "sites": [
+      {
+        "line": 1204,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids = {n[\"id\"] for n in nodes}"
+      },
+      {
+        "line": 1520,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids = {n[\"id\"] for n in nodes}"
+      },
+      {
+        "line": 1522,
+        "name": "seen_doc_refs",
+        "tuple_arity": 0,
+        "sample": "seen_doc_refs: set[str] = set()"
+      },
+      {
+        "line": 1885,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = {n[\"id\"] for n in nodes}"
+      },
+      {
+        "line": 2032,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids = {n.get(\"id\") for n in nodes}"
+      },
+      {
+        "line": 2670,
+        "name": "seen_keys",
+        "tuple_arity": 0,
+        "sample": "seen_keys: set[tuple] = set()"
+      },
+      {
+        "line": 2839,
+        "name": "seen_keys",
+        "tuple_arity": 0,
+        "sample": "seen_keys: set[tuple] = set()"
+      },
+      {
+        "line": 4436,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 4544,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 4623,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 5138,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 5139,
+        "name": "seen_edges",
+        "tuple_arity": 4,
+        "sample": "seen_edges: set[tuple[str, str, str, str | None]] = set()"
+      }
+    ],
+    "error": ""
+  },
+  "examples": [
+    {
+      "source": "src_cli_agent_orchestrator_cli_commands_launch_launch",
+      "target": "src_cli_agent_orchestrator_cli_commands_launch_py_option",
+      "edge_count": 13,
+      "relations": [
+        "references"
+      ],
+      "source_files": [
+        "src/cli_agent_orchestrator/cli/commands/launch.py"
+      ],
+      "source_locations": [
+        "L103",
+        "L108",
+        "L114",
+        "L119",
+        "L125",
+        "L135",
+        "L77",
+        "L78",
+        "L79",
+        "L80",
+        "L85",
+        "L92",
+        "L97"
+      ],
+      "contexts": [
+        "decorator"
+      ]
+    },
+    {
+      "source": "test_services_test_plugin_event_emission_testterminalpluginevents_test_create_terminal_does_not_dispatch_on_failure",
+      "target": "test_services_test_plugin_event_emission_py_patch",
+      "edge_count": 13,
+      "relations": [
+        "references"
+      ],
+      "source_files": [
+        "test/services/test_plugin_event_emission.py"
+      ],
+      "source_locations": [
+        "L480",
+        "L481",
+        "L482",
+        "L483",
+        "L484",
+        "L485",
+        "L486",
+        "L487",
+        "L488",
+        "L489",
+        "L490",
+        "L491",
+        "L492"
+      ],
+      "contexts": [
+        "decorator"
+      ]
+    },
+    {
+      "source": "test_services_test_terminal_service_full_testcreateterminal_test_ambiguous_provider_launch_keeps_terminal_and_private_evidence_for_reconciliation",
+      "target": "test_services_test_terminal_service_full_py_patch",
+      "edge_count": 13,
+      "relations": [
+        "references"
+      ],
+      "source_files": [
+        "test/services/test_terminal_service_full.py"
+      ],
+      "source_locations": [
+        "L129",
+        "L130",
+        "L131",
+        "L132",
+        "L133",
+        "L134",
+        "L135",
+        "L136",
+        "L137",
+        "L138",
+        "L139",
+        "L140",
+        "L141"
+      ],
+      "contexts": [
+        "decorator"
+      ]
+    },
+    {
+      "source": "test_services_test_terminal_service_full_testcreateterminal_test_create_terminal_appends_skill_catalog",
+      "target": "test_services_test_terminal_service_full_py_patch",
+      "edge_count": 13,
+      "relations": [
+        "references"
+      ],
+      "source_files": [
+        "test/services/test_terminal_service_full.py"
+      ],
+      "source_locations": [
+        "L570",
+        "L571",
+        "L572",
+        "L573",
+        "L574",
+        "L575",
+        "L576",
+        "L577",
+        "L578",
+        "L579",
+        "L580",
+        "L581",
+        "L582"
+      ],
+      "contexts": [
+        "decorator"
+      ]
+    },
+    {
+      "source": "test_services_test_terminal_service_full_testcreateterminal_test_create_terminal_without_skills_is_unchanged",
+      "target": "test_services_test_terminal_service_full_py_patch",
+      "edge_count": 13,
+      "relations": [
+        "references"
+      ],
+      "source_files": [
+        "test/services/test_terminal_service_full.py"
+      ],
+      "source_locations": [
+        "L639",
+        "L640",
+        "L641",
+        "L642",
+        "L643",
+        "L644",
+        "L645",
+        "L646",
+        "L647",
+        "L648",
+        "L649",
+        "L650",
+        "L651"
+      ],
+      "contexts": [
+        "decorator"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "WorkAdmission": [
+    {
+      "id": "src_cli_agent_orchestrator_services_work_admission_workadmission",
+      "file": "src/cli_agent_orchestrator/services/work_admission.py",
+      "location": "L65",
+      "degree": 29
+    }
+  ],
+  "WorkContracts": [
+    {
+      "id": "src_cli_agent_orchestrator_services_work_contract_workcontracts",
+      "file": "src/cli_agent_orchestrator/services/work_contract.py",
+      "location": "L52",
+      "degree": 24
+    }
+  ],
+  "WorkScheduler": [
+    {
+      "id": "src_cli_agent_orchestrator_services_work_scheduler_workscheduler",
+      "file": "src/cli_agent_orchestrator/services/work_scheduler.py",
+      "location": "L60",
+      "degree": 27
+    }
+  ],
+  "WorkReservations": [
+    {
+      "id": "src_cli_agent_orchestrator_services_work_reservations_workreservations",
+      "file": "src/cli_agent_orchestrator/services/work_reservations.py",
+      "location": "L73",
+      "degree": 24
+    }
+  ],
+  "DelegationSnapshots": [
+    {
+      "id": "src_cli_agent_orchestrator_services_delegation_snapshot_delegationsnapshots",
+      "file": "src/cli_agent_orchestrator/services/delegation_snapshot.py",
+      "location": "L94",
+      "degree": 22
+    }
+  ],
+  "KnowledgePolicy": [
+    {
+      "id": "src_cli_agent_orchestrator_services_knowledge_policy_knowledgepolicy",
+      "file": "src/cli_agent_orchestrator/services/knowledge_policy.py",
+      "location": "L25",
+      "degree": 23
+    }
+  ],
+  "KnowledgeRevisions": [
+    {
+      "id": "src_cli_agent_orchestrator_services_knowledge_revisions_knowledgerevisions",
+      "file": "src/cli_agent_orchestrator/services/knowledge_revisions.py",
+      "location": "L65",
+      "degree": 29
+    }
+  ],
+  "WorkRepository": [
+    {
+      "id": "src_cli_agent_orchestrator_clients_work_repository_workrepository",
+      "file": "src/cli_agent_orchestrator/clients/work_repository.py",
+      "location": "L159",
+      "degree": 96
+    }
+  ]
+}

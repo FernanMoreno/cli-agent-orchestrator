@@ -1,0 +1,88 @@
+{
+  "generated_at": "2026-09-27T14:57:55.825240+00:00",
+  "nodes": {
+    "src_cli_agent_orchestrator_clients_work_repository_workrepository": {
+      "code_fingerprint": "809d53a1f37e5fc652df5b5f1f0a815ab15cb605ab9fa79b348cd44c0fde9350",
+      "label": "WorkRepository",
+      "last": "2026-09-22T18:12:48.283365+00:00",
+      "provenance": [
+        {
+          "date": "2026-09-22T18:12:48.283365+00:00",
+          "outcome": "useful",
+          "q": "Explain WorkAdmission"
+        }
+      ],
+      "score": 0.893688715,
+      "source_file": "src/cli_agent_orchestrator/clients/work_repository.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "src_cli_agent_orchestrator_services_work_admission_workadmission": {
+      "code_fingerprint": "8b3cff93722584ab7337ac9ea3a325cecce5a1453c7d1cdc646ed1685a70587c",
+      "label": "WorkAdmission",
+      "last": "2026-09-27T07:55:42.181476+00:00",
+      "neg": 1,
+      "provenance": [
+        {
+          "date": "2026-09-22T18:12:48.283365+00:00",
+          "outcome": "useful",
+          "q": "Explain WorkAdmission"
+        }
+      ],
+      "score": -0.099559511,
+      "source_file": "src/cli_agent_orchestrator/services/work_admission.py",
+      "status": "contested",
+      "uses": 1,
+      "verdict": "dead end"
+    },
+    "src_cli_agent_orchestrator_services_work_authority_workauthority": {
+      "code_fingerprint": "c2918cb2edfa2f398ce6f3a937cbf6cf6ecc20107fe30a3d00bed9db8a170e06",
+      "label": "WorkAuthority",
+      "last": "2026-09-22T18:12:48.283365+00:00",
+      "provenance": [
+        {
+          "date": "2026-09-22T18:12:48.283365+00:00",
+          "outcome": "useful",
+          "q": "Explain WorkAdmission"
+        }
+      ],
+      "score": 0.893688715,
+      "source_file": "src/cli_agent_orchestrator/services/work_authority.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "src_cli_agent_orchestrator_services_work_reservations_workreservations": {
+      "code_fingerprint": "4266af8a16bf0a97eaa1dd157f79b67b360de0f68bbda51ef5158a156f870317",
+      "label": "WorkReservations",
+      "last": "2026-09-22T18:12:48.283365+00:00",
+      "provenance": [
+        {
+          "date": "2026-09-22T18:12:48.283365+00:00",
+          "outcome": "useful",
+          "q": "Explain WorkAdmission"
+        }
+      ],
+      "score": 0.893688715,
+      "source_file": "src/cli_agent_orchestrator/services/work_reservations.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "src_cli_agent_orchestrator_services_work_scheduler_workscheduler": {
+      "code_fingerprint": "a4defceea4e89ae26767cf9b932954591ae9eb5a154a939c947ee8bd64264bb9",
+      "label": "WorkScheduler",
+      "last": "2026-09-22T18:12:48.283365+00:00",
+      "provenance": [
+        {
+          "date": "2026-09-22T18:12:48.283365+00:00",
+          "outcome": "useful",
+          "q": "Explain WorkAdmission"
+        }
+      ],
+      "score": 0.893688715,
+      "source_file": "src/cli_agent_orchestrator/services/work_scheduler.py",
+      "status": "tentative",
+      "uses": 1
+    }
+  },
+  "version": 1
+}
