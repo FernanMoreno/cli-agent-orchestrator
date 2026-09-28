@@ -1,5 +1,15 @@
 # T097 formal composition review — 2026-09-26
 
+## Current status — 2026-09-28
+
+The verdict below records the earlier bounded source review. Since then, hosted
+run [`36463930292`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36463930292)
+passed the fixed Ubuntu 26.10/QEMU guest acceptance: 8 passed, 0 skipped,
+Landlock ABI 11. T097 is closed at that accepted profile. No production host
+exists or is planned, so Bubblewrap remains unregistered and Work disabled;
+T019 remains independently open and deferred. A future deployment requires a
+new target-specific task and acceptance.
+
 **Verdict: FAIL for T097 acceptance; T097 and T019 remain `[ ]`.** The tmux ABA review found name-based destructive Work cleanup unsafe. The corrective source delta rejects Work rollback, `kill_session`, and `kill_window` until a server-incarnation-fenced identity exists. The target, ordinary input, and supervisor environment fences have bounded evidence. This reviewer inspected source and the supplied reports; no provider or operator database was exercised here.
 
 ## Changed and adjacent boundaries

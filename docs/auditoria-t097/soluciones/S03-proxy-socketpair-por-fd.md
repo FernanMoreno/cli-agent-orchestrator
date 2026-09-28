@@ -43,6 +43,8 @@ Causa: [C03](../causas/C03-proxy-socket-con-nombre.md)
   de activar secreto y GO.
 - Tests cubren ausencia de ruta, revocación/cierre, varios mensajes y replay
   idéntico, y un hermano host tras `exec` bajo el filtro/Yama verificados; el
-  registro de backend permanece vacío hasta la aceptación global.
-- La aceptación de host ejecutó dos workers reales a la vez: endpoints,
-  secretos, respuestas y efectos quedaron ligados a intentos distintos.
+  registro de backend permanece vacío por decisión de no desplegar Work; la
+  aceptación global del perfil guest está completada.
+- La suite de aceptación ejecutada en el guest lanzó dos workers reales a la
+  vez: endpoints, secretos, respuestas y efectos quedaron ligados a intentos
+  distintos.

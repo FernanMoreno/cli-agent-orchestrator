@@ -56,6 +56,6 @@ Contrato mínimo (ya fijado por `test/security/test_work_bubblewrap_runtime_snap
 - Pruebas de socket tardío, mutación del origen después del ACK, setup fallido,
   cleanup incierto y retención del snapshot pasan en el harness local. La
   prueba directa de dispositivos hace `skip` si el runner no permite `mknod`.
-- El host no usa un kernel nativo ABI 9 y `/usr`, `/lib`, `/lib64` siguen como
-  binds vivos; su defensa observada es seccomp `connect=EPERM`. La suite ABI 9
-  y la matriz de host de aceptación siguen pendientes (S08).
+- El host local no usa un kernel nativo ABI 9 y `/usr`, `/lib`, `/lib64` siguen
+  como binds vivos; su defensa observada es seccomp `connect=EPERM`. La suite
+  ABI 9 pasó en el guest fijado (S08); no hay target de producción planeado.

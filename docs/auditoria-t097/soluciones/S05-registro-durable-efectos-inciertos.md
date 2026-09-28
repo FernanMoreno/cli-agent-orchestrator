@@ -53,5 +53,5 @@ effects e issues. Otra prueba mata el proceso entre el DDL de v35 y su commit;
 al reabrir, v34 queda íntegro, verifica y migra a v35. La compatibilidad v34
 backfillea los issues existentes sin cambiar sus datos.
 
-Esto cierra C05. No cierra la aceptación T097 completa: los gates host-nativos
-y la suite integrada siguen en C01/C03/C04/C07/C08.
+Esto cierra C05. La aceptación integrada T097 pasó en el guest fijado; no se
+habilita el backend porque no existe ni se prevé un host de producción.

@@ -1,7 +1,7 @@
 # C04 — La prueba de aislamiento del proxy no está ligada a intento, generación, contrato ni proceso
 
 **Severidad:** alta
-**Estado:** cerrado en la proof actual; aceptación global sigue sujeta a C07/C08
+**Estado:** cerrada en la proof y aceptación integrada del guest (C07/C08); Work no se despliega y el backend permanece deshabilitado.
 
 ## Síntoma
 
@@ -40,4 +40,5 @@ comprueba pidfds, starttime de ambos procesos, identidad durable, PID/user
 namespace y snapshot, y lo exige antes de cada efecto. Las pruebas cambian
 starttime y namespace tras emitir proof y confirman su rechazo. La resistencia
 de hermano mismo UID queda verificada por S03 bajo Yama=1. C04 queda cerrada;
-el gate global permanece cerrado por C07/C08.
+la aceptación guest C07/C08 también pasó. No se prevé host de producción, así
+que T097 se cierra con el backend deliberadamente sin registrar.

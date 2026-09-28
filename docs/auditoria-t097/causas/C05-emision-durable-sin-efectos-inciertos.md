@@ -46,5 +46,6 @@ permanece pendiente.
 Las pruebas con `SIGKILL` cubren el efecto antes y después del callback
 upstream, y la muerte durante DDL verifica rollback íntegro y compatibilidad
 v34→v35. Ver [S05](../soluciones/S05-registro-durable-efectos-inciertos.md)
-para rutas admin, política de retención y evidencia. El gate global T097 sigue
-abierto por causas independientes C01, C03, C04, C07 y C08.
+para rutas admin, política de retención y evidencia. La aceptación integrada
+guest T097 pasó en C07/C08; el cierre de auditoría no habilita Work porque no
+existe ni se prevé un host de producción y `WORK_BACKENDS` queda vacío.

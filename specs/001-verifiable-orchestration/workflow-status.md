@@ -3409,6 +3409,18 @@ Bubblewrap 0.13.0, instalado `root:root 0755`, con digest revisado
 La suite `test/integration/t097 -m t097_host` pasó como cuenta broker:
 **8 passed, 0 skipped en 288,11 s**.
 
-T101 y C07/C08 quedan cerradas para el perfil guest reproducible. El guest no
-certifica un kernel de despliegue: `WORK_BACKENDS={}` permanece vacío y T097/T019
-siguen sujetos a la aceptación específica del host destino.
+T101 y C07/C08 quedan cerradas con el perfil guest reproducible. **Decisión de
+cierre T097 — 2026-09-28:** no existe ni se prevé un host de producción; se
+cierra T097 con esta aceptación y el backend permanece sin registrar. Work no
+se habilita. T019 sigue abierto y diferido hasta que se elija un target futuro.
+
+Se revisó la opción gratuita. Este repositorio es público y los runners
+estándar de GitHub Actions son gratuitos, pero cada runner es efímero y se
+desmantela al terminar el job; sirven para la aceptación repetible ya pasada,
+no como host de producción ([runner y cobro de Actions](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job)).
+OCI publica VM Always Free, pero advierte falta temporal de capacidad y que
+puede reclamar instancias inactivas ([límites Always Free](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm)).
+Google Cloud limita su cuota Always Free a una `e2-micro` en una de tres
+regiones de EE. UU. ([cuota gratuita de Compute Engine](https://cloud.google.com/free/docs/free-cloud-features)).
+Ninguna se adopta como host de producción. La opción gratuita cubre las
+pruebas; no hay una opción gratuita fiable seleccionada para operar Work.

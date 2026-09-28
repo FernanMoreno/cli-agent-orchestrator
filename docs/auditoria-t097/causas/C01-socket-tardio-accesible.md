@@ -1,7 +1,7 @@
 # C01 — El socket tardío sigue siendo accesible desde el worker
 
 **Severidad:** crítica (rompe el aislamiento de IPC del gate T097)
-**Estado:** cerrado en la composición verificada; aceptación global sigue sujeta a C07/C08
+**Estado:** cerrada en la composición y aceptación integrada del guest (C07/C08); no hay host de producción planeado y el backend sigue deshabilitado.
 
 ## Síntoma
 
@@ -74,6 +74,7 @@ La composición monta snapshots privados para runtime/fuente/dependencias y
 seccomp deniega `connect()` con `EPERM`; el ACK exige esa evidencia. El test
 compuesto crea un socket tardío en un bind `/usr` vivo después del ACK y prueba
 que no llega al listener. C01 queda cerrado para esta política. La aceptación
-integrada T097 y el host ABI 9/digest aprobado siguen pendientes en C07/C08;
-ver [S01](../soluciones/S01-socket-tardio-accesible.md) y
+guest T097/C07/C08 pasó; como no existe ni se prevé un host de producción,
+`WORK_BACKENDS` permanece vacío por decisión de alcance. Véase
+[S01](../soluciones/S01-socket-tardio-accesible.md) y
 [S08](../soluciones/S08-limites-del-entorno.md).

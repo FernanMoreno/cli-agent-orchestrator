@@ -1,10 +1,10 @@
 # C08 — Límites del entorno de validación
 
 **Severidad:** bloqueante para evidencia
-**Estado:** cerrada para el perfil guest en el run hosted [`36463930292`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36463930292),
+**Estado:** cerrada por el run hosted [`36463930292`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36463930292),
 con workflow global verde, suite 8/8 sin skips y Landlock ABI 11. Los runners
-nativos `ubuntu-24.04` y `ubuntu-26.04` ofrecieron ABI 7 y ABI 8; la aceptación
-QEMU acredita el guest fijado, no un host de despliegue.
+nativos `ubuntu-24.04` y `ubuntu-26.04` ofrecieron ABI 7 y ABI 8. No existe ni
+se prevé un host de despliegue, por lo que el backend queda deshabilitado.
 
 ## Entorno original
 
@@ -106,6 +106,7 @@ El run [`36463930292`](https://github.com/FernanMoreno/cli-agent-orchestrator/ac
 kernel `7.3.0-5-generic`, Landlock ABI 11 y Bubblewrap 0.13.0 con digest
 `15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250`; la suite
 terminó **8 passed, 0 skipped en 288,11 s**. C07/C08 quedan cerradas para este
-perfil guest reproducible. El host de despliegue sigue sujeto a su aceptación
-específica; `WORK_BACKENDS` permanece vacío y T097/T019 continúan `[ ]` hasta
-validarlo.
+perfil guest reproducible. T097 se cierra sin habilitar despliegue porque no
+existe ni se prevé un host de producción. `WORK_BACKENDS` permanece vacío;
+T019 sigue abierto y diferido. Si se define un target futuro, requerirá una
+tarea y aceptación específicas para ese host.

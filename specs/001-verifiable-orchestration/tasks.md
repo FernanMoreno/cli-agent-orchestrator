@@ -182,8 +182,11 @@ conservar resultado y niños después de eliminar terminal.
   el receipt interno tras suite completa sin omisiones.
   T017/T019/T020/T035 permanecen abiertos con sus gates propios.
 - T019 depende del receipt interno T094 y de la provisión explícita de actores;
-  además depende del backend Work demostrado por T097. T097 permanece abierto;
-  por tanto T019 permanece bloqueado y abierto.
+  además depende del backend Work demostrado por T097. T097 queda cerrado con
+  aceptación del guest de referencia; el proyecto no tiene ni prevé un host de
+  despliegue, así que el backend permanece deliberadamente sin registrar.
+  T019 queda abierto y diferido hasta que se defina un target de despliegue y
+  se apruebe trabajo nuevo para ese host.
   El proxy y su credencial requieren prueba de aislamiento del backend antes
   de cualquier ejecución en `WorkAdmission._preflight`, antes de crear sesión
   o ventana. El registro Work sigue vacío; Tmux/Herdr no son fallback y un
@@ -278,10 +281,13 @@ No se hacen commits automáticos. Una demo real y una integración remota conser
 
 ## Phase 14: Convergence
 
-- [ ] T097 [US2] Implementar y demostrar un backend Work Linux dedicado en
-  `src/cli_agent_orchestrator/backends/` que permanezca sin registrar en
-  `work_registry.py` hasta superar su aceptación. Bubblewrap es candidato,
-  no evidencia suficiente: si se usa, exigir versión >=0.12.0 y probar que
+- [x] T097 [US2] Implementar y aceptar el backend Work Linux con Bubblewrap en
+  `src/cli_agent_orchestrator/backends/`, manteniéndolo sin registrar en
+  `work_registry.py`. Para el alcance actual, la aceptación Ubuntu 26.10/QEMU
+  TCG cierra la demostración: 8 casos pasaron sin skips. No existe ni se prevé
+  un host de despliegue, así que Work queda deshabilitado; esto no declara
+  soporte de producción. Una decisión futura de despliegue requiere una tarea
+  nueva y aceptación en el host concreto. Exigir Bubblewrap >=0.12.0 y probar que
   0.11.1 o versión desconocida rechaza antes de cualquier efecto conforme a
   GHSA-pxhw-h44j-8pfx/CVE-2026-87766; el 0.11.1 instalado en este host es
   incompatible. Imponer el `ProcessRestrictionContract` efectivo
@@ -303,8 +309,11 @@ No se hacen commits automáticos. Una demo real y una integración remota conser
   entre preflight y efecto, launch, reinicio, muerte de proxy, reemplazo,
   terminación, limpieza y fallos parciales; sin fuga de secretos ni nuevos
   efectos no autorizados, con residuo incierto bloqueado para conciliación y
-  sin redelivery automático. Registrar el backend sólo para la
-  plataforma y contratos demostrados; Tmux/Herdr conservan rechazo Work.
+  sin redelivery automático. La aceptación del guest Ubuntu 26.10/QEMU TCG
+  cierra la demostración en el alcance actual. Como el proyecto no tiene ni
+  prevé un host de despliegue, mantener el backend sin registrar y Work
+  deshabilitado; cualquier activación futura requiere una tarea nueva con
+  target de despliegue y aceptación propia. Tmux/Herdr conservan rechazo Work.
   Este gate no implementa credencial v27, hijo/handoff, ACK ni ingreso público:
   T019 sigue `[ ]` hasta sus propias pruebas y T035 conserva su gate
   (FR-003/FR-006/SC-001).
@@ -479,9 +488,9 @@ diferido, no PASS. No hay integración a GO/release/backend;
   verificando rechazo sin marcador/efecto, cleanup incierto conciliable y
   ninguna redelivery automática. Desarrollar y probar el código sin depender
   del host C08 usando sólo artefactos scratch como fixtures; ese resultado no
-  cuenta como aceptación de host. Mantener `WORK_BACKENDS = {}` hasta que T097
-  cierre aparte la aceptación adversarial en host aprobado (FR-003/FR-006/
-  SC-001, C07, T097; partial).
+  cuenta como aceptación de host. Mantener `WORK_BACKENDS = {}` por la decisión
+  de no desplegar Work: el guest cierra la aceptación T097 de este alcance, pero
+  no autoriza ejecución en un host no elegido (FR-003/FR-006/SC-001, C07, T097).
 
 **Evidencia T098 — 2026-09-28:** el gateway productivo registra sólo el
 adaptador V2 de proceso y rechaza V1 antes de persistir una nueva admisión. El
@@ -531,8 +540,8 @@ S07 aún no cubre endpoint proxy real entre intentos Work concurrentes, todos
 los aliases filesystem/IPC ni recuperación tras muerte/reinicio de proxy y
 supervisor. Además, el actor host ordinario del mismo UID pudo hacer
 `ptrace`/`pidfd_getfd` sobre el bootstrap pre-GO fuera de los user namespaces;
-esa frontera queda explícita en C07/C08. T097 sigue `[ ]`, `WORK_BACKENDS={}`
-y T019 permanece `[ ]`; no se registra el backend.
+esa frontera queda explícita en C07/C08. En ese punto T097 y T019 seguían
+`[ ]`; `WORK_BACKENDS={}` permanecía vacío y no se registraba el backend.
 
 **Actualización C07 — aceptación final en QEMU, 2026-09-28:** la suite host
 `test/integration/t097 -m t097_host` pasó **8 passed, 0 skipped en 335,30 s**
@@ -554,14 +563,16 @@ cuenta OS dedicada, no root, `nologin` y sin otros procesos. No se afirma que
 - [x] C08: aceptación sin skips y Landlock ABI >= 9 en el guest Ubuntu 26.10 fijado, arrancado con QEMU TCG desde GitHub-hosted `ubuntu-24.04`; el perfil guest no certifica el kernel de despliegue.
 
 La aceptación QEMU hosted de C08/T101 está cerrada para el perfil guest.
-T097/T019 y `WORK_BACKENDS={}` permanecen abiertos hasta aceptar el host de
-despliegue.
+**T097 queda cerrado con ese alcance:** no existe ni se prevé un host de
+despliegue, así que el backend no se registra y Work queda deshabilitado.
+T019 permanece abierto y diferido; no se implementará sin una decisión futura
+de target Linux.
 
 ## Phase 16: Cierre de identidad broker y aceptación de runner
 
 - [x] T099 [US2] Enforzar en `BubblewrapWorkBackend.preflight_work` que `CAO_WORK_BROKER_ACCOUNT` nombre una cuenta local existente, no root, con shell no interactiva y UID igual al eUID; rechazar configuración ausente, root, shell de login o mismatch antes de cualquier probe Landlock/Bubblewrap. Añadir pruebas RED/GREEN para cada condición y para rechazo sin probes en `test/backends/test_work_broker_identity.py`; la aceptación host de `test/integration/t097/test_host_acceptance.py` debe usar y comprobar la misma configuración (FR-003/FR-006, SC-001, US2/AC13, C03; partial).
 - [x] T100 [US2] Añadir `.github/workflows/t097-host-acceptance.yml` para orquestar desde GitHub-hosted `ubuntu-24.04` un guest Ubuntu 26.10 efímero con QEMU TCG, sólo desde `main` y `workflow_dispatch` de `main`, permisos `contents: read` y timeout acotado. Fijar y verificar SHA-256 de la imagen cloud y del source archive Bubblewrap 0.13.0; compilar e instalar Bubblewrap root:root 0755 dentro del guest; preparar sysctls allí; crear la cuenta broker no interactiva indicada por `CAO_WORK_BROKER_ACCOUNT`; exigir Landlock ABI >= 9; correr los ocho casos como broker sin skips, con timeout 45 s exclusivo de TCG; documentar que el guest no certifica el runner ni un host de despliegue (C07/C08; partial).
-- [x] T101 [US2] Ejecutar el workflow de aceptación QEMU desde `main`; exigir Landlock ABI >= 9, ocho casos sin skips, timeout TCG documentado y Bubblewrap 0.13.0 con digest revisado. El run global verde cierra C07/C08 para el perfil guest en `specs/001-verifiable-orchestration/` y `docs/auditoria-t097/`, sin afirmar compatibilidad de hosts de despliegue ni registrar `WORK_BACKENDS`. T097/T019 permanecen sujetos a aceptación del host de destino antes de habilitar ejecución Work (C07/C08, T097; partial).
+- [x] T101 [US2] Ejecutar el workflow de aceptación QEMU desde `main`; exigir Landlock ABI >= 9, ocho casos sin skips, timeout TCG documentado y Bubblewrap 0.13.0 con digest revisado. El run global verde cierra C07/C08 para el perfil guest en `specs/001-verifiable-orchestration/` y `docs/auditoria-t097/`, sin afirmar compatibilidad de hosts de despliegue ni registrar `WORK_BACKENDS`. Con esta aceptación se cierra T097 para el alcance sin despliegue; T019 permanece independiente y abierto.
 
 **Repetición tras enforcement de broker — 2026-09-28:** copié el `src/` y
 `test/` actualizados a un guest Ubuntu/QEMU Linux y ejecuté toda la suite como
@@ -608,6 +619,8 @@ posterior consta a continuación.
 `7.3.0-5-generic`, Landlock ABI 11 y Bubblewrap 0.13.0 con el digest revisado
 `15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250`.
 `test/integration/t097 -m t097_host` pasó **8 casos, 0 skips, en 288,11 s**
-bajo la cuenta broker. T101 y C07/C08 se cierran para el guest reproducible;
-el host de despliegue requiere aceptación independiente. `WORK_BACKENDS={}` y
-T097/T019 permanecen abiertos hasta ese gate.
+bajo la cuenta broker. T101 y C07/C08 se cierran para el guest reproducible.
+**Decisión de cierre T097 — 2026-09-28:** no existe ni se prevé un host de
+producción; se cierra T097 con esta aceptación y no se registra ni habilita el
+backend. Cualquier despliegue futuro requerirá una tarea nueva y aceptación del
+host concreto. T019 permanece abierto y diferido por separado.

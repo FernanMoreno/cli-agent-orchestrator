@@ -93,11 +93,11 @@ rechazo antes de asignar recursos, reparto justo y revocación durante ejecució
     `exec` descendiente sólo alcanza contenido ejecutable inmutable del contrato.
     Loader invocado, shebang, `execveat`, memfd, fork/doble fork y FDs se rechazan o
     quedan confinados de forma comprobable; Tmux/Herdr no son fallback. Un cleanup
-    incierto requiere conciliación y nunca redelivery automática. El backend
-    permanece sin registrar hasta la aceptación completa de T097/C08 en el
-    perfil Ubuntu QEMU guest fijado en el plan. Esa aceptación valida el guest;
-    el preflight de cada host de despliegue sigue siendo obligatorio antes de
-    ejecutar Work.
+    incierto requiere conciliación y nunca redelivery automática. T097/C08
+    quedaron aceptadas en el perfil Ubuntu QEMU guest fijado en el plan. Como
+    el proyecto no tiene ni prevé un host de despliegue, el backend permanece
+    sin registrar por decisión de alcance y Work no se habilita. Cualquier
+    despliegue futuro requiere una tarea nueva y preflight en su host concreto.
 12. **Given** un host Linux que ejecuta Bubblewrap Work, **When** se crean namespaces
     y proxies por intento, **Then** el componente Work corre con una cuenta de servicio
     no root, no interactiva y exclusiva; herramientas autorizadas cruzan sólo por un
@@ -387,10 +387,12 @@ edición obsoleta y ejecutar gates aplicables en un entorno controlado.
 - La decisión T019 del 2026-09-25 acota una credencial interna por intento y un
   proxy MCP server-owned. Su diseño no activa MCP público ni cambia el ingreso
   ordinario `/sessions`; T017/T019/T035 siguen sujetos a sus gates separados.
-- T097 es un prerrequisito abierto de T019: el backend Linux permanece sin
-  registrar hasta pasar la aceptación adversarial en el guest Ubuntu 26.10
-  fijado con QEMU TCG, orquestado desde GitHub-hosted `ubuntu-24.04` y descrito
-  en plan.md. Una prueba de separación de mounts en WSL
+- La aceptación T097/C08 pasó en el guest Ubuntu 26.10 fijado con QEMU TCG,
+  orquestado desde GitHub-hosted `ubuntu-24.04` y descrito en plan.md. Al no
+  existir ni estar previsto un host de despliegue, T097 se cierra con esa
+  evidencia de referencia y el backend Linux permanece sin registrar; Work no
+  se habilita. T019 queda abierto y diferido hasta que se decida un target
+  concreto. Una prueba de separación de mounts en WSL
   no acredita restricciones de proceso, aislamiento de IPC/red, secreto del
   proxy ni el ciclo de vida Work. Si utiliza Bubblewrap, debe exigir versión
   >=0.12.0 y rechazar versiones anteriores antes de cualquier efecto;

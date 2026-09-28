@@ -49,4 +49,5 @@ Test compuesto real con Bubblewrap 0.13 en `test/integration/`:
   reciba `EPERM` y el listener no acepte conexiones.
 - Esta prueba cierra el bypass C01 en la composición. No recorre todavía el
   stack `preflight_work` → admisión → supervisor ni constituye aceptación de
-  host; esa matriz sigue en S07/S08.
+  host; la aceptación guest consta en S07/S08. No hay target de producción y
+  el backend queda deshabilitado.

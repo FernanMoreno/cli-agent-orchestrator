@@ -84,6 +84,7 @@ esa caché host.
 El run [`36463930292`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36463930292)
 terminó con workflow global verde. Ejecutó esos ocho casos con Landlock ABI 11
 y el mismo digest revisado: **8 passed, 0 skipped en 288,11 s**. Queda aceptada
-la imagen guest fijada; los hosts de despliegue requieren su propio preflight.
-Por eso `WORK_BACKENDS={}` sigue vacío y T097/T019 siguen sujetos al host
-destino.
+la imagen guest fijada y T097 queda cerrada para el alcance actual. No hay un
+host de despliegue planeado: `WORK_BACKENDS={}` sigue vacío y Work continúa
+deshabilitado. T019 permanece abierto y diferido. Un target futuro necesita
+una tarea nueva y su propio preflight.

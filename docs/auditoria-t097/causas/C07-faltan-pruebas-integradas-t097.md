@@ -1,7 +1,7 @@
 # C07 — Aceptación integrada T097
 
 **Severidad:** alta (gate de registro)
-**Estado:** cerrada para el perfil guest por el run hosted [`36463930292`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36463930292): workflow global verde, 8/8 sin skips. El host de despliegue conserva su aceptación propia como gate de T097.
+**Estado:** cerrada por el run hosted [`36463930292`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36463930292): workflow global verde, 8/8 sin skips. No existe ni se prevé un host de despliegue; el backend queda deshabilitado y cualquier target futuro será trabajo nuevo.
 
 ## Aceptación QEMU guest — 2026-09-28
 
@@ -89,6 +89,7 @@ completaron correctamente. Dentro del guest Ubuntu 26.10, kernel
 `15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250`, la suite
 como cuenta broker terminó **8 passed, 0 skipped en 288,11 s**.
 
-Quedan cerradas C07/C08 para este perfil reproducible. No se certifica el
-kernel de despliegue: T097/T019 siguen sujetos a la aceptación específica del
-host destino y `WORK_BACKENDS = {}` permanece vacío.
+Quedan cerradas C07/C08 y T097 para el alcance actual. No se certifica ningún
+host de despliegue: el proyecto no tiene ni prevé uno, `WORK_BACKENDS = {}`
+permanece vacío y Work sigue deshabilitado. T019 queda abierto y diferido; una
+decisión futura de despliegue deberá crear su propia tarea y aceptación.

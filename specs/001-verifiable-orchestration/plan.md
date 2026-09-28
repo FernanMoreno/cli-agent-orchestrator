@@ -94,11 +94,14 @@ El proxy presenta allí la credencial, nunca el proceso agente.
 El backend debe aislar endpoint y descriptores entre intentos y fallar cerrado
 cuando no puede demostrar ese aislamiento. Cada petición al servicio revalida
 digest, binding, generación, grant, lease y estado de recuperación vivos.
-T097 bloquea T019 hasta construir y demostrar un backend Work Linux dedicado,
-inicialmente fuera de `WORK_BACKENDS`. Bubblewrap puede ser un mecanismo de
-aislamiento candidato; la separación de mounts observada en una prueba WSL
-individual sólo aporta evidencia de esa propiedad. Si se usa Bubblewrap, el
-backend verifica versión >=0.12.0 antes de preparar el sandbox y falla cerrado
+T097 completó la implementación y aceptación del perfil Ubuntu QEMU guest,
+manteniendo el backend fuera de `WORK_BACKENDS`. No existe ni se prevé un host
+de despliegue; por decisión de alcance no se registra ni habilita Work, y T019
+queda abierto/diferido hasta definir un target futuro. Bubblewrap es el
+mecanismo usado en el perfil guest aceptado; esa aceptación no certifica un
+host de despliegue. La separación de mounts observada en una prueba WSL
+individual sólo aporta evidencia de esa propiedad. El backend verifica versión
+>=0.12.0 antes de preparar el sandbox y falla cerrado
 con 0.11.1 o una versión indeterminada: el [aviso upstream
 GHSA-pxhw-h44j-8pfx](https://github.com/containers/bubblewrap/security/advisories/GHSA-pxhw-h44j-8pfx)
 describe CVE-2026-87766 por seguimiento de symlink durante setup y la corrección
@@ -179,10 +182,12 @@ deniega memfd y rutas de ejecución por descriptor que salgan del mapping. Un
 loader dinámico invocado directamente y scripts con shebang se rechazan mientras
 el contrato no incluya una clausura verificable de intérprete/cargador. Fork y
 doble fork heredan Landlock/seccomp y permanecen bajo la identidad supervisada.
-Las pruebas scratch prueban esa composición de código, no la aceptación QEMU:
-`WORK_BACKENDS` continúa vacío hasta cerrar T097/C08 con Bubblewrap y ABI
-aprobados en el guest fijado. La aceptación QEMU tampoco registra el backend
-para despliegue ni sustituye la comprobación del host de destino.
+Las pruebas scratch prueban esa composición de código, no la aceptación QEMU.
+El run QEMU verde cerró T097/C08 para el guest fijado, pero no registra el
+backend para despliegue. `WORK_BACKENDS` continúa vacío por decisión de alcance:
+no hay host de despliegue planeado. Si se define uno en el futuro, una tarea
+nueva deberá comprobar allí Bubblewrap, ABI, namespaces y broker antes de
+registrar el backend.
 
 El padre autenticado sólo selecciona refs de hijo y receptor preprovisionadas
 por el operador; no recibe sus credenciales ni construye sus `Principals`.

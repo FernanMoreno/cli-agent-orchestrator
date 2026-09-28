@@ -1,4 +1,4 @@
-# S08 — Evidencia reproducible y gate de host
+# S08 — Evidencia reproducible y decisión de despliegue
 
 Causa: [C08](../causas/C08-limites-del-entorno.md)
 
@@ -7,12 +7,12 @@ Causa: [C08](../causas/C08-limites-del-entorno.md)
 El guest temporal y el workflow hosted resolvieron C08 para el perfil Linux
 reproducible. El run [`36463930292`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36463930292)
 terminó globalmente verde con 8/8 casos y sin skips. Ninguna prueba equivale a
-aceptar un host de despliegue. El workflow
+habilitar un despliegue. No existe ni se prevé un host de producción; el workflow
 `.github/workflows/t097-host-acceptance.yml` usa GitHub-hosted `ubuntu-24.04`
 para arrancar un guest Ubuntu 26.10 con QEMU TCG. Los kernels nativos
 `ubuntu-24.04` y `ubuntu-26.04` ofrecieron ABI 7 y 8, inferiores al requisito 9.
-El perfil guest está aceptado; `WORK_BACKENDS` permanece `{}` hasta aceptar el
-host de despliegue.
+El perfil guest está aceptado. `WORK_BACKENDS` permanece `{}` por la decisión
+de no desplegar; el backend queda deshabilitado.
 
 ## Entorno de aceptación
 
@@ -130,6 +130,8 @@ ABI 11, Bubblewrap 0.13.0 y el digest aprobado
 casos pasaron sin skips en 288,11 s. T101 y C07/C08 quedan cerradas para ese
 perfil guest.
 
-El run QEMU no certifica un host de despliegue ni habilita el backend.
-`WORK_BACKENDS={}` permanece vacío y T097/T019 siguen sujetos a aceptar el host
-de destino antes de habilitar ejecución Work.
+El run QEMU no certifica un host de despliegue ni habilita el backend. T097 se
+cierra para el alcance actual porque no existe ni se prevé un host de
+producción; `WORK_BACKENDS={}` permanece vacío y T019 sigue abierto y diferido.
+Si se decide desplegar Work más adelante, hará falta una tarea nueva con un
+target concreto y aceptación en ese host.

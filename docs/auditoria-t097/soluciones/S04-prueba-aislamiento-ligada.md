@@ -38,7 +38,8 @@ durable y el envío acotado de respuesta; no cancela un efecto ya iniciado.
   los pidfds y la identidad durable en cada guard.
 - El rechazo de hermanos del mismo UID depende también de seccomp + Yama
   `ptrace_scope=1`, verificado en [S03](S03-proxy-socketpair-por-fd.md).
-- La integración completa del flujo y la aceptación de host siguen pendientes
-  en S07/S08.
+- La integración completa del flujo y la aceptación del perfil guest pasaron
+  en S07/S08. No se prevé un host de producción, por lo que el backend sigue
+  sin registrar.
 - Bubblewrap no tiene `--preserve-fds` en la versión fijada por el harness;
   el traspaso usa un canal Unix de control y `SCM_RIGHTS`.

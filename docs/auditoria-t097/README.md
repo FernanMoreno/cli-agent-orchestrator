@@ -26,14 +26,19 @@ Orden recomendado: S02 → S01 → S03 → S04 → S05 → S06 → S08 → S07.
 | C04 | Cerrada | Proof revalida pidfds, starttime e inode PID namespace en cada guard. |
 | C05 | Cerrada | Recuperación tras muerte confirmada, journal de issues huérfanos, conciliación admin y pruebas SIGKILL/migración. |
 | C06 | Cerrada | Fallos originales del proxy corregidos; suite focal pasa. |
-| C07 | Cerrada para el perfil guest | Run hosted [`36463930292`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36463930292): workflow global verde; 8/8, 0 skips en QEMU TCG, Landlock ABI 11 y Bubblewrap 0.13.0 con digest revisado. |
-| C08 | Cerrada para el perfil guest | La VM Ubuntu 26.10 fijada valida el entorno Linux de referencia. No certifica el kernel del runner ni uno de despliegue; cada host destino aún requiere su propia aceptación. |
+| C07 | Cerrada | Run hosted [`36463930292`](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/36463930292): workflow global verde; 8/8, 0 skips en QEMU TCG, Landlock ABI 11 y Bubblewrap 0.13.0 con digest revisado. No hay host de despliegue planeado. |
+| C08 | Cerrada | La VM Ubuntu 26.10 fijada es el perfil Linux aceptado. El proyecto no reclama soporte de despliegue ni registra el backend; un target futuro exigiría una tarea nueva y aceptación propia. |
 
-La aceptación QEMU cierra C07/C08 para el perfil guest. T097 y
-`WORK_BACKENDS = {}` siguen `[ ]` hasta revisar por separado el host de
-despliegue. La suite guest usa timeout 45 s
-porque TCG excede los 10 s de ejecución en dos pruebas. Ese perfil valida sólo
-la imagen Ubuntu fijada; no certifica kernels arbitrarios. La política confía
+**Cierre T097 (2026-09-28):** el run QEMU cierra la aceptación del alcance
+actual. No existe ni se prevé un host de producción; T097 queda `[x]` con
+`WORK_BACKENDS = {}` deliberadamente vacío y Work deshabilitado. T019 sigue
+abierto y diferido. Un despliegue futuro requerirá una tarea nueva y aceptación
+del host concreto. GitHub Actions aporta el runner gratuito usado para validar,
+pero lo destruye al terminar cada job; no sirve como host persistente de
+producción ([detalle](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job)).
+La suite guest usa timeout 45 s porque TCG excede los 10 s de ejecución en dos
+pruebas. Ese perfil valida sólo la imagen Ubuntu fijada; no certifica kernels
+arbitrarios. La política confía
 en el proceso CAO de una cuenta OS dedicada, no root, sin login y sin otros
 procesos; no afirma que Linux aísle procesos host arbitrarios con el mismo UID.
 

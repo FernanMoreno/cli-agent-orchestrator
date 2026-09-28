@@ -22,4 +22,5 @@ seccomp/Landlock, migraciones, registro y sibling probe) pasó **219 tests con
 3 omitidos** por capacidades del host.
 
 Los skips corresponden a capacidades del host, no a xfail que oculte fallos.
-El registro `WORK_BACKENDS` sigue vacío mientras C07/C08 estén abiertos.
+El registro `WORK_BACKENDS` queda vacío por decisión de no desplegar Work; la
+aceptación C07/C08 del guest está cerrada.
