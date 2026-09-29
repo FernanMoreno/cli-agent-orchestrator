@@ -115,6 +115,7 @@ class TestTmuxBackendDelegation:
             enter_count=2,
             force_bracketed_paste=False,
             submit_delay=0.3,
+            plain_shell=False,
         )
 
     def test_send_special_key_delegates(self, backend, mock_client):

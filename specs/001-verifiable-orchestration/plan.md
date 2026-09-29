@@ -401,6 +401,16 @@ aislado, conciliación explícita de todo estado posterior y autorización
 separada de restore T070: no hay downgrade in-place, DROP ni pérdida tácita.
 Transporte queda fuera de este contrato.
 
+#### Cierre de perfil con Work schema v38 (2026-09-29)
+
+El inventario fija perfiles separados por versión del schema: v28 conserva el
+catálogo cerrado de Work schema30 y sirve sólo para verificar bundles v2
+históricos; v29 añade las tablas y FKs de las migraciones31–38 y verifica el
+ledger completo con sus checksums hasta schema38. La captura nueva usa v29.
+El verificador acepta v28/v29 con sus catálogos respectivos, pero restore sólo
+admite el perfil actual v29. Los bundles v1 v24/v25 mantienen su verificación
+de integridad histórica y no obtienen autoridad de restore.
+
 ### US7: operación, mantenibilidad y release
 
 Dividir edición obsoleta de workflow y manifest efectivo por step. error_kind ya tiene

@@ -697,7 +697,9 @@ class WorkService:
         except Exception:
             return False
 
-    def recover_process_cleanup(self, attempt_id: str, *, supervisor=None, actor_id: str) -> dict:
+    def recover_process_cleanup(
+        self, attempt_id: str, *, supervisor=None, backend_reconciler=None, actor_id: str
+    ) -> dict:
         """Reattach and clean only the current, durably held reconcile process."""
         from cli_agent_orchestrator.services.work_process_supervisor import (
             WorkProcessState,
@@ -745,6 +747,17 @@ class WorkService:
                                 supervisor if supervisor is not None else WorkProcessSupervisor()
                             )
                             confirmed = observer.original_pair_terminated(identity) is True
+                    elif backend_reconciler is not None:
+                        reconcile_attempt = getattr(
+                            backend_reconciler, "reconcile_attempt", None
+                        )
+                        if callable(reconcile_attempt):
+                            cleanup = reconcile_attempt(attempt_id, current["generation"])
+                            confirmed = (
+                                type(cleanup) is dict
+                                and cleanup.get("container_removed") is True
+                                and cleanup.get("image_removed") is True
+                            )
             except Exception:
                 confirmed = False
             if confirmed:

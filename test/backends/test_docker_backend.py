@@ -74,6 +74,150 @@ def test_docker_work_maps_only_managed_tools_when_a_server_proxy_is_bound(monkey
     assert probes == ["probe"]
 
 
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("DOCKER_HOST", "tcp://docker.example:2376"),
+        ("DOCKER_CONTEXT", "remote-prod"),
+    ],
+)
+def test_docker_work_rejects_remote_daemon_before_engine_probe(monkeypatch, name, value):
+    module = __import__(
+        "cli_agent_orchestrator.backends.docker_backend", fromlist=["DockerWorkBackend"]
+    )
+    from cli_agent_orchestrator.backends.base import UnsupportedWorkEnforcement
+
+    backend = module.DockerWorkBackend(image_ref="sha256:" + "b" * 64)
+    monkeypatch.setattr(module.platform, "system", lambda: "Linux")
+    monkeypatch.setenv(name, value)
+    commands = []
+
+    def run(arguments, **_kwargs):
+        commands.append(arguments)
+        if arguments[1:3] == ["context", "inspect"]:
+            return SimpleNamespace(returncode=0, stdout="tcp://docker.example:2376", stderr="")
+        raise AssertionError("engine command reached before local endpoint was verified")
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+
+    with pytest.raises(UnsupportedWorkEnforcement, match="local Docker daemon"):
+        backend.preflight_work(_restriction(module))
+
+    assert all("version" not in command for command in commands)
+
+
+def test_docker_reconcile_does_not_treat_daemon_unavailable_as_absence(monkeypatch):
+    module = __import__(
+        "cli_agent_orchestrator.backends.docker_backend", fromlist=["DockerWorkBackend"]
+    )
+    backend = module.DockerWorkBackend(image_ref="sha256:" + "b" * 64)
+
+    def unavailable(_arguments, **_kwargs):
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="Cannot connect to the Docker daemon at unix:///var/run/docker.sock",
+        )
+
+    monkeypatch.setattr(backend, "_run", unavailable)
+
+    with pytest.raises(module.DockerWorkExecutionUncertain, match="state could not be verified"):
+        backend.reconcile_attempt("attempt-daemon-down", 3)
+
+
+@pytest.mark.parametrize("failure_location", ["container", "image"])
+@pytest.mark.asyncio
+async def test_docker_dispatch_stops_when_prior_artifact_inspect_is_uncertain(
+    tmp_path, failure_location
+):
+    from test.integration.t098.test_work_launch_dispatch import _setup
+
+    from cli_agent_orchestrator.services.work_service import DeliveryUncertain
+
+    module = __import__(
+        "cli_agent_orchestrator.backends.docker_backend", fromlist=["DockerWorkBackend"]
+    )
+    inspect_calls = []
+    side_effect_calls = []
+    unavailable = SimpleNamespace(
+        returncode=1,
+        stdout="",
+        stderr="Cannot connect to the Docker daemon at unix:///var/run/docker.sock",
+    )
+    absent_container = SimpleNamespace(
+        returncode=1,
+        stdout="",
+        stderr="Error response from daemon: No such container",
+    )
+    absent_image = SimpleNamespace(
+        returncode=1,
+        stdout="",
+        stderr="Error response from daemon: No such image",
+    )
+
+    def backend_factory(_marker, repository):
+        backend = module.DockerWorkBackend(
+            image_ref="sha256:" + "b" * 64,
+            repository=repository,
+        )
+        backend._validate_engine_and_image = lambda: None
+        backend._staged_executable = lambda *_args: b"\x7fELFworker"
+
+        def run(arguments, **_kwargs):
+            if arguments[:2] == ["container", "inspect"]:
+                inspect_calls.append(tuple(arguments))
+                return unavailable if failure_location == "container" else absent_container
+            if arguments[:2] == ["image", "inspect"]:
+                inspect_calls.append(tuple(arguments))
+                return unavailable if failure_location == "image" else absent_image
+            side_effect_calls.append(tuple(arguments))
+            return SimpleNamespace(returncode=1, stdout="", stderr="synthetic side effect")
+
+        backend._run = run
+        return backend
+
+    repository, principal, gateway, _backend, _marker, request = _setup(
+        tmp_path,
+        backend_factory=backend_factory,
+        contract_paths=(str(tmp_path),),
+        contract_write_paths=(),
+    )
+    receipt = gateway.admit(principal, request)
+
+    with pytest.raises(DeliveryUncertain):
+        await gateway.dispatch_registered_next()
+
+    assert inspect_calls
+    assert not side_effect_calls
+    assert all(arguments[:2] not in (("image", "build"), ("container", "create")) for arguments in side_effect_calls)
+    work = repository.get_work(receipt.work_item_id)
+    assert work["state"] == "reconcile"
+    assert work["attempts"][-1]["state"] == "reconcile"
+
+
+def test_docker_failed_execution_without_container_id_reconciles_by_attempt_identity(
+    monkeypatch,
+):
+    module = __import__(
+        "cli_agent_orchestrator.backends.docker_backend", fromlist=["DockerWorkBackend"]
+    )
+    backend = module.DockerWorkBackend(image_ref="sha256:" + "b" * 64)
+    reconciled = []
+    monkeypatch.setattr(
+        backend,
+        "reconcile_attempt",
+        lambda attempt_id, generation: reconciled.append((attempt_id, generation))
+        or {"container_removed": False, "image_removed": True},
+    )
+
+    result = backend._cleanup_failed_execution(
+        "attempt-created-without-id", 8, None, "cao-work-image:g8"
+    )
+
+    assert result == (False, True)
+    assert reconciled == [("attempt-created-without-id", 8)]
+
+
 def test_docker_work_requires_an_immutable_image_id_before_any_probe():
     spec = importlib.util.find_spec("cli_agent_orchestrator.backends.docker_backend")
     assert spec is not None, "the explicit Docker Work backend is missing"

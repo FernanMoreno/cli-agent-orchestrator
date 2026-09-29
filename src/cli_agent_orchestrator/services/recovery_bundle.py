@@ -45,6 +45,7 @@ _FORMAT_V2 = "recovery-bundle-v2"
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _LEGACY_WORK_SQLITE_PROFILE_VERSION = 24
 _SUPPORTED_BUNDLE_PROFILE_VERSIONS = frozenset((_LEGACY_WORK_SQLITE_PROFILE_VERSION, 25))
+_SUPPORTED_V2_PROFILE_VERSIONS = frozenset((28, WORK_SQLITE_PROFILE_VERSION))
 _MAX_EXECUTABLE_CONTENT_BYTES = 8 * 1024 * 1024
 
 
@@ -720,7 +721,7 @@ def _read_manifest(path: Path, receipt: RecoveryBundleReceipt) -> dict[str, obje
         valid_profile = manifest.get("profile_version") in _SUPPORTED_BUNDLE_PROFILE_VERSIONS
     elif manifest.get("format") == _FORMAT_V2:
         expected_keys = {"format", "objects", "profile_version", "references", "cut_evidence"}
-        valid_profile = manifest.get("profile_version") == WORK_SQLITE_PROFILE_VERSION
+        valid_profile = manifest.get("profile_version") in _SUPPORTED_V2_PROFILE_VERSIONS
     else:
         raise _reject()
     if (
@@ -785,7 +786,11 @@ def _read_manifest(path: Path, receipt: RecoveryBundleReceipt) -> dict[str, obje
 
 
 def _verify_v2_phase_evidence(
-    evidence: dict[str, object], object_roles: dict[str, tuple[str, ...]], sqlite_path: Path
+    evidence: dict[str, object],
+    object_roles: dict[str, tuple[str, ...]],
+    sqlite_path: Path,
+    *,
+    profile_version: int,
 ) -> None:
     expected_lease = {
         "id": evidence["lease_id"],
@@ -820,7 +825,7 @@ def _verify_v2_phase_evidence(
         if (
             not isinstance(inventory, dict)
             or set(inventory) != {"fingerprint", "profile_version"}
-            or inventory["profile_version"] != WORK_SQLITE_PROFILE_VERSION
+            or inventory["profile_version"] != profile_version
             or not _is_digest(inventory["fingerprint"])
         ):
             raise _reject()
@@ -828,7 +833,10 @@ def _verify_v2_phase_evidence(
     if observations[0] != observations[1] or observations[1] != observations[2]:
         raise _reject()
     with _open_readonly_database(sqlite_path) as copied:
-        if _inventory_evidence(inspect_offline_work_store(copied)) != observations[1]:
+        if (
+            _inventory_evidence(inspect_offline_work_store(copied, profile_version=profile_version))
+            != observations[1]
+        ):
             raise _reject()
     expected_coverage = [
         {"digest": digest, "classification": "integrity-only", "roles": list(roles)}
@@ -988,7 +996,10 @@ def _verify_recovery_bundle(
             previous_reference = current_reference
         if manifest["format"] == _FORMAT_V2:
             _verify_v2_phase_evidence(
-                manifest["cut_evidence"], object_roles, entries["objects"] / sqlite_digest
+                manifest["cut_evidence"],
+                object_roles,
+                entries["objects"] / sqlite_digest,
+                profile_version=manifest["profile_version"],
             )
             if require_publication:
                 _verify_v2_publication(receipt, manifest["cut_evidence"])

@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+import time
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -230,6 +231,75 @@ def _reconciled_held(tmp_path):
     return repository, reconcile, held
 
 
+def _reconciled_held_with_issued_proxy(tmp_path):
+    from test.services.test_work_contract_binding import bind, context
+    from cli_agent_orchestrator.services.work_mcp_proxy import WorkMcpProxy
+
+    data = context(tmp_path)
+    models, _, repository, actor, job, _, _, item, original = data
+    with repository.transaction() as connection:
+        connection.execute(
+            "UPDATE work_jobs SET budget=? WHERE id=?",
+            (json.dumps({"scheduler_units": 2}), job["id"]),
+        )
+    contract = models.EffectiveWorkContractV2(
+        **{**original.model_dump(), "schema_version": 2}
+    )
+    binding = bind(data, contract=contract)
+    attempt_id = item["attempts"][-1]["id"]
+    scheduler = WorkScheduler(repository)
+    scheduler.configure(capacity=1, max_queue=2, aging_seconds=10, expected_policy_revision=0)
+    scheduler.enqueue(
+        attempt_id=attempt_id,
+        generation=1,
+        expected_attempt_revision=item["attempts"][-1]["revision"],
+        units=1,
+        actor_id=actor.id,
+    )
+    held = scheduler.claim_next(actor_id=actor.id)
+    sent = repository.transition_attempt(
+        attempt_id=attempt_id,
+        generation=1,
+        expected_revision=item["attempts"][-1]["revision"],
+        expected_state="planned",
+        target="sent",
+        actor_id=actor.id,
+        event_id="cleanup-sent",
+        evidence=TransitionEvidence(
+            generation=1,
+            expected_generation=1,
+            contract_confirmed=True,
+            grant_confirmed=True,
+            capacity_confirmed=True,
+            reservations_confirmed=True,
+        ),
+    )
+    proxy = WorkMcpProxy(
+        repository,
+        server_secret_factory=lambda: b"unused",
+        upstream=lambda request, secret: {},
+    )
+    proxy.create_bound_attempt(
+        attempt_id=attempt_id,
+        generation=1,
+        expected_attempt_revision=sent["attempts"][-1]["revision"],
+        contract_hash=binding.contract_hash,
+        expires_at=time.time() + 30,
+    )
+    proxy.close()
+    reconcile = repository.transition_attempt(
+        attempt_id=attempt_id,
+        generation=1,
+        expected_revision=sent["attempts"][-1]["revision"],
+        expected_state="sent",
+        target="reconcile",
+        actor_id=actor.id,
+        event_id="cleanup-reconcile",
+        evidence=TransitionEvidence(generation=1, expected_generation=1),
+    )
+    return repository, reconcile, held
+
+
 def _supervisor(state=WorkProcessState.TERMINATED):
     attempt = object()
     supervisor = Mock()
@@ -238,9 +308,12 @@ def _supervisor(state=WorkProcessState.TERMINATED):
     return supervisor, attempt
 
 
-def _recover(repository, work, supervisor):
+def _recover(repository, work, supervisor, *, backend_reconciler=None):
+    arguments = {"supervisor": supervisor, "actor_id": "owner"}
+    if backend_reconciler is not None:
+        arguments["backend_reconciler"] = backend_reconciler
     return WorkService(repository).recover_process_cleanup(
-        work["attempts"][-1]["id"], supervisor=supervisor, actor_id="owner"
+        work["attempts"][-1]["id"], **arguments
     )
 
 
@@ -276,6 +349,123 @@ def test_missing_or_corrupt_identity_fails_without_supervisor_effect(tmp_path):
     supervisor.reattach.assert_not_called()
 
 
+def test_docker_reconciliation_requires_both_exact_cleanup_flags_before_proxy_recovery(
+    monkeypatch, tmp_path
+):
+    from cli_agent_orchestrator.services import work_mcp_proxy as proxy_module
+
+    repository, work, _ = _reconciled_held(tmp_path)
+    attempt_id = work["attempts"][-1]["id"]
+    events = []
+    backend = Mock()
+    backend.reconcile_attempt.side_effect = lambda attempt, generation: events.append(
+        ("docker", attempt, generation)
+    ) or {"container_removed": True, "image_removed": True}
+    proxy = Mock()
+    proxy.recover_incomplete_effects.side_effect = lambda *args: events.append(
+        ("effects", *args)
+    ) or 0
+    proxy.recover_incomplete_issues.side_effect = lambda *args: events.append(
+        ("issues", *args)
+    ) or 0
+    monkeypatch.setattr(proxy_module, "WorkMcpProxy", lambda _repository: proxy)
+
+    complete = _recover(repository, work, None, backend_reconciler=backend)
+
+    assert complete["attempts"][-1]["cleanup_state"] == "complete"
+    backend.reconcile_attempt.assert_called_once_with(attempt_id, 1)
+    assert events == [
+        ("docker", attempt_id, 1),
+        ("effects", attempt_id, 1),
+        ("issues", attempt_id, 1),
+    ]
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"container_removed": True, "image_removed": False},
+        {"container_removed": False, "image_removed": True},
+        {"container_removed": True},
+        {"container_removed": 1, "image_removed": True},
+        None,
+    ],
+)
+def test_docker_reconciliation_fails_closed_without_exact_flags(
+    monkeypatch, tmp_path, result
+):
+    from cli_agent_orchestrator.services import work_mcp_proxy as proxy_module
+
+    repository, work, _ = _reconciled_held(tmp_path)
+    attempt_id = work["attempts"][-1]["id"]
+    backend = Mock()
+    backend.reconcile_attempt.return_value = result
+    proxy = Mock()
+    monkeypatch.setattr(proxy_module, "WorkMcpProxy", lambda _repository: proxy)
+
+    failed = _recover(repository, work, None, backend_reconciler=backend)
+
+    assert failed["attempts"][-1]["cleanup_state"] == "failed"
+    backend.reconcile_attempt.assert_called_once_with(attempt_id, 1)
+    proxy.recover_incomplete_effects.assert_not_called()
+    proxy.recover_incomplete_issues.assert_not_called()
+
+
+def test_docker_cleanup_recovery_abandons_unanswered_mcp_issue_durably(tmp_path):
+    from cli_agent_orchestrator.services.work_mcp_proxy import WorkMcpProxy
+
+    repository, work, _ = _reconciled_held_with_issued_proxy(tmp_path)
+    attempt_id = work["attempts"][-1]["id"]
+    backend = Mock()
+    backend.reconcile_attempt.return_value = {
+        "container_removed": True,
+        "image_removed": True,
+    }
+
+    before = WorkMcpProxy(repository)
+    assert before.unresolved_issues()[0]["state"] == "issued"
+    assert before.incomplete_issue_owners() == ((attempt_id, 1),)
+    assert before.incomplete_effect_owners() == ()
+
+    complete = _recover(repository, work, None, backend_reconciler=backend)
+
+    assert complete["attempts"][-1]["cleanup_state"] == "complete"
+    backend.reconcile_attempt.assert_called_once_with(attempt_id, 1)
+    after = WorkMcpProxy(repository)
+    assert after.unresolved_issues()[0]["state"] == "abandoned"
+    assert after.incomplete_issue_owners() == ()
+    assert after.incomplete_effect_owners() == ()
+    with repository.read_snapshot() as connection:
+        states = connection.execute(
+            "SELECT state FROM work_mcp_proxy_issue_events "
+            "WHERE attempt_id=? AND generation=1 ORDER BY sequence",
+            (attempt_id,),
+        ).fetchall()
+        assert [row[0] for row in states] == ["issued", "abandoned"]
+        assert connection.execute(
+            "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=?",
+            (attempt_id,),
+        ).fetchone()[0] == 0
+
+
+def test_docker_reconciliation_exception_fails_closed_without_proxy_recovery(
+    monkeypatch, tmp_path
+):
+    from cli_agent_orchestrator.services import work_mcp_proxy as proxy_module
+
+    repository, work, _ = _reconciled_held(tmp_path)
+    backend = Mock()
+    backend.reconcile_attempt.side_effect = RuntimeError("daemon unavailable")
+    proxy = Mock()
+    monkeypatch.setattr(proxy_module, "WorkMcpProxy", lambda _repository: proxy)
+
+    failed = _recover(repository, work, None, backend_reconciler=backend)
+
+    assert failed["attempts"][-1]["cleanup_state"] == "failed"
+    proxy.recover_incomplete_effects.assert_not_called()
+    proxy.recover_incomplete_issues.assert_not_called()
+
+
 def test_verified_identity_is_reattached_and_only_termination_completes(tmp_path):
     repository, work, held = _reconciled_held(tmp_path)
     identity = _identity()
@@ -301,8 +491,10 @@ def test_verified_identity_is_reattached_and_only_termination_completes(tmp_path
         return WorkProcessState.TERMINATED
 
     supervisor.terminate.side_effect = terminate_without_transaction
-    complete = _recover(repository, work, supervisor)
+    backend = Mock()
+    complete = _recover(repository, work, supervisor, backend_reconciler=backend)
     assert complete["attempts"][-1]["cleanup_state"] == "complete"
+    backend.reconcile_attempt.assert_not_called()
     assert complete["state"] == "reconcile"
     supervisor.reattach.assert_called_once_with(identity)
     supervisor.terminate.assert_called_once_with(attached)
@@ -315,6 +507,7 @@ def test_verified_identity_is_reattached_and_only_termination_completes(tmp_path
     repeated = _recover(repository, complete, supervisor)
     assert repeated == complete
     supervisor.reattach.assert_called_once()
+    backend.reconcile_attempt.assert_not_called()
 
 
 def test_concurrent_recovery_cannot_enter_cleanup_for_the_same_attempt(tmp_path):

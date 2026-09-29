@@ -48,6 +48,16 @@ GitHub describe esos runners estándar como VMs nuevas por job
 La suite registra versión de imagen y kernel en el log; cada host de despliegue
 sigue sujeto a los checks de runtime del backend.
 
+**Actualización T019 (2026-09-29):** T019 queda cerrada para el perfil local
+Docker. `./test/integration/t019/run-docker-backend-acceptance.sh` pasó **7/7**
+en Docker Desktop 29.8.1/WSL2: daemon Unix local, workers concurrentes aislados,
+issues MCP sin efectos cerradas y recuperación durable tras caída del proceso
+owner, sin redelivery. El worker estaba activo antes del SIGKILL; Docker puede
+detener el attach cuando desaparece el cliente, y la aceptación elimina el
+artifact etiquetado que queda. La aceptación Bubblewrap QEMU de T097 sigue siendo la evidencia
+guest de Linux. Esto no registra `WORK_BACKENDS`, no habilita Work ni declara
+aceptación de producción; si aparece un host, requiere una tarea y gate propios.
+
 Hallazgos de línea base, reproducidos antes de las correcciones:
 - `pytest test/services/test_work_mcp_proxy.py` → 2 failed, 5 passed.
 - `pytest test/security/test_work_bubblewrap_runtime_snapshot.py` → error de

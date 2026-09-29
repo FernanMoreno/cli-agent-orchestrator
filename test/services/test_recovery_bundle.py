@@ -95,6 +95,23 @@ EXPECTED_V28_TABLES = (
     "workflow_run_step",
 )
 
+EXPECTED_V29_TABLES = tuple(
+    sorted(
+        (
+            *EXPECTED_V28_TABLES,
+            "work_attempt_credentials",
+            "work_bubblewrap_release_claims",
+            "work_bubblewrap_setup_intents",
+            "work_mcp_proxy_effect_events",
+            "work_mcp_proxy_effects",
+            "work_mcp_proxy_issue_events",
+            "work_mcp_proxy_issues",
+            "work_task_receiver_acceptances",
+            "work_task_receiver_credentials",
+        )
+    )
+)
+
 EXPECTED_REFERENCE_FAMILIES = tuple(
     sorted(
         (
@@ -345,9 +362,9 @@ def _replace_flows_with_an_extra_foreign_key(connection: sqlite3.Connection) -> 
     )
 
 
-def _assert_real_v28_fixture(connection: sqlite3.Connection) -> None:
-    """Keep RED behavioural: assert the real fixture before asking for the missing API."""
-    assert _table_names(connection) == EXPECTED_V28_TABLES
+def _assert_real_v29_fixture(connection: sqlite3.Connection) -> None:
+    """Assert the current schema-v38 fixture before invoking the closed-profile API."""
+    assert _table_names(connection) == EXPECTED_V29_TABLES
     assert {row[1] for row in connection.execute("PRAGMA table_info(work_results)")} >= {
         "content_hash",
         "immutable_location",
@@ -363,7 +380,7 @@ def _assert_real_v28_fixture(connection: sqlite3.Connection) -> None:
 
 
 def _inventory_module(connection: sqlite3.Connection):
-    _assert_real_v28_fixture(connection)
+    _assert_real_v29_fixture(connection)
     name = "cli_agent_orchestrator.services.recovery_inventory"
     if importlib.util.find_spec(name) is None:
         pytest.fail("closed recovery inventory is not implemented")
@@ -397,27 +414,71 @@ def initialized_cao_connection(tmp_path, monkeypatch):
         engine.dispose()
 
 
-def test_real_init_db_store_has_an_explicit_closed_v28_inventory(initialized_cao_connection):
+@pytest.fixture
+def historical_v28_connection(tmp_path, monkeypatch):
+    """Build a real schema-v30 store while retaining the legacy application tables."""
+    from cli_agent_orchestrator import constants
+    from cli_agent_orchestrator.clients import database, work_repository
+
+    database_path = tmp_path / "cao-v28.sqlite3"
+    engine = create_engine(f"sqlite:///{database_path}", connect_args={"check_same_thread": False})
+    monkeypatch.setattr(constants, "DATABASE_FILE", database_path)
+    monkeypatch.setattr(database, "DB_DIR", database_path.parent)
+    monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=engine))
+    database.init_db()
+    engine.dispose()
+
+    connection = sqlite3.connect(database_path)
+    _downgrade_work_schema(connection, version=30)
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
+def _downgrade_work_schema(connection: sqlite3.Connection, *, version: int) -> None:
+    """Remove only later Work migration objects from an isolated initialized fixture."""
+    repository = importlib.import_module("cli_agent_orchestrator.clients.work_repository")
+    expected = repository._EXPECTED_SCHEMAS[version]
+    later_objects = set(repository._EXPECTED_SCHEMAS[repository.SCHEMA_VERSION]) - set(expected)
+    connection.execute("PRAGMA foreign_keys=OFF")
+    object_rows = connection.execute(
+        "SELECT type,name FROM sqlite_master WHERE name IN (%s)"
+        % ",".join("?" for _ in later_objects),
+        tuple(later_objects),
+    ).fetchall()
+    for object_type in ("trigger", "index", "table"):
+        for actual_type, name in object_rows:
+            if actual_type == object_type:
+                connection.execute(f'DROP {object_type.upper()} "{name}"')
+    connection.execute("DELETE FROM work_migrations WHERE version>?", (version,))
+    connection.commit()
+    repository.WorkRepository._verify(connection, version=version)
+
+
+def test_real_init_db_store_has_an_explicit_closed_v29_inventory(initialized_cao_connection):
     """The normal CAO store includes the legacy tables alongside the verified Work profile."""
     before = _database_state(initialized_cao_connection)
     module = importlib.import_module("cli_agent_orchestrator.services.recovery_inventory")
 
-    assert _table_names(initialized_cao_connection) == EXPECTED_V28_TABLES
+    assert _table_names(initialized_cao_connection) == EXPECTED_V29_TABLES
     inventory = module.inspect_work_store(initialized_cao_connection)
 
-    assert inventory.tables == EXPECTED_V28_TABLES
+    assert inventory.profile_version == 29
+    assert inventory.tables == EXPECTED_V29_TABLES
     assert _database_state(initialized_cao_connection) == before
 
 
-def test_v28_inventory_is_closed_canonical_and_read_only(v24_connection):
-    """A v28 recovery profile names every table and external family without writes."""
+def test_v29_inventory_is_closed_canonical_and_read_only(v24_connection):
+    """A v29 recovery profile names every schema-v38 table without writes."""
     before = _database_state(v24_connection)
     module = _inventory_module(v24_connection)
 
     inventory = module.inspect_work_store(v24_connection)
 
-    assert inventory.profile_version == 28
-    assert inventory.tables == EXPECTED_V28_TABLES
+    assert inventory.profile_version == 29
+    assert inventory.tables == EXPECTED_V29_TABLES
     assert (
         tuple(
             (
@@ -431,9 +492,9 @@ def test_v28_inventory_is_closed_canonical_and_read_only(v24_connection):
         == EXPECTED_REFERENCE_FAMILIES
     )
     assert inventory.foreign_keys == tuple(sorted(inventory.foreign_keys))
-    assert inventory.foreign_keys == module._V28_FOREIGN_KEYS
-    assert len(inventory.foreign_keys) == 118
-    assert sum(len(reference.source_columns) for reference in inventory.foreign_keys) == 182
+    assert inventory.foreign_keys == module._V29_FOREIGN_KEYS
+    assert len(inventory.foreign_keys) == 141
+    assert sum(len(reference.source_columns) for reference in inventory.foreign_keys) == 236
     assert {
         (reference.on_update, reference.on_delete, reference.match_observed)
         for reference in inventory.foreign_keys
@@ -452,6 +513,42 @@ def test_v28_inventory_is_closed_canonical_and_read_only(v24_connection):
     with pytest.raises(FrozenInstanceError):
         inventory.profile_version = 23
     assert _database_state(v24_connection) == before
+
+
+def test_v29_inventory_checksums_cover_every_migration_after_frozen_v28(v24_connection):
+    """A v29 profile rejects a changed checksum in each newly included migration."""
+    module = importlib.import_module("cli_agent_orchestrator.services.recovery_inventory")
+    repository = importlib.import_module("cli_agent_orchestrator.clients.work_repository")
+
+    for version in range(31, 39):
+        v24_connection.execute(
+            "UPDATE work_migrations SET checksum=? WHERE version=?", ("0" * 64, version)
+        )
+        with pytest.raises(module.RecoveryInventoryError, match="recovery inventory incompatible"):
+            module.inspect_work_store(v24_connection)
+        v24_connection.execute(
+            "UPDATE work_migrations SET checksum=? WHERE version=?",
+            (repository._CHECKSUMS[version], version),
+        )
+
+    assert module.inspect_work_store(v24_connection).profile_version == 29
+
+
+def test_v28_inventory_still_verifies_historical_schema_v30_without_writes(
+    historical_v28_connection,
+):
+    """The frozen v28 reader keeps its exact schema-v30 table and FK contract."""
+    before = _database_state(historical_v28_connection)
+    module = importlib.import_module("cli_agent_orchestrator.services.recovery_inventory")
+
+    inventory = module.inspect_work_store(historical_v28_connection, profile_version=28)
+
+    assert inventory.profile_version == 28
+    assert inventory.tables == EXPECTED_V28_TABLES
+    assert inventory.foreign_keys == module._V28_FOREIGN_KEYS
+    assert len(inventory.foreign_keys) == 118
+    assert sum(len(reference.source_columns) for reference in inventory.foreign_keys) == 182
+    assert _database_state(historical_v28_connection) == before
 
 
 def test_sqlite_reference_families_have_closed_verified_column_mappings(v24_connection):
@@ -674,6 +771,56 @@ def _recomposed_v2_receipt(module, receipt, manifest):
     )
 
 
+def test_historical_v28_v2_bundle_still_verifies_but_is_not_restorable(
+    historical_v28_connection, monkeypatch, tmp_path
+):
+    """A schema-v30 v2 receipt remains verify-only after v29 becomes current."""
+    repository = importlib.import_module("cli_agent_orchestrator.clients.work_repository")
+    inventory = importlib.import_module("cli_agent_orchestrator.services.recovery_inventory")
+    module = _recovery_bundle_module()
+    source = _database_path(historical_v28_connection)
+
+    monkeypatch.setattr(repository, "SCHEMA_VERSION", 30)
+    monkeypatch.setattr(module, "WORK_SQLITE_PROFILE_VERSION", 28)
+    monkeypatch.setattr(
+        module,
+        "inspect_work_store",
+        lambda connection: inventory.inspect_work_store(connection, profile_version=28),
+    )
+    monkeypatch.setattr(
+        module,
+        "verified_inbox_store_identity",
+        lambda connection: inventory.verified_inbox_store_identity(connection, profile_version=28),
+    )
+    monkeypatch.setattr(
+        module,
+        "inspect_portable_work_store",
+        lambda connection, *, expected_source_identity: inventory.inspect_portable_work_store(
+            connection, expected_source_identity=expected_source_identity, profile_version=28
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "inspect_offline_work_store",
+        lambda connection, *, profile_version: inventory.inspect_offline_work_store(
+            connection, profile_version=profile_version
+        ),
+    )
+    receipt = _capture_with_work_authority(
+        module,
+        module.RecoveryCaptureSource(database_path=source),
+        tmp_path / "historical-v28-v2",
+    )
+    manifest = json.loads((receipt.bundle_path / "manifest.json").read_bytes())
+
+    assert manifest["profile_version"] == 28
+    monkeypatch.setattr(module, "WORK_SQLITE_PROFILE_VERSION", 29)
+    assert module.verify_recovery_bundle(receipt) == receipt
+    with pytest.raises(module.RecoveryBundleError, match="recovery bundle rejected"):
+        module.restore_recovery_bundle(receipt, tmp_path / "historical-v28-restore.sqlite3")
+    assert not (tmp_path / "historical-v28-restore.sqlite3").exists()
+
+
 def _historical_v25_sqlite(path: Path) -> None:
     """Build a real pre-v26 Work database through its historical migrations."""
     repository_module = importlib.import_module("cli_agent_orchestrator.clients.work_repository")
@@ -777,7 +924,7 @@ def test_capture_and_restore_keep_exact_executable_bytes_in_bundle_only(
     )
 
     manifest = json.loads((receipt.bundle_path / "manifest.json").read_bytes())
-    assert manifest["profile_version"] == 28
+    assert manifest["profile_version"] == 29
     assert (receipt.bundle_path / "objects" / digest).read_bytes() == content
     assert [
         (item["role"], item["identifier"], item["digest"], item["size"])
@@ -976,7 +1123,7 @@ def test_executable_capture_rejects_swapped_public_inode_before_read(
     assert not destination.exists()
 
 
-def test_capture_verifies_a_real_v28_store_and_publishes_only_declared_objects(
+def test_capture_verifies_a_real_v29_store_and_publishes_only_declared_objects(
     initialized_cao_connection, tmp_path
 ):
     """Would fail if capture copied an orphan, skipped a cut check, or leaked source paths."""
@@ -1005,14 +1152,14 @@ def test_capture_verifies_a_real_v28_store_and_publishes_only_declared_objects(
         == json.dumps(manifest, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
     )
     assert str(source) not in manifest_bytes.decode()
-    assert manifest["profile_version"] == 28
+    assert manifest["profile_version"] == 29
     sqlite_roles = {
         role
         for object_ in manifest["objects"]
         for role in object_["roles"]
         if role.startswith("sqlite-v")
     }
-    assert sqlite_roles == {"sqlite-v28"}
+    assert sqlite_roles == {"sqlite-v29"}
     assert {entry["digest"] for entry in manifest["objects"]} >= {result.content_hash}
     assert all(
         entry["path"] == f"objects/{entry['digest']}"
@@ -1025,7 +1172,7 @@ def test_capture_verifies_a_real_v28_store_and_publishes_only_declared_objects(
     ).read_bytes() == b"offline recovery result bytes"
     assert orphan.content_hash not in {entry["digest"] for entry in manifest["objects"]}
     sqlite_object = next(
-        object_ for object_ in manifest["objects"] if "sqlite-v28" in object_["roles"]
+        object_ for object_ in manifest["objects"] if "sqlite-v29" in object_["roles"]
     )
     sqlite_object["roles"] = ["sqlite-v25"]
     inconsistent_manifest = json.dumps(
@@ -1057,7 +1204,7 @@ def test_capture_verifies_a_real_v28_store_and_publishes_only_declared_objects(
     assert _database_state(initialized_cao_connection) == before
 
 
-def test_capture_of_a_real_work_store_requires_v28_cut_evidence_before_publication(
+def test_capture_of_a_real_work_store_requires_v29_cut_evidence_before_publication(
     initialized_cao_connection, tmp_path
 ):
     """A real offline capture is not a v1 integrity-only bundle after T069."""
@@ -1074,12 +1221,12 @@ def test_capture_of_a_real_work_store_requires_v28_cut_evidence_before_publicati
     lease = authority.create_offline_cut(operator, ttl_seconds=60)
     receipt = module.OfflineRecoveryCapture(authority, lease).capture(
         module.RecoveryCaptureSource(database_path=source),
-        tmp_path / "v28-cut-evidence",
+        tmp_path / "v29-cut-evidence",
     )
 
     manifest = json.loads((receipt.bundle_path / "manifest.json").read_bytes())
     assert manifest["format"] == "recovery-bundle-v2"
-    assert manifest["profile_version"] == 28
+    assert manifest["profile_version"] == 29
     assert set(manifest["cut_evidence"]) == {
         "capture_id",
         "coverage",
@@ -1495,7 +1642,7 @@ def test_v2_capture_records_phase_observations_and_inventory_before_returning_re
     assert set(evidence["phases"]) == {"before", "after", "promote"}
     for phase in evidence["phases"].values():
         assert phase["writer_count"] == 0
-        assert phase["inventory"]["profile_version"] == 28
+        assert phase["inventory"]["profile_version"] == 29
         assert phase["lease"]["store_identity"] != str(source.resolve())
         assert phase["lease"]["store_identity"] == evidence["store_identity"]
 
@@ -1583,7 +1730,7 @@ def test_historic_v1_is_verify_only_and_malformed_or_mixed_v2_fails_closed(
     historic["format"] = "recovery-bundle-v1"
     historic["profile_version"] = 24
     historic["objects"] = [dict(item) for item in manifest["objects"]]
-    next(item for item in historic["objects"] if "sqlite-v28" in item["roles"])["roles"] = [
+    next(item for item in historic["objects"] if "sqlite-v29" in item["roles"])["roles"] = [
         "sqlite-v24"
     ]
     historic_bytes = json.dumps(historic, separators=(",", ":"), sort_keys=True).encode()

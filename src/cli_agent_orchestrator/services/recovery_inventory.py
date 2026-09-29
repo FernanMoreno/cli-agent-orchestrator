@@ -23,8 +23,9 @@ from cli_agent_orchestrator.clients.work_repository import (
     _stored_recovery_context,
 )
 
-WORK_SQLITE_PROFILE_VERSION = 28
-_WORK_SCHEMA_VERSION = 30
+WORK_SQLITE_PROFILE_VERSION = 29
+_WORK_SCHEMA_VERSION = 38
+_PROFILE_SCHEMA_VERSIONS = {28: 30, 29: 38}
 _INCOMPATIBLE = "recovery inventory incompatible"
 
 _V25_TABLES = (
@@ -1318,6 +1319,186 @@ _V28_FOREIGN_KEYS = tuple(
     )
 )
 
+_V29_ADDITIONAL_TABLES = (
+    "work_attempt_credentials",
+    "work_bubblewrap_release_claims",
+    "work_bubblewrap_setup_intents",
+    "work_mcp_proxy_effect_events",
+    "work_mcp_proxy_effects",
+    "work_mcp_proxy_issue_events",
+    "work_mcp_proxy_issues",
+    "work_task_receiver_acceptances",
+    "work_task_receiver_credentials",
+)
+_V29_TABLES = tuple(sorted((*_V25_TABLES, *_V29_ADDITIONAL_TABLES)))
+
+
+def _known_v29_fk(
+    source: str, source_columns: tuple[str, ...], target: str, target_columns: tuple[str, ...]
+) -> ForeignKeyReference:
+    return ForeignKeyReference(
+        source, source_columns, target, target_columns, "NO ACTION", "NO ACTION", "NONE"
+    )
+
+
+# Frozen FK additions from Work migrations 31 through 38. The v28 catalog
+# remains tied to schema 30 for historical bundle verification.
+_V29_FOREIGN_KEYS = tuple(
+    sorted(
+        (
+            *_V28_FOREIGN_KEYS,
+            _known_v29_fk(
+                "work_attempt_credentials",
+                ("attempt_id", "generation", "contract_hash"),
+                "work_dispatch_bindings",
+                ("attempt_id", "generation", "contract_hash"),
+            ),
+            _known_v29_fk(
+                "work_attempt_credentials",
+                ("job_id", "grant_id", "grant_revision"),
+                "work_grants",
+                ("job_id", "id", "revision"),
+            ),
+            _known_v29_fk(
+                "work_attempt_credentials",
+                ("job_id", "work_item_id"),
+                "work_items",
+                ("job_id", "id"),
+            ),
+            _known_v29_fk(
+                "work_attempt_credentials", ("principal_id",), "work_principals", ("id",)
+            ),
+            _known_v29_fk(
+                "work_attempt_credentials",
+                ("work_item_id", "attempt_id", "generation"),
+                "work_attempts",
+                ("work_item_id", "id", "generation"),
+            ),
+            _known_v29_fk(
+                "work_bubblewrap_release_claims",
+                (
+                    "attempt_id",
+                    "generation",
+                    "contract_hash",
+                    "command_token",
+                    "executable_sha256",
+                    "ack_sha256",
+                    "process_identity_sha256",
+                ),
+                "work_bubblewrap_setup_intents",
+                (
+                    "attempt_id",
+                    "generation",
+                    "contract_hash",
+                    "command_token",
+                    "executable_sha256",
+                    "ack_sha256",
+                    "process_identity_sha256",
+                ),
+            ),
+            _known_v29_fk(
+                "work_bubblewrap_setup_intents", ("attempt_id",), "work_attempts", ("id",)
+            ),
+            _known_v29_fk(
+                "work_bubblewrap_setup_intents",
+                ("attempt_id", "generation", "process_identity_sha256"),
+                "work_bubblewrap_process_identities",
+                ("attempt_id", "generation", "identity_sha256"),
+            ),
+            _known_v29_fk(
+                "work_bubblewrap_setup_intents",
+                ("executable_sha256",),
+                "work_executable_contents",
+                ("content_hash",),
+            ),
+            _known_v29_fk(
+                "work_mcp_proxy_effect_events",
+                ("effect_id",),
+                "work_mcp_proxy_effects",
+                ("effect_id",),
+            ),
+            _known_v29_fk(
+                "work_mcp_proxy_effects", ("attempt_id",), "work_mcp_proxy_issues", ("attempt_id",)
+            ),
+            _known_v29_fk(
+                "work_mcp_proxy_effects",
+                ("attempt_id", "generation"),
+                "work_mcp_proxy_issues",
+                ("attempt_id", "generation"),
+            ),
+            _known_v29_fk(
+                "work_mcp_proxy_issue_events",
+                ("attempt_id", "generation"),
+                "work_mcp_proxy_issues",
+                ("attempt_id", "generation"),
+            ),
+            _known_v29_fk(
+                "work_mcp_proxy_issues",
+                ("attempt_id", "generation", "contract_hash"),
+                "work_dispatch_bindings",
+                ("attempt_id", "generation", "contract_hash"),
+            ),
+            _known_v29_fk(
+                "work_task_receiver_acceptances",
+                ("attempt_id", "generation"),
+                "work_child_origin_bindings",
+                ("child_attempt_id", "child_generation"),
+            ),
+            _known_v29_fk(
+                "work_task_receiver_acceptances",
+                ("receiver_subject_id", "receiver_origin_kind", "receiver_authorization_revision"),
+                "work_origin_authorizations",
+                ("subject_id", "origin_kind", "revision"),
+            ),
+            _known_v29_fk(
+                "work_task_receiver_acceptances",
+                ("receiver_subject_id", "receiver_origin_kind", "receiver_subject_revision"),
+                "work_origin_subjects",
+                ("subject_id", "origin_kind", "revision"),
+            ),
+            _known_v29_fk(
+                "work_task_receiver_credentials",
+                ("attempt_id", "generation"),
+                "work_attempt_credentials",
+                ("attempt_id", "generation"),
+            ),
+            _known_v29_fk(
+                "work_task_receiver_credentials",
+                ("attempt_id", "generation"),
+                "work_child_origin_bindings",
+                ("child_attempt_id", "child_generation"),
+            ),
+            _known_v29_fk(
+                "work_task_receiver_credentials",
+                ("job_id", "receiver_grant_id", "receiver_grant_revision"),
+                "work_grants",
+                ("job_id", "id", "revision"),
+            ),
+            _known_v29_fk(
+                "work_task_receiver_credentials",
+                ("job_id", "work_item_id"),
+                "work_items",
+                ("job_id", "id"),
+            ),
+            _known_v29_fk(
+                "work_task_receiver_credentials",
+                ("receiver_subject_id",),
+                "work_principals",
+                ("id",),
+            ),
+            _known_v29_fk(
+                "work_task_receiver_credentials",
+                ("work_item_id", "attempt_id", "generation"),
+                "work_attempts",
+                ("work_item_id", "id", "generation"),
+            ),
+        )
+    )
+)
+
+_PROFILE_TABLES = {28: _V25_TABLES, 29: _V29_TABLES}
+_PROFILE_FOREIGN_KEYS = {28: _V28_FOREIGN_KEYS, 29: _V29_FOREIGN_KEYS}
+
 
 @dataclass(frozen=True, order=True)
 class ReferenceFamily:
@@ -1362,27 +1543,29 @@ def _portable_inbox_store_identity(connection: sqlite3.Connection) -> ManagedInb
     return ManagedInboxStoreIdentity(canonical_identity, canonical_uuid)
 
 
-def verified_inbox_store_identity(connection: sqlite3.Connection) -> ManagedInboxStoreIdentity:
-    """Return inbox identity only after the source passes the strict v24 verifier."""
-    inspect_work_store(connection)
+def verified_inbox_store_identity(
+    connection: sqlite3.Connection, *, profile_version: int = WORK_SQLITE_PROFILE_VERSION
+) -> ManagedInboxStoreIdentity:
+    """Return inbox identity only after the selected closed profile verifies."""
+    inspect_work_store(connection, profile_version=profile_version)
     return _portable_inbox_store_identity(connection)
 
 
-def _verify_portable_work_profile(connection: sqlite3.Connection) -> None:
-    """Mirror the v24 repository verifier except for staging's physical filename.
+def _verify_portable_work_profile(connection: sqlite3.Connection, *, schema_version: int) -> None:
+    """Mirror one repository verifier except for staging's physical filename.
 
     The strict verifier remains the only execution gate.  This narrow variant
     preserves all its DDL, migration ledger, recovery-context and foreign-key
     checks while leaving path substitution local to recovery inspection.
     """
-    expected = _EXPECTED_SCHEMAS[_WORK_SCHEMA_VERSION]
+    expected = _EXPECTED_SCHEMAS[schema_version]
     if _schema_objects(connection) != expected:
         raise SchemaMismatch("work schema is incomplete, incompatible or modified")
     records = connection.execute(
         "SELECT version,checksum,verification_result FROM work_migrations ORDER BY version"
     ).fetchall()
     if [tuple(row) for row in records] != [
-        (number, _CHECKSUMS[number], "verified") for number in range(1, _WORK_SCHEMA_VERSION + 1)
+        (number, _CHECKSUMS[number], "verified") for number in range(1, schema_version + 1)
     ]:
         raise SchemaMismatch("work migration ledger is incompatible or modified")
     _stored_recovery_context(connection)
@@ -1398,6 +1581,7 @@ def inspect_portable_work_store(
     connection: sqlite3.Connection,
     *,
     expected_source_identity: ManagedInboxStoreIdentity,
+    profile_version: int = WORK_SQLITE_PROFILE_VERSION,
 ) -> WorkStoreInventory:
     """Inspect a read-only staging copy against one strictly verified source identity.
 
@@ -1406,35 +1590,19 @@ def inspect_portable_work_store(
     identity/UUID pair to the strictly verified source and returns inventory
     only; it never grants execution authority to the copy.
     """
-    if (
-        not isinstance(connection, sqlite3.Connection)
-        or SCHEMA_VERSION != _WORK_SCHEMA_VERSION
-        or not isinstance(expected_source_identity, ManagedInboxStoreIdentity)
-    ):
+    if not isinstance(expected_source_identity, ManagedInboxStoreIdentity):
         raise RecoveryInventoryError(_INCOMPATIBLE)
-    try:
-        if _portable_inbox_store_identity(connection) != expected_source_identity:
-            raise RecoveryInventoryError(_INCOMPATIBLE)
-        _verify_portable_work_profile(connection)
-        tables = _user_tables(connection)
-        if tables != _V25_TABLES:
-            raise RecoveryInventoryError(_INCOMPATIBLE)
-        _validate_legacy_tables(connection)
-        _validate_reference_catalog(connection, tables)
-        foreign_keys = _foreign_keys(connection, tables)
-        if foreign_keys != _V28_FOREIGN_KEYS:
-            raise RecoveryInventoryError(_INCOMPATIBLE)
-    except (SchemaMismatch, sqlite3.DatabaseError, IndexError, TypeError, ValueError) as error:
-        raise RecoveryInventoryError(_INCOMPATIBLE) from error
-    return WorkStoreInventory(
-        profile_version=WORK_SQLITE_PROFILE_VERSION,
-        tables=tables,
-        foreign_keys=foreign_keys,
-        references=_REFERENCE_FAMILIES,
+    return _inspect_work_profile(
+        connection,
+        profile_version=profile_version,
+        portable=True,
+        expected_source_identity=expected_source_identity,
     )
 
 
-def inspect_offline_work_store(connection: sqlite3.Connection) -> WorkStoreInventory:
+def inspect_offline_work_store(
+    connection: sqlite3.Connection, *, profile_version: int = WORK_SQLITE_PROFILE_VERSION
+) -> WorkStoreInventory:
     """Verify a bundle SQLite object without adopting its historical store path.
 
     Unlike the staging inspector, this pure verifier has no source-store path
@@ -1442,27 +1610,7 @@ def inspect_offline_work_store(connection: sqlite3.Connection) -> WorkStoreInven
     persisted inbox identity's canonical form, but never grants execution
     authority to the historical copy.
     """
-    if not isinstance(connection, sqlite3.Connection) or SCHEMA_VERSION != _WORK_SCHEMA_VERSION:
-        raise RecoveryInventoryError(_INCOMPATIBLE)
-    try:
-        _portable_inbox_store_identity(connection)
-        _verify_portable_work_profile(connection)
-        tables = _user_tables(connection)
-        if tables != _V25_TABLES:
-            raise RecoveryInventoryError(_INCOMPATIBLE)
-        _validate_legacy_tables(connection)
-        _validate_reference_catalog(connection, tables)
-        foreign_keys = _foreign_keys(connection, tables)
-        if foreign_keys != _V28_FOREIGN_KEYS:
-            raise RecoveryInventoryError(_INCOMPATIBLE)
-    except (SchemaMismatch, sqlite3.DatabaseError, IndexError, TypeError, ValueError) as error:
-        raise RecoveryInventoryError(_INCOMPATIBLE) from error
-    return WorkStoreInventory(
-        profile_version=WORK_SQLITE_PROFILE_VERSION,
-        tables=tables,
-        foreign_keys=foreign_keys,
-        references=_REFERENCE_FAMILIES,
-    )
+    return _inspect_work_profile(connection, profile_version=profile_version, portable=True)
 
 
 _REFERENCE_FAMILIES = tuple(
@@ -1718,31 +1866,59 @@ def _validate_legacy_tables(connection: sqlite3.Connection) -> None:
             raise RecoveryInventoryError(_INCOMPATIBLE)
 
 
-def inspect_work_store(connection: sqlite3.Connection) -> WorkStoreInventory:
-    """Inspect an already-initialized current Work store without writing to it.
-
-    The repository verifier proves the v24 ledger and each known schema object;
-    the explicit user-table list closes the profile against extensions or legacy
-    tables that the repository deliberately ignores.  Any incompatibility has
-    the same stable public error so callers cannot adopt a partial profile.
-    """
-    if not isinstance(connection, sqlite3.Connection) or SCHEMA_VERSION != _WORK_SCHEMA_VERSION:
+def _inspect_work_profile(
+    connection: sqlite3.Connection,
+    *,
+    profile_version: int,
+    portable: bool,
+    expected_source_identity: ManagedInboxStoreIdentity | None = None,
+) -> WorkStoreInventory:
+    if not isinstance(connection, sqlite3.Connection) or type(profile_version) is not int:
+        raise RecoveryInventoryError(_INCOMPATIBLE)
+    schema_version = _PROFILE_SCHEMA_VERSIONS.get(profile_version)
+    tables_expected = _PROFILE_TABLES.get(profile_version)
+    foreign_keys_expected = _PROFILE_FOREIGN_KEYS.get(profile_version)
+    if (
+        schema_version is None
+        or tables_expected is None
+        or foreign_keys_expected is None
+        or schema_version > SCHEMA_VERSION
+        or schema_version not in _EXPECTED_SCHEMAS
+    ):
         raise RecoveryInventoryError(_INCOMPATIBLE)
     try:
-        WorkRepository._verify(connection, version=_WORK_SCHEMA_VERSION)
+        if portable:
+            stored_identity = _portable_inbox_store_identity(connection)
+            if expected_source_identity is not None and stored_identity != expected_source_identity:
+                raise RecoveryInventoryError(_INCOMPATIBLE)
+            _verify_portable_work_profile(connection, schema_version=schema_version)
+        else:
+            WorkRepository._verify(connection, version=schema_version)
         tables = _user_tables(connection)
-        if tables != _V25_TABLES:
+        if tables != tables_expected:
             raise RecoveryInventoryError(_INCOMPATIBLE)
         _validate_legacy_tables(connection)
         _validate_reference_catalog(connection, tables)
         foreign_keys = _foreign_keys(connection, tables)
-        if foreign_keys != _V28_FOREIGN_KEYS:
+        if foreign_keys != foreign_keys_expected:
             raise RecoveryInventoryError(_INCOMPATIBLE)
     except (SchemaMismatch, sqlite3.DatabaseError, IndexError, TypeError, ValueError) as error:
         raise RecoveryInventoryError(_INCOMPATIBLE) from error
     return WorkStoreInventory(
-        profile_version=WORK_SQLITE_PROFILE_VERSION,
+        profile_version=profile_version,
         tables=tables,
         foreign_keys=foreign_keys,
         references=_REFERENCE_FAMILIES,
     )
+
+
+def inspect_work_store(
+    connection: sqlite3.Connection, *, profile_version: int = WORK_SQLITE_PROFILE_VERSION
+) -> WorkStoreInventory:
+    """Inspect one exact current or historical Work profile without writing.
+
+    The repository verifier proves the full migration ledger and each schema
+    object. The profile's explicit table/FK catalog also rejects extensions and
+    legacy tables that the Work verifier deliberately ignores.
+    """
+    return _inspect_work_profile(connection, profile_version=profile_version, portable=False)

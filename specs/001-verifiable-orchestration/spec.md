@@ -330,7 +330,11 @@ edición obsoleta y ejecutar gates aplicables en un entorno controlado.
   de migración, backup, restauración y rollback aplicable. El backup interno
   con corte lleva lease server-owned de operador autenticado, limitado a
   writers Work registrados; su evidencia versionada no atribuye
-  quiescencia global a productores ajenos al registro.
+  quiescencia global a productores ajenos al registro. Cada perfil de recovery
+  queda fijado a su versión exacta del schema y catálogo de tablas/FK; el perfil
+  v28/schema30 conserva verificación histórica, mientras v29/schema38 es el único
+  perfil actual capturable y restaurable. Los bundles v1 v24/v25 y los v2 v28
+  conservan verificación histórica sin autoridad de restore.
 - **FR-019 / R19**: Matriz real es opt-in y registra escenarios del roadmap por
   proveedor, resultados, omisiones y limitaciones.
 - **FR-020 / O01**: Edición de workflows rechaza revisiones obsoletas y cada step

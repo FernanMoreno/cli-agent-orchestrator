@@ -47,7 +47,7 @@ def projected_work(tmp_path, monkeypatch):
     )
     WorkService(repository).dispatch(
         work["id"],
-        lambda: DeliveryObservation(task_received=True, execution_started=True),
+        lambda: DeliveryObservation(),
         actor_id=principal.id,
         admission=TransitionEvidence(
             generation=1,
@@ -77,10 +77,10 @@ def test_v1_fixture_accepts_nullable_legacy_projection_fields(work_contract_v1):
     )
 
 
-def test_get_work_projects_running_delivery_without_claiming_terminal_success(
+def test_get_work_projects_sent_delivery_without_a_receipt_or_terminal_success(
     client, projected_work, work_contract_v1
 ):
-    """Breaks if durable running delivery is projected as success or process certainty."""
+    """Legacy adapter observations cannot manufacture an authenticated receipt."""
     _, job, work = projected_work
     response = client.get(f"/work-items/{work['id']}")
 
@@ -92,10 +92,10 @@ def test_get_work_projects_running_delivery_without_claiming_terminal_success(
         "attempt_id": work["attempts"][-1]["id"],
         "job_state": "running",
         "work_state": "running",
-        "attempt_state": "running",
-        "turn_state": "processing",
+        "attempt_state": "sent",
+        "turn_state": "input_sent",
         "process_state": "unknown",
-        "revision": 3,
+        "revision": 2,
         "result_ref": None,
         "cleanup_state": "not_requested",
         "required_action": None,

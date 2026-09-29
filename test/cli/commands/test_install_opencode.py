@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -86,6 +87,25 @@ def _write_profile(
         f"---\nname: {name}\ndescription: {description}\n{extra_frontmatter}{mcp_block}\n---\n{body}\n",
         encoding="utf-8",
     )
+
+
+def _help_lists_subcommand(help_output: str, subcommand: str) -> bool:
+    """Return whether an OpenCode help page advertises one exact subcommand."""
+    lines = help_output.splitlines()
+    try:
+        section_start = next(i for i, line in enumerate(lines) if line.strip() == "SUBCOMMANDS")
+    except StopIteration:
+        return False
+
+    for line in lines[section_start + 1 :]:
+        if not line.strip():
+            continue
+        if not line[0].isspace():
+            break
+        names = re.split(r"\s{2,}", line.strip(), maxsplit=1)[0]
+        if subcommand in {name.strip() for name in names.split(",")}:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -541,7 +561,7 @@ class TestStaleMcpGrantsRemoved:
 
 
 # ---------------------------------------------------------------------------
-# Optional live smoke test: opencode agent list shows the installed agent
+# Optional live smoke test: install files are in OpenCode's discovery directory
 # ---------------------------------------------------------------------------
 
 
@@ -550,56 +570,100 @@ class TestStaleMcpGrantsRemoved:
     reason="opencode binary not on PATH",
 )
 class TestOpencodeAgentListIntegration:
-    """Verify that the installed agent appears in `opencode agent list`."""
+    """Verify the installed agent and use a CLI list command when it is isolated."""
 
     def test_installed_agent_visible_in_opencode_list(
-        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, runner: CliRunner, install_workspace: Dict[str, Any]
     ):
-        local_store = tmp_path / "agent-store"
-        context_dir = tmp_path / "agent-context"
-        agents_dir = tmp_path / "opencode_cli" / "agents"
-        config_file = tmp_path / "opencode_cli" / "opencode.json"
+        local_store = install_workspace["local_store"]
+        agents_dir = install_workspace["agents_dir"]
+        config_file = install_workspace["config_file"]
+        config_dir = agents_dir.parent
 
-        local_store.mkdir(parents=True)
-        context_dir.mkdir(parents=True)
-
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.services.profile_store.LOCAL_AGENT_STORE_DIR", local_store
+        _write_profile(
+            local_store / "smoke-test-agent.md",
+            name="smoke-test-agent",
+            mcp_servers="  cao-mcp-server:\n    command: cao-mcp-server\n",
         )
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.utils.agent_profiles.LOCAL_AGENT_STORE_DIR", local_store
-        )
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.services.install_service.AGENT_CONTEXT_DIR", context_dir
-        )
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.services.install_service.OPENCODE_AGENTS_DIR", agents_dir
-        )
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.utils.opencode_config.OPENCODE_CONFIG_FILE", config_file
-        )
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.services.settings_service.get_agent_dirs", lambda: {}
-        )
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.services.settings_service.get_extra_agent_dirs", lambda: []
-        )
-
-        _write_profile(local_store / "smoke-test-agent.md", name="smoke-test-agent")
 
         result = runner.invoke(install, ["smoke-test-agent", "--provider", "opencode_cli"])
-        assert result.exit_code == 0
+        assert result.exit_code == 0, result.output
+
+        # OpenCode discovers agent files and MCP grants from the same isolated
+        # config root supplied below. These checks still exercise the real
+        # install path when a CLI version offers only service-backed listing.
+        agent_file = agents_dir / "smoke-test-agent.md"
+        assert agent_file.is_file()
+        agent = frontmatter.loads(agent_file.read_text(encoding="utf-8"))
+        assert agent.metadata["description"] == "Test agent"
+        assert agent.metadata["mode"] == "all"
+
+        assert config_file.parent == config_dir
+        config = json.loads(config_file.read_text(encoding="utf-8"))
+        assert config["mcp"]["cao-mcp-server"]["type"] == "local"
+        assert config["tools"]["cao-mcp-server*"] is False
+        assert config["agent"]["smoke-test-agent"]["tools"]["cao-mcp-server*"] is True
 
         env = {
             "OPENCODE_CONFIG": str(config_file),
-            "OPENCODE_CONFIG_DIR": str(tmp_path / "opencode_cli"),
+            "OPENCODE_CONFIG_DIR": str(config_dir),
             "OPENCODE_DISABLE_AUTOUPDATE": "1",
         }
+
+        opencode = shutil.which("opencode")
+        assert opencode is not None
+        root_help = subprocess.run(
+            [opencode, "--help"],
+            capture_output=True,
+            text=True,
+            env={**os.environ, **env},
+            timeout=15,
+        )
+        assert root_help.returncode == 0, root_help.stderr
+
+        if not _help_lists_subcommand(root_help.stdout, "agent"):
+            if _help_lists_subcommand(root_help.stdout, "debug"):
+                debug_help = subprocess.run(
+                    [opencode, "debug", "--help"],
+                    capture_output=True,
+                    text=True,
+                    env={**os.environ, **env},
+                    timeout=15,
+                )
+                assert debug_help.returncode == 0, debug_help.stderr
+                if _help_lists_subcommand(debug_help.stdout, "agents"):
+                    pytest.skip(
+                        "OpenCode exposes `debug agents` through its persistent service; "
+                        "skip only that service-backed listing to keep this check scoped "
+                        "to the isolated discovery directory. The installed agent and "
+                        "opencode.json were validated above."
+                    )
+            pytest.skip(
+                "OpenCode does not advertise an isolated `agent list` command; "
+                "the installed agent and opencode.json were validated in the "
+                "test discovery directory."
+            )
+
+        agent_help = subprocess.run(
+            [opencode, "agent", "--help"],
+            capture_output=True,
+            text=True,
+            env={**os.environ, **env},
+            timeout=15,
+        )
+        assert agent_help.returncode == 0, agent_help.stderr
+        if not _help_lists_subcommand(agent_help.stdout, "list"):
+            pytest.skip(
+                "OpenCode advertises `agent` but not its `list` subcommand; "
+                "the installed agent and opencode.json were validated above."
+            )
+
         proc = subprocess.run(
-            ["opencode", "agent", "list"],
+            [opencode, "agent", "list"],
             capture_output=True,
             text=True,
             env={**os.environ, **env},
             timeout=60,
         )
-        assert "smoke-test-agent" in proc.stdout or "smoke-test-agent" in proc.stderr
+        assert proc.returncode == 0, proc.stderr or proc.stdout
+        assert re.search(r"(?m)^\s*smoke-test-agent(?:\s|$)", proc.stdout)

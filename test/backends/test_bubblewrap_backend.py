@@ -13,6 +13,22 @@ def test_backend_features_with_valid_broker(monkeypatch):
     monkeypatch.setattr(bubblewrap_backend, "_require_work_broker_identity", lambda _name: None)
 
 
+@pytest.fixture
+def attempt_credential_fd():
+    """Provide the sealed descriptor required by a bound process launch."""
+    import os
+
+    from cli_agent_orchestrator.services.work_attempt_credential import (
+        create_attempt_credential_descriptor,
+    )
+
+    descriptor = create_attempt_credential_descriptor(b"x" * 32)
+    try:
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
 class NoTmuxEffects:
     def __init__(self):
         self.effects = []
@@ -447,7 +463,7 @@ def test_legacy_mutators_reject_without_touching_tmux_client(tmp_path, method, a
 
 
 def test_bound_process_executor_forwards_exact_work_fences_to_recorded_bubblewrap_launch(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, attempt_credential_fd
 ):
     from types import SimpleNamespace
 
@@ -526,6 +542,7 @@ def test_bound_process_executor_forwards_exact_work_fences_to_recorded_bubblewra
         command_token="/worker",
         worker_input=b"frozen task",
         expected_attempt_revision=19,
+        attempt_credential_fd=attempt_credential_fd,
         before_effect=before_effect,
         authorize_setup=authorize_setup,
         authorize_go=authorize_go,
@@ -545,7 +562,9 @@ def test_bound_process_executor_forwards_exact_work_fences_to_recorded_bubblewra
     assert kwargs["authorize_go"] is authorize_go
 
 
-def test_tool_contract_gets_fresh_attempt_bound_proxy_before_recorded_launch(tmp_path, monkeypatch):
+def test_tool_contract_gets_fresh_attempt_bound_proxy_before_recorded_launch(
+    tmp_path, monkeypatch, attempt_credential_fd
+):
     from types import SimpleNamespace
 
     from cli_agent_orchestrator.backends import bubblewrap_backend
@@ -633,6 +652,7 @@ def test_tool_contract_gets_fresh_attempt_bound_proxy_before_recorded_launch(tmp
         command_token="/worker",
         worker_input=b"frozen task",
         expected_attempt_revision=8,
+        attempt_credential_fd=attempt_credential_fd,
         before_effect=lambda: None,
         authorize_setup=lambda _connection: None,
         authorize_go=lambda _connection: None,

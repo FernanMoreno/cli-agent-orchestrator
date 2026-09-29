@@ -80,6 +80,11 @@ Desde WSL2 con Docker Desktop activo (o desde Linux con Docker Engine), ejecutar
 ./test/integration/t019/run-docker-acceptance.sh
 ```
 
+El primer runner fija el CLI al socket Unix local (`unix:///var/run/docker.sock`)
+antes de construir imágenes; contextos remotos TCP/SSH no son aceptados. En WSL2,
+Docker Desktop debe exponer ese socket a la distribución. El runner no envía
+imágenes ni tareas si no puede verificar el daemon local.
+
 El primer comando construye una imagen inmutable `FROM scratch` con el worker
 estático y ejecuta un contenedor por intento. Verifica worker simple, rechazo
 antes del efecto de peticiones gestionadas inválidas, admisión de un hijo
@@ -88,14 +93,20 @@ con su credencial separada. El proxy sólo expone operaciones autorizadas por
 `WorkOrigins`; el worker no recibe mounts del workspace, red, herramientas ni
 rutas de escritura. Sólo las operaciones `cao.work.*` permitidas cruzan el
 proxy MCP privado; no hay herramientas locales arbitrarias. Se comprueba el
-cleanup del contenedor e imágenes/archivos temporales.
+cleanup del contenedor e imágenes/archivos temporales, dos workers concurrentes
+que intentan leer el descriptor MCP del hermano, la recuperación sin redelivery
+y la caída real del owner con worker e issue MCP activos. La aceptación Docker
+del 2026-09-29 pasó **7/7** en Docker Desktop 29.8.1 / WSL2. La recuperación
+usa un repository/backend nuevo y concilia artifacts etiquetados por
+intento/generación. Docker puede detener el attach al caer el owner; la prueba
+no afirma que el contenedor siga ejecutándose después de esa desconexión.
 
 El segundo comando ejecuta la suite T097 dentro de un guest Linux QEMU,
 orquestado por un contenedor Docker. En la aceptación del 2026-09-29 pasó
 **8/8 sin skips**, con Ubuntu 26.10, kernel guest `7.3.0-5-generic`, Bubblewrap
 0.13.0 (digest
 `15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250`) y
-Landlock ABI 11. El Docker Work backend pasó **4/4** en Docker Desktop 29.8.1
+Landlock ABI 11. El Docker Work backend pasó **7/7** en Docker Desktop 29.8.1
 sobre kernel WSL2 `6.18.33.2-microsoft-standard-WSL2`.
 
 El perfil de runtime admite sólo un ELF estático: sin herramientas locales

@@ -186,6 +186,7 @@ def _setup(
     capacity=1,
     contract_paths=None,
     contract_write_paths=None,
+    lease_seconds=300,
 ):
     repository = WorkRepository(tmp_path / "t098.sqlite3")
     repository.initialize()
@@ -273,7 +274,7 @@ def _setup(
         grant_revision=grant.revision,
         contract=contract,
         adapter_version=2,
-        lease_seconds=300,
+        lease_seconds=lease_seconds,
     )
     marker = tmp_path / "worker-input.bin"
     backend = backend_factory(marker, repository)

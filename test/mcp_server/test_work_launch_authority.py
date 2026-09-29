@@ -10,11 +10,15 @@ from fastapi.testclient import TestClient
 from cli_agent_orchestrator.api import main as api_main
 from cli_agent_orchestrator.clients.work_repository import WorkConflict
 from cli_agent_orchestrator.mcp_server import server, utils
+from cli_agent_orchestrator.models.work_contract import (
+    EffectiveWorkContractV2,
+    ExecutableIdentity,
+)
 from cli_agent_orchestrator.services.work_launch_gateway import build_durable_launch_gateway
+from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
 from test.services.test_work_launch_runtime import (
     ProtectedFakeBackend,
     durable_counts,
-    provision,
     trusted_setup,
 )
 
@@ -23,6 +27,11 @@ def _tool_function(name):
     tool = getattr(server, name, None)
     assert tool is not None, f"missing MCP tool {name}"
     return getattr(tool, "fn", tool)
+
+
+class _ProcessCapableFakeBackend(ProtectedFakeBackend):
+    def execute_bound_process(self, *args, **kwargs):
+        raise AssertionError("MCP launch admission must not execute the worker")
 
 
 def _launch_args(**overrides):
@@ -37,11 +46,41 @@ def _launch_args(**overrides):
     return args
 
 
+def _provision_v2_launch(setup):
+    repository, principal, _, job, grant, contract = setup
+    payload = contract.model_dump(mode="python")
+    payload["schema_version"] = 2
+    payload["permissions"]["commands"] = ("/bin/alpha",)
+    payload["executable_identities"] = (
+        ExecutableIdentity(
+            command_token="/bin/alpha",
+            content_reference="sha256:" + "a" * 64,
+            sha256_digest="a" * 64,
+            elf_machine="x86_64",
+            elf_class="ELF64",
+            endianness="little",
+        ).model_dump(mode="python"),
+    )
+    process_contract = EffectiveWorkContractV2.model_validate(payload)
+    return WorkProvisioning(repository).provision_launch(
+        principal,
+        subject=principal,
+        selector="opaque",
+        expected_revision=0,
+        job_id=job["id"],
+        grant_id=grant.id,
+        grant_revision=grant.revision,
+        contract=process_contract,
+        adapter_version=2,
+        lease_seconds=300,
+    )
+
+
 @pytest.fixture
 def launch_transport(trusted_setup, monkeypatch):
     repository, principal, _, _, _, _ = trusted_setup
-    provision(trusted_setup)
-    backend = ProtectedFakeBackend()
+    _provision_v2_launch(trusted_setup)
+    backend = _ProcessCapableFakeBackend()
     gateway = build_durable_launch_gateway(repository, backends={"test": backend})
     previous_gateway = getattr(api_main.app.state, "durable_launch_gateway", None)
     api_main.app.state.durable_launch_gateway = gateway

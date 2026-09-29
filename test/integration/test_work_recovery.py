@@ -174,7 +174,7 @@ def test_v2_capture_restores_only_a_blocked_distinct_portable_store(recovery_sou
     module.restore_recovery_bundle(receipt, destination)
 
     assert manifest["format"] == "recovery-bundle-v2"
-    assert manifest["profile_version"] == 28
+    assert manifest["profile_version"] == 29
     assert manifest["cut_evidence"]
     assert recovery_source.read_bytes() == source_before
     with sqlite3.connect(recovery_source) as source_connection:

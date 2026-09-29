@@ -3412,7 +3412,8 @@ La suite `test/integration/t097 -m t097_host` pasó como cuenta broker:
 T101 y C07/C08 quedan cerradas con el perfil guest reproducible. **Decisión de
 cierre T097 — 2026-09-28:** no existe ni se prevé un host de producción; se
 cierra T097 con esta aceptación y el backend permanece sin registrar. Work no
-se habilita. T019 sigue abierto y diferido hasta que se elija un target futuro.
+se habilita. Al corte del 2026-09-28, T019 seguía abierto y diferido hasta elegir
+un target; ese estado fue supersedido por el cierre local documentado abajo.
 
 Se revisó la opción gratuita. Este repositorio es público y los runners
 estándar de GitHub Actions son gratuitos, pero cada runner es efímero y se
@@ -3431,10 +3432,13 @@ Se cerró T019 para su alcance local acordado: Docker cumple como runtime Work
 por intento y como anfitrión de la aceptación Bubblewrap. El backend no se añade
 a `WORK_BACKENDS` y no existe aceptación de producción.
 
-- `./test/integration/t019/run-docker-backend-acceptance.sh`: **4 passed** en
+- `./test/integration/t019/run-docker-backend-acceptance.sh`: **7 passed** en
   Docker Desktop 29.8.1 / WSL2. La suite cubrió worker estático, rechazo antes
-  del efecto, admisión de hijo por `cao.work.*` y aceptación/receipt exactos del
-  receptor, además de cleanup.
+  del efecto, admisión de hijo por `cao.work.*`, aceptación/receipt exactos del
+  receptor, aislamiento de dos workers concurrentes, recovery con objetos
+  nuevos y SIGKILL del owner mientras worker/issue MCP estaban activos, sin
+  redelivery. El runner fija el daemon local por socket Unix y
+  rechaza endpoint/contexto remoto antes de construir o enviar imágenes.
 - `./test/integration/t019/run-docker-acceptance.sh`: **8 passed, 0 skipped**
   en guest Ubuntu 26.10 bajo QEMU TCG. Guest kernel `7.3.0-5-generic`, Bubblewrap
   0.13.0 con digest
@@ -3454,3 +3458,43 @@ autoriza sólo hijo/receptor preprovisionados y valida la aceptación exacta.
 El adapter `agent_step` sólo forma parte del gateway interno sellado. No se
 habilita ingreso público, el camino legacy `utils/orchestration.py`, proveedor
 real, base de datos del operador ni despliegue.
+
+### T019: convergencia local — evidencia final de 2026-09-29
+
+La aceptación recién repetida con la recuperación tras reinicio pasó **7
+passed en 22,44 s**, con Docker 29.8.1 y
+`DOCKER_HOST=unix:///var/run/docker.sock`. El caso de hermanos concurrentes
+prueba desde workers reales que el endpoint MCP del intento ajeno no se puede
+abrir con `/proc/<pid>/fd/3` ni `pidfd_getfd`; las observaciones registran sólo
+errno/namespace y ningún secreto. Se comprueban el cierre durable
+`issued → abandoned` cuando no hubo efecto y el aislamiento de IDs/canarios por
+intento.
+
+El caso de cleanup incierto deja deliberadamente un container y una imagen etiquetados
+tras fallar la observación inicial de cleanup. Un `WorkRepository` y backend
+nuevos concilian sólo la identidad exacta, confirman ambos flags de eliminación,
+conservan el intento en `reconcile`, completan `cleanup_state` y verifican que
+el gateway no redespacha. El `finally` reconcilia cualquier artefacto si una
+aserción falla.
+
+Una prueba adicional lanza el gateway en un proceso owner separado, espera que
+el worker Docker esté activo y su issue MCP permanezca `issued`, y envía SIGKILL
+al owner. Un recovery con repository/backend nuevos avanza el lease de la DB
+temporal, marca `reconcile`, elimina por labels exactos, cierra la issue como
+`abandoned` sin crear effects y comprueba que el gateway no reenvía. Docker
+Desktop puede detener el attach cuando desaparece el cliente; la prueba verifica
+el artifact residual, no que continúe ejecutándose tras el SIGKILL.
+
+La regresión T110 se reprodujo en RED: dos casos trataban el error de inspect de
+container/image como ausencia y alcanzaban comandos de build/cleanup. Tras usar
+el clasificador explícito de ausencia en dispatch y conciliar por identidad si
+falta el ID del container, el conjunto focal pasó **4/4**.
+
+Regresiones focales ya ejecutadas sobre el diff actual: Docker/backend,
+Bubblewrap, tmux, autoridad de launch, proyección y continuación: **86 passed**;
+recovery process/bundle/integration y compatibilidad OpenCode local: **127
+passed, 1 skipped** (el OpenCode 2.0.18 instalado no implementa `agent list`; se
+verifican sus archivos/configuración instalados). Migraciones de inventario
+seleccionadas: **7 passed**. El skip restante no simula una prueba de producción.
+La composición pasó **4 contratos conservados, 0 rotos** (294 archivos/1098
+dependencias). La suite completa se registrará tras el gate final.

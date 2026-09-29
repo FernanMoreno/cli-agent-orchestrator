@@ -1367,3 +1367,21 @@ corpus 248 code/20 docs sin API semántica, AST `--code-only` completado y
 resolución de rutas 9p atascada hasta interrupción exit 130. `graph.json` y
 `.graphify_ast.json` intactos; refresh diferido. Sin integración a
 GO/release/backend ni registro; `WORK_BACKENDS={}` y T097/T019 siguen `[ ]`.
+
+### T019 local: aceptación Docker convergida — 2026-09-29
+
+T019 queda cerrada para el runtime Work Docker por intento y su aceptación
+Bubblewrap local reproducible. La suite Docker real pasó **7/7** en Docker
+Desktop 29.8.1/WSL2: daemon Unix local obligatorio, workers hermanos concurrentes
+aislados, cierre durable de issues MCP sin efecto y conciliación tras caída real
+del proceso owner, sin redelivery. Worker e issue estaban activos antes del
+SIGKILL; Docker puede detener el attach al desaparecer el cliente, y el recovery
+elimina el artifact etiquetado que queda. La aceptación Bubblewrap
+QEMU previamente cerrada para T097 pasó **8/8 sin skips** en Ubuntu 26.10 con
+Landlock ABI 11 y Bubblewrap 0.13.0.
+
+Se actualizaron recovery bundle/inventory al Work schema38 preservando lectura
+histórica de los perfiles anteriores. `WORK_BACKENDS` sigue vacío; no existe
+aceptación ni despliegue de producción, y no se habilitaron ingreso público,
+proveedores reales ni la base de datos del operador. Cualquier host futuro exige
+una tarea y aceptación propias.

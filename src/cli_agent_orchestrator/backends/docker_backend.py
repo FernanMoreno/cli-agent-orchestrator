@@ -10,6 +10,7 @@ import os
 import platform
 import re
 import shutil
+import stat
 import subprocess
 import tarfile
 import threading
@@ -118,6 +119,8 @@ class DockerWorkBackend(TmuxBackend):
         self._work_origins = None
         self._mcp_proxy_instances = weakref.WeakSet()
         self._mcp_proxy_factory_lock = threading.Lock()
+        self._local_docker_host: str | None = None
+        self._docker_environment: dict[str, str] | None = None
 
     def bind_work_origins(self, origins) -> None:
         """Bind the one WorkOrigins owner paired with this runtime's repository."""
@@ -151,14 +154,14 @@ class DockerWorkBackend(TmuxBackend):
             raise _unsupported("exactly one immutable static ELF executable is required")
 
     def _run(self, arguments, *, timeout=15, check=True, input_data: bytes | None = None):
-        executable = self._docker_executable()
+        command = self._docker_arguments(arguments)
         if input_data is not None and type(input_data) is not bytes:
             raise TypeError("Docker stdin payload must be immutable bytes")
         options = {
             "capture_output": True,
             "timeout": timeout,
             "check": False,
-            "env": None,
+            "env": self._docker_environment,
         }
         if input_data is None:
             options.update(stdin=subprocess.DEVNULL, text=True)
@@ -167,7 +170,7 @@ class DockerWorkBackend(TmuxBackend):
             options["text"] = False
         try:
             result = subprocess.run(
-                [executable, *arguments],
+                command,
                 **options,
             )
         except (OSError, subprocess.SubprocessError) as error:
@@ -179,12 +182,88 @@ class DockerWorkBackend(TmuxBackend):
     def _docker_executable(self) -> str:
         return shutil.which(self.docker_command) or self.docker_command
 
+    def _configure_local_docker_endpoint(self) -> None:
+        """Pin every Docker operation to the verified local Unix socket."""
+        if self._local_docker_host is not None:
+            return
+        environment = os.environ.copy()
+        docker_host = environment.get("DOCKER_HOST")
+        docker_context = environment.get("DOCKER_CONTEXT")
+        executable = self._docker_executable()
+        if docker_host:
+            host = docker_host
+        else:
+            if not docker_context:
+                try:
+                    context = subprocess.run(
+                        [executable, "context", "show"],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        check=False,
+                        env=environment,
+                    )
+                except (OSError, subprocess.SubprocessError) as error:
+                    raise DockerWorkBackendUnavailable(
+                        "Docker local context could not be queried"
+                    ) from error
+                if context.returncode != 0:
+                    raise DockerWorkBackendUnavailable(
+                        "Docker local context could not be queried"
+                    )
+                docker_context = context.stdout.strip()
+            if not docker_context or "\x00" in docker_context:
+                raise _unsupported("a local Docker context must be selected")
+            try:
+                inspected = subprocess.run(
+                    [
+                        executable,
+                        "context",
+                        "inspect",
+                        docker_context,
+                        "--format",
+                        "{{.Endpoints.docker.Host}}",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                    env=environment,
+                )
+            except (OSError, subprocess.SubprocessError) as error:
+                raise DockerWorkBackendUnavailable(
+                    "Docker local context could not be inspected"
+                ) from error
+            if inspected.returncode != 0:
+                raise DockerWorkBackendUnavailable("Docker local context could not be inspected")
+            host = inspected.stdout.strip()
+        if not host.startswith("unix://"):
+            raise _unsupported("Docker Work accepts only a local Docker daemon")
+        socket_path = host.removeprefix("unix://")
+        if not socket_path.startswith("/") or "\x00" in socket_path:
+            raise _unsupported("Docker Work accepts only a local Docker daemon")
+        try:
+            socket_stat = os.stat(socket_path)
+        except OSError as error:
+            raise DockerWorkBackendUnavailable("local Docker socket could not be verified") from error
+        if not stat.S_ISSOCK(socket_stat.st_mode):
+            raise _unsupported("Docker Work accepts only a local Docker daemon")
+        for key in ("DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"):
+            environment.pop(key, None)
+        self._local_docker_host = host
+        self._docker_environment = environment
+
+    def _docker_arguments(self, arguments) -> list[str]:
+        self._configure_local_docker_endpoint()
+        return [self._docker_executable(), "--host", self._local_docker_host, *arguments]
+
     def _validate_engine_and_image(self) -> None:
         with self._preflight_lock:
             if self._validated_image:
                 return
             if platform.system() != "Linux":
                 raise _unsupported("Docker Work requires a Linux Docker engine client host")
+            self._configure_local_docker_endpoint()
             version_result = self._run(
                 ["version", "--format", "{{.Server.Version}}|{{.Server.Os}}|{{.Server.Arch}}"]
             )
@@ -376,17 +455,41 @@ class DockerWorkBackend(TmuxBackend):
         if kill:
             self._run(["container", "kill", container_id], check=False)
             self._run(["container", "wait", container_id], timeout=30, check=False)
-        removed = self._run(["container", "rm", "--force", container_id], check=False)
-        if removed.returncode != 0:
-            inspect = self._run(["container", "inspect", container_id], check=False)
-            return inspect.returncode != 0
+        self._run(["container", "rm", "--force", container_id], check=False)
         inspect = self._run(["container", "inspect", container_id], check=False)
-        return inspect.returncode != 0
+        return not self._inspect_reports_present(inspect)
 
     def _cleanup_attempt_image(self, image_tag: str) -> bool:
         self._run(["image", "rm", "--force", image_tag], check=False)
         inspect = self._run(["image", "inspect", image_tag], check=False)
-        return inspect.returncode != 0
+        return not self._inspect_reports_present(inspect)
+
+    def _cleanup_failed_execution(
+        self, attempt_id: str, generation: int, container_id: str | None, image_tag: str
+    ) -> tuple[bool, bool]:
+        if container_id is None:
+            cleanup = self.reconcile_attempt(attempt_id, generation)
+            return (
+                cleanup.get("container_removed") is True,
+                cleanup.get("image_removed") is True,
+            )
+        return (
+            self._cleanup_container(container_id, kill=True),
+            self._cleanup_attempt_image(image_tag),
+        )
+
+    @staticmethod
+    def _inspect_reports_present(result) -> bool:
+        if result.returncode == 0:
+            return True
+        diagnostic = "\n".join(
+            value
+            for value in (getattr(result, "stdout", ""), getattr(result, "stderr", ""))
+            if isinstance(value, str)
+        ).lower()
+        if re.search(r"no such (?:object|container|image)", diagnostic):
+            return False
+        raise DockerWorkExecutionUncertain("Docker artifact state could not be verified")
 
     @staticmethod
     def _frame(prefix: bytes, payload: bytes) -> bytes:
@@ -555,8 +658,9 @@ class DockerWorkBackend(TmuxBackend):
         container_result = self._run(
             ["container", "inspect", "--format", "{{json .}}", container_name], check=False
         )
-        container_removed = True
-        if container_result.returncode == 0:
+        container_exists = self._inspect_reports_present(container_result)
+        container_removed = not container_exists
+        if container_exists:
             try:
                 container = json.loads(container_result.stdout)
                 labels = container["Config"]["Labels"]
@@ -577,8 +681,9 @@ class DockerWorkBackend(TmuxBackend):
         image_result = self._run(
             ["image", "inspect", "--format", "{{json .}}", image_tag], check=False
         )
-        image_removed = True
-        if image_result.returncode == 0:
+        image_exists = self._inspect_reports_present(image_result)
+        image_removed = not image_exists
+        if image_exists:
             try:
                 image = json.loads(image_result.stdout)
                 labels = image["Config"]["Labels"]
@@ -714,12 +819,12 @@ class DockerWorkBackend(TmuxBackend):
         container_name = self._container_name(attempt_id, generation)
         attempt_image_tag = self._attempt_image_tag(attempt_id, generation)
         prior = self._run(["container", "inspect", "--format", "{{.Id}}", container_name], check=False)
-        if prior.returncode == 0:
+        if self._inspect_reports_present(prior):
             raise DockerWorkAttemptRecoveryRequired(
                 "a container already exists for this Work attempt; reconcile before retry"
             )
         prior_image = self._run(["image", "inspect", attempt_image_tag], check=False)
-        if prior_image.returncode == 0:
+        if self._inspect_reports_present(prior_image):
             raise DockerWorkAttemptRecoveryRequired(
                 "a worker image already exists for this Work attempt; reconcile before retry"
             )
@@ -867,6 +972,7 @@ class DockerWorkBackend(TmuxBackend):
                 process.stdin.write(payload)
                 process.stdin.flush()
 
+        mcp_owner_stopped = False
         try:
             if mcp_proxy is not None:
                 endpoint = mcp_proxy.create_bound_attempt(
@@ -920,14 +1026,16 @@ class DockerWorkBackend(TmuxBackend):
             container_id = create.stdout.strip()
             if not re.fullmatch(r"[0-9a-f]{64}", container_id):
                 raise DockerWorkBackendUnavailable("Docker returned an invalid container identity")
-            executable = self._docker_executable()
             try:
                 process = subprocess.Popen(
-                    [executable, "container", "start", "--attach", "--interactive", container_id],
+                    self._docker_arguments(
+                        ["container", "start", "--attach", "--interactive", container_id]
+                    ),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     close_fds=True,
+                    env=self._docker_environment,
                 )
             except OSError as error:
                 raise DockerWorkBackendUnavailable("Docker container start could not be observed") from error
@@ -1051,22 +1159,27 @@ class DockerWorkBackend(TmuxBackend):
             if not self._cleanup_attempt_image(attempt_image_tag):
                 raise DockerWorkExecutionUncertain("Docker worker exited but image cleanup is uncertain")
             attempt_image_id = None
+            mcp_owner_stopped = True
             return DockerWorkExecution(code, bytes(stdout), bytes(stderr))
         except TimeoutError:
-            container_removed = container_id is None or self._cleanup_container(container_id, kill=True)
-            image_removed = self._cleanup_attempt_image(attempt_image_tag)
+            container_removed, image_removed = self._cleanup_failed_execution(
+                attempt_id, generation, container_id, attempt_image_tag
+            )
             if not container_removed or not image_removed:
                 raise DockerWorkExecutionUncertain(
                     "Docker worker exceeded its limit and cleanup is uncertain"
                 )
+            mcp_owner_stopped = True
             raise
         except BaseException:
-            container_removed = container_id is None or self._cleanup_container(container_id, kill=True)
-            image_removed = self._cleanup_attempt_image(attempt_image_tag)
+            container_removed, image_removed = self._cleanup_failed_execution(
+                attempt_id, generation, container_id, attempt_image_tag
+            )
             if not container_removed or not image_removed:
                 raise DockerWorkExecutionUncertain(
                     "Docker worker or image cleanup is uncertain; reconcile before retry"
                 )
+            mcp_owner_stopped = True
             raise
         finally:
             if mcp_proxy is not None:
@@ -1080,7 +1193,20 @@ class DockerWorkBackend(TmuxBackend):
             for reader in readers:
                 reader.join(timeout=1)
             if proxy_thread is not None:
-                proxy_thread.join(timeout=1)
+                proxy_thread.join(timeout=5)
+            if mcp_owner_stopped and mcp_proxy is not None:
+                if proxy_thread is not None and proxy_thread.is_alive():
+                    raise DockerWorkExecutionUncertain(
+                        "managed Work proxy did not stop after Docker cleanup"
+                    )
+                try:
+                    with self.repository.cleanup_owner_lock(attempt_id, generation):
+                        mcp_proxy.recover_incomplete_effects(attempt_id, generation)
+                        mcp_proxy.recover_incomplete_issues(attempt_id, generation)
+                except Exception as error:
+                    raise DockerWorkExecutionUncertain(
+                        "managed Work proxy closure could not be recorded"
+                    ) from error
 
     def create_session(self, *args, **kwargs):
         raise _unsupported("Docker Work does not provide terminal sessions")

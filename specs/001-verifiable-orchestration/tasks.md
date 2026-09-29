@@ -180,13 +180,12 @@ conservar resultado y niños después de eliminar terminal.
 - T093 es un gate documental aprobado, no permiso de entrada pública. T035
   requiere además integración y autorización separada; T094 acredita sólo
   el receipt interno tras suite completa sin omisiones.
-  T017/T019/T020/T035 permanecen abiertos con sus gates propios.
-- T019 depende del receipt interno T094 y de la provisión explícita de actores;
-  además depende del backend Work demostrado por T097. T097 queda cerrado con
-  aceptación del guest de referencia; el proyecto no tiene ni prevé un host de
-  despliegue, así que el backend permanece deliberadamente sin registrar.
-  T019 queda abierto y diferido hasta que se defina un target de despliegue y
-  se apruebe trabajo nuevo para ese host.
+  T017/T020/T035 permanecen abiertos con sus gates propios. T019 se cerró después
+  para el perfil local Docker, sin implicar cierre de las otras integraciones.
+- T019 dependía del receipt interno T094, la provisión explícita de actores y el
+  backend demostrado por T097. Se cerró el 2026-09-29 para runtime Docker local
+  y aceptación reproducible; `WORK_BACKENDS` permanece vacío. No hay host de
+  despliegue ni aceptación de producción, que requerirían una tarea separada.
   El proxy y su credencial requieren prueba de aislamiento del backend antes
   de cualquier ejecución en `WorkAdmission._preflight`, antes de crear sesión
   o ventana. El registro Work sigue vacío; Tmux/Herdr no son fallback y un
@@ -565,14 +564,15 @@ cuenta OS dedicada, no root, `nologin` y sin otros procesos. No se afirma que
 La aceptación QEMU hosted de C08/T101 está cerrada para el perfil guest.
 **T097 queda cerrado con ese alcance:** no existe ni se prevé un host de
 despliegue, así que el backend no se registra y Work queda deshabilitado.
-T019 permanece abierto y diferido; no se implementará sin una decisión futura
-de target Linux.
+Al corte del 2026-09-28, T019 permanecía abierto y diferido, sin target Linux.
+Ese estado histórico quedó supersedido por el cierre local de T019 en Phase 19,
+registrado abajo el 2026-09-29.
 
 ## Phase 16: Cierre de identidad broker y aceptación de runner
 
 - [x] T099 [US2] Enforzar en `BubblewrapWorkBackend.preflight_work` que `CAO_WORK_BROKER_ACCOUNT` nombre una cuenta local existente, no root, con shell no interactiva y UID igual al eUID; rechazar configuración ausente, root, shell de login o mismatch antes de cualquier probe Landlock/Bubblewrap. Añadir pruebas RED/GREEN para cada condición y para rechazo sin probes en `test/backends/test_work_broker_identity.py`; la aceptación host de `test/integration/t097/test_host_acceptance.py` debe usar y comprobar la misma configuración (FR-003/FR-006, SC-001, US2/AC13, C03; partial).
 - [x] T100 [US2] Añadir `.github/workflows/t097-host-acceptance.yml` para orquestar desde GitHub-hosted `ubuntu-24.04` un guest Ubuntu 26.10 efímero con QEMU TCG, sólo desde `main` y `workflow_dispatch` de `main`, permisos `contents: read` y timeout acotado. Fijar y verificar SHA-256 de la imagen cloud y del source archive Bubblewrap 0.13.0; compilar e instalar Bubblewrap root:root 0755 dentro del guest; preparar sysctls allí; crear la cuenta broker no interactiva indicada por `CAO_WORK_BROKER_ACCOUNT`; exigir Landlock ABI >= 9; correr los ocho casos como broker sin skips, con timeout 45 s exclusivo de TCG; documentar que el guest no certifica el runner ni un host de despliegue (C07/C08; partial).
-- [x] T101 [US2] Ejecutar el workflow de aceptación QEMU desde `main`; exigir Landlock ABI >= 9, ocho casos sin skips, timeout TCG documentado y Bubblewrap 0.13.0 con digest revisado. El run global verde cierra C07/C08 para el perfil guest en `specs/001-verifiable-orchestration/` y `docs/auditoria-t097/`, sin afirmar compatibilidad de hosts de despliegue ni registrar `WORK_BACKENDS`. Con esta aceptación se cierra T097 para el alcance sin despliegue; T019 permanece independiente y abierto.
+- [x] T101 [US2] Ejecutar el workflow de aceptación QEMU desde `main`; exigir Landlock ABI >= 9, ocho casos sin skips, timeout TCG documentado y Bubblewrap 0.13.0 con digest revisado. El run global verde cierra C07/C08 para el perfil guest en `specs/001-verifiable-orchestration/` y `docs/auditoria-t097/`, sin afirmar compatibilidad de hosts de despliegue ni registrar `WORK_BACKENDS`. Con esta aceptación se cierra T097 para el alcance sin despliegue; al corte del 2026-09-28, T019 seguía independiente y abierto (estado supersedido por Phase 19).
 
 **Repetición tras enforcement de broker — 2026-09-28:** copié el `src/` y
 `test/` actualizados a un guest Ubuntu/QEMU Linux y ejecuté toda la suite como
@@ -645,9 +645,10 @@ T105/T106 completadas. Migraciones v36/v37/v38, credenciales separadas por
 intento/receptor, aceptación exacta y ACK atómico tienen cobertura focal. El
 runtime enlaza `WorkOrigins` al backend; el gateway sellado registra el adapter
 interno `agent_step` sin habilitar ingreso público ni `utils/orchestration.py`.
-`./test/integration/t019/run-docker-backend-acceptance.sh` pasó **4/4** en Docker
-Desktop 29.8.1: worker simple, rechazo fail-closed, hijo gestionado y receipt
-exacto del receptor. `./test/integration/t019/run-docker-acceptance.sh` pasó
+`./test/integration/t019/run-docker-backend-acceptance.sh` pasó **7/7** en Docker
+Desktop 29.8.1: worker simple, rechazo fail-closed, hijo gestionado, receipt
+exacto del receptor, aislamiento de hermanos, recovery con objetos nuevos y
+caída del owner con worker activo sin redelivery. `./test/integration/t019/run-docker-acceptance.sh` pasó
 **8/8 sin skips** en guest Ubuntu 26.10/QEMU, kernel `7.3.0-5-generic`, Bubblewrap
 0.13.0, digest `15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250`
 y Landlock ABI 11. La suite amplia relacionada pasó 177 tests; 4 pruebas T098
@@ -670,3 +671,18 @@ test/services/test_step_contract.py test/services/test_settlement_rewire.py
 test/api/test_work_decisions.py test/api/test_scope_coverage.py
 test/api/test_run_step_replay_branch.py test/api/test_replay_nfr2_and_c1.py`:
 **510 passed, 4 warnings, 0 skipped**.
+
+## Phase 19: Convergencia de T019 local
+
+**Independent Test**: ejecutar dos intentos Docker concurrentes, probar acceso
+cruzado, reiniciar el owner tras crear un contenedor, y confirmar conciliación
+durable sin redelivery; repetir aceptación local con el perfil Docker fijado.
+
+- [x] T109 [US1] Limitar `DockerWorkBackend` a un daemon local verificado antes de enviar imagen o tarea; rechazar contextos SSH/TCP y cubrir la frontera con tests unitarios y aceptación local.
+- [x] T110 [US1] Distinguir artefacto ausente de daemon/CLI inaccesible en inspect, cleanup y conciliación Docker; ningún error de observación puede acreditar cleanup completo.
+- [x] T111 [US1] Integrar recuperación Docker tras reinicio con la conciliación Work por intento/generación; borrar sólo artefactos con identidad exacta y mantener el intento bloqueado si no puede probarse su parada/cleanup.
+- [x] T112 [US1] Cerrar durablemente issues MCP sin efectos al demostrar salida normal del worker; recuperar issues/effects tras reinicio sin reissue ni redelivery.
+- [x] T113 [US1] Añadir aceptación adversarial real de dos workers Docker concurrentes que intenten abrir el endpoint MCP ajeno o heredar/leer sus descriptores; comprobar rechazo y aislamiento por intento.
+- [x] T114 [US1] Actualizar el inventario y bundle de recovery al esquema Work vigente, v38, conservando rechazo de perfiles manipulados y pruebas de copia/restore.
+- [x] T115 [US1] Alinear fixtures de proyección, continuación y launch MCP con receipt durable y versión de adapter vigente; ningún booleano legado puede simular aceptación autenticada.
+- [x] T116 [US1] Consolidar el estado documental de T019 local: resolver la nota histórica que aún lo deja diferido, registrar cada gate ejecutado y mantener explícito que no se afirma host de producción ni registro global.

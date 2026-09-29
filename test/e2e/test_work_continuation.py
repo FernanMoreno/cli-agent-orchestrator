@@ -60,7 +60,7 @@ class FakeAdapter:
         self.sends += 1
         if self.effects_forbidden:
             raise AssertionError(f"{self.instance_id} must not send completed work")
-        return DeliveryObservation(task_received=True, execution_started=True)
+        return DeliveryObservation()
 
     def validate_result(self, content: bytes) -> dict:
         self.callbacks += 1
@@ -174,6 +174,23 @@ def _completed_work(tmp_path: Path) -> tuple[CompletedWork, FakeAdapter]:
             reservations_confirmed=True,
         ),
         actor_id="owner",
+    )
+    # Continuity starts after durable acceptance. Seed that trusted state here;
+    # adapter telemetry booleans are intentionally not acceptance evidence.
+    sent_attempt = repository.get_work(work["id"])["attempts"][-1]
+    repository.transition_attempt(
+        attempt_id=sent_attempt["id"],
+        generation=sent_attempt["generation"],
+        expected_revision=sent_attempt["revision"],
+        expected_state="sent",
+        target="acknowledged",
+        actor_id=principal.id,
+        event_id="continuation-fixture-task-accepted",
+        evidence=TransitionEvidence(
+            generation=sent_attempt["generation"],
+            expected_generation=sent_attempt["generation"],
+            task_received=True,
+        ),
     )
     settled = adapter_a.execute(service, repository.get_work(work["id"]), artifacts)
     assert settled["state"] == "succeeded"
