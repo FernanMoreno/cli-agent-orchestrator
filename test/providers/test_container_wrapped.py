@@ -23,7 +23,7 @@ All backends and subprocesses are mocked — no Docker/Podman/tmux required.
 """
 
 import shlex
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -185,10 +185,16 @@ def test_status_dead_launch_reports_unknown_not_false_idle(mock_backend):
 
 
 @pytest.mark.asyncio
+@patch.object(
+    ClaudeCodeProvider,
+    "_observe_initial_viewport_state",
+    new_callable=AsyncMock,
+    return_value=TerminalStatus.UNKNOWN,
+)
 @patch("cli_agent_orchestrator.providers.claude_code.asyncio.sleep")
 @patch("cli_agent_orchestrator.providers.claude_code.time")
 @patch(_BACKEND)
-async def test_idle_timeout_prompt_handler(mock_backend, mock_time, mock_sleep):
+async def test_idle_timeout_prompt_handler(mock_backend, mock_time, mock_sleep, mock_viewport):
     """Tasks 3 + 4: the idle gap keeps polling for a LATE dialog inside the outer cap.
 
     A cold containerized start renders dialogs late and in sequence. The bypass
@@ -208,11 +214,11 @@ async def test_idle_timeout_prompt_handler(mock_backend, mock_time, mock_sleep):
         18.0,  # last_prompt_time reset to 18
         35.0,  # iter2: gap 35-18=17<20 and 35<180 -> trust handled
         35.0,  # last_prompt_time reset to 35 — trust no longer ends the loop
-        36.0,  # iter3: gap 1<20 -> version banner -> return
+        36.0,  # iter3: banner alone is not a readiness witness
+        55.0,  # idle gap after trust expires; return before another buffer read
     ]
-    # Third frame: accepting trust no longer returns, because the Bedrock
-    # model-upgrade nudge renders AFTER the trust dialog and would otherwise sit
-    # unanswered until init timed out. The banner is what ends the loop.
+    # The welcome banner is not proof that the composer is ready. With no ready
+    # viewport, the handler keeps polling until the post-trust idle gap expires.
     mock_backend.get_history.side_effect = [
         "WARNING: Bypass Permissions\n1. No\n2. Yes, I accept\n",
         "Yes, I trust this folder",
@@ -225,6 +231,8 @@ async def test_idle_timeout_prompt_handler(mock_backend, mock_time, mock_sleep):
     # Bypass: special-key Down + Enter. Trust: special-key Enter.
     assert mock_backend.send_keys.call_count == 0
     assert mock_backend.send_special_key.call_count == 3
+    assert mock_viewport.await_count == 1
+    assert mock_time.monotonic.call_count == 8
 
 
 @pytest.mark.asyncio
