@@ -220,10 +220,7 @@ class _StartupTaskTracker:
         return asyncio.gather(*awaitables, **kwargs)
 
     def to_thread(self, function, *args, **kwargs):
-        async def wait_until_cancelled():
-            await asyncio.Future()
-
-        return wait_until_cancelled()
+        return asyncio.to_thread(function, *args, **kwargs)
 
 
 @pytest.fixture
@@ -556,7 +553,7 @@ async def test_lifespan_cleans_started_resources_when_gateway_composition_fails(
             return asyncio.gather(*awaitables, **kwargs)
 
         def to_thread(self, function, *args, **kwargs):
-            return wait_until_cancelled("thread")()
+            return asyncio.to_thread(function, *args, **kwargs)
 
     task_tracker = TaskTracker()
     monkeypatch.setattr(main, "asyncio", task_tracker)
