@@ -3497,4 +3497,12 @@ passed, 1 skipped** (el OpenCode 2.0.18 instalado no implementa `agent list`; se
 verifican sus archivos/configuración instalados). Migraciones de inventario
 seleccionadas: **7 passed**. El skip restante no simula una prueba de producción.
 La composición pasó **4 contratos conservados, 0 rotos** (294 archivos/1098
-dependencias). La suite completa se registrará tras el gate final.
+dependencias). El hook pre-push se ejecutó manualmente sobre `8dee04cc` desde
+ext4 porque el wrapper local de Husky no se materializa en worktrees limpios.
+`uv run pytest -q --disable-warnings` terminó **30 failed, 11.022 passed, 93
+skipped, 266 deselected, 1 xfailed, 18 warnings en 2.583,93 s**. Los mismos 30
+nodeids también fallaron en un checkout limpio de la base previa `ca71a269`;
+no son regresiones introducidas por T019. El fixture adicional de
+`test_container_wrapped.py` se corrigió y el módulo pasó **7 tests**.
+`npm run scan:jit` salió 0 sin archivos para escanear; `npm run check:size`
+salió 0 sin artefactos frontend construidos, ambos skips según sus scripts.
