@@ -151,6 +151,12 @@ de prueba; comprobar integridad, autorización y ausencia de reejecución.
    la aprobación antigua no autoriza la nueva revisión.
 4. **Given** un padre cancelado, **When** un hijo sigue vivo, **Then** se registra la
    propagación y la limpieza sin fingir la terminación del hijo.
+5. **Given** una política explícita que permite reejecutar un step existente,
+   **When** su intento cambia antes de registrar el nuevo contrato, **Then** se
+   rechaza la reejecución sin sobrescribir el intento concurrente ni producir otro efecto.
+6. **Given** un principal con permiso de sólo lectura, **When** crea o revoca una
+   decisión Work, **Then** ambas mutaciones se deniegan; un principal con permiso
+   de escritura puede realizarlas.
 
 ### User Story 5 - Ver estado y capacidades coherentes (Priority: P1)
 
@@ -263,6 +269,9 @@ edición obsoleta y ejecutar gates aplicables en un entorno controlado.
 
 - **FR-001 / R01**: Toda operación conserva identidad lógica e historial de intentos,
   padre, proveedor, contrato, lease, resultado y conciliación.
+  Una política de recuperación que permita reejecutar un step existente queda ligada
+  a su intento observado; si éste cambia antes de admitir el nuevo intento, la
+  operación se rechaza sin reemplazar el estado concurrente ni emitir otro efecto.
 - **FR-002 / R02**: Cada intento distingue planificación, envío, recepción, ejecución,
   resultado y fallo; incertidumbre de entrega no autoriza reenvío automático.
   Sólo la aceptación durable acreditada por el receptor autenticado, ligada a
@@ -312,7 +321,9 @@ edición obsoleta y ejecutar gates aplicables en un entorno controlado.
 - **FR-015 / R15**: Memoria entre nodos tiene autoridad versionada, permisos por
   proyecto/job, conflictos explícitos y protocolo de recuperación.
 - **FR-016 / R16**: Aprobaciones, pausas, reanudaciones, revocaciones y excepciones
-  registran decisor, evidencia examinada, revisión y efectos autorizados.
+  registran decisor, evidencia examinada, revisión y efectos autorizados. Crear o
+  revocar una decisión exige permiso de escritura, incluso cuando la autenticación
+  y lectura estén permitidas.
 - **FR-017 / R17**: Cada transición de dominio tiene un único dueño reutilizado por
   las interfaces; no se duplica ciclo de vida por cliente.
 - **FR-018 / R18**: Datos y formatos tienen versión, compatibilidad explícita y pruebas
@@ -375,6 +386,9 @@ edición obsoleta y ejecutar gates aplicables en un entorno controlado.
   externa explícita; planificación no equivale a entrega.
 - **SC-009**: CI ordinaria produce cero invocaciones facturables; matriz real informa
   éxito, fallo y omisión por separado.
+- **SC-010**: Ninguna reejecución basada en un intento obsoleto reemplaza el estado
+  concurrente ni produce un segundo efecto; ninguna credencial de sólo lectura puede
+  crear o revocar decisiones.
 
 ## Assumptions
 

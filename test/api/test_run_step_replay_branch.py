@@ -113,6 +113,9 @@ def _isolated_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
     _migrate_workflow_run()
     _migrate_workflow_run_step()
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+
+    WorkRepository(tmp_path / "wf.db").initialize()
     return tmp_path / "wf.db"
 
 
@@ -755,11 +758,11 @@ class TestTheHoist:
             gate_fingerprints.append(fingerprint)
             return real_decide(r_id, s_id, fingerprint, policy)
 
-        real_begin = workflow_journal.begin_step
+        real_begin = workflow_journal.begin_step_with_contract
 
-        def _spy_begin(r_id, s_id, updated_at, call_fingerprint):
-            stored_fingerprints.append(call_fingerprint)
-            return real_begin(r_id, s_id, updated_at, call_fingerprint)
+        def _spy_begin(r_id, s_id, generation, updated_at, contract, **kwargs):
+            stored_fingerprints.append(contract["call_fingerprint"])
+            return real_begin(r_id, s_id, generation, updated_at, contract, **kwargs)
 
         create, send, delete, out, exit_cli, wait, status_p, _unused = _patch_terminal_layer()
         with (
@@ -772,7 +775,7 @@ class TestTheHoist:
             status_p,
             patch(_GET_WD, return_value="/cwd/one"),
             patch(_DECIDE, side_effect=_spy_decide),
-            patch.object(workflow_journal, "begin_step", _spy_begin),
+            patch.object(workflow_journal, "begin_step_with_contract", _spy_begin),
         ):
             resp = client.post(TERMINALS_RUN_STEP_ROUTE, json=body)
 
@@ -1081,10 +1084,12 @@ class TestTheRouteDecidesNothing:
         assert "RecoveryPolicy." not in code
         assert not re.search(r"fingerprint\s*[!=]=", code)
         assert "_REEXECUTION_PERMITTED" not in code
-        # The route reads exactly two things off the decision: the verdict and,
-        # on a halt, the rule.
+        # The route branches on only the verdict and halt rule. On EXECUTE it
+        # forwards the immutable decision to the writer so its row snapshot can
+        # fence the later transaction without repeating gate policy here.
         assert "decision.verdict" in code
         assert "decision.rule" in code
+        assert "authorize_reexecution(decision)" in code
 
     def test_the_route_logs_only_inside_best_effort_bookkeeping_guards(self):
         """SR-7: the gate logs nothing by design and the decision log belongs to

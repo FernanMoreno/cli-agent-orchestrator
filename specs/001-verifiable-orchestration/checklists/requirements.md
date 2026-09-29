@@ -19,6 +19,7 @@
 - [x] Casos de fallo, concurrencia, cancelación, versión y recuperación identificados.
 - [x] Alcance y límites de autorización explícitos.
 - [x] Dependencias y supuestos de autoridad multinodo explícitos.
+- [x] Reejecución obsoleta y mutaciones de decisión de sólo lectura tienen resultados observables.
 
 ## Feature Readiness
 

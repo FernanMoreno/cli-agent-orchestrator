@@ -122,3 +122,23 @@ un gate que sólo comprueba un SDK auxiliar no prueba límites del orquestador.
 Decisión de esta fase: no escribir en Obsidian. Son decisiones propuestas del diseño,
 ya preservadas en Spec Kit. Tras aceptación y verificación se seleccionarán únicamente
 invariantes o causas recurrentes que deban sobrevivir cambios de sesión.
+
+## D13. Reejecución autorizada sin carrera de persistencia
+
+**Decisión**: adjuntar al resultado `EXECUTE` la identidad inmutable de la fila observada
+cuando una política explícita permite reejecutar; comparar esa identidad en la transacción
+que registra el nuevo contrato y rechazar si cambió.
+**Razón**: el gate y el writer están separados por la preparación/envío del terminal; un
+estado `running` permitido sin snapshot también admitiría sobrescribir el intento de un
+contendiente.
+**Alternativas**: permitir cualquier fila existente duplica/pierde intentos concurrentes;
+volver a calcular la política en el writer crea dos dueños para la decisión de replay.
+
+## D14. Autorización de mutaciones de decisiones Work
+
+**Decisión**: crear y revocar decisiones requieren permiso API de escritura, manteniendo
+la validación de identidad, grants y efectos en el dueño durable existente.
+**Razón**: autenticación y lectura bastaban para alcanzar dos rutas mutantes sin permiso
+de escritura.
+**Alternativas**: confiar sólo en validación del payload no limita quién puede alterar
+la decisión, y duplicar la política de decisión en la ruta fragmentaría su ownership.

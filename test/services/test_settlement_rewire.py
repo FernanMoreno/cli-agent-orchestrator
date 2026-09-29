@@ -92,6 +92,9 @@ def _journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
     _migrate_workflow_run()
     _migrate_workflow_run_step()
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+
+    WorkRepository(db_path).initialize()
     workflow_service.run_registry.clear()
     workflow_service._active_drives.clear()
     yield db_path
@@ -101,6 +104,16 @@ def _journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 def _script_record(run_id: str) -> ScriptRunRecord:
     """Register a live ``ScriptRunRecord`` — the guard both callbacks require."""
+    workflow_journal.insert_run(
+        run_id=run_id,
+        workflow_name="wf",
+        spec_snapshot="{}",
+        inputs_json="{}",
+        state="running",
+        started_at="2026-08-16T00:00:00Z",
+        tier="script",
+        generation="1",
+    )
     record = ScriptRunRecord(
         run_id=run_id,
         workflow_name="wf",
@@ -143,7 +156,7 @@ def _patch_terminal_layer(
     row before it executes" claim is about.
     """
 
-    def _send(terminal_id: str, prompt: str) -> bool:
+    def _send(terminal_id: str, prompt: str, **kwargs: Any) -> bool:
         if on_send is not None:
             on_send()
         return True

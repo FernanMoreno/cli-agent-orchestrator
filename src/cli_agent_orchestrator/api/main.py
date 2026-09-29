@@ -49,11 +49,13 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cli_agent_orchestrator.backends import TerminalBackendError, TerminalNotFoundError
-from cli_agent_orchestrator.api.work_routes import router as work_router
 from cli_agent_orchestrator.api.knowledge_routes import (
-    router as knowledge_router, legacy_memory_operator, legacy_graph_memory_operator,
+    legacy_graph_memory_operator,
+    legacy_memory_operator,
 )
+from cli_agent_orchestrator.api.knowledge_routes import router as knowledge_router
+from cli_agent_orchestrator.api.work_routes import router as work_router
+from cli_agent_orchestrator.backends import TerminalBackendError, TerminalNotFoundError
 from cli_agent_orchestrator.backends.herdr_backend import HerdrBackend
 from cli_agent_orchestrator.backends.registry import get_backend
 from cli_agent_orchestrator.cli.commands.init import seed_default_skills
@@ -1427,7 +1429,9 @@ async def lifespan(app: FastAPI):
             try:
                 set_herdr_inbox_service(None)
             except BaseException:
-                logger.warning("Error clearing Herdr inbox service during startup cleanup", exc_info=True)
+                logger.warning(
+                    "Error clearing Herdr inbox service during startup cleanup", exc_info=True
+                )
         await shutdown_lifespan_resources(best_effort=True)
 
     try:
@@ -3899,7 +3903,9 @@ async def join_native_child(
     while True:
         child = await asyncio.to_thread(get_native_child, child_id)
         if child is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="native child not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="native child not found"
+            )
         receipt = NativeChildReceipt(**child)
         if receipt.state in {"succeeded", "failed", "reconcile", "cancelled"}:
             return NativeChildJoinResponse(child=receipt, settled=True)
@@ -4596,6 +4602,13 @@ async def run_step(
                     step_id=decide_step_id, rule=halt_rule, reason=decision.reason
                 )
             # EXECUTE falls through — the step runs normally.
+            # Only EXECUTE reaches this point. Let the recorder admit an existing
+            # attempt when the gate has established that re-execution is allowed;
+            # an absent row is unaffected, and halt verdicts returned above never
+            # grant this authorization.
+            authorize_reexecution = getattr(on_step_terminal_ready, "authorize_reexecution", None)
+            if callable(authorize_reexecution):
+                authorize_reexecution(decision)
 
         result = await run_agent_step(
             provider=body.provider,
@@ -4711,9 +4724,7 @@ async def run_step(
                 # duplicate work. Only an adapter with an explicit
                 # auto-continuation contract may say it can resume by itself.
                 "retryable": False,
-                "provider_may_resume": e.provider_may_resume
-                if e.kind == "quota_wait"
-                else False,
+                "provider_may_resume": e.provider_may_resume if e.kind == "quota_wait" else False,
             },
         )
     except (TimeoutError, TerminalInputBlockedError) as e:
@@ -4975,7 +4986,9 @@ async def update_workflow_endpoint(
     try:
         return await asyncio.to_thread(
             workflow_spec_service.update_workflow,
-            name, request.content, request.expected_source_hash,
+            name,
+            request.content,
+            request.expected_source_hash,
         )
     except (KeyError, FileNotFoundError):
         raise HTTPException(status_code=404, detail=f"unknown workflow '{name}'")
@@ -8020,7 +8033,9 @@ def _to_memory_summary(mem, base_dir: Path) -> MemorySummary:
     )
 
 
-@app.get("/memory", response_model=List[MemorySummary], dependencies=[Depends(legacy_memory_operator)])
+@app.get(
+    "/memory", response_model=List[MemorySummary], dependencies=[Depends(legacy_memory_operator)]
+)
 async def list_memories_endpoint(
     scope: Optional[MemoryScope] = None,
     memory_type: Optional[MemoryType] = Query(default=None, alias="type"),
@@ -8232,7 +8247,9 @@ async def create_relationship_endpoint(
     return dto.to_dict()
 
 
-@app.patch("/memory/relationships/{relationship_id}", dependencies=[Depends(legacy_memory_operator)])
+@app.patch(
+    "/memory/relationships/{relationship_id}", dependencies=[Depends(legacy_memory_operator)]
+)
 async def patch_relationship_endpoint(
     relationship_id: str,
     body: RelationshipPatchRequest,
@@ -8257,7 +8274,10 @@ async def patch_relationship_endpoint(
     return dto.to_dict()
 
 
-@app.post("/memory/relationships/{relationship_id}/promote", dependencies=[Depends(legacy_memory_operator)])
+@app.post(
+    "/memory/relationships/{relationship_id}/promote",
+    dependencies=[Depends(legacy_memory_operator)],
+)
 async def promote_relationship_endpoint(
     relationship_id: str,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
@@ -8273,7 +8293,9 @@ async def promote_relationship_endpoint(
     return dto.to_dict()
 
 
-@app.post("/memory/relationships/{relationship_id}/reject", dependencies=[Depends(legacy_memory_operator)])
+@app.post(
+    "/memory/relationships/{relationship_id}/reject", dependencies=[Depends(legacy_memory_operator)]
+)
 async def reject_relationship_endpoint(
     relationship_id: str,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
@@ -8287,7 +8309,9 @@ async def reject_relationship_endpoint(
     return dto.to_dict()
 
 
-@app.delete("/memory/relationships/{relationship_id}", dependencies=[Depends(legacy_memory_operator)])
+@app.delete(
+    "/memory/relationships/{relationship_id}", dependencies=[Depends(legacy_memory_operator)]
+)
 async def delete_relationship_endpoint(
     relationship_id: str,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
@@ -8312,7 +8336,9 @@ async def delete_relationship_endpoint(
     return dto.to_dict()
 
 
-@app.get("/memory/{key}", response_model=MemoryDetail, dependencies=[Depends(legacy_memory_operator)])
+@app.get(
+    "/memory/{key}", response_model=MemoryDetail, dependencies=[Depends(legacy_memory_operator)]
+)
 async def get_memory_endpoint(
     key: MemoryKey,
     scope: Optional[MemoryScope] = None,

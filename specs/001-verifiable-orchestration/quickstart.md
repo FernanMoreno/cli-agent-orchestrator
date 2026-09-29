@@ -122,3 +122,17 @@ No ejecutar merge, push ni publicar release para validar documentación o contra
 Después de implementación: tests, gate, revisión de composición, diff, decisión Graphify,
 decisión de conocimiento y verificación fresca. Evidencia en workflow-status.md debe
 incluir comando, resultado, alcance y límites. Toda modificación posterior invalida signoff.
+
+## Endurecimiento de replay y decisiones
+
+Desde la raíz del repositorio, validar la carrera de reejecución, sus rutas API y el
+permiso de escritura con:
+
+```bash
+uv run pytest -q test/services/test_step_replay.py test/services/test_step_contract.py
+uv run pytest -q test/api/test_run_step_replay_branch.py test/api/test_replay_nfr2_and_c1.py test/api/test_work_decisions.py test/api/test_scope_coverage.py
+uv run pytest -q test/services/test_settlement_rewire.py
+```
+
+Las pruebas de persistencia usan SQLite temporal con el esquema Work inicializado; un
+test que no lo inicialice no representa el contrato vigente de `begin_step_with_contract`.

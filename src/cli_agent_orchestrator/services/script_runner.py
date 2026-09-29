@@ -460,6 +460,19 @@ def make_step_terminal_recorder(
     # mutate the live record while terminal allocation is still in flight.
     contract_generation = record.generation
     contract_identity = None
+    reexecution_snapshot = None
+
+    def _authorize_reexecution(decision) -> None:
+        """Carry the gate's exact row identity to the transactional contract write."""
+        from cli_agent_orchestrator.services.step_replay import ReplayDecision, ReplayVerdict
+
+        if (
+            not isinstance(decision, ReplayDecision)
+            or decision.verdict is not ReplayVerdict.EXECUTE
+        ):
+            raise ValueError("step retry requires an EXECUTE replay decision")
+        nonlocal reexecution_snapshot
+        reexecution_snapshot = decision.reexecution_snapshot
 
     def _record(terminal_id: str, call_fingerprint: str) -> None:
         _remember(terminal_id, call_fingerprint)
@@ -490,7 +503,12 @@ def make_step_terminal_recorder(
         ):
             raise ValueError("step contract identity does not match its delivery callback")
         number = workflow_journal.begin_step_with_contract(
-            run_id, step_id, contract_generation, _now(), contract
+            run_id,
+            step_id,
+            contract_generation,
+            _now(),
+            contract,
+            expected_prior=reexecution_snapshot,
         )
         contract_identity = (number, terminal_id, call_fingerprint)
         _remember(terminal_id, call_fingerprint)
@@ -506,6 +524,7 @@ def make_step_terminal_recorder(
     # substrate explicitly opts into this stronger hook when it is present.
     _record.record_contract = _record_contract
     _record.guard_delivery = _guard_delivery
+    _record.authorize_reexecution = _authorize_reexecution
     return _record
 
 

@@ -654,3 +654,19 @@ y Landlock ABI 11. La suite amplia relacionada pasó 177 tests; 4 pruebas T098
 de host Bubblewrap se omitieron por no ser Linux nativo, cubierto aquí por QEMU.
 No hay host de producción: esto cierra la integración y aceptación local T019,
 pero no registra backend en `WORK_BACKENDS` ni habilita despliegue.
+
+## Phase 18: Guardas de replay y mutaciones de decisiones
+
+**Independent Test**: ejecutar un retry autorizado mientras otro escritor cambia el
+intento previo y comprobar que la transacción lo rechaza; autenticar con permiso de sólo
+lectura y comprobar que no crea ni revoca decisiones.
+
+- [x] T107 [US4] Vincular el `EXECUTE` de replay con la identidad observada en `src/cli_agent_orchestrator/services/step_replay.py`, transportarla desde `src/cli_agent_orchestrator/api/main.py` por `src/cli_agent_orchestrator/services/script_runner.py` y comparar dentro de `src/cli_agent_orchestrator/services/workflow_journal.py`; cubrir cambio concurrente/identidad estable en `test/services/test_step_replay.py`, `test/services/test_step_contract.py` y `test/api/test_run_step_replay_branch.py`; inicializar esquema Work en fixtures actuales de `test/api/test_replay_nfr2_and_c1.py` y `test/services/test_settlement_rewire.py`.
+- [x] T108 [US4] Exigir permiso de escritura en creación y revocación de decisiones en `src/cli_agent_orchestrator/api/work_routes.py`; probar denegación de sólo lectura y éxito de escritura en `test/api/test_work_decisions.py` y conservar cobertura de rutas mutantes en `test/api/test_scope_coverage.py`.
+
+**Verificación T107/T108 — 2026-09-29:**
+`uv run pytest -o addopts= -q --disable-warnings test/services/test_step_replay.py
+test/services/test_step_contract.py test/services/test_settlement_rewire.py
+test/api/test_work_decisions.py test/api/test_scope_coverage.py
+test/api/test_run_step_replay_branch.py test/api/test_replay_nfr2_and_c1.py`:
+**510 passed, 4 warnings, 0 skipped**.

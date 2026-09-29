@@ -172,6 +172,30 @@ class StepRow:
     # takes the new last slot — which also honours this field's own append-only rule.
     result_json: Optional[str] = None
 
+    @property
+    def attempt_identity(self) -> "StepAttemptIdentity":
+        """Return the non-payload columns used for a gate-to-write compare-and-set."""
+        return StepAttemptIdentity(
+            self.state,
+            self.attempts,
+            self.updated_at,
+            self.call_fingerprint,
+            self.terminal_id,
+            self.error_kind,
+        )
+
+
+@dataclass(frozen=True)
+class StepAttemptIdentity:
+    """Non-payload identity used to fence a gate-approved retry against races."""
+
+    state: str
+    attempts: int
+    updated_at: str
+    call_fingerprint: Optional[str]
+    terminal_id: Optional[str]
+    error_kind: Optional[str]
+
 
 @dataclass
 class EventRow:
@@ -1189,6 +1213,7 @@ def begin_step_with_contract(
     contract: dict,
     *,
     attempt_number: Optional[int] = None,
+    expected_prior: Optional[StepAttemptIdentity] = None,
 ) -> int:
     """Atomically freeze pre-delivery evidence and begin this journal attempt.
 
@@ -1203,6 +1228,8 @@ def begin_step_with_contract(
         raise ValueError("step contract generation required")
     if attempt_number is not None and (type(attempt_number) is not int or attempt_number < 1):
         raise ValueError("invalid contract attempt number")
+    if expected_prior is not None and not isinstance(expected_prior, StepAttemptIdentity):
+        raise ValueError("invalid prior step identity")
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
     with _connect() as conn:
@@ -1223,11 +1250,22 @@ def begin_step_with_contract(
                 raise ValueError("step contract retry does not match immutable evidence")
             return attempt_number
         prior = conn.execute(
-            "SELECT state,error_kind FROM workflow_run_step WHERE run_id=? AND step_id=?",
+            "SELECT state,attempts,updated_at,call_fingerprint,terminal_id,error_kind "
+            "FROM workflow_run_step WHERE run_id=? AND step_id=?",
             (run_id, step_id),
         ).fetchone()
-        if prior is not None and prior[0] != "rerun_authorized" and prior != ("failed", "error"):
-            raise ValueError("step requires replay or an explicit recovery decision")
+        if expected_prior is not None:
+            current_identity = None if prior is None else StepAttemptIdentity(*prior)
+            if current_identity != expected_prior:
+                raise ValueError("step changed after replay decision")
+            if expected_prior.state not in {"running", "completed", "completed_unvalidated"} or (
+                expected_prior.error_kind is not None
+            ):
+                raise ValueError("replay decision cannot authorize this prior step state")
+        elif prior is not None:
+            state, _attempts, _updated_at, _fingerprint, _terminal_id, error_kind = prior
+            if state != "rerun_authorized" and (state, error_kind) != ("failed", "error"):
+                raise ValueError("step requires replay or an explicit recovery decision")
         number = conn.execute(
             "SELECT COALESCE(MAX(attempt_number),0)+1 FROM work_step_contracts "
             "WHERE run_id=? AND step_id=? AND generation=?",

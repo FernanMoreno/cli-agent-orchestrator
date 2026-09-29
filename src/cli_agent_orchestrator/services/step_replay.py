@@ -97,7 +97,11 @@ from cli_agent_orchestrator.models.workflow import RecoveryPolicy, StepResultEnv
 from cli_agent_orchestrator.services.step_fingerprint import scheme_of
 from cli_agent_orchestrator.services.step_result import parse_envelope
 from cli_agent_orchestrator.services.workflow_errors import HaltRule
-from cli_agent_orchestrator.services.workflow_journal import StepRow, get_step
+from cli_agent_orchestrator.services.workflow_journal import (
+    StepAttemptIdentity,
+    StepRow,
+    get_step,
+)
 
 # The one scheme a fingerprint may be compared under. Named because BOTH the SR-3 precondition
 # and rules 4-5 ask the same question of it; two literals is the drift that would let the
@@ -150,7 +154,7 @@ class ReplayDecision:
     edit available in this subsystem. Freezing costs nothing, because :func:`decide`
     constructs each instance once and never revises it.
 
-    THE TWO OPTIONAL FIELDS ARE EACH CONDITIONAL ON EXACTLY ONE VERDICT (BR-6), and
+    THE OPTIONAL PAYLOAD FIELDS ARE EACH CONDITIONAL ON EXACTLY ONE VERDICT (BR-6), and
     :func:`decide` is the only construction site, which is what enforces it:
 
     * ``envelope`` is set **iff** ``verdict is REPLAY``. A populated envelope on any other
@@ -160,6 +164,9 @@ class ReplayDecision:
       ``RecoveryDecisionRequired(*, step_id, rule, reason)`` requires one — without this field
       the only path from gate to raiser would be parsing the prose ``reason``, i.e. reading
       English to recover a value that already exists as a closed enum (BR-8/TD-3).
+    * ``reexecution_snapshot`` is set only when an explicit recovery policy permits a retry
+      of an existing row. The API passes this non-payload identity to the transactional
+      contract writer, which rejects a concurrent row change instead of overwriting it.
 
     THERE IS DELIBERATELY NO ``diverged_fields`` (BR-7/TD-3, ruled at this unit's Q1).
     ``step_fingerprint.compute`` returns ONE digest over ten components and only the digest is
@@ -182,6 +189,7 @@ class ReplayDecision:
     envelope: Optional[StepResultEnvelope]
     reason: str
     rule: Optional[HaltRule]
+    reexecution_snapshot: Optional[StepAttemptIdentity] = None
 
 
 def decide(
@@ -280,6 +288,7 @@ def decide(
                     f"declared recovery policy permits re-execution"
                 ),
                 rule=None,
+                reexecution_snapshot=row.attempt_identity,
             )
         return ReplayDecision(
             verdict=ReplayVerdict.DECISION_REQUIRED,
@@ -343,6 +352,7 @@ def decide(
                     f"re-execution"
                 ),
                 rule=None,
+                reexecution_snapshot=row.attempt_identity,
             )
         # Rule 5 second: unverifiable provenance NEVER replays as a match (FR-6), and is
         # never labelled DIVERGED either (BR-4/INV-2) — comparing a hash computed under

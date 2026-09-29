@@ -23,6 +23,11 @@ ID opaco, secuencia y generación son conceptos distintos.
 | Continuation | id, schema_version, source_attempt_id, contract_ref, snapshot_ref, artifact_refs, completed, pending, uncertain, reason, hash; importación no implica ejecución |
 | MigrationRecord | version, checksum, applied_at, verification_result; fallo impide admitir trabajo del esquema afectado |
 
+`ReplayGateSnapshot` es una identidad de comparación de sólo lectura para el step existente:
+estado, número de intentos, fecha de actualización, fingerprint, terminal y tipo de error.
+No contiene payload ni autoridad propia. Sólo acompaña una decisión de replay que autoriza
+reejecución; el writer la compara atómicamente antes de persistir otro contrato.
+
 Relaciones de parentesco y dependencias sólo apuntan dentro del job salvo referencia
 externa explícita de lectura. El grafo de dependencias no puede tener ciclos. Prohibir
 borrado en cascada del historial al eliminar terminales. Retención usa política y tombstones.

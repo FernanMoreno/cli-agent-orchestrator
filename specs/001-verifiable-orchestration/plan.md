@@ -309,6 +309,14 @@ El intento anterior debe estar detenido o cercado de forma comprobable; si puede
 solo por cuota, el nuevo intento no se admite sin conciliación. Aprobaciones enlazan revisión
 de contrato, evidencias y efectos; decisiones idempotentes no reescriben autor ni fecha.
 
+El gate de replay conserva una identidad inmutable del intento previamente observado sólo
+cuando la política permite reejecutarlo. El callback de registro lleva esa decisión al writer;
+éste compara la identidad dentro de la transacción que persiste el contrato y rechaza cambios
+concurrentes. Un retry sin autorización de replay conserva las reglas estrictas existentes.
+Las rutas API que crean o revocan decisiones Work exigen permiso de escritura antes de invocar
+el dueño durable. Las pruebas usan SQLite real y fixtures inicializadas con el esquema Work
+completo para verificar que la aceptación cubre el estado actual del contrato.
+
 ### US5: proyecciones y backends
 
 Un DTO versionado conserva job, work item, attempt, turn y proceso por separado. API/MCP/CLI,

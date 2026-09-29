@@ -89,6 +89,12 @@ consulta autoridad. Las interfaces usan textos/colores generados desde el mismo 
 
 ## Escenarios obligatorios
 
+Crear o revocar `POST /work-items/{id}/decisions` y
+`POST /work-decisions/{id}/revoke` requiere permiso de escritura. En una reejecución
+admitida explícitamente por la política, el gate vincula la autorización al intento
+observado; el writer devuelve conflicto si ese intento cambió antes de registrar el
+nuevo contrato. Las rutas y el writer no infieren autorización desde el texto explicativo.
+
 1. Diez admissions simultáneas con dos plazas: nunca tres reservas activas.
 2. Petición repetida idéntica devuelve mismo item; distinto hash devuelve conflicto.
 3. Caída en cada frontera intención/envío/acuse/resultado/evento y recuperación de DB real.

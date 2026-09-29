@@ -248,6 +248,26 @@ def test_atomic_attempt_contract_is_immutable_and_identical_retry_does_not_overw
         workflow_journal.begin_step_with_contract(
             "run", "step", "1", "later", changed, attempt_number=1
         )
+
+
+def test_reexecution_contract_compares_the_gate_snapshot_atomically(journal):
+    workflow_journal.begin_step("run", "step", "before-gate", "v2:prior")
+    expected_prior = workflow_journal.get_step("run", "step").attempt_identity
+
+    workflow_journal.begin_step("run", "step", "after-gate", "v2:contender")
+    with pytest.raises(ValueError, match="changed after replay decision"):
+        workflow_journal.begin_step_with_contract(
+            "run", "step", "1", "delivery", contract(), expected_prior=expected_prior
+        )
+
+
+def test_reexecution_contract_accepts_the_unchanged_gate_snapshot(journal):
+    workflow_journal.begin_step("run", "step", "before-gate", "v2:prior")
+    expected_prior = workflow_journal.get_step("run", "step").attempt_identity
+    number = workflow_journal.begin_step_with_contract(
+        "run", "step", "1", "delivery", contract(), expected_prior=expected_prior
+    )
+    assert number == 1
     with sqlite3.connect(journal) as connection:
         stored = connection.execute("SELECT contract_json FROM work_step_contracts").fetchone()[0]
         assert json.loads(stored)["fields"]["timeout_seconds"]["value"] == 12

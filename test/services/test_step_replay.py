@@ -222,6 +222,8 @@ class TestPerRuleTable:
         d = decide(RUN, STEP, FP_CALL, RecoveryPolicy.IDEMPOTENT)
         assert d.verdict is ReplayVerdict.EXECUTE
         assert d.rule is None
+        assert d.reexecution_snapshot is not None
+        assert d.reexecution_snapshot.state == StepState.RUNNING.value
 
     def test_rule2_running_with_reconcile_executes(self):
         _seed_step(state=StepState.RUNNING.value, fingerprint=FP_CALL)
@@ -258,6 +260,8 @@ class TestPerRuleTable:
         assert d.verdict is ReplayVerdict.EXECUTE
         assert d.rule is None
         assert d.envelope is None
+        assert d.reexecution_snapshot is not None
+        assert d.reexecution_snapshot.state == StepState.COMPLETED.value
 
     def test_rule4_absent_scheme_with_reconcile_executes(self):
         """A NULL column — a row predating the fingerprint column — routes as rule 4 too."""
@@ -948,7 +952,7 @@ class TestDecisionShape:
         assert not hasattr(ReplayDecision, "diverged_fields")
         assert "diverged_fields" not in ReplayDecision.__annotations__
 
-    def test_replay_decision_carries_exactly_the_four_declared_fields(self):
+    def test_replay_decision_carries_exactly_the_declared_fields(self):
         import dataclasses
 
         assert [f.name for f in dataclasses.fields(ReplayDecision)] == [
@@ -956,6 +960,7 @@ class TestDecisionShape:
             "envelope",
             "reason",
             "rule",
+            "reexecution_snapshot",
         ]
 
     def test_replay_decision_is_frozen(self):

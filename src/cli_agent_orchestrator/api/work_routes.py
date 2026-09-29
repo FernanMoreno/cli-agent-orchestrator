@@ -5,8 +5,8 @@ accepts only coordinates and evidence; it never accepts an actor, grant, or
 contract override from a client.
 """
 
-from contextlib import contextmanager
 import sqlite3
+from contextlib import contextmanager
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
@@ -20,6 +20,7 @@ from cli_agent_orchestrator.clients.work_repository import (
 from cli_agent_orchestrator.models.work import EventPage, WorkView
 from cli_agent_orchestrator.security.auth import (
     SCOPE_ADMIN,
+    SCOPE_WRITE,
     Principal,
     get_current_principal,
     require_any_scope,
@@ -31,12 +32,12 @@ from cli_agent_orchestrator.services.work_decisions import (
     DecisionRevoked,
     WorkDecisions,
 )
-from cli_agent_orchestrator.services.work_projection import WorkQueries
 from cli_agent_orchestrator.services.work_mcp_proxy import (
     WorkMcpProxy,
     WorkMcpProxyRejected,
     WorkMcpProxyUnavailable,
 )
+from cli_agent_orchestrator.services.work_projection import WorkQueries
 
 router = APIRouter(tags=["durable-work"])
 
@@ -317,6 +318,7 @@ def get_work_events(
 def record_decision(
     work_item_id: Annotated[str, Path(min_length=1, max_length=512)],
     body: DecisionRequest,
+    _scopes: Annotated[list[str], Depends(require_any_scope(SCOPE_WRITE))],
     principal: Annotated[Principal, Depends(get_current_principal)],
     service: Annotated[WorkDecisions, Depends(decisions)],
 ):
@@ -334,6 +336,7 @@ def record_decision(
 def revoke_decision(
     decision_id: Annotated[str, Path(min_length=1, max_length=512)],
     body: DecisionRevocationRequest,
+    _scopes: Annotated[list[str], Depends(require_any_scope(SCOPE_WRITE))],
     principal: Annotated[Principal, Depends(get_current_principal)],
     service: Annotated[WorkDecisions, Depends(decisions)],
 ):

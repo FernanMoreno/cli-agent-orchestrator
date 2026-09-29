@@ -58,6 +58,7 @@ from cli_agent_orchestrator.clients.database import (
     _migrate_workflow_run,
     _migrate_workflow_run_step,
 )
+from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.constants import TERMINALS_RUN_STEP_ROUTE
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.models.workflow import (
@@ -93,6 +94,7 @@ def _isolated_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
     _migrate_workflow_run()
     _migrate_workflow_run_step()
+    WorkRepository(db_path).initialize()
     before = dict(workflow_service.run_registry)
     workflow_service.run_registry.clear()
     workflow_service._active_drives.clear()
@@ -522,11 +524,10 @@ class TestSequentialYamlWorkflowsKeepWorking:
         assert spy.prompts == ["do y1", "do y2", "do y3"]
 
     @pytest.mark.asyncio
-    async def test_the_durable_journal_of_a_yaml_run_is_unchanged_in_shape(self, _isolated_journal):
-        """The write-through half of "keep working": the run and its steps settle exactly as
-        they did before #583, and the two columns this issue added stay NULL — the YAML tier
-        writes neither, so a row that suddenly carried a fingerprint would mean the script
-        tier's writers had leaked into it."""
+    async def test_the_durable_journal_of_a_yaml_run_keeps_its_yaml_contract_shape(
+        self, _isolated_journal
+    ):
+        """YAML runs keep their own durable contract identity and do not write script envelopes."""
         _assert_tmp_db(_isolated_journal)
         spy = _ProviderSpy()
         with _terminal_layer(spy):
@@ -542,7 +543,8 @@ class TestSequentialYamlWorkflowsKeepWorking:
         for row in rows.values():
             assert row.state == StepState.COMPLETED.value
             assert row.attempts == 1
-            assert row.call_fingerprint is None
+            assert row.call_fingerprint is not None
+            assert row.call_fingerprint.startswith("v2:")
             assert row.result_json is None
 
     @pytest.mark.asyncio
