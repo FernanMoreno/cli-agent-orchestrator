@@ -125,11 +125,16 @@ class WorkContracts:
 
     @classmethod
     def _stored_contract(cls, connection, row):
-        evidence = connection.execute(
-            "SELECT contract_json,contract_hash FROM work_dispatch_v2_evidence "
-            "WHERE attempt_id=? AND generation=?",
-            (row["attempt_id"], row["generation"]),
-        ).fetchone()
+        evidence = None
+        if connection.execute(
+            "SELECT 1 FROM sqlite_schema WHERE type='table' "
+            "AND name='work_dispatch_v2_evidence'"
+        ).fetchone():
+            evidence = connection.execute(
+                "SELECT contract_json,contract_hash FROM work_dispatch_v2_evidence "
+                "WHERE attempt_id=? AND generation=?",
+                (row["attempt_id"], row["generation"]),
+            ).fetchone()
         contract = cls._from_json(
             evidence["contract_json"] if evidence is not None else row["contract_json"]
         )

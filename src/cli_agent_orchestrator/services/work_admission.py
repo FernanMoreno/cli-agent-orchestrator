@@ -7,6 +7,7 @@ commit intent, and recheck authority at the protected external-effect boundary.
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -37,6 +38,10 @@ from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 from cli_agent_orchestrator.services.work_reservations import ReservationConflict, WorkReservations
 from cli_agent_orchestrator.services.work_scheduler import WorkScheduler
 from cli_agent_orchestrator.services.work_service import WorkService
+from cli_agent_orchestrator.services.work_attempt_credential import (
+    WorkAttemptCredentials,
+    create_attempt_credential_descriptor,
+)
 from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
 logger = logging.getLogger(__name__)
@@ -60,6 +65,8 @@ class _WorkEffectPort:
         binding=None,
         guard_connection=None,
         attempt_revision=None,
+        attempt_credential_fd=None,
+        receiver_credential_fd=None,
     ):
         self._backend, self._restriction, self._guard, self._release = (
             backend,
@@ -71,6 +78,8 @@ class _WorkEffectPort:
         self._binding = binding
         self._guard_connection = guard_connection
         self._attempt_revision = attempt_revision
+        self._attempt_credential_fd = attempt_credential_fd
+        self._receiver_credential_fd = receiver_credential_fd
         self._expected_target = expected_target
         self._closed = False
         from cli_agent_orchestrator.backends.work_backend import WorkBackendView
@@ -97,7 +106,14 @@ class _WorkEffectPort:
     def close(self):
         if not self._closed:
             self._closed = True
-            self._release()
+            try:
+                for attribute in ("_attempt_credential_fd", "_receiver_credential_fd"):
+                    descriptor = getattr(self, attribute)
+                    if descriptor is not None:
+                        os.close(descriptor)
+                        setattr(self, attribute, None)
+            finally:
+                self._release()
 
     def _before_effect(
         self, effect, terminal_id, session_name=None, window_name=None, file_path=None
@@ -143,23 +159,30 @@ class _WorkEffectPort:
         if not isinstance(worker_input, bytes) or len(worker_input) > 32768:
             raise WorkConflict("process worker input is outside its byte bound")
         executor = getattr(self._backend, "execute_bound_process", None)
-        if not callable(executor) or not callable(self._guard_connection):
+        if (
+            not callable(executor)
+            or not callable(self._guard_connection)
+            or type(self._attempt_credential_fd) is not int
+        ):
             raise WorkConflict("selected Work backend has no protected process capability")
         authorize = lambda connection: self._guard_connection(
             connection, "execute_process", command_token
         )
-        return executor(
-            self._restriction,
+        process_options = dict(
             binding=binding,
             command_token=command_token,
             worker_input=worker_input,
             expected_attempt_revision=self._attempt_revision,
+            attempt_credential_fd=self._attempt_credential_fd,
             before_effect=lambda: self._before_effect(
                 "execute_process", None, file_path=command_token
             ),
             authorize_setup=authorize,
             authorize_go=authorize,
         )
+        if self._receiver_credential_fd is not None:
+            process_options["receiver_credential_fd"] = self._receiver_credential_fd
+        return executor(self._restriction, **process_options)
 
     def backend_scope(self):
         from cli_agent_orchestrator.backends.registry import work_backend_scope
@@ -174,21 +197,31 @@ class WorkAdmission:
         *,
         backends: Mapping[str, TerminalBackend],
         delivery_adapters=None,
+        origins=None,
     ):
         if not isinstance(backends, Mapping) or any(
             not isinstance(name, str) or not name or not isinstance(backend, TerminalBackend)
             for name, backend in backends.items()
         ):
             raise ValueError("explicit server backend registry required")
+        if origins is not None:
+            from cli_agent_orchestrator.services.work_origin import WorkOrigins
+
+            if not isinstance(origins, WorkOrigins) or origins.repository is not repository:
+                raise ValueError("managed lineage origin must share this work runtime")
         self.repository = repository
+        self.origins = origins
         self.backends = dict(backends)
         self.authority = WorkAuthority(repository)
         self.contracts = WorkContracts(repository)
         self.provisioning = WorkProvisioning(repository)
         self.deliveries = WorkDeliveries(repository, delivery_adapters)
+        self.attempt_credentials = WorkAttemptCredentials(repository)
         self.scheduler = WorkScheduler(repository)
         self.reservations = WorkReservations(repository)
         self._pending_abandonments = set()
+        if origins is not None:
+            origins._bind_admission(self)
 
     @staticmethod
     def _restriction(contract):
@@ -283,6 +316,8 @@ class WorkAdmission:
         origin = getattr(handoff, "_origin", None)
         if not isinstance(origin, WorkOrigins):
             raise WorkConflict("managed lineage requires an internal origin handoff")
+        if self.origins is not None and origin is not self.origins:
+            raise WorkConflict("managed lineage origin belongs to another runtime")
         return origin._consume(self, handoff)
 
     @staticmethod
@@ -1104,7 +1139,36 @@ class WorkAdmission:
                     reservations_confirmed=True,
                 ),
             )
-            return binding, selected, paths, sent, target_identity
+            sent_attempt = sent["attempts"][-1]
+            issued_credential = self.attempt_credentials.issue_in_transaction(
+                connection,
+                binding,
+                expected_attempt_revision=sent_attempt["revision"],
+            )
+            credential_fd = None
+            receiver_credential_fd = None
+            try:
+                credential_fd = create_attempt_credential_descriptor(issued_credential.secret)
+                if issued_credential.receiver_secret is not None:
+                    receiver_credential_fd = create_attempt_credential_descriptor(
+                        issued_credential.receiver_secret
+                    )
+            except BaseException:
+                for descriptor in (receiver_credential_fd, credential_fd):
+                    if descriptor is not None:
+                        os.close(descriptor)
+                raise
+            finally:
+                del issued_credential
+            return (
+                binding,
+                selected,
+                paths,
+                sent,
+                target_identity,
+                credential_fd,
+                receiver_credential_fd,
+            )
 
     def _prepare_dispatch(self, *, registered_only=False):
         """Commit the selected order and return its short-lived effect capability."""
@@ -1141,7 +1205,15 @@ class WorkAdmission:
                 continue
             if committed is None:
                 return None
-            binding, capacity, paths, sent, target_identity = committed
+            (
+                binding,
+                capacity,
+                paths,
+                sent,
+                target_identity,
+                credential_fd,
+                receiver_credential_fd,
+            ) = committed
             attempt = sent["attempts"][-1]
 
             def check_effect_connection(
@@ -1245,6 +1317,8 @@ class WorkAdmission:
                 binding=binding,
                 guard_connection=process_effect_in_transaction,
                 attempt_revision=attempt["revision"],
+                attempt_credential_fd=credential_fd,
+                receiver_credential_fd=receiver_credential_fd,
             )
 
             return binding, port, sent
@@ -1270,7 +1344,7 @@ class WorkAdmission:
             finally:
                 port.close()
 
-        return WorkService(self.repository)._send_committed(
+        return WorkService(self.repository, origins=self.origins)._send_committed(
             sent,
             deliver,
             actor_id=binding.principal_id,
@@ -1285,7 +1359,7 @@ class WorkAdmission:
                 binding, port, sent = prepared
                 port.close()
                 await asyncio.to_thread(
-                    WorkService(self.repository)._reconcile,
+                    WorkService(self.repository, origins=self.origins)._reconcile,
                     sent,
                     actor_id=binding.principal_id,
                 )
@@ -1358,7 +1432,7 @@ class WorkAdmission:
             finally:
                 port.close()
 
-        return await WorkService(self.repository)._send_committed_async(
+        return await WorkService(self.repository, origins=self.origins)._send_committed_async(
             sent,
             deliver,
             actor_id=binding.principal_id,

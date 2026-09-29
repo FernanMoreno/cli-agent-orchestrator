@@ -25,7 +25,10 @@ class AgentStepBackend(AdmissionOnlyBackend):
     def session_exists(self, name):
         return name in self.sessions
 
-    def create_session(self, name, window, terminal_id, directory, extra_env=None):
+    def create_session(
+        self, name, window, terminal_id, directory, extra_env=None, *, work_safe=False
+    ):
+        assert work_safe is True
         self.sessions[name] = (window, terminal_id, directory)
         return window
 

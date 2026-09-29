@@ -91,16 +91,26 @@ secreto bruto no se persiste ni entra en delivery, prompt, entorno, terminal,
 logs o eventos. Un proxy MCP server-owned por intento recibe el secreto sólo por
 descriptor privado heredado y llama al servicio de origen por socket privado.
 El proxy presenta allí la credencial, nunca el proceso agente.
-El backend debe aislar endpoint y descriptores entre intentos y fallar cerrado
-cuando no puede demostrar ese aislamiento. Cada petición al servicio revalida
-digest, binding, generación, grant, lease y estado de recuperación vivos.
-T097 completó la implementación y aceptación del perfil Ubuntu QEMU guest,
-manteniendo el backend fuera de `WORK_BACKENDS`. No existe ni se prevé un host
-de despliegue; por decisión de alcance no se registra ni habilita Work, y T019
-queda abierto/diferido hasta definir un target futuro. Bubblewrap es el
-mecanismo usado en el perfil guest aceptado; esa aceptación no certifica un
-host de despliegue. La separación de mounts observada en una prueba WSL
-individual sólo aporta evidencia de esa propiedad. El backend verifica versión
+El backend Docker crea un contenedor por intento, sin montar el socket del
+daemon en el worker, con rootfs de sólo lectura, red/IPC/PID aislados,
+capacidades retiradas, `no-new-privileges`, recursos acotados y mounts mínimos
+derivados del contrato. El endpoint proxy se expone sólo dentro del contenedor
+propietario; el secreto sigue en el broker y el worker nunca recibe el socket
+del daemon ni una credencial. Si Docker no puede garantizar un límite requerido
+por el contrato, el backend rechaza antes de crear o iniciar el worker. Cada
+petición al servicio revalida digest, binding, generación, grant, lease y
+estado de recuperación vivos.
+
+Docker tiene dos perfiles locales separados: el backend de runtime por intento
+y una imagen de aceptación que ejecuta las pruebas Linux de Bubblewrap. Esta
+última fija base e imagen, registra el kernel y exige Bubblewrap 0.13.0,
+Landlock ABI >=9, namespaces de usuario y cuenta broker dedicada. Docker Desktop
+comparte el kernel Linux de su VM WSL2; el resultado demuestra la composición
+en ese entorno local, no certifica un host de producción. T097 completó la
+aceptación del perfil Ubuntu QEMU guest y no existe host de despliegue previsto.
+Por ello, `WORK_BACKENDS` queda vacío por defecto; sólo la composición local
+explícita puede registrar el backend después de pasar sus gates. El backend
+verifica versión
 >=0.12.0 antes de preparar el sandbox y falla cerrado
 con 0.11.1 o una versión indeterminada: el [aviso upstream
 GHSA-pxhw-h44j-8pfx](https://github.com/containers/bubblewrap/security/advisories/GHSA-pxhw-h44j-8pfx)
@@ -117,6 +127,19 @@ secreto permanecen fuera del árbol y espacio visibles al agente; sólo un
 transporte IPC mínimo por intento puede estar expuesto, y otro intento no puede
 abrirlo ni heredar endpoint/descriptores. No se registra ni activa el backend
 antes de demostrar esos límites con procesos adversariales.
+
+**Estado de implementación verificado al 2026-09-29:** el perfil local
+`DockerWorkBackend` ejecuta un ELF estático en contenedor read-only, sin mounts
+del host ni red, con supervisor por intento y cleanup. Un socket MCP privado
+por intento transporta sólo las operaciones gestionadas autorizadas: el intento
+padre puede admitir un hijo preprovisionado y el receptor puede aceptar su
+entrega exacta. `WorkOrigins` vuelve a validar credencial, binding y grants; un
+adapter `agent_step` se registra sólo en la composición interna sellada del
+gateway. No se habilita ingreso público ni se da autoridad al camino legacy de
+`utils/orchestration.py`. Las pruebas de Docker pasaron 4/4; la aceptación
+Bubblewrap en guest QEMU pasó 8/8 sin skips. Ambos perfiles siguen fuera de
+`WORK_BACKENDS`: esto cierra la integración local T019, no acredita un host de
+producción ni habilita despliegues.
 
 La identidad de host forma parte del límite Bubblewrap. El creador de cada user
 namespace recibe capacidades dentro de ese namespace; por tanto, cambiar sólo
@@ -184,10 +207,11 @@ el contrato no incluya una clausura verificable de intérprete/cargador. Fork y
 doble fork heredan Landlock/seccomp y permanecen bajo la identidad supervisada.
 Las pruebas scratch prueban esa composición de código, no la aceptación QEMU.
 El run QEMU verde cerró T097/C08 para el guest fijado, pero no registra el
-backend para despliegue. `WORK_BACKENDS` continúa vacío por decisión de alcance:
-no hay host de despliegue planeado. Si se define uno en el futuro, una tarea
-nueva deberá comprobar allí Bubblewrap, ABI, namespaces y broker antes de
-registrar el backend.
+backend para despliegue. `WORK_BACKENDS` continúa vacío por defecto. Una
+composición local Docker puede registrar el backend para sus ejecuciones
+opt-in sólo después de probar aislamiento por intento, recovery y proxy. Si se
+define un host de despliegue en el futuro, deberá comprobar allí Bubblewrap,
+ABI, namespaces y broker antes de registrar el backend en esa instalación.
 
 El padre autenticado sólo selecciona refs de hijo y receptor preprovisionadas
 por el operador; no recibe sus credenciales ni construye sus `Principals`.
@@ -225,12 +249,16 @@ owner del receipt autenticado de receptor junto a `WorkService` usando la
 misma transacción de `WorkRepository`, nunca un booleano de HTTP.
 Las tablas internas v19–v23 y el guard v24 ya existen en fuente; esta nota no
 declara conectados los ingress. T094 añadió el receipt interno en v25 y T069
-elevó el Work store a v26; cualquier tabla de credencial T019 sería v27 aditiva,
-con checksum, unicidad y FK compuestas, sin backfill legacy. Fases pendientes:
-(1) RED T019 de credencial/aislamiento, autoridad/origen y aceptación durable;
-(2) migración v27 y creación durable previa al efecto; (3) puente interno
-padre/proxy/origen/hijo/receptor y binding cercado; (4) reinicio, revocación,
-replay, fallo parcial y mixed-version antes de considerar rutas de entrada.
+elevó el Work store a v26. Migraciones posteriores ya llevaron el schema a
+v35; el digest de credencial T019 debe añadirse en v36, con checksum, unicidad
+y FK compuestas, sin backfill legacy. La aceptación exacta del receptor necesita
+registro durable separado antes de emitir receipt; añadirlo en v37, también sin
+backfill. Fases T019: (1) RED de credencial, aislamiento y aceptación durable;
+(2) digest v36 y creación durable previa al efecto; (3) aceptación v37 y puente
+interno padre/proxy/origen/hijo/receptor con binding cercado; (4) backend Docker
+por intento y aceptación Bubblewrap local en Docker; (5) reinicio, revocación,
+replay, fallo parcial y mixed-version. Ninguna de estas fases activa ingress
+público, proveedor real ni DB del operador.
 T017, T019, T020 y T035 conservan gates independientes.
 
 Rollback operativo desactiva nueva admisión, preserva historial e impone

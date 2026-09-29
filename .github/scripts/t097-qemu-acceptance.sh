@@ -5,7 +5,12 @@ set -Eeuo pipefail
 : "${RUNNER_TEMP:?GitHub runner temp directory is required}"
 : "${CAO_WORK_BROKER_ACCOUNT:?Set the repository variable CAO_WORK_BROKER_ACCOUNT}"
 
-if [[ "${GITHUB_REF:-}" != refs/heads/main ]]; then
+local_docker_acceptance="${CAO_T019_LOCAL_DOCKER_ACCEPTANCE:-0}"
+if [[ "$local_docker_acceptance" != 0 && "$local_docker_acceptance" != 1 ]]; then
+  echo "CAO_T019_LOCAL_DOCKER_ACCEPTANCE must be 0 or 1" >&2
+  exit 1
+fi
+if [[ "$local_docker_acceptance" != 1 && "${GITHUB_REF:-}" != refs/heads/main ]]; then
   echo "T097 guest acceptance may run only from main" >&2
   exit 1
 fi
@@ -141,10 +146,24 @@ fi
 ssh "${ssh_args[@]}" -p "$guest_port" "$guest" uname -a
 ssh "${ssh_args[@]}" -p "$guest_port" "$guest" cat /etc/os-release
 
-git -C "$GITHUB_WORKSPACE" archive --format=tar.gz \
-  --output="$work_dir/checkout.tar.gz" \
-  HEAD pyproject.toml uv.lock README.md LICENSE src test \
-  scripts/hatch_build_tui_tag.py
+if [[ "$local_docker_acceptance" == 1 ]]; then
+  printf 'T019 Docker runner kernel: '
+  uname -a
+  tar -czf "$work_dir/checkout.tar.gz" \
+    --exclude='*/__pycache__' \
+    --exclude='*/.pytest_cache' \
+    --exclude='*/.mypy_cache' \
+    --exclude='*/.ruff_cache' \
+    --exclude='*/.venv' \
+    --exclude='*/node_modules' \
+    -C "$GITHUB_WORKSPACE" \
+    pyproject.toml uv.lock README.md LICENSE src test scripts/hatch_build_tui_tag.py
+else
+  git -C "$GITHUB_WORKSPACE" archive --format=tar.gz \
+    --output="$work_dir/checkout.tar.gz" \
+    HEAD pyproject.toml uv.lock README.md LICENSE src test \
+    scripts/hatch_build_tui_tag.py
+fi
 scp "${ssh_args[@]}" -P "$guest_port" \
   "$work_dir/checkout.tar.gz" "$guest:/home/runner/checkout.tar.gz"
 scp "${ssh_args[@]}" -P "$guest_port" \

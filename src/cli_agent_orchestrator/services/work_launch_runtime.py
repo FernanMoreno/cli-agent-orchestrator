@@ -35,6 +35,7 @@ from cli_agent_orchestrator.services.work_authority import (
     WorkAuthority,
 )
 from cli_agent_orchestrator.services.work_contract import ContractConflict
+from cli_agent_orchestrator.services.work_origin import WorkOrigins
 from cli_agent_orchestrator.services.work_provisioning import (
     ProvisionDenied,
     ProvisionSelectionUnavailable,
@@ -160,11 +161,22 @@ class LaunchRuntime:
             raise ValueError("verified work repository required")
         self.repository = repository
         self._provisioning = WorkProvisioning(repository)
+        # One origin owner is paired with the admission and receipt owner for
+        # this repository runtime. Resolvers created elsewhere cannot be
+        # substituted into this dispatcher.
+        self.origins = WorkOrigins(repository)
         # WorkAdmission owns the only admission/write path.  Its constructor also
         # validates the explicit server backend and adapter registries.
         self._admission = WorkAdmission(
-            repository, backends=backends, delivery_adapters=delivery_adapters
+            repository,
+            backends=backends,
+            delivery_adapters=delivery_adapters,
+            origins=self.origins,
         )
+        for backend in self._admission.backends.values():
+            bind_origins = getattr(backend, "bind_work_origins", None)
+            if callable(bind_origins):
+                bind_origins(self.origins)
         self._runtime_identity = object()
         self._handoff_secret = secrets.token_bytes(32)
 

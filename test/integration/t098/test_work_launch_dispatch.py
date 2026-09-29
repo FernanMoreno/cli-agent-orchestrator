@@ -124,10 +124,14 @@ class ProcessOnlyBackend(TmuxBackend):
         command_token,
         worker_input,
         expected_attempt_revision,
+        attempt_credential_fd,
         before_effect,
         authorize_setup,
         authorize_go,
+        receiver_credential_fd=None,
     ):
+        assert type(attempt_credential_fd) is int
+        assert receiver_credential_fd is None or type(receiver_credential_fd) is int
         if self.before_effect_hook is not None:
             self.before_effect_hook()
         before_effect()
@@ -180,6 +184,8 @@ def _setup(
     contract_tools=(),
     request_tools=(),
     capacity=1,
+    contract_paths=None,
+    contract_write_paths=None,
 ):
     repository = WorkRepository(tmp_path / "t098.sqlite3")
     repository.initialize()
@@ -241,10 +247,16 @@ def _setup(
         provider="scratch_worker",
         backend="test",
         permissions=ContractPermissions(
-            paths=(str(tmp_path),), commands=("/worker",), tools=contract_tools
+            paths=(str(tmp_path),) if contract_paths is None else tuple(contract_paths),
+            commands=("/worker",),
+            tools=contract_tools,
         ),
         resources=ContractResources(
-            checkout_root=str(tmp_path), write_paths=(str(tmp_path / "worker-output"),), units=1
+            checkout_root=str(tmp_path),
+            write_paths=(str(tmp_path / "worker-output"),)
+            if contract_write_paths is None
+            else tuple(contract_write_paths),
+            units=1,
         ),
         snapshot=ContractSnapshot(
             state="present", id=snapshot.id, delivered_hash=snapshot.delivered_hash
@@ -267,7 +279,8 @@ def _setup(
     backend = backend_factory(marker, repository)
     gateway = build_durable_launch_gateway(repository, backends={"test": backend})
     assert set(gateway._launch_runtime_provider._runtime._admission.deliveries.adapters) == {
-        ("launch", 2)
+        ("launch", 2),
+        ("agent_step", 1),
     }
     request = DurableLaunchRequest(
         selection="t098-selection",

@@ -16,6 +16,8 @@ from cli_agent_orchestrator.models.work_contract import (
     ContractResources,
     ContractSnapshot,
     EffectiveWorkContract,
+    EffectiveWorkContractV2,
+    ExecutableIdentity,
     FrozenContractModel,
 )
 from cli_agent_orchestrator.models.work_delivery import WorkDeliveryEnvelope
@@ -92,6 +94,42 @@ def _integrity_counts(repository):
             connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
             for table in ("work_lineage_integrity", "work_lineage_projection_intents")
         )
+
+
+def test_managed_lineage_intent_preserves_immutable_v2_executable_contract():
+    models, _admission_module, _origin_module = _modules()
+    contract = EffectiveWorkContractV2(
+        id="lineage-v2-child",
+        operation_kind="launch",
+        provider="scratch_worker",
+        backend="docker",
+        permissions=ContractPermissions(commands=("/worker",)),
+        resources=ContractResources(checkout_root="/workspace", write_paths=(), units=1),
+        snapshot=ContractSnapshot(
+            state="present", id="lineage-v2-snapshot", delivered_hash="a" * 64
+        ),
+        executable_identities=(
+            ExecutableIdentity(
+                command_token="/worker",
+                content_reference="sha256:" + "b" * 64,
+                sha256_digest="b" * 64,
+                elf_machine="x86_64",
+                elf_class="ELF64",
+                endianness="little",
+            ),
+        ),
+    )
+
+    intent = models.ManagedLineageIntent(
+        contract=contract,
+        delivery=WorkDeliveryEnvelope(
+            operation_kind="launch", adapter_version=2, payload_json="{}"
+        ),
+        lease_seconds=60,
+    )
+
+    assert isinstance(intent.contract, EffectiveWorkContractV2)
+    assert intent.contract.canonical_hash() == contract.canonical_hash()
 
 
 def _managed_context(tmp_path):
@@ -332,6 +370,29 @@ def _managed_handoff(
     )
 
 
+def _issue_receiver_receipt(context, origins, work, attempt, *, nonce):
+    attempt_ref = context.models.WorkAttemptRef(
+        work_item_id=work["id"],
+        attempt_id=attempt["id"],
+        generation=attempt["generation"],
+    )
+    origins.record_task_received_acceptance(
+        authenticated_context=origins.authenticated_context(context.receiver),
+        attempt_ref=attempt_ref,
+        receiver_subject_ref=context.receiver_subject,
+        receiver_authorization_ref=context.receiver_authorization.ref,
+    )
+    return origins.issue_task_received_receipt(
+        authenticated_context=origins.authenticated_context(
+            context.owner, context.child, context.receiver
+        ),
+        attempt_ref=attempt_ref,
+        receiver_subject_ref=context.receiver_subject,
+        receiver_authorization_ref=context.receiver_authorization.ref,
+        nonce=nonce,
+    )
+
+
 def test_authenticated_task_receipt_only_acknowledges_its_exact_managed_delivery(
     managed_context,
 ):
@@ -360,18 +421,8 @@ def test_authenticated_task_receipt_only_acknowledges_its_exact_managed_delivery
     )
     assert sent["attempts"][0]["state"] == "sent"
 
-    receipt = origins.issue_task_received_receipt(
-        authenticated_context=origins.authenticated_context(
-            context.owner, context.child, context.receiver
-        ),
-        attempt_ref=context.models.WorkAttemptRef(
-            work_item_id=child["id"],
-            attempt_id=attempt["id"],
-            generation=attempt["generation"],
-        ),
-        receiver_subject_ref=context.receiver_subject,
-        receiver_authorization_ref=context.receiver_authorization.ref,
-        nonce="task-receipt-exact",
+    receipt = _issue_receiver_receipt(
+        context, origins, child, attempt, nonce="task-receipt-exact"
     )
     receiver = service_module.WorkService(context.repository, origins=origins)
     stale_generation = receipt.model_copy(
@@ -447,18 +498,8 @@ def test_task_receipt_issued_before_receiver_revocation_never_acknowledges(manag
         admission=admission,
         actor_id=context.owner.id,
     )["attempts"][0]["state"] == "sent"
-    receipt = origins.issue_task_received_receipt(
-        authenticated_context=origins.authenticated_context(
-            context.owner, context.child, context.receiver
-        ),
-        attempt_ref=context.models.WorkAttemptRef(
-            work_item_id=child["id"],
-            attempt_id=attempt["id"],
-            generation=attempt["generation"],
-        ),
-        receiver_subject_ref=context.receiver_subject,
-        receiver_authorization_ref=context.receiver_authorization.ref,
-        nonce="task-receipt-revoked",
+    receipt = _issue_receiver_receipt(
+        context, origins, child, attempt, nonce="task-receipt-revoked"
     )
     context.origin_module.WorkOriginAuthority(context.repository).revoke(
         owner=context.owner,
@@ -482,6 +523,53 @@ def test_task_receipt_issued_before_receiver_revocation_never_acknowledges(manag
             "AND event_type='attempt.acknowledged'",
             (attempt["id"],),
         ).fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_registered_dispatch_uses_paired_origin_runtime_for_receiver_ack(managed_context):
+    """The real dispatcher must consume an exact receiver receipt through its origin owner."""
+    context = managed_context
+    service_module = importlib.import_module("cli_agent_orchestrator.services.work_service")
+    admission_module = importlib.import_module("cli_agent_orchestrator.services.work_admission")
+    origins = context.origin_module.WorkOrigins(context.repository)
+    async def deliver(binding, _payload, _snapshot, _port):
+        work = context.repository.get_work(binding.work_item_id)
+        attempt = work["attempts"][-1]
+        receipt = _issue_receiver_receipt(
+            context,
+            origins,
+            work,
+            attempt,
+            nonce="dispatcher-task-receipt",
+        )
+        return service_module.DeliveryObservation(task_received_receipt=receipt)
+
+    adapter = DeliveryAdapter(_InboxPayload, deliver)
+    admission = admission_module.WorkAdmission(
+        context.repository,
+        backends={"test": _NoEffectBackend()},
+        delivery_adapters={("inbox", 1): adapter},
+        origins=origins,
+    )
+    child = admission.admit_managed_lineage(
+        _managed_handoff(context, key="paired-dispatch-receipt", origins=origins)
+    )
+
+    result = await admission.dispatch_registered_next()
+
+    assert result["id"] == child["id"]
+    assert result["attempts"][0]["state"] == "acknowledged"
+    with context.repository.read_snapshot() as connection:
+        acceptance = connection.execute(
+            "SELECT delivery_id,delivery_hash FROM work_task_receiver_acceptances "
+            "WHERE attempt_id=? AND generation=1",
+            (child["attempts"][0]["id"],),
+        ).fetchone()
+        assert acceptance is not None
+        assert connection.execute(
+            "SELECT count(*) FROM work_task_received_receipts WHERE attempt_id=?",
+            (child["attempts"][0]["id"],),
+        ).fetchone()[0] == 1
 
 
 def test_v21_legacy_child_migrates_to_v22_and_replays_through_public_admission(
@@ -1532,3 +1620,312 @@ def test_managed_lineage_missing_or_contradictory_marker_fails_contract_revalida
             attempt["id"], generation=attempt["generation"]
         )
     assert _counts(context.repository) == (2, 2, 2, 0 if "bindings" in mutation else 1, 1, 2)
+
+
+def test_attempt_credential_keeps_only_digest_and_rechecks_live_grant(managed_context):
+    """The per-attempt bearer is non-persistent and fenced by current authority."""
+    context = managed_context
+    credential_module = importlib.import_module(
+        "cli_agent_orchestrator.services.work_attempt_credential"
+    )
+    service_module = importlib.import_module("cli_agent_orchestrator.services.work_service")
+    origins = context.origin_module.WorkOrigins(context.repository)
+    child = context.admission.admit_managed_lineage(
+        _managed_handoff(context, origins=origins, key="attempt-credential")
+    )
+    attempt = child["attempts"][0]
+    sent = service_module.WorkService(context.repository, origins=origins).dispatch(
+        child["id"],
+        lambda: service_module.DeliveryObservation(),
+        admission=TransitionEvidence(
+            generation=attempt["generation"],
+            expected_generation=attempt["generation"],
+            contract_confirmed=True,
+            grant_confirmed=True,
+            capacity_confirmed=True,
+            reservations_confirmed=True,
+        ),
+        actor_id=context.child.id,
+    )
+    sent_attempt = sent["attempts"][-1]
+    owner = credential_module.WorkAttemptCredentials(context.repository)
+    with context.repository.transaction() as connection:
+        binding = WorkContracts(context.repository)._revalidate_order(
+            connection, sent_attempt["id"], generation=sent_attempt["generation"]
+        )
+        issued = owner.issue_in_transaction(
+            connection, binding, expected_attempt_revision=sent_attempt["revision"]
+        )
+        authenticated = owner.authenticate_in_transaction(connection, issued.secret)
+        row = connection.execute(
+            "SELECT credential_sha256 FROM work_attempt_credentials "
+            "WHERE attempt_id=? AND generation=?",
+            (sent_attempt["id"], sent_attempt["generation"]),
+        ).fetchone()
+
+    import hashlib
+
+    assert row["credential_sha256"] == hashlib.sha256(issued.secret).hexdigest()
+    assert authenticated.attempt_id == sent_attempt["id"]
+    assert authenticated.generation == sent_attempt["generation"]
+    assert issued.secret not in repr(authenticated).encode()
+
+    WorkAuthority(context.repository).revoke(
+        context.owner,
+        grant_id=context.child_grant.id,
+        expected_grant_revision=context.child_grant.revision,
+        reason="credential revocation test",
+    )
+    with context.repository.transaction() as connection:
+        with pytest.raises(credential_module.WorkAttemptCredentialRejected):
+            owner.authenticate_in_transaction(connection, issued.secret)
+
+
+def test_attempt_credential_selects_only_preprovisioned_lineage_subjects(managed_context):
+    """A worker credential resolves actor identity; it cannot submit principals."""
+    context = managed_context
+    credential_module = importlib.import_module(
+        "cli_agent_orchestrator.services.work_attempt_credential"
+    )
+    service_module = importlib.import_module("cli_agent_orchestrator.services.work_service")
+    origins = context.origin_module.WorkOrigins(context.repository)
+    admission_module = importlib.import_module(
+        "cli_agent_orchestrator.services.work_admission"
+    )
+    admission_module.WorkAdmission(
+        context.repository,
+        backends=context.admission.backends,
+        delivery_adapters=context.admission.deliveries.adapters,
+        origins=origins,
+    )
+    parent_attempt = context.parent["attempts"][0]
+    sent = service_module.WorkService(context.repository, origins=origins).dispatch(
+        context.parent["id"],
+        lambda: service_module.DeliveryObservation(),
+        admission=TransitionEvidence(
+            generation=parent_attempt["generation"],
+            expected_generation=parent_attempt["generation"],
+            contract_confirmed=True,
+            grant_confirmed=True,
+            capacity_confirmed=True,
+            reservations_confirmed=True,
+        ),
+        actor_id=context.owner.id,
+    )
+    sent_attempt = sent["attempts"][-1]
+    credentials = credential_module.WorkAttemptCredentials(context.repository)
+    with context.repository.transaction() as connection:
+        binding = WorkContracts(context.repository)._revalidate_order(
+            connection, sent_attempt["id"], generation=sent_attempt["generation"]
+        )
+        issued = credentials.issue_in_transaction(
+            connection, binding, expected_attempt_revision=sent_attempt["revision"]
+        )
+
+    intent = context.models.ManagedLineageIntent(
+        contract=context.child_contract,
+        delivery=WorkDeliveryEnvelope(
+            operation_kind="inbox",
+            adapter_version=1,
+            payload_json=json.dumps({"message": "credential-authenticated child"}),
+        ),
+        lease_seconds=120,
+    )
+    response = origins.handle_mcp_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "cao.work.child",
+                "arguments": {
+                    "child_subject_id": context.child.id,
+                    "receiver_subject_id": context.receiver.id,
+                    "intent": intent.model_dump(mode="json"),
+                    "idempotency_key": "credential-lineage",
+                },
+            },
+        },
+        issued.secret,
+    )
+    assert "result" in response
+    child_result = json.loads(response["result"]["content"][0]["text"])
+    child = context.repository.get_work(child_result["work_item_id"])
+    assert child["lineage_protocol"] == "managed-v1"
+    assert child["parent_work_item_id"] == sent["id"]
+
+    before = _counts(context.repository)
+    rejected = origins.handle_mcp_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "cao.work.child",
+                "arguments": {
+                    "child_subject_id": "principal-not-provisioned",
+                    "receiver_subject_id": context.receiver.id,
+                    "intent": intent.model_dump(mode="json"),
+                    "idempotency_key": "cross-attempt-lineage",
+                },
+            },
+        },
+        issued.secret,
+    )
+    assert "error" in rejected
+    assert _counts(context.repository) == before
+
+
+def test_dispatch_durably_issues_secret_fd_before_delivery(managed_context):
+    """Dispatch commits the credential digest before returning an effect port."""
+    import os
+
+    context = managed_context
+    origins = context.origin_module.WorkOrigins(context.repository)
+    admission_module = importlib.import_module("cli_agent_orchestrator.services.work_admission")
+    admission = admission_module.WorkAdmission(
+        context.repository,
+        backends={"test": _NoEffectBackend()},
+        delivery_adapters={("inbox", 1): _delivery_adapter()},
+        origins=origins,
+    )
+    child = admission.admit_managed_lineage(
+        _managed_handoff(context, origins=origins, key="credential-before-effect")
+    )
+
+    prepared = admission._prepare_dispatch(registered_only=False)
+    assert prepared is not None
+    binding, port, sent = prepared
+    attempt = sent["attempts"][-1]
+    with context.repository.read_snapshot() as connection:
+        credential = connection.execute(
+            "SELECT credential_sha256,attempt_revision FROM work_attempt_credentials "
+            "WHERE attempt_id=? AND generation=?",
+            (attempt["id"], attempt["generation"]),
+        ).fetchone()
+        assert connection.execute(
+            "SELECT state FROM work_attempts WHERE id=?", (attempt["id"],)
+        ).fetchone()[0] == "sent"
+    assert credential is not None
+    secret = os.pread(port._attempt_credential_fd, 32, 0)
+    assert len(secret) == 32
+    import hashlib
+
+    assert credential["credential_sha256"] == hashlib.sha256(secret).hexdigest()
+    assert credential["attempt_revision"] == attempt["revision"]
+    assert binding.attempt_id == attempt["id"]
+    port.close()
+
+
+def test_receiver_credential_acknowledges_exact_delivery_atomically(managed_context):
+    """Only separate attempt and receiver credentials may commit the exact ACK."""
+    import os
+
+    context = managed_context
+    origins = context.origin_module.WorkOrigins(context.repository)
+    admission_module = importlib.import_module(
+        "cli_agent_orchestrator.services.work_admission"
+    )
+    admission = admission_module.WorkAdmission(
+        context.repository,
+        backends={"test": _NoEffectBackend()},
+        delivery_adapters={("inbox", 1): _delivery_adapter()},
+        origins=origins,
+    )
+    child = admission.admit_managed_lineage(
+        _managed_handoff(context, origins=origins, key="receiver-credential-ack")
+    )
+    parent_dispatch = admission._prepare_dispatch(registered_only=False)
+    assert parent_dispatch is not None
+    assert parent_dispatch[0].attempt_id != child["attempts"][0]["id"]
+    parent_dispatch[1].close()
+    binding, port, sent = admission._prepare_dispatch(registered_only=False)
+    assert binding.attempt_id == child["attempts"][0]["id"]
+    attempt = sent["attempts"][-1]
+    attempt_credential = os.pread(port._attempt_credential_fd, 32, 0)
+    receiver_credential = os.pread(port._receiver_credential_fd, 32, 0)
+    request = {
+        "jsonrpc": "2.0",
+        "id": "ack",
+        "method": "tools/call",
+        "params": {"name": "cao.work.task_received", "arguments": {}},
+    }
+
+    with context.repository.transaction() as connection:
+        connection.execute(
+            """CREATE TRIGGER reject_t019_ack BEFORE UPDATE OF state ON work_attempts
+               WHEN NEW.state='acknowledged'
+               BEGIN SELECT RAISE(ABORT, 'injected ACK failure'); END"""
+        )
+    rejected = origins.handle_mcp_request(
+        request, attempt_credential, receiver_credential=receiver_credential
+    )
+    assert "error" in rejected
+    assert context.repository.get_work(child["id"])["attempts"][0]["state"] == "sent"
+    with context.repository.read_snapshot() as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM work_task_receiver_acceptances WHERE attempt_id=?",
+            (attempt["id"],),
+        ).fetchone()[0] == 0
+
+    with context.repository.transaction() as connection:
+        connection.execute("DROP TRIGGER reject_t019_ack")
+    acknowledged = origins.handle_mcp_request(
+        request, attempt_credential, receiver_credential=receiver_credential
+    )
+    assert "result" in acknowledged
+    assert context.repository.get_work(child["id"])["attempts"][0]["state"] == "acknowledged"
+    with context.repository.read_snapshot() as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM work_task_receiver_acceptances WHERE attempt_id=?",
+            (attempt["id"],),
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT count(*) FROM work_task_received_receipts WHERE attempt_id=?",
+            (attempt["id"],),
+        ).fetchone()[0] == 1
+    duplicate = origins.handle_mcp_request(
+        request, attempt_credential, receiver_credential=receiver_credential
+    )
+    assert duplicate == acknowledged
+    port.close()
+
+
+def test_task_receipt_requires_durable_receiver_acceptance(managed_context):
+    """Attempt state and a server seal alone cannot stand in for receiver acceptance."""
+    context = managed_context
+    service_module = importlib.import_module("cli_agent_orchestrator.services.work_service")
+    origins = context.origin_module.WorkOrigins(context.repository)
+    child = context.admission.admit_managed_lineage(
+        _managed_handoff(context, origins=origins, key="receiver-acceptance-required")
+    )
+    attempt = child["attempts"][0]
+    sent = service_module.WorkService(context.repository, origins=origins).dispatch(
+        child["id"],
+        lambda: service_module.DeliveryObservation(),
+        admission=TransitionEvidence(
+            generation=attempt["generation"],
+            expected_generation=attempt["generation"],
+            contract_confirmed=True,
+            grant_confirmed=True,
+            capacity_confirmed=True,
+            reservations_confirmed=True,
+        ),
+        actor_id=context.child.id,
+    )
+    sent_attempt = sent["attempts"][-1]
+
+    with pytest.raises(context.origin_module.OriginDenied):
+        origins.issue_task_received_receipt(
+            authenticated_context=origins.authenticated_context(
+                context.owner, context.child, context.receiver
+            ),
+            attempt_ref=context.models.WorkAttemptRef(
+                work_item_id=child["id"],
+                attempt_id=sent_attempt["id"],
+                generation=sent_attempt["generation"],
+            ),
+            receiver_subject_ref=context.receiver_subject,
+            receiver_authorization_ref=context.receiver_authorization.ref,
+            nonce="receipt-without-acceptance",
+        )

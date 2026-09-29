@@ -71,6 +71,42 @@ integración; los defaults excluyen e2e/integration. mock_cli debe seguir sin cr
 Web usa el script test de web/package.json; Rust usa cargo test desde tui/.
 No adjudicar PostgreSQL, herdr, tmux o navegador real a una prueba con mocks.
 
+## T019: aceptación local con Docker
+
+Desde WSL2 con Docker Desktop activo (o desde Linux con Docker Engine), ejecutar:
+
+```bash
+./test/integration/t019/run-docker-backend-acceptance.sh
+./test/integration/t019/run-docker-acceptance.sh
+```
+
+El primer comando construye una imagen inmutable `FROM scratch` con el worker
+estático y ejecuta un contenedor por intento. Verifica worker simple, rechazo
+antes del efecto de peticiones gestionadas inválidas, admisión de un hijo
+preprovisionado mediante `cao.work.*` y aceptación/receipt exactos del receptor
+con su credencial separada. El proxy sólo expone operaciones autorizadas por
+`WorkOrigins`; el worker no recibe mounts del workspace, red, herramientas ni
+rutas de escritura. Sólo las operaciones `cao.work.*` permitidas cruzan el
+proxy MCP privado; no hay herramientas locales arbitrarias. Se comprueba el
+cleanup del contenedor e imágenes/archivos temporales.
+
+El segundo comando ejecuta la suite T097 dentro de un guest Linux QEMU,
+orquestado por un contenedor Docker. En la aceptación del 2026-09-29 pasó
+**8/8 sin skips**, con Ubuntu 26.10, kernel guest `7.3.0-5-generic`, Bubblewrap
+0.13.0 (digest
+`15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250`) y
+Landlock ABI 11. El Docker Work backend pasó **4/4** en Docker Desktop 29.8.1
+sobre kernel WSL2 `6.18.33.2-microsoft-standard-WSL2`.
+
+El perfil de runtime admite sólo un ELF estático: sin herramientas locales
+arbitrarias, red ni escrituras del workspace. No concede permisos de lectura
+del host. La vía MCP permite únicamente acciones `cao.work.*` autorizadas, por
+un socket privado por intento; no es un endpoint público. Estas pruebas no
+agregan el backend a
+`WORK_BACKENDS` ni certifican un host de producción. En WSL2, Docker Desktop
+aporta una VM Linux con kernel compartido por sus contenedores; el guest QEMU es
+la evidencia reproducible de Bubblewrap y Landlock.
+
 ## Matriz real y upstream
 
 El workflow actual `.github/workflows/real-provider-e2e.yml` es manual. Tras autorización,

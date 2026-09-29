@@ -36,6 +36,9 @@ from cli_agent_orchestrator.clients.work_mcp_proxy_schema import (
     WORK_MCP_PROXY_ISSUE_SCHEMA,
     WORK_MCP_PROXY_ISSUE_RECOVERY_SCHEMA,
 )
+from cli_agent_orchestrator.clients.work_attempt_credential_schema import (
+    WORK_ATTEMPT_CREDENTIAL_SCHEMA,
+)
 from cli_agent_orchestrator.clients.work_authority_schema import AUTHORITY_SCHEMA
 from cli_agent_orchestrator.clients.work_decisions_schema import DECISIONS_SCHEMA
 from cli_agent_orchestrator.clients.work_delivery_schema import (
@@ -58,6 +61,7 @@ from cli_agent_orchestrator.clients.work_origin_schema import (
     LINEAGE_ORIGIN_SCHEMA,
     ORIGIN_AUTHORITY_SCHEMA,
     ORIGIN_SCHEMA,
+    WORK_TASK_RECEIVER_ACCEPTANCE_SCHEMA,
     TASK_RECEIVED_RECEIPT_SCHEMA,
 )
 from cli_agent_orchestrator.clients.work_process_identity_schema import (
@@ -80,6 +84,9 @@ from cli_agent_orchestrator.clients.work_scheduler_schema import (
     SCHEDULER_SCHEMA,
 )
 from cli_agent_orchestrator.clients.work_snapshot_schema import SNAPSHOT_SCHEMA
+from cli_agent_orchestrator.clients.work_task_receiver_credential_schema import (
+    WORK_TASK_RECEIVER_CREDENTIAL_SCHEMA,
+)
 from cli_agent_orchestrator.clients.worktree_evidence_schema import WORKTREE_EVIDENCE_SCHEMA
 from cli_agent_orchestrator.services.work_reducer import (
     TransitionConflict,
@@ -446,7 +453,7 @@ def _stored_recovery_context(connection: sqlite3.Connection) -> RecoveryStoreCon
     )
 
 
-SCHEMA_VERSION = 35
+SCHEMA_VERSION = 38
 _SCHEMA = (
     """CREATE TABLE work_migrations (
         version INTEGER PRIMARY KEY, checksum TEXT NOT NULL,
@@ -553,6 +560,9 @@ _MIGRATIONS = {
     33: WORK_MCP_PROXY_ISSUE_SCHEMA,
     34: WORK_MCP_PROXY_EFFECT_SCHEMA,
     35: WORK_MCP_PROXY_ISSUE_RECOVERY_SCHEMA,
+    36: WORK_ATTEMPT_CREDENTIAL_SCHEMA,
+    37: WORK_TASK_RECEIVER_ACCEPTANCE_SCHEMA,
+    38: WORK_TASK_RECEIVER_CREDENTIAL_SCHEMA,
 }
 _CHECKSUMS = {
     version: hashlib.sha256(";\n".join(statements).encode()).hexdigest()

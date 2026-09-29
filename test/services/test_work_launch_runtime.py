@@ -30,6 +30,7 @@ from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuth
 from cli_agent_orchestrator.services.work_launch import launch_adapter
 from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
 from cli_agent_orchestrator.services.work_scheduler import WorkScheduler
+from cli_agent_orchestrator.services.work_origin import WorkOrigins
 
 
 def runtime_module():
@@ -37,6 +38,20 @@ def runtime_module():
     name = "cli_agent_orchestrator.services.work_launch_runtime"
     assert importlib.util.find_spec(name) is not None, "T035 launch runtime is missing"
     return importlib.import_module(name)
+
+
+def test_launch_runtime_pairs_origin_admission_and_receipt_owners(tmp_path):
+    repository = WorkRepository(tmp_path / "origin-runtime.sqlite3")
+
+    runtime = runtime_module().LaunchRuntime(
+        repository,
+        backends={},
+        delivery_adapters={},
+    )
+
+    assert isinstance(runtime.origins, WorkOrigins)
+    assert runtime.origins.repository is repository
+    assert runtime._admission.origins is runtime.origins
 
 
 class ProtectedFakeBackend(TmuxBackend):

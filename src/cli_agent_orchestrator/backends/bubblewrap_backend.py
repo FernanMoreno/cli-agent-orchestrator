@@ -29,6 +29,10 @@ from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_contract import EffectiveWorkContractV2
 from cli_agent_orchestrator.services.work_process_supervisor import WorkProcessSupervisor
 from cli_agent_orchestrator.services.work_mcp_proxy import WorkMcpProxy
+from cli_agent_orchestrator.services.work_attempt_credential import (
+    read_attempt_credential_descriptor,
+    validate_attempt_credential_descriptor,
+)
 from cli_agent_orchestrator.services.work_process_landlock import _query_abi_version
 from cli_agent_orchestrator.work_bubblewrap_policy import BUBBLEWRAP_VERSION
 
@@ -293,19 +297,31 @@ class BubblewrapWorkBackend(TmuxBackend):
         self._bwrap_sha256_digest = bwrap_sha256_digest
         self._supervisor_factory = supervisor_factory
         self._mcp_proxy_factory = mcp_proxy_factory
+        self._work_origins = None
         self._broker_account = (
             os.environ.get("CAO_WORK_BROKER_ACCOUNT") if broker_account is None else broker_account
         )
         self._mcp_proxy_instances = weakref.WeakSet()
         self._mcp_proxy_factory_lock = threading.Lock()
 
+    def bind_work_origins(self, origins) -> None:
+        """Install the private Work MCP upstream for a paired runtime."""
+        from cli_agent_orchestrator.services.work_origin import WorkOrigins
+
+        if (
+            not isinstance(origins, WorkOrigins)
+            or self._work_repository is None
+            or origins.repository is not self._work_repository
+        ):
+            raise ValueError("Bubblewrap Work origins must share the server-owned repository")
+        self._work_origins = origins
+
     def preflight_work(self, contract: ProcessRestrictionContract) -> None:
         if platform.system() != "Linux":
             raise _unsupported("Bubblewrap Work is Linux-only")
-        _require_work_broker_identity(self._broker_account)
         if not isinstance(contract, ProcessRestrictionContract):
             raise _unsupported("an explicit ProcessRestrictionContract is required")
-        if contract.tools and self._mcp_proxy_factory is None:
+        if contract.tools and self._mcp_proxy_factory is None and self._work_origins is None:
             raise _unsupported("contract tools require an attempt-bound MCP proxy factory")
         _validate_command_token_syntax(contract.commands)
         if contract.network:
@@ -322,6 +338,7 @@ class BubblewrapWorkBackend(TmuxBackend):
             or contract.executable_identities[0].static is not True
         ):
             raise _unsupported("exactly one immutable static ELF executable mapping is required")
+        _require_work_broker_identity(self._broker_account)
         try:
             landlock_abi = _query_abi_version()
         except OSError as exc:
@@ -340,6 +357,8 @@ class BubblewrapWorkBackend(TmuxBackend):
         command_token: str,
         worker_input: bytes,
         expected_attempt_revision: int,
+        attempt_credential_fd: int | None = None,
+        receiver_credential_fd: int | None = None,
         before_effect,
         authorize_setup,
         authorize_go,
@@ -373,14 +392,51 @@ class BubblewrapWorkBackend(TmuxBackend):
             or not callable(before_effect)
             or not callable(authorize_setup)
             or not callable(authorize_go)
+            or type(attempt_credential_fd) is not int
         ):
             raise _unsupported("process effect differs from its immutable Work contract")
+        try:
+            validate_attempt_credential_descriptor(attempt_credential_fd)
+        except Exception as exc:
+            raise _unsupported("server-owned attempt credential descriptor is unavailable") from exc
+        if receiver_credential_fd is not None:
+            try:
+                validate_attempt_credential_descriptor(receiver_credential_fd)
+            except Exception as exc:
+                raise _unsupported(
+                    "server-owned receiver credential descriptor is unavailable"
+                ) from exc
+        if (
+            "cao.work.task_received" in binding.contract.permissions.tools
+            and receiver_credential_fd is None
+        ):
+            raise _unsupported("receiver acknowledgement requires its separate credential")
         mcp_proxy = None
         if binding.contract.permissions.tools:
-            if self._mcp_proxy_factory is None:
+            if self._mcp_proxy_factory is None and self._work_origins is None:
                 raise _unsupported("contract tools require an attempt-bound MCP proxy factory")
             try:
-                mcp_proxy = self._mcp_proxy_factory(binding.attempt_id, binding.generation)
+                server_secret_factory = lambda: read_attempt_credential_descriptor(
+                    attempt_credential_fd
+                )
+                if self._mcp_proxy_factory is not None:
+                    mcp_proxy = self._mcp_proxy_factory(binding.attempt_id, binding.generation)
+                else:
+                    def upstream(request, secret):
+                        receiver_secret = None
+                        if request.get("params", {}).get("name") == "cao.work.task_received":
+                            receiver_secret = read_attempt_credential_descriptor(
+                                receiver_credential_fd
+                            )
+                        return self._work_origins.handle_mcp_request(
+                            request, secret, receiver_credential=receiver_secret
+                        )
+
+                    mcp_proxy = WorkMcpProxy(
+                        self._work_repository,
+                        server_secret_factory=server_secret_factory,
+                        upstream=upstream,
+                    )
             except Exception as exc:
                 raise _unsupported("attempt-bound MCP proxy factory failed before launch") from exc
             if not isinstance(mcp_proxy, WorkMcpProxy):

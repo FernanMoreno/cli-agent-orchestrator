@@ -259,6 +259,42 @@ LINEAGE_INTEGRITY_SCHEMA = (
 )
 
 
+WORK_TASK_RECEIVER_ACCEPTANCE_SCHEMA = (
+    """CREATE TABLE work_task_receiver_acceptances (
+        attempt_id TEXT NOT NULL,
+        generation INTEGER NOT NULL CHECK(typeof(generation)='integer' AND generation>0),
+        receiver_subject_id TEXT NOT NULL,
+        receiver_origin_kind TEXT NOT NULL DEFAULT 'receiver'
+            CHECK(receiver_origin_kind='receiver'),
+        receiver_subject_revision INTEGER NOT NULL
+            CHECK(typeof(receiver_subject_revision)='integer' AND receiver_subject_revision>0),
+        receiver_authorization_revision INTEGER NOT NULL
+            CHECK(typeof(receiver_authorization_revision)='integer' AND receiver_authorization_revision>0),
+        delivery_id TEXT NOT NULL CHECK(length(delivery_id) BETWEEN 1 AND 512),
+        delivery_hash TEXT NOT NULL CHECK(length(delivery_hash)=64
+            AND delivery_hash NOT GLOB '*[^0-9a-f]*'),
+        acceptance_sha256 TEXT NOT NULL CHECK(length(acceptance_sha256)=64
+            AND acceptance_sha256 NOT GLOB '*[^0-9a-f]*'),
+        accepted_at REAL NOT NULL CHECK(typeof(accepted_at)='real' AND accepted_at>0),
+        schema_version INTEGER NOT NULL DEFAULT 1
+            CHECK(typeof(schema_version)='integer' AND schema_version=1),
+        PRIMARY KEY(attempt_id,generation),
+        FOREIGN KEY(attempt_id,generation)
+            REFERENCES work_child_origin_bindings(child_attempt_id,child_generation),
+        FOREIGN KEY(receiver_subject_id,receiver_origin_kind,receiver_subject_revision)
+            REFERENCES work_origin_subjects(subject_id,origin_kind,revision),
+        FOREIGN KEY(receiver_subject_id,receiver_origin_kind,receiver_authorization_revision)
+            REFERENCES work_origin_authorizations(subject_id,origin_kind,revision)
+    )""",
+    """CREATE TRIGGER work_task_receiver_acceptances_immutable_update
+        BEFORE UPDATE ON work_task_receiver_acceptances
+        BEGIN SELECT RAISE(ABORT,'receiver acceptance is immutable'); END""",
+    """CREATE TRIGGER work_task_receiver_acceptances_immutable_delete
+        BEFORE DELETE ON work_task_receiver_acceptances
+        BEGIN SELECT RAISE(ABORT,'receiver acceptance cannot be deleted'); END""",
+)
+
+
 # v25 records the first authenticated receiver acknowledgement for a managed
 # delivery.  No historic attempt is backfilled: only an exact v22/v23 binding
 # can name this immutable receipt, so legacy replay cannot gain an ACK merely

@@ -3424,3 +3424,33 @@ Google Cloud limita su cuota Always Free a una `e2-micro` en una de tres
 regiones de EE. UU. ([cuota gratuita de Compute Engine](https://cloud.google.com/free/docs/free-cloud-features)).
 Ninguna se adopta como host de producción. La opción gratuita cubre las
 pruebas; no hay una opción gratuita fiable seleccionada para operar Work.
+
+### T019: integración Docker local completada — 2026-09-29
+
+Se cerró T019 para su alcance local acordado: Docker cumple como runtime Work
+por intento y como anfitrión de la aceptación Bubblewrap. El backend no se añade
+a `WORK_BACKENDS` y no existe aceptación de producción.
+
+- `./test/integration/t019/run-docker-backend-acceptance.sh`: **4 passed** en
+  Docker Desktop 29.8.1 / WSL2. La suite cubrió worker estático, rechazo antes
+  del efecto, admisión de hijo por `cao.work.*` y aceptación/receipt exactos del
+  receptor, además de cleanup.
+- `./test/integration/t019/run-docker-acceptance.sh`: **8 passed, 0 skipped**
+  en guest Ubuntu 26.10 bajo QEMU TCG. Guest kernel `7.3.0-5-generic`, Bubblewrap
+  0.13.0 con digest
+  `15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250` y
+  Landlock ABI 11. Docker Desktop registró el kernel WSL2
+  `6.18.33.2-microsoft-standard-WSL2`; no se atribuye ese kernel al guest.
+- Suite relacionada: **177 passed, 4 skipped**; los skips son pruebas T098 que
+  requieren host Linux nativo. La suite `test/services/test_work_delegation.py`
+  pasó por separado: **3 passed**.
+- `git diff --check`: limpio. `project-composition-check caos`: 4 contratos
+  conservados, 0 rotos.
+
+El worker Docker tiene un ELF estático, sin mounts del host, red, herramientas
+locales arbitrarias ni rutas de escritura. El socket MCP privado por intento
+permite sólo `cao.work.*` autorizado; `WorkOrigins`
+autoriza sólo hijo/receptor preprovisionados y valida la aceptación exacta.
+El adapter `agent_step` sólo forma parte del gateway interno sellado. No se
+habilita ingreso público, el camino legacy `utils/orchestration.py`, proveedor
+real, base de datos del operador ni despliegue.

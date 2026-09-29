@@ -17,6 +17,7 @@ from cli_agent_orchestrator.services.work_authority import AuthorityDenied, Work
 from cli_agent_orchestrator.services.work_launch import (
     process_launch_adapter,
 )
+from cli_agent_orchestrator.services.work_agent_step import agent_step_adapter
 from cli_agent_orchestrator.services.work_launch_runtime import (
     LaunchIntent,
     LaunchReceipt,
@@ -221,7 +222,7 @@ class DurableLaunchGateway:
 def build_durable_launch_gateway(
     repository: WorkRepository, *, backends: Mapping[str, TerminalBackend]
 ) -> DurableLaunchGateway:
-    """Compose process-only launch admission from verified storage and explicit backends."""
+    """Compose trusted root launches and private managed child deliveries."""
     if not isinstance(repository, WorkRepository):
         raise ValueError("verified work repository required")
     repository.verify_schema()
@@ -230,6 +231,9 @@ def build_durable_launch_gateway(
         backends=backends,
         delivery_adapters={
             ("launch", 2): process_launch_adapter(),
+            # This is reachable only through WorkOrigins' server-sealed child
+            # admission path; DurableLaunchGateway exposes no agent-step intake.
+            ("agent_step", 1): agent_step_adapter(),
         },
     )
     return DurableLaunchGateway(_ComposedLaunchRuntimeProvider(runtime))

@@ -388,17 +388,17 @@ edición obsoleta y ejecutar gates aplicables en un entorno controlado.
   proxy MCP server-owned. Su diseño no activa MCP público ni cambia el ingreso
   ordinario `/sessions`; T017/T019/T035 siguen sujetos a sus gates separados.
 - La aceptación T097/C08 pasó en el guest Ubuntu 26.10 fijado con QEMU TCG,
-  orquestado desde GitHub-hosted `ubuntu-24.04` y descrito en plan.md. Al no
-  existir ni estar previsto un host de despliegue, T097 se cierra con esa
-  evidencia de referencia y el backend Linux permanece sin registrar; Work no
-  se habilita. T019 queda abierto y diferido hasta que se decida un target
-  concreto. Una prueba de separación de mounts en WSL
-  no acredita restricciones de proceso, aislamiento de IPC/red, secreto del
-  proxy ni el ciclo de vida Work. Si utiliza Bubblewrap, debe exigir versión
-  >=0.12.0 y rechazar versiones anteriores antes de cualquier efecto;
-  `/usr/bin/bwrap` 0.11.1 de este host no es apto. El resultado hosted valida
-  sólo esa imagen de referencia; otros hosts deben satisfacer sus gates de
-  runtime antes de admitir Work.
+  orquestado desde GitHub-hosted `ubuntu-24.04` y descrito en plan.md. No hay
+  host de despliegue previsto. Para T019 se eligió Docker local en dos papeles:
+  un contenedor aislado por intento Work y un entorno Docker reproducible para
+  la aceptación Bubblewrap. La aceptación local debe registrar imagen, digest,
+  kernel y capacidades reales; Docker Desktop comparte el kernel Linux de su
+  VM WSL2, por lo que esta evidencia sirve al desarrollo local y no certifica
+  un host de producción. El backend permanece fuera de `WORK_BACKENDS` por
+  defecto y sólo puede habilitarse desde composición local explícita. Si
+  Bubblewrap no alcanza versión >=0.12.0, Landlock ABI >=9, namespaces y cuenta
+  broker dedicada en el entorno concreto, el preflight rechaza antes del
+  efecto; `/usr/bin/bwrap` 0.11.1 de este host no es apto.
 - La aprobación de corte offline T069 del 2026-09-24 limita la garantía a
   writers Work registrados por el runtime. Un bundle v1 sólo prueba integridad
   estructural; ningún lease autoriza restore T070, proveedor, transporte o DB

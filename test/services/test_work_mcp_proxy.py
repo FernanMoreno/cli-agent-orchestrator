@@ -21,6 +21,9 @@ from cli_agent_orchestrator.services.work_mcp_proxy import (
     WorkMcpProxyUnavailable,
     WorkMcpProxyUncertain,
 )
+from cli_agent_orchestrator.services.work_docker_isolation_proof import (
+    issue_docker_runtime_isolation_proof,
+)
 from test.security.test_work_bubblewrap_bound_content import _bound_worker
 
 
@@ -350,6 +353,57 @@ def test_bound_proxy_issue_reserves_endpoint_without_secret_and_cannot_be_reissu
     assert calls == []
 
 
+def test_docker_attach_request_is_forwarded_through_the_reserved_work_proxy(
+    tmp_path, short_proxy_root
+):
+    """Docker's local FD bridge reaches the same durable server-owned MCP proxy."""
+    repository, binding, _, _ = _bound_worker(tmp_path)
+    calls = []
+    proxy = WorkMcpProxy(
+        repository,
+        endpoint_root=short_proxy_root,
+        server_secret_factory=lambda: b"server-only-secret",
+        upstream=lambda request, secret: calls.append((request, secret)) or {
+            "jsonrpc": "2.0",
+            "id": request["id"],
+            "result": {"ok": True},
+        },
+    )
+    endpoint = proxy.create_bound_attempt(
+        attempt_id=binding.attempt_id,
+        generation=1,
+        expected_attempt_revision=1,
+        contract_hash=binding.contract_hash,
+        expires_at=time.time() + 30,
+    )
+
+    class LiveProof:
+        def require_current(self, *_args):
+            return None
+
+    proxy._isolation_proof = LiveProof()
+    proxy._secret = b"server-only-secret"
+    server = threading.Thread(target=lambda: proxy.serve(binding.attempt_id, 1), daemon=True)
+    server.start()
+    request = (
+        b'{"jsonrpc":"2.0","id":"docker-1","method":"tools/call",'
+        b'"params":{"name":"cao.work.child","arguments":{}}}\n'
+    )
+    try:
+        response = proxy.forward_from_docker(endpoint, request)
+        assert json.loads(response) == {
+            "jsonrpc": "2.0",
+            "id": "docker-1",
+            "result": {"ok": True},
+        }
+        server.join(timeout=2)
+        assert not server.is_alive()
+    finally:
+        proxy.close()
+    assert len(calls) == 1
+    assert calls[0][1] == b"server-only-secret"
+
+
 def test_bound_proxy_without_activated_isolation_proof_never_calls_upstream(tmp_path, short_proxy_root):
     repository, binding, _, _ = _bound_worker(tmp_path)
     root = short_proxy_root
@@ -560,6 +614,70 @@ def test_proxy_serves_sequential_calls_and_does_not_replay_identical_request(
         ).fetchone()[0] == 1
 
 
+def test_docker_attach_request_is_forwarded_through_the_reserved_work_proxy(
+    tmp_path, short_proxy_root
+):
+    repository, binding, _, _ = _bound_worker(tmp_path)
+    calls = []
+
+    class LiveProof:
+        def require_current(self, *_args):
+            return None
+
+    proxy = WorkMcpProxy(
+        repository,
+        endpoint_root=short_proxy_root,
+        server_secret_factory=lambda: b"docker-private",
+        upstream=lambda request, secret: calls.append((request, secret)) or {
+            "jsonrpc": "2.0", "id": request["id"], "result": {"accepted": True}
+        },
+    )
+    endpoint = proxy.create_bound_attempt(
+        attempt_id=binding.attempt_id,
+        generation=1,
+        expected_attempt_revision=1,
+        contract_hash=binding.contract_hash,
+        expires_at=time.time() + 30,
+    )
+    docker_identity = {
+        "container_id": "c" * 64,
+        "image_id": "sha256:" + "a" * 64,
+        "started_at": "2026-09-29T10:00:00.000000000Z",
+    }
+    proof = issue_docker_runtime_isolation_proof(
+        attempt_id=binding.attempt_id,
+        generation=1,
+        attempt_revision=1,
+        contract_hash=binding.contract_hash,
+        image_id=docker_identity["image_id"],
+        container_id=docker_identity["container_id"],
+        started_at=docker_identity["started_at"],
+        worker_socket_identity=endpoint.worker_socket_identity,
+        inspect_current=lambda: dict(docker_identity),
+    )
+    proxy.activate_with_isolation_proof(endpoint, proof)
+    server = threading.Thread(
+        target=lambda: proxy.serve(binding.attempt_id, 1), daemon=True
+    )
+    server.start()
+    request = (
+        b'{"jsonrpc":"2.0","id":"docker-1","method":"tools/call",'
+        b'"params":{"name":"Read","arguments":{}}}\n'
+    )
+    try:
+        response = proxy.forward_from_docker(endpoint, request)
+        assert json.loads(response) == {
+            "jsonrpc": "2.0", "id": "docker-1", "result": {"accepted": True}
+        }
+    finally:
+        proxy.close()
+        server.join(timeout=2)
+    assert not server.is_alive()
+    assert len(calls) == 1
+    assert calls[0][0]["params"]["name"] == "Read"
+    assert calls[0][1] == b"docker-private"
+
+
 def test_proxy_recovery_turns_open_intent_into_uncertain(tmp_path):
     repository, binding, _, _ = _bound_worker(tmp_path)
     proxy = WorkMcpProxy(repository)
@@ -582,8 +700,8 @@ def test_proxy_recovery_turns_open_intent_into_uncertain(tmp_path):
             "VALUES ('e1000000000000000000000000000000',1,'intent',?)",
             (time.time(),),
         )
-    assert proxy.recover_incomplete_effects() == 1
-    assert proxy.recover_incomplete_effects() == 0
+    assert proxy.recover_incomplete_effects(binding.attempt_id, 1) == 1
+    assert proxy.recover_incomplete_effects(binding.attempt_id, 1) == 0
     with repository.read_snapshot() as connection:
         assert [row[0] for row in connection.execute(
             "SELECT state FROM work_mcp_proxy_effect_events "

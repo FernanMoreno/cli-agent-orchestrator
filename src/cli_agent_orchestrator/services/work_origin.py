@@ -25,7 +25,7 @@ from cli_agent_orchestrator.models.work_origin import (
     WorkAttemptRef,
     lineage_integrity_fingerprint,
 )
-from cli_agent_orchestrator.security.auth import Principal
+from cli_agent_orchestrator.security.auth import SCOPE_WRITE, Principal, _verified_principal
 from cli_agent_orchestrator.services.work_authority import (
     AuthorityDenied,
     Permissions,
@@ -106,6 +106,7 @@ class _AuthenticatedLineageContext:
 
     requester: Principal
     subjects: tuple[Principal, ...]
+    credential_sha256: str | None
     _runtime: object = field(repr=False, compare=False)
     _seal: str = field(repr=False, compare=False)
 
@@ -492,6 +493,19 @@ class WorkOrigins:
         self.contracts = WorkContracts(repository)
         self._runtime_identity = object()
         self._handoff_secret = secrets.token_bytes(32)
+        self._admission = None
+
+    def _bind_admission(self, admission) -> None:
+        """Pair private origin tools with their one runtime admission owner."""
+        from cli_agent_orchestrator.services.work_admission import WorkAdmission
+
+        if (
+            not isinstance(admission, WorkAdmission)
+            or admission.repository is not self.repository
+            or (self._admission is not None and self._admission is not admission)
+        ):
+            raise OriginDenied("managed origin endpoint belongs to another Work runtime")
+        self._admission = admission
 
     @staticmethod
     def _principal_payload(principal: Principal) -> dict:
@@ -508,6 +522,7 @@ class WorkOrigins:
             {
                 "requester": self._principal_payload(context.requester),
                 "subjects": [self._principal_payload(subject) for subject in context.subjects],
+                "credential_sha256": context.credential_sha256,
             }
         )
 
@@ -530,12 +545,14 @@ class WorkOrigins:
             context = _AuthenticatedLineageContext(
                 requester=requester,
                 subjects=tuple(subjects),
+                credential_sha256=None,
                 _runtime=self._runtime_identity,
                 _seal="",
             )
             return _AuthenticatedLineageContext(
                 requester=requester,
                 subjects=tuple(subjects),
+                credential_sha256=None,
                 _runtime=self._runtime_identity,
                 _seal=self._seal_context(context),
             )
@@ -550,6 +567,228 @@ class WorkOrigins:
         ):
             raise OriginDenied("managed lineage requires authenticated server context")
         return context
+
+    def _credential_context(self, requester, subjects, digest):
+        """Seal identities resolved from one live attempt credential."""
+        try:
+            WorkAuthority._principal(requester)
+            if any(not isinstance(subject, Principal) for subject in subjects):
+                raise AuthorityDenied("verified lineage subjects are required")
+            identities = (requester, *subjects)
+            if len({principal.id for principal in identities}) != len(identities):
+                raise AuthorityDenied("lineage identities must be distinct")
+            context = _AuthenticatedLineageContext(
+                requester=requester,
+                subjects=tuple(subjects),
+                credential_sha256=digest,
+                _runtime=self._runtime_identity,
+                _seal="",
+            )
+            return _AuthenticatedLineageContext(
+                requester=requester,
+                subjects=tuple(subjects),
+                credential_sha256=digest,
+                _runtime=self._runtime_identity,
+                _seal=self._seal_context(context),
+            )
+        except AuthorityDenied as error:
+            raise OriginDenied("attempt credential context is invalid") from error
+
+    @staticmethod
+    def _credential_principal(connection, principal_id):
+        """Rebuild a narrow internal principal only from durable identity rows."""
+        row = connection.execute(
+            "SELECT issuer,subject,kind FROM work_principals WHERE id=?", (principal_id,)
+        ).fetchone()
+        if row is None:
+            raise OriginDenied("attempt principal is no longer registered")
+        try:
+            principal = _verified_principal(row["issuer"], row["subject"], [SCOPE_WRITE], row["kind"])
+        except Exception as error:
+            raise OriginDenied("attempt principal identity is corrupt") from error
+        if principal.id != principal_id:
+            raise OriginDenied("attempt principal identity does not match its registration")
+        return principal
+
+    def _preprovisioned_subject(self, connection, subject_id, expected_kind):
+        """Resolve current subject and authorization refs; callers cannot supply actors."""
+        subject_id = _identity(subject_id, "preprovisioned subject")
+        subject = connection.execute(
+            "SELECT * FROM work_origin_subjects WHERE subject_id=? "
+            "ORDER BY revision DESC LIMIT 1",
+            (subject_id,),
+        ).fetchone()
+        authorization = self.origin_authority._current_authorization(
+            connection, subject_id=subject_id, origin_kind=expected_kind
+        )
+        if (
+            subject is None
+            or subject["origin_kind"] != expected_kind
+            or subject["state"] != "active"
+            or authorization is None
+            or authorization["state"] != "active"
+        ):
+            raise OriginDenied("lineage subject is not actively preprovisioned")
+        return (
+            self._credential_principal(connection, subject_id),
+            OriginSubjectRef(
+                subject_id=subject_id,
+                kind=expected_kind,
+                revision=subject["revision"],
+            ),
+            OriginAuthorizationRef(
+                subject_id=subject_id,
+                origin_kind=expected_kind,
+                revision=authorization["revision"],
+            ),
+        )
+
+    def admit_from_attempt_credential(
+        self,
+        credential: bytes,
+        *,
+        child_subject_id: str,
+        receiver_subject_id: str,
+        intent: ManagedLineageIntent,
+        idempotency_key: str,
+        kind: str,
+    ):
+        """Admit lineage from the private per-attempt endpoint, with no caller principals."""
+        from cli_agent_orchestrator.services.work_attempt_credential import (
+            WorkAttemptCredentialRejected,
+            WorkAttemptCredentials,
+        )
+
+        if type(credential) is not bytes or len(credential) != 32:
+            raise OriginDenied("attempt credential is invalid")
+        credentials = WorkAttemptCredentials(self.repository)
+        digest = hashlib.sha256(credential).hexdigest()
+        try:
+            with self.repository.read_snapshot() as connection:
+                authenticated = credentials.authenticate_in_transaction(connection, credential)
+                parent_attempt_ref = WorkAttemptRef(
+                    work_item_id=authenticated.work_item_id,
+                    attempt_id=authenticated.attempt_id,
+                    generation=authenticated.generation,
+                )
+                requester = self._credential_principal(connection, authenticated.principal_id)
+                child, child_ref, child_auth_ref = self._preprovisioned_subject(
+                    connection, child_subject_id, "child"
+                )
+                receiver, receiver_ref, receiver_auth_ref = self._preprovisioned_subject(
+                    connection, receiver_subject_id, "receiver"
+                )
+                context = self._credential_context(
+                    requester, (child, receiver), digest
+                )
+        except WorkAttemptCredentialRejected as error:
+            raise OriginDenied("attempt credential is expired, revoked or stale") from error
+        return self.admit(
+            authenticated_context=context,
+            parent_attempt_ref=parent_attempt_ref,
+            child_subject_ref=child_ref,
+            child_authorization_ref=child_auth_ref,
+            receiver_subject_ref=receiver_ref,
+            receiver_authorization_ref=receiver_auth_ref,
+            intent=intent,
+            idempotency_key=idempotency_key,
+            kind=kind,
+        )
+
+    def handle_mcp_request(
+        self, request: dict, credential: bytes, *, receiver_credential: bytes | None = None
+    ) -> dict:
+        """Dispatch attempt-bound lineage and independently authenticated ACK tools."""
+        request_id = request.get("id") if type(request) is dict else None
+        try:
+            if (
+                type(request) is not dict
+                or request.get("jsonrpc") != "2.0"
+                or request.get("method") != "tools/call"
+                or type(request.get("params")) is not dict
+                or set(request["params"]) != {"name", "arguments"}
+                or type(request["params"].get("arguments")) is not dict
+            ):
+                raise OriginDenied("managed Work proxy request is invalid")
+            name = request["params"]["name"]
+            arguments = request["params"]["arguments"]
+            if name == "cao.work.task_received":
+                if arguments or type(receiver_credential) is not bytes:
+                    raise OriginDenied("receiver acknowledgement requires its separate credential")
+                work = self.accept_task_received_with_credentials(
+                    attempt_credential=credential,
+                    receiver_credential=receiver_credential,
+                )
+                attempt = work["attempts"][-1]
+                result = {
+                    "attempt_id": attempt["id"],
+                    "generation": attempt["generation"],
+                    "state": attempt["state"],
+                    "work_item_id": work["id"],
+                }
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(
+                                    result, sort_keys=True, separators=(",", ":")
+                                ),
+                            }
+                        ]
+                    },
+                }
+            kind = {"cao.work.child": "child", "cao.work.handoff": "handoff"}.get(
+                name
+            )
+            if kind is None or self._admission is None:
+                raise OriginDenied("managed Work proxy tool is unavailable")
+            if set(arguments) != {
+                "child_subject_id",
+                "receiver_subject_id",
+                "intent",
+                "idempotency_key",
+            }:
+                raise OriginDenied("managed Work proxy arguments are invalid")
+            intent = ManagedLineageIntent.model_validate_json(
+                json.dumps(arguments["intent"], allow_nan=False)
+            )
+            handoff = self.admit_from_attempt_credential(
+                credential,
+                child_subject_id=arguments["child_subject_id"],
+                receiver_subject_id=arguments["receiver_subject_id"],
+                intent=intent,
+                idempotency_key=arguments["idempotency_key"],
+                kind=kind,
+            )
+            child = self._admission.admit_managed_lineage(handoff)
+            attempt = child["attempts"][0]
+            result = {
+                "work_item_id": child["id"],
+                "attempt_id": attempt["id"],
+                "generation": attempt["generation"],
+                "state": child["state"],
+            }
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(result, sort_keys=True, separators=(",", ":")),
+                        }
+                    ]
+                },
+            }
+        except Exception:
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32001, "message": "Managed Work request rejected"},
+            }
 
     @staticmethod
     def _kind(value: str) -> str:
@@ -714,6 +953,333 @@ class WorkOrigins:
             raise OriginDenied("task receipt attempt revision changed")
         return origin, attempt
 
+    @staticmethod
+    def _receiver_acceptance_hash(
+        *,
+        attempt_ref,
+        receiver_subject_ref,
+        receiver_authorization_ref,
+        delivery_id,
+        delivery_hash,
+    ) -> str:
+        payload = _canonical(
+            {
+                "attempt": attempt_ref.model_dump(mode="json"),
+                "delivery_hash": delivery_hash,
+                "delivery_id": delivery_id,
+                "receiver_authorization_ref": receiver_authorization_ref.model_dump(mode="json"),
+                "receiver_subject_ref": receiver_subject_ref.model_dump(mode="json"),
+                "schema_version": 1,
+            }
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _record_task_received_acceptance_in_transaction(
+        self,
+        connection,
+        *,
+        attempt_ref,
+        receiver_subject_ref,
+        receiver_authorization_ref,
+        origin,
+    ):
+        """Persist receiver acceptance inside the caller's Work transaction."""
+        digest = self._receiver_acceptance_hash(
+            attempt_ref=attempt_ref,
+            receiver_subject_ref=receiver_subject_ref,
+            receiver_authorization_ref=receiver_authorization_ref,
+            delivery_id=origin["delivery_id"],
+            delivery_hash=origin["delivery_hash"],
+        )
+        prior = connection.execute(
+            "SELECT * FROM work_task_receiver_acceptances "
+            "WHERE attempt_id=? AND generation=?",
+            (attempt_ref.attempt_id, attempt_ref.generation),
+        ).fetchone()
+        expected = (
+            receiver_subject_ref.subject_id,
+            receiver_subject_ref.revision,
+            receiver_authorization_ref.revision,
+            origin["delivery_id"],
+            origin["delivery_hash"],
+            digest,
+        )
+        if prior is not None:
+            actual = (
+                prior["receiver_subject_id"],
+                prior["receiver_subject_revision"],
+                prior["receiver_authorization_revision"],
+                prior["delivery_id"],
+                prior["delivery_hash"],
+                prior["acceptance_sha256"],
+            )
+            if actual != expected:
+                raise OriginConflict("receiver acceptance replay contradicts durable evidence")
+            return dict(prior)
+        connection.execute(
+            """INSERT INTO work_task_receiver_acceptances
+               (attempt_id,generation,receiver_subject_id,receiver_subject_revision,
+                receiver_authorization_revision,delivery_id,delivery_hash,
+                acceptance_sha256,accepted_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                attempt_ref.attempt_id,
+                attempt_ref.generation,
+                *expected[:5],
+                digest,
+                time.time(),
+            ),
+        )
+        return dict(
+            connection.execute(
+                "SELECT * FROM work_task_receiver_acceptances "
+                "WHERE attempt_id=? AND generation=?",
+                (attempt_ref.attempt_id, attempt_ref.generation),
+            ).fetchone()
+        )
+
+    def accept_task_received_with_credentials(
+        self, *, attempt_credential: bytes, receiver_credential: bytes
+    ) -> dict:
+        """Atomically persist receiver acceptance and the Work ACK transition."""
+        from uuid import uuid4
+
+        from cli_agent_orchestrator.services.work_attempt_credential import (
+            WorkAttemptCredentialRejected,
+            WorkAttemptCredentials,
+        )
+
+        credentials = WorkAttemptCredentials(self.repository)
+        try:
+            with self.repository.transaction() as connection:
+                self.repository._verify(connection)
+                executor = credentials.authenticate_in_transaction(
+                    connection, attempt_credential
+                )
+                receiver = credentials.authenticate_receiver_in_transaction(
+                    connection, receiver_credential
+                )
+                if (
+                    executor.attempt_id,
+                    executor.generation,
+                    executor.work_item_id,
+                ) != (receiver.attempt_id, receiver.generation, receiver.work_item_id):
+                    raise OriginDenied("receiver credential belongs to another Work attempt")
+                attempt_ref = WorkAttemptRef(
+                    work_item_id=executor.work_item_id,
+                    attempt_id=executor.attempt_id,
+                    generation=executor.generation,
+                )
+                receiver_subject_ref = OriginSubjectRef(
+                    subject_id=receiver.receiver_subject_id,
+                    kind="receiver",
+                    revision=receiver.receiver_subject_revision,
+                )
+                receiver_authorization_ref = OriginAuthorizationRef(
+                    subject_id=receiver.receiver_subject_id,
+                    origin_kind="receiver",
+                    revision=receiver.receiver_authorization_revision,
+                )
+                attempt = connection.execute(
+                    "SELECT state,revision FROM work_attempts WHERE id=? AND generation=?",
+                    (attempt_ref.attempt_id, attempt_ref.generation),
+                ).fetchone()
+                if attempt is None:
+                    raise OriginDenied("receiver attempt no longer exists")
+                if attempt["state"] == "acknowledged":
+                    origin = connection.execute(
+                        "SELECT * FROM work_child_origin_bindings "
+                        "WHERE child_attempt_id=? AND child_generation=?",
+                        (attempt_ref.attempt_id, attempt_ref.generation),
+                    ).fetchone()
+                    if origin is None:
+                        raise OriginDenied("acknowledged receiver lineage is unavailable")
+                    self._revalidate_integrity(connection, origin)
+                    self._revalidate_replay_authorizations(connection, origin)
+                    if (
+                        origin["receiver_subject_id"] != receiver.receiver_subject_id
+                        or origin["delivery_id"] != receiver.delivery_id
+                        or origin["delivery_hash"] != receiver.delivery_hash
+                    ):
+                        raise OriginDenied("receiver replay differs from its durable delivery")
+                    receipt_row = connection.execute(
+                        "SELECT 1 FROM work_task_received_receipts "
+                        "WHERE attempt_id=? AND generation=?",
+                        (attempt_ref.attempt_id, attempt_ref.generation),
+                    ).fetchone()
+                    acceptance = connection.execute(
+                        "SELECT * FROM work_task_receiver_acceptances "
+                        "WHERE attempt_id=? AND generation=?",
+                        (attempt_ref.attempt_id, attempt_ref.generation),
+                    ).fetchone()
+                    if receipt_row is None or acceptance is None:
+                        raise OriginConflict("acknowledged Work has incomplete receiver evidence")
+                    replay = TaskReceivedReceiptV1(
+                        attempt=attempt_ref,
+                        attempt_revision=attempt["revision"],
+                        receiver_subject_ref=receiver_subject_ref,
+                        receiver_authorization_ref=receiver_authorization_ref,
+                        delivery_id=receiver.delivery_id,
+                        delivery_hash=receiver.delivery_hash,
+                        nonce="receiver-replay",
+                        proof="0" * 64,
+                    )
+                    self._require_receiver_acceptance(connection, replay, origin)
+                    return self.repository._work(connection, attempt_ref.work_item_id)
+                if attempt["state"] != "sent":
+                    raise OriginDenied("receiver can acknowledge only the current sent attempt")
+                origin, live_attempt = self._task_received_origin(
+                    connection,
+                    attempt_ref=attempt_ref,
+                    receiver_subject_ref=receiver_subject_ref,
+                    receiver_authorization_ref=receiver_authorization_ref,
+                    delivery_id=receiver.delivery_id,
+                    delivery_hash=receiver.delivery_hash,
+                )
+                self._record_task_received_acceptance_in_transaction(
+                    connection,
+                    attempt_ref=attempt_ref,
+                    receiver_subject_ref=receiver_subject_ref,
+                    receiver_authorization_ref=receiver_authorization_ref,
+                    origin=origin,
+                )
+                receipt = TaskReceivedReceiptV1(
+                    attempt=attempt_ref,
+                    attempt_revision=live_attempt["revision"],
+                    receiver_subject_ref=receiver_subject_ref,
+                    receiver_authorization_ref=receiver_authorization_ref,
+                    delivery_id=receiver.delivery_id,
+                    delivery_hash=receiver.delivery_hash,
+                    nonce=uuid4().hex,
+                    proof="0" * 64,
+                )
+                receipt = receipt.model_copy(
+                    update={"proof": self._seal_task_receipt(receipt)}
+                )
+                validated = self.validate_task_received_receipt(connection, receipt)
+                return self.repository._record_task_received_receipt(connection, **validated)
+        except WorkAttemptCredentialRejected as error:
+            raise OriginDenied("receiver acceptance credential is expired or stale") from error
+
+    def record_task_received_acceptance(
+        self,
+        *,
+        authenticated_context,
+        attempt_ref,
+        receiver_subject_ref,
+        receiver_authorization_ref,
+    ) -> dict:
+        """Persist exact receiver acknowledgement before any Work receipt is issued."""
+        context = self._context(authenticated_context)
+        attempt_ref = self._ref(attempt_ref, WorkAttemptRef, "receiver acceptance attempt")
+        receiver_subject_ref = self._ref(
+            receiver_subject_ref, OriginSubjectRef, "receiver acceptance subject"
+        )
+        receiver_authorization_ref = self._ref(
+            receiver_authorization_ref,
+            OriginAuthorizationRef,
+            "receiver acceptance authorization",
+        )
+        with self.repository.transaction() as connection:
+            self.repository._verify(connection)
+            try:
+                self.origin_authority._registered(connection, context.requester)
+                origin, _ = self._task_received_origin(
+                    connection,
+                    attempt_ref=attempt_ref,
+                    receiver_subject_ref=receiver_subject_ref,
+                    receiver_authorization_ref=receiver_authorization_ref,
+                )
+            except (AuthorityDenied, OriginDenied) as error:
+                raise OriginDenied("receiver acceptance is not currently authorized") from error
+            if (
+                context.requester.id != origin["receiver_subject_id"]
+                or context.requester.id != receiver_subject_ref.subject_id
+            ):
+                raise OriginDenied("receiver acceptance requires the exact authenticated receiver")
+            digest = self._receiver_acceptance_hash(
+                attempt_ref=attempt_ref,
+                receiver_subject_ref=receiver_subject_ref,
+                receiver_authorization_ref=receiver_authorization_ref,
+                delivery_id=origin["delivery_id"],
+                delivery_hash=origin["delivery_hash"],
+            )
+            prior = connection.execute(
+                "SELECT * FROM work_task_receiver_acceptances "
+                "WHERE attempt_id=? AND generation=?",
+                (attempt_ref.attempt_id, attempt_ref.generation),
+            ).fetchone()
+            expected = (
+                receiver_subject_ref.subject_id,
+                receiver_subject_ref.revision,
+                receiver_authorization_ref.revision,
+                origin["delivery_id"],
+                origin["delivery_hash"],
+                digest,
+            )
+            if prior is not None:
+                actual = (
+                    prior["receiver_subject_id"],
+                    prior["receiver_subject_revision"],
+                    prior["receiver_authorization_revision"],
+                    prior["delivery_id"],
+                    prior["delivery_hash"],
+                    prior["acceptance_sha256"],
+                )
+                if actual != expected:
+                    raise OriginConflict("receiver acceptance replay contradicts durable evidence")
+                return dict(prior)
+            connection.execute(
+                """INSERT INTO work_task_receiver_acceptances
+                   (attempt_id,generation,receiver_subject_id,receiver_subject_revision,
+                    receiver_authorization_revision,delivery_id,delivery_hash,
+                    acceptance_sha256,accepted_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (
+                    attempt_ref.attempt_id,
+                    attempt_ref.generation,
+                    *expected[:5],
+                    digest,
+                    time.time(),
+                ),
+            )
+            return dict(
+                connection.execute(
+                    "SELECT * FROM work_task_receiver_acceptances "
+                    "WHERE attempt_id=? AND generation=?",
+                    (attempt_ref.attempt_id, attempt_ref.generation),
+                ).fetchone()
+            )
+
+    def _require_receiver_acceptance(self, connection, receipt, origin) -> None:
+        acceptance = connection.execute(
+            "SELECT * FROM work_task_receiver_acceptances WHERE attempt_id=? AND generation=?",
+            (receipt.attempt.attempt_id, receipt.attempt.generation),
+        ).fetchone()
+        expected_hash = self._receiver_acceptance_hash(
+            attempt_ref=receipt.attempt,
+            receiver_subject_ref=receipt.receiver_subject_ref,
+            receiver_authorization_ref=receipt.receiver_authorization_ref,
+            delivery_id=origin["delivery_id"],
+            delivery_hash=origin["delivery_hash"],
+        )
+        if acceptance is None or (
+            acceptance["receiver_subject_id"],
+            acceptance["receiver_subject_revision"],
+            acceptance["receiver_authorization_revision"],
+            acceptance["delivery_id"],
+            acceptance["delivery_hash"],
+            acceptance["acceptance_sha256"],
+        ) != (
+            receipt.receiver_subject_ref.subject_id,
+            receipt.receiver_subject_ref.revision,
+            receipt.receiver_authorization_ref.revision,
+            origin["delivery_id"],
+            origin["delivery_hash"],
+            expected_hash,
+        ):
+            raise OriginDenied("task receipt requires exact durable receiver acceptance")
+
     def issue_task_received_receipt(
         self,
         *,
@@ -764,6 +1330,7 @@ class WorkOrigins:
                 nonce=nonce,
                 proof="0" * 64,
             )
+            self._require_receiver_acceptance(connection, provisional, origin)
             return provisional.model_copy(update={"proof": self._seal_task_receipt(provisional)})
 
     def validate_task_received_receipt(
@@ -785,6 +1352,7 @@ class WorkOrigins:
             delivery_id=receipt.delivery_id,
             delivery_hash=receipt.delivery_hash,
         )
+        self._require_receiver_acceptance(connection, receipt, origin)
         return {
             "attempt_id": receipt.attempt.attempt_id,
             "generation": receipt.attempt.generation,
@@ -878,6 +1446,28 @@ class WorkOrigins:
         intent = self._intent(intent)
         idempotency_key = _identity(idempotency_key, "idempotency key")
         kind = self._kind(kind)
+        if context.credential_sha256 is not None:
+            from cli_agent_orchestrator.services.work_attempt_credential import (
+                WorkAttemptCredentialRejected,
+                WorkAttemptCredentials,
+            )
+
+            try:
+                credential = WorkAttemptCredentials(self.repository).authenticate_digest_in_transaction(
+                    connection, context.credential_sha256
+                )
+            except WorkAttemptCredentialRejected as error:
+                raise OriginDenied("attempt credential authority is no longer live") from error
+            if (
+                (credential.attempt_id, credential.generation, credential.work_item_id)
+                != (
+                    parent_attempt_ref.attempt_id,
+                    parent_attempt_ref.generation,
+                    parent_attempt_ref.work_item_id,
+                )
+                or credential.principal_id != context.requester.id
+            ):
+                raise OriginDenied("attempt credential does not authorize this parent attempt")
         contract = self.contracts._contract(intent.contract)
         delivery = WorkDeliveries.envelope(intent.delivery, contract.operation_kind)
         intent = intent.model_copy(update={"contract": contract, "delivery": delivery})

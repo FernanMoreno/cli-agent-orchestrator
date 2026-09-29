@@ -1154,3 +1154,73 @@ def test_v33_to_v34_adds_append_only_mcp_effect_journal(work_store_paths):
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         with pytest.raises(module.SchemaMismatch):
             module.WorkRepository._verify(connection, version=33)
+
+
+def test_v36_attempt_credentials_migrate_additively_without_backfill(tmp_path, monkeypatch):
+    """T019 stores a digest per new attempt and never invents legacy credentials."""
+    module = repository_module()
+    repository = module.WorkRepository(tmp_path / "attempt-credentials-v36.sqlite3")
+
+    monkeypatch.setattr(module, "SCHEMA_VERSION", 35)
+    repository.initialize()
+    with repository.connection() as connection:
+        assert connection.execute("SELECT max(version) FROM work_migrations").fetchone()[0] == 35
+        assert "work_attempt_credentials" not in module._schema_objects(connection)
+
+    monkeypatch.setattr(module, "SCHEMA_VERSION", 36)
+    repository.initialize()
+    with repository.connection() as connection:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(work_attempt_credentials)")
+        }
+        assert "credential_sha256" in columns
+        assert not {"credential", "secret", "token"} & columns
+        assert connection.execute("SELECT count(*) FROM work_attempt_credentials").fetchone()[0] == 0
+        assert connection.execute("SELECT max(version) FROM work_migrations").fetchone()[0] == 36
+        assert module._schema_objects(connection) == module._EXPECTED_SCHEMAS[36]
+
+
+def test_v37_receiver_acceptance_migrates_without_legacy_proofs(tmp_path, monkeypatch):
+    module = repository_module()
+    repository = module.WorkRepository(tmp_path / "receiver-acceptance-v37.sqlite3")
+
+    monkeypatch.setattr(module, "SCHEMA_VERSION", 36)
+    repository.initialize()
+    with repository.connection() as connection:
+        assert "work_task_receiver_acceptances" not in module._schema_objects(connection)
+
+    monkeypatch.setattr(module, "SCHEMA_VERSION", 37)
+    repository.initialize()
+    with repository.connection() as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM work_task_receiver_acceptances"
+        ).fetchone()[0] == 0
+        assert connection.execute("SELECT max(version) FROM work_migrations").fetchone()[0] == 37
+        assert module._schema_objects(connection) == module._EXPECTED_SCHEMAS[37]
+
+
+def test_v38_receiver_credentials_migrate_without_legacy_secrets(tmp_path, monkeypatch):
+    """Receiver bearer history is additive and never backfilled from lineage rows."""
+    module = repository_module()
+    repository = module.WorkRepository(tmp_path / "receiver-credentials-v38.sqlite3")
+
+    monkeypatch.setattr(module, "SCHEMA_VERSION", 37)
+    repository.initialize()
+    with repository.connection() as connection:
+        assert "work_task_receiver_credentials" not in module._schema_objects(connection)
+
+    monkeypatch.setattr(module, "SCHEMA_VERSION", 38)
+    repository.initialize()
+    with repository.connection() as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM work_task_receiver_credentials"
+        ).fetchone()[0] == 0
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(work_task_receiver_credentials)")
+        }
+        assert "credential_sha256" in columns
+        assert not {"credential", "secret", "token"} & columns
+        assert connection.execute("SELECT max(version) FROM work_migrations").fetchone()[0] == 38
+        assert module._schema_objects(connection) == module._EXPECTED_SCHEMAS[38]

@@ -339,7 +339,7 @@ class ManagedLineageIntent(FrozenOriginModel):
     """Unprivileged child request content; effective authority is resolved server-side."""
 
     schema_version: Literal[1] = 1
-    contract: EffectiveWorkContract
+    contract: EffectiveWorkContract | EffectiveWorkContractV2
     delivery: WorkDeliveryEnvelope
     lease_seconds: Annotated[int, Field(gt=0, le=3600)]
     native_child_id: Identity | None = None

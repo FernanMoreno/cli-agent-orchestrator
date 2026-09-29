@@ -20,7 +20,8 @@ from cli_agent_orchestrator.models.work_contract import (
     ContractPermissions,
     ContractResources,
     ContractSnapshot,
-    EffectiveWorkContract,
+    EffectiveWorkContractV2,
+    ExecutableIdentity,
     ObservedValue,
 )
 from cli_agent_orchestrator.security import auth
@@ -58,6 +59,10 @@ class CapableBackend(TmuxBackend):
 
     def preflight_work(self, restriction):
         self.preflights.append(restriction)
+
+    def execute_bound_process(self, *args, **kwargs):
+        self.effects.append((args, kwargs))
+        raise AssertionError("admission must not execute the worker")
 
     def create_session(self, *args, **kwargs):
         self.effects.append((args, kwargs))
@@ -98,7 +103,11 @@ def _provisioned_launch(repository, root, *, backend):
         principal,
         job_id=job["id"],
         providers={"mock_cli"},
-        permissions=Permissions(tools={"knowledge.read", "tool.read"}, paths={str(root)}),
+        permissions=Permissions(
+            tools={"knowledge.read", "tool.read"},
+            paths={str(root)},
+            commands={"/bin/alpha"},
+        ),
         expires_at=time.time() + 600,
     )
     snapshot = DelegationSnapshots(
@@ -113,12 +122,14 @@ def _provisioned_launch(repository, root, *, backend):
         scope_id=job["project_id"],
         resolver=lambda connection, actor: ResolvedSnapshot("composition snapshot"),
     )
-    contract = EffectiveWorkContract(
+    contract = EffectiveWorkContractV2(
         id="composition-contract",
         operation_kind="launch",
         provider="mock_cli",
         backend=backend,
-        permissions=ContractPermissions(tools=("tool.read",), paths=(str(root),)),
+        permissions=ContractPermissions(
+            tools=("tool.read",), paths=(str(root),), commands=("/bin/alpha",)
+        ),
         resources=ContractResources(
             checkout_root=str(root), write_paths=(str(root / "work"),), units=1
         ),
@@ -126,6 +137,16 @@ def _provisioned_launch(repository, root, *, backend):
             state="present", id=snapshot.id, delivered_hash=snapshot.delivered_hash
         ),
         model=ObservedValue(status="known", value="mock-model", provenance="launch_config"),
+        executable_identities=(
+            ExecutableIdentity(
+                command_token="/bin/alpha",
+                content_reference="sha256:" + "a" * 64,
+                sha256_digest="a" * 64,
+                elf_machine="x86_64",
+                elf_class="ELF64",
+                endianness="little",
+            ),
+        ),
     )
     WorkProvisioning(repository).provision_launch(
         principal,
@@ -136,7 +157,7 @@ def _provisioned_launch(repository, root, *, backend):
         grant_id=grant.id,
         grant_revision=grant.revision,
         contract=contract,
-        adapter_version=1,
+        adapter_version=2,
         lease_seconds=300,
     )
     return principal
@@ -291,7 +312,7 @@ def test_lifespan_admits_queued_work_only_through_the_exact_registered_backend(
         response = client.post("/work-launches", json=_launch_body())
 
     assert composed_server.calls == ["init_db", "get_backend"]
-    assert response.status_code == 202
+    assert response.status_code == 202, response.json()
     assert response.json()["state"] == "queued"
     assert _durable_counts(composed_server.repository) == (1, 1, 1, 1, 1)
     assert len(backend.preflights) == 1
@@ -319,7 +340,7 @@ def test_lifespan_composes_omitted_selection_through_durable_work_only(
         response = client.post("/work-launches", json=body)
 
     assert composed_server.calls == ["init_db", "get_backend"]
-    assert response.status_code == 202
+    assert response.status_code == 202, response.json()
     assert response.json()["state"] == "queued"
     assert _durable_counts(composed_server.repository) == (1, 1, 1, 1, 1)
     assert len(backend.preflights) == 1

@@ -8,6 +8,10 @@ from cli_agent_orchestrator.clients.work_repository import (
     SchemaMismatch,
     WorkRepository,
 )
+from cli_agent_orchestrator.models.work_contract import (
+    EffectiveWorkContractV2,
+    ExecutableIdentity,
+)
 from cli_agent_orchestrator.security import auth
 from cli_agent_orchestrator.services.work_authority import WorkAuthority
 from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
@@ -44,6 +48,28 @@ def _request(gateway_module):
     )
 
 
+class ProcessLaunchFakeBackend(ProtectedFakeBackend):
+    def execute_bound_process(self, *_args, **_kwargs):
+        raise AssertionError("composition test must not launch the worker")
+
+
+def _process_launch_contract(contract):
+    payload = contract.model_dump(mode="python")
+    payload["schema_version"] = 2
+    payload["permissions"]["commands"] = ("/bin/alpha",)
+    payload["executable_identities"] = (
+        ExecutableIdentity(
+            command_token="/bin/alpha",
+            content_reference="sha256:" + "a" * 64,
+            sha256_digest="a" * 64,
+            elf_machine="x86_64",
+            elf_class="ELF64",
+            endianness="little",
+        ).model_dump(mode="python"),
+    )
+    return EffectiveWorkContractV2.model_validate(payload)
+
+
 def test_factory_composes_verified_sqlite_then_resolves_later_provision_and_replays_restart(
     trusted_setup,
 ):
@@ -51,7 +77,7 @@ def test_factory_composes_verified_sqlite_then_resolves_later_provision_and_repl
     from cli_agent_orchestrator.services import work_launch_gateway as gateway_module
 
     repository, principal, _, _, _, _ = trusted_setup
-    backend = ProtectedFakeBackend()
+    backend = ProcessLaunchFakeBackend()
     before_factory = _authority_counts(repository)
 
     gateway = gateway_module.build_durable_launch_gateway(
@@ -61,7 +87,19 @@ def test_factory_composes_verified_sqlite_then_resolves_later_provision_and_repl
     assert _authority_counts(repository) == before_factory
     assert durable_counts(repository) == (0, 0, 0, 0, 0)
 
-    provision(trusted_setup)
+    repository, principal, _, job, grant, contract = trusted_setup
+    WorkProvisioning(repository).provision_launch(
+        principal,
+        subject=principal,
+        selector="opaque",
+        expected_revision=0,
+        job_id=job["id"],
+        grant_id=grant.id,
+        grant_revision=grant.revision,
+        contract=_process_launch_contract(contract),
+        adapter_version=2,
+        lease_seconds=300,
+    )
     first = gateway.admit(principal, _request(gateway_module))
     restarted = gateway_module.build_durable_launch_gateway(
         repository, backends={"test": backend}
@@ -76,6 +114,20 @@ def test_factory_composes_verified_sqlite_then_resolves_later_provision_and_repl
         ).fetchone()
     assert stored["idempotency_key"] == f"launch-v1-{stored['request_hash']}"
     assert backend.effects == []
+
+
+def test_factory_registers_private_managed_agent_step_delivery(trusted_setup):
+    """Managed lineage may use the server-owned agent-step adapter after handoff."""
+    from cli_agent_orchestrator.services import work_launch_gateway as gateway_module
+
+    repository, _principal, *_rest = trusted_setup
+    gateway = gateway_module.build_durable_launch_gateway(
+        repository, backends={"test": ProtectedFakeBackend()}
+    )
+    adapters = gateway._launch_runtime_provider._runtime._admission.deliveries.adapters
+
+    assert set(adapters) == {("launch", 2), ("agent_step", 1)}
+    assert adapters[("agent_step", 1)].payload_model.__name__ == "AgentStepPayload"
 
 
 @pytest.mark.parametrize("change", ("retire", "revoke"))
@@ -125,7 +177,7 @@ def test_factory_rejects_unverified_store_invalid_backend_and_unsupported_adapte
     from cli_agent_orchestrator.services import work_launch_gateway as gateway_module
 
     repository, principal, _, job, grant, contract = trusted_setup
-    backend = ProtectedFakeBackend()
+    backend = ProcessLaunchFakeBackend()
     before_invalid_backend = _authority_counts(repository)
 
     with pytest.raises(ValueError, match="explicit server backend registry required"):
@@ -152,7 +204,7 @@ def test_factory_rejects_unverified_store_invalid_backend_and_unsupported_adapte
         grant_id=grant.id,
         grant_revision=grant.revision,
         contract=contract,
-        adapter_version=2,
+        adapter_version=3,
         lease_seconds=300,
     )
     gateway = gateway_module.build_durable_launch_gateway(

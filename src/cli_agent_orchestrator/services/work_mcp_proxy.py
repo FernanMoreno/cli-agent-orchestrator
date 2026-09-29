@@ -40,6 +40,9 @@ from cli_agent_orchestrator.models.work_contract import EffectiveWorkContractV2
 from cli_agent_orchestrator.services.work_bubblewrap_isolation_proof import (
     WorkBubblewrapRuntimeIsolationProof,
 )
+from cli_agent_orchestrator.services.work_docker_isolation_proof import (
+    WorkDockerRuntimeIsolationProof,
+)
 from cli_agent_orchestrator.services.work_contract import WorkContracts
 
 _MAX_REQUEST_BYTES = 16384
@@ -131,6 +134,7 @@ class WorkMcpProxy:
         self._consumed = False
         self._request_timeout: float | None = _SOCKET_TIMEOUT_SECONDS
         self._lifecycle_lock = threading.RLock()
+        self._worker_io_lock = threading.Lock()
 
     @staticmethod
     def _validate_binding(attempt_id: str, generation: int, expires_at: float) -> AttemptBinding:
@@ -259,14 +263,18 @@ class WorkMcpProxy:
             ) from exc
 
     def activate_with_isolation_proof(
-        self, endpoint: WorkMcpEndpoint, proof: WorkBubblewrapRuntimeIsolationProof
+        self,
+        endpoint: WorkMcpEndpoint,
+        proof: WorkBubblewrapRuntimeIsolationProof | WorkDockerRuntimeIsolationProof,
     ) -> None:
         """Expose server-side credentials only after the worker setup ACK is durable."""
         with self._lifecycle_lock:
             self._activate_with_isolation_proof(endpoint, proof)
 
     def _activate_with_isolation_proof(
-        self, endpoint: WorkMcpEndpoint, proof: WorkBubblewrapRuntimeIsolationProof
+        self,
+        endpoint: WorkMcpEndpoint,
+        proof: WorkBubblewrapRuntimeIsolationProof | WorkDockerRuntimeIsolationProof,
     ) -> None:
         issue = self._issue
         if (
@@ -275,7 +283,9 @@ class WorkMcpProxy:
             or self._broker_socket is None
             or self._worker_socket is None
             or self._secret is not None
-            or not isinstance(proof, WorkBubblewrapRuntimeIsolationProof)
+            or not isinstance(
+                proof, (WorkBubblewrapRuntimeIsolationProof, WorkDockerRuntimeIsolationProof)
+            )
             or (proof.attempt_id, proof.generation, proof.attempt_revision, proof.contract_hash)
             != (issue[0], issue[1], issue[2], issue[3])
             or proof.worker_socket_identity != endpoint.worker_socket_identity
@@ -293,6 +303,66 @@ class WorkMcpProxy:
             raise WorkMcpProxyUnavailable("server-side proxy credential is invalid")
         self._secret = secret
         self._isolation_proof = proof
+
+    def forward_from_docker(self, endpoint: WorkMcpEndpoint, request: bytes) -> bytes:
+        """Bridge one bounded Docker attach request through the private proxy socket."""
+        if (
+            endpoint is not self._endpoint
+            or self._issue is None
+            or self._secret is None
+            or not isinstance(self._isolation_proof, WorkDockerRuntimeIsolationProof)
+            or self._worker_socket is None
+            or self._broker_socket is None
+        ):
+            raise WorkMcpProxyRejected("Docker proxy endpoint is not live for this owner")
+        self._request(request)
+        try:
+            self._isolation_proof.require_current(*self._issue[:2], self._issue[3])
+        except RuntimeError as error:
+            raise WorkMcpProxyRejected("Docker isolation expired before proxy request") from error
+        with self._worker_io_lock:
+            worker_socket = self._worker_socket
+            if worker_socket is None:
+                raise WorkMcpProxyRejected("Docker proxy endpoint was revoked")
+            previous_timeout = worker_socket.gettimeout()
+            try:
+                worker_socket.settimeout(_SOCKET_TIMEOUT_SECONDS)
+                worker_socket.sendall(request)
+                response = bytearray()
+                while len(response) <= _MAX_RESPONSE_BYTES:
+                    chunk = worker_socket.recv(min(4096, _MAX_RESPONSE_BYTES + 1 - len(response)))
+                    if not chunk:
+                        break
+                    response.extend(chunk)
+                    if b"\n" in chunk:
+                        break
+            except (OSError, TimeoutError) as error:
+                raise WorkMcpProxyRejected("Docker proxy response is unavailable") from error
+            finally:
+                try:
+                    worker_socket.settimeout(previous_timeout)
+                except OSError:
+                    pass
+        if (
+            not response.endswith(b"\n")
+            or response.count(b"\n") != 1
+            or len(response) > _MAX_RESPONSE_BYTES
+        ):
+            raise WorkMcpProxyRejected("Docker proxy response is outside its bound")
+        try:
+            value = json.loads(response[:-1].decode("utf-8"))
+        except (UnicodeError, ValueError, TypeError) as error:
+            raise WorkMcpProxyRejected("Docker proxy response is invalid") from error
+        request_value = self._request(request)
+        if (
+            type(value) is not dict
+            or value.get("jsonrpc") != "2.0"
+            or type(value.get("id")) is not type(request_value["id"])
+            or value.get("id") != request_value["id"]
+            or set(value) not in ({"jsonrpc", "id", "result"}, {"jsonrpc", "id", "error"})
+        ):
+            raise WorkMcpProxyRejected("Docker proxy response does not match its request")
+        return bytes(response)
 
     @staticmethod
     def _file_identity(path: Path | int) -> tuple[int, int]:
@@ -806,7 +876,9 @@ class WorkMcpProxy:
         """Close both private socketpair ends and discard server-side authority."""
         with self._lifecycle_lock:
             proof, self._isolation_proof = self._isolation_proof, None
-            if isinstance(proof, WorkBubblewrapRuntimeIsolationProof):
+            if isinstance(
+                proof, (WorkBubblewrapRuntimeIsolationProof, WorkDockerRuntimeIsolationProof)
+            ):
                 proof.close()
             broker, self._broker_socket = self._broker_socket, None
             worker, self._worker_socket = self._worker_socket, None
