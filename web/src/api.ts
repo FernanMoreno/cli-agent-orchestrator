@@ -18,12 +18,16 @@
  * A relative `--base` such as `./` cannot work for runtime calls and is not
  * supported; use an absolute prefix.
  */
+import { browserBearer, browserFetch } from './auth'
+
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, '')
 
 /** URL for the terminal's xterm WebSocket, honouring BASE. */
 export function terminalSocketUrl(terminalId: string): string {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${protocol}//${location.host}${BASE}/terminals/${terminalId}/ws`
+  const token = browserBearer()
+  const query = token ? `?token=${encodeURIComponent(token)}` : ''
+  return `${protocol}//${location.host}${BASE}/terminals/${encodeURIComponent(terminalId)}/ws${query}`
 }
 
 /** URL for a workflow run's SSE event stream, honouring BASE. */
@@ -50,7 +54,7 @@ async function fetchJSON<T>(url: string, opts?: RequestInit & { timeoutMs?: numb
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 10000)
   try {
-    const res = await fetch(`${BASE}${url}`, { ...opts, signal: controller.signal })
+    const res = await browserFetch(`${BASE}${url}`, { ...opts, signal: controller.signal })
     if (!res.ok) {
       // Best-effort read of the JSON error body to expose the server's
       // `detail` without leaking a full response. A non-JSON body is fine —
@@ -65,6 +69,7 @@ async function fetchJSON<T>(url: string, opts?: RequestInit & { timeoutMs?: numb
           detailMeta = body.detail as Record<string, unknown>
           if (typeof detailMeta.message === 'string') detail = detailMeta.message
           if (typeof detailMeta.kind === 'string') kind = detailMeta.kind
+          if (typeof detailMeta.code === 'string') kind = detailMeta.code
         }
       } catch { /* non-JSON error body */ }
       const err: ApiError = new Error(`${res.status} ${res.statusText}`)

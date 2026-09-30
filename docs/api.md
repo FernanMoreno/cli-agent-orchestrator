@@ -451,3 +451,28 @@ configured bearer. They do not infer authority from terminal IDs or fall back to
 local memory after a remote failure. These are readers; MCP knowledge mutations,
 versioned checkpoints, paginated synchronization and universal context injection
 are not enabled by this increment.
+
+
+## Personal browser authentication
+
+The optional local password mode adds `/auth/config`, `/auth/login`,
+`/auth/session`, `/auth/renew`, `/auth/logout`, `/auth/logout-all` and
+`/auth/password`. `/sessions` continues to mean agent sessions. Browser management
+requests require the configured exact Origin and `X-CAO-Browser: 1`; responses
+use `Cache-Control: no-store`. Login creates a host-only, HttpOnly, SameSite=Strict
+cookie. Renewal and logout do not write cookies. Session responses contain public
+expiry information and a non-authenticating session ID, never the cookie or JWT.
+
+When an Authorization header is present, existing JWT verification takes
+precedence and an invalid bearer never falls back to a browser cookie. With no
+header, enabled browser mode can authenticate the cookie using the existing
+operator identity and scopes. Protected personal APIs still reject anonymous
+requests. Browser login issues no Work provision or grant. Cookie terminal and
+event streams retain their existing permissions and stop when session authority
+is withdrawn.
+
+Account creation, forgotten-password recovery and account disablement are local
+owner commands, with no remote registration/reset API. See
+[Personal deployment](personal-deployment.md) and the
+[browser auth contract](../specs/004-browser-login-sessions/contracts/browser-auth.md)
+for setup, limits, origin rules and error codes.

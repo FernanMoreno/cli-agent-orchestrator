@@ -1,3 +1,5 @@
+import { authSnapshot, browserAuthSignal, browserFetch } from '../../auth'
+
 // useEventFollow — live SSE follow of a run's event timeline (#504 / U8, FR-6).
 //
 // Opens the content-negotiated SSE arm of GET /workflows/runs/{id}/events with
@@ -125,11 +127,11 @@ export function useEventFollow(
     }
 
     const connect = async () => {
-      if (closed) return
+      if (closed || (authSnapshot().mode === 'local_password' && (!authSnapshot().session || authSnapshot().logoutPending))) return
       controller = new AbortController()
       const url = eventStreamUrl(runId, lastSeq)
       try {
-        const res = await fetch(url, {
+        const res = await browserFetch(url, {
           headers: { Accept: 'text/event-stream' },
           signal: controller.signal,
         })
@@ -177,9 +179,18 @@ export function useEventFollow(
       }
     }
 
+    const authSignal = browserAuthSignal()
+    const abort = () => {
+      closed = true
+      controller?.abort()
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      handlersRef.current.onConnectedChange?.(false)
+    }
+    authSignal.addEventListener('abort', abort, { once: true })
     connect()
 
     return () => {
+      authSignal.removeEventListener('abort', abort)
       closed = true
       controller?.abort()
       if (reconnectTimer) clearTimeout(reconnectTimer)

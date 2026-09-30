@@ -1359,6 +1359,8 @@ async def _run_registered_work_dispatcher(gateway) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
+    from cli_agent_orchestrator.api.browser_auth_routes import configure_browser_auth
+    configure_browser_auth(app)
     logger.info("Starting CLI Agent Orchestrator server...")
     setup_logging()
     # Scrub credential query params (``?access_token=`` / ``?ticket=``) from
@@ -1513,10 +1515,12 @@ async def lifespan(app: FastAPI):
             build_durable_launch_gateway,
         )
 
+        work_repository = WorkRepository(DATABASE_FILE)
+        work_backends = work_registry.local_work_backends_for(work_repository)
         app.state.durable_launch_gateway = build_durable_launch_gateway(
-            WorkRepository(DATABASE_FILE), backends=work_registry.WORK_BACKENDS
+            work_repository, backends=work_backends
         )
-        if work_registry.WORK_BACKENDS:
+        if work_backends:
             work_dispatcher_task = start_lifespan_task(
                 _run_registered_work_dispatcher(app.state.durable_launch_gateway)
             )
@@ -1658,6 +1662,8 @@ app = FastAPI(
     version=SERVER_VERSION,
     lifespan=lifespan,
 )
+from cli_agent_orchestrator.api.browser_auth_routes import router as browser_auth_router
+app.include_router(browser_auth_router)
 app.include_router(work_router)
 app.include_router(knowledge_router)
 
@@ -1745,6 +1751,10 @@ async def get_work_launch_principal(
 ) -> Principal:
     """Adapt only this work ingress's identity failure to its durable error envelope."""
     try:
+        from cli_agent_orchestrator.security.auth import browser_principal
+        browser = await asyncio.to_thread(browser_principal, request, authorization)
+        if browser is not None:
+            return browser
         token = _extract_bearer(authorization)
         if not token:
             raise ValueError("missing bearer token")
@@ -1896,6 +1906,8 @@ class OriginCheckMiddleware:
 # Security: CSRF / Cross-Origin Request Forgery (CWE-352). See the middleware
 # docstring; the guard must sit INSIDE TrustedHostMiddleware's Host validation
 # (add_middleware stacks last-added outermost), hence it is registered first.
+from cli_agent_orchestrator.api.browser_auth_routes import BrowserSessionLifetimeMiddleware
+app.add_middleware(BrowserSessionLifetimeMiddleware)
 app.add_middleware(OriginCheckMiddleware)
 
 # Security: DNS Rebinding Protection
@@ -2124,6 +2136,7 @@ async def events_history(
 
 @app.get("/agui/v1/stream")
 async def agui_stream(
+    request: Request,
     since: Optional[str] = Query(
         default=None,
         description=(
@@ -2173,13 +2186,13 @@ async def agui_stream(
     # Auth: query-parameter token (EventSource can't set headers). Default-off
     # (no AUTH0_DOMAIN / CAO_AUTH_JWKS_URI) grants the full scope set.
     if is_auth_enabled():
-        if not access_token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="access_token query parameter required when auth is enabled",
-            )
+        if "authorization" in request.headers or access_token is None:
+            scopes = await get_current_scopes(request.headers.get("authorization"), request)
+        else:
+            scopes = None
         try:
-            scopes = extract_scopes_from_token(access_token)
+            if scopes is None:
+                scopes = extract_scopes_from_token(access_token)
         except HTTPException:
             raise
         except Exception:
@@ -7479,11 +7492,28 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
     # or ``SCOPE_ADMIN``. ``SCOPE_READ`` is enough to watch HTTP output, not
     # to type into the PTY. Default-off (auth disabled): no token is required
     # and behavior is byte-for-byte unchanged.
+    browser_control = False
     if is_auth_enabled():
-        token = _extract_bearer(websocket.headers.get("authorization"))
-        if not token:
+        raw_authorization = websocket.headers.get("authorization")
+        explicit_credential = raw_authorization is not None or "token" in websocket.query_params
+        token = _extract_bearer(raw_authorization)
+        if raw_authorization is None:
             token = websocket.query_params.get("token")
-        if not token:
+        if explicit_credential and not token:
+            await websocket.close(code=4401, reason="Unauthorized")
+            return
+        browser_scopes = None
+        if not explicit_credential:
+            from cli_agent_orchestrator.security.auth import browser_principal
+            try:
+                principal = await asyncio.to_thread(browser_principal, websocket)
+                if principal is not None:
+                    browser_scopes = sorted(principal.scopes)
+                    browser_control = True
+            except HTTPException:
+                await websocket.close(code=4401, reason="Unauthorized")
+                return
+        if not token and browser_scopes is None:
             logger.warning(
                 "Rejected WebSocket attach for terminal %r: auth enabled, missing bearer token",
                 terminal_id,
@@ -7491,7 +7521,7 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
             await websocket.close(code=4401, reason="Unauthorized")
             return
         try:
-            scopes = extract_scopes_from_token(token)
+            scopes = browser_scopes if browser_scopes is not None else extract_scopes_from_token(token)
         except Exception:
             logger.warning(
                 "Rejected WebSocket attach for terminal %r: auth enabled, invalid bearer token",
@@ -7616,10 +7646,14 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
                     # Write in chunks to avoid overflowing the PTY buffer
                     chunk_size = 1024
                     for i in range(0, len(raw), chunk_size):
+                        if browser_control:
+                            await asyncio.to_thread(browser_principal, websocket)
                         os.write(master_fd, raw[i : i + chunk_size])
                         if i + chunk_size < len(raw):
                             await asyncio.sleep(0.01)
                 elif payload.get("type") == "resize":
+                    if browser_control:
+                        await asyncio.to_thread(browser_principal, websocket)
                     rows = payload.get("rows", 24)
                     cols = payload.get("cols", 80)
                     winsize_data = struct.pack("HHHH", rows, cols, 0, 0)

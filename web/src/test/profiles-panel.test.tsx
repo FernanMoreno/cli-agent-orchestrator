@@ -63,6 +63,7 @@ function routedFetch(overrides: Record<string, (url: string) => any> = {}) {
     for (const [needle, handler] of Object.entries(overrides)) {
       if (url.includes(needle)) return handler(url)
     }
+    if (url.includes('/auth/config')) return okJson({mode: 'disabled'})
     if (url.includes('/agents/profiles/search')) return okJson(SEARCH_RESULTS)
     if (/\/agents\/profiles\/[^/?]+$/.test(url)) return okJson(DETAIL)
     if (url.includes('/agents/profiles')) return okJson(CATALOG)
@@ -79,6 +80,7 @@ describe('Profiles tab navigation (stage 1)', () => {
 
   it('renders the Profiles tab between Home and Agents', async () => {
     render(<App />)
+    await screen.findByRole('tab', { name: /profiles/i })
     const tabs = screen.getAllByRole('tab').map(t => t.textContent)
     const home = tabs.findIndex(t => t?.includes('Home'))
     const profiles = tabs.findIndex(t => t?.includes('Profiles'))
@@ -89,12 +91,14 @@ describe('Profiles tab navigation (stage 1)', () => {
 
   it('opens the Profiles panel when the tab is clicked', async () => {
     render(<App />)
+    await screen.findByRole('tab', { name: /profiles/i })
     fireEvent.click(screen.getByRole('tab', { name: /profiles/i }))
     expect(await screen.findByRole('searchbox', { name: /search profiles/i })).toBeInTheDocument()
   })
 
   it('navigates to the Profiles tab from the Home stat card', async () => {
     render(<App />)
+    await screen.findByRole('tab', { name: /profiles/i })
     fireEvent.click(await screen.findByRole('button', { name: /open profiles tab/i }))
     expect(await screen.findByRole('searchbox', { name: /search profiles/i })).toBeInTheDocument()
   })
@@ -103,6 +107,7 @@ describe('Profiles tab navigation (stage 1)', () => {
     // Inserting the Profiles tab shifted Alt+N for every later tab; this
     // pins the new mapping beyond DOM order.
     render(<App />)
+    await screen.findByRole('tab', { name: /profiles/i })
     fireEvent.keyDown(window, { key: '2', altKey: true })
     expect(screen.getByRole('tab', { name: /profiles/i })).toHaveAttribute('aria-selected', 'true')
     fireEvent.keyDown(window, { key: '3', altKey: true })
@@ -609,6 +614,7 @@ describe('round-7 review: navigation lock while a save owns the interaction (#69
       for (const [needle, handler] of Object.entries(overrides)) {
         if (u.includes(needle)) return handler(u, opts)
       }
+      if (u.includes('/auth/config')) return okJson({mode: 'disabled'})
       if (u.includes('/agents/profiles/schema')) return okJson({
         type: 'object', required: ['name'], properties: { name: { type: 'string' } },
       })
@@ -621,6 +627,7 @@ describe('round-7 review: navigation lock while a save owns the interaction (#69
 
   async function openScratchCreate() {
     render(<App />)
+    await screen.findByRole('tab', { name: /profiles/i })
     fireEvent.click(screen.getByRole('tab', { name: /profiles/i }))
     await act(async () => {})
     fireEvent.click(screen.getByRole('button', { name: /new profile/i }))
@@ -698,6 +705,7 @@ describe('round-7 review: navigation lock while a save owns the interaction (#69
           : okJson({ name: 'developer', description: 'Writes code', provider: '', model: '', tags: [], capabilities: [] }),
     }))
     render(<App />)
+    await screen.findByRole('tab', { name: /profiles/i })
     fireEvent.click(screen.getByRole('tab', { name: /profiles/i }))
     await act(async () => {})
     fireEvent.click(screen.getByRole('option', { name: /developer/ }))

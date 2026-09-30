@@ -24,6 +24,7 @@ export default defineConfig({
   },
   test: {
     globals: true,
+    include: ['src/**/*.test.{ts,tsx}'],
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
   },
@@ -31,6 +32,10 @@ export default defineConfig({
     host: 'localhost',
     port: 5173,
     proxy: {
+      // Cookie login requires the configured canonical origin; use the built UI
+      // when that origin is the API port. Bearer development uses this proxy.
+      // Preserve Origin without relaxing CORS or browser CSRF guards.
+      '/auth': { target: 'http://localhost:9889', changeOrigin: true },
       '/sessions': { target: 'http://localhost:9889', changeOrigin: true },
       '/terminals': { target: 'http://localhost:9889', changeOrigin: true, ws: true },
       '/work-items': { target: 'http://localhost:9889', changeOrigin: true },

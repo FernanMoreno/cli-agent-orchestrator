@@ -1,0 +1,42 @@
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, expect, it, vi } from 'vitest'
+import App from '../App'
+vi.mock('../components/AgentPanel', () => ({ AgentPanel: () => null }))
+vi.mock('../components/ProfilesPanel', () => ({ ProfilesPanel: () => null }))
+vi.mock('../components/DashboardHome', () => ({ DashboardHome: () => <div>Protected dashboard</div> }))
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); sessionStorage.clear(); history.replaceState({}, '', '/') })
+
+it('starts at sign in and navigates to create account without sending credentials', async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ mode: 'bearer', local_setup_available: true })))
+  vi.stubGlobal('fetch', fetch); render(<App />)
+  expect(await screen.findByLabelText('Usuario')).toBeInTheDocument()
+  expect(screen.getByRole('tab', { name: 'Iniciar sesión' })).toHaveAttribute('aria-selected', 'true')
+  expect(screen.queryByLabelText('Confirmar contraseña')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Crear cuenta' }))
+  expect(screen.getByRole('tab', { name: 'Crear cuenta' })).toHaveAttribute('aria-selected', 'true')
+  expect(screen.getByLabelText('Confirmar contraseña')).toBeInTheDocument()
+  fireEvent.change(screen.getByLabelText('Contraseña'), { target: { value: 'TenChars1!' } })
+  fireEvent.click(screen.getByRole('tab', { name: 'Iniciar sesión' }))
+  expect(screen.getByLabelText('Contraseña')).toHaveValue('')
+  fireEvent.click(screen.getByRole('tab', { name: 'Crear cuenta' }))
+  expect(screen.getByLabelText('Contraseña')).toHaveValue('')
+  expect(fetch).toHaveBeenCalledTimes(1)
+  expect(screen.queryByText('Protected dashboard')).toBeNull()
+})
+it('guides first account creation without posting to an unavailable login', async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ mode: 'bearer', local_setup_available: true })))
+  vi.stubGlobal('fetch', fetch); render(<App />); await screen.findByLabelText('Usuario')
+  fireEvent.change(screen.getByLabelText('Usuario'), { target: { value: 'felni' } })
+  fireEvent.change(screen.getByLabelText('Contraseña'), { target: { value: 'TenChars1!' } })
+  fireEvent.submit(screen.getByLabelText('Contraseña').closest('form')!)
+  expect(await screen.findByRole('alert')).toHaveTextContent('Crea tu cuenta')
+  expect(fetch).toHaveBeenCalledTimes(1)
+})
+it('does not expose registration for an already configured installation', async () => {
+  const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ mode: 'local_password' }))).mockResolvedValueOnce(new Response(JSON.stringify({ detail: { code: 'session_required' } }), { status: 401 }))
+  vi.stubGlobal('fetch', fetch); render(<App />); await screen.findByLabelText('Usuario')
+  fireEvent.click(screen.getByRole('tab', { name: 'Crear cuenta' }))
+  expect(screen.getByText('La cuenta de esta instalación ya está creada.')).toBeInTheDocument()
+  expect(screen.queryByLabelText('Confirmar contraseña')).toBeNull()
+  expect(fetch).toHaveBeenCalledTimes(2)
+})

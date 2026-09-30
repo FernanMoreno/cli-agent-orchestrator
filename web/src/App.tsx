@@ -1,4 +1,4 @@
-import { useEffect, useState, Suspense } from 'react'
+import { useEffect, useState, useSyncExternalStore, Suspense } from 'react'
 import { api } from './api'
 import { useStore } from './store'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -10,6 +10,10 @@ import { ProfilesPanel } from './components/ProfilesPanel'
 import { SettingsPanel } from './components/SettingsPanel'
 import { WorkflowsPanel } from './components/WorkflowsPanel'
 import { CaoMark } from './components/CaoMark'
+import { authSnapshot, initializeBrowserAuth, logoutBrowser, subscribeBrowserAuth } from './auth'
+import { BrowserAccess } from './components/BrowserAccess'
+import { BrowserAccount } from './components/BrowserAccount'
+import { BrowserConnection } from './components/BrowserConnection'
 import { Bot, Home, Clock, Settings, Brain, Workflow, CheckCircle, XCircle, Info, Wifi, WifiOff, Package } from 'lucide-react'
 
 type TabKey = 'home' | 'profiles' | 'agents' | 'flows' | 'settings' | 'memory' | 'workflows'
@@ -60,7 +64,7 @@ function Snackbar() {
   )
 }
 
-export default function App() {
+function Dashboard() {
   const [tab, setTab] = useState<TabKey>('home')
 
   // The ONLY way any surface changes tabs. Refuses while an in-flight
@@ -127,6 +131,7 @@ export default function App() {
             <h1 className="text-lg font-bold text-white">CLI Agent Orchestrator</h1>
           </div>
           <div className="flex items-center gap-4">
+            {authSnapshot().mode === 'local_password' ? <BrowserAccount /> : <BrowserConnection />}
             <span className="text-xs text-gray-500">{sessions.length} session{sessions.length !== 1 ? 's' : ''}</span>
             <div className="flex items-center gap-1.5" title={connected ? 'Connected' : 'Disconnected'}>
               {connected ? (
@@ -193,4 +198,20 @@ export default function App() {
       <Snackbar />
     </div>
   )
+}
+
+export default function App() {
+  const auth = useSyncExternalStore(subscribeBrowserAuth, authSnapshot)
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    let current = true
+    void initializeBrowserAuth().finally(() => { if (current) setReady(true) })
+    return () => { current = false }
+  }, [])
+  if (!ready || auth.status === 'initializing') return <main role="status">Comprobando sesión…</main>
+  if (auth.logoutPending) return <main className="min-h-screen bg-gray-950 text-gray-200 p-6"><p role="alert">{auth.message}</p><button onClick={()=>void logoutBrowser(auth.logoutAllPending).catch(()=>{})}>Reintentar cierre de sesión</button></main>
+  if (auth.status === 'unavailable' && !auth.session) return <main className="min-h-screen bg-gray-950 text-gray-200 p-6"><p role="alert">{auth.message}</p><button onClick={()=>void initializeBrowserAuth()}>Reintentar conexión</button></main>
+  if (auth.mode === 'bearer' && auth.config?.local_setup_available === true) return <BrowserAccess setupAvailable />
+  if (auth.mode === 'local_password' && !auth.session) return <BrowserAccess />
+  return <>{auth.status === 'unavailable' && <div role="alert" className="bg-amber-950 text-amber-200 p-3">{auth.message}</div>}<Dashboard key={auth.session?.session_id ?? 'traditional'} /></>
 }

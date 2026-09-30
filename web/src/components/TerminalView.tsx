@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { X, Terminal as TermIcon } from 'lucide-react'
+import { authSnapshot, browserAuthSignal, ensureBrowserAccess, renewBrowserSession } from '../auth'
 import { api, terminalSocketUrl } from '../api'
 import type { WorkView } from '../api'
 import { workStatusSemantics } from '../work-status.generated'
@@ -220,25 +221,38 @@ export function TerminalView({ terminalId, provider, agentProfile, workItemId, t
     term.loadAddon(fitAddon)
     term.open(el)
 
-    // Connect WebSocket
-    const ws = new WebSocket(terminalSocketUrl(terminalId))
-    ws.binaryType = 'arraybuffer'
-
-    ws.onopen = () => {
-      // Fit once the connection is live so we send correct dimensions
-      fitAddon.fit()
-      ws.send(JSON.stringify({ type: 'resize', rows: term.rows, cols: term.cols }))
-    }
-
-    ws.onmessage = (e) => {
-      if (e.data instanceof ArrayBuffer) {
-        term.write(new Uint8Array(e.data))
+    let closed = false
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+    let ws: WebSocket
+    const connect = () => {
+      if (closed) return
+      ws = new WebSocket(terminalSocketUrl(terminalId))
+      ws.binaryType = 'arraybuffer'
+      ws.onopen = () => {
+        fitAddon.fit()
+        ws.send(JSON.stringify({ type: 'resize', rows: term.rows, cols: term.cols }))
+      }
+      ws.onmessage = e => {
+        if (!closed && e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data))
+      }
+      ws.onclose = event => {
+        term.write('\r\n\x1b[33m[Connection closed; input is never replayed]\x1b[0m\r\n')
+        if (closed || authSnapshot().mode !== 'local_password') return
+        reconnectTimer = setTimeout(async () => {
+          try {
+            if (event.code === 4401) await renewBrowserSession()
+            else await ensureBrowserAccess()
+            if (!closed && authSnapshot().session && !authSnapshot().logoutPending) connect()
+          } catch {
+            if (!closed && authSnapshot().session && !authSnapshot().logoutPending) reconnectTimer = setTimeout(connect, 1500)
+          }
+        }, 1000)
       }
     }
-
-    ws.onclose = () => {
-      term.write('\r\n\x1b[33m[Connection closed]\x1b[0m\r\n')
-    }
+    connect()
+    const authSignal = browserAuthSignal()
+    const abort = () => { closed = true; clearTimeout(reconnectTimer); ws.close() }
+    authSignal.addEventListener('abort', abort, { once: true })
 
     // Copy selection to clipboard on mouse-up
     term.onSelectionChange(() => {
@@ -261,8 +275,13 @@ export function TerminalView({ terminalId, provider, agentProfile, workItemId, t
     // onData handles ALL input including paste — xterm.js
     // receives pasted text through the browser's input system
     term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'input', data }))
+      if (ws.readyState === WebSocket.OPEN && !closed) {
+        const target = ws
+        if (authSnapshot().mode !== 'local_password') target.send(JSON.stringify({ type: 'input', data }))
+        else void ensureBrowserAccess().then(() => {
+          if (!closed && target === ws && target.readyState === WebSocket.OPEN) target.send(JSON.stringify({ type: 'input', data }))
+          else term.write('\r\n[Input was not sent. Check terminal state before trying again.]\r\n')
+        }).catch(() => term.write('\r\n[Input was not sent. Check connection and terminal state.]\r\n'))
       }
     })
 
@@ -290,6 +309,9 @@ export function TerminalView({ terminalId, provider, agentProfile, workItemId, t
       cancelAnimationFrame(initialFit)
       clearTimeout(resizeTimer)
       resizeObserver.disconnect()
+      closed = true
+      clearTimeout(reconnectTimer)
+      authSignal.removeEventListener('abort', abort)
       ws.close()
       term.dispose()
     }

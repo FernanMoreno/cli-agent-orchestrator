@@ -409,3 +409,26 @@ See [api.md](api.md) for the full API reference.
 ## Migrating from the old two-file setup
 
 Previously, `terminal_backend` / `herdr_session` lived in a separate `~/.aws/cli-agent-orchestrator/config.json`, read inline by `backends/factory.py`. On first read after upgrading, if `config.json` exists and `settings.json` has no `terminal` section yet, `ConfigService` copies `terminal_backend` → `terminal.backend` and `herdr_session` → `terminal.herdr_session` into `settings.json` and logs the move once. `config.json` is left on disk untouched but is no longer read afterward — it is deprecated.
+
+
+## Personal browser login configuration
+
+`CAO_BROWSER_LOGIN_ROOT` selects the private personal-deployment directory.
+The tooling writes `deployment.json` with an explicit `browser_login` object:
+`enabled`, `installation_id`, `canonical_origin`, `transport_policy`, `binding`
+and `limits`. The binding preserves the existing JWT principal ID, issuer,
+subject, `kind=jwt` and configured scopes. Local password login does not replace
+an external identity provider or disable JWT enforcement.
+
+The supported personal origin is `http://127.0.0.1:<server_port>` with the explicit
+`loopback_http` transport exception. The private SQLite account/session store is
+`browser-auth.sqlite3` beside `deployment.json`. Enabled configuration with a
+missing store, invalid binding, schema or origin fails closed during startup.
+Restart the service after a mode/configuration change.
+
+The default limits in seconds are `access_seconds=3600`,
+`remembered_idle_seconds=604800`, `remembered_absolute_seconds=2592000`,
+`temporal_idle_seconds=28800`, `temporal_absolute_seconds=86400`.
+Edit the private `limits` object to change them; do not store passwords there.
+Use the local account commands described in [Personal deployment](personal-deployment.md)
+for creation, password recovery, mode disablement, backup and restore.

@@ -392,6 +392,7 @@ def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
 
 async def get_current_scopes(
     authorization: Optional[str] = Header(default=None),
+    request: Request = None,
 ) -> List[str]:
     """FastAPI dependency returning the caller's granted scope set.
 
@@ -404,6 +405,9 @@ async def get_current_scopes(
     ``Depends(get_current_scopes)``.
     """
 
+    browser = browser_principal(request, authorization)
+    if browser is not None:
+        return sorted(browser.scopes)
     if not is_auth_enabled():
         return list(FULL_SCOPE_SET)
 
@@ -437,8 +441,15 @@ def require_any_scope(*required: str) -> Callable[..., Any]:
     the check always passes and behavior is byte-for-byte unchanged.
     """
 
-    async def _dep(scopes: List[str] = Depends(get_current_scopes)) -> List[str]:
-        if is_auth_enabled() and not any(scope in scopes for scope in required):
+    async def _dep(
+        scopes: List[str] = Depends(get_current_scopes), request: Request = None
+    ) -> List[str]:
+        browser_enabled = request is not None and getattr(
+            request.app.state, "browser_auth_config", {}
+        ).get("enabled", False)
+        if (is_auth_enabled() or browser_enabled) and not any(
+            scope in scopes for scope in required
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Forbidden: requires one of {list(required)}",
@@ -525,6 +536,9 @@ async def get_current_principal(
     Local mode trusts only server-provided socket addresses, never Host, forwarded
     headers, caller_id or bodies. Deployments must keep ASGI peer metadata trusted.
     """
+    browser = browser_principal(request, authorization)
+    if browser is not None:
+        return browser
     try:
         if is_auth_enabled():
             token = _extract_bearer(authorization)
@@ -542,3 +556,108 @@ async def get_current_principal(
             detail="verified work identity required",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
+
+
+def browser_session_context(request, *, secret_required=True):
+    """Validate the HTTP/browser boundary without importing persistence or API owners."""
+    config = getattr(request.app.state, "browser_auth_config", {})
+    service = getattr(request.app.state, "browser_auth", None)
+    if service is None or not config.get("enabled"):
+        raise HTTPException(
+            401,
+            detail={"code": "session_required", "message": "Session required."},
+            headers={"Cache-Control": "no-store"},
+        )
+    origin = config.get("canonical_origin", "")
+    from urllib.parse import urlsplit
+
+    canonical = urlsplit(origin)
+    actual_scheme = request.scope.get("scheme", "")
+    expected_scheme = (
+        "https" if actual_scheme == "wss" else "http" if actual_scheme == "ws" else actual_scheme
+    )
+    if (
+        request.headers.get("host") != canonical.netloc
+        or expected_scheme != canonical.scheme
+        or not request.client
+        or not ipaddress.ip_address(request.client.host).is_loopback
+    ):
+        raise HTTPException(
+            403,
+            detail={"code": "browser_origin_denied", "message": "Browser origin denied."},
+            headers={"Cache-Control": "no-store"},
+        )
+    request_origin = request.headers.get("origin")
+    websocket = request.scope.get("type") == "websocket"
+    changing = not websocket and request.method not in ("GET", "HEAD", "OPTIONS")
+    if websocket or changing:
+        allowed = request_origin == origin
+        if changing:
+            allowed = allowed and request.headers.get("x-cao-browser") == "1"
+    else:
+        allowed = (
+            request_origin == origin
+            if request_origin is not None
+            else request.headers.get("sec-fetch-site") == "same-origin"
+        )
+    if not allowed:
+        raise HTTPException(
+            403,
+            detail={"code": "browser_origin_denied", "message": "Browser origin denied."},
+            headers={"Cache-Control": "no-store"},
+        )
+    installation = str(config.get("installation_id", ""))
+    if not installation or not all(c.isalnum() or c in "_-" for c in installation):
+        raise HTTPException(
+            503,
+            detail={"code": "auth_unavailable", "message": "Authentication unavailable."},
+            headers={"Cache-Control": "no-store"},
+        )
+    name = "cao_browser_" + installation
+    secret = request.cookies.get(name)
+    if secret_required and not secret:
+        raise HTTPException(
+            401,
+            detail={"code": "session_required", "message": "Session required."},
+            headers={"Cache-Control": "no-store"},
+        )
+    return service, name, secret
+
+
+def browser_principal(request, authorization=None, *, touch=False):
+    """Resolve only the server-injected session port and preserve the operator's sealed identity."""
+    if request is None:
+        return None
+    config = getattr(request.app.state, "browser_auth_config", {})
+    if not isinstance(config, dict) or not config.get("enabled"):
+        return None
+    if authorization is not None:
+        # An explicit malformed/expired bearer must never fall back to a cookie.
+        token = _extract_bearer(authorization)
+        if not token:
+            raise HTTPException(
+                401, detail="invalid bearer token", headers={"Cache-Control": "no-store"}
+            )
+        try:
+            return principal_from_token(token)
+        except Exception:
+            raise HTTPException(
+                401, detail="invalid bearer token", headers={"Cache-Control": "no-store"}
+            ) from None
+    service, _, secret = browser_session_context(request)
+    try:
+        identity = service.identity(secret, require_access=True, touch=touch)
+        return _verified_principal(
+            identity["issuer"], identity["subject"], identity["scopes"], identity["kind"]
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            getattr(exc, "status", 503),
+            detail={
+                "code": getattr(exc, "code", "auth_unavailable"),
+                "message": "Browser session unavailable.",
+            },
+            headers={"Cache-Control": "no-store"},
+        ) from None
