@@ -9,13 +9,23 @@
 # toolchain exists.
 cd "$(dirname "$0")/.."
 
+run_python_tests() {
+  (
+    cd .. || exit 1
+    # Tests create independent Git repositories. Hook-local Git variables
+    # would redirect their commands back to the repository being pushed.
+    unset $(git rev-parse --local-env-vars) || exit 1
+    "$@" -q --disable-warnings
+  )
+}
+
 echo "[pre-push] Python unit tests"
 if command -v uv >/dev/null 2>&1; then
-  (cd .. && uv run pytest -q --disable-warnings) || exit 1
+  run_python_tests uv run pytest || exit 1
 elif command -v python >/dev/null 2>&1 && python -c "import pytest" >/dev/null 2>&1; then
-  (cd .. && python -m pytest -q --disable-warnings) || exit 1
+  run_python_tests python -m pytest || exit 1
 elif command -v python3 >/dev/null 2>&1 && python3 -c "import pytest" >/dev/null 2>&1; then
-  (cd .. && python3 -m pytest -q --disable-warnings) || exit 1
+  run_python_tests python3 -m pytest || exit 1
 else
   echo "[pre-push] skipping python tests: no uv/pytest runner on PATH"
 fi
