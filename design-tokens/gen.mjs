@@ -211,9 +211,13 @@ function genTuiWorkStatus() {
       const running = state === "running" ? 1 : 0;
       const succeeded = state === "succeeded" ? 1 : 0;
       return (
-        `    WorkStatusSemantics { state: ${JSON.stringify(state)}, label: ${JSON.stringify(value.label)}, ` +
-        `semantic_role: WorkSemanticRole::${roleVariant(value.semanticRole)}, ` +
-        `observed_running_count: ${running}, observed_succeeded_count: ${succeeded} },`
+        `    WorkStatusSemantics {\n` +
+        `        state: ${JSON.stringify(state)},\n` +
+        `        label: ${JSON.stringify(value.label)},\n` +
+        `        semantic_role: WorkSemanticRole::${roleVariant(value.semanticRole)},\n` +
+        `        observed_running_count: ${running},\n` +
+        `        observed_succeeded_count: ${succeeded},\n` +
+        `    },`
       );
     })
     .join("\n");
@@ -273,7 +277,13 @@ function genTuiWorkStatus() {
     "        assert_eq!(WORK_STATUS_SEMANTICS.len(), 7);\n" +
     "        let running = work_status_semantics(\"running\").expect(\"running must be generated\");\n" +
     "        assert_eq!(running.semantic_role, WorkSemanticRole::Info);\n" +
-    "        assert_eq!((running.observed_running_count, running.observed_succeeded_count), (1, 0));\n" +
+    "        assert_eq!(\n" +
+    "            (\n" +
+    "                running.observed_running_count,\n" +
+    "                running.observed_succeeded_count\n" +
+    "            ),\n" +
+    "            (1, 0)\n" +
+    "        );\n" +
     "        assert!(work_status_semantics(\"unknown\").is_none());\n" +
     "    }\n" +
     "}\n"
@@ -324,12 +334,17 @@ function genMcpStatus() {
   const entries = Object.entries(status.statuses);
   const body = entries
     .map(([key, s]) => {
-      return (
-        `  ${JSON.stringify(key)}: { ` +
-        `label: ${JSON.stringify(s.label)}, ` +
-        `semanticRole: ${JSON.stringify(s.semanticRole)}, ` +
-        `pulse: ${s.pulse ? "true" : "false"} },`
-      );
+      const property =
+        /^[$_\p{ID_Start}][$\u200C\u200D\p{ID_Continue}]*$/u.test(key)
+          ? key
+          : JSON.stringify(key);
+      return [
+        `  ${property}: {`,
+        `    label: ${JSON.stringify(s.label)},`,
+        `    semanticRole: ${JSON.stringify(s.semanticRole)},`,
+        `    pulse: ${s.pulse ? "true" : "false"},`,
+        "  },",
+      ].join("\n");
     })
     .join("\n");
 
@@ -340,8 +355,8 @@ function genMcpStatus() {
     "// `semanticRole` resolves to the `--cao-status-<role>` CSS variable (defined\n" +
     "// in tokens.generated.css, host-overridable). `pulse` drives the animation.\n" +
     "\n" +
-    'export type SemanticRole =\n' +
-    ROLE_ORDER.map((r) => `  | ${JSON.stringify(r)}`).join("\n") +
+    "export type SemanticRole =\n  " +
+    ROLE_ORDER.map((r) => JSON.stringify(r)).join(" | ") +
     ";\n" +
     "\n" +
     "export interface StatusSemantics {\n" +

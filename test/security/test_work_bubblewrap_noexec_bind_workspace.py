@@ -20,7 +20,6 @@ from pathlib import Path
 
 import pytest
 
-
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _T097_ROOT = Path("/tmp/caos-exec/T097")
 _SCRATCH_BWRAP = _T097_ROOT / "bubblewrap-build" / "bwrap"
@@ -29,7 +28,7 @@ _FIXTURE_SOURCE = _PROJECT_ROOT / "test" / "fixtures" / "work_bubblewrap_fd_prob
 _REPORT_PREFIX = "T097_NOEXEC_BIND_REPORT="
 
 
-_NAMESPACE_HELPER = r'''
+_NAMESPACE_HELPER = r"""
 import ctypes
 import errno
 import json
@@ -183,7 +182,7 @@ finally:
         report["cleanup_error"] = {"errno": error, "message": os.strerror(error)}
 
 print("T097_NOEXEC_BIND_REPORT=" + json.dumps(report), flush=True)
-'''
+"""
 
 
 def _scratch_bubblewrap() -> Path:
@@ -227,9 +226,7 @@ def _parse_report(output: str) -> dict[str, object]:
     return json.loads(reports[0])
 
 
-def _mountinfo_entries(
-    stdout: str, mountpoint: str
-) -> list[tuple[list[str], list[str]]]:
+def _mountinfo_entries(stdout: str, mountpoint: str) -> list[tuple[list[str], list[str]]]:
     entries = []
     for line in stdout.splitlines():
         before_separator, separator, after_separator = line.partition(" - ")
@@ -327,9 +324,7 @@ def test_allowed_loader_cannot_run_elf_from_private_noexec_workspace_bind(tmp_pa
         timeout=5,
     )
     assert headers.returncode == 0, f"readelf could not inspect probe ELF:\n{headers.stderr}"
-    interpreter = re.search(
-        r"Requesting program interpreter:\s*([^\]]+)\]", headers.stdout
-    )
+    interpreter = re.search(r"Requesting program interpreter:\s*([^\]]+)\]", headers.stdout)
     if interpreter is None:
         pytest.skip("compiler produced no PT_INTERP segment for the allowed-loader probe")
     loader = Path(interpreter.group(1).strip())
@@ -394,8 +389,7 @@ def test_allowed_loader_cannot_run_elf_from_private_noexec_workspace_bind(tmp_pa
             f"source={report['source_mount_fstype']!r}, sandbox={topmost_filesystem!r}"
         )
         assert "noexec" in topmost_mount[5].split(","), (
-            "topmost sandbox workspace mount is not noexec: "
-            f"{topmost_mount!r}"
+            "topmost sandbox workspace mount is not noexec: " f"{topmost_mount!r}"
         )
 
         if report.get("bwrap_returncode") == 78 and "landlock-unavailable:" in report.get(

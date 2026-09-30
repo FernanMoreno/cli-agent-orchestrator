@@ -123,6 +123,53 @@ class TestNativeChildLifecycle:
         assert stored["state"] == "cancelled"
         assert stored["cleanup_completed_at"] is not None
 
+    def test_transactional_cleanup_does_not_overwrite_a_state_that_wins_first(self, test_db):
+        """Caller-owned cleanup writes must use the same active-state CAS as the wrapper."""
+        terminal_id = "child-cleanup-race"
+        injected_success = False
+
+        with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
+            child = plan_native_child(
+                parent_terminal_id="parent01",
+                terminal_id=terminal_id,
+                provider="codex",
+                agent_profile="developer",
+                lease_seconds=30,
+            )
+            transition_native_child(terminal_id, "sent")
+
+            session = test_db()
+            engine = session.get_bind()
+
+            def settle_before_cleanup_update(
+                connection, cursor, statement, parameters, context, executemany
+            ):
+                nonlocal injected_success
+                if injected_success or not statement.lstrip().upper().startswith(
+                    "UPDATE NATIVE_CHILDREN"
+                ):
+                    return
+                injected_success = True
+                connection.exec_driver_sql(
+                    "UPDATE native_children SET state=? WHERE terminal_id=?",
+                    ("succeeded", terminal_id),
+                )
+
+            event.listen(engine, "before_cursor_execute", settle_before_cleanup_update)
+            try:
+                db_mod._record_native_child_cleanup_rows(session, [terminal_id])
+                session.commit()
+            finally:
+                event.remove(engine, "before_cursor_execute", settle_before_cleanup_update)
+                session.close()
+
+            stored = get_native_child(child["id"])
+
+        assert injected_success is True
+        assert stored is not None
+        assert stored["state"] == "succeeded"
+        assert stored["cleanup_completed_at"] is not None
+
     def test_terminal_state_cannot_move_back_to_active(self, test_db):
         with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
             child = plan_native_child(

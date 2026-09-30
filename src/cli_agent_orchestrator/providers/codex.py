@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from cli_agent_orchestrator.agent_plugins.mcp_delivery import with_plugin_mcp as _with_plugin_mcp
+from cli_agent_orchestrator.agent_plugins.mcp_mapping import CODEX_BARE_KEY
 from cli_agent_orchestrator.backends.registry import get_backend
 from cli_agent_orchestrator.constants import CAO_HOME_DIR
 from cli_agent_orchestrator.models.terminal import TerminalStatus
@@ -103,6 +105,18 @@ TUI_PROGRESS_PATTERN = r"[•◦][^\n]*\((?:(?:\d+h\s+)?\d+m\s+)?\d+s\s*•\s*es
 # Both indicate the TUI is blocked waiting for user input.
 TRUST_PROMPT_PATTERN = r"allow Codex to work in this folder"
 TRUST_PROMPT_PATTERN_V2 = r"Do you trust the contents of this directory\?"
+
+
+def _has_selected_trust_v3_dialog(bottom_region: str) -> bool:
+    """Recognize the complete active v0.159 dialog, never a quoted question alone."""
+    return bool(
+        re.search(r"(?m)^\s*Trust this folder\?", bottom_region)
+        and re.search(r"(?m)^\s*›\s*1\. Trust and continue\s*$", bottom_region)
+        and re.search(r"(?m)^\s*2\. Quit\s*$", bottom_region)
+        and re.search(r"(?m)^\s*enter\s+continue\s*·\s*esc\s+quit\s*$", bottom_region)
+    )
+
+
 TRUST_PROMPT_FOOTER = r"Press enter to continue"
 
 # First-run auth menu, shown when no OpenAI/Codex credentials are configured yet:
@@ -255,23 +269,17 @@ APPROVAL_MENU_MIN_OPTIONS = 2
 # a post-turn receipt witness, never to turn an arbitrary blocking menu into a
 # completion signal.
 RATE_LIMIT_DIALOG_HEADER_PATTERN = r"^\s*Approaching rate limits\s*$"
-RATE_LIMIT_DIALOG_QUESTION_PATTERN = (
-    r"^\s*Switch to (?P<model>\S+) for lower credit usage\?\s*$"
-)
+RATE_LIMIT_DIALOG_QUESTION_PATTERN = r"^\s*Switch to (?P<model>\S+) for lower credit usage\?\s*$"
 # This is deliberately not the generic numbered-menu grammar.  It is the
 # exact three-choice rate-limit picker that Codex renders after a response.
 # The matching model token binds the question to option 1, preventing an
 # arbitrary (or quoted) menu from borrowing the title alone.
 RATE_LIMIT_DIALOG_OPTION_1_PATTERN = (
-    r"^(?P<cursor>›[^\S\n]+)?1\.[^\S\n]+Switch to (?P<model>\S+)"
-    r"(?:[^\S\n]{2,}\S.*)?\s*$"
+    r"^(?P<cursor>›[^\S\n]+)?1\.[^\S\n]+Switch to (?P<model>\S+)" r"(?:[^\S\n]{2,}\S.*)?\s*$"
 )
-RATE_LIMIT_DIALOG_OPTION_2_PATTERN = (
-    r"^(?P<cursor>›[^\S\n]+)?2\.[^\S\n]+Keep current model\s*$"
-)
+RATE_LIMIT_DIALOG_OPTION_2_PATTERN = r"^(?P<cursor>›[^\S\n]+)?2\.[^\S\n]+Keep current model\s*$"
 RATE_LIMIT_DIALOG_OPTION_3_PATTERN = (
-    r"^(?P<cursor>›[^\S\n]+)?3\.[^\S\n]+Keep current model "
-    r"\(never show again\)\s*$"
+    r"^(?P<cursor>›[^\S\n]+)?3\.[^\S\n]+Keep current model " r"\(never show again\)\s*$"
 )
 RATE_LIMIT_DIALOG_CONFIRM_PATTERN = r"^\s*Press enter to confirm or esc to go back\s*$"
 
@@ -434,7 +442,10 @@ def _toml_scalar(value: Any) -> str:
 # (mcp_servers.my.srv.command → mcp_servers['my']['srv'], not
 # mcp_servers['my.srv']), so codex would never find the server.
 _CODEX_CONFIG_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
-_CODEX_BARE_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+# One definition, shared with the mapping-time gate that isolates a name Codex
+# cannot express, so the gate and this serializer cannot drift (the same shape
+# already used for MiniMax's `_PLUGIN_SERVER_NAME`).
+_CODEX_BARE_KEY_PATTERN = CODEX_BARE_KEY
 
 
 def _validate_config_key(key: Any, *, source: str, allow_dots: bool = False) -> str:
@@ -820,9 +831,8 @@ def _transcript_before_active_rate_limit_dialog(script_output: str) -> Optional[
     # rows belong to that option only; any other intervening prose rejects the
     # dialog rather than being silently skipped.
     option_2_index = next_nonempty(option_1_index + 1)
-    while (
-        option_2_index is not None
-        and re.match(APPROVAL_MENU_CONTINUATION_PATTERN, dialog_lines[option_2_index])
+    while option_2_index is not None and re.match(
+        APPROVAL_MENU_CONTINUATION_PATTERN, dialog_lines[option_2_index]
     ):
         option_2_index = next_nonempty(option_2_index + 1)
     if option_2_index is None:
@@ -1099,7 +1109,7 @@ class CodexProvider(BaseProvider):
         profile = None
         if self._agent_profile is not None:
             try:
-                profile = load_agent_profile(self._agent_profile)
+                profile = _with_plugin_mcp(load_agent_profile(self._agent_profile), "codex")
             except Exception as e:
                 raise ProviderError(f"Failed to load agent profile '{self._agent_profile}': {e}")
 
@@ -1268,12 +1278,31 @@ class CodexProvider(BaseProvider):
                     if "args" in cfg:
                         args_toml = "[" + ", ".join(_toml_scalar(a) for a in cfg["args"]) + "]"
                         command_parts.extend(["-c", f"{prefix}.args={args_toml}"])
+                    # Codex documents `mcp_servers.<id>.cwd` ("Working directory for
+                    # the MCP stdio server process"), so the plugin's directory is
+                    # carried natively here rather than through the /bin/sh shim the
+                    # formats without such a field need. Reported by review
+                    # 5222539218 on #584 (item 4).
+                    if isinstance(cfg.get("cwd"), str) and cfg["cwd"]:
+                        command_parts.extend(["-c", f"{prefix}.cwd={_toml_scalar(cfg['cwd'])}"])
                     if "env" in cfg and cfg["env"]:
-                        for env_key, env_val in cfg["env"].items():
-                            _validate_config_key(env_key, source="mcpServers env")
-                            command_parts.extend(
-                                ["-c", f"{prefix}.env.{env_key}={_toml_scalar(str(env_val))}"]
-                            )
+                        # ONE inline table with QUOTED keys, not one override per key.
+                        #
+                        # The env map lives on the VALUE side of `-c key=value`, which
+                        # Codex parses as a TOML value (it wraps the raw text as
+                        # `_x_ = <raw>`), so an inline table is accepted and a quoted
+                        # key is expressible. Emitting `…env.LOG.LEVEL=` instead put a
+                        # schema-valid key into the PATH, where the dot nests it wrongly
+                        # and `_validate_config_key` raised -- aborting the whole launch
+                        # over one environment variable. Reported by review 5222539218
+                        # on #584 (item 6). `_toml_scalar` renders a TOML basic string,
+                        # which is the same grammar a quoted key uses, so it escapes the
+                        # key safely too. Also drops the per-server override count.
+                        pairs = ", ".join(
+                            f"{_toml_scalar(str(env_key))} = {_toml_scalar(str(env_val))}"
+                            for env_key, env_val in cfg["env"].items()
+                        )
+                        command_parts.extend(["-c", f"{prefix}.env={{ {pairs} }}"])
                     # Forward CAO_TERMINAL_ID so MCP servers (e.g. cao-mcp-server)
                     # can identify the current session for handoff/assign operations.
                     # Codex does not forward env vars to MCP subprocesses by default;
@@ -1352,10 +1381,12 @@ class CodexProvider(BaseProvider):
 
             bottom_region = "\n".join(clean_output.splitlines()[-STARTUP_PROMPT_BOTTOM_LINES:])
 
-            if (
-                not trust_dismissed
-                and re.search(TRUST_PROMPT_PATTERN_V2, bottom_region)
-                and re.search(TRUST_PROMPT_FOOTER, bottom_region)
+            if not trust_dismissed and (
+                (
+                    re.search(TRUST_PROMPT_PATTERN_V2, bottom_region)
+                    and re.search(TRUST_PROMPT_FOOTER, bottom_region)
+                )
+                or _has_selected_trust_v3_dialog(bottom_region)
             ):
                 from cli_agent_orchestrator.services.status_monitor import status_monitor
 
@@ -1391,6 +1422,7 @@ class CodexProvider(BaseProvider):
                     re.search(TRUST_PROMPT_PATTERN_V2, bottom_region)
                     and re.search(TRUST_PROMPT_FOOTER, bottom_region)
                 )
+                or _has_selected_trust_v3_dialog(bottom_region)
                 or _has_update_dialog_in_bottom(clean_output)
             )
             if has_idle and not has_dialog:
@@ -1566,8 +1598,10 @@ class CodexProvider(BaseProvider):
         # appear in the bottom region — avoids false positives if the question text
         # appears in scrollback from a previous model response.
         bottom_region = "\n".join(clean_output.splitlines()[-15:])
-        if re.search(TRUST_PROMPT_PATTERN_V2, bottom_region) and re.search(
-            TRUST_PROMPT_FOOTER, bottom_region
+        if (
+            re.search(TRUST_PROMPT_PATTERN_V2, bottom_region)
+            and re.search(TRUST_PROMPT_FOOTER, bottom_region)
+            or _has_selected_trust_v3_dialog(bottom_region)
         ):
             return TerminalStatus.WAITING_USER_ANSWER
 
@@ -1910,9 +1944,7 @@ class CodexProvider(BaseProvider):
             return None
 
         clean_output = strip_terminal_escapes(before_dialog)
-        receipt_matches = list(
-            re.finditer(rf"(?m)^{re.escape(receipt)}$", clean_output)
-        )
+        receipt_matches = list(re.finditer(rf"(?m)^{re.escape(receipt)}$", clean_output))
         if not receipt_matches:
             return None
         receipt_match = receipt_matches[-1]
@@ -1924,7 +1956,9 @@ class CodexProvider(BaseProvider):
         # handle it rather than converting an echoed instruction into success.
         user_cells = [
             match
-            for match in re.finditer(USER_PREFIX_PATTERN, clean_output, re.IGNORECASE | re.MULTILINE)
+            for match in re.finditer(
+                USER_PREFIX_PATTERN, clean_output, re.IGNORECASE | re.MULTILINE
+            )
             if match.start() < receipt_match.start()
         ]
         if not user_cells:

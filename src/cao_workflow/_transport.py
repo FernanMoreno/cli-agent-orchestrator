@@ -12,6 +12,9 @@ long-poll response.
 from __future__ import annotations
 
 import json
+import os
+import re
+import threading
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -21,6 +24,11 @@ from urllib.request import Request, urlopen
 _TRANSPORT_SLACK = 30.0
 
 _BASE_TIMEOUT_DEFAULT = 600.0
+_RUN_CAPABILITY_ENV = "CAO_WORKFLOW_AUTH_FD"
+_RUN_CAPABILITY_HEADER = "X-CAO-Workflow-Run-Credential"
+_RUN_CAPABILITY_RE = re.compile(r"^[A-Za-z0-9_-]{32,256}$")
+_run_capability_cache: str | None = None
+_run_capability_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -39,10 +47,14 @@ def _post(url: str, body: dict, timeout: "float | None" = None) -> _Response:
     base_timeout = timeout if timeout is not None else _BASE_TIMEOUT_DEFAULT
     socket_timeout = base_timeout + _TRANSPORT_SLACK
     data = json.dumps(body).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    capability = _read_run_capability()
+    if capability is not None:
+        headers[_RUN_CAPABILITY_HEADER] = capability
     request = Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
@@ -57,6 +69,32 @@ def _post(url: str, body: dict, timeout: "float | None" = None) -> _Response:
         # as a normal _Response for run_step to turn into ShimHTTPError, not
         # ShimTransportError.
         return _Response(status=e.code, body=e.read().decode("utf-8"))
+
+
+def _read_run_capability() -> str | None:
+    """Read the opaque workflow credential once from the inherited descriptor."""
+    global _run_capability_cache
+    with _run_capability_lock:
+        if _run_capability_cache is not None:
+            return _run_capability_cache
+        descriptor = os.environ.pop(_RUN_CAPABILITY_ENV, None)
+        if descriptor is None:
+            return None
+        if not descriptor.isdecimal() or str(int(descriptor)) != descriptor:
+            raise ValueError("invalid inherited workflow credential descriptor")
+        fd = int(descriptor)
+        try:
+            raw = os.read(fd, 4096)
+        finally:
+            os.close(fd)
+        try:
+            capability = raw.decode("ascii")
+        except UnicodeDecodeError as error:
+            raise ValueError("invalid inherited workflow credential") from error
+        if _RUN_CAPABILITY_RE.fullmatch(capability) is None:
+            raise ValueError("invalid inherited workflow credential")
+        _run_capability_cache = capability
+        return capability
 
 
 __all__ = ["_post", "_Response", "_TRANSPORT_SLACK", "URLError"]

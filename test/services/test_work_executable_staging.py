@@ -14,8 +14,8 @@ from types import SimpleNamespace
 import pytest
 
 from cli_agent_orchestrator.models.work_contract import ExecutableIdentity
-from cli_agent_orchestrator.services.work_elf_identity import identify_static_executable
 from cli_agent_orchestrator.services import work_executable_staging as staging
+from cli_agent_orchestrator.services.work_elf_identity import identify_static_executable
 from cli_agent_orchestrator.services.work_executable_staging import (
     WorkExecutableStagingUnavailable,
     stage_static_executable,

@@ -221,9 +221,7 @@ class TestPluginRegistryLifespan:
         ):
             lifespan_context = lifespan(app)
             await lifespan_context.__aenter__()
-            shutdown_task = asyncio.create_task(
-                lifespan_context.__aexit__(None, None, None)
-            )
+            shutdown_task = asyncio.create_task(lifespan_context.__aexit__(None, None, None))
             await teardown_started.wait()
             shutdown_task.cancel()
 

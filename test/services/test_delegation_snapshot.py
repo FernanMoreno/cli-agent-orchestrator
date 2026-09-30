@@ -5,6 +5,11 @@ import importlib
 import multiprocessing
 import sqlite3
 import time
+from test.clients.test_work_repository import (
+    legacy_admit,
+    legacy_v21_store,
+    migrate_legacy_v21_store,
+)
 
 import pytest
 
@@ -12,11 +17,6 @@ from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.security.auth import local_operator_principal
 from cli_agent_orchestrator.services.knowledge_policy import KnowledgeAccessDenied, KnowledgePolicy
 from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
-from test.clients.test_work_repository import (
-    legacy_admit,
-    legacy_v21_store,
-    migrate_legacy_v21_store,
-)
 
 
 def setup(tmp_path, monkeypatch, *, legacy=False, **limits):

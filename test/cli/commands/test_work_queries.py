@@ -39,7 +39,8 @@ def test_work_json_forwards_authorized_api_view_unchanged():
     """Removing the read projection or changing its API DTO breaks this command."""
     body = _work_view()
     with patch(
-        "cli_agent_orchestrator.cli.commands.workflow.requests.get", return_value=_response(body=body)
+        "cli_agent_orchestrator.cli.commands.workflow.requests.get",
+        return_value=_response(body=body),
     ) as get:
         result = CliRunner().invoke(workflow, ["work", "work-1", "--json"])
 
@@ -125,7 +126,8 @@ def test_work_events_human_output_keeps_cursor_high_water_and_gaps():
         "gaps": [{"from_sequence": 1, "through_sequence": 4}],
     }
     with patch(
-        "cli_agent_orchestrator.cli.commands.workflow.requests.get", return_value=_response(body=body)
+        "cli_agent_orchestrator.cli.commands.workflow.requests.get",
+        return_value=_response(body=body),
     ):
         result = CliRunner().invoke(workflow, ["work-events", "job-1"])
 
@@ -212,7 +214,9 @@ def test_work_transport_and_response_errors_are_bounded_without_token_leakage():
                 "cli_agent_orchestrator.cli.commands.workflow.requests.get", return_value=response
             )
         else:
-            get = patch("cli_agent_orchestrator.cli.commands.workflow.requests.get", side_effect=failure)
+            get = patch(
+                "cli_agent_orchestrator.cli.commands.workflow.requests.get", side_effect=failure
+            )
         with (
             get,
             patch(

@@ -1,5 +1,10 @@
 """MCP work launch is an authenticated intent-only client of the HTTP seam."""
 
+from test.services.test_work_launch_runtime import (
+    ProtectedFakeBackend,
+    durable_counts,
+    trusted_setup,
+)
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
@@ -16,17 +21,17 @@ from cli_agent_orchestrator.models.work_contract import (
 )
 from cli_agent_orchestrator.services.work_launch_gateway import build_durable_launch_gateway
 from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
-from test.services.test_work_launch_runtime import (
-    ProtectedFakeBackend,
-    durable_counts,
-    trusted_setup,
-)
 
 
 def _tool_function(name):
     tool = getattr(server, name, None)
     assert tool is not None, f"missing MCP tool {name}"
     return getattr(tool, "fn", tool)
+
+
+@pytest.fixture(autouse=True)
+def public_work_ingress_enabled_for_mcp_tests(monkeypatch):
+    monkeypatch.setenv("CAO_ENABLE_PUBLIC_WORK_INGRESS", "true")
 
 
 class _ProcessCapableFakeBackend(ProtectedFakeBackend):
@@ -130,6 +135,9 @@ def launch_transport(trusted_setup, monkeypatch):
 async def test_mcp_work_launch_registers_and_admits_only_through_http_gateway(launch_transport):
     tools = await server.mcp.list_tools()
     assert "work_launch" in {tool.name for tool in tools}
+    assert "task_received" not in {tool.name for tool in tools}
+    with launch_transport.repository.read_snapshot() as connection:
+        grants_before = connection.execute("SELECT count(*) FROM work_grants").fetchone()[0]
 
     result = await _tool_function("work_launch")(**_launch_args())
 
@@ -146,10 +154,51 @@ async def test_mcp_work_launch_registers_and_admits_only_through_http_gateway(la
     assert durable_counts(launch_transport.repository) == (1, 1, 1, 1, 1)
     assert launch_transport.backend.effects == []
     with launch_transport.repository.connection() as connection:
+        assert connection.execute("SELECT count(*) FROM work_grants").fetchone()[0] == grants_before
+        assert connection.execute("SELECT count(*) FROM work_reservation_sets").fetchone()[0] == 0
+        assert connection.execute("SELECT count(*) FROM work_path_reservations").fetchone()[0] == 0
         assert (
             connection.execute("SELECT count(*) FROM work_task_received_receipts").fetchone()[0]
             == 0
         )
+
+
+@pytest.mark.asyncio
+async def test_mcp_work_launch_requires_separate_public_ingress_gate(launch_transport, monkeypatch):
+    monkeypatch.delenv("CAO_ENABLE_PUBLIC_WORK_INGRESS", raising=False)
+
+    result = await _tool_function("work_launch")(**_launch_args())
+
+    assert result == {
+        "ok": False,
+        "status_code": 503,
+        "error": {
+            "code": "work_ingress_disabled",
+            "message": "Public managed Work ingress is disabled.",
+            "retryable": False,
+            "required_action": "enable_public_work_ingress",
+        },
+    }
+    assert launch_transport.requests == []
+    assert durable_counts(launch_transport.repository) == (0, 0, 0, 0, 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "args",
+    [
+        _launch_args(message="m" * 32769),
+        _launch_args(allowed_tools=["tool.read"] * 129),
+        _launch_args(allowed_tools=["t" * 129]),
+    ],
+)
+async def test_mcp_work_launch_rejects_oversized_fields_before_http(launch_transport, args):
+    result = await _tool_function("work_launch")(**args)
+
+    assert result["status_code"] == 422
+    assert result["error"]["code"] == "launch_intent_invalid"
+    assert launch_transport.requests == []
+    assert durable_counts(launch_transport.repository) == (0, 0, 0, 0, 0)
 
 
 @pytest.mark.asyncio
@@ -223,6 +272,29 @@ def test_mcp_work_launch_sanitizes_unknown_upstream_error_detail():
         },
     }
     assert "token=secret" not in str(result)
+
+
+def test_mcp_work_launch_preserves_the_api_public_ingress_gate_error():
+    response = requests.Response()
+    response.status_code = 503
+    response._content = (
+        b'{"detail":{"code":"work_ingress_disabled",'
+        b'"message":"Public managed Work ingress is disabled.",'
+        b'"retryable":false,"required_action":"enable_public_work_ingress"}}'
+    )
+
+    result = server._work_launch_http_error(requests.HTTPError(response=response))
+
+    assert result == {
+        "ok": False,
+        "status_code": 503,
+        "error": {
+            "code": "work_ingress_disabled",
+            "message": "Public managed Work ingress is disabled.",
+            "retryable": False,
+            "required_action": "enable_public_work_ingress",
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -341,7 +413,16 @@ async def test_mcp_work_launch_rejects_ack_and_authority_fields_before_http(laun
     launch = _tool_function("work_launch")
 
     with pytest.raises(TypeError):
-        await launch(**_launch_args(task_received=True, receiver_id="forged"))
+        await launch(
+            **_launch_args(
+                task_received=True,
+                receiver_id="forged",
+                attempt_id="forged",
+                generation=999,
+                receipt="forged",
+                receiver_credential="forged",
+            )
+        )
     with pytest.raises(TypeError):
         await launch(**_launch_args(caller_id="forged", child_id="forged", continuation="forged"))
 

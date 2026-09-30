@@ -23,11 +23,6 @@ from pathlib import Path
 from cli_agent_orchestrator.clients.work_inbox_schema import ManagedInboxStoreIdentity
 from cli_agent_orchestrator.clients.work_recovery_schema import RECOVERY_STATE_BLOCKED_RESTORE
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
-from cli_agent_orchestrator.services.work_authority import (
-    OfflineCutLease,
-    WorkAuthority,
-    public_offline_store_identity,
-)
 from cli_agent_orchestrator.services.recovery_inventory import (
     WORK_SQLITE_PROFILE_VERSION,
     RecoveryInventoryError,
@@ -38,6 +33,11 @@ from cli_agent_orchestrator.services.recovery_inventory import (
     verified_inbox_store_identity,
 )
 from cli_agent_orchestrator.services.secret_gate import scan_for_secrets
+from cli_agent_orchestrator.services.work_authority import (
+    OfflineCutLease,
+    WorkAuthority,
+    public_offline_store_identity,
+)
 
 _ERROR = "recovery bundle rejected"
 _FORMAT = "recovery-bundle-v1"
@@ -45,7 +45,7 @@ _FORMAT_V2 = "recovery-bundle-v2"
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _LEGACY_WORK_SQLITE_PROFILE_VERSION = 24
 _SUPPORTED_BUNDLE_PROFILE_VERSIONS = frozenset((_LEGACY_WORK_SQLITE_PROFILE_VERSION, 25))
-_SUPPORTED_V2_PROFILE_VERSIONS = frozenset((28, WORK_SQLITE_PROFILE_VERSION))
+_SUPPORTED_V2_PROFILE_VERSIONS = frozenset((28, 29, 30, WORK_SQLITE_PROFILE_VERSION))
 _MAX_EXECUTABLE_CONTENT_BYTES = 8 * 1024 * 1024
 
 

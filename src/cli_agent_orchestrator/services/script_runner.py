@@ -33,7 +33,7 @@ import json
 import logging
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
@@ -129,6 +129,12 @@ class ScriptRunRecord:
     started_at: str
     finished_at: Optional[str]
     tier: str = "script"
+    # Run-scoped capabilities are deliberately not retained on this in-memory
+    # record. The runner writes them to an inherited descriptor for one child
+    # process, while the durable journal remains the source of run identity.
+    run_capability_required: bool = False
+    managed_step_admitters: Dict[str, Callable] = field(default_factory=dict, repr=False)
+    work_pending: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -867,12 +873,30 @@ def record_step_completion(
         *,
         error_kind: Optional[str] = None,
     ) -> None:
+        # A managed Work step is settled only from its authenticated Work receipt
+        # and accepted result.  A late legacy run-step callback may still carry
+        # terminal text, but that text is neither a Work ACK nor a Work result and
+        # must not replace the durable work_pending marker.
+        try:
+            durable_step = workflow_journal.get_step(run_id, step_id)
+        except Exception:  # noqa: BLE001 — fail closed for this best-effort projection
+            logger.warning(
+                "journal: script step '%s/%s' source state unavailable; legacy result projection skipped",
+                run_id,
+                step_id,
+            )
+            return
+        if durable_step is not None and durable_step.state == "work_pending":
+            return
+
         st = record.step_states.get(step_id)
         if st is None:
             # No prior RUNNING seed (e.g. the terminal-ready callback never fired) —
             # create the state so the transition is still recorded.
             st = StepRunState(step_id=step_id, state=StepState.RUNNING)
-            record.step_states[step_id] = st
+        else:
+            # Stage the legacy transition until the atomic DAL ownership gate accepts it.
+            st = replace(st)
         if terminal_id is not None:
             st.terminal_id = terminal_id
         st.attempts += 1
@@ -942,6 +966,8 @@ def record_step_completion(
                     run_id,
                     step_id,
                 )
+        except workflow_journal.ManagedStepSettlementRefused:
+            return
         except (
             Exception
         ) as e:  # noqa: BLE001 — journal write is best-effort; resumability degraded only (INV-4)
@@ -952,6 +978,8 @@ def record_step_completion(
                 step_id,
                 e,
             )
+
+        record.step_states[step_id] = st
 
     return _settle
 
@@ -1092,11 +1120,77 @@ async def _finalize(
     )
 
 
+async def _managed_work_pending_result(record: ScriptRunRecord) -> Optional[WorkflowRunResult]:
+    """Keep a script run live while a managed step awaits verified Work output.
+
+    A script can catch the step endpoint's 409 and exit successfully, or let
+    that response terminate it with a nonzero exit. Neither process outcome is
+    authority to settle a Work-pending workflow run. Rehydrate the visible step
+    states from the journal and leave the exact run generation/attempt untouched.
+    """
+    # Legacy script runs do not need the Work journal scan. Besides preserving
+    # their former execution path, this makes the managed-state query contingent
+    # on the server having issued a run capability or installed a trusted step
+    # resolver; user supplied CAO_WORKFLOW_* variables alone never opt in.
+    if not record.run_capability_required and not record.managed_step_admitters:
+        return None
+    rows = await asyncio.to_thread(workflow_journal.get_steps, record.run_id)
+    unresolved = [
+        row
+        for row in rows
+        if row.state == StepState.WORK_PENDING.value
+        or (row.state == StepState.FAILED.value and row.error_kind == "managed_work_failed")
+    ]
+    if not unresolved:
+        return None
+
+    for row in rows:
+        try:
+            state = StepState(row.state)
+        except ValueError:
+            continue
+        record.step_states[row.step_id] = StepRunState(
+            step_id=row.step_id,
+            state=state,
+            attempts=row.attempts,
+            terminal_id=row.terminal_id,
+            error=row.error,
+            call_fingerprint=row.call_fingerprint,
+        )
+
+    run = await asyncio.to_thread(workflow_journal.get_run, record.run_id)
+    current = run.current_step_id if run is not None else None
+    if current not in {row.step_id for row in unresolved}:
+        # Do not paper over an inconsistent journal by settling it. The pending
+        # marker itself remains the conservative state until projection/review.
+        logger.warning(
+            "script run '%s' has a managed Work marker outside its current step",
+            record.run_id,
+        )
+        current = unresolved[0].step_id
+    record.current_step_id = current
+    record.state = RunState.RUNNING
+    record.finished_at = None
+    record.work_pending = True
+    return WorkflowRunResult(
+        run_id=record.run_id,
+        workflow_name=record.workflow_name,
+        state=RunState.RUNNING,
+        steps=_build_steps(record),
+        started_at=record.started_at,
+        finished_at=None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Shared drive: spawn -> concurrent drain -> reap -> exit interp -> finalize
 # ---------------------------------------------------------------------------
 async def _drive_process(
-    record: ScriptRunRecord, script_path: str, env: Dict[str, str]
+    record: ScriptRunRecord,
+    script_path: str,
+    env: Dict[str, str],
+    *,
+    run_credential: Optional[str] = None,
 ) -> WorkflowRunResult:
     """Spawn, drain both pipes concurrently, reap under the bound, interpret exit.
 
@@ -1104,13 +1198,43 @@ async def _drive_process(
     only difference is the env (``CAO_WORKFLOW_RESUME``) and the script path
     (author file vs materialized snapshot). Never ``shell=True`` (C-2).
     """
+    credential_read_fd: Optional[int] = None
+    credential_write_fd: Optional[int] = None
     try:
+        spawn_env = env
+        pass_fds: Tuple[int, ...] = ()
+        if run_credential is not None:
+            if os.name != "posix":
+                raise ValueError("managed workflow credentials require inherited file descriptors")
+            if (
+                not isinstance(run_credential, str)
+                or not 32 <= len(run_credential) <= 256
+                or any(
+                    ch not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+                    for ch in run_credential
+                )
+            ):
+                raise ValueError("invalid managed workflow run credential")
+            credential_bytes = run_credential.encode("ascii")
+            credential_read_fd, credential_write_fd = os.pipe()
+            remaining = memoryview(credential_bytes)
+            while remaining:
+                written = os.write(credential_write_fd, remaining)
+                if written <= 0:
+                    raise OSError("failed to write managed workflow run credential")
+                remaining = remaining[written:]
+            os.close(credential_write_fd)
+            credential_write_fd = None
+            spawn_env = dict(env)
+            spawn_env["CAO_WORKFLOW_AUTH_FD"] = str(credential_read_fd)
+            pass_fds = (credential_read_fd,)
         record.process = await asyncio.create_subprocess_exec(
             sys.executable,
             script_path,
-            env=env,
+            env=spawn_env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **({"pass_fds": pass_fds} if pass_fds else {}),
         )
     except (
         Exception
@@ -1127,6 +1251,13 @@ async def _drive_process(
             kind="error",
             error=f"spawn failed: {exc}",
         )
+    finally:
+        for fd in (credential_write_fd, credential_read_fd):
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
     process = record.process
 
     stdout_ring = _RingBuffer(WORKFLOW_SCRIPT_LOG_CAP)
@@ -1148,6 +1279,9 @@ async def _drive_process(
             task.cancel()
         await asyncio.gather(*drain, return_exceptions=True)
         await _reconcile_orphans(record.run_id)
+        pending_result = await _managed_work_pending_result(record)
+        if pending_result is not None:
+            return pending_result
         record.generation = _bump(record.generation)
         await _persist_generation_best_effort(record)
         stderr_tail = stderr_ring.text()
@@ -1165,6 +1299,10 @@ async def _drive_process(
         # just because the process happened to exit after the cancel fired.
         await _reconcile_orphans(record.run_id)
         return await _finalize(record, state=RunState.CANCELLED, kind="cancelled")
+
+    pending_result = await _managed_work_pending_result(record)
+    if pending_result is not None:
+        return pending_result
 
     rc = process.returncode
     if rc == 0:
@@ -1207,7 +1345,14 @@ async def _persist_generation_best_effort(record: ScriptRunRecord) -> None:
 # ---------------------------------------------------------------------------
 # A1 — run_script_workflow (S1 flow, M1 + M2 run-path gate)
 # ---------------------------------------------------------------------------
-async def run_script_workflow(spec: Any, inputs: Dict[str, Any], run_id: str) -> WorkflowRunResult:
+async def run_script_workflow(
+    spec: Any,
+    inputs: Dict[str, Any],
+    run_id: str,
+    *,
+    managed_step_admitters: Optional[Mapping[str, Callable]] = None,
+    run_credential_factory: Optional[Callable[[str, str], str]] = None,
+) -> WorkflowRunResult:
     """Run a script workflow to completion, awaited inline (A1, S1, US-B1/B4/B5).
 
     ``spec`` is the resolved ``ScriptSpec`` (U5/C4) — duck-typed here (U5 owns the
@@ -1267,6 +1412,8 @@ async def run_script_workflow(spec: Any, inputs: Dict[str, Any], run_id: str) ->
         started_at=_now(),
         finished_at=None,
         tier="script",
+        run_capability_required=run_credential_factory is not None,
+        managed_step_admitters=dict(managed_step_admitters or {}),
     )
     # M3 (traceability): a registered record lives for the process lifetime — it is
     # NOT evicted on finalize, mirroring the base YAML registry, so a bounded
@@ -1306,6 +1453,11 @@ async def run_script_workflow(spec: Any, inputs: Dict[str, Any], run_id: str) ->
     except (
         Exception
     ) as e:  # noqa: BLE001 — journal insert is best-effort; live floor still serves (INV-4)
+        if run_credential_factory is not None or managed_step_admitters:
+            run_registry.pop(run_id, None)
+            raise RuntimeError(
+                "managed script run could not be durably recorded before execution"
+            ) from e
         logger.warning("journal: script insert_run for '%s' failed (run continues): %s", run_id, e)
 
     # --- Step 2: spawn (constructed env) + Step 3/4: drive, reap, interpret ---
@@ -1316,15 +1468,33 @@ async def run_script_workflow(spec: Any, inputs: Dict[str, Any], run_id: str) ->
     # Deliver the RESOLVED inputs (already validated + capped at the route, and
     # journaled above as json.dumps(inputs)) to the child via CAO_WORKFLOW_INPUTS.
     env = build_env(run_id, "1", inputs, resume=False)
+    run_credential = None
+    if run_credential_factory is not None:
+        try:
+            run_credential = await asyncio.to_thread(
+                run_credential_factory, record.run_id, record.generation
+            )
+        except Exception as error:
+            run_registry.pop(run_id, None)
+            raise RuntimeError("managed script run credential could not be issued") from error
     _active_drives.add(run_id)
     try:
-        return await _drive_process(record, spec.path, env)
+        return await _drive_process(
+            record,
+            spec.path,
+            env,
+            **({"run_credential": run_credential} if run_credential is not None else {}),
+        )
     finally:
         _active_drives.discard(run_id)
 
 
 async def run_script_workflow_prepared(
-    record: ScriptRunRecord, spec_path: str, env: Dict[str, str]
+    record: ScriptRunRecord,
+    spec_path: str,
+    env: Dict[str, str],
+    *,
+    run_credential: Optional[str] = None,
 ) -> WorkflowRunResult:
     """Drive an already-linted, already-journaled, already-registered script run (U2, ADR-3).
 
@@ -1346,7 +1516,9 @@ async def run_script_workflow_prepared(
     """
     _active_drives.add(record.run_id)
     try:
-        return await _drive_process(record, spec_path, env)
+        if run_credential is None:
+            return await _drive_process(record, spec_path, env)
+        return await _drive_process(record, spec_path, env, run_credential=run_credential)
     finally:
         _active_drives.discard(record.run_id)
 
@@ -1355,7 +1527,11 @@ async def run_script_workflow_prepared(
 # A2 — resume_script_run (S2 flow, M3, US-C1/C2)
 # ---------------------------------------------------------------------------
 async def resume_script_run(
-    run_id: str, decisions: Optional[Mapping[str, str]] = None
+    run_id: str,
+    decisions: Optional[Mapping[str, str]] = None,
+    *,
+    run_credential_factory: Optional[Callable[[str, str], str]] = None,
+    managed_step_admitters: Optional[Mapping[str, Callable]] = None,
 ) -> WorkflowRunResult:
     """Resume a crashed/failed/cancelled script run from its journal (A2, S2).
 
@@ -1530,6 +1706,8 @@ async def resume_script_run(
             started_at=row.started_at,
             finished_at=None,
             tier="script",
+            run_capability_required=run_credential_factory is not None,
+            managed_step_admitters=dict(managed_step_admitters or {}),
         )
 
         # --- Execution: bump + PERSIST generation BEFORE spawn (INV-6, load-bearing) ---
@@ -1537,6 +1715,16 @@ async def resume_script_run(
         # NOT best-effort: an unpersisted bump would let an orphan's old-generation
         # calls through (U3's update_run_generation raises on failure by design).
         await asyncio.to_thread(update_run_generation, run_id, record.generation)
+        run_credential = None
+        if run_credential_factory is not None:
+            try:
+                run_credential = await asyncio.to_thread(
+                    run_credential_factory, record.run_id, record.generation
+                )
+            except Exception as error:
+                raise ResumeNotAllowedError(
+                    "managed script run credential could not be issued"
+                ) from error
         run_registry[run_id] = record
 
         # Re-open the durable row to RUNNING (best-effort) so a status read reflects it.
@@ -1551,7 +1739,12 @@ async def resume_script_run(
 
         env = _build_env(run_id, record.generation, journaled_inputs, resume=True)
         snapshot_path = _materialize_snapshot(run_id, source)
-        result = await _drive_process(record, snapshot_path, env)
+        result = await _drive_process(
+            record,
+            snapshot_path,
+            env,
+            **({"run_credential": run_credential} if run_credential is not None else {}),
+        )
     finally:
         _active_drives.discard(run_id)
         _delete_temp_file(snapshot_path)  # ALWAYS deleted after reap (BR-30)

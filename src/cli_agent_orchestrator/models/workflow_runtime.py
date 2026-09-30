@@ -42,6 +42,9 @@ class StepState(str, Enum):
 
     PENDING = "pending"
     RUNNING = "running"
+    # A managed step is durably admitted to Work, but no authenticated receipt
+    # and result have been accepted by the workflow engine yet.
+    WORK_PENDING = "work_pending"
     COMPLETED = "completed"
     FAILED = "failed"
     SKIPPED = "skipped"

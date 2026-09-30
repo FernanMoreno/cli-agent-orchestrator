@@ -368,7 +368,7 @@ class TmuxClient:
     def __init__(self) -> None:
         self.server = libtmux.Server()
 
-    def _set_server_exit_empty_off(self) -> None:
+    def _set_server_exit_empty_off(self) -> bool:
         """Keep the tmux server alive across a transient zero-session moment.
 
         By default tmux terminates its whole server process the instant the last
@@ -423,13 +423,15 @@ class TmuxClient:
             result = self.server.cmd("start-server", ";", "set-option", "-s", "exit-empty", "off")
         except Exception:
             logger.warning("failed to set tmux server option 'exit-empty off'", exc_info=True)
-            return
+            return False
 
         if result.returncode != 0:
             logger.warning(
                 "failed to set tmux server option 'exit-empty off': %s",
                 "; ".join(result.stderr) or f"tmux exited {result.returncode}",
             )
+            return False
+        return True
 
     # ── libtmux listing boundary ─────────────────────────────────────────
     #
@@ -728,7 +730,7 @@ class TmuxClient:
             # Ensure the server won't die on a transient empty moment during a
             # mass teardown (harness-control#845). Runs before new_session, and
             # starts the server if it isn't up yet.
-            self._set_server_exit_empty_off()
+            exit_empty_configured = self._set_server_exit_empty_off()
 
             working_directory = self._resolve_and_validate_working_directory(working_directory)
 
@@ -785,6 +787,10 @@ class TmuxClient:
                     y=50,
                 )
                 session = self.server.new_session(**new_session_kwargs)
+                if not exit_empty_configured:
+                    # An external restart can kill the bootstrap invocation.
+                    # Reapply once new_session has established a live server.
+                    self._set_server_exit_empty_off()
             except ValueError as e:
                 if work_safe:
                     raise TmuxCreateUncertain(

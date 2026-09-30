@@ -7,6 +7,12 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from test.security.test_work_bubblewrap_composition import (
+    _TRUSTED_BWRAP_SHA256,
+    _WORKER_MARKER,
+    _minimal_static_worker,
+    _real_bubblewrap,
+)
 
 import pytest
 
@@ -27,14 +33,14 @@ from cli_agent_orchestrator.services.delegation_snapshot import (
 )
 from cli_agent_orchestrator.services.knowledge_policy import KnowledgePolicy
 from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
+from cli_agent_orchestrator.services.work_bubblewrap_setup_intent import WorkBubblewrapSetupIntent
+from cli_agent_orchestrator.services.work_elf_identity import identify_static_executable
+from cli_agent_orchestrator.services.work_executable_content import WorkExecutableContent
 from cli_agent_orchestrator.services.work_launch_gateway import (
-    DurableLaunchRequest,
     DurableLaunchGatewayError,
+    DurableLaunchRequest,
     build_durable_launch_gateway,
 )
-from cli_agent_orchestrator.services.work_bubblewrap_setup_intent import WorkBubblewrapSetupIntent
-from cli_agent_orchestrator.services.work_executable_content import WorkExecutableContent
-from cli_agent_orchestrator.services.work_elf_identity import identify_static_executable
 from cli_agent_orchestrator.services.work_process_supervisor import (
     WorkProcessState,
     WorkProcessSupervisor,
@@ -42,12 +48,6 @@ from cli_agent_orchestrator.services.work_process_supervisor import (
 from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
 from cli_agent_orchestrator.services.work_scheduler import WorkScheduler
 from cli_agent_orchestrator.services.work_service import DeliveryUncertain
-from test.security.test_work_bubblewrap_composition import (
-    _TRUSTED_BWRAP_SHA256,
-    _WORKER_MARKER,
-    _minimal_static_worker,
-    _real_bubblewrap,
-)
 
 
 def _adversarial_static_worker(tmp_path):
@@ -254,9 +254,11 @@ def _setup(
         ),
         resources=ContractResources(
             checkout_root=str(tmp_path),
-            write_paths=(str(tmp_path / "worker-output"),)
-            if contract_write_paths is None
-            else tuple(contract_write_paths),
+            write_paths=(
+                (str(tmp_path / "worker-output"),)
+                if contract_write_paths is None
+                else tuple(contract_write_paths)
+            ),
             units=1,
         ),
         snapshot=ContractSnapshot(

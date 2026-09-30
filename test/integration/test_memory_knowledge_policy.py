@@ -1,12 +1,12 @@
 """Memory entrypoints retain the reviewed store's authority and audit boundary."""
 
 import time
+from test.services.test_knowledge_policy import policy_context  # noqa: F401
 
 import pytest
 
-from cli_agent_orchestrator.services.memory_service import MemoryService
 from cli_agent_orchestrator.services.knowledge_revisions import KnowledgeRevisions
-from test.services.test_knowledge_policy import policy_context  # noqa: F401
+from cli_agent_orchestrator.services.memory_service import MemoryService
 
 
 def proposal(service, actor):
@@ -160,9 +160,11 @@ async def test_existing_legacy_secret_is_redacted_on_recall_and_context(
 
 
 def test_curated_context_uses_same_redaction_policy(tmp_path, monkeypatch):
-    from cli_agent_orchestrator.services import terminal_service
+    from cli_agent_orchestrator.clients.database import create_terminal
     from cli_agent_orchestrator.models.terminal import TerminalStatus
+    from cli_agent_orchestrator.services import terminal_service
 
+    create_terminal("curator", "session", "curator", "mock_cli", metadata={})
     service = MemoryService(base_dir=tmp_path)
     monkeypatch.setattr(
         service, "_get_terminal_context", lambda terminal_id: {"session_name": "session"}
@@ -178,11 +180,8 @@ def test_curated_context_uses_same_redaction_policy(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(terminal_service, "send_input", lambda *args: None)
     secret = "sk-" + "c" * 48
-    monkeypatch.setattr(
-        terminal_service,
-        "get_output",
-        lambda terminal_id: "<cao-memory>api_key=" + secret + "</cao-memory>",
-    )
+    outputs = iter(["", "<cao-memory>api_key=" + secret + "</cao-memory>"])
+    monkeypatch.setattr(terminal_service, "get_output", lambda terminal_id: next(outputs))
     result = service.get_curated_memory_context("worker", "task")
     assert result and secret not in result
 
@@ -231,6 +230,7 @@ async def test_legacy_operations_use_durable_audit_in_metadata_database(
 @pytest.mark.asyncio
 async def test_legacy_audit_failure_prevents_file_write(tmp_path, isolated_memory_db):
     import sqlite3
+
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
     repository = WorkRepository(isolated_memory_db.url.database)
@@ -251,7 +251,7 @@ async def test_graph_cache_hits_still_pass_legacy_policy_and_audit(
     tmp_path, isolated_memory_db, monkeypatch
 ):
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.graph.providers.memory import MemoryGraphProvider, _CACHE
+    from cli_agent_orchestrator.graph.providers.memory import _CACHE, MemoryGraphProvider
     from cli_agent_orchestrator.security import auth
 
     service = MemoryService(base_dir=tmp_path / "wiki", db_engine=isolated_memory_db)
@@ -293,8 +293,9 @@ async def test_relationship_owner_audits_and_redacts_metadata(
     tmp_path, isolated_memory_db, monkeypatch
 ):
     from sqlalchemy.orm import sessionmaker
-    from cli_agent_orchestrator.services import memory_relationship_service as relationships
+
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.services import memory_relationship_service as relationships
 
     monkeypatch.setattr(relationships, "SessionLocal", sessionmaker(bind=isolated_memory_db))
     memory = MemoryService(base_dir=tmp_path / "wiki", db_engine=isolated_memory_db)
@@ -328,8 +329,9 @@ async def test_memory_graph_redacts_cached_historical_metadata(
     tmp_path, isolated_memory_db, monkeypatch
 ):
     from unittest.mock import AsyncMock
+
     from cli_agent_orchestrator.graph.models import GraphView, Node
-    from cli_agent_orchestrator.graph.providers.memory import MemoryGraphProvider, _CACHE
+    from cli_agent_orchestrator.graph.providers.memory import _CACHE, MemoryGraphProvider
 
     service = MemoryService(base_dir=tmp_path / "wiki", db_engine=isolated_memory_db)
     provider = MemoryGraphProvider(memory_service=service, lint_enabled=lambda: False)
@@ -357,8 +359,8 @@ async def test_nested_audit_failure_never_degrades_to_success(
     tmp_path, isolated_memory_db, operation
 ):
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.graph.providers.memory import _CACHE, MemoryGraphProvider
     from cli_agent_orchestrator.services.knowledge_policy import LegacyMemoryAuditError
-    from cli_agent_orchestrator.graph.providers.memory import MemoryGraphProvider, _CACHE
 
     service = MemoryService(base_dir=tmp_path / "wiki", db_engine=isolated_memory_db)
     await service.store("safe fact", scope="global", key="fact")
@@ -390,8 +392,9 @@ async def test_compaction_redacts_inputs_and_output_and_audits(
     from pathlib import Path
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
-    from cli_agent_orchestrator.services import wiki_compiler
+
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.services import wiki_compiler
 
     service = MemoryService(base_dir=tmp_path / "wiki", db_engine=isolated_memory_db)
     memory = await service.store("historical-marker", scope="global", key="fact")
@@ -430,6 +433,7 @@ async def test_compaction_redacts_inputs_and_output_and_audits(
 def test_archive_redacts_historical_tags_before_export(tmp_path, isolated_memory_db):
     import asyncio
     from pathlib import Path
+
     from cli_agent_orchestrator.services.memory_archive.okf import OkfArchiveBackend
 
     service = MemoryService(base_dir=tmp_path / "wiki", db_engine=isolated_memory_db)
@@ -448,8 +452,9 @@ def test_archive_redacts_historical_tags_before_export(tmp_path, isolated_memory
 @pytest.mark.parametrize("shared", ["neither", "base", "database"])
 async def test_memory_graph_cache_isolates_persistent_owners(tmp_path, shared):
     from sqlalchemy import create_engine
+
     from cli_agent_orchestrator.clients import database
-    from cli_agent_orchestrator.graph.providers.memory import MemoryGraphProvider, _CACHE
+    from cli_agent_orchestrator.graph.providers.memory import _CACHE, MemoryGraphProvider
     from cli_agent_orchestrator.services.memory_relationship_service import (
         MemoryRelationshipService,
     )

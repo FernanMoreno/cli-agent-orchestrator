@@ -79,11 +79,10 @@ class TestPackagingParity:
 
     @pytest.mark.parametrize("name", SHIPPED_SKILLS)
     def test_references_subdir_is_mirrored(self, name):
-        """If the canonical skill has a references/ subdir, the mirror must too."""
+        """Mirror reference files and directory presence, including absence."""
         source_refs = CANONICAL_SKILLS_DIR / name / "references"
         dest_refs = PACKAGE_SKILLS_DIR / name / "references"
-        if not source_refs.is_dir():
-            pytest.skip(f"{name} has no references/ subdir")
+        assert source_refs.is_dir() == dest_refs.is_dir(), f"references/ presence drift for {name}"
 
         source_files = _relative_files(source_refs)
         dest_files = _relative_files(dest_refs)

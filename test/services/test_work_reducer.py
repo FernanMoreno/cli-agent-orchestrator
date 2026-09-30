@@ -21,6 +21,52 @@ def evidence(domain, **overrides):
     return domain.TransitionEvidence(**values)
 
 
+def test_shared_fixture_replays_the_complete_work_transition_matrix(domain):
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/work_contract_v1.json").read_text(encoding="utf-8")
+    )
+    presentation = fixture["presentation_expectations"]
+    edges = presentation.get("work_transitions", [])
+    states = {row["state"] for row in presentation["work_states"]}
+
+    assert len(edges) == 15
+    assert len({(edge["from"], edge["to"]) for edge in edges}) == 15
+    assert all(edge["from"] in states and edge["to"] in states for edge in edges)
+
+    fixture_edges = set()
+    for edge in edges:
+        outcome = domain.transition(
+            edge["from"],
+            edge["to"],
+            evidence=evidence(domain, **edge["evidence"]),
+        )
+        assert outcome.value == edge["to"]
+        fixture_edges.add((edge["from"], outcome.value))
+
+    complete_evidence = evidence(
+        domain,
+        contract_confirmed=True,
+        grant_confirmed=True,
+        capacity_confirmed=True,
+        reservations_confirmed=True,
+        result_durable=True,
+        result_validated=True,
+        children_settled=True,
+        prior_stopped=True,
+        reconciliation_authorized=True,
+    )
+    reducer_edges = set()
+    for source in states:
+        for target in states:
+            try:
+                domain.transition(source, target, evidence=complete_evidence)
+            except domain.TransitionConflict:
+                continue
+            reducer_edges.add((source, target))
+
+    assert fixture_edges == reducer_edges
+
+
 def test_admission_requires_all_confirmations(domain):
     for absent in (
         "contract_confirmed",
@@ -100,6 +146,49 @@ def test_known_pre_dispatch_failure_does_not_fabricate_running(domain):
     assert domain.transition("queued", "failed", evidence=evidence(domain)) == "failed"
     with pytest.raises(domain.TransitionConflict):
         domain.transition("queued", "failed", evidence=evidence(domain, expected_generation=2))
+
+
+@pytest.mark.parametrize("state", ["sent", "acknowledged", "running"])
+def test_process_failure_requires_exact_stop_and_cleanup_evidence(domain, state):
+    with pytest.raises(domain.TransitionConflict):
+        domain.delivery_transition(
+            state,
+            "failed",
+            evidence=domain.TransitionEvidence(generation=1, expected_generation=1),
+        )
+
+    proof = domain.TransitionEvidence(
+        generation=1,
+        expected_generation=1,
+        process_exit_code=23,
+        process_stopped=True,
+        container_removed=True,
+        image_removed=True,
+    )
+    assert domain.delivery_transition(state, "failed", evidence=proof) == "failed"
+
+
+def test_zero_exit_or_unclean_process_cannot_settle_a_runtime_failure(domain):
+    for proof in (
+        domain.TransitionEvidence(
+            generation=1,
+            expected_generation=1,
+            process_exit_code=0,
+            process_stopped=True,
+            container_removed=True,
+            image_removed=True,
+        ),
+        domain.TransitionEvidence(
+            generation=1,
+            expected_generation=1,
+            process_exit_code=23,
+            process_stopped=True,
+            container_removed=False,
+            image_removed=True,
+        ),
+    ):
+        with pytest.raises(domain.TransitionConflict):
+            domain.delivery_transition("running", "failed", evidence=proof)
 
 
 def test_uncertain_delivery_cannot_return_to_queue(domain):

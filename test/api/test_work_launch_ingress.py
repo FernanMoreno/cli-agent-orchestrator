@@ -56,8 +56,9 @@ def verified_principal():
 
 
 @pytest.fixture
-def launch_client(client, verified_principal):
+def launch_client(client, verified_principal, monkeypatch):
     previous_gateway = getattr(app.state, "durable_launch_gateway", _MISSING)
+    monkeypatch.setenv("CAO_ENABLE_PUBLIC_WORK_INGRESS", "true")
     if previous_gateway is not _MISSING:
         del app.state.durable_launch_gateway
     app.dependency_overrides[get_work_launch_principal] = lambda: verified_principal
@@ -189,6 +190,15 @@ def test_work_launch_ingress_passes_omitted_selection_as_server_resolvable_none(
         "model",
         "cwd",
         "idempotency_key",
+        "task_received",
+        "receiver_id",
+        "child_id",
+        "continuation",
+        "attempt_id",
+        "generation",
+        "receipt",
+        "attempt_credential",
+        "receiver_credential",
     ],
 )
 def test_work_launch_ingress_rejects_authority_and_effect_extras_before_gateway_lookup(

@@ -185,10 +185,7 @@ async def test_restarted_registered_agent_step_delivers_exact_persisted_snapshot
     assert persisted["truncated"] == int(truncated)
     if redacted:
         assert b"[REDACTED:bearer_token]" in persisted["content"]
-        assert (
-            b"a-very-long-token-that-must-never-be-delivered"
-            not in persisted["content"]
-        )
+        assert b"a-very-long-token-that-must-never-be-delivered" not in persisted["content"]
     if truncated:
         assert persisted["content"] == "é".encode() * 3
 
@@ -196,9 +193,7 @@ async def test_restarted_registered_agent_step_delivers_exact_persisted_snapshot
     monkeypatch.setattr(
         terminal_service,
         "MemoryService",
-        lambda: pytest.fail(
-            "managed agent-step must not resolve live memory after restart"
-        ),
+        lambda: pytest.fail("managed agent-step must not resolve live memory after restart"),
     )
     context.service = WorkAdmission(
         WorkRepository(context.repo.path),

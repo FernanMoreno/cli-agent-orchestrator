@@ -1,7 +1,7 @@
 """Knowledge history is immutable, scoped, reviewed and never implicitly instructional."""
 
-import importlib.util
 import hashlib
+import importlib.util
 import json
 import sqlite3
 import time
@@ -21,8 +21,8 @@ def test_knowledge_schema_is_exported_for_the_verified_migration():
 @pytest.fixture
 def knowledge(tmp_path, monkeypatch):
     from cli_agent_orchestrator.services.knowledge_revisions import (
-        KnowledgeRevisions,
         KnowledgeDenied,
+        KnowledgeRevisions,
     )
 
     monkeypatch.delenv("CAO_AUTH_JWKS_URI", raising=False)
@@ -172,8 +172,8 @@ def test_redaction_precedes_truncation_and_audit_has_no_content(knowledge):
 def test_missing_policy_and_spoofed_principal_fail_closed(knowledge):
     service, repository, actor, _, _, _ = knowledge
     from cli_agent_orchestrator.services.knowledge_revisions import (
-        KnowledgeRevisions,
         KnowledgeDenied,
+        KnowledgeRevisions,
     )
 
     with pytest.raises(KnowledgeDenied):

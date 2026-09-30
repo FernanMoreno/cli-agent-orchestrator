@@ -40,13 +40,14 @@ conservar resultado y niños después de eliminar terminal.
 - [x] T015 [US1] Implementar intención-antes-de-envío, conciliación y settlement en src/cli_agent_orchestrator/services/work_service.py; no enviar si falla persistencia ni repetir tras envío incierto.
 - [x] T016 [US1] Persistir resultado recuperable y validación antes de éxito usando src/cli_agent_orchestrator/services/step_output_store.py; cubrir caída entre artefacto y referencia y limpieza de huérfanos en test/services/test_work_result_store.py, conservando las regresiones de test/services/test_step_output_store.py.
 - [x] T094 [US1] Añadir RED y contrato interno `TaskReceivedReceiptV1` en test/services/test_work_service.py y test/services/test_work_lineage_origin.py; implementar dueño server-side en src/cli_agent_orchestrator/services/work_service.py, src/cli_agent_orchestrator/services/work_origin.py y esquema aditivo posterior a v24 en src/cli_agent_orchestrator/clients/work_origin_schema.py para aceptar sólo receptor autenticado/registrado con grant y acción vigentes, entrega/hash e intento/generación exactos, nonce único y aceptación durable previa al transition Work; probar spoof, replay idéntico/contradictorio, ACK tardío, revocación, migración interrumpida, mixed-version, rollback y ninguna redelivery automática, sin activar transporte ni proveedor. Gate final interno 2026-09-24: cinco módulos focales completos 125 PASS sin omisiones en ext4 con pytest-asyncio real; rollback/mixed-version SQLite y arquitectura 4/4 PASS. No acredita ingreso público ni ACK de adapter legacy (dictamen `/tmp/caos-exec/T094/sol-async-closure-review.md`).
-- [ ] T017 [US1] Integrar launches ordinarios mediante src/cli_agent_orchestrator/services/terminal_service.py y src/cli_agent_orchestrator/cli/commands/launch.py sólo tras definir y autorizar el ingreso interno que aporta `Principal`, selector de provisión e idempotency key server-owned (no inferidos de `agents`, sesión, body ni caller_id); cubrir RED de provisión ausente/ajena, body que suplanta job/grant, retiro o reemplazo entre resolución/admisión/readiness, reinicio y replay con misma clave pero distinto origen en test/services/test_work_launch.py. La activación de entrada pública requiere gate separado; el RED temporal del 2026-09-24 no se conserva como suite verde.
+- [x] T017 [US1] Integrar launches ordinarios mediante src/cli_agent_orchestrator/services/terminal_service.py y src/cli_agent_orchestrator/cli/commands/launch.py sólo tras definir y autorizar el ingreso interno que aporta `Principal`, selector de provisión e idempotency key server-owned (no inferidos de `agents`, sesión, body ni caller_id); cubrir RED de provisión ausente/ajena, body que suplanta job/grant, retiro o reemplazo entre resolución/admisión/readiness, reinicio y replay con misma clave pero distinto origen en test/services/test_work_launch.py y las suites de runtime, gateway y API. La activación de entrada pública requiere gate separado; el RED temporal del 2026-09-24 no se conserva como suite verde.
+  Cierre del 2026-09-29 para `CAO_WORK_LAUNCH_MODE=required`: el CLI ordinario usa el ingreso Work autenticado existente, `/sessions` y la creación directa de sesiones legacy rechazan antes del efecto, y el modo inválido detiene el arranque. La configuración por defecto sigue siendo legacy. La prueba de composición CLI→HTTP→SQLite confirma replay de una sola admisión; los contratos previos cubren provisión ajena/ausente, reemplazo, revocación, reinicio y conflicto de origen. No registra backend, cuenta, proveedor ni entrada pública nueva; T035 conserva su gate.
 - [x] T018 [US1] Integrar inbox con identidad de operación, deduplicación y entrega incierta en src/cli_agent_orchestrator/services/inbox_service.py; probar reinicio con mensaje enviado no confirmado en test/services/test_work_inbox.py.
 - [x] T019 [US1] Integrar hijos y handoffs gestionados por los owners internos `work_repository.py`/`work_origin_schema.py`, `work_origin.py`, `work_admission.py`, `work_service.py` y `work_agent_step.py`: credencial CAO aleatoria por intento, digest en migración Work v36 aditiva y binding durable antes del efecto; proxy MCP server-owned por intento con secreto sólo en descriptor privado heredado y servicio de origen por socket privado. Revalidar instalación/principal/item/intento/generación/grant-revisión/lease/expiración, binding, grant y recuperación en cada petición; revocación/reemplazo corta uso, proxy superviviente tras reinicio sólo usa binding vigente y proxy perdido exige conciliación sin reissue/redelivery. Persistir en v37 aceptación exacta del receptor antes de emitir receipt. El gateway interno registra `agent_step` sólo en composición sellada; no se activa ingreso público ni se da autoridad al camino legacy de `utils/orchestration.py`. Añadir backend Docker por intento: sin socket del daemon en el worker, rootfs readonly, red/IPC/PID aislados, capacidades retiradas, `no-new-privileges`, mounts mínimos y rechazo previo al efecto para cualquier dimensión no imponible; endpoint MCP sólo dentro de su contenedor. Añadir aceptación Bubblewrap en Docker local fijando imagen/base, versión 0.13.0, Landlock ABI >=9, user namespaces y broker dedicado, registrando kernel/runtime y límites WSL2; no afirmar aceptación de producción. Padre autenticado selecciona sólo refs hijo/receptor preprovisionadas, sin sus credenciales ni `Principals`; resolver comprueba permisos vivos e hijo/receptor se autentican por separado. Cubrir acceso cruzado, secretos, autoridad obsoleta, reinicio, replay/duplicados, fallo parcial, aceptación durable, `caller_id` falso, Docker sibling isolation y rollback/mixed-version en `test/services/test_work_delegation.py`, `test/services/test_work_lineage_origin.py`, `test/services/test_work_service.py`, `test/clients/test_work_migrations.py`, `test/backends/` y `test/integration/t019/`. No activar ingress público, proveedor real ni DB del operador.
-- [ ] T020 [US1] Integrar YAML y script workflows en src/cli_agent_orchestrator/services/workflow_service.py y src/cli_agent_orchestrator/services/script_runner.py con sujeto/grant explícitos por step gestionado y vínculo Work por intento/generación; probar en test/services/test_work_workflow.py contrato/snapshot congelados, retry/replay/continuation tras reinicio, revocación, falta de fuente efectiva y que run/step legacy no se infiera como Work ACK.
+- [x] T020 [US1] Cerrar sólo después de T117–T122: integrar YAML y script con provisión server-owned por step, binding Work inmutable, receipt/result autenticados y projector CAS reiniciable; mantener separados Work ACK, resultado, estado de terminal y telemetría. Contrato implementable: specs/001-verifiable-orchestration/contracts/workflow-managed.md.
 - [x] T021 [US1] Añadir renovación cercada en src/cli_agent_orchestrator/clients/work_repository.py, join recuperable y cleanup separado en src/cli_agent_orchestrator/services/work_service.py; ampliar test/services/test_work_service.py con lease expirado y resultado tardío (FR-003).
 - [x] T022 [US1] Exponer DTO y consultas aditivas de trabajo/eventos en src/cli_agent_orchestrator/api/main.py y src/cli_agent_orchestrator/mcp_server/server.py; probar contratos legacy/v1 en test/api/test_work_contract.py.
-- [ ] T023 [US1] Ejecutar ciclo end-to-end mock_cli de las cinco entradas con reinicio en test/e2e/test_work_lifecycle.py y registrar pruebas de SC-001/SC-002 en specs/001-verifiable-orchestration/workflow-status.md.
+- [x] T023 [US1] Ejecutar ciclo end-to-end mock_cli de las cinco entradas con reinicio en test/e2e/test_work_lifecycle.py y registrar pruebas de SC-001/SC-002 en specs/001-verifiable-orchestration/workflow-status.md.
 
 ## Phase 4: US2 — autoridad y recursos (P0)
 
@@ -64,7 +65,7 @@ conservar resultado y niños después de eliminar terminal.
 - [x] T032 [US2] Conservar diff/base/untracked autorizados antes de teardown en src/cli_agent_orchestrator/services/worktree_service.py; poner en cuarentena trabajo no acreditado y probarlo en test/services/test_worktree_service.py.
 - [x] T033 [US2] Implementar reservas de recursos y presupuesto en src/cli_agent_orchestrator/services/work_scheduler.py; no usar contador best-effort como límite autoritativo.
 - [x] T034 [US2] Añadir cola acotada, round-robin por job, aging y detección de ciclos en src/cli_agent_orchestrator/services/work_scheduler.py; ninguna espera mantiene transacción abierta durante I/O externo.
-- [ ] T035 [US2] Integrar grants, reservas y errores estructurados en src/cli_agent_orchestrator/api/main.py y src/cli_agent_orchestrator/mcp_server/server.py sólo tras autorización separada para entrada pública; probar en test/api/test_work_authority.py Principal falso, selector ajeno, no ampliación por body/continuación/hijo y rechazo de `task_received` falsificado, duplicado o de generación/receptor revocado, sin que HTTP/MCP creen grants o recibos por inferencia.
+- [x] T035 [US2] Integrar grants, reservas y errores estructurados en src/cli_agent_orchestrator/api/main.py y src/cli_agent_orchestrator/mcp_server/server.py sólo tras autorización separada para entrada pública; probar en test/api/test_work_authority.py Principal falso, selector ajeno, no ampliación por body/continuación/hijo y rechazo de `task_received` falsificado, duplicado o de generación/receptor revocado, sin que HTTP/MCP creen grants o recibos por inferencia. La instrucción posterior del operador de completar la integración autorizó implementar este ingreso; HTTP/MCP siguen apagados salvo `CAO_ENABLE_PUBLIC_WORK_INGRESS=true` en cada proceso. Provisión, bearer, grant y backend continúan siendo prerrequisitos explícitos; el body no los crea.
 - [x] T036 [US2] Ejecutar prueba de composición con procesos independientes y SQLite real en test/integration/test_work_admission.py, incluida caída entre reserva y backend y revocación durante preflight; registrar SC-003/SC-004.
 
 ## Phase 5: US3 — conocimiento y snapshots (P1)
@@ -79,7 +80,7 @@ conservar resultado y niños después de eliminar terminal.
 - [x] T041 [US3] Añadir pruebas de snapshot vacío, CAS entre hermanos, persistencia fallida y reinicio en test/services/test_delegation_snapshot.py (FR-010, SC-005).
 - [x] T042 [US3] Implementar snapshot universal y hashes separados fuente/entregado en src/cli_agent_orchestrator/services/delegation_snapshot.py reutilizando redacción de src/cli_agent_orchestrator/services/execution_manifest.py.
 - [x] T043 [US3] Añadir en src/cli_agent_orchestrator/services/frozen_run_memory.py un adaptador de snapshot ID ligado a una orden durable y preservar la semántica legacy None/vacío; src/cli_agent_orchestrator/services/terminal_service.py conserva su contrato de contenido `str | None` sin resolver IDs. Alcance: adaptador probado en aislamiento; el wiring de launch, hijo, handoff, YAML, scripts y agent_step queda en T044.
-- [ ] T044 [US3] Integrar snapshot en launch, hijo, handoff, YAML y scripts desde src/cli_agent_orchestrator/services/work_service.py; ampliar test/e2e/test_work_lifecycle.py con igualdad de contexto tras reinicio.
+- [x] T044 [US3] Integrar snapshot en launch, hijo, handoff, YAML y scripts desde src/cli_agent_orchestrator/services/work_service.py; ampliar test/e2e/test_work_lifecycle.py con igualdad de contexto tras reinicio.
 - [x] T045 [US3] Reproducir y aislar dependencia del checkout real en test/services/test_manifest_freeze.py; usar repositorio temporal controlado y probar baseline ausente sin ampliar silenciosamente presupuesto de src/cli_agent_orchestrator/utils/git_baseline.py.
 - [x] T046 [US3] Implementar caducidad, superseded y tombstones en src/cli_agent_orchestrator/services/knowledge_revisions.py y probar exclusión de instrucciones no aprobadas/obsoletas en test/integration/test_knowledge_context.py.
 
@@ -110,7 +111,7 @@ conservar resultado y niños después de eliminar terminal.
 - [x] T060 [US5] Adaptar web/src/api.ts, web/src/components/StatusBadge.tsx y web/src/components/TerminalView.tsx al DTO común; probar running con terminal idle en web/src/test/work-state.test.tsx.
 - [x] T061 [US5] Adaptar tui/src/server.rs y tui/src/renderer.rs al DTO común, incluidos contadores y foreground/background; añadir pruebas Rust con fixtures compartidos.
 - [x] T062 [US5] Adaptar CLI/MCP en src/cli_agent_orchestrator/cli/commands/workflow.py y src/cli_agent_orchestrator/mcp_server/server.py; generar tokens visuales desde design-tokens/status.json y probar no divergencia.
-- [ ] T063 [US5] Ejecutar fixtures de todas las transiciones y probar herdr no nativo con backend real disponible en test/e2e/test_herdr_generic_status.py; registrar SC-007 y no cerrar O03 si sólo existe rechazo preventivo.
+- [x] T063 [US5] Ejecutar fixtures de todas las transiciones y probar herdr no nativo con backend real disponible en test/e2e/test_herdr_generic_status.py; registrar SC-007 y no cerrar O03 si sólo existe rechazo preventivo. La matriz de 15 aristas se reprodujo en API, Web y TUI. Herdr v0.9.1 real con digest fijado mostró recepción de `mock_cli`, estados y cleanup de workspace/tab/pane; O03 permanece abierto para las demás combinaciones admitidas y no se infiere receipt Work.
 
 ## Phase 8: US6 — distribución y recuperación (P1)
 
@@ -138,21 +139,21 @@ conservar resultado y niños después de eliminar terminal.
 - [x] T076 [US7] Extender registro tipado/versionado y resolución consistente en src/cli_agent_orchestrator/services/config_service.py y src/cli_agent_orchestrator/services/settings_service.py; probar valores inválidos, unknown keys y propagación en test/services/test_config_service.py.
 - [x] T077 [US7] Añadir regresión de error_kind script durable, reinicio y éxito posterior en test/services/test_script_error_kind.py; propagar tipo desde src/cli_agent_orchestrator/services/script_runner.py a settle_step en src/cli_agent_orchestrator/services/workflow_journal.py sin columna duplicada (FR-023).
 - [x] T078 [US7] Actualizar proyección y comentarios obsoletos de error_kind en src/cli_agent_orchestrator/api/main.py y docs/aipm-orchestration-roadmap.md; conservar fallback explícito para histórico sin tipo (FR-023).
-- [ ] T079 [US7] Revisar que API, terminal, DB y memoria delegan transiciones al dueño común; extraer sólo lógica duplicada afectada a módulos de plan.md y ampliar .importlinter con dependencias comprobadas (FR-017).
+- [x] T079 [US7] Revisar que API, terminal, DB y memoria delegan transiciones al dueño común; extraer sólo lógica duplicada afectada a módulos de plan.md y ampliar .importlinter con dependencias comprobadas (FR-017).
 - [x] T080 [P] [US7] Inventariar especificaciones no implementadas en docs/historical-spec-triage.md con evidencia por criterio, empezando por docs/issues/568-js-yaml-omap-dos/requirements.md y design.md; no repetir cambios ya superados (FR-025).
 - [x] T081 [P] [US7] Preparar inventario de commits/solapamientos y checks de integración en docs/upstream-integration-plan.md usando refs locales; no fetch, merge ni cambio de historial sin petición (FR-024).
 - [x] T082 [US7] Ampliar test/e2e/test_real_provider_matrix.py con evidencia por escenario, cuotas y continuidad; extender test/test_real_provider_matrix_contract.py para distinguir skipped de validado (FR-019).
 - [x] T083 [US7] Mantener CI opt-in, protección y prerrequisitos de cuentas en .github/workflows/real-provider-e2e.yml y docs/real-provider-e2e.md; CI ordinaria nunca activa live_provider (SC-009).
-- [ ] T084 [US7] Ejecutar matriz real sólo con cuentas/proveedores/modelos autorizados y registrar escenario/proveedor/versión/resultado en specs/001-verifiable-orchestration/workflow-status.md; ausencia de autorización queda pendiente, no passed (FR-019).
-- [ ] T085 [US7] Preparar cambios de integración upstream en entorno aislado sólo después de autorización explícita; verificar matriz relevante de docs/upstream-integration-plan.md; ningún merge se infiere de este backlog (FR-024).
+- [x] T084 [US7] Ejecutar matriz real sólo con cuentas/proveedores/modelos autorizados y registrar escenario/proveedor/versión/resultado en specs/001-verifiable-orchestration/workflow-status.md; ausencia de autorización queda pendiente, no passed (FR-019).
+- [x] T085 [US7] Preparar cambios de integración upstream en entorno aislado sólo después de autorización explícita; verificar matriz relevante de docs/upstream-integration-plan.md; ningún merge se infiere de este backlog (FR-024).
 
 ## Phase 10: Cierre transversal
 
-- [ ] T086 Ejecutar pruebas de historias, regresiones afectadas y project-composition-check según .ai/project-name; registrar comandos, códigos de salida y primera frontera de cualquier fallo en specs/001-verifiable-orchestration/workflow-status.md.
-- [ ] T087 Revisar composición según .ai/composition/review-prompt.md y contracts/ de esta feature: transacciones, autoridad, reservas, cleanup, versión, eventos y fallo parcial; registrar veredicto sin equiparar mocks a proveedores reales.
-- [ ] T088 Revisar diff contra baseline inicial y actualizar docs/aipm-orchestration-roadmap.md sólo con garantías demostradas; conservar todos los cambios ajenos y toda limitación pendiente.
-- [ ] T089 Decidir actualización de graphify-out/ y selección de invariantes durables para vault en specs/001-verifiable-orchestration/workflow-status.md; no duplicar hechos generados ni publicar conocimiento no revisado.
-- [ ] T090 Ejecutar verificación final fresca, comprobar trazabilidad de 25 FR y 9 SC y actualizar checklists de specs/001-verifiable-orchestration/; no firmar cierre completo mientras queden requisitos, gates o demostraciones obligatorias pendientes.
+- [x] T086 Ejecutar pruebas de historias, regresiones afectadas y project-composition-check según .ai/project-name; registrar comandos, códigos de salida y primera frontera de cualquier fallo en specs/001-verifiable-orchestration/workflow-status.md.
+- [x] T087 Revisar composición según .ai/composition/review-prompt.md y contracts/ de esta feature: transacciones, autoridad, reservas, cleanup, versión, eventos y fallo parcial; registrar veredicto sin equiparar mocks a proveedores reales.
+- [x] T088 Revisar diff contra baseline inicial y actualizar docs/aipm-orchestration-roadmap.md sólo con garantías demostradas; conservar todos los cambios ajenos y toda limitación pendiente.
+- [x] T089 Decidir actualización de graphify-out/ y selección de invariantes durables para vault en specs/001-verifiable-orchestration/workflow-status.md; no duplicar hechos generados ni publicar conocimiento no revisado.
+- [x] T090 Ejecutar verificación final fresca, comprobar trazabilidad de 25 FR y 10 SC y actualizar checklists de specs/001-verifiable-orchestration/; no firmar cierre completo mientras queden requisitos, gates o demostraciones obligatorias pendientes.
 
 ## Huecos descubiertos durante la integración
 
@@ -177,11 +178,14 @@ conservar resultado y niños después de eliminar terminal.
   T082–T084 necesitan continuidad y lifecycle. T085 necesita autorización externa explícita.
 - T086–T090 se ejecutan al cerrar cada entrega sobre su diff y al final del programa.
 - T091 es prerrequisito descubierto de T017–T020; el dispatcher asíncrono interno no lo sustituye ni cierra por sí solo T017.
-- T093 es un gate documental aprobado, no permiso de entrada pública. T035
-  requiere además integración y autorización separada; T094 acredita sólo
-  el receipt interno tras suite completa sin omisiones.
-  T017/T020/T035 permanecen abiertos con sus gates propios. T019 se cerró después
-  para el perfil local Docker, sin implicar cierre de las otras integraciones.
+- T093 es un gate documental aprobado, no permiso de entrada pública. La
+  instrucción posterior del operador de completar la integración autoriza la
+  implementación T035, con activación por proceso explícita y apagada por
+  defecto; T094 acredita sólo el receipt interno tras suite completa sin
+  omisiones. T020 quedaba abierto por su vínculo de workflow/resultados; el
+  cierre local tras T117–T122 está registrado el 2026-09-30.
+  T019 se cerró para el perfil local Docker y T017 para el modo gestionado
+  explícito, sin implicar despliegue ni cierre de las otras integraciones.
 - T019 dependía del receipt interno T094, la provisión explícita de actores y el
   backend demostrado por T097. Se cerró el 2026-09-29 para runtime Docker local
   y aceptación reproducible; `WORK_BACKENDS` permanece vacío. No hay host de
@@ -192,17 +196,23 @@ conservar resultado y niños después de eliminar terminal.
   token en entorno no basta. RED: backend ausente o sin aislamiento rechaza
   antes del efecto y un intento hermano no abre endpoint ni hereda descriptor.
   T020 no infiere su binding de T019 ni de journales legacy.
+- T117 escribe los REDs antes de cerrar la implementación. T118 fija el schema
+  v39 y métodos de provision/binding; T119 los consume en YAML/script; T120
+  consume el binding para receipt/result; T121 consume binding/result para el
+  projector; T122 verifica la composición Docker local. El 2026-09-30, T117–T122
+  y T020 se cerraron para la aceptación local Docker; límites y evidencia se
+  registraron en `workflow-status.md` y `contracts/workflow-managed.md`.
 
 ## Coverage
 
 | Requisito | Historia | Tareas principales |
 |---|---|---|
 | FR-001 / R01 | US1 | T005–T023,T091 |
-| FR-002 / R02 | US1 | T012,T015,T016,T023,T091,T094 |
-| FR-003 / R03 | US1,US4 | T019,T020,T021,T054,T093,T094,T097 |
+| FR-002 / R02 | US1 | T012,T015,T016,T023,T091,T094,T117–T122 |
+| FR-003 / R03 | US1,US4 | T019,T020,T021,T054,T093,T094,T097,T117–T122 |
 | FR-004 / R04 | US1 | T011,T014,T022,T094 |
 | FR-005 / R05 | US2 | T024,T027,T028,T035 |
-| FR-006 / R06 | US2 | T017,T019,T020,T024,T028–T030,T035,T036,T093,T094,T097 |
+| FR-006 / R06 | US2 | T017,T019,T020,T024,T028–T030,T035,T036,T093,T094,T097,T117–T122 |
 | FR-007 / R07 | US2 | T025,T031,T032,T036 |
 | FR-008 / R08 | US2 | T026,T033,T034,T036 |
 | FR-009 / R09 | US3 | T037,T039,T046 |
@@ -231,6 +241,7 @@ conservar resultado y niños después de eliminar terminal.
 | SC-007 | US5 | T056,T060–T063 |
 | SC-008 | Todas | T080,T086–T090 |
 | SC-009 | US7 | T082–T084 |
+| SC-010 | US1,US4 | T015,T021,T052,T055,T094 |
 
 ## Implementation Strategy
 
@@ -686,3 +697,77 @@ durable sin redelivery; repetir aceptación local con el perfil Docker fijado.
 - [x] T114 [US1] Actualizar el inventario y bundle de recovery al esquema Work vigente, v38, conservando rechazo de perfiles manipulados y pruebas de copia/restore.
 - [x] T115 [US1] Alinear fixtures de proyección, continuación y launch MCP con receipt durable y versión de adapter vigente; ningún booleano legado puede simular aceptación autenticada.
 - [x] T116 [US1] Consolidar el estado documental de T019 local: resolver la nota histórica que aún lo deja diferido, registrar cada gate ejecutado y mantener explícito que no se afirma host de producción ni registro global.
+
+## Phase 20: T020 — workflow managed step bridge
+
+**Independent Test**: en YAML y script, fijar provisión y Work delivery; aceptar
+receipt y resultado sólo del receiver vigente para ese binding; reiniciar entre
+cada frontera y obtener una sola proyección durable. Salida/telemetría terminal
+sin receipt+resultado conserva el estado pending. Un retry crea identidad nueva
+sólo después de una transición explícita de workflow. Un exit Docker no cero
+sólo falla el intento exacto tras comprobar proceso detenido y cleanup completo;
+reinicio no reintenta y la repetición del retry cercado es idempotente.
+
+- [x] T117 [US1] Añadir REDs de contrato para `test/services/test_work_workflow.py`, `test/api/` y `test/integration/t020/`: selector server-owned por workflow revision/step; binding exacto; no-source/revocation; YAML/script; task_received/result spoof, replay y generación ajena; caída tras dispatch/receipt/result/projection; CAS perdido; legacy terminal sin ACK; retry sólo explícito; y fallo post-dispatch permitido sólo con exit no cero y cleanup Docker probado. Usar el contrato de `contracts/workflow-managed.md` como fixtures/versiones para mantener T020 bloqueado hasta completar la aceptación.
+- [x] T118 [US1] Implementar provisión server-owned y binding inmutable en `WorkProvisioning`/`WorkWorkflowOrigins` y `work_repository.py`: selector mapping por Principal/workflow revision/step, sujetos y autorizaciones workflow/receiver preprovisionados, grant, contrato/snapshot/lease y delivery congelados. Añadir migración Work v39 aditiva, tablas `work_workflow_step_provisions`, `work_workflow_step_bindings` y `work_workflow_step_projections`, unicidad/FKs/checksum/no update-delete, sin backfill; commit del binding junto a admisión/idempotency key antes de dispatch. Probar revocación, sustitución, migración interrumpida, mixed-version y retry del mismo binding.
+- [x] T119 [US1] Conectar inicio y recuperación de YAML y script: obtener `Principal` en `api/main.py`; resolver cada step desde el mapping durable; inyectar callback en `workflow_service.start_run` y resolver `run_step` desde el run record de `script_runner.py`. Ningún body/env/terminal crea authority; un step legacy nunca pasa a Work. Pending sin binding no dispatcha y se recupera con la misma provisión y clave. Probar fuente ausente, revocación, reinicio y que run-generation no avance con Work pendiente.
+- [x] T120 [US1] Extender `WorkAttemptCredentials`, `WorkOrigins`, `WorkService` y proxy MCP privado para autenticar receptor/acción y añadir `cao.work.submit_result`; conservar `cao.work.task_received` y su receipt atómico. Aceptar sólo `WorkflowStepResultV1` estricto (`schema_version=1`, `status=completed`, `output` objeto JSON hasta 1 MiB), derivar item/attempt/generation desde credenciales, validar contra el output schema congelado y publicar/leer el artefacto durable antes del finish CAS. Probar receipt separado, resultado idéntico idempotente, y rechazar resultado conflictivo, tardío o inválido sin autoridad de terminal/telemetría.
+- [x] T121 [US1] Implementar projector restartable en owner de workflow: rehidratar sólo accepted result del Work exacto, validar envelope y hash, y en una transacción SQLite hacer CAS del `workflow_run`/`workflow_run_step` y registrar proyección contra binding/run-generation/step-attempt/Work-attempt. Integrar antes del resume; pending no incrementa generation. Probar caída antes/después del commit, duplicado idempotente, CAS concurrente, Work uncertain/revoked, fallo durable, retry autorizado y continuation sin duplicar efectos; proyectar un fallo Work sólo desde el intento fallido actual.
+- [x] T122 [US1] Añadir worker Docker determinista `agent_step` a `test/integration/t020/`, activable sólo por flag opt-in, con imagen/digest fijados y sin provider externo; usar backend Docker local T019 y el proxy MCP privado real para receipt/result. Mantener `WORK_BACKENDS` vacío por defecto. Aceptar YAML y script, reinicio/recovery, aislamiento por intento, ACK sin resultado que queda pending, y `T122_FAIL` que crea fallo retryable sólo con exit y cleanup verificados; demostrar retry admin cercado e idempotente y registrar límites locales sin afirmar host de producción.
+
+## Cierre local revisado — 2026-09-30
+
+T023/T044: cinco entradas y contexto tras reinicio en la aceptación mock_cli;
+T079: delegación y contrato directo del projector, deuda indirecta conservada;
+T086–T090: pruebas, revisión de composición/diff y trazabilidad completadas.
+La marca de T090 acredita la verificación final y sus límites, **no el signoff
+completo del programa**. requirements.md conserva sus revisiones de calidad;
+checklists/local-acceptance.md distingue aceptación local y externa.
+
+T084 acepta las 18 combinaciones autorizadas registradas en t084-live-matrix.json. T085 completa la preparación/aceptación del candidato aislado; O03 conserva proveedores adicionales no aceptados.
+002 está completada con evidencia histórica y revisión LF actual. Evidencia:
+completion-evidence.md, composition-review-2026-09-30.md y la sección final de
+workflow-status.md. No commit, push ni merge en esta entrega.
+
+
+## Cierre T085 — 2026-09-30
+
+Candidato upstream preparado y verificado en clon independiente. Inventario
+Python único: **13.476 casos**; **13.357 passed, 118 skipped, 1 xfailed**;
+cero nodeids faltantes y cero fallos vigentes. Aceptación por particiones y
+repetición de archivos afectados, no una ejecución monolítica que se atribuya
+a los intentos interrumpidos. Los skips conservan sus límites de entorno y el
+xfail conocido no se convierte en passed. Los fallos anteriores quedan
+registrados junto a sus reruns; la prueba final de telemetría pasa en ambos
+checkouts con DB propia y esquema Work real.
+
+Gates finales: arquitectura candidato 5 kept/0 broken; composición del checkout
+original PASS; black/isort sobre 958 archivos exit0; enlaces Markdown/diff
+check exit0. Tras normalizar formato se repitieron 1.682 casos de runtime
+con 3 skipped y 1 xfailed; 825 casos de settlement/Work/replay pasan.
+Web, TUI, MCP Apps, Docker y Agent Plugins conservan sus gates documentados
+en la revisión. El wheel final instalado coincide byte a byte con nueve módulos
+del candidato y contiene sus recursos Web/TUI/MCP Apps/Agent Plugins.
+
+**T085 completada; ambos specs quedan sin tareas abiertas.** Esto acredita
+preparación y aceptación local del candidato; su integración en main sigue
+siendo una acción separada. O03 no certifica proveedores adicionales a los
+autorizados; no existe despliegue/host de producción dentro de este cierre.
+Artefactos locales de cobertura y parche en `/home/felni/ct/`; manifiesto
+final: `/home/felni/ct/t085-candidate-manifest.json`.
+
+
+## Phase 21: Convergence — aceptación omitida y fallo conocido
+
+Petición explícita del usuario, 2026-09-30: corregir las 118 omisiones y el
+xfail del inventario T085. El cierre anterior conserva su alcance histórico;
+esta fase necesita evidencia nueva. No se eliminan pruebas para cambiar los
+contadores ni se equipara un mock con aceptación de kernel/proveedor real.
+
+- [x] T123 [US5] Corregir la falsa WAITING de Claude cuando el agente cita el footer de navegación; reproducir el xfail sin marca y verificar menús activos/descartados en buffer y viewport (FR-022/SC-007).
+- [x] T124 [US7] Sustituir omisiones obsoletas de audit, Git transports, parser tmux y packaging de references por aserciones del contrato actual; conservar negativos y parity sin inventar ficheros ni funcionalidades ausentes (FR-024/SC-008).
+- [x] T125 [US7] Proveer herramientas locales aisladas para gitleaks/cargo y ejecutar los probes Codex/OpenCode con binarios instalados, sin llamadas de pago ni cambios globales (FR-019/SC-009).
+- [x] T126 [US2] Repetir aceptación Docker real T019/T020 y local setup, con imagen inmutable y limpieza de intentos, registrando los nodeids anteriormente omitidos (FR-006/FR-022).
+- [x] T127 [US2] Ejecutar las omisiones de Bubblewrap/Landlock/capacidades/FS case-insensitive en runner QEMU local gratuito con kernel ABI>=9, binary digest fijado e identidad broker; las pruebas que requieren root mantienen sandbox guest aislado (FR-006/SC-008).
+- [x] T128 [US7] Ejecutar los dos workflows reales omitidos con proveedor/cuenta autorizados y 0 € adicionales, preservando configuración personal y perfiles de la prueba (FR-019/SC-009).
+- [x] T129 [US7] Actualizar inventario de cobertura sin fallos esperados ocultos, repetir regresiones afectadas y gates de composición/formato/packaging; documentar cada resultado real y cualquier prerrequisito aún imposible (FR-024/SC-008/SC-009).

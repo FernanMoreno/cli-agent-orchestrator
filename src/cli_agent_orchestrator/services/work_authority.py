@@ -25,6 +25,7 @@ _ORIGIN_ACTIONS = frozenset(
         "admit_step",
         "execute",
         "task_received",
+        "task_result",
         "delegate",
     }
 )

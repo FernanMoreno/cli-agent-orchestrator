@@ -7,19 +7,19 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from dataclasses import replace
+from test.clients.test_work_bubblewrap_process_identity import _identity
+from test.services.test_work_contract_binding import bind, context
 
 import pytest
 
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
+from cli_agent_orchestrator.services.work_authority import AuthorityDenied
 from cli_agent_orchestrator.services.work_bubblewrap_composition import (
     WorkBubblewrapAcknowledgement,
 )
 from cli_agent_orchestrator.services.work_bubblewrap_setup_intent import (
     WorkBubblewrapSetupIntent,
 )
-from cli_agent_orchestrator.services.work_authority import AuthorityDenied
-from test.clients.test_work_bubblewrap_process_identity import _identity
-from test.services.test_work_contract_binding import bind, context
 
 
 def _setup(tmp_path, *, catalog_size=4, v2=True):

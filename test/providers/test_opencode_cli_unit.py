@@ -492,6 +492,15 @@ class TestExtractLastMessage:
 
 
 class TestInitialize:
+    @pytest.fixture(autouse=True)
+    def installed_v1(self):
+        # This class exercises v1 chrome and commands without reading the
+        # operator's installed version, config, or credentials.
+        with patch(
+            "cli_agent_orchestrator.providers.opencode_cli.detect_opencode_major", return_value=1
+        ):
+            yield
+
     @pytest.mark.asyncio
     @patch(
         "cli_agent_orchestrator.providers.opencode_cli.OpenCodeCliProvider._wait_for_initial_ready",
@@ -716,3 +725,17 @@ class TestWorkspaceAccess:
         )
 
         assert "opencode_cli" in PROVIDERS_REQUIRING_WORKSPACE_ACCESS
+
+
+@pytest.mark.asyncio
+@patch("cli_agent_orchestrator.services.status_monitor.status_monitor")
+@patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
+async def test_native_idle_cannot_replace_initial_opencode_viewport(backend, monitor):
+    monitor.get_status.return_value = TerminalStatus.IDLE
+    monitor.observe_initial_screen_snapshot.side_effect = [
+        TerminalStatus.UNKNOWN,
+        TerminalStatus.IDLE,
+    ]
+    backend.return_value.get_history.side_effect = ["shell prompt", "tab agents  ctrl+p commands"]
+    assert await make_provider()._wait_for_initial_ready(timeout=2.0) is True
+    assert backend.return_value.get_history.call_count == 2

@@ -677,9 +677,7 @@ class TestPluginRegistryTeardown:
         teardown_task = asyncio.create_task(registry.teardown())
         create_task = asyncio.create_task
 
-        def record_child_task(
-            coroutine: Any, *, name: str | None = None
-        ) -> asyncio.Task[Any]:
+        def record_child_task(coroutine: Any, *, name: str | None = None) -> asyncio.Task[Any]:
             child = create_task(coroutine, name=name)
             child_tasks.append(child)
             return child

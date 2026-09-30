@@ -193,8 +193,8 @@ def isolated_memory_db(tmp_path_factory, monkeypatch):
         connect_args={"check_same_thread": False},
     )
     database.Base.metadata.create_all(bind=engine)
-    from cli_agent_orchestrator.clients.work_repository import WorkRepository
     from cli_agent_orchestrator import constants
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
     WorkRepository(database_path).initialize()
     monkeypatch.setattr(constants, "DATABASE_FILE", database_path)

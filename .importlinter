@@ -49,6 +49,19 @@ forbidden_modules =
     cli_agent_orchestrator.services.workflow_journal
     cli_agent_orchestrator.services.memory_service
 
+[importlinter:contract:workflow-projection-entry-boundary]
+name = Workflow projection must not directly import entrypoints or execution runtimes
+type = forbidden
+allow_indirect_imports = True
+source_modules =
+    cli_agent_orchestrator.services.workflow_step_projector
+forbidden_modules =
+    cli_agent_orchestrator.api
+    cli_agent_orchestrator.cli
+    cli_agent_orchestrator.mcp_server
+    cli_agent_orchestrator.providers
+    cli_agent_orchestrator.backends
+
 [importlinter:contract:work-repository-entry-runtime-boundary]
 name = Work repository must not depend on entrypoints or effect runtimes
 type = forbidden

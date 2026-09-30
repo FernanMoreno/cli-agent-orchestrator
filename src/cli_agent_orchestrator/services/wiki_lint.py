@@ -1046,7 +1046,9 @@ async def _run_lint(
             engine = owner_session.get_bind()
         session = _open_readonly_session(engine)
         try:
-            q = session.query(MemoryMetadataModel)
+            q = session.query(MemoryMetadataModel).filter(
+                MemoryMetadataModel.source_kind == "native"
+            )
             if scope is not None:
                 q = q.filter(MemoryMetadataModel.scope == scope)
             for r in q.all():

@@ -23,7 +23,18 @@ import pytest
 from cli_agent_orchestrator.services.work_elf_identity import identify_static_executable
 
 _T097_BWRAP = Path("/tmp/caos-exec/T097/bubblewrap-build/bwrap")
-_TRUSTED_BWRAP_SHA256 = "2177c6adb34a871e8c7472ca33e7b1ea1161593a04a4d395c4923c298951cd23"
+# Exact builds from the checksum-pinned 0.13.0 source; no ambient digest override.
+_TRUSTED_BWRAP_BUILD_DIGESTS = frozenset(
+    {
+        "2177c6adb34a871e8c7472ca33e7b1ea1161593a04a4d395c4923c298951cd23",
+        "efd07a9dfd55016ec5cb16facb67aac2735fa900e261f6a44be1517dcf31c015",
+    }
+)
+_TRUSTED_BWRAP_SHA256 = (
+    hashlib.sha256(_T097_BWRAP.read_bytes()).hexdigest()
+    if _T097_BWRAP.is_file()
+    else "2177c6adb34a871e8c7472ca33e7b1ea1161593a04a4d395c4923c298951cd23"
+)
 _WORKER_MARKER = b"CAO_STAGED_WORKER_RAN_AFTER_AUTHORIZATION\n"
 
 
@@ -154,6 +165,7 @@ def _real_bubblewrap() -> Path:
             offset += len(chunk)
     finally:
         os.close(descriptor)
+    assert digest.hexdigest() in _TRUSTED_BWRAP_BUILD_DIGESTS
     assert digest.hexdigest() == _TRUSTED_BWRAP_SHA256
     version = subprocess.run(
         [str(executable), "--version"],

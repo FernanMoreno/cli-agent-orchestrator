@@ -6,12 +6,12 @@ import json
 import os
 import subprocess
 import sys
+from test.integration.t097.test_host_acceptance import _host_backend_factory, accepted_linux_host
+from test.integration.t098.test_work_launch_dispatch import _minimal_static_worker, _setup
 
 import pytest
 
 from cli_agent_orchestrator.services.work_bubblewrap_setup_intent import WorkBubblewrapSetupIntent
-from test.integration.t098.test_work_launch_dispatch import _minimal_static_worker, _setup
-from test.integration.t097.test_host_acceptance import _host_backend_factory, accepted_linux_host
 
 pytestmark = [pytest.mark.integration, pytest.mark.t097_host]
 

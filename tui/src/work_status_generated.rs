@@ -37,13 +37,55 @@ pub struct WorkStatusSemantics {
 }
 
 pub const WORK_STATUS_SEMANTICS: &[WorkStatusSemantics] = &[
-    WorkStatusSemantics { state: "queued", label: "Queued", semantic_role: WorkSemanticRole::Info, observed_running_count: 0, observed_succeeded_count: 0 },
-    WorkStatusSemantics { state: "running", label: "Running", semantic_role: WorkSemanticRole::Info, observed_running_count: 1, observed_succeeded_count: 0 },
-    WorkStatusSemantics { state: "waiting_children", label: "Waiting for child work", semantic_role: WorkSemanticRole::Warning, observed_running_count: 0, observed_succeeded_count: 0 },
-    WorkStatusSemantics { state: "succeeded", label: "Succeeded", semantic_role: WorkSemanticRole::Accent, observed_running_count: 0, observed_succeeded_count: 1 },
-    WorkStatusSemantics { state: "failed", label: "Failed", semantic_role: WorkSemanticRole::Danger, observed_running_count: 0, observed_succeeded_count: 0 },
-    WorkStatusSemantics { state: "reconcile", label: "Reconciling", semantic_role: WorkSemanticRole::Warning, observed_running_count: 0, observed_succeeded_count: 0 },
-    WorkStatusSemantics { state: "cancelled", label: "Cancelled", semantic_role: WorkSemanticRole::Neutral, observed_running_count: 0, observed_succeeded_count: 0 },
+    WorkStatusSemantics {
+        state: "queued",
+        label: "Queued",
+        semantic_role: WorkSemanticRole::Info,
+        observed_running_count: 0,
+        observed_succeeded_count: 0,
+    },
+    WorkStatusSemantics {
+        state: "running",
+        label: "Running",
+        semantic_role: WorkSemanticRole::Info,
+        observed_running_count: 1,
+        observed_succeeded_count: 0,
+    },
+    WorkStatusSemantics {
+        state: "waiting_children",
+        label: "Waiting for child work",
+        semantic_role: WorkSemanticRole::Warning,
+        observed_running_count: 0,
+        observed_succeeded_count: 0,
+    },
+    WorkStatusSemantics {
+        state: "succeeded",
+        label: "Succeeded",
+        semantic_role: WorkSemanticRole::Accent,
+        observed_running_count: 0,
+        observed_succeeded_count: 1,
+    },
+    WorkStatusSemantics {
+        state: "failed",
+        label: "Failed",
+        semantic_role: WorkSemanticRole::Danger,
+        observed_running_count: 0,
+        observed_succeeded_count: 0,
+    },
+    WorkStatusSemantics {
+        state: "reconcile",
+        label: "Reconciling",
+        semantic_role: WorkSemanticRole::Warning,
+        observed_running_count: 0,
+        observed_succeeded_count: 0,
+    },
+    WorkStatusSemantics {
+        state: "cancelled",
+        label: "Cancelled",
+        semantic_role: WorkSemanticRole::Neutral,
+        observed_running_count: 0,
+        observed_succeeded_count: 0,
+    },
 ];
 
 pub fn work_status_semantics(state: &str) -> Option<&'static WorkStatusSemantics> {
@@ -61,7 +103,13 @@ mod tests {
         assert_eq!(WORK_STATUS_SEMANTICS.len(), 7);
         let running = work_status_semantics("running").expect("running must be generated");
         assert_eq!(running.semantic_role, WorkSemanticRole::Info);
-        assert_eq!((running.observed_running_count, running.observed_succeeded_count), (1, 0));
+        assert_eq!(
+            (
+                running.observed_running_count,
+                running.observed_succeeded_count
+            ),
+            (1, 0)
+        );
         assert!(work_status_semantics("unknown").is_none());
     }
 }

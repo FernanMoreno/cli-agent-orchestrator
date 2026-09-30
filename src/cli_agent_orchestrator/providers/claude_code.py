@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, List, Optional
 if TYPE_CHECKING:
     from cli_agent_orchestrator.models.agent_profile import AgentProfile
 
+from cli_agent_orchestrator.agent_plugins.mcp_delivery import with_plugin_mcp as _with_plugin_mcp
 from cli_agent_orchestrator.backends.registry import get_backend
 from cli_agent_orchestrator.constants import CAO_HOME_DIR
 from cli_agent_orchestrator.models.terminal import TerminalInputBlockedError, TerminalStatus
@@ -155,10 +156,28 @@ IDLE_PROMPT_PATTERN = r"[>❯][\s\xa0]"  # Handle both old ">" and new "❯" pro
 # newlines, so a completed turn whose bottom-chrome window happens to end "...Enter to confirm"
 # with the next line starting "·" would still false-match; real footers always render the
 # separator on the same line, so "[ \t]*" is strictly tighter with no loss of real-footer coverage.
-# The "↑/↓ to navigate" arm has the same class of false-positive risk from agent prose (see the
-# existing xfail test_agent_prose_with_nav_text_in_footer_false_waiting) but is left as-is here --
-# out of scope for this fix, which only addresses the "Enter to confirm" case flagged in review.
+# A selection footer can also occur in quoted agent output. Only live chrome
+# with no newer response or input composer represents an unanswered dialog.
 WAITING_USER_ANSWER_PATTERN = r"↑/↓ to navigate|Enter to confirm[ \t]*·"
+
+
+def _has_live_selection_footer(rows: list[str]) -> bool:
+    footer_indices = [
+        index for index, row in enumerate(rows) if re.search(WAITING_USER_ANSWER_PATTERN, row)
+    ]
+    if not footer_indices:
+        return False
+    newer = rows[footer_indices[-1] + 1 :]
+    for index, row in enumerate(newer):
+        if re.match(r"^\s*[⏺●]", row):
+            return False
+        # Numbered menu selections also use ❯; they are not input composers.
+        if re.match(r"^\s*[❯>]($|\s)", row) and not re.match(r"^\s*[❯>]\s*\d+\.", row):
+            if any(re.search(r"─{8,}", prior) for prior in newer[max(0, index - 2) : index]):
+                return False
+    return True
+
+
 PLAN_APPROVAL_PATTERN = r"Would you like to proceed\?"
 TRUST_PROMPT_PATTERN = r"Yes, I trust this folder"  # Workspace trust dialog
 BYPASS_PROMPT_PATTERN = r"Yes, I accept"  # Bypass permissions confirmation dialog
@@ -215,9 +234,7 @@ _QUOTA_CANCEL_PATTERN = re.compile(r"(?i)\besc\b[^\n]{0,80}\bcancel\b")
 # parked at WAITING_QUOTA.  This is intentionally the same gerund-first shape
 # used by the composited-screen processing detector, not the loose historical
 # spinner regex that can match markdown bullets.
-_QUOTA_FRESH_SPINNER_LINE_PATTERN = re.compile(
-    r"^[ \t\xa0]*[✶✢✽✻✳·*][ \t\xa0]+\w*ing\b.*…"
-)
+_QUOTA_FRESH_SPINNER_LINE_PATTERN = re.compile(r"^[ \t\xa0]*[✶✢✽✻✳·*][ \t\xa0]+\w*ing\b.*…")
 IDLE_PROMPT_PATTERN_LOG = r"[>❯][\s\xa0]"  # Same pattern for log files
 # New Claude Code TUI completion summary, e.g. "✻ Sautéed for 1s" /
 # "✶ Cultivated for 12s". Unlike the active spinner (PROCESSING_PATTERN, which
@@ -377,8 +394,7 @@ class ClaudeCodeProvider(BaseProvider):
             # arbitrarily old line with unrelated future prose.
             panel = "\n".join(lines[index : index + _QUOTA_PANEL_LINES])
             if not (
-                _QUOTA_CONTINUING_PATTERN.search(panel)
-                and _QUOTA_CANCEL_PATTERN.search(panel)
+                _QUOTA_CONTINUING_PATTERN.search(panel) and _QUOTA_CANCEL_PATTERN.search(panel)
             ):
                 continue
 
@@ -421,7 +437,7 @@ class ClaudeCodeProvider(BaseProvider):
         if self._agent_profile is None:
             return None
         try:
-            return load_agent_profile(self._agent_profile)
+            return _with_plugin_mcp(load_agent_profile(self._agent_profile), "claude_code")
         except FileNotFoundError:
             return None
         except Exception as e:
@@ -777,6 +793,7 @@ class ClaudeCodeProvider(BaseProvider):
         any_prompt_handled = False
         bypass_accepted = False
         trust_accepted = False
+        trust_navigation_at = None
         text_style_accepted = False
         oauth_login_route_accepted = False
         # Keyed on the matched title ("Newer Opus model available"), not a bool:
@@ -841,7 +858,6 @@ class ClaudeCodeProvider(BaseProvider):
             if not trust_accepted and re.search(TRUST_PROMPT_PATTERN, clean_output):
                 from cli_agent_orchestrator.services.status_monitor import status_monitor
 
-                logger.info("Workspace trust prompt detected, auto-accepting")
                 # Claude Code used to preselect "Yes", but v2.1.250 changed the
                 # default to "No, exit". Inspect the latest matching option line
                 # so we remain compatible with both layouts. The prompt's prior
@@ -853,19 +869,35 @@ class ClaudeCodeProvider(BaseProvider):
                 if line_end == -1:
                     line_end = len(clean_output)
                 trust_line = clean_output[line_start:line_end]
-                yes_selected = (
-                    re.search(r"[>❯]", trust_line[: trust_pos - line_start]) is not None
-                    or "No, exit" not in clean_output
-                )
-                if not yes_selected:
-                    status_monitor.notify_input_sent(self.terminal_id)
-                    await asyncio.to_thread(
-                        get_backend().send_special_key,
-                        self.session_name,
-                        self.window_name,
-                        "Down",
+                yes_selected = re.search(r"[>❯]", trust_line[: trust_pos - line_start]) is not None
+                no_selected = (
+                    re.search(
+                        r"(?m)^[ \t]*[>❯][ \t]*(?:\d+\.[ \t]*)?No,[ \t]*exit[ \t]*$",
+                        clean_output,
                     )
+                    is not None
+                )
+                # A partial redraw may expose Yes before the selected option.
+                # Never infer consent from the absence of the No option.
+                if not yes_selected and not no_selected:
                     await asyncio.sleep(0.5)
+                    continue
+                if not yes_selected:
+                    if trust_navigation_at is None or time.monotonic() - trust_navigation_at >= 1.0:
+                        status_monitor.notify_input_sent(self.terminal_id)
+                        await asyncio.to_thread(
+                            get_backend().send_special_key,
+                            self.session_name,
+                            self.window_name,
+                            "Down",
+                        )
+                        trust_navigation_at = time.monotonic()
+                    # Retry only while a fresh frame still selects No: the
+                    # first key can arrive before the CLI enables its handler.
+                    # Observe the selected Yes option before confirming; a
+                    # fixed sleep cannot prove the CLI consumed the Down key.
+                    await asyncio.sleep(0.5)
+                    continue
                 status_monitor.notify_input_sent(self.terminal_id)
                 await asyncio.to_thread(
                     get_backend().send_special_key, self.session_name, self.window_name, "Enter"
@@ -950,7 +982,9 @@ class ClaudeCodeProvider(BaseProvider):
             ):
                 from cli_agent_orchestrator.services.status_monitor import status_monitor
 
-                logger.info("Claude Code existing OAuth login route detected, accepting subscription route")
+                logger.info(
+                    "Claude Code existing OAuth login route detected, accepting subscription route"
+                )
                 status_monitor.notify_input_sent(self.terminal_id)
                 await asyncio.to_thread(
                     get_backend().send_special_key, self.session_name, self.window_name, "Enter"
@@ -1290,7 +1324,6 @@ class ClaudeCodeProvider(BaseProvider):
         # exclusion window being a strict superset of the match window means a trust/bypass dialog
         # can only ever be excluded MORE often, never less, so it can't accidentally let a real
         # trust/bypass dialog through as WAITING_USER_ANSWER.
-        bottom_chrome = "\n".join(lines[-6:])
 
         if (
             not re.search(TRUST_PROMPT_PATTERN, bottom_region)
@@ -1307,11 +1340,8 @@ class ClaudeCodeProvider(BaseProvider):
             # already-selected visual preference.
             and not re.search(TEXT_STYLE_PROMPT_PATTERN, bottom_region)
         ):
-            # AskUserQuestion: "↑/↓ to navigate" in bottom chrome (last 6 lines).
-            # Known residual: agent prose containing this exact string in the
-            # 6-line footer window of an idle prompt will false-positive as
-            # WAITING. Full fix needs structural composer detection (out of scope).
-            if re.search(WAITING_USER_ANSWER_PATTERN, bottom_chrome):
+            # A later composer/response dismisses selection chrome in scrollback.
+            if _has_live_selection_footer(lines[-6:]):
                 return TerminalStatus.WAITING_USER_ANSWER
             # Plan-approval: "Would you like to proceed?" with no nav footer.
             # Guard against dismissed dialog in scrollback: only classify as
@@ -1496,9 +1526,8 @@ class ClaudeCodeProvider(BaseProvider):
         if any(NEW_TUI_BOX_SPINNER_PATTERN.search(ln) for ln in bottom):
             return TerminalStatus.PROCESSING
 
-        bottom_joined = "\n".join(bottom)
         if (
-            re.search(WAITING_USER_ANSWER_PATTERN, bottom_joined)
+            _has_live_selection_footer(bottom)
             and not re.search(TRUST_PROMPT_PATTERN, joined)
             and not re.search(BYPASS_PROMPT_PATTERN, joined)
             and not re.search(MODEL_UPGRADE_PROMPT_PATTERN, joined)

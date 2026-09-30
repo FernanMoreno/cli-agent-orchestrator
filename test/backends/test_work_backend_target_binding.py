@@ -6,8 +6,8 @@ import pytest
 
 from cli_agent_orchestrator.backends.base import WorkEffectAuthorizationRequired
 from cli_agent_orchestrator.backends.work_backend import WorkBackendView
-from cli_agent_orchestrator.constants import FIFO_DIR
 from cli_agent_orchestrator.clients.work_repository import WorkConflict
+from cli_agent_orchestrator.constants import FIFO_DIR
 from cli_agent_orchestrator.services.work_admission import WorkAdmission
 
 
@@ -46,6 +46,7 @@ class RecordingBackend:
             "kill_session",
             "kill_window",
         }:
+
             def record(*args, **kwargs):
                 self.effects.append((name, args, kwargs))
 
@@ -195,9 +196,7 @@ def test_work_view_rechecks_the_durable_attempt_terminal_before_each_send(termin
     )
     view.bind_terminal_target("abcd1234", "work-session", "work-window")
     with sqlite3.connect(terminal_store) as connection:
-        connection.execute(
-            "UPDATE work_attempts SET terminal_id='beef5678' WHERE id='attempt-a'"
-        )
+        connection.execute("UPDATE work_attempts SET terminal_id='beef5678' WHERE id='attempt-a'")
 
     with pytest.raises(WorkConflict, match="durable terminal binding changed"):
         view.send_keys("work-session", "work-window", "payload")
@@ -301,9 +300,7 @@ def test_work_view_cannot_kill_a_session_shared_with_another_terminal(terminal_s
             "INSERT INTO terminals(id,tmux_session,tmux_window) VALUES (?,?,?)",
             ("abcd1234", "work-session", "work-window"),
         )
-        connection.execute(
-            "UPDATE terminals SET tmux_session='work-session' WHERE id='beef5678'"
-        )
+        connection.execute("UPDATE terminals SET tmux_session='work-session' WHERE id='beef5678'")
 
     with pytest.raises(WorkConflict, match="server-instance-fenced"):
         view.kill_session("work-session")

@@ -24,3 +24,11 @@
 ## Dependencies
 
 T001 → T002 → T003 → T004–T006 (T004–T006 parallel).
+
+## Revisión de cierre — 2026-09-30
+
+Las siete tareas conservan su evidencia histórica. La revisión fresca de
+`git diff --check HEAD` salió con código 0 y `git check-attr text eol` confirmó
+`text=auto eol=lf` para API main.py. Esta revisión no atribuye a la normalización
+los cambios semánticos de 001 ni vuelve a afirmar igualdad contra HEAD después
+de esos cambios. No se crearon commits de cierre.

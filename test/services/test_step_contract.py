@@ -12,7 +12,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from cli_agent_orchestrator.models.workflow_runtime import RunState
-from cli_agent_orchestrator.services import agent_step, script_runner, workflow_journal
+from cli_agent_orchestrator.services import (
+    agent_step,
+    script_runner,
+    workflow_journal,
+    workflow_service,
+)
 
 
 def test_contract_schema_is_available_to_the_versioned_migrator():
@@ -137,6 +142,41 @@ async def test_yaml_contract_commits_before_terminal_allocation(yaml_journal, mo
     assert observed[0]["call_fingerprint"]
 
 
+@pytest.mark.parametrize("stale", (None, "generation", "fingerprint", "attempt"))
+def test_yaml_result_is_retained_only_for_current_attempt(yaml_journal, stale):
+    from cli_agent_orchestrator.models.terminal import AgentStepResult, TerminalStatus
+
+    fields = contract()["fields"]
+    attempt = workflow_journal.begin_yaml_step_with_contract(
+        "yaml-run", "step", "1", "now", "v2:stable", fields
+    )
+    result = AgentStepResult(
+        terminal_id="abc12345", last_message="frozen result π", status=TerminalStatus.COMPLETED
+    )
+    args = (
+        "yaml-run",
+        "step",
+        "2" if stale == "generation" else "1",
+        attempt + 1 if stale == "attempt" else attempt,
+        "v2:changed" if stale == "fingerprint" else "v2:stable",
+        result,
+    )
+    if stale:
+        with pytest.raises(ValueError):
+            workflow_journal.record_yaml_step_result(
+                *args, result_json=workflow_service._legacy_result_envelope(result)
+            )
+        assert workflow_journal.get_step("yaml-run", "step").result_json is None
+    else:
+        workflow_journal.record_yaml_step_result(
+            *args, result_json=workflow_service._legacy_result_envelope(result)
+        )
+        retained = workflow_journal.get_step("yaml-run", "step")
+        assert retained.state == "running"  # output collection still owns completion
+        assert json.loads(retained.result_json)["last_message"] == result.last_message
+        assert retained.terminal_id == result.terminal_id
+
+
 def test_yaml_retry_rejects_a_changed_first_contract(yaml_journal):
     """Changing the retry's effective identity cannot authorize another send."""
     fields = agent_step._effective_step_fields(
@@ -207,6 +247,7 @@ async def test_api_contract_rejection_does_not_settle_a_competing_attempt(
     monkeypatch.setattr(agent_step.terminal_service, "create_terminal", create)
     monkeypatch.setattr(agent_step.terminal_service, "get_terminal_metadata", lambda _: {})
     monkeypatch.setattr(main, "get_plugin_registry", lambda request: None)
+    monkeypatch.setattr(main.app.state, "work_workflow_origins", None, raising=False)
     body = main.RunStepRequest(
         provider="codex",
         agent="developer",
@@ -219,7 +260,12 @@ async def test_api_contract_rejection_does_not_settle_a_competing_attempt(
         },
     )
     with pytest.raises(HTTPException) as failure:
-        await main.run_step(Request({"type": "http"}), BackgroundTasks(), body)
+        await main.run_step(
+            Request({"type": "http", "app": main.app}),
+            BackgroundTasks(),
+            body,
+            workflow_run_credential=None,
+        )
     assert failure.value.status_code == 409
     assert failure.value.detail["kind"] == "contract_rejected"
     assert failure.value.detail["terminal_id"] == "def67890"
@@ -796,3 +842,42 @@ async def test_redelivery_guard_is_not_swallowed_after_cancel(journal, monkeypat
     assert error.value.kind == "contract_rejected"
     assert error.value.delivery_may_have_occurred is True
     assert redelivered == []
+
+
+@pytest.mark.parametrize("seed_memory", [False, True])
+def test_work_claim_between_legacy_preflight_and_settle_is_preserved(
+    journal, monkeypatch, seed_memory
+):
+    from cli_agent_orchestrator.models.workflow import StepState
+
+    workflow_journal.begin_step("run", "step", "now", "v2:identity")
+    record = script_runner.run_registry["run"]
+    if seed_memory:
+        record.step_states["step"] = workflow_service.StepRunState(
+            step_id="step", state=StepState.RUNNING, terminal_id="abc12345"
+        )
+    before = dict(record.step_states)
+    callback = script_runner.record_step_completion(
+        {"CAO_WORKFLOW_RUN_ID": "run", "CAO_WORKFLOW_STEP_ID": "step"}
+    )
+    real_get = workflow_journal.get_step
+
+    def claim_after_read(run_id, step_id):
+        observed = real_get(run_id, step_id)
+        with sqlite3.connect(journal) as connection:
+            connection.execute(
+                "UPDATE workflow_run_step SET state='work_pending' WHERE run_id=? AND step_id=?",
+                (run_id, step_id),
+            )
+        return observed
+
+    monkeypatch.setattr(workflow_journal, "get_step", claim_after_read)
+    callback("abc12345", None, "late legacy output")
+    retained = real_get("run", "step")
+    assert retained.state == "work_pending"
+    assert retained.result_json is None
+    assert retained.attempts == 0
+    assert record.step_states == before
+    if seed_memory:
+        assert record.step_states["step"].state == StepState.RUNNING
+        assert record.step_states["step"].attempts == 0

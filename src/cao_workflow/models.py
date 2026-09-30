@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 
 @dataclass(frozen=True)
@@ -15,7 +15,7 @@ class StepHandle:
     """
 
     step_id: str
-    terminal_id: str
+    terminal_id: Optional[str]
     output: Any
     status: str
     replayed: bool = False

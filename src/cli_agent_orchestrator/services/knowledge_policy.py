@@ -4,17 +4,18 @@ This policy is a trusted server dependency, never a request DTO or a replacement
 for transport authentication. Legacy file memory is restricted to the local operator.
 """
 
-from contextlib import contextmanager
-from dataclasses import dataclass
 import hashlib
 import json
-from pathlib import Path
 import sqlite3
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from pathlib import Path
 from uuid import uuid4
 
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
-from cli_agent_orchestrator.security.auth import Principal, SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE
+from cli_agent_orchestrator.security.auth import SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE, Principal
 from cli_agent_orchestrator.services.secret_gate import redact_secrets
 from cli_agent_orchestrator.services.work_authority import (
     AuthorityDenied,
@@ -165,6 +166,29 @@ class LegacyMemoryAuditError(RuntimeError):
         super().__init__(f"legacy memory audit failed; {outcome}; operation_id={operation_id}")
 
 
+_ENCLOSING_LEGACY_AUDIT = ContextVar("enclosing_legacy_database_audit", default=None)
+
+
+def join_legacy_database_audit(principal, db):
+    """Reuse a durable outer intent only for its verified SQLite transaction."""
+    active = _ENCLOSING_LEGACY_AUDIT.get()
+    if active is None:
+        raise KnowledgeAccessDenied(
+            "shared legacy transaction requires an enclosing audited operation"
+        )
+    repository, actor_id, operation_id = active
+    require_legacy_operator(principal)
+    if principal.id != actor_id:
+        raise KnowledgeAccessDenied("shared legacy transaction belongs to another authority")
+    connection = db.connection().connection.driver_connection
+    databases = connection.execute("PRAGMA database_list").fetchall()
+    main = next((row[2] for row in databases if row[1] == "main"), None)
+    if not main or Path(main).resolve() != repository.path.resolve():
+        raise KnowledgeAccessDenied("shared legacy transaction belongs to another authority")
+    repository._verify(connection)
+    return operation_id
+
+
 @contextmanager
 def legacy_memory_access(repository: WorkRepository, principal: Principal, action: str, target):
     """Commit intent before file effects; fail closed if either audit commit fails.
@@ -222,6 +246,7 @@ def legacy_memory_access(repository: WorkRepository, principal: Principal, actio
         append("denied")
         raise
     append("authorized")
+    audit_token = _ENCLOSING_LEGACY_AUDIT.set((repository, principal.id, operation_id))
     try:
         yield operation_id
     except LegacyMemoryAuditError:
@@ -232,6 +257,8 @@ def legacy_memory_access(repository: WorkRepository, principal: Principal, actio
         raise
     else:
         append("completed")
+    finally:
+        _ENCLOSING_LEGACY_AUDIT.reset(audit_token)
 
 
 def audit_legacy_memory_denied(

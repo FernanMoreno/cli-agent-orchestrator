@@ -1,6 +1,6 @@
 """Pure evidence-gated transitions for durable work."""
 
-from pydantic import BaseModel, ConfigDict, StrictBool
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
 
 from cli_agent_orchestrator.models.work import AttemptState, PositiveInt, WorkState
 
@@ -30,6 +30,10 @@ class TransitionEvidence(BaseModel):
     reconciliation_authorized: StrictBool = False
     task_received: StrictBool = False
     execution_started: StrictBool = False
+    process_exit_code: StrictInt | None = None
+    process_stopped: StrictBool = False
+    container_removed: StrictBool = False
+    image_removed: StrictBool = False
 
 
 def _fence(evidence: TransitionEvidence) -> None:
@@ -136,4 +140,15 @@ def delivery_transition(
         evidence.result_durable and evidence.result_validated
     ):
         raise TransitionConflict("finished requires a retrievable validated result")
+    if target == AttemptState.FAILED and state != AttemptState.PLANNED:
+        if not (
+            evidence.process_exit_code is not None
+            and 1 <= evidence.process_exit_code <= 255
+            and evidence.process_stopped
+            and evidence.container_removed
+            and evidence.image_removed
+        ):
+            raise TransitionConflict(
+                "post-dispatch process failure requires a nonzero exit and verified cleanup"
+            )
     return target

@@ -386,7 +386,9 @@ pub struct Health {
 
 #[cfg(test)]
 mod tests {
-    use super::{Health, Profile, Provider, Readiness, SessionParams, Terminal, TerminalStatus, WorkView};
+    use super::{
+        Health, Profile, Provider, Readiness, SessionParams, Terminal, TerminalStatus, WorkView,
+    };
     use std::collections::{BTreeMap, BTreeSet};
 
     /// A fully-populated `Profile`. Every field is `Some`/non-empty on purpose: the key-set
@@ -415,10 +417,9 @@ mod tests {
 
     #[test]
     fn work_view_deserializes_v1_projection_and_rejects_unknown_schema_version() {
-        let envelope: serde_json::Value = serde_json::from_str(include_str!(
-            "../../test/fixtures/work_contract_v1.json"
-        ))
-        .expect("the checked-in work contract fixture must be JSON");
+        let envelope: serde_json::Value =
+            serde_json::from_str(include_str!("../../test/fixtures/work_contract_v1.json"))
+                .expect("the checked-in work contract fixture must be JSON");
         let mut view = envelope["views"][0].clone();
         view["schema_version"] = envelope["schema_version"].clone();
 

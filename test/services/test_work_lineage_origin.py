@@ -32,8 +32,8 @@ from cli_agent_orchestrator.services.work_authority import (
     Permissions,
     WorkAuthority,
 )
-from cli_agent_orchestrator.services.work_delivery import DeliveryAdapter
 from cli_agent_orchestrator.services.work_contract import ContractConflict, WorkContracts
+from cli_agent_orchestrator.services.work_delivery import DeliveryAdapter
 from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 from cli_agent_orchestrator.services.work_scheduler import WorkScheduler
 
@@ -421,9 +421,7 @@ def test_authenticated_task_receipt_only_acknowledges_its_exact_managed_delivery
     )
     assert sent["attempts"][0]["state"] == "sent"
 
-    receipt = _issue_receiver_receipt(
-        context, origins, child, attempt, nonce="task-receipt-exact"
-    )
+    receipt = _issue_receiver_receipt(context, origins, child, attempt, nonce="task-receipt-exact")
     receiver = service_module.WorkService(context.repository, origins=origins)
     stale_generation = receipt.model_copy(
         update={"attempt": receipt.attempt.model_copy(update={"generation": 2})}
@@ -466,12 +464,15 @@ def test_authenticated_task_receipt_only_acknowledges_its_exact_managed_delivery
     reopened = service_module.WorkService(WorkRepository(context.repository.path))
     assert reopened.record_task_received(receipt)["attempts"][0]["state"] == "acknowledged"
     redeliveries = []
-    assert reopened.dispatch(
-        child["id"],
-        lambda: redeliveries.append("sent"),
-        admission=admission,
-        actor_id="untrusted-replay",
-    )["attempts"][0]["state"] == "acknowledged"
+    assert (
+        reopened.dispatch(
+            child["id"],
+            lambda: redeliveries.append("sent"),
+            admission=admission,
+            actor_id="untrusted-replay",
+        )["attempts"][0]["state"]
+        == "acknowledged"
+    )
     assert redeliveries == []
 
 
@@ -492,12 +493,15 @@ def test_task_receipt_issued_before_receiver_revocation_never_acknowledges(manag
         capacity_confirmed=True,
         reservations_confirmed=True,
     )
-    assert service_module.WorkService(context.repository).dispatch(
-        child["id"],
-        lambda: service_module.DeliveryObservation(),
-        admission=admission,
-        actor_id=context.owner.id,
-    )["attempts"][0]["state"] == "sent"
+    assert (
+        service_module.WorkService(context.repository).dispatch(
+            child["id"],
+            lambda: service_module.DeliveryObservation(),
+            admission=admission,
+            actor_id=context.owner.id,
+        )["attempts"][0]["state"]
+        == "sent"
+    )
     receipt = _issue_receiver_receipt(
         context, origins, child, attempt, nonce="task-receipt-revoked"
     )
@@ -514,15 +518,21 @@ def test_task_receipt_issued_before_receiver_revocation_never_acknowledges(manag
 
     assert rejected["attempts"][0]["state"] == "sent"
     with context.repository.read_snapshot() as connection:
-        assert connection.execute(
-            "SELECT count(*) FROM work_task_received_receipts WHERE attempt_id=?",
-            (attempt["id"],),
-        ).fetchone()[0] == 0
-        assert connection.execute(
-            "SELECT count(*) FROM work_events WHERE attempt_id=? "
-            "AND event_type='attempt.acknowledged'",
-            (attempt["id"],),
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_task_received_receipts WHERE attempt_id=?",
+                (attempt["id"],),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_events WHERE attempt_id=? "
+                "AND event_type='attempt.acknowledged'",
+                (attempt["id"],),
+            ).fetchone()[0]
+            == 0
+        )
 
 
 @pytest.mark.asyncio
@@ -532,6 +542,7 @@ async def test_registered_dispatch_uses_paired_origin_runtime_for_receiver_ack(m
     service_module = importlib.import_module("cli_agent_orchestrator.services.work_service")
     admission_module = importlib.import_module("cli_agent_orchestrator.services.work_admission")
     origins = context.origin_module.WorkOrigins(context.repository)
+
     async def deliver(binding, _payload, _snapshot, _port):
         work = context.repository.get_work(binding.work_item_id)
         attempt = work["attempts"][-1]
@@ -566,10 +577,13 @@ async def test_registered_dispatch_uses_paired_origin_runtime_for_receiver_ack(m
             (child["attempts"][0]["id"],),
         ).fetchone()
         assert acceptance is not None
-        assert connection.execute(
-            "SELECT count(*) FROM work_task_received_receipts WHERE attempt_id=?",
-            (child["attempts"][0]["id"],),
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_task_received_receipts WHERE attempt_id=?",
+                (child["attempts"][0]["id"],),
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_v21_legacy_child_migrates_to_v22_and_replays_through_public_admission(
@@ -1689,9 +1703,7 @@ def test_attempt_credential_selects_only_preprovisioned_lineage_subjects(managed
     )
     service_module = importlib.import_module("cli_agent_orchestrator.services.work_service")
     origins = context.origin_module.WorkOrigins(context.repository)
-    admission_module = importlib.import_module(
-        "cli_agent_orchestrator.services.work_admission"
-    )
+    admission_module = importlib.import_module("cli_agent_orchestrator.services.work_admission")
     admission_module.WorkAdmission(
         context.repository,
         backends=context.admission.backends,
@@ -1803,9 +1815,12 @@ def test_dispatch_durably_issues_secret_fd_before_delivery(managed_context):
             "WHERE attempt_id=? AND generation=?",
             (attempt["id"], attempt["generation"]),
         ).fetchone()
-        assert connection.execute(
-            "SELECT state FROM work_attempts WHERE id=?", (attempt["id"],)
-        ).fetchone()[0] == "sent"
+        assert (
+            connection.execute(
+                "SELECT state FROM work_attempts WHERE id=?", (attempt["id"],)
+            ).fetchone()[0]
+            == "sent"
+        )
     assert credential is not None
     secret = os.pread(port._attempt_credential_fd, 32, 0)
     assert len(secret) == 32
@@ -1823,9 +1838,7 @@ def test_receiver_credential_acknowledges_exact_delivery_atomically(managed_cont
 
     context = managed_context
     origins = context.origin_module.WorkOrigins(context.repository)
-    admission_module = importlib.import_module(
-        "cli_agent_orchestrator.services.work_admission"
-    )
+    admission_module = importlib.import_module("cli_agent_orchestrator.services.work_admission")
     admission = admission_module.WorkAdmission(
         context.repository,
         backends={"test": _NoEffectBackend()},
@@ -1852,21 +1865,22 @@ def test_receiver_credential_acknowledges_exact_delivery_atomically(managed_cont
     }
 
     with context.repository.transaction() as connection:
-        connection.execute(
-            """CREATE TRIGGER reject_t019_ack BEFORE UPDATE OF state ON work_attempts
+        connection.execute("""CREATE TRIGGER reject_t019_ack BEFORE UPDATE OF state ON work_attempts
                WHEN NEW.state='acknowledged'
-               BEGIN SELECT RAISE(ABORT, 'injected ACK failure'); END"""
-        )
+               BEGIN SELECT RAISE(ABORT, 'injected ACK failure'); END""")
     rejected = origins.handle_mcp_request(
         request, attempt_credential, receiver_credential=receiver_credential
     )
     assert "error" in rejected
     assert context.repository.get_work(child["id"])["attempts"][0]["state"] == "sent"
     with context.repository.read_snapshot() as connection:
-        assert connection.execute(
-            "SELECT count(*) FROM work_task_receiver_acceptances WHERE attempt_id=?",
-            (attempt["id"],),
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_task_receiver_acceptances WHERE attempt_id=?",
+                (attempt["id"],),
+            ).fetchone()[0]
+            == 0
+        )
 
     with context.repository.transaction() as connection:
         connection.execute("DROP TRIGGER reject_t019_ack")
@@ -1876,14 +1890,20 @@ def test_receiver_credential_acknowledges_exact_delivery_atomically(managed_cont
     assert "result" in acknowledged
     assert context.repository.get_work(child["id"])["attempts"][0]["state"] == "acknowledged"
     with context.repository.read_snapshot() as connection:
-        assert connection.execute(
-            "SELECT count(*) FROM work_task_receiver_acceptances WHERE attempt_id=?",
-            (attempt["id"],),
-        ).fetchone()[0] == 1
-        assert connection.execute(
-            "SELECT count(*) FROM work_task_received_receipts WHERE attempt_id=?",
-            (attempt["id"],),
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_task_receiver_acceptances WHERE attempt_id=?",
+                (attempt["id"],),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_task_received_receipts WHERE attempt_id=?",
+                (attempt["id"],),
+            ).fetchone()[0]
+            == 1
+        )
     duplicate = origins.handle_mcp_request(
         request, attempt_credential, receiver_credential=receiver_credential
     )

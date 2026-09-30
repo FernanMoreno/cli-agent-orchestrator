@@ -75,7 +75,9 @@ def _patch_terminal_layer(
 
 
 class TestHappyPath:
-    def test_stale_processing_status_requires_two_matching_receipt_observations_before_settling(self):
+    def test_stale_processing_status_requires_two_matching_receipt_observations_before_settling(
+        self,
+    ):
         """A monitor may retain PROCESSING after a child has finished its turn.
 
         The monitor state is transport telemetry, not task truth.  Once work
@@ -110,7 +112,7 @@ class TestHappyPath:
                     timeout=1,
                     prompt_redelivery=False,
                 )
-        )
+            )
 
         assert result == "durable result"
         assert probe.call_count == 3
@@ -334,9 +336,7 @@ class TestHappyPath:
                 release_resolution.set()
                 await step
 
-            m_send.assert_called_once_with(
-                "abc12345", "x", frozen_memory=block, task_delivery=True
-            )
+            m_send.assert_called_once_with("abc12345", "x", frozen_memory=block, task_delivery=True)
             return event_loop_thread_id
 
         event_loop_thread_id = asyncio.run(_run())
@@ -970,6 +970,83 @@ class TestFailureRaises:
         with create:
             with pytest.raises(ValueError, match="session not found"):
                 asyncio.run(run_agent_step("kiro_cli", "dev", "x"))
+
+
+class TestDurablePersistenceBeforeTeardown:
+    """Issue #447 / PR #453 review finding 2: the durable result must be
+    written BEFORE teardown, not after run_agent_step returns — a crash
+    during teardown must not be able to lose an already-extracted result."""
+
+    def test_job_id_persists_completed_before_delete(self):
+        """upsert_handoff_result must be called, and its call must be
+        observed to happen strictly before delete_terminal — proving the
+        ordering, not just that both happened."""
+        create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer()
+        order = []
+        upsert = patch(
+            f"{_MODULE}.upsert_handoff_result",
+            side_effect=lambda *a, **kw: order.append(("upsert", a, kw)),
+        )
+        with (
+            create,
+            send,
+            delete as m_delete,
+            get_output,
+            exit_cli,
+            get_wd,
+            wait,
+            status,
+            upsert,
+        ):
+            m_delete.side_effect = lambda *a, **kw: order.append(("delete", a, kw))
+            result = asyncio.run(run_agent_step("kiro_cli", "dev", "x", job_id="cafe1234" * 4))
+
+        assert result.status == TerminalStatus.COMPLETED
+        assert [step for step, _, _ in order] == ["upsert", "delete"]
+        upsert_call = order[0]
+        assert upsert_call[1][0] == "cafe1234" * 4
+        assert upsert_call[1][1] == "completed"
+        assert upsert_call[2]["terminal_id"] == "abc12345"
+        assert upsert_call[2]["last_message"] == "the answer"
+
+    def test_no_job_id_skips_persistence(self):
+        """Without job_id (e.g. the run engine's in-process caller), no
+        persistence call is made — behavior unchanged from before #447."""
+        create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer()
+        with (
+            create,
+            send,
+            delete,
+            get_output,
+            exit_cli,
+            get_wd,
+            wait,
+            status,
+            patch(f"{_MODULE}.upsert_handoff_result") as m_upsert,
+        ):
+            asyncio.run(run_agent_step("kiro_cli", "dev", "x"))
+        m_upsert.assert_not_called()
+
+    def test_persistence_failure_does_not_fail_successful_step(self):
+        """A DB write failure during the pre-teardown persist must be logged,
+        not raised — the step already succeeded and must still return."""
+        create, send, delete, get_output, exit_cli, get_wd, wait, status = _patch_terminal_layer()
+        with (
+            create,
+            send,
+            delete as m_delete,
+            get_output,
+            exit_cli,
+            get_wd,
+            wait,
+            status,
+            patch(f"{_MODULE}.upsert_handoff_result", side_effect=Exception("db boom")),
+        ):
+            result = asyncio.run(run_agent_step("kiro_cli", "dev", "x", job_id="a" * 32))
+        assert result.status == TerminalStatus.COMPLETED
+        assert result.last_message == "the answer"
+        # Teardown must still proceed after a persistence failure.
+        m_delete.assert_called_once()
 
 
 class TestTeardownIsBestEffort:

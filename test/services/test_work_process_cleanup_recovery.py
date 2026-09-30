@@ -17,6 +17,7 @@ from unittest.mock import Mock
 import pytest
 
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
+from cli_agent_orchestrator.services import work_process_supervisor as supervisor_module
 from cli_agent_orchestrator.services.work_process_supervisor import (
     WorkProcessAttempt,
     WorkProcessIdentity,
@@ -24,7 +25,6 @@ from cli_agent_orchestrator.services.work_process_supervisor import (
     WorkProcessState,
     WorkProcessSupervisor,
 )
-from cli_agent_orchestrator.services import work_process_supervisor as supervisor_module
 from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 from cli_agent_orchestrator.services.work_scheduler import (
     SchedulerConflict,
@@ -233,6 +233,7 @@ def _reconciled_held(tmp_path):
 
 def _reconciled_held_with_issued_proxy(tmp_path):
     from test.services.test_work_contract_binding import bind, context
+
     from cli_agent_orchestrator.services.work_mcp_proxy import WorkMcpProxy
 
     data = context(tmp_path)
@@ -242,9 +243,7 @@ def _reconciled_held_with_issued_proxy(tmp_path):
             "UPDATE work_jobs SET budget=? WHERE id=?",
             (json.dumps({"scheduler_units": 2}), job["id"]),
         )
-    contract = models.EffectiveWorkContractV2(
-        **{**original.model_dump(), "schema_version": 2}
-    )
+    contract = models.EffectiveWorkContractV2(**{**original.model_dump(), "schema_version": 2})
     binding = bind(data, contract=contract)
     attempt_id = item["attempts"][-1]["id"]
     scheduler = WorkScheduler(repository)
@@ -312,9 +311,7 @@ def _recover(repository, work, supervisor, *, backend_reconciler=None):
     arguments = {"supervisor": supervisor, "actor_id": "owner"}
     if backend_reconciler is not None:
         arguments["backend_reconciler"] = backend_reconciler
-    return WorkService(repository).recover_process_cleanup(
-        work["attempts"][-1]["id"], **arguments
-    )
+    return WorkService(repository).recover_process_cleanup(work["attempts"][-1]["id"], **arguments)
 
 
 def _replacement_args(work, held):
@@ -362,12 +359,12 @@ def test_docker_reconciliation_requires_both_exact_cleanup_flags_before_proxy_re
         ("docker", attempt, generation)
     ) or {"container_removed": True, "image_removed": True}
     proxy = Mock()
-    proxy.recover_incomplete_effects.side_effect = lambda *args: events.append(
-        ("effects", *args)
-    ) or 0
-    proxy.recover_incomplete_issues.side_effect = lambda *args: events.append(
-        ("issues", *args)
-    ) or 0
+    proxy.recover_incomplete_effects.side_effect = (
+        lambda *args: events.append(("effects", *args)) or 0
+    )
+    proxy.recover_incomplete_issues.side_effect = (
+        lambda *args: events.append(("issues", *args)) or 0
+    )
     monkeypatch.setattr(proxy_module, "WorkMcpProxy", lambda _repository: proxy)
 
     complete = _recover(repository, work, None, backend_reconciler=backend)
@@ -391,9 +388,7 @@ def test_docker_reconciliation_requires_both_exact_cleanup_flags_before_proxy_re
         None,
     ],
 )
-def test_docker_reconciliation_fails_closed_without_exact_flags(
-    monkeypatch, tmp_path, result
-):
+def test_docker_reconciliation_fails_closed_without_exact_flags(monkeypatch, tmp_path, result):
     from cli_agent_orchestrator.services import work_mcp_proxy as proxy_module
 
     repository, work, _ = _reconciled_held(tmp_path)
@@ -442,15 +437,16 @@ def test_docker_cleanup_recovery_abandons_unanswered_mcp_issue_durably(tmp_path)
             (attempt_id,),
         ).fetchall()
         assert [row[0] for row in states] == ["issued", "abandoned"]
-        assert connection.execute(
-            "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=?",
-            (attempt_id,),
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=?",
+                (attempt_id,),
+            ).fetchone()[0]
+            == 0
+        )
 
 
-def test_docker_reconciliation_exception_fails_closed_without_proxy_recovery(
-    monkeypatch, tmp_path
-):
+def test_docker_reconciliation_exception_fails_closed_without_proxy_recovery(monkeypatch, tmp_path):
     from cli_agent_orchestrator.services import work_mcp_proxy as proxy_module
 
     repository, work, _ = _reconciled_held(tmp_path)

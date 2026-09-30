@@ -1084,9 +1084,9 @@ def test_concurrent_store_and_repair_converge_without_duplicate_identity(
 def test_repair_rejects_authenticated_mode_before_scanning(tmp_path, engine, monkeypatch):
     from cli_agent_orchestrator.security import auth
 
-    service = MemoryReconciliationService(tmp_path / 'memory', engine)
-    monkeypatch.setattr(auth, 'is_auth_enabled', lambda: True)
-    monkeypatch.setattr(service, '_iter_candidates', lambda: pytest.fail('unauthorized scan'))
+    service = MemoryReconciliationService(tmp_path / "memory", engine)
+    monkeypatch.setattr(auth, "is_auth_enabled", lambda: True)
+    monkeypatch.setattr(service, "_iter_candidates", lambda: pytest.fail("unauthorized scan"))
     for operation in (service.plan, service.apply):
         with pytest.raises(PermissionError):
             operation()
@@ -1096,9 +1096,9 @@ def test_repair_rejects_authenticated_mode_before_scanning(tmp_path, engine, mon
 def test_repair_audits_once_and_redacts_historical_metadata(tmp_path, engine):
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
-    base = tmp_path / 'memory'
-    secret = 'AKIAABCDEFGHIJKLMNOP'
-    topic = _write_topic(base, 'global', None, 'historical', tags=secret)
+    base = tmp_path / "memory"
+    secret = "AKIAABCDEFGHIJKLMNOP"
+    topic = _write_topic(base, "global", None, "historical", tags=secret)
     original = topic.read_bytes()
     service = MemoryReconciliationService(base, engine)
     service.plan()
@@ -1109,7 +1109,7 @@ def test_repair_audits_once_and_redacts_historical_metadata(tmp_path, engine):
     repository = WorkRepository(engine.url.database)
     with repository.connection() as connection:
         audit = list(connection.execute("SELECT action,phase FROM work_memory_access_audit"))
-    assert [tuple(row) for row in audit] == [('repair','authorized'), ('repair','completed')] * 2
+    assert [tuple(row) for row in audit] == [("repair", "authorized"), ("repair", "completed")] * 2
     assert topic.read_bytes() == original
 
 
@@ -1117,27 +1117,31 @@ def test_repair_audit_failure_prevents_projection_changes(tmp_path, engine):
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
     from cli_agent_orchestrator.services.knowledge_policy import LegacyMemoryAuditError
 
-    base = tmp_path / 'memory'
-    topic = _write_topic(base, 'global', None, 'historical')
+    base = tmp_path / "memory"
+    topic = _write_topic(base, "global", None, "historical")
     repository = WorkRepository(engine.url.database)
     repository.initialize()
     with repository.connection() as connection:
-        connection.execute("CREATE TRIGGER reject_repair BEFORE INSERT ON work_memory_access_audit BEGIN SELECT RAISE(ABORT,'failure'); END")
+        connection.execute(
+            "CREATE TRIGGER reject_repair BEFORE INSERT ON work_memory_access_audit BEGIN SELECT RAISE(ABORT,'failure'); END"
+        )
     with pytest.raises(LegacyMemoryAuditError):
         MemoryReconciliationService(base, engine).apply()
     assert _rows(engine) == []
-    assert not (topic.parent.parent / 'index.md').exists()
+    assert not (topic.parent.parent / "index.md").exists()
 
 
 def test_startup_repair_uses_same_authority_before_scan(tmp_path, engine, monkeypatch):
     from cli_agent_orchestrator.security import auth
     from cli_agent_orchestrator.services import memory_reconciliation, settings_service
 
-    service = MemoryReconciliationService(tmp_path / 'memory', engine)
-    monkeypatch.setattr(memory_reconciliation, 'MemoryReconciliationService', lambda: service)
-    monkeypatch.setattr(settings_service, 'is_memory_enabled', lambda: True)
-    monkeypatch.setattr(auth, 'is_auth_enabled', lambda: True)
-    monkeypatch.setattr(service, '_iter_candidates', lambda: pytest.fail('unauthorized startup scan'))
+    service = MemoryReconciliationService(tmp_path / "memory", engine)
+    monkeypatch.setattr(memory_reconciliation, "MemoryReconciliationService", lambda: service)
+    monkeypatch.setattr(settings_service, "is_memory_enabled", lambda: True)
+    monkeypatch.setattr(auth, "is_auth_enabled", lambda: True)
+    monkeypatch.setattr(
+        service, "_iter_candidates", lambda: pytest.fail("unauthorized startup scan")
+    )
     with pytest.raises(PermissionError):
         memory_reconciliation.reconcile_memory_startup()
     assert _rows(engine) == []

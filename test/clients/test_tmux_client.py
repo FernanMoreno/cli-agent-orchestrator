@@ -103,6 +103,20 @@ class TestCreateSession:
             "start-server", ";", "set-option", "-s", "exit-empty", "off"
         )
 
+    def test_reapplies_exit_empty_after_failed_server_start(self, tmux, tmp_path):
+        window = MagicMock(name="window")
+        window.name = "win"
+        session = MagicMock()
+        session.windows = [window]
+        tmux.server.new_session.return_value = session
+        tmux.server.cmd.side_effect = [
+            MagicMock(returncode=1, stderr=["server exited unexpectedly"]),
+            MagicMock(returncode=0, stderr=[]),
+        ]
+        tmux.create_session("ses", "win", "tid", str(tmp_path))
+        order = [c[0] for c in tmux.server.mock_calls if c[0] in ("cmd", "new_session")]
+        assert order == ["cmd", "new_session", "cmd"]
+
     def test_disables_exit_empty_before_new_session(self, tmux, tmp_path):
         """Copilot review (PR #599): ``assert_any_call`` only proves the call
         happened at SOME point, not that it happened before ``new_session`` —

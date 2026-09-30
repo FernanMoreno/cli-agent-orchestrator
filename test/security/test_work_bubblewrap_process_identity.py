@@ -4,11 +4,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-
-import pytest
-
-from cli_agent_orchestrator.clients.work_repository import WorkRepository
-from cli_agent_orchestrator.services import work_bubblewrap_composition as composition
 from test.clients.test_work_bubblewrap_process_identity import _sent_attempt
 from test.security.test_work_bubblewrap_composition import (
     _TRUSTED_BWRAP_SHA256,
@@ -16,6 +11,11 @@ from test.security.test_work_bubblewrap_composition import (
     _real_bubblewrap,
     _worker_fixture,
 )
+
+import pytest
+
+from cli_agent_orchestrator.clients.work_repository import WorkRepository
+from cli_agent_orchestrator.services import work_bubblewrap_composition as composition
 
 
 def _digest(payload):

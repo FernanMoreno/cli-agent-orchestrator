@@ -83,16 +83,17 @@ class WorkBackendView:
         self, effect, terminal_id, session_name=None, window_name=None, file_path=None
     ):
         self._require_attempt_terminal(terminal_id)
-        if effect in self._TARGET_EFFECTS and (session_name, window_name) not in self._authorized_targets:
+        if (
+            effect in self._TARGET_EFFECTS
+            and (session_name, window_name) not in self._authorized_targets
+        ):
             raise WorkEffectAuthorizationRequired("effect target is not bound to this work view")
         return self._guard(effect, terminal_id, session_name, window_name, file_path)
 
     def _before(self, effect, terminal_id, session_name=None, window_name=None, file_path=None):
         self._backend._before_work_effect(
             self._restriction,
-            lambda: self._guard_target(
-                effect, terminal_id, session_name, window_name, file_path
-            ),
+            lambda: self._guard_target(effect, terminal_id, session_name, window_name, file_path),
         )
 
     def bind_terminal_target(self, terminal_id, session_name, window_name):
@@ -103,7 +104,10 @@ class WorkBackendView:
             raise WorkEffectAuthorizationRequired("terminal session is required")
         if not isinstance(window_name, str) or not window_name:
             raise WorkEffectAuthorizationRequired("terminal window is required")
-        if self._expected_target is not None and (session_name, window_name) != self._expected_target:
+        if (
+            self._expected_target is not None
+            and (session_name, window_name) != self._expected_target
+        ):
             raise WorkEffectAuthorizationRequired("terminal target differs from the planned target")
         self._before("bind_terminal_target", terminal_id, session_name, window_name)
         self._authorized_targets.add((session_name, window_name))
@@ -138,7 +142,10 @@ class WorkBackendView:
                 if not isinstance(window_name, str) or not window_name:
                     raise WorkEffectAuthorizationRequired("terminal window is required")
                 if name == "create_session":
-                    if self._expected_target is None or (session_name, window_name) != self._expected_target:
+                    if (
+                        self._expected_target is None
+                        or (session_name, window_name) != self._expected_target
+                    ):
                         raise WorkEffectAuthorizationRequired(
                             "create_session requires the exact planned target"
                         )

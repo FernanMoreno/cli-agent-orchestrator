@@ -157,6 +157,163 @@ async def test_workflow_step_forwards_explicit_engine(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_managed_yaml_step_enters_work_and_stays_pending_without_legacy_agent_call(
+    monkeypatch,
+):
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+
+    WorkRepository(DATABASE_FILE).initialize()
+    admit = AsyncMock(
+        return_value={"id": "durable-work", "attempts": [{"id": "attempt", "generation": 1}]}
+    )
+    legacy = AsyncMock(side_effect=AssertionError("managed step escaped into legacy runner"))
+    monkeypatch.setattr(ws, "run_agent_step", legacy)
+
+    result = await ws.start_run(
+        _spec(),
+        {},
+        "managed-yaml",
+        managed_step_admitters={"s1": admit},
+    )
+
+    assert result.state == RunState.RUNNING
+    assert result.finished_at is None
+    assert result.steps[0].state == StepState.WORK_PENDING
+    assert admit.await_args.kwargs["run_id"] == "managed-yaml"
+    assert admit.await_args.kwargs["run_generation"] == 1
+    assert admit.await_args.kwargs["step_id"] == "s1"
+    assert admit.await_args.kwargs["step_attempt"] == 1
+    legacy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_managed_yaml_pending_step_recovers_same_attempt_after_restart(monkeypatch):
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+
+    WorkRepository(DATABASE_FILE).initialize()
+    admit = AsyncMock(
+        return_value={"id": "durable-work", "attempts": [{"id": "attempt", "generation": 1}]}
+    )
+    legacy = AsyncMock(side_effect=AssertionError("pending Work was replayed as legacy"))
+    monkeypatch.setattr(ws, "run_agent_step", legacy)
+    await ws.start_run(
+        _spec(),
+        {},
+        "managed-yaml-restart",
+        managed_step_admitters={"s1": admit},
+    )
+    ws.run_registry.pop("managed-yaml-restart")
+
+    resumed = await ws.resume_from_last_completed(
+        "managed-yaml-restart", managed_step_admitters={"s1": admit}
+    )
+
+    assert resumed.state == RunState.RUNNING
+    assert resumed.finished_at is None
+    assert resumed.steps[0].state == StepState.WORK_PENDING
+    assert resumed.steps[0].attempts == 1
+    assert admit.await_count == 2
+    recovery = admit.await_args.kwargs
+    assert recovery["run_id"] == "managed-yaml-restart"
+    assert recovery["run_generation"] == 1
+    assert recovery["step_id"] == "s1"
+    assert recovery["step_attempt"] == 1
+    assert recovery["recover"] is True
+    legacy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_yaml_resume_uses_resolved_managed_admitter_after_restart(monkeypatch):
+    """A restart recovers the provision-bound pending step at its original attempt."""
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+
+    WorkRepository(DATABASE_FILE).initialize()
+    legacy = AsyncMock(side_effect=AssertionError("managed YAML step reached terminal runner"))
+    monkeypatch.setattr(ws, "run_agent_step", legacy)
+    spec = _spec()
+    admit = AsyncMock(
+        return_value={"id": "durable-work", "attempts": [{"id": "attempt", "generation": 1}]}
+    )
+    first = await ws.start_run(
+        spec, {}, "managed-resume-source", managed_step_admitters={"s1": admit}
+    )
+    assert first.state == RunState.RUNNING
+    assert [step.state for step in first.steps] == [StepState.WORK_PENDING]
+    ws.run_registry.pop("managed-resume-source")
+    resumed = await ws.resume_from_last_completed(
+        "managed-resume-source", managed_step_admitters={"s1": admit}
+    )
+
+    assert resumed.state == RunState.RUNNING
+    assert [step.state for step in resumed.steps] == [StepState.WORK_PENDING]
+    assert admit.await_args.kwargs["step_id"] == "s1"
+    assert admit.await_args.kwargs["step_attempt"] == 1
+    assert admit.await_args.kwargs["recover"] is True
+    assert admit.await_count == 2
+    legacy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_completed_managed_yaml_step_does_not_need_legacy_terminal_contract(monkeypatch):
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+    from cli_agent_orchestrator.services import workflow_journal
+
+    WorkRepository(DATABASE_FILE).initialize()
+    monkeypatch.setattr(workflow_journal, "get_work_step_projection", lambda *_args: object())
+    legacy = AsyncMock(side_effect=AssertionError("completed managed step was replayed"))
+    monkeypatch.setattr(ws, "run_agent_step", legacy)
+    admit = AsyncMock(
+        return_value={"id": "durable-work", "attempts": [{"id": "attempt", "generation": 1}]}
+    )
+    first = await ws.start_run(
+        _spec(), {}, "managed-completed-restart", managed_step_admitters={"s1": admit}
+    )
+    assert first.steps[0].state == StepState.WORK_PENDING
+
+    # Model the projector's durable completion before the API process restarts.
+    workflow_journal.update_step(
+        "managed-completed-restart", "s1", "completed", 1, "now", output_json="{}"
+    )
+    ws.run_registry.pop("managed-completed-restart")
+    resumed = await ws.resume_from_last_completed(
+        "managed-completed-restart", managed_step_admitters={"s1": admit}
+    )
+
+    assert resumed.state == RunState.COMPLETED
+    assert resumed.steps[0].state == StepState.COMPLETED
+    assert admit.await_count == 1
+    legacy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_managed_yaml_step_does_not_admit_work_if_durable_fence_fails(
+    monkeypatch,
+):
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+
+    WorkRepository(DATABASE_FILE).initialize()
+    admit = AsyncMock(return_value={"id": "must-not-exist", "attempts": [{"id": "a"}]})
+
+    def fail_fence(**_kwargs):
+        raise OSError("journal unavailable")
+
+    monkeypatch.setattr(ws.workflow_journal, "mark_work_pending", fail_fence)
+    with pytest.raises(OSError, match="journal unavailable"):
+        await ws.start_run(
+            _spec(),
+            {},
+            "managed-yaml-fence-failure",
+            managed_step_admitters={"s1": admit},
+        )
+    admit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_trace_b_worker_crashes_twice_then_succeeds(monkeypatch):
     """Trace B: two StepExecutionErrors, third attempt COMPLETED -> attempts=3."""
     calls = {"n": 0}

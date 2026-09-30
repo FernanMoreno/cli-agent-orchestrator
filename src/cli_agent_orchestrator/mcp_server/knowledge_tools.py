@@ -37,7 +37,9 @@ def _selectors(job_id, grant_id, grant_revision):
 
 async def _read(path, key, **params):
     try:
-        result = await asyncio.to_thread(knowledge_get, path, local_transport=utils.get_json, **params)
+        result = await asyncio.to_thread(
+            knowledge_get, path, local_transport=utils.get_json, **params
+        )
         return {"ok": True, key: result}
     except requests.HTTPError as error:
         status = error.response.status_code if error.response is not None else 503

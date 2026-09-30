@@ -6,6 +6,7 @@ import importlib
 import importlib.util
 import shutil
 import sqlite3
+from test.integration.test_work_dispatch import context  # noqa: F401
 from uuid import uuid4
 
 import pytest
@@ -14,8 +15,8 @@ from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.clients import database
-from cli_agent_orchestrator.clients.work_repository import WorkConflict
 from cli_agent_orchestrator.clients.work_inbox_schema import INBOX_STORE_CONTEXT_SCHEMA
+from cli_agent_orchestrator.clients.work_repository import WorkConflict
 from cli_agent_orchestrator.models.work_contract import (
     ContractPermissions,
     ContractResources,
@@ -28,7 +29,6 @@ from cli_agent_orchestrator.services.delegation_snapshot import (
 )
 from cli_agent_orchestrator.services.knowledge_policy import KnowledgePolicy
 from cli_agent_orchestrator.services.work_admission import WorkAdmission
-from test.integration.test_work_dispatch import context  # noqa: F401
 
 
 @pytest.fixture
@@ -176,15 +176,14 @@ def test_same_path_store_uuid_replacement_rejects_before_managed_reservation(
     replacement = tmp_path / "replacement.sqlite"
 
     with database.SessionLocal() as prior_sqlalchemy_connection:
-        assert database._managed_inbox_store_identity_for_session(
-            prior_sqlalchemy_connection
-        ) == original_context
+        assert (
+            database._managed_inbox_store_identity_for_session(prior_sqlalchemy_connection)
+            == original_context
+        )
         shutil.copy2(paired_context.repo.path, replacement)
         with sqlite3.connect(replacement) as connection:
             connection.execute("DROP TRIGGER work_inbox_store_context_immutable_update")
-            connection.execute(
-                "UPDATE work_inbox_store_context SET store_uuid=?", (uuid4().hex,)
-            )
+            connection.execute("UPDATE work_inbox_store_context SET store_uuid=?", (uuid4().hex,))
             connection.execute(INBOX_STORE_CONTEXT_SCHEMA[1])
         replacement.replace(paired_context.repo.path)
 
@@ -231,22 +230,80 @@ def test_store_uuid_is_stable_across_reopen_and_preserves_v15_bridge(paired_cont
     assert before[0][0] == receipt.inbox_id
 
 
-def test_v16_expansion_preserves_a_literal_v15_bridge(paired_context):
-    coordinator = _coordinator(paired_context)
-    receipt = coordinator.admit(**_request(paired_context, "v15-expand"))
-    before = [tuple(row) for row in _bridge_rows(paired_context.repo)]
+def test_v16_expansion_preserves_a_literal_v15_bridge(tmp_path):
+    from test.clients.test_work_migrations import verified_store_at_version
 
-    with paired_context.repo.transaction() as connection:
-        connection.execute("DELETE FROM work_migrations WHERE version=16")
-        connection.execute("DROP TRIGGER work_inbox_store_context_immutable_update")
-        connection.execute("DROP TRIGGER work_inbox_store_context_immutable_delete")
-        connection.execute("DROP TABLE work_inbox_store_context")
+    repository_module = importlib.import_module("cli_agent_orchestrator.clients.work_repository")
+    store_path = tmp_path / "literal-v15.sqlite3"
+    repository = verified_store_at_version(repository_module, store_path, version=15)
+    store_identity = str(store_path.resolve())
+    contract_json = '{"schema_version":1,"id":"contract-v15"}'
 
-    paired_context.repo.initialize()
+    with repository.transaction() as connection:
+        connection.execute(
+            "INSERT INTO work_jobs "
+            "(id,project_id,principal_id,allowed_providers,grant_id,created_at) "
+            "VALUES ('job-v15','project','principal-v15','[\"mock_cli\"]','grant-v15',1)"
+        )
+        connection.execute(
+            "INSERT INTO work_principals VALUES " "('principal-v15','issuer','subject','jwt',1)"
+        )
+        connection.execute(
+            "INSERT INTO work_grants "
+            "(id,revision,job_id,principal_id,allowed_providers,permissions,expires_at,created_at) "
+            "VALUES ('grant-v15',1,'job-v15','principal-v15','[\"mock_cli\"]','{}',100,1)"
+        )
+        connection.execute(
+            "INSERT INTO work_delegation_snapshots "
+            "(id,schema_version,job_id,contract_id,binding_key,request_hash,scope,scope_id,"
+            "producer_principal_id,source_hash,delivered_hash,content,redacted,truncated,created_at) "
+            "VALUES ('snapshot-v15',1,'job-v15','contract-v15','binding-v15',?,'project',"
+            "'project','principal-v15',?,?,X'',0,0,1)",
+            ("a" * 64, "b" * 64, "c" * 64),
+        )
+        connection.execute(
+            "INSERT INTO work_items "
+            "(id,job_id,operation_kind,idempotency_key,request_hash,contract_id,created_at) "
+            "VALUES ('item-v15','job-v15','inbox','key-v15',?,'contract-v15',1)",
+            ("d" * 64,),
+        )
+        connection.execute(
+            "INSERT INTO work_attempts "
+            "(id,work_item_id,attempt_number,generation,provider,lease_expires_at,created_at) "
+            "VALUES ('attempt-v15','item-v15',1,1,'mock_cli',100,1)"
+        )
+        connection.execute(
+            "INSERT INTO work_dispatch_bindings "
+            "(attempt_id,generation,job_id,work_item_id,principal_id,grant_id,grant_revision,"
+            "contract_id,contract_json,contract_hash,snapshot_id,created_at) "
+            "VALUES ('attempt-v15',1,'job-v15','item-v15','principal-v15','grant-v15',1,"
+            "'contract-v15',?,?, 'snapshot-v15',1)",
+            (contract_json, "e" * 64),
+        )
+        connection.execute(
+            "INSERT INTO work_inbox_store_identity VALUES (1,?,1)", (store_identity,)
+        )
+        connection.execute(
+            "INSERT INTO work_inbox_bindings VALUES (73,'attempt-v15',1,?,1)",
+            (store_identity,),
+        )
 
-    assert [tuple(row) for row in _bridge_rows(paired_context.repo)] == before
-    assert before[0][0] == receipt.inbox_id
-    assert database._managed_inbox_store_identity().store_uuid
+    with repository.connection() as connection:
+        assert connection.execute("SELECT max(version) FROM work_migrations").fetchone()[0] == 15
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        before = [tuple(row) for row in _bridge_rows(repository)]
+
+    repository.initialize()
+
+    assert [tuple(row) for row in _bridge_rows(repository)] == before
+    assert before == [(73, "attempt-v15", 1, store_identity)]
+    with repository.connection() as connection:
+        context = connection.execute(
+            "SELECT singleton,store_uuid,store_identity FROM work_inbox_store_context"
+        ).fetchone()
+        assert context[0] == 1
+        assert len(context[1]) == 32
+        assert context[2] == store_identity
 
 
 def test_same_binding_is_idempotent_but_another_managed_row_conflicts(paired_context):

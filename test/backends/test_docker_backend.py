@@ -1,8 +1,8 @@
 """Docker Work accepts only the profile its container boundary can prove."""
 
-import io
 import hashlib
 import importlib.util
+import io
 import json
 import tarfile
 from types import SimpleNamespace
@@ -11,9 +11,8 @@ import pytest
 
 
 def _restriction(module, *, paths=(), read_paths=(), network=(), tools=()):
-    from cli_agent_orchestrator.models.work_contract import ExecutableIdentity
-
     from cli_agent_orchestrator.backends.base import ProcessRestrictionContract
+    from cli_agent_orchestrator.models.work_contract import ExecutableIdentity
 
     identity = ExecutableIdentity(
         command_token="/worker",
@@ -69,9 +68,38 @@ def test_docker_work_maps_only_managed_tools_when_a_server_proxy_is_bound(monkey
     monkeypatch.setattr(backend, "_validate_engine_and_image", lambda: probes.append("probe"))
 
     backend.preflight_work(_restriction(module, tools=("cao.work.child",)))
+    backend.preflight_work(_restriction(module, tools=("cao.work.submit_result",)))
     with pytest.raises(module.UnsupportedWorkEnforcement):
         backend.preflight_work(_restriction(module, tools=("filesystem.read",)))
-    assert probes == ["probe"]
+    assert probes == ["probe", "probe"]
+
+
+def test_docker_submit_result_uses_the_separate_receiver_credential_descriptor():
+    module = __import__(
+        "cli_agent_orchestrator.backends.docker_backend", fromlist=["DockerWorkBackend"]
+    )
+    from cli_agent_orchestrator.services.work_attempt_credential import (
+        create_attempt_credential_descriptor,
+    )
+
+    secret = b"receiver-secret".ljust(32, b"!")
+    descriptor = create_attempt_credential_descriptor(secret)
+    try:
+        request = {"params": {"name": "cao.work.submit_result"}}
+        assert module._receiver_credential_for_request(request, descriptor) == secret
+    finally:
+        module.os.close(descriptor)
+
+
+def test_docker_submit_result_rejects_a_missing_receiver_credential():
+    module = __import__(
+        "cli_agent_orchestrator.backends.docker_backend", fromlist=["DockerWorkBackend"]
+    )
+
+    with pytest.raises(module.UnsupportedWorkEnforcement):
+        module._receiver_credential_for_request(
+            {"params": {"name": "cao.work.submit_result"}}, None
+        )
 
 
 @pytest.mark.parametrize(
@@ -189,7 +217,10 @@ async def test_docker_dispatch_stops_when_prior_artifact_inspect_is_uncertain(
 
     assert inspect_calls
     assert not side_effect_calls
-    assert all(arguments[:2] not in (("image", "build"), ("container", "create")) for arguments in side_effect_calls)
+    assert all(
+        arguments[:2] not in (("image", "build"), ("container", "create"))
+        for arguments in side_effect_calls
+    )
     work = repository.get_work(receipt.work_item_id)
     assert work["state"] == "reconcile"
     assert work["attempts"][-1]["state"] == "reconcile"
@@ -259,7 +290,10 @@ def test_docker_attempt_build_context_uses_pinned_base_and_attempt_bound_labels(
         assert [member.name for member in members] == ["Dockerfile", "cao-work-worker"]
         dockerfile = stream.extractfile(members[0]).read().decode("ascii")
         assert "FROM cao-work-rootfs:" + "b" * 64 in dockerfile
-        assert f'org.cao.work.attempt_sha256="{hashlib.sha256(b"attempt-1").hexdigest()}"' in dockerfile
+        assert (
+            f'org.cao.work.attempt_sha256="{hashlib.sha256(b"attempt-1").hexdigest()}"'
+            in dockerfile
+        )
         assert 'org.cao.work.generation="7"' in dockerfile
         worker = members[1]
         assert worker.mode == 0o555
@@ -313,7 +347,9 @@ def test_docker_reconcile_removes_only_artifacts_with_exact_attempt_labels(monke
 
     monkeypatch.setattr(backend, "_run", run)
     monkeypatch.setattr(
-        backend, "_cleanup_container", lambda container_id, *, kill: removed.append((container_id, kill)) or True
+        backend,
+        "_cleanup_container",
+        lambda container_id, *, kill: removed.append((container_id, kill)) or True,
     )
     monkeypatch.setattr(
         backend, "_cleanup_attempt_image", lambda image_tag: image_removed.append(image_tag) or True

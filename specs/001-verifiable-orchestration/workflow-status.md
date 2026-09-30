@@ -1,23 +1,25 @@
 # Estado de AI_WORKFLOW.md
 
-Fecha: 2026-09-24. Estado del programa: **diseño aprobado, implementación en curso**.
-Este archivo no es un signoff de la funcionalidad solicitada.
+## Estado vigente — 2026-09-30
 
-Último incremento cerrado: **T070** (restore aislado de bundle v2; evidencia al
-final). Antes se cerraron **T061** (presentación semántica de Work en Web y TUI),
-**T067** (cliente remoto CAS y recovery
-versionados) y **T064/T068** (contrato HTTP y cursor de
-la autoridad), **T058** (preflight de fábrica por descriptor), **T059**
-(observación Herdr simulada), **T056** (contrato DTO de proyección HTTP v1),
-**T018** (bridge inbox managed interno),
-**T043** (adaptador snapshot-ID en aislamiento),
-**T091** (entrega durable interna), **T006** (DTO de dominio v1) y
-**T038/T040/T092** (política común de memoria).
-Tras la detención solicitada después de T040, se reanudó T006 y luego T091.
-**T044 sigue pendiente**;
-las entradas públicas T017–T020 y el resto del roadmap siguen pendientes.
-Los cierres de T006 y T091 están al final del documento; el cierre anterior
-de memoria también se detalla en [t040-composition-review.md](t040-composition-review.md).
+**Cierre documental del alcance local acordado.** 001: 129 tareas completadas;
+002: 7 tareas completadas. T084: 18 celdas autorizadas aceptadas. T085:
+candidato aislado preparado/verificado, con 13.491 casos aprobados por inventario.
+Las 119 incidencias iniciales están resueltas y dos workflows reales pasan en main.
+Claude tiene login claude.ai Pro activo comprobado tras la renovación del usuario;
+no se repitieron workflows Claude para esta reconciliación documental.
+
+[Estado vigente y límites](acceptance-status.md),
+[checklist local](checklists/local-acceptance.md) y
+[evidencia de corrección](omitted-acceptance.md).
+O03 ampliado y OpenCode v2 no están aceptados; el merge upstream en main es una
+acción separada. Producción está excluida del alcance acordado.
+
+## Bitácora histórica
+
+Las secciones siguientes conservan el estado observado en cada intervención.
+Sus pendientes y contadores anteriores fueron sustituidos, cuando hay evidencia,
+por el estado vigente enlazado arriba; no deben leerse como la situación actual.
 
 ## Alcance y decisiones de proceso
 
@@ -3506,3 +3508,316 @@ no son regresiones introducidas por T019. El fixture adicional de
 `test_container_wrapped.py` se corrigió y el módulo pasó **7 tests**.
 `npm run scan:jit` salió 0 sin archivos para escanear; `npm run check:size`
 salió 0 sin artefactos frontend construidos, ambos skips según sus scripts.
+
+### T017: launch ordinario gestionado en modo explícito — 2026-09-29
+
+`CAO_WORK_LAUNCH_MODE=required` en servidor y CLI dirige `cao launch` ordinario
+con sesión y mensaje explícitos a `/work-launches`. El bearer verificado aporta
+el `Principal`; el selector es una referencia opaca y `WorkProvisioning` y
+`LaunchRuntime` fijan provisión, grant, contrato, snapshot y clave de operación
+en el servidor. Los defaults de herramientas del perfil local no se convierten
+en permisos Work. El servidor rechaza `/sessions` y la creación directa de una
+sesión legacy antes del efecto, y un modo desconocido impide su arranque.
+Sin el modo, la ruta legacy conserva su comportamiento anterior.
+
+La prueba integrada CLI→HTTP→SQLite temporal admitió una intención y confirmó
+que su repetición conserva exactamente el mismo recibo, con un solo item,
+intento, binding, delivery y scheduler request. La suite focal de launch,
+provisión, runtime, gateway, CLI, HTTP y autoridad pasó **165 tests** con cuatro
+warnings de dependencias. Incluye provisión ausente/ajena, sustitución o retiro
+entre resolución, admisión y readiness, revocación, reinicio, conflicto de
+idempotencia por origen distinto, bearer ausente, body con job/grant falsificados,
+backend faltante y rechazo legacy. `project-composition-check caos` pasó:
+**4 contratos conservados, 0 rotos** (295 archivos, 1101 dependencias).
+
+T017 se cierra para el modo gestionado explícito. `WORK_BACKENDS` continúa vacío
+por defecto; la operación local requiere provisión previa, autenticación JWT
+configurada y registro explícito de un backend Work aceptado. Esta ronda no
+ejecutó Docker real ni habilitó producción. T035 conserva el gate de entrada
+pública completa y T020 el vínculo de workflows. El estado histórico de T017
+abierta arriba queda supersedido por este cierre.
+
+### Incremento de integración local y aceptación — 2026-09-29
+
+El perfil de `docs/local-work-docker.md` reúne en un proceso local la provisión
+server-owned, un bearer JWT verificado mediante emisor JWKS en loopback y un
+backend Docker fijado por digest. El ingreso HTTP `/work-launches` y su adaptación
+MCP están limitados por `CAO_ENABLE_PUBLIC_WORK_INGRESS=true` en cada proceso;
+sin el flag permanecen cerrados. `CAO_WORK_LAUNCH_MODE=required` cerca la ruta
+legacy de creación de sesiones. `WORK_BACKENDS` sigue vacío por defecto; el
+registro Docker sólo existe con `CAO_WORK_DOCKER_LOCAL=1` y un ID de imagen
+`sha256:` válido. El demo conserva estado efímero y su worker estático no emite
+un resultado Work.
+
+Evidencia de esta ronda anterior al cierre T020: suites focales de API/MCP para
+T035 **77 passed**, más caso ASGI de body fragmentado **1 passed**; Python
+afectado **661 passed, 1 skipped, 2 deselected**; Web **44 passed** y build
+TypeScript/Vite correcto; TUI **2 passed**. La aceptación real del backend local
+Docker pasó **2 tests** con ID de imagen fijado. Herdr v0.9.1 verificado por
+SHA-256 y ejecutado en una prueba real pasó **1 test** para proyección genérica
+de `mock_cli`. El caso real tmux/mock_cli de inbox tras reinicio pasó **1 test**.
+La matriz contractual de proveedores pasó **68 tests, 1 skipped**: el skip es el
+proveedor live sin cuenta/modelo autorizado, no una aceptación real. Los dos
+deselected de la suite amplia fueron el caso real de tmux ejecutado por separado
+y el fixture histórico v15→v16; éste construía un ledger v38 incoherente y se
+reparó después con una base v15 válida. La nueva suite de inbox/migraciones
+reportó **58 passed** tras esa reparación.
+
+T020 continúa abierta. El `work_pending` durable ya impide replay/callback
+legacy, pero el worker de un workflow todavía necesita provisión y binding por
+step, receipt/result autenticados y proyección CAS reiniciable. El contrato
+`contracts/workflow-managed.md` y T117–T122 detallan esas fronteras; no se
+acepta la salida de terminal ni la telemetría como ACK o resultado. T023 sólo
+demuestra en proceso real el inbox legacy; T044 tiene cobertura compuesta de
+launch/inbox/hijo/handoff, no todavía YAML/script. T079 queda pendiente de la
+composición final con T020. T084 requiere cuentas/modelos autorizados; T085
+requiere integración upstream por separado. No hubo fetch, merge, commit ni
+push en esta ronda.
+
+### T020: workflow managed step bridge — cerrado localmente, 2026-09-30
+
+La causa del fallo post-dispatch era que `work_agent_step` descartaba el
+`DockerWorkExecution`: aunque el backend esperaba y verificaba el exit y
+eliminaba el contenedor e imagen del intento, Work no recibía esa observación y
+permanecía `sent`/`running`. El projector no podía registrar el fallo y el
+endpoint de retry carecía de un fallo durable. El adaptador ahora entrega una
+evidencia estricta ligada a attempt/generation sólo ante exit no cero y prueba
+de cleanup; Work la persiste mediante CAS junto con `cleanup_state=complete` y
+el evento de fallo. Exit cero sin resultado, cancelación o cleanup incierto
+siguen pendientes/de conciliación, y un resultado ya aceptado gana ante un exit
+tardío.
+
+La prueba end-to-end encontró además que los steps YAML no persistían su
+`call_fingerprint`. Al llegar al endpoint admin de retry, la identidad del
+managed step no coincidía y el retry era rechazado como transición obsoleta.
+`mark_work_pending` ahora persiste y cerca ese fingerprint, y recovery conserva
+la identidad de la llamada.
+
+La suite focal actual pasó **221 tests**, incluidas migraciones Work v39; la
+aceptación opt-in de T019/T020 con Docker Engine **29.8.1 linux/amd64** pasó
+**13 tests en 68,53 s**. Incluye YAML y script, resultado durable y proyección
+tras reinicio, ACK sin resultado que queda pendiente, fallo Docker exit 23 con
+cleanup probado, ausencia de retry implícito, retry admin cercado e idempotente
+y fallo del segundo intento. `project-composition-check caos` analizó 298
+archivos/1141 dependencias: **4 contratos conservados, 0 rotos**.
+
+T020 queda cerrada para el perfil local de aceptación. El runner exige opt-in,
+usa un daemon Linux local y una imagen fijada; `WORK_BACKENDS` sigue vacío por
+defecto. Esta evidencia no representa un host de producción ni habilita
+despliegue, ingreso público, proveedor externo o backend global. T084 y los
+gates upstream permanecen separados.
+
+## Cierre local — 2026-09-30
+
+Estado actual: **001: 120/122 tareas verificadas, T084/T085 pendientes; 002:
+7/7 completadas**. No signoff completo de 001. T023/T044 y T079 se cierran con
+aceptación local; T086–T090 registran verificación y límites, no aceptación
+externa. Checklist de calidad requirements.md: 15/15; aceptación local/externa
+separada en checklists/local-acceptance.md. Trazabilidad verificada por script:
+25 FR y 10 SC, numeración exacta, sin duplicados.
+
+### Gates frescos y comandos
+
+Batería principal: **2680 passed, 4 skipped, exit 0**, 811,77 s. Se usó un
+basetemp exclusivo para impedir interferencia entre sesiones pytest.
+
+```bash
+uv run pytest -o addopts= -q --tb=short \
+  --basetemp=/tmp/cao-specs-final-all --junitxml=/tmp/cao-specs-final-all.xml \
+  test/services/test_work_*.py test/clients/test_work*.py test/integration/test_work*.py \
+  test/services/test_knowledge*.py test/services/test_delegation_snapshot.py \
+  test/services/test_recovery_bundle.py test/services/test_recovery_decision_intake.py \
+  test/services/test_config_service.py test/services/test_script_error_kind.py \
+  test/services/test_manifest_freeze.py test/services/test_frozen_run_memory.py \
+  test/services/test_turn_receipt_delivery.py test/integration/test_knowledge*.py \
+  test/integration/test_memory_knowledge_policy.py test/api/test_work*.py \
+  test/api/test_knowledge*.py test/backends/test_work_registry.py \
+  test/backends/test_docker_backend.py test/backends/test_bubblewrap_backend.py \
+  test/backends/test_herdr_work_status.py test/providers/test_provider_capabilities.py \
+  test/test_real_provider_matrix_contract.py test/services/test_workflow*.py \
+  test/services/test_script_runner.py test/services/test_step_contract.py \
+  test/api/test_run_step_env_guard.py test/api/test_run_step_replay_branch.py \
+  test/e2e/test_work_lifecycle.py test/e2e/test_work_continuation.py \
+  test/fixtures/test_cao_server.py test/cao_workflow/test_transport.py \
+  test/cao_workflow/test_step_surface.py test/cli/commands/test_launch.py
+```
+
+Gate adicional: **368 passed, 5 skipped, exit 0**, 88,57 s.
+
+```bash
+uv run pytest -o addopts= -q --tb=short \
+  --basetemp=/tmp/cao-specs-final-extra --junitxml=/tmp/cao-specs-final-extra.xml \
+  test/integration/t098 test/mcp_server/test_work_launch_authority.py \
+  test/api/test_workflow_managed_ingress.py test/api/test_workflow_lifecycle_integration.py \
+  test/api/test_workflow_run_surface_tier.py test/api/test_workflow_runs.py \
+  test/api/test_workflow_revision.py test/services/test_status_monitor.py \
+  test/providers/test_mock_cli_unit.py test/clients/test_database.py \
+  test/e2e/test_herdr_generic_status.py
+```
+
+Docker final: **14 passed, exit 0**, 65,11 s; Engine 29.8.1 Linux/amd64,
+rootfs inmutable sha256:c9867b97dccbda32fd5c29ec911f7c5665c3bde0171ff69934b8258ae4c8af80.
+Worker ELF SHA-256: 04dc7236707b12c092b69b68b09b69b1bc312156145bb51376bee7e1573765c9.
+
+```bash
+CAO_T020_DOCKER_ACCEPTANCE=1 ./test/integration/t020/run-docker-acceptance.sh
+uv run pytest -o addopts= -q --tb=short --basetemp=/tmp/cao-docker-final-unit \
+  test/backends/test_docker_backend.py test/backends/test_docker_work_supervisor.py \
+  test/services/test_work_launch.py
+```
+
+Segundo comando: **35 passed, exit 0** tras la última corrección Docker.
+Web: `npm test -- --reporter=dot`, desde web/, **341 passed, 20 archivos, exit 0**.
+TUI: `/home/felni/.cargo/bin/cargo test --quiet`, desde tui/, env de endpoint
+loopback al servidor temporal iniciado por `_start_cao_server`; **252 passed,
+exit 0** (213+3+4+11+5+7+9). Sin llamadas a modelos reales en estos gates.
+
+Arquitectura: `project-composition-check "$(cat .ai/project-name)"`, **exit 0**,
+298 archivos/1142 dependencias, **5 kept, 0 broken**. Diff final:
+`git diff --check HEAD`, **exit 0**. Se revisaron fronteras afectadas y cambios
+frente a HEAD; la worktree inicial ya contenía T017/T019/T020 y se conservó.
+No se hizo commit, push, fetch ni merge.
+
+### Omisiones y fallos anteriores
+
+Las cuatro omisiones principales son Bubblewrap scratch/pidfds, Landlock ABI9
+(host ABI7), ruta YAML condicionada a CLI real y Kiro CLI ausente. El gate
+adicional omitió cuatro casos de Bubblewrap scratch y Herdr CLI ausente. La
+aceptación real Herdr/mock_cli anterior es histórica; no se transforma esta
+omisión fresca en un éxito. Docker y mock_cli sí tienen aceptación fresca.
+
+Se reprodujeron regresiones legacy 403/503, pérdida de result_json YAML, replay
+mezclado, owners de runtime retenidos y cleanup truthy antes de corregirlos.
+El primer gate amplio tuvo 67 fallos; las fixtures expresaban versiones/firma
+antiguas y el servidor capturaba el checkout OneDrive del operador (7,46 s
+medidos frente al timeout HTTP 5 s). Ahora captura su workspace temporal, sin
+ampliar timeout. El gate HTTP intermedio pasó 224 pruebas/1 omisión.
+
+La repetición Docker tuvo 1 fallo/12 éxitos antes de la última corrección:
+attach terminaba antes de consumir un EXIT válido. La regresión retrasó el
+lector después de confirmar process.wait, reproduciendo 1 fallo; tras corregir
+el dueño de completion pasaron ambos casos. EOF sin EXIT sigue fallando,
+y deadline, identidad, código de salida y cleanup siguen obligatorios.
+
+### Revisión, conocimiento y límites
+
+Composición: **PASS WITH RISKS para el perfil local**, informe en
+composition-review-2026-09-30.md. Deuda journal→database→memoria→terminal
+conservada; la nueva regla del projector limita imports directos.
+
+Graphify consultado antes de implementar y contrastado con fuente. Se difiere
+refresh completo por el bloqueo OneDrive/9p ya documentado y se restauró sólo
+el stamp creado por la consulta. No se escribió al vault ni se duplicaron
+artefactos generados; invariantes durables en contratos y completion-evidence.md.
+
+T084 sigue pendiente de identificación del proveedor «go» y presupuesto/cuota
+confirmados. T085 tiene inventario y simulación local con 12 conflictos; la
+integración aislada exige autorización específica de su plan. Las preguntas
+siguen sin respuesta; el tiempo transcurrido no es autorización. O03 conserva
+combinaciones no aceptadas; no hay host de producción y Work queda opt-in.
+
+
+## Aceptación T084/T085 en curso — 2026-09-30
+
+La respuesta del usuario concreta Codex, Claude y OpenCode y autoriza **0 €
+adicionales**, sólo suscripciones/modelos gratuitos. No queda pendiente la
+identificación de «go». Codex0.159.2 utiliza ChatGPT Pro y gpt-6-luna;
+Claude2.1.285 utiliza OAuth Pro y claude-haiku-4-5, con extra_usage desactivado;
+OpenCode1.18.32 utiliza opencode-go/longcat-2.5-preview-free desde un PATH
+aisladamente preparado. Se eliminan claves API ambientales de la ejecución.
+
+Codex → Codex: **1 passed**, con turno real, entrega entre hermanos, cancelación
+y reconciliación de timeout validados y cleanup confirmado. No hubo cuota
+agotada: escenarios de espera/continuación figuran not_applicable, nunca passed
+sin observarlos. JUnit local: /home/felni/ct/livecodex3.xml. La primera ejecución
+detectó que el diálogo Trust this folder? de Codex0.159 no era reconocido; se
+corrigió el adaptador y se añadieron cinco regresiones de menú activo/incompleto/
+scrollback antes de repetir la prueba. Matriz restante en curso.
+
+T085 tiene candidato independiente en /home/felni/.cache/caos/t085-20260930,
+con los 12 conflictos resueltos y gates parciales documentados en
+[t085-integration-review.md](t085-integration-review.md). La suite Python
+completa continúa; T084/T085 siguen sin marcar hasta registrar el resultado
+completo. No se incorporó el merge a main ni se publicó.
+
+
+## T084: matriz real autorizada aceptada — 2026-09-30
+
+**18 combinaciones validadas**: las nueve aristas padre→hijo de Codex, Claude
+y OpenCode v1, en cada uno de tmux y Herdr0.9.1. CLI/modelos: Codex0.159.2
+con gpt-6-luna (ChatGPT Pro), Claude2.1.285 con claude-haiku-4-5 (Pro OAuth),
+y OpenCode1.18.32 con opencode-go/longcat-2.5-preview-free. Presupuesto
+autorizado: 0 € adicionales. Se usaron suscripciones/modelo gratuito, sin
+claves API de pago ambientales; extra_usage de Claude estaba desactivado.
+
+Cada combinación acredita turno real, mensajes entre hermanos, cancelación,
+reconciliación de timeout y limpieza de sesión. No se agotó ninguna cuota:
+espera/continuación de cuota conservan **not_applicable**, sin atribuirles un
+passed. Evidencia saneada por escenario en [t084-live-matrix.json](t084-live-matrix.json).
+Los intentos fallidos previos se conservaron fuera del repo; sólo se incluye
+el resultado vigente de cada combinación después de corregir sus causas.
+
+T084 queda completada para las cuentas/modelos autorizados. O03 tiene evidencia
+real para estas combinaciones y mock_cli; proveedores adicionales conservan
+su aceptación pendiente. T085 mantiene abierta la aceptación Python completa
+del candidato independiente; ningún merge se incorporó a main.
+
+
+## Cierre T085 — 2026-09-30
+
+Candidato upstream preparado y verificado en clon independiente. Inventario
+Python único: **13.476 casos**; **13.357 passed, 118 skipped, 1 xfailed**;
+cero nodeids faltantes y cero fallos vigentes. Aceptación por particiones y
+repetición de archivos afectados, no una ejecución monolítica que se atribuya
+a los intentos interrumpidos. Los skips conservan sus límites de entorno y el
+xfail conocido no se convierte en passed. Los fallos anteriores quedan
+registrados junto a sus reruns; la prueba final de telemetría pasa en ambos
+checkouts con DB propia y esquema Work real.
+
+Gates finales: arquitectura candidato 5 kept/0 broken; composición del checkout
+original PASS; black/isort sobre 958 archivos exit0; enlaces Markdown/diff
+check exit0. Tras normalizar formato se repitieron 1.682 casos de runtime
+con 3 skipped y 1 xfailed; 825 casos de settlement/Work/replay pasan.
+Web, TUI, MCP Apps, Docker y Agent Plugins conservan sus gates documentados
+en la revisión. El wheel final instalado coincide byte a byte con nueve módulos
+del candidato y contiene sus recursos Web/TUI/MCP Apps/Agent Plugins.
+
+**T085 completada; ambos specs quedan sin tareas abiertas.** Esto acredita
+preparación y aceptación local del candidato; su integración en main sigue
+siendo una acción separada. O03 no certifica proveedores adicionales a los
+autorizados; no existe despliegue/host de producción dentro de este cierre.
+Artefactos locales de cobertura y parche en `/home/felni/ct/`; manifiesto
+final: `/home/felni/ct/t085-candidate-manifest.json`.
+
+
+## Corrección posterior de aceptación — 2026-09-30
+
+Las 119 incidencias del resultado anterior están resueltas en el candidato:
+**13.491 passed por inventario**, con 15 regresiones nuevas y aceptación real
+por entorno. Véase [omitted-acceptance.md](omitted-acceptance.md) y su JSON por nodeid.
+Los contadores antiguos arriba describen ejecuciones históricas.
+
+### Ampliación personal completada — 2026-09-30
+
+Spec 003 incorpora el candidato en el checkout main, conserva v1 e integra
+OpenCode v2, repite dos workflows Claude tras renovar el login y acepta el servicio
+localhost persistente con autenticación, reinicio, provisión Docker y restore.
+La matriz v2 acredita 18 combinaciones mediante resultados conservados y dos
+repeticiones de la celda corregida. La reserva del worker estático de aceptación
+se liberó tras comprobar la eliminación exacta de sus artefactos Docker.
+
+No hay commit/push/merge de historia nuevos. Diez proveedores externos no
+autorizados quedan fuera; cuotas no agotadas y equipo encendido siguen siendo
+límites. [Estado vigente](acceptance-status.md),
+[evidencia](../003-personal-deployment/completion-evidence.md),
+[guía](../../docs/personal-deployment.md).
+
+### Corrección de acceso web — 2026-09-30
+
+El operador detectó Offline en la web después del cierre CLI/TUI. Se reprodujo
+401 en `/sessions`: faltaba bearer en el cliente web. Spec 003 añade T014–T017
+y corrige REST/SSE/WebSocket, enlace privado de acceso local y formulario de
+conexión. Navegador real aceptado: Live, sesiones/perfiles 200, fragmento retirado,
+credencial rechazada eliminada y nuevo enlace reconecta. 372 pruebas web, nueve
+de despliegue, build y cinco contratos de composición pasan. El comando `web`
+abrió el acceso en Windows. La autenticación del servidor permanece obligatoria.

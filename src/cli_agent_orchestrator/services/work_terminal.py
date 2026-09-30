@@ -42,9 +42,7 @@ class _TerminalDispatchLock:
             raise RuntimeError("terminal dispatch lock context cannot be reused")
         self._entered = True
         if fcntl is None:
-            raise TerminalDispatchLockError(
-                "terminal dispatch requires interprocess flock support"
-            )
+            raise TerminalDispatchLockError("terminal dispatch requires interprocess flock support")
         if not isinstance(self.terminal_id, str) or not self.terminal_id:
             raise ValueError("terminal dispatch lock requires a terminal id")
         try:

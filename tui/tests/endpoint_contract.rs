@@ -146,12 +146,21 @@ fn base_url() -> String {
 fn get_json_array(path: &str) -> Vec<Value> {
     let url = format!("{}{path}", base_url());
 
-    let response = minreq::get(&url)
-        .with_timeout(REQUEST_TIMEOUT_SECS)
-        .send()
-        .unwrap_or_else(|error| {
-            panic!(
-                "could not reach cao-server at {url} -- {error}\n\
+    let mut request = minreq::get(&url).with_timeout(REQUEST_TIMEOUT_SECS);
+    if let Ok(token) = env::var("CAO_AUTH_LOCAL_TOKEN") {
+        assert!(
+            !token
+                .bytes()
+                .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control()),
+            "invalid local bearer token"
+        );
+        request = request
+            .with_header("Authorization", format!("Bearer {token}"))
+            .with_max_redirects(0);
+    }
+    let response = request.send().unwrap_or_else(|error| {
+        panic!(
+            "could not reach cao-server at {url} -- {error}\n\
                  \n\
                  This test FAILS rather than skips, on purpose (BR-7): a contract test that \n\
                  skipped when the server was down would report green while verifying nothing, \n\
@@ -160,14 +169,14 @@ fn get_json_array(path: &str) -> Vec<Value> {
                  Start the server (`cao-server`) or point CAO_API_HOST / CAO_API_PORT at a \n\
                  running instance, then re-run. Current values: CAO_API_HOST={host:?}, \n\
                  CAO_API_PORT={port:?} (defaults {DEFAULT_API_HOST}:{DEFAULT_API_PORT}).",
-                host = env::var("CAO_API_HOST").ok(),
-                port = env::var("CAO_API_PORT").ok(),
-            )
-        });
+            host = env::var("CAO_API_HOST").ok(),
+            port = env::var("CAO_API_PORT").ok(),
+        )
+    });
 
     // BR-9 / Step 5: the status is part of the contract and must not be assumed. Both routes
-    // return 200; a 401 or 403 here would mean the endpoint started requiring auth, which
-    // would otherwise slip past a shape-only assertion. (#321)
+    // return 200 for the configured operator; a 401 or 403 must fail the gate
+    // instead of slipping past a shape-only assertion. (#321)
     let status = response.status_code;
     let body = response.as_str().unwrap_or_else(|error| {
         panic!("GET {url} returned status {status} with a non-UTF-8 body -- {error}")
@@ -370,11 +379,10 @@ fn profiles_endpoint_does_not_return_a_provider_field() {
     }
 }
 
-/// Test 3 — every `GET /agents/providers` entry carries exactly `{name, binary, installed}`.
+/// Test 3 — every provider carries the stable picker fields and additive capabilities.
 ///
 /// Step 4 / BR-2 / BR-9. Route B of A-2's resolution, which the provider picker depends on
-/// (FR-1.2), verified at `api/main.py:1531-1550`. The three names are hard-coded literals for
-/// the same reason the eight are.
+/// (FR-1.2), plus the FR-012 operation flags. Names stay hard-coded so API drift fails here.
 ///
 /// Note what this does *not* assert: that the list is complete. The route's hardcoded map has
 /// nine entries against a ten-value `ProviderType` enum (`MOCK_CLI` absent), so the *shape* is
@@ -382,15 +390,15 @@ fn profiles_endpoint_does_not_return_a_provider_field() {
 /// `server-client` by forbidding the client from hiding providers — a different mechanism.
 /// `installed == false` is display data here, never a filter (BR-9 of `shared-types`). (#321)
 #[test]
-fn providers_endpoint_returns_exactly_name_binary_and_installed() {
-    let expected_keys: BTreeSet<String> = ["name", "binary", "installed"]
+fn providers_endpoint_returns_picker_fields_and_operation_capabilities() {
+    let expected_keys: BTreeSet<String> = ["name", "binary", "installed", "capabilities"]
         .iter()
         .map(|key| (*key).to_string())
         .collect();
     assert_eq!(
         expected_keys.len(),
-        3,
-        "the hard-coded expectation must itself list 3 distinct names"
+        4,
+        "the hard-coded expectation must itself list 4 distinct names"
     );
     let expected_types = [
         ("name", "string"),
@@ -405,7 +413,7 @@ fn providers_endpoint_returns_exactly_name_binary_and_installed() {
         assert_eq!(
             actual, expected_keys,
             "GET /agents/providers entry {index} must carry exactly {{name, binary, \
-             installed}}; the provider picker (FR-1.2) reads all three. Got: {actual:?}"
+             installed, capabilities}}. Got: {actual:?}"
         );
 
         for (key, expected_type) in expected_types {
@@ -418,6 +426,32 @@ fn providers_endpoint_returns_exactly_name_binary_and_installed() {
                 "GET /agents/providers entry {index} key {key:?} must be {expected_type} on \
                  the wire; got {actual_type} ({value})",
                 actual_type = wire_type(value)
+            );
+        }
+        let capabilities = entry["capabilities"]
+            .as_object()
+            .expect("provider capabilities must be an object of operation flags");
+        let capability_keys: BTreeSet<String> = [
+            "native_children",
+            "sibling_messages",
+            "terminal_status",
+            "screen_status",
+            "direct_status_probe",
+            "midburst_processing_probe",
+            "durable_turn_receipts",
+        ]
+        .iter()
+        .map(|key| (*key).to_string())
+        .collect();
+        assert_eq!(
+            capabilities.keys().cloned().collect::<BTreeSet<_>>(),
+            capability_keys,
+            "provider operation flags must match the public capability contract",
+        );
+        for (operation, available) in capabilities {
+            assert!(
+                available.is_boolean(),
+                "capability {operation} must be boolean"
             );
         }
     }

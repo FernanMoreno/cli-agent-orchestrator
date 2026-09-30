@@ -3,11 +3,10 @@
 import hashlib
 import sqlite3
 import time
-
-import pytest
-
 from test.clients.test_work_migrations import repository_module
 from test.fixtures.work_store import work_store_paths  # noqa: F401
+
+import pytest
 
 
 def _v23_store(module, path):

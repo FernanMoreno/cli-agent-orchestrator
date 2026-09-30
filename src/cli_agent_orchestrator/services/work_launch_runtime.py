@@ -19,9 +19,9 @@ from cli_agent_orchestrator.clients.work_repository import (
     WorkConflict,
     WorkRepository,
 )
+from cli_agent_orchestrator.models.work_contract import EffectiveWorkContractV2
 from cli_agent_orchestrator.models.work_delivery import WorkDeliveryEnvelope
 from cli_agent_orchestrator.models.work_origin import ProvisionedLaunch
-from cli_agent_orchestrator.models.work_contract import EffectiveWorkContractV2
 from cli_agent_orchestrator.security.auth import Principal
 from cli_agent_orchestrator.services.delegation_snapshot import (
     SnapshotConflict,

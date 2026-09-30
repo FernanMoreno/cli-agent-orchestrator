@@ -10,13 +10,13 @@ from test.fixtures.work_store import work_store_paths  # noqa: F401
 
 import pytest
 
+from cli_agent_orchestrator.clients.work_process_identity_schema import (
+    PROCESS_IDENTITY_SCHEMA,
+)
 from cli_agent_orchestrator.clients.work_repository import (
     SchemaMismatch,
     WorkConflict,
     WorkRepository,
-)
-from cli_agent_orchestrator.clients.work_process_identity_schema import (
-    PROCESS_IDENTITY_SCHEMA,
 )
 from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 
@@ -658,6 +658,42 @@ def test_result_reference_failure_does_not_claim_success(store):
     assert store.get_work(work["id"]) == work
     with sqlite3.connect(store.path) as connection:
         assert connection.execute("SELECT count(*) FROM work_results").fetchone()[0] == 0
+
+
+def test_result_registration_runs_origin_precondition_in_the_acceptance_transaction(store):
+    job = create_job(store)
+    work = running_work(store, job)
+    calls = []
+
+    def require_workflow_origin(connection):
+        assert connection.in_transaction
+        assert connection.execute("SELECT id FROM work_items WHERE id=?", (work["id"],)).fetchone()
+        calls.append(connection)
+
+    result = register_result(store, work, before_register=require_workflow_origin)
+    assert calls
+    assert store.get_result(result["id"]) == result
+
+    def reject_origin(_connection):
+        raise WorkConflict("workflow receipt is absent")
+
+    digest = hashlib.sha256(b"rejected output").hexdigest()
+    with pytest.raises(WorkConflict, match="receipt is absent"):
+        register_result(
+            store,
+            work,
+            content_hash=digest,
+            immutable_location=digest,
+            byte_length=len(b"rejected output"),
+            before_register=reject_origin,
+        )
+    with store.connection() as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_results WHERE content_hash=?", (digest,)
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_renewal_is_fenced_and_never_revives_expired_or_cancelled_attempt(store):

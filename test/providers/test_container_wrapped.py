@@ -221,7 +221,7 @@ async def test_idle_timeout_prompt_handler(mock_backend, mock_time, mock_sleep, 
     # viewport, the handler keeps polling until the post-trust idle gap expires.
     mock_backend.get_history.side_effect = [
         "WARNING: Bypass Permissions\n1. No\n2. Yes, I accept\n",
-        "Yes, I trust this folder",
+        "❯ 1. Yes, I trust this folder",
         "Welcome to Claude Code v2.1.235",
     ]
 
@@ -256,7 +256,7 @@ async def test_wrapped_provider_lifecycle(
     mock_wait_shell.return_value = True
     mock_wait_status.return_value = True
     # A workspace-trust dialog is showing at startup (handled by the prompt handler).
-    mock_backend.get_history.return_value = "Yes, I trust this folder"
+    mock_backend.get_history.return_value = "❯ 1. Yes, I trust this folder"
     # Wrapped exec -> native status is always unresolved; status is buffer-driven.
     mock_backend.get_native_status.return_value = None
 

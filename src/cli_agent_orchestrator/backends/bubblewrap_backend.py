@@ -27,13 +27,13 @@ from cli_agent_orchestrator.backends.tmux_backend import TmuxBackend
 from cli_agent_orchestrator.clients.tmux import TmuxClient
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_contract import EffectiveWorkContractV2
-from cli_agent_orchestrator.services.work_process_supervisor import WorkProcessSupervisor
-from cli_agent_orchestrator.services.work_mcp_proxy import WorkMcpProxy
 from cli_agent_orchestrator.services.work_attempt_credential import (
     read_attempt_credential_descriptor,
     validate_attempt_credential_descriptor,
 )
+from cli_agent_orchestrator.services.work_mcp_proxy import WorkMcpProxy
 from cli_agent_orchestrator.services.work_process_landlock import _query_abi_version
+from cli_agent_orchestrator.services.work_process_supervisor import WorkProcessSupervisor
 from cli_agent_orchestrator.work_bubblewrap_policy import BUBBLEWRAP_VERSION
 
 _EXECUTABLE_TOKEN_RE = re.compile(r"^/[A-Za-z0-9._/+@-]+$")
@@ -52,15 +52,33 @@ _BWRAP_SHA256_ALLOWLIST: frozenset[str] = frozenset(
         "f41ba3f7be0280df0afe201f0e2eeb16a17e969782491e830e6753c67f78d70d",
         "a5882b87c0b8105a5d9e81db5f64a4f8d373affc36f531e5df7409db5b1af8f6",
         "15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250",
+        "efd07a9dfd55016ec5cb16facb67aac2735fa900e261f6a44be1517dcf31c015",
     }
 )
 _BWRAP_MAX_BYTES = 64 * 1024 * 1024
 _CANONICAL_BWRAP_EXECUTABLE = Path("/usr/bin/bwrap")
 _TRUSTED_BWRAP_PARENT_DIRECTORIES = (Path("/"), Path("/usr"), Path("/usr/bin"))
+_RECEIVER_AUTHENTICATED_TOOLS = frozenset({"cao.work.task_received", "cao.work.submit_result"})
 
 
 def _unsupported(reason: str) -> UnsupportedWorkEnforcement:
     return UnsupportedWorkEnforcement("BubblewrapWorkBackend", reason)
+
+
+def _receiver_credential_for_request(request: dict, descriptor: int | None) -> bytes | None:
+    """Read receiver authority only for separately authenticated Work actions."""
+    try:
+        name = request["params"]["name"]
+    except (KeyError, TypeError):
+        raise _unsupported("Bubblewrap Work MCP request is invalid")
+    if name not in _RECEIVER_AUTHENTICATED_TOOLS:
+        return None
+    if descriptor is None:
+        raise _unsupported("receiver action requires its separate credential")
+    try:
+        return read_attempt_credential_descriptor(descriptor)
+    except Exception as error:
+        raise _unsupported("server-owned receiver credential descriptor is unavailable") from error
 
 
 def _require_work_broker_identity(
@@ -399,6 +417,13 @@ class BubblewrapWorkBackend(TmuxBackend):
             validate_attempt_credential_descriptor(attempt_credential_fd)
         except Exception as exc:
             raise _unsupported("server-owned attempt credential descriptor is unavailable") from exc
+        if (
+            any(
+                tool in _RECEIVER_AUTHENTICATED_TOOLS for tool in binding.contract.permissions.tools
+            )
+            and receiver_credential_fd is None
+        ):
+            raise _unsupported("receiver action requires its separate credential")
         if receiver_credential_fd is not None:
             try:
                 validate_attempt_credential_descriptor(receiver_credential_fd)
@@ -406,11 +431,6 @@ class BubblewrapWorkBackend(TmuxBackend):
                 raise _unsupported(
                     "server-owned receiver credential descriptor is unavailable"
                 ) from exc
-        if (
-            "cao.work.task_received" in binding.contract.permissions.tools
-            and receiver_credential_fd is None
-        ):
-            raise _unsupported("receiver acknowledgement requires its separate credential")
         mcp_proxy = None
         if binding.contract.permissions.tools:
             if self._mcp_proxy_factory is None and self._work_origins is None:
@@ -422,12 +442,11 @@ class BubblewrapWorkBackend(TmuxBackend):
                 if self._mcp_proxy_factory is not None:
                     mcp_proxy = self._mcp_proxy_factory(binding.attempt_id, binding.generation)
                 else:
+
                     def upstream(request, secret):
-                        receiver_secret = None
-                        if request.get("params", {}).get("name") == "cao.work.task_received":
-                            receiver_secret = read_attempt_credential_descriptor(
-                                receiver_credential_fd
-                            )
+                        receiver_secret = _receiver_credential_for_request(
+                            request, receiver_credential_fd
+                        )
                         return self._work_origins.handle_mcp_request(
                             request, secret, receiver_credential=receiver_secret
                         )

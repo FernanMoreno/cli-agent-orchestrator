@@ -1,5 +1,19 @@
 # Hoja de ruta: trabajo colectivo verificable
 
+## Estado local — 2026-09-30
+
+Los specs001/002 y las tareas de 003 están completados dentro del alcance
+acordado. El candidato T085 está incorporado en el checkout main conservando
+trabajo local; la historia Git no cambió. OpenCode v2 acepta 18 combinaciones
+autorizadas tmux/Herdr, y dos workflows Claude pasaron tras renovar el login.
+El servicio personal persistente y autenticado funciona en localhost de este
+equipo, con reinicio automático, provisión Docker y backup/restore comprobados.
+[Estado vigente y límites](../specs/001-verifiable-orchestration/acceptance-status.md),
+[evidencia 003](../specs/003-personal-deployment/completion-evidence.md) y
+[guía operativa](personal-deployment.md).
+Los diez proveedores externos no autorizados siguen sin aceptar; las entradas
+fechadas posteriores conservan la historia de implementación, no el estado vigente.
+
 ## Propósito y alcance
 
 Este fork debe evolucionar CAO de un **orquestador de terminales** a un
@@ -17,6 +31,41 @@ proveedores y pruebas de ciclo de vida.
 Eso **no** equivale todavía a un contrato completo de trabajo colectivo. Esta
 nota es la fuente de verdad para los objetivos arquitectónicos y pendientes
 conocidos; no presenta las capacidades parciales como garantías de producción.
+
+## Estado revisado (2026-09-30)
+
+El modo explícito `CAO_WORK_LAUNCH_MODE=required` dirige `cao launch` a la
+admisión durable Work. Requiere una provisión previa del selector, bearer JWT
+verificado, grant/contrato/snapshot vigentes, un backend Work registrado y
+`CAO_ENABLE_PUBLIC_WORK_INGRESS=true` en el servidor. El ingreso HTTP y MCP
+T035 está implementado con ese gate apagado por defecto, validación de autoridad
+y límites de tamaño; el body no provisiona grants ni emite `task_received`.
+
+El perfil Docker local opt-in registra `docker-local` con una imagen fijada por
+ID inmutable y el mismo repositorio Work que usa el gateway. La aceptación
+ejecutó un worker ELF estático y comprobó salida y cleanup en Docker real. El
+demo desechable usa un emisor JWKS local, bearer firmado y provisión interna;
+el recibo de launch `queued` acredita admisión, no resultado del worker ni
+ejecución de un proveedor de modelos. `WORK_BACKENDS` sigue vacío por defecto.
+
+La matriz de transiciones de Work se reprodujo en Python, Web y TUI. Herdr real
+con `mock_cli` demostró recepción del input, estados y eliminación de sus
+recursos. O03 sigue abierto para las demás combinaciones admitidas y esa
+observación no equivale a un receipt Work.
+
+T020 compone YAML/script con provisiones server-owned por step, credenciales
+ligadas al run, receptor autenticado, resultado validado y projector CAS
+reiniciable. Docker local prueba receipt/result, snapshot, resultado ausente,
+fallo exit23 con cleanup y reintento autorizado. T023/T044 cubren las cinco
+entradas mock_cli y conservación del contexto tras reinicio. La aceptación real
+de modelos T084, la integración upstream autorizada T085 y las demás
+combinaciones O03 conservan su evidencia pendiente.
+
+T079 conserva un owner de transiciones Work y añade una frontera de imports
+directos del projector. La deuda transitiva journal→database→memoria→terminal
+sigue documentada. Los resultados y límites actuales constan en
+`specs/001-verifiable-orchestration/completion-evidence.md` y
+`specs/001-verifiable-orchestration/workflow-status.md`.
 
 ## Estado de integración verificado (2026-09-23)
 

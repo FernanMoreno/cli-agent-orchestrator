@@ -2,7 +2,7 @@
 
 import time
 
-from cli_agent_orchestrator.models.work_contract import ExecutableIdentity, EffectiveWorkContractV2
+from cli_agent_orchestrator.models.work_contract import EffectiveWorkContractV2, ExecutableIdentity
 from cli_agent_orchestrator.services.step_output_store import ArtifactRef, ImmutableResultStore
 from cli_agent_orchestrator.services.work_contract import ContractConflict, WorkContracts
 from cli_agent_orchestrator.services.work_elf_identity import identify_static_executable

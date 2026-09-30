@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
+from test.services.test_work_decisions import EFFECT, EVIDENCE, _decision_context
+
+import pytest
 import requests
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import pytest
-
 from cli_agent_orchestrator.mcp_server import server
 from cli_agent_orchestrator.mcp_server import utils as mcp_utils
 from cli_agent_orchestrator.security import auth
-from test.services.test_work_decisions import EFFECT, EVIDENCE, _decision_context
 
 
 def _tool(name):
@@ -62,9 +62,10 @@ def _kwargs(context, **changes):
 async def test_api_and_mcp_converge_through_the_same_http_store(decision_mcp):
     context, client = decision_mcp
     body = _kwargs(context)
-    api = client.post(f"/work-items/{context.original.work_item_id}/decisions", json={
-        key: value for key, value in body.items() if key != "work_item_id"
-    })
+    api = client.post(
+        f"/work-items/{context.original.work_item_id}/decisions",
+        json={key: value for key, value in body.items() if key != "work_item_id"},
+    )
     mcp = await _tool("decide_work")(**body)
 
     assert api.status_code == 200, api.text
@@ -73,8 +74,9 @@ async def test_api_and_mcp_converge_through_the_same_http_store(decision_mcp):
     with context.repository.read_snapshot() as connection:
         assert connection.execute("SELECT count(*) FROM work_human_decisions").fetchone()[0] == 1
         assert (
-            connection.execute("SELECT count(*) FROM work_events WHERE event_type='decision.recorded'")
-            .fetchone()[0]
+            connection.execute(
+                "SELECT count(*) FROM work_events WHERE event_type='decision.recorded'"
+            ).fetchone()[0]
             == 1
         )
 
@@ -84,7 +86,9 @@ async def test_mcp_rejects_path_spoofing_without_an_http_write(decision_mcp, mon
     _context, _client = decision_mcp
     post = pytest.MonkeyPatch()
     calls = []
-    monkeypatch.setattr(mcp_utils, "post_body_json", lambda *args, **kwargs: calls.append((args, kwargs)))
+    monkeypatch.setattr(
+        mcp_utils, "post_body_json", lambda *args, **kwargs: calls.append((args, kwargs))
+    )
     result = await _tool("decide_work")(**_kwargs(_context, work_item_id="../operator-db"))
     assert result["ok"] is False
     assert result["code"] == "work_decision_invalid"

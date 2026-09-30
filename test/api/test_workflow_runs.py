@@ -954,7 +954,11 @@ async def test_submit_script_manifest_freeze_is_offloaded_from_event_loop(monkey
     monkeypatch.setattr(api_main, "_schedule_background_drive", lambda *args: None)
 
     body = api_main.WorkflowRunRequest(name_or_path="scr", inputs={}, run_id="manifest-submit")
-    submit_task = asyncio.create_task(api_main.submit_workflow_run_endpoint(body, []))
+    from fastapi import Request
+
+    request = Request({"type": "http", "app": api_main.app})
+    monkeypatch.setattr(api_main.app.state, "work_workflow_origins", None, raising=False)
+    submit_task = asyncio.create_task(api_main.submit_workflow_run_endpoint(body, request, []))
     sentinel_task = asyncio.create_task(advance_same_loop())
     while not probe_started.is_set():
         await asyncio.sleep(0)

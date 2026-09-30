@@ -24,6 +24,10 @@ from cli_agent_orchestrator.clients.knowledge_schema import (
 )
 from cli_agent_orchestrator.clients.memory_access_schema import MEMORY_ACCESS_SCHEMA
 from cli_agent_orchestrator.clients.step_contract_schema import STEP_CONTRACT_SCHEMA
+from cli_agent_orchestrator.clients.work_attempt_credential_schema import (
+    WORK_ATTEMPT_CREDENTIAL_SCHEMA,
+)
+from cli_agent_orchestrator.clients.work_authority_schema import AUTHORITY_SCHEMA
 from cli_agent_orchestrator.clients.work_bubblewrap_identity_schema import (
     BUBBLEWRAP_IDENTITY_SCHEMA,
 )
@@ -31,15 +35,6 @@ from cli_agent_orchestrator.clients.work_bubblewrap_setup_intent_schema import (
     BUBBLEWRAP_RELEASE_CLAIM_SCHEMA,
     BUBBLEWRAP_SETUP_INTENT_SCHEMA,
 )
-from cli_agent_orchestrator.clients.work_mcp_proxy_schema import (
-    WORK_MCP_PROXY_EFFECT_SCHEMA,
-    WORK_MCP_PROXY_ISSUE_SCHEMA,
-    WORK_MCP_PROXY_ISSUE_RECOVERY_SCHEMA,
-)
-from cli_agent_orchestrator.clients.work_attempt_credential_schema import (
-    WORK_ATTEMPT_CREDENTIAL_SCHEMA,
-)
-from cli_agent_orchestrator.clients.work_authority_schema import AUTHORITY_SCHEMA
 from cli_agent_orchestrator.clients.work_decisions_schema import DECISIONS_SCHEMA
 from cli_agent_orchestrator.clients.work_delivery_schema import (
     DELIVERY_CONTENT_SCHEMA,
@@ -55,27 +50,33 @@ from cli_agent_orchestrator.clients.work_inbox_schema import (
     INBOX_STORE_CONTEXT_SCHEMA,
     ManagedInboxStoreIdentity,
 )
+from cli_agent_orchestrator.clients.work_mcp_proxy_schema import (
+    WORK_MCP_PROXY_EFFECT_SCHEMA,
+    WORK_MCP_PROXY_ISSUE_RECOVERY_SCHEMA,
+    WORK_MCP_PROXY_ISSUE_SCHEMA,
+)
 from cli_agent_orchestrator.clients.work_origin_schema import (
     LAUNCH_ORIGIN_SCHEMA,
     LINEAGE_INTEGRITY_SCHEMA,
     LINEAGE_ORIGIN_SCHEMA,
     ORIGIN_AUTHORITY_SCHEMA,
     ORIGIN_SCHEMA,
-    WORK_TASK_RECEIVER_ACCEPTANCE_SCHEMA,
     TASK_RECEIVED_RECEIPT_SCHEMA,
+    WORK_TASK_RECEIVER_ACCEPTANCE_SCHEMA,
+    WORKFLOW_STEP_SCHEMA,
 )
 from cli_agent_orchestrator.clients.work_process_identity_schema import (
     PROCESS_IDENTITY_SCHEMA,
 )
 from cli_agent_orchestrator.clients.work_recovery_schema import (
-    OFFLINE_CUT_SCHEMA,
     OFFLINE_CUT_OBSERVATION_SCHEMA,
     OFFLINE_CUT_REJECTION_SCHEMA,
-    WORK_WRITER_REGISTRY_SCHEMA,
+    OFFLINE_CUT_SCHEMA,
     RECOVERY_CONTEXT_SCHEMA,
     RECOVERY_CONTEXT_VERSION,
     RECOVERY_STATE_BLOCKED_RESTORE,
     RECOVERY_STATE_NORMAL,
+    WORK_WRITER_REGISTRY_SCHEMA,
     RecoveryStoreContext,
 )
 from cli_agent_orchestrator.clients.work_reservations_schema import RESERVATIONS_SCHEMA
@@ -453,7 +454,7 @@ def _stored_recovery_context(connection: sqlite3.Connection) -> RecoveryStoreCon
     )
 
 
-SCHEMA_VERSION = 38
+SCHEMA_VERSION = 39
 _SCHEMA = (
     """CREATE TABLE work_migrations (
         version INTEGER PRIMARY KEY, checksum TEXT NOT NULL,
@@ -563,6 +564,7 @@ _MIGRATIONS = {
     36: WORK_ATTEMPT_CREDENTIAL_SCHEMA,
     37: WORK_TASK_RECEIVER_ACCEPTANCE_SCHEMA,
     38: WORK_TASK_RECEIVER_CREDENTIAL_SCHEMA,
+    39: WORKFLOW_STEP_SCHEMA,
 }
 _CHECKSUMS = {
     version: hashlib.sha256(";\n".join(statements).encode()).hexdigest()
@@ -1986,6 +1988,583 @@ class WorkRepository:
         )
         return self._work(connection, work_item_id)
 
+    def _record_workflow_step_receiver_credential(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        binding_id: str,
+        attempt_id: str,
+        generation: int,
+        schema_version: int,
+        job_id: str,
+        work_item_id: str,
+        receiver_subject_id: str,
+        receiver_subject_revision: int,
+        receiver_authorization_revision: int,
+        receiver_grant_id: str,
+        receiver_grant_revision: int,
+        installation_uuid: str,
+        attempt_revision: int,
+        lease_expires_at: float,
+        expires_at: float,
+        delivery_id: str,
+        delivery_hash: str,
+        credential_sha256: str,
+        issued_at: float,
+    ) -> None:
+        """Store the receiver digest against the exact immutable workflow binding."""
+        if not connection.in_transaction:
+            raise WorkConflict("workflow receiver credential requires a caller transaction")
+        self._verify(connection)
+        for label, value in (
+            ("workflow binding", binding_id),
+            ("workflow Work attempt", attempt_id),
+            ("workflow Work item", work_item_id),
+            ("workflow job", job_id),
+            ("workflow receiver", receiver_subject_id),
+            ("workflow receiver grant", receiver_grant_id),
+            ("workflow delivery", delivery_id),
+        ):
+            _identity(value, label)
+        if schema_version != 1 or type(schema_version) is not int:
+            raise WorkConflict("workflow receiver credential schema version is invalid")
+        for label, value in (
+            ("workflow Work generation", generation),
+            ("workflow receiver subject revision", receiver_subject_revision),
+            ("workflow receiver authorization revision", receiver_authorization_revision),
+            ("workflow receiver grant revision", receiver_grant_revision),
+            ("workflow Work attempt revision", attempt_revision),
+        ):
+            if type(value) is not int or value <= 0:
+                raise WorkConflict(f"{label} is invalid")
+        for label, value in (
+            ("workflow delivery hash", delivery_hash),
+            ("workflow receiver credential digest", credential_sha256),
+        ):
+            if (
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise WorkConflict(f"{label} is invalid")
+        if (
+            not isinstance(installation_uuid, str)
+            or len(installation_uuid) != 32
+            or any(character not in "0123456789abcdef" for character in installation_uuid)
+        ):
+            raise WorkConflict("workflow receiver installation identity is invalid")
+        if (
+            isinstance(lease_expires_at, bool)
+            or not isinstance(lease_expires_at, (int, float))
+            or isinstance(expires_at, bool)
+            or not isinstance(expires_at, (int, float))
+            or isinstance(issued_at, bool)
+            or not isinstance(issued_at, (int, float))
+            or issued_at <= 0
+            or expires_at <= issued_at
+            or expires_at > lease_expires_at
+            or lease_expires_at <= 0
+        ):
+            raise WorkConflict("workflow receiver credential expiry is invalid")
+        binding = connection.execute(
+            "SELECT * FROM work_workflow_step_bindings WHERE binding_id=?",
+            (binding_id,),
+        ).fetchone()
+        if binding is None or (
+            binding["work_attempt_id"],
+            binding["work_generation"],
+            binding["job_id"],
+            binding["work_item_id"],
+            binding["receiver_subject_id"],
+            binding["receiver_subject_revision"],
+            binding["receiver_authorization_revision"],
+            binding["receiver_grant_id"],
+            binding["receiver_grant_revision"],
+            binding["delivery_id"],
+            binding["delivery_hash"],
+        ) != (
+            attempt_id,
+            generation,
+            job_id,
+            work_item_id,
+            receiver_subject_id,
+            receiver_subject_revision,
+            receiver_authorization_revision,
+            receiver_grant_id,
+            receiver_grant_revision,
+            delivery_id,
+            delivery_hash,
+        ):
+            raise WorkConflict("workflow receiver credential differs from its immutable binding")
+        attempt = connection.execute(
+            "SELECT state,revision,lease_expires_at,work_item_id FROM work_attempts "
+            "WHERE id=? AND generation=?",
+            (attempt_id, generation),
+        ).fetchone()
+        issued = connection.execute(
+            "SELECT installation_uuid,attempt_revision,lease_expires_at,expires_at "
+            "FROM work_attempt_credentials WHERE attempt_id=? AND generation=?",
+            (attempt_id, generation),
+        ).fetchone()
+        if (
+            attempt is None
+            or attempt["state"] != "sent"
+            or attempt["revision"] != attempt_revision
+            or attempt["work_item_id"] != work_item_id
+            or attempt["lease_expires_at"] != lease_expires_at
+            or issued is None
+            or issued["installation_uuid"] != installation_uuid
+            or issued["attempt_revision"] != attempt_revision
+            or issued["lease_expires_at"] != lease_expires_at
+            or issued["expires_at"] != expires_at
+        ):
+            raise WorkConflict("workflow receiver credential is not for the current sent attempt")
+        connection.execute(
+            "INSERT INTO work_workflow_step_receiver_credentials "
+            "(binding_id,attempt_id,generation,schema_version,job_id,work_item_id,"
+            "receiver_subject_id,receiver_subject_revision,receiver_authorization_revision,"
+            "receiver_grant_id,receiver_grant_revision,installation_uuid,attempt_revision,"
+            "lease_expires_at,expires_at,delivery_id,delivery_hash,credential_sha256,issued_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                binding_id,
+                attempt_id,
+                generation,
+                schema_version,
+                job_id,
+                work_item_id,
+                receiver_subject_id,
+                receiver_subject_revision,
+                receiver_authorization_revision,
+                receiver_grant_id,
+                receiver_grant_revision,
+                installation_uuid,
+                attempt_revision,
+                lease_expires_at,
+                expires_at,
+                delivery_id,
+                delivery_hash,
+                credential_sha256,
+                issued_at,
+            ),
+        )
+
+    def _record_workflow_step_receiver_acceptance(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        binding_id: str,
+        attempt_id: str,
+        generation: int,
+        receiver_subject_id: str,
+        receiver_subject_revision: int,
+        receiver_authorization_kind: str,
+        receiver_authorization_revision: int,
+        delivery_id: str,
+        delivery_hash: str,
+        acceptance_sha256: str,
+        accepted_at: float,
+        schema_version: int,
+    ) -> dict:
+        """Persist one acceptance digest after its live receiver authority check."""
+        if not connection.in_transaction:
+            raise WorkConflict("workflow receiver acceptance requires a caller transaction")
+        self._verify(connection)
+        for label, value in (
+            ("workflow binding", binding_id),
+            ("workflow Work attempt", attempt_id),
+            ("workflow receiver", receiver_subject_id),
+            ("workflow delivery", delivery_id),
+        ):
+            _identity(value, label)
+        if type(generation) is not int or generation <= 0:
+            raise WorkConflict("workflow receiver acceptance generation is invalid")
+        for label, value in (
+            ("workflow receiver subject revision", receiver_subject_revision),
+            ("workflow receiver authorization revision", receiver_authorization_revision),
+        ):
+            if type(value) is not int or value <= 0:
+                raise WorkConflict(f"{label} is invalid")
+        if receiver_authorization_kind != "receiver" or schema_version != 1:
+            raise WorkConflict("workflow receiver acceptance version or authority is invalid")
+        for label, value in (
+            ("workflow delivery hash", delivery_hash),
+            ("workflow acceptance digest", acceptance_sha256),
+        ):
+            if (
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise WorkConflict(f"{label} is invalid")
+        if (
+            isinstance(accepted_at, bool)
+            or not isinstance(accepted_at, (int, float))
+            or accepted_at <= 0
+        ):
+            raise WorkConflict("workflow receiver acceptance timestamp is invalid")
+        binding = connection.execute(
+            "SELECT * FROM work_workflow_step_bindings WHERE binding_id=?",
+            (binding_id,),
+        ).fetchone()
+        if binding is None or (
+            binding["work_attempt_id"],
+            binding["work_generation"],
+            binding["receiver_subject_id"],
+            binding["receiver_subject_revision"],
+            binding["receiver_authorization_revision"],
+            binding["delivery_id"],
+            binding["delivery_hash"],
+        ) != (
+            attempt_id,
+            generation,
+            receiver_subject_id,
+            receiver_subject_revision,
+            receiver_authorization_revision,
+            delivery_id,
+            delivery_hash,
+        ):
+            raise WorkConflict("workflow receiver acceptance differs from its immutable binding")
+        attempt = connection.execute(
+            "SELECT state,work_item_id FROM work_attempts WHERE id=? AND generation=?",
+            (attempt_id, generation),
+        ).fetchone()
+        if (
+            attempt is None
+            or attempt["state"] != "sent"
+            or attempt["work_item_id"] != binding["work_item_id"]
+        ):
+            raise WorkConflict("workflow receiver acceptance requires the bound sent attempt")
+        prior = connection.execute(
+            "SELECT * FROM work_workflow_step_receiver_acceptances "
+            "WHERE attempt_id=? AND generation=?",
+            (attempt_id, generation),
+        ).fetchone()
+        expected = (
+            binding_id,
+            receiver_subject_id,
+            receiver_subject_revision,
+            receiver_authorization_kind,
+            receiver_authorization_revision,
+            delivery_id,
+            delivery_hash,
+            acceptance_sha256,
+        )
+        if prior is not None:
+            actual = (
+                prior["binding_id"],
+                prior["receiver_subject_id"],
+                prior["receiver_subject_revision"],
+                prior["receiver_authorization_kind"],
+                prior["receiver_authorization_revision"],
+                prior["delivery_id"],
+                prior["delivery_hash"],
+                prior["acceptance_sha256"],
+            )
+            if actual != expected:
+                raise WorkConflict("workflow receiver acceptance replay contradicts its history")
+            return dict(prior)
+        connection.execute(
+            "INSERT INTO work_workflow_step_receiver_acceptances "
+            "(binding_id,attempt_id,generation,receiver_subject_id,receiver_subject_revision,"
+            "receiver_authorization_kind,receiver_authorization_revision,delivery_id,delivery_hash,"
+            "acceptance_sha256,accepted_at,schema_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                binding_id,
+                attempt_id,
+                generation,
+                receiver_subject_id,
+                receiver_subject_revision,
+                receiver_authorization_kind,
+                receiver_authorization_revision,
+                delivery_id,
+                delivery_hash,
+                acceptance_sha256,
+                accepted_at,
+                schema_version,
+            ),
+        )
+        return dict(
+            connection.execute(
+                "SELECT * FROM work_workflow_step_receiver_acceptances "
+                "WHERE attempt_id=? AND generation=?",
+                (attempt_id, generation),
+            ).fetchone()
+        )
+
+    def _workflow_step_task_received_receipt(
+        self, connection: sqlite3.Connection, attempt_id: str, generation: int
+    ) -> dict | None:
+        if not connection.in_transaction:
+            raise WorkConflict("workflow task receipt reads require a stable transaction")
+        _identity(attempt_id, "workflow task receipt attempt")
+        if type(generation) is not int or generation <= 0:
+            raise WorkConflict("workflow task receipt generation is invalid")
+        row = connection.execute(
+            "SELECT * FROM work_workflow_step_task_received_receipts "
+            "WHERE attempt_id=? AND generation=?",
+            (attempt_id, generation),
+        ).fetchone()
+        if row is None:
+            return None
+        for field in ("receipt_hash", "delivery_hash"):
+            value = row[field]
+            if (
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise WorkConflict("workflow task receipt digest is corrupt")
+        binding = connection.execute(
+            "SELECT * FROM work_workflow_step_bindings WHERE binding_id=?",
+            (row["binding_id"],),
+        ).fetchone()
+        if binding is None or (
+            binding["work_attempt_id"],
+            binding["work_generation"],
+            binding["work_item_id"],
+            binding["job_id"],
+            binding["receiver_subject_id"],
+            binding["receiver_subject_revision"],
+            binding["receiver_authorization_revision"],
+            binding["receiver_grant_id"],
+            binding["receiver_grant_revision"],
+            binding["delivery_id"],
+            binding["delivery_hash"],
+        ) != (
+            row["attempt_id"],
+            row["generation"],
+            row["work_item_id"],
+            row["job_id"],
+            row["receiver_subject_id"],
+            row["receiver_subject_revision"],
+            row["receiver_authorization_revision"],
+            row["receiver_grant_id"],
+            row["receiver_grant_revision"],
+            row["delivery_id"],
+            row["delivery_hash"],
+        ):
+            raise WorkConflict("workflow task receipt differs from its binding")
+        return dict(row)
+
+    def _record_workflow_step_task_received_receipt(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        binding_id: str,
+        attempt_id: str,
+        generation: int,
+        schema_version: int,
+        work_item_id: str,
+        job_id: str,
+        attempt_revision: int,
+        receiver_subject_id: str,
+        receiver_subject_revision: int,
+        receiver_authorization_kind: str,
+        receiver_authorization_revision: int,
+        receiver_grant_id: str,
+        receiver_grant_revision: int,
+        delivery_id: str,
+        delivery_hash: str,
+        nonce: str,
+        receipt_hash: str,
+        received_at: float,
+    ) -> dict:
+        """Commit the immutable receiver receipt and Work ACK transition together."""
+        if not connection.in_transaction:
+            raise WorkConflict("workflow task receipt requires a caller transaction")
+        self._verify(connection)
+        for label, value in (
+            ("workflow binding", binding_id),
+            ("workflow Work attempt", attempt_id),
+            ("workflow Work item", work_item_id),
+            ("workflow job", job_id),
+            ("workflow receiver", receiver_subject_id),
+            ("workflow receiver grant", receiver_grant_id),
+            ("workflow delivery", delivery_id),
+            ("workflow task receipt nonce", nonce),
+        ):
+            _identity(value, label)
+        if schema_version != 1 or type(schema_version) is not int:
+            raise WorkConflict("workflow task receipt schema version is invalid")
+        for label, value in (
+            ("workflow Work generation", generation),
+            ("workflow attempt revision", attempt_revision),
+            ("workflow receiver revision", receiver_subject_revision),
+            ("workflow receiver authorization revision", receiver_authorization_revision),
+            ("workflow receiver grant revision", receiver_grant_revision),
+        ):
+            if type(value) is not int or value <= 0:
+                raise WorkConflict(f"{label} is invalid")
+        if receiver_authorization_kind != "receiver":
+            raise WorkConflict("workflow task receipt authority kind is invalid")
+        for label, value in (
+            ("workflow delivery hash", delivery_hash),
+            ("workflow receipt hash", receipt_hash),
+        ):
+            if (
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise WorkConflict(f"{label} is invalid")
+        if (
+            isinstance(received_at, bool)
+            or not isinstance(received_at, (int, float))
+            or received_at <= 0
+        ):
+            raise WorkConflict("workflow task receipt timestamp is invalid")
+        identity = (
+            binding_id,
+            work_item_id,
+            job_id,
+            attempt_revision,
+            receiver_subject_id,
+            receiver_subject_revision,
+            receiver_authorization_kind,
+            receiver_authorization_revision,
+            receiver_grant_id,
+            receiver_grant_revision,
+            delivery_id,
+            delivery_hash,
+        )
+        prior = self._workflow_step_task_received_receipt(connection, attempt_id, generation)
+        if prior is not None:
+            if (
+                prior["nonce"] != nonce
+                or prior["receipt_hash"] != receipt_hash
+                or (
+                    prior["binding_id"],
+                    prior["work_item_id"],
+                    prior["job_id"],
+                    prior["attempt_revision"],
+                    prior["receiver_subject_id"],
+                    prior["receiver_subject_revision"],
+                    prior["receiver_authorization_kind"],
+                    prior["receiver_authorization_revision"],
+                    prior["receiver_grant_id"],
+                    prior["receiver_grant_revision"],
+                    prior["delivery_id"],
+                    prior["delivery_hash"],
+                )
+                != identity
+            ):
+                raise WorkConflict("workflow task receipt contradicts immutable receipt history")
+            return self._work(connection, work_item_id)
+        binding = connection.execute(
+            "SELECT * FROM work_workflow_step_bindings WHERE binding_id=?",
+            (binding_id,),
+        ).fetchone()
+        acceptance = connection.execute(
+            "SELECT * FROM work_workflow_step_receiver_acceptances "
+            "WHERE attempt_id=? AND generation=?",
+            (attempt_id, generation),
+        ).fetchone()
+        attempt = connection.execute(
+            "SELECT * FROM work_attempts WHERE id=? AND generation=?",
+            (attempt_id, generation),
+        ).fetchone()
+        if (
+            binding is None
+            or (
+                binding["work_attempt_id"],
+                binding["work_generation"],
+                binding["work_item_id"],
+                binding["job_id"],
+                binding["receiver_subject_id"],
+                binding["receiver_subject_revision"],
+                binding["receiver_authorization_revision"],
+                binding["receiver_grant_id"],
+                binding["receiver_grant_revision"],
+                binding["delivery_id"],
+                binding["delivery_hash"],
+            )
+            != (
+                attempt_id,
+                generation,
+                work_item_id,
+                job_id,
+                receiver_subject_id,
+                receiver_subject_revision,
+                receiver_authorization_revision,
+                receiver_grant_id,
+                receiver_grant_revision,
+                delivery_id,
+                delivery_hash,
+            )
+            or acceptance is None
+            or acceptance["binding_id"] != binding_id
+            or acceptance["acceptance_sha256"] is None
+            or attempt is None
+            or attempt["work_item_id"] != work_item_id
+            or attempt["state"] != "sent"
+            or attempt["revision"] != attempt_revision
+            or attempt["lease_expires_at"] <= received_at
+        ):
+            raise WorkConflict(
+                "workflow task receipt requires its exact live acceptance and sent attempt"
+            )
+        work = self._work(connection, work_item_id)
+        if (
+            work["job_id"] != job_id
+            or work["attempts"][-1]["id"] != attempt_id
+            or work["attempts"][-1]["generation"] != generation
+        ):
+            raise WorkConflict("workflow task receipt attempt is no longer current")
+        connection.execute(
+            "INSERT INTO work_workflow_step_task_received_receipts "
+            "(binding_id,attempt_id,generation,schema_version,work_item_id,job_id,attempt_revision,"
+            "receiver_subject_id,receiver_subject_revision,receiver_authorization_kind,"
+            "receiver_authorization_revision,receiver_grant_id,receiver_grant_revision,delivery_id,"
+            "delivery_hash,nonce,receipt_hash,received_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                binding_id,
+                attempt_id,
+                generation,
+                schema_version,
+                work_item_id,
+                job_id,
+                attempt_revision,
+                receiver_subject_id,
+                receiver_subject_revision,
+                receiver_authorization_kind,
+                receiver_authorization_revision,
+                receiver_grant_id,
+                receiver_grant_revision,
+                delivery_id,
+                delivery_hash,
+                nonce,
+                receipt_hash,
+                received_at,
+            ),
+        )
+        try:
+            next_attempt = delivery_transition(
+                attempt["state"],
+                "acknowledged",
+                evidence=TransitionEvidence(
+                    generation=generation,
+                    expected_generation=generation,
+                    task_received=True,
+                ),
+            ).value
+        except TransitionConflict as error:
+            raise WorkConflict(
+                "workflow task receipt acknowledgement is not a valid transition"
+            ) from error
+        self._commit_checked_transition(
+            connection,
+            work=work,
+            attempt=attempt,
+            next_work=work["state"],
+            next_attempt=next_attempt,
+            actor_id=receiver_subject_id,
+            event_id=nonce,
+            fingerprint=receipt_hash,
+            event_type="attempt.acknowledged",
+        )
+        return self._work(connection, work_item_id)
+
     def reconcile_cancelled_descendants(
         self, *, work_item_id: str, attempt_id: str, generation: int, actor_id: str
     ) -> dict:
@@ -2049,6 +2628,7 @@ class WorkRepository:
         event_id: str,
         fingerprint: str,
         event_type: str,
+        event_metadata: dict | None = None,
         after_state_change: Callable[[], None] | None = None,
     ) -> None:
         """Persist one already-validated work/attempt transition and its receipt."""
@@ -2072,6 +2652,7 @@ class WorkRepository:
             event_type=event_type,
             actor_id=actor_id,
             event_id=event_id,
+            metadata=event_metadata,
         )
         connection.execute(
             "INSERT INTO work_transition_receipts VALUES (?,?,?)",
@@ -2141,6 +2722,12 @@ class WorkRepository:
             raise WorkConflict("attempt revision or expected state changed")
         if evidence.generation != generation or evidence.expected_generation != generation:
             raise WorkConflict("evidence generation differs from stored generation")
+        if (
+            target == "failed"
+            and attempt["state"] != "planned"
+            and (attempt["result_id"] is not None or work["accepted_result_id"] is not None)
+        ):
+            raise WorkConflict("a registered or accepted result prevents process failure")
         job = self._job(connection, work["job_id"])
         if target not in {"cancelled", "failed", "reconcile"}:
             if job["state"] in {"revoked", "completed", "failed"}:
@@ -2176,6 +2763,11 @@ class WorkRepository:
             next_work = transition(next_work, target_work, evidence=evidence).value
 
         def after_state_change() -> None:
+            if target == "failed" and attempt["state"] != "planned":
+                connection.execute(
+                    "UPDATE work_attempts SET cleanup_state='complete' WHERE id=?",
+                    (attempt_id,),
+                )
             if target == "finished":
                 connection.execute(
                     "UPDATE work_items SET accepted_result_id=? WHERE id=?",
@@ -2196,6 +2788,15 @@ class WorkRepository:
                     actor_id=actor_id,
                 )
 
+        event_metadata = None
+        if target == "failed" and attempt["state"] != "planned":
+            event_metadata = {
+                "process_exit_code": evidence.process_exit_code,
+                "process_stopped": evidence.process_stopped,
+                "container_removed": evidence.container_removed,
+                "image_removed": evidence.image_removed,
+            }
+
         self._commit_checked_transition(
             connection,
             work=work,
@@ -2206,6 +2807,7 @@ class WorkRepository:
             fingerprint=fingerprint,
             event_id=event_id,
             event_type=f"attempt.{target}",
+            event_metadata=event_metadata,
             after_state_change=after_state_change,
         )
         if target == "cancelled":
@@ -2287,6 +2889,7 @@ class WorkRepository:
         validator_id: str,
         validation_evidence: dict,
         actor_id: str,
+        before_register: Callable[[sqlite3.Connection], None] | None = None,
     ) -> dict:
         """Retain service-verified artifact evidence before claiming success.
 
@@ -2302,6 +2905,8 @@ class WorkRepository:
         _identity(actor_id, "actor_id")
         if not isinstance(validation_evidence, dict) or not validation_evidence:
             raise ValueError("validation evidence required")
+        if before_register is not None and not callable(before_register):
+            raise ValueError("result registration precondition must be callable")
         encoded_evidence = _json(validation_evidence)
         identifier = hashlib.sha256(f"{attempt_id}:{content_hash}".encode()).hexdigest()
         with self.transaction() as connection:
@@ -2313,6 +2918,8 @@ class WorkRepository:
                 raise KeyError("attempt not found")
             if attempt["generation"] != generation:
                 raise WorkConflict("stale result generation")
+            if before_register is not None:
+                before_register(connection)
             previous = connection.execute(
                 "SELECT * FROM work_results WHERE id=?", (identifier,)
             ).fetchone()

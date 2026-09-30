@@ -45,6 +45,7 @@ the gate exists to HALT on, so the requirement is stricter here than anywhere el
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -545,7 +546,14 @@ class TestSequentialYamlWorkflowsKeepWorking:
             assert row.attempts == 1
             assert row.call_fingerprint is not None
             assert row.call_fingerprint.startswith("v2:")
-            assert row.result_json is None
+            assert json.loads(row.result_json) == {
+                "last_message": "a fresh answer",
+                "status": "completed",
+                "terminal_id": "rvg-fresh-terminal",
+                "truncated": False,
+                "redacted": False,
+            }
+            assert row.output_json is None
 
     @pytest.mark.asyncio
     async def test_the_yaml_drive_never_calls_the_gate_and_performs_no_replay_read(

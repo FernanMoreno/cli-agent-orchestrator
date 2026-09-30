@@ -149,7 +149,7 @@ def client() -> TestClient:
     from cli_agent_orchestrator.plugins import PluginRegistry
 
     app.state.plugin_registry = PluginRegistry()
-    return TestClient(app, base_url="http://localhost")
+    return TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
 
 
 def _direct_connect() -> sqlite3.Connection:
@@ -1167,8 +1167,37 @@ class TestOrphanedRecoveryConsentRequiresARedecision:
                 "steps": [{"id": STEP, "provider": "kiro", "agent": "agent", "prompt": "prompt"}],
             }
         )
-        _seed_run(tier="yaml", snapshot=yaml_snapshot)
-        _seed_step(state=StepState.RERUN_AUTHORIZED.value)
+        _seed_run(tier="yaml", snapshot=yaml_snapshot, state="running")
+        # A resumable YAML attempt needs its immutable pre-delivery contract;
+        # the script consent-looking state does not supply that evidence.
+        from cli_agent_orchestrator.clients.work_repository import WorkRepository
+        from cli_agent_orchestrator.models.workflow import WorkflowSpec
+        from cli_agent_orchestrator.services import agent_step
+
+        WorkRepository(_db_path()).initialize()
+        step = WorkflowSpec.model_validate_json(yaml_snapshot).steps[0]
+        fields = agent_step._effective_step_fields(
+            provider=step.provider,
+            agent=step.agent,
+            allowed_tools=None,
+            engine=step.engine,
+            model=None,
+            working_directory=None,
+            use_worktree=False,
+            created_here=True,
+            timeout=workflow_service.WORKFLOW_STEP_TIMEOUT,
+            ready_timeout=agent_step.DEFAULT_READY_TIMEOUT,
+            teardown=True,
+            prompt_redelivery=True,
+        )
+        workflow_journal.begin_yaml_step_with_contract(
+            RUN, STEP, "1", TS, workflow_service._yaml_call_fingerprint(step, step.prompt), fields
+        )
+        _seed_step(
+            state=StepState.RERUN_AUTHORIZED.value,
+            fingerprint=workflow_service._yaml_call_fingerprint(step, step.prompt),
+        )
+        workflow_journal.update_run_state(RUN, "failed", TS)
         get_steps_calls: List[str] = []
         real_get_steps = workflow_journal.get_steps
 

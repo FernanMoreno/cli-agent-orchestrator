@@ -8,6 +8,7 @@ it never invokes wiki lint, linking, compilation, models, or network clients.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import os
 import re
 import uuid
@@ -58,6 +59,7 @@ class RepairAction(str, Enum):
     CONFLICT = "conflict"
     UNSAFE_PATH = "unsafe_path"
     FAILED = "failed"
+    MIGRATION_ROLLBACK = "migration_rollback"
 
 
 @dataclass(frozen=True, order=True)
@@ -112,6 +114,7 @@ class RepairReport:
             "malformed": 0,
             "conflict": 0,
             "unsafe_path": 0,
+            "migration_rollback": 0,
         }
         for record in self.records:
             if record.status in counts:
@@ -147,6 +150,10 @@ class MemoryReconciliationError(RuntimeError):
             f"{report.counts['failed']} unexpected failure(s). "
             "Run `cao memory repair --apply`."
         )
+
+
+class MigrationReceiptNotFoundError(ValueError):
+    """The explicitly selected migration receipt does not exist."""
 
 
 @dataclass(frozen=True)
@@ -636,7 +643,11 @@ class MemoryReconciliationService:
         from cli_agent_orchestrator.clients.database import MemoryMetadataModel
 
         with self._get_db_session() as db:
-            rows = db.query(MemoryMetadataModel).all()
+            rows = (
+                db.query(MemoryMetadataModel)
+                .filter(MemoryMetadataModel.source_kind == "native")
+                .all()
+            )
             return [
                 _Row(
                     id=row.id,
@@ -1049,6 +1060,7 @@ class MemoryReconciliationService:
             query = db.query(MemoryMetadataModel).filter(
                 MemoryMetadataModel.key == topic.identity.key,
                 MemoryMetadataModel.scope == topic.identity.scope,
+                MemoryMetadataModel.source_kind == "native",
                 (
                     MemoryMetadataModel.scope_id == topic.identity.scope_id
                     if topic.identity.scope_id is not None
@@ -1446,7 +1458,230 @@ class MemoryReconciliationService:
 
         _migrate_memory_scope_null_uniqueness(engine=self._db_engine, strict=self._strict_index)
 
-    def reconcile(self, *, apply: bool = False) -> RepairReport:
+    def _migration_rollback_record(
+        self,
+        receipt: Any,
+        *,
+        action: RepairAction,
+        status: str,
+        reason: Optional[str] = None,
+    ) -> RepairRecord:
+        logical_scope_id = receipt.scope_id or None
+        return RepairRecord(
+            identity=MemoryIdentity(receipt.cao_key, receipt.scope, logical_scope_id),
+            file_path=receipt.native_relpath,
+            actions=(action,),
+            status=status,
+            finding=(
+                RepairFinding(
+                    kind=reason,
+                    message=f"migration receipt rollback refused: {reason}",
+                )
+                if reason is not None
+                else None
+            ),
+        )
+
+    def _migration_source_reason(self, db: Any, receipt: Any) -> Optional[str]:
+        from cli_agent_orchestrator.clients.database import MemoryMetadataModel
+
+        base = self.base_dir.resolve()
+        native_path = (base / receipt.native_relpath).resolve()
+        if not native_path.is_relative_to(base):
+            return "native_relpath_invalid"
+        if not native_path.is_file():
+            return "native_source_missing"
+        if hashlib.sha256(native_path.read_bytes()).hexdigest() != receipt.native_snapshot_sha256:
+            return "native_snapshot_mismatch"
+        logical_scope_id = receipt.scope_id or None
+        query = db.query(MemoryMetadataModel).filter(
+            MemoryMetadataModel.key == receipt.cao_key,
+            MemoryMetadataModel.scope == receipt.scope,
+            MemoryMetadataModel.source_kind == "native",
+        )
+        query = (
+            query.filter(MemoryMetadataModel.scope_id == logical_scope_id)
+            if logical_scope_id is not None
+            else query.filter(MemoryMetadataModel.scope_id.is_(None))
+        )
+        if query.one_or_none() is None:
+            return "native_row_missing"
+        return None
+
+    @staticmethod
+    def _edge_restore_maps(
+        receipt: Any,
+    ) -> tuple[dict[str, str], dict[str, tuple[str, str, str, str, str, str]]]:
+        from cli_agent_orchestrator.services.vault.migrate import parse_edge_snapshot
+
+        snapshots = parse_edge_snapshot(receipt.superseded_edges)
+        restore = {item["id"]: item["prior_status"] for item in snapshots}
+        expect = {
+            item["id"]: (
+                item["scope"],
+                item["scope_id"],
+                item["source_key"],
+                item["target_key"],
+                item["type"],
+                item["origin"],
+            )
+            for item in snapshots
+        }
+        return restore, expect
+
+    def _reconcile_migration_receipt(
+        self,
+        receipt_id: str,
+        *,
+        apply: bool,
+    ) -> RepairReport:
+        from cli_agent_orchestrator.clients.database import VaultMigrationReceiptModel
+        from cli_agent_orchestrator.services.memory_relationship_service import (
+            EdgeSnapshotDriftError,
+            MemoryRelationshipService,
+        )
+
+        relationships = MemoryRelationshipService(memory_service=self._memory)
+        audit_sink: list[Any] = []
+        with self._get_db_session() as db:
+            with db.begin():
+                receipt = db.get(VaultMigrationReceiptModel, receipt_id)
+                if receipt is None:
+                    raise MigrationReceiptNotFoundError(
+                        f"migration receipt not found: {receipt_id!r}"
+                    )
+                if receipt.status != "active":
+                    record = self._migration_rollback_record(
+                        receipt,
+                        action=RepairAction.CONFLICT,
+                        status="skipped",
+                        reason="receipt_not_active",
+                    )
+                    return RepairReport((record,), applied=apply)
+                try:
+                    restore, expect = self._edge_restore_maps(receipt)
+                except ValueError:
+                    record = self._migration_rollback_record(
+                        receipt,
+                        action=RepairAction.CONFLICT,
+                        status="skipped",
+                        reason="edge_snapshot_invalid",
+                    )
+                    return RepairReport((record,), applied=apply)
+                reason = self._migration_source_reason(db, receipt)
+                if reason is None:
+                    drift = relationships.preflight_edge_identities(
+                        expect,
+                        require_status="superseded",
+                        db=db,
+                    )
+                    if drift:
+                        reason = drift[sorted(drift)[0]]
+                if reason is not None:
+                    record = self._migration_rollback_record(
+                        receipt,
+                        action=RepairAction.CONFLICT,
+                        status="skipped",
+                        reason=reason,
+                    )
+                    return RepairReport((record,), applied=apply)
+                if not apply:
+                    record = self._migration_rollback_record(
+                        receipt,
+                        action=RepairAction.MIGRATION_ROLLBACK,
+                        status="planned",
+                    )
+                    return RepairReport((record,), applied=False)
+                try:
+                    relationships.restore_statuses(
+                        restore,
+                        expect=expect,
+                        require_status="superseded",
+                        db=db,
+                        audit_sink=audit_sink,
+                    )
+                except EdgeSnapshotDriftError as exc:
+                    reason = exc.reasons[sorted(exc.reasons)[0]]
+                    record = self._migration_rollback_record(
+                        receipt,
+                        action=RepairAction.CONFLICT,
+                        status="skipped",
+                        reason=reason,
+                    )
+                    return RepairReport((record,), applied=True)
+                receipt.status = "rolled_back"
+            for emit_audit in audit_sink:
+                emit_audit()
+            record = self._migration_rollback_record(
+                receipt,
+                action=RepairAction.MIGRATION_ROLLBACK,
+                status="repaired",
+            )
+        return RepairReport((record,), applied=True)
+
+    def _migration_receipt_findings(self) -> tuple[RepairRecord, ...]:
+        """Report active receipt drift without selecting or mutating a receipt."""
+        from cli_agent_orchestrator.clients.database import VaultMigrationReceiptModel
+        from cli_agent_orchestrator.services.memory_relationship_service import (
+            MemoryRelationshipService,
+        )
+
+        records: list[RepairRecord] = []
+        relationships = MemoryRelationshipService()
+        with self._get_db_session() as db:
+            receipts = (
+                db.query(VaultMigrationReceiptModel)
+                .filter(VaultMigrationReceiptModel.status == "active")
+                .order_by(VaultMigrationReceiptModel.receipt_id)
+                .all()
+            )
+            for receipt in receipts:
+                try:
+                    _restore, expect = self._edge_restore_maps(receipt)
+                except ValueError:
+                    records.append(
+                        self._migration_rollback_record(
+                            receipt,
+                            action=RepairAction.CONFLICT,
+                            status="unchanged",
+                            reason="edge_snapshot_invalid",
+                        )
+                    )
+                    continue
+                source_reason = self._migration_source_reason(db, receipt)
+                if source_reason is not None:
+                    records.append(
+                        self._migration_rollback_record(
+                            receipt,
+                            action=RepairAction.CONFLICT,
+                            status="unchanged",
+                            reason=source_reason,
+                        )
+                    )
+                    continue
+                drift = relationships.preflight_edge_identities(
+                    expect,
+                    require_status="superseded",
+                    db=db,
+                )
+                for edge_id in sorted(drift):
+                    records.append(
+                        self._migration_rollback_record(
+                            receipt,
+                            action=RepairAction.CONFLICT,
+                            status="unchanged",
+                            reason=drift[edge_id],
+                        )
+                    )
+        return tuple(records)
+
+    @audited_legacy("repair", owner="_memory")
+    def reconcile(
+        self,
+        *,
+        apply: bool = False,
+        receipt_id: Optional[str] = None,
+    ) -> RepairReport:
         """Plan by default; mutate only when explicitly requested.
 
         ``apply=True`` is the explicit ``cao memory repair --apply``
@@ -1454,19 +1689,35 @@ class MemoryReconciliationService:
         there must surface rather than be logged at debug. The startup path
         calls ``apply()`` directly and keeps the fail-soft default.
         """
+        if receipt_id is not None:
+            return self._reconcile_migration_receipt(receipt_id, apply=apply)
         if not apply:
-            return self.plan()
+            report = self.plan()
+            return RepairReport(
+                records=report.records + self._migration_receipt_findings(),
+                applied=False,
+            )
         self._strict_index = True
         try:
-            return self.apply()
+            report = self.apply()
+            return RepairReport(
+                records=report.records + self._migration_receipt_findings(),
+                applied=True,
+            )
         finally:
             self._strict_index = False
 
 
 def reconcile_memory_startup() -> Optional[RepairReport]:
-    """Apply bounded startup repair unless memory is disabled."""
+    """Repair local compatibility memory only in the local operator deployment.
+
+    Authenticated servers use grant-authorized knowledge. Legacy file repair
+    requires the local operator and must not manufacture that authority at
+    startup or attempt it using the server's JWT.
+    """
+    from cli_agent_orchestrator.security.auth import is_auth_enabled
     from cli_agent_orchestrator.services.settings_service import is_memory_enabled
 
-    if not is_memory_enabled():
+    if not is_memory_enabled() or is_auth_enabled():
         return None
     return MemoryReconciliationService().apply()

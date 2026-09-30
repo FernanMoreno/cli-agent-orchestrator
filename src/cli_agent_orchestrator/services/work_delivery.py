@@ -1,10 +1,10 @@
 """Durable, versioned server adapters; no dynamic code loading from stored input."""
 
-from collections.abc import Mapping
-from dataclasses import dataclass
 import hashlib
 import json
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Callable
 
@@ -275,6 +275,7 @@ class WorkDeliveries:
             return
         request_hash = _digest(request, binding.contract_hash)
         try:
+
             def accept(reference):
                 opaque = self._opaque_envelope(envelope, reference)
                 digest = _digest(opaque, binding.contract_hash, request_hash)
@@ -346,6 +347,8 @@ class WorkDeliveries:
             or any(not isinstance(value, str) or not value for value in target)
         ):
             raise ContractConflict("delivery target identity is invalid")
-        if adapter.terminal_identity is not None and target[0] != adapter.terminal_identity(payload):
+        if adapter.terminal_identity is not None and target[0] != adapter.terminal_identity(
+            payload
+        ):
             raise ContractConflict("delivery target terminal differs from its identity")
         return target

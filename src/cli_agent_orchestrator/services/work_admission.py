@@ -14,14 +14,18 @@ from pathlib import Path
 from uuid import uuid4
 
 from cli_agent_orchestrator.backends.base import ProcessRestrictionContract, TerminalBackend
-from cli_agent_orchestrator.models.work_contract import EffectiveWorkContractV2
-from cli_agent_orchestrator.constants import FIFO_DIR
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
+from cli_agent_orchestrator.constants import FIFO_DIR
+from cli_agent_orchestrator.models.work_contract import EffectiveWorkContractV2
 from cli_agent_orchestrator.models.work_origin import ProvisionedLaunch
 from cli_agent_orchestrator.services.delegation_snapshot import (
     DelegationSnapshots,
     SnapshotConflict,
     SnapshotUnavailable,
+)
+from cli_agent_orchestrator.services.work_attempt_credential import (
+    WorkAttemptCredentials,
+    create_attempt_credential_descriptor,
 )
 from cli_agent_orchestrator.services.work_authority import (
     AuthorityDenied,
@@ -38,10 +42,6 @@ from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 from cli_agent_orchestrator.services.work_reservations import ReservationConflict, WorkReservations
 from cli_agent_orchestrator.services.work_scheduler import WorkScheduler
 from cli_agent_orchestrator.services.work_service import WorkService
-from cli_agent_orchestrator.services.work_attempt_credential import (
-    WorkAttemptCredentials,
-    create_attempt_credential_descriptor,
-)
 from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
 logger = logging.getLogger(__name__)
@@ -198,6 +198,7 @@ class WorkAdmission:
         backends: Mapping[str, TerminalBackend],
         delivery_adapters=None,
         origins=None,
+        workflow_origins=None,
     ):
         if not isinstance(backends, Mapping) or any(
             not isinstance(name, str) or not name or not isinstance(backend, TerminalBackend)
@@ -209,8 +210,17 @@ class WorkAdmission:
 
             if not isinstance(origins, WorkOrigins) or origins.repository is not repository:
                 raise ValueError("managed lineage origin must share this work runtime")
+        if workflow_origins is not None:
+            from cli_agent_orchestrator.services.work_workflow import WorkWorkflowOrigins
+
+            if (
+                not isinstance(workflow_origins, WorkWorkflowOrigins)
+                or workflow_origins.repository is not repository
+            ):
+                raise ValueError("managed workflow origin must share this work runtime")
         self.repository = repository
         self.origins = origins
+        self.workflow_origins = workflow_origins
         self.backends = dict(backends)
         self.authority = WorkAuthority(repository)
         self.contracts = WorkContracts(repository)
@@ -222,6 +232,8 @@ class WorkAdmission:
         self._pending_abandonments = set()
         if origins is not None:
             origins._bind_admission(self)
+        if workflow_origins is not None:
+            workflow_origins._bind_admission(self)
 
     @staticmethod
     def _restriction(contract):
@@ -636,6 +648,7 @@ class WorkAdmission:
         launch_origin=None,
         launch_fingerprint=None,
         require_unique_selection=False,
+        _workflow_origin=None,
     ):
         contract = self.contracts._contract(contract)
         if delivery is not None:
@@ -674,6 +687,29 @@ class WorkAdmission:
             raise WorkConflict("launch origin admission requires a delivery envelope")
         if origin is None and contract.operation_kind == "launch":
             raise WorkConflict("new launch admission requires a durable origin")
+        workflow_origin = None
+        if _workflow_origin is not None:
+            if self.workflow_origins is None:
+                raise WorkConflict("managed workflow origin is unavailable")
+            workflow_origin = self.workflow_origins._accept_handoff(_workflow_origin)
+            if origin is not None or parent_work_item_id is not None:
+                raise WorkConflict("workflow step cannot combine with another origin")
+            if (
+                workflow_origin.principal.id != getattr(principal, "id", None)
+                or workflow_origin.job_id != job_id
+                or workflow_origin.grant_id != grant_id
+                or workflow_origin.grant_revision != expected_grant_revision
+                or workflow_origin.idempotency_key != idempotency_key
+                or workflow_origin.request_hash != request_hash
+                or workflow_origin.lease_seconds != lease_seconds
+                or workflow_origin.contract.canonical_hash() != contract.canonical_hash()
+                or workflow_origin.delivery != delivery
+                or contract.operation_kind != "agent_step"
+                or delivery is None
+            ):
+                raise WorkConflict("workflow origin does not match its admitted step")
+        elif isinstance(idempotency_key, str) and idempotency_key.startswith("workflow-step-v1:"):
+            raise WorkConflict("managed workflow origin required for reserved step identity")
         launch_request = dict(
             request,
             grant_id=grant_id,
@@ -697,6 +733,8 @@ class WorkAdmission:
         with self.repository.transaction() as connection:
             self.repository._verify(connection)
             self.authority._authorize(connection, principal, **authority_args)
+            if workflow_origin is not None:
+                self.workflow_origins._revalidate(connection, workflow_origin)
             if origin is not None:
                 self._revalidate_launch_origin(
                     connection,
@@ -714,6 +752,9 @@ class WorkAdmission:
             else:
                 existing = self._replay(connection, **replay_args)
             if existing is not None:
+                if workflow_origin is not None:
+                    self.workflow_origins._confirm_replay(connection, workflow_origin, existing)
+                    return existing
                 return self._legacy_replay(existing)
             if requires_managed_origin:
                 raise WorkConflict("managed lineage origin required")
@@ -726,6 +767,8 @@ class WorkAdmission:
         with self.repository.transaction() as connection:
             self.repository._verify(connection)
             self.authority._authorize(connection, principal, **authority_args)
+            if workflow_origin is not None:
+                self.workflow_origins._revalidate(connection, workflow_origin)
             # A competing admission can win while this caller was in preflight.
             if origin is not None:
                 self._revalidate_launch_origin(
@@ -744,6 +787,9 @@ class WorkAdmission:
             else:
                 existing = self._replay(connection, **replay_args)
             if existing is not None:
+                if workflow_origin is not None:
+                    self.workflow_origins._confirm_replay(connection, workflow_origin, existing)
+                    return existing
                 return self._legacy_replay(existing)
             if requires_managed_origin:
                 raise WorkConflict("managed lineage origin required")
@@ -777,6 +823,13 @@ class WorkAdmission:
                     principal=principal,
                 )
             self.deliveries._bind(connection, binding, prepared_delivery, request=delivery)
+            if workflow_origin is not None:
+                self.workflow_origins._bind_admitted(
+                    connection,
+                    workflow_origin,
+                    work=work,
+                    contract_binding=binding,
+                )
             self.scheduler._enqueue(
                 connection,
                 attempt_id=original["id"],
@@ -1080,7 +1133,14 @@ class WorkAdmission:
                 connection.execute("ROLLBACK TO work_queue_probe")
                 connection.execute("RELEASE work_queue_probe")
 
-    def _commit_dispatch(self, preview, *, registered_only=False, expected_terminal_id=None):
+    def _commit_dispatch(
+        self,
+        preview,
+        *,
+        registered_only=False,
+        expected_terminal_id=None,
+        expected_terminal_target=None,
+    ):
         with self.repository.transaction() as connection:
             self.repository._verify(connection)
             eligible = self._eligible(connection, registered_only=registered_only)
@@ -1110,6 +1170,8 @@ class WorkAdmission:
                 )
                 if terminal_id != expected_terminal_id:
                     raise _SelectionChanged()
+                if target_identity != expected_terminal_target:
+                    raise WorkConflict("registered delivery target changed during dispatch")
                 if terminal_id is not None:
                     self.repository._attach_dispatch_terminal(
                         connection,
@@ -1191,6 +1253,7 @@ class WorkAdmission:
                             preview,
                             registered_only=True,
                             expected_terminal_id=None,
+                            expected_terminal_target=preview_target,
                         )
                     else:
                         with terminal_dispatch_lock(self.repository.path, preview_terminal_id):
@@ -1198,6 +1261,7 @@ class WorkAdmission:
                                 preview,
                                 registered_only=True,
                                 expected_terminal_id=preview_terminal_id,
+                                expected_terminal_target=preview_target,
                             )
                 else:
                     committed = self._commit_dispatch(preview, registered_only=False)

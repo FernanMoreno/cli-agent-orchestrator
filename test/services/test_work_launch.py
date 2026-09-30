@@ -2,6 +2,7 @@
 
 import importlib
 import json
+from test.integration.test_work_dispatch import AdmissionOnlyBackend, admit, context  # noqa: F401
 from types import SimpleNamespace
 
 import pytest
@@ -14,7 +15,6 @@ from cli_agent_orchestrator.providers.mock_cli import MockCliProvider
 from cli_agent_orchestrator.services import settings_service, terminal_service
 from cli_agent_orchestrator.services.work_admission import WorkAdmission
 from cli_agent_orchestrator.services.work_service import DeliveryUncertain
-from test.integration.test_work_dispatch import context, admit, AdmissionOnlyBackend  # noqa: F401
 
 
 class LaunchBackend(AdmissionOnlyBackend):
@@ -25,7 +25,8 @@ class LaunchBackend(AdmissionOnlyBackend):
     def session_exists(self, name):
         return name in self.sessions
 
-    def create_session(self, name, window, terminal_id, directory, extra_env=None):
+    def create_session(self, name, window, terminal_id, directory, extra_env=None, work_safe=False):
+        assert work_safe
         self.sessions[name] = (window, terminal_id, directory)
         return window
 
@@ -105,6 +106,38 @@ def launch_envelope(key="1234abcd"):
             }
         ),
     )
+
+
+@pytest.mark.asyncio
+async def test_required_launch_mode_rejects_ordinary_session_before_backend_effect(
+    launch_context, monkeypatch
+):
+    monkeypatch.setenv("CAO_WORK_LAUNCH_MODE", "required")
+
+    with pytest.raises(PermissionError, match="managed Work launch"):
+        await terminal_service.create_terminal(
+            provider="mock_cli",
+            agent_profile="developer",
+            session_name="legacy-session",
+            new_session=True,
+        )
+
+    assert launch_context.backend.sessions == {}
+    assert launch_context.backend.effects == []
+
+
+@pytest.mark.asyncio
+async def test_required_launch_mode_keeps_registered_launch_on_managed_path(
+    launch_context, monkeypatch
+):
+    monkeypatch.setenv("CAO_WORK_LAUNCH_MODE", "required")
+    work = admit(launch_context, "required-mode", delivery=launch_envelope())
+
+    result = await launch_context.service.dispatch_registered_next()
+
+    assert result["id"] == work["id"]
+    assert result["attempts"][0]["state"] == "sent"
+    assert len(launch_context.backend.sessions) == 1
 
 
 @pytest.mark.asyncio

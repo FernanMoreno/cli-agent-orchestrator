@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-
 _T097_ROOT = Path("/tmp/caos-exec/T097")
 _SCRATCH_BWRAP = _T097_ROOT / "bubblewrap-build" / "bwrap"
 _VERSION_RE = re.compile(r"^bubblewrap\s+(\d+)\.(\d+)\.(\d+)(?:\s.*)?$")
@@ -144,9 +143,10 @@ def scratch_bubblewrap() -> Path:
         scratch_root = _T097_ROOT.resolve(strict=True)
     except (OSError, RuntimeError) as exc:
         pytest.skip(f"could not resolve T097 scratch Bubblewrap: {exc}")
-    if not executable.is_relative_to(scratch_root) or executable == Path(
-        "/usr/bin/bwrap"
-    ).resolve():
+    if (
+        not executable.is_relative_to(scratch_root)
+        or executable == Path("/usr/bin/bwrap").resolve()
+    ):
         pytest.skip("T097 Bubblewrap resolves outside its scratch tree; refusing fallback")
     if not os.access(executable, os.X_OK):
         pytest.skip(f"T097 scratch Bubblewrap is not executable: {executable}")
@@ -235,7 +235,9 @@ def static_elf_probe(tmp_path_factory) -> Path:
     except (OSError, subprocess.SubprocessError) as exc:
         pytest.skip(f"compiler could not build the static ELF probe: {exc}")
     if build.returncode != 0:
-        pytest.skip(f"compiler cannot produce the required static ELF probe: {build.stderr.strip()}")
+        pytest.skip(
+            f"compiler cannot produce the required static ELF probe: {build.stderr.strip()}"
+        )
     return binary
 
 

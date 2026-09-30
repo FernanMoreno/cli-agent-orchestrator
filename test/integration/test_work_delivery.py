@@ -5,6 +5,12 @@ import importlib
 import json
 import multiprocessing
 import sqlite3
+from test.integration.test_work_dispatch import (  # noqa: F401
+    AdmissionOnlyBackend,
+    accounting,
+    admit,
+    context,
+)
 
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
@@ -14,12 +20,6 @@ from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.services.work_admission import WorkAdmission
 from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
 from cli_agent_orchestrator.services.work_service import DeliveryObservation, DeliveryUncertain
-from test.integration.test_work_dispatch import (  # noqa: F401
-    context,
-    admit,
-    accounting,
-    AdmissionOnlyBackend,
-)
 
 
 class Message(BaseModel):
@@ -228,9 +228,7 @@ async def test_retired_launch_origin_during_readiness_blocks_the_protected_effec
     validated_target = []
 
     async def retire_then_effect(binding, payload, snapshot, port):
-        port.bind_terminal_target(
-            payload.terminal_id, payload.session_name, payload.window_name
-        )
+        port.bind_terminal_target(payload.terminal_id, payload.session_name, payload.window_name)
         validated_target.append((payload.terminal_id, payload.session_name, payload.window_name))
         WorkProvisioning(context.repo).retire_launch(
             context.actor,
@@ -324,9 +322,7 @@ async def test_registered_timeout_never_resends_after_restart(context):
     persist_terminal_target(*target)
 
     async def uncertain(binding, payload, snapshot, port):
-        port.bind_terminal_target(
-            payload.terminal_id, payload.session_name, payload.window_name
-        )
+        port.bind_terminal_target(payload.terminal_id, payload.session_name, payload.window_name)
         observed.append(("launch", payload.message, snapshot.content))
         port.send_keys(payload.session_name, payload.window_name, payload.message)
         raise TimeoutError("no receipt")
@@ -361,9 +357,7 @@ async def test_registered_timeout_never_resends_after_restart(context):
 
 def _dispatch_in_fresh_process(database, output):
     async def send(binding, payload, snapshot, port):
-        port.bind_terminal_target(
-            payload.terminal_id, payload.session_name, payload.window_name
-        )
+        port.bind_terminal_target(payload.terminal_id, payload.session_name, payload.window_name)
         port.send_keys(payload.session_name, payload.window_name, payload.message)
         output.put((binding.work_item_id, payload.message, snapshot.content))
         return DeliveryObservation(task_received=True)
@@ -622,8 +616,8 @@ def test_delivery_history_cannot_be_updated_or_deleted(context):
 
 @pytest.mark.asyncio
 async def test_aliased_delivery_fields_remain_executable_after_persistence(context):
-    from cli_agent_orchestrator.services.work_delivery import DeliveryAdapter
     from cli_agent_orchestrator.models.work_delivery import WorkDeliveryEnvelope
+    from cli_agent_orchestrator.services.work_delivery import DeliveryAdapter
 
     class AliasedMessage(Message):
         message: str = Field(alias="text")
@@ -672,8 +666,8 @@ def test_non_roundtrip_serializer_is_rejected_before_queueing(context):
 def test_nested_credential_fields_never_persist_even_when_payload_model_accepts_them(
     context, credential
 ):
-    from cli_agent_orchestrator.services.work_delivery import DeliveryAdapter
     from cli_agent_orchestrator.models.work_delivery import WorkDeliveryEnvelope
+    from cli_agent_orchestrator.services.work_delivery import DeliveryAdapter
 
     class MetadataMessage(Message):
         metadata: dict[str, str]

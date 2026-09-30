@@ -11,9 +11,15 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from test.integration.t097.test_host_acceptance import (
+    _host_backend_factory,
+    accepted_linux_host,
+)
+from test.integration.t098.test_work_launch_dispatch import _setup
 
 import pytest
 
+from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_contract import (
     ContractSnapshot,
     EffectiveWorkContractV2,
@@ -23,21 +29,15 @@ from cli_agent_orchestrator.services.delegation_snapshot import (
     ResolvedSnapshot,
 )
 from cli_agent_orchestrator.services.knowledge_policy import KnowledgePolicy
-from cli_agent_orchestrator.clients.work_repository import WorkRepository
+from cli_agent_orchestrator.services.work_bubblewrap_setup_intent import WorkBubblewrapSetupIntent
+from cli_agent_orchestrator.services.work_contract import WorkContracts
 from cli_agent_orchestrator.services.work_launch_gateway import (
     DurableLaunchRequest,
     build_durable_launch_gateway,
 )
 from cli_agent_orchestrator.services.work_mcp_proxy import WorkMcpProxy
 from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
-from cli_agent_orchestrator.services.work_contract import WorkContracts
 from cli_agent_orchestrator.services.work_service import DeliveryUncertain, WorkService
-from cli_agent_orchestrator.services.work_bubblewrap_setup_intent import WorkBubblewrapSetupIntent
-from test.integration.t097.test_host_acceptance import (
-    _host_backend_factory,
-    accepted_linux_host,
-)
-from test.integration.t098.test_work_launch_dispatch import _setup
 
 pytestmark = [pytest.mark.integration, pytest.mark.t097_host]
 

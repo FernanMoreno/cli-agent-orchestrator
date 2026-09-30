@@ -663,9 +663,11 @@ class TestGuardOneStandingAlone:
             scoped.setattr(workflow_journal, "_connect", _recording_connect)
             on_settled("rvg-terminal-7", None, "one statement, please")
 
-        # ONE connection for the whole settle. A second one is a second transaction.
-        assert len(recorders) == 1, [r.statements for r in recorders]
-        mutating = [s for s in recorders[0].statements if _is_mutating(s)]
+        # The Work ownership preflight uses a read-only connection. All settlement
+        # mutations must still occur on ONE connection in ONE statement.
+        writing = [r for r in recorders if any(_is_mutating(s) for s in r.statements)]
+        assert len(writing) == 1, [r.statements for r in recorders]
+        mutating = [s for s in writing[0].statements if _is_mutating(s)]
         assert len(mutating) == 1, mutating
         # ...and that one statement carries BOTH halves of the row the guard is about.
         statement = mutating[0]

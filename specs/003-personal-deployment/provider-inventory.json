@@ -1,0 +1,124 @@
+{
+  "date": "2026-09-30",
+  "source": "src/cli_agent_orchestrator/models/provider.py",
+  "providers": {
+    "kiro_cli": {
+      "backends": [
+        "tmux",
+        "herdr"
+      ],
+      "authorized_for_real_acceptance": false,
+      "scope": "no account/model authorized for live calls in this session"
+    },
+    "claude_code": {
+      "backends": [
+        "tmux",
+        "herdr"
+      ],
+      "authorized_for_real_acceptance": true,
+      "scope": "authorized subscription/free model"
+    },
+    "codex": {
+      "backends": [
+        "tmux",
+        "herdr"
+      ],
+      "authorized_for_real_acceptance": true,
+      "scope": "authorized subscription/free model"
+    },
+    "kimi_cli": {
+      "backends": [
+        "tmux",
+        "herdr"
+      ],
+      "authorized_for_real_acceptance": false,
+      "scope": "no account/model authorized for live calls in this session"
+    },
+    "copilot_cli": {
+      "backends": [
+        "tmux",
+        "herdr"
+      ],
+      "authorized_for_real_acceptance": false,
+      "scope": "no account/model authorized for live calls in this session"
+    },
+    "opencode_cli": {
+      "backends": [
+        "tmux",
+        "herdr"
+      ],
+      "authorized_for_real_acceptance": true,
+      "scope": "authorized subscription/free model"
+    },
+    "hermes": {
+      "backends": [
+        "tmux",
+        "herdr"
+      ],
+      "authorized_for_real_acceptance": false,
+      "scope": "no account/model authorized for live calls in this session"
+    },
+    "cursor_cli": {
+      "backends": [
+        "tmux",
+        "herdr"
+      ],
+      "authorized_for_real_acceptance": false,
+      "scope": "no account/model authorized for live calls in this session"
+    },
+    "antigravity_cli": {
+      "backends": [
+        "tmux",
+        "herdr"
+      ],
+      "authorized_for_real_acceptance": false,
+      "scope": "no account/model authorized for live calls in this session"
+    },
+    "gemini_cli": {
+      "backends": [
+        "tmux",
+        "herdr"
+      ],
+      "authorized_for_real_acceptance": false,
+      "scope": "no account/model authorized for live calls in this session"
+    },
+    "omp": {
+      "backends": [
+        "tmux",
+        "herdr"
+      ],
+      "authorized_for_real_acceptance": false,
+      "scope": "no account/model authorized for live calls in this session"
+    },
+    "grok_cli": {
+      "backends": [
+        "tmux",
+        "herdr"
+      ],
+      "authorized_for_real_acceptance": false,
+      "scope": "no account/model authorized for live calls in this session"
+    },
+    "mcode": {
+      "backends": [
+        "tmux",
+        "herdr"
+      ],
+      "authorized_for_real_acceptance": false,
+      "scope": "no account/model authorized for live calls in this session"
+    },
+    "mock_cli": {
+      "backends": [
+        "tmux",
+        "herdr"
+      ],
+      "authorized_for_real_acceptance": false,
+      "scope": "hermetic local provider"
+    }
+  },
+  "acceptance_pair_count": 18,
+  "limits": [
+    "Quota exhaustion is not induced.",
+    "Only Codex, Claude and OpenCode are authorized for subscription/free real calls.",
+    "mock_cli acceptance is local; it is not a real external provider."
+  ]
+}

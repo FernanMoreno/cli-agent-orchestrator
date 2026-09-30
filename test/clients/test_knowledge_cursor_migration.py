@@ -1,11 +1,10 @@
 """The recovery cursor table is an additive, verified work-store migration."""
 
 import sqlite3
-
-import pytest
-
 from test.clients.test_work_migrations import repository_module
 from test.fixtures.work_store import work_store_paths  # noqa: F401
+
+import pytest
 
 
 def test_recovery_cursor_migration_preserves_v16_history_and_scope_immutability(work_store_paths):
@@ -56,6 +55,8 @@ def test_recovery_cursor_migration_preserves_v16_history_and_scope_immutability(
             "SELECT name FROM sqlite_master WHERE name='work_knowledge_cursors'"
         ).fetchone() == ("work_knowledge_cursors",)
         with pytest.raises(sqlite3.IntegrityError, match="scope is immutable"):
-            connection.execute("UPDATE work_knowledge_records SET scope_id='other' WHERE id='historic'")
+            connection.execute(
+                "UPDATE work_knowledge_records SET scope_id='other' WHERE id='historic'"
+            )
         with pytest.raises(sqlite3.IntegrityError, match="history is immutable"):
             connection.execute("UPDATE work_knowledge_revisions SET content='changed'")

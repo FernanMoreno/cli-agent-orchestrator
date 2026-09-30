@@ -3,11 +3,11 @@
 import hashlib
 import json
 import sqlite3
+from test.clients.test_work_migrations import verified_store_at_version
 
 import pytest
 
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
-from test.clients.test_work_migrations import verified_store_at_version
 
 
 def _identity(**changes):

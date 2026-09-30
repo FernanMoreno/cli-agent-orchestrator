@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import io
 import json
@@ -15,14 +14,15 @@ import subprocess
 import tarfile
 import threading
 import time
+import weakref
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
-import weakref
 
 from cli_agent_orchestrator.backends.base import (
     ProcessRestrictionContract,
-    UnsupportedWorkEnforcement,
     TerminalBackendError,
+    UnsupportedWorkEnforcement,
 )
 from cli_agent_orchestrator.backends.tmux_backend import TmuxBackend
 from cli_agent_orchestrator.clients.tmux import TmuxClient
@@ -33,11 +33,11 @@ from cli_agent_orchestrator.services.work_attempt_credential import (
     validate_attempt_credential_descriptor,
 )
 from cli_agent_orchestrator.services.work_contract import WorkContracts
-from cli_agent_orchestrator.services.work_executable_content import WorkExecutableContent
-from cli_agent_orchestrator.services.work_mcp_proxy import WorkMcpProxy, WorkMcpProxyError
 from cli_agent_orchestrator.services.work_docker_isolation_proof import (
     issue_docker_runtime_isolation_proof,
 )
+from cli_agent_orchestrator.services.work_executable_content import WorkExecutableContent
+from cli_agent_orchestrator.services.work_mcp_proxy import WorkMcpProxy, WorkMcpProxyError
 
 _IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 _BASE_TAG = re.compile(r"^cao-work-rootfs:[0-9a-f]{64}$")
@@ -47,14 +47,36 @@ _INPUT_LIMIT = 32768
 _REQUEST_LIMIT = 16384
 _FRAME_LIMIT = 65536
 _ALLOWED_MANAGED_TOOLS = frozenset(
-    {"cao.work.child", "cao.work.handoff", "cao.work.task_received"}
+    {
+        "cao.work.child",
+        "cao.work.handoff",
+        "cao.work.task_received",
+        "cao.work.submit_result",
+    }
 )
+_RECEIVER_AUTHENTICATED_TOOLS = frozenset({"cao.work.task_received", "cao.work.submit_result"})
 _SUPERVISOR_SOURCE = Path(__file__).with_name("docker_work_supervisor.c")
 _SUPERVISOR_SOURCE_SHA256 = hashlib.sha256(_SUPERVISOR_SOURCE.read_bytes()).hexdigest()
 
 
 def _unsupported(reason: str) -> UnsupportedWorkEnforcement:
     return UnsupportedWorkEnforcement("DockerWorkBackend", reason)
+
+
+def _receiver_credential_for_request(request: dict, descriptor: int | None) -> bytes | None:
+    """Read receiver authority only for its two separately authenticated actions."""
+    try:
+        name = request["params"]["name"]
+    except (KeyError, TypeError):
+        raise _unsupported("Docker Work MCP request is invalid")
+    if name not in _RECEIVER_AUTHENTICATED_TOOLS:
+        return None
+    if descriptor is None:
+        raise _unsupported("receiver action requires its separate credential")
+    try:
+        return read_attempt_credential_descriptor(descriptor)
+    except Exception as error:
+        raise _unsupported("server-owned receiver credential descriptor is unavailable") from error
 
 
 class DockerWorkBackendUnavailable(TerminalBackendError):
@@ -76,6 +98,9 @@ class DockerWorkExecution:
     returncode: int
     stdout: bytes
     stderr: bytes
+    process_stopped: bool
+    container_removed: bool
+    image_removed: bool
 
 
 class DockerWorkBackend(TmuxBackend):
@@ -208,9 +233,7 @@ class DockerWorkBackend(TmuxBackend):
                         "Docker local context could not be queried"
                     ) from error
                 if context.returncode != 0:
-                    raise DockerWorkBackendUnavailable(
-                        "Docker local context could not be queried"
-                    )
+                    raise DockerWorkBackendUnavailable("Docker local context could not be queried")
                 docker_context = context.stdout.strip()
             if not docker_context or "\x00" in docker_context:
                 raise _unsupported("a local Docker context must be selected")
@@ -245,7 +268,9 @@ class DockerWorkBackend(TmuxBackend):
         try:
             socket_stat = os.stat(socket_path)
         except OSError as error:
-            raise DockerWorkBackendUnavailable("local Docker socket could not be verified") from error
+            raise DockerWorkBackendUnavailable(
+                "local Docker socket could not be verified"
+            ) from error
         if not stat.S_ISSOCK(socket_stat.st_mode):
             raise _unsupported("Docker Work accepts only a local Docker daemon")
         for key in ("DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"):
@@ -305,7 +330,8 @@ class DockerWorkBackend(TmuxBackend):
                 or len(rootfs_layers) != 1
                 or not isinstance(config, dict)
                 or config.get("User", "") != ""
-                or config.get("Env") not in (
+                or config.get("Env")
+                not in (
                     None,
                     [],
                     ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
@@ -342,7 +368,9 @@ class DockerWorkBackend(TmuxBackend):
             executable = bytearray()
             offset = 0
             while offset < 8 * 1024 * 1024:
-                block = os.pread(staged.memfd_fd, min(1024 * 1024, 8 * 1024 * 1024 - offset), offset)
+                block = os.pread(
+                    staged.memfd_fd, min(1024 * 1024, 8 * 1024 * 1024 - offset), offset
+                )
                 if not block:
                     break
                 executable.extend(block)
@@ -430,8 +458,7 @@ class DockerWorkBackend(TmuxBackend):
             metadata.get("Id") != image_id
             or (metadata.get("Os"), metadata.get("Architecture")) != ("linux", "amd64")
             or rootfs.get("Type") != "layers"
-            or tuple(rootfs.get("Layers", ()))[: self._base_layer_count]
-            != self._base_layer_digests
+            or tuple(rootfs.get("Layers", ()))[: self._base_layer_count] != self._base_layer_digests
             or len(rootfs.get("Layers", ())) != self._base_layer_count + 1
             or not isinstance(config, dict)
             or config.get("User", "") != ""
@@ -446,10 +473,11 @@ class DockerWorkBackend(TmuxBackend):
             != hashlib.sha256(attempt_id.encode("utf-8")).hexdigest()
             or labels.get("org.cao.work.generation") != str(generation)
             or labels.get("org.cao.work.worker_sha256") != worker_sha256
-            or labels.get("org.cao.work.supervisor.source_sha256")
-            != _SUPERVISOR_SOURCE_SHA256
+            or labels.get("org.cao.work.supervisor.source_sha256") != _SUPERVISOR_SOURCE_SHA256
         ):
-            raise DockerWorkBackendUnavailable("Docker worker image differs from its one-file rootfs")
+            raise DockerWorkBackendUnavailable(
+                "Docker worker image differs from its one-file rootfs"
+            )
 
     def _cleanup_container(self, container_id: str, *, kill: bool) -> bool:
         if kill:
@@ -531,9 +559,7 @@ class DockerWorkBackend(TmuxBackend):
         )
         if base.returncode != 0:
             self._run(["image", "tag", self.image_ref, self._base_image_tag])
-            base = self._run(
-                ["image", "inspect", "--format", "{{.Id}}", self._base_image_tag]
-            )
+            base = self._run(["image", "inspect", "--format", "{{.Id}}", self._base_image_tag])
         if base.stdout.strip() != self.image_ref:
             raise DockerWorkAttemptRecoveryRequired(
                 "the local immutable Work rootfs alias resolves to another image"
@@ -593,7 +619,11 @@ class DockerWorkBackend(TmuxBackend):
         host = metadata.get("HostConfig")
         labels = config.get("Labels") if isinstance(config, dict) else None
         expected_attempt_hash = hashlib.sha256(attempt_id.encode("utf-8")).hexdigest()
-        if not isinstance(state, dict) or not isinstance(config, dict) or not isinstance(host, dict):
+        if (
+            not isinstance(state, dict)
+            or not isinstance(config, dict)
+            or not isinstance(host, dict)
+        ):
             raise DockerWorkExecutionUncertain("Docker container runtime metadata is incomplete")
         if (
             metadata.get("Id") != container_id
@@ -606,7 +636,11 @@ class DockerWorkBackend(TmuxBackend):
             or config.get("Cmd") != command
             or config.get("AttachStdin") is not True
             or config.get("OpenStdin") is not True
-            or config.get("Env") not in (["LC_ALL=C"], ["LC_ALL=C", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"])
+            or config.get("Env")
+            not in (
+                ["LC_ALL=C"],
+                ["LC_ALL=C", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
+            )
             or not isinstance(labels, dict)
             or labels.get("cao.work.backend") != "docker"
             or labels.get("cao.work.attempt_sha256") != expected_attempt_hash
@@ -634,7 +668,9 @@ class DockerWorkBackend(TmuxBackend):
             or host.get("PortBindings") not in (None, {})
             or metadata.get("Mounts") not in (None, [])
         ):
-            raise DockerWorkExecutionUncertain("Docker container differs from its isolation contract")
+            raise DockerWorkExecutionUncertain(
+                "Docker container differs from its isolation contract"
+            )
         return {
             "container_id": container_id,
             "image_id": image_id,
@@ -720,7 +756,9 @@ class DockerWorkBackend(TmuxBackend):
         if self.repository is None or not isinstance(binding.contract, EffectiveWorkContractV2):
             raise _unsupported("bound V2 contract and server Work repository are required")
         matches = tuple(
-            item for item in binding.contract.executable_identities if item.command_token == command_token
+            item
+            for item in binding.contract.executable_identities
+            if item.command_token == command_token
         )
         if (
             len(matches) != 1
@@ -730,7 +768,9 @@ class DockerWorkBackend(TmuxBackend):
             or restriction.tools != binding.contract.permissions.tools
             or binding.contract.permissions.commands != (command_token,)
             or binding.contract.permissions.network
-            or any(tool not in _ALLOWED_MANAGED_TOOLS for tool in binding.contract.permissions.tools)
+            or any(
+                tool not in _ALLOWED_MANAGED_TOOLS for tool in binding.contract.permissions.tools
+            )
             or binding.contract.resources.write_paths
             or binding.contract.permissions.network
             or not isinstance(worker_input, bytes)
@@ -747,7 +787,9 @@ class DockerWorkBackend(TmuxBackend):
         try:
             validate_attempt_credential_descriptor(attempt_credential_fd)
         except Exception as error:
-            raise _unsupported("server-owned attempt credential descriptor is unavailable") from error
+            raise _unsupported(
+                "server-owned attempt credential descriptor is unavailable"
+            ) from error
         if receiver_credential_fd is not None:
             try:
                 validate_attempt_credential_descriptor(receiver_credential_fd)
@@ -756,8 +798,11 @@ class DockerWorkBackend(TmuxBackend):
                     "server-owned receiver credential descriptor is unavailable"
                 ) from error
         tools = binding.contract.permissions.tools
-        if "cao.work.task_received" in tools and receiver_credential_fd is None:
-            raise _unsupported("receiver acknowledgement requires its separate credential")
+        if (
+            any(tool in _RECEIVER_AUTHENTICATED_TOOLS for tool in tools)
+            and receiver_credential_fd is None
+        ):
+            raise _unsupported("receiver action requires its separate credential")
         mcp_proxy = None
         endpoint = None
         proxy_thread = None
@@ -769,12 +814,11 @@ class DockerWorkBackend(TmuxBackend):
                 if self._mcp_proxy_factory is not None:
                     mcp_proxy = self._mcp_proxy_factory(binding.attempt_id, binding.generation)
                 else:
+
                     def upstream(request, secret):
-                        receiver_secret = None
-                        if request.get("params", {}).get("name") == "cao.work.task_received":
-                            receiver_secret = read_attempt_credential_descriptor(
-                                receiver_credential_fd
-                            )
+                        receiver_secret = _receiver_credential_for_request(
+                            request, receiver_credential_fd
+                        )
                         return self._work_origins.handle_mcp_request(
                             request, secret, receiver_credential=receiver_secret
                         )
@@ -810,15 +854,16 @@ class DockerWorkBackend(TmuxBackend):
             if (
                 current != binding
                 or attempt is None
-                or (attempt["state"], attempt["revision"])
-                != ("sent", expected_attempt_revision)
+                or (attempt["state"], attempt["revision"]) != ("sent", expected_attempt_revision)
             ):
                 raise DockerWorkBackendUnavailable("Docker attempt binding is stale")
             lease_expires_at = attempt["lease_expires_at"]
         executable_content = self._staged_executable(attempt_id, generation, command_token)
         container_name = self._container_name(attempt_id, generation)
         attempt_image_tag = self._attempt_image_tag(attempt_id, generation)
-        prior = self._run(["container", "inspect", "--format", "{{.Id}}", container_name], check=False)
+        prior = self._run(
+            ["container", "inspect", "--format", "{{.Id}}", container_name], check=False
+        )
         if self._inspect_reports_present(prior):
             raise DockerWorkAttemptRecoveryRequired(
                 "a container already exists for this Work attempt; reconcile before retry"
@@ -915,27 +960,39 @@ class DockerWorkBackend(TmuxBackend):
                     if header.startswith(b"CAO-OUT/1 "):
                         parts = header.decode("ascii", "strict").strip().split(" ")
                         if len(parts) != 3 or parts[1] not in {"stdout", "stderr"}:
-                            raise DockerWorkExecutionUncertain("Docker worker output frame is invalid")
+                            raise DockerWorkExecutionUncertain(
+                                "Docker worker output frame is invalid"
+                            )
                         raw_size = parts[2]
                         if not raw_size.isdigit() or len(raw_size) > 9:
-                            raise DockerWorkExecutionUncertain("Docker worker output size is invalid")
+                            raise DockerWorkExecutionUncertain(
+                                "Docker worker output size is invalid"
+                            )
                         size = int(raw_size)
                         if size > _OUTPUT_LIMIT or total + size > _OUTPUT_LIMIT:
-                            raise DockerWorkExecutionUncertain("Docker worker output exceeded its byte bound")
+                            raise DockerWorkExecutionUncertain(
+                                "Docker worker output exceeded its byte bound"
+                            )
                         payload = self._read_exact(process.stdout, size)
                         if self._read_exact(process.stdout, 1) != b"\n":
-                            raise DockerWorkExecutionUncertain("Docker worker output frame is truncated")
+                            raise DockerWorkExecutionUncertain(
+                                "Docker worker output frame is truncated"
+                            )
                         total += size
                         (stdout if parts[1] == "stdout" else stderr).extend(payload)
                         continue
                     if header.startswith(b"CAO-EXIT/1 "):
                         raw_code = header[len(b"CAO-EXIT/1 ") : -1]
                         if not raw_code.isdigit() or len(raw_code) > 3:
-                            raise DockerWorkExecutionUncertain("Docker supervisor exit status is invalid")
+                            raise DockerWorkExecutionUncertain(
+                                "Docker supervisor exit status is invalid"
+                            )
                         exit_codes.append(int(raw_code))
                         exited_event.set()
                         return
-                    raise DockerWorkExecutionUncertain("Docker supervisor output protocol is invalid")
+                    raise DockerWorkExecutionUncertain(
+                        "Docker supervisor output protocol is invalid"
+                    )
             except BaseException as error:
                 fail(error)
 
@@ -1038,7 +1095,9 @@ class DockerWorkBackend(TmuxBackend):
                     env=self._docker_environment,
                 )
             except OSError as error:
-                raise DockerWorkBackendUnavailable("Docker container start could not be observed") from error
+                raise DockerWorkBackendUnavailable(
+                    "Docker container start could not be observed"
+                ) from error
             readers = (
                 threading.Thread(target=read_stdout, daemon=True),
                 threading.Thread(target=read_mcp, daemon=True),
@@ -1058,8 +1117,12 @@ class DockerWorkBackend(TmuxBackend):
                 if time.monotonic() >= deadline:
                     raise TimeoutError("Docker supervisor exceeded its setup limit")
             if protocol_errors or not ready_payload:
-                raise protocol_errors[0] if protocol_errors else DockerWorkExecutionUncertain(
-                    "Docker supervisor setup acknowledgement is missing"
+                raise (
+                    protocol_errors[0]
+                    if protocol_errors
+                    else DockerWorkExecutionUncertain(
+                        "Docker supervisor setup acknowledgement is missing"
+                    )
                 )
             ready = ready_payload[0]
             if (
@@ -1114,15 +1177,16 @@ class DockerWorkBackend(TmuxBackend):
             while not exited_event.wait(0.02):
                 if protocol_errors:
                     raise protocol_errors[0]
-                if process.poll() is not None:
-                    raise DockerWorkExecutionUncertain(
-                        "Docker attach closed before the supervisor exit frame"
-                    )
+                # Process exit can precede the reader consuming a buffered EXIT
+                # frame. The reader owns protocol completion and reports EOF
+                # without EXIT; the deadline still bounds a stalled reader.
                 if time.monotonic() >= deadline:
                     raise TimeoutError("Docker worker exceeded its lease or runtime limit")
             if protocol_errors or not exit_codes:
-                raise protocol_errors[0] if protocol_errors else DockerWorkExecutionUncertain(
-                    "Docker supervisor exit status is missing"
+                raise (
+                    protocol_errors[0]
+                    if protocol_errors
+                    else DockerWorkExecutionUncertain("Docker supervisor exit status is missing")
                 )
             if mcp_proxy is not None:
                 mcp_proxy.revoke(attempt_id, generation)
@@ -1150,17 +1214,32 @@ class DockerWorkBackend(TmuxBackend):
                 or final_identity != runtime_identity
                 or process.returncode not in (code, 0)
             ):
-                raise DockerWorkExecutionUncertain("Docker worker exit status is not bound to its runtime")
+                raise DockerWorkExecutionUncertain(
+                    "Docker worker exit status is not bound to its runtime"
+                )
             if any(isinstance(error, WorkMcpProxyError) for error in proxy_errors):
-                raise DockerWorkExecutionUncertain("managed Work proxy failed during Docker execution")
+                raise DockerWorkExecutionUncertain(
+                    "managed Work proxy failed during Docker execution"
+                )
             if not self._cleanup_container(container_id, kill=False):
-                raise DockerWorkExecutionUncertain("Docker worker exited but container cleanup is uncertain")
+                raise DockerWorkExecutionUncertain(
+                    "Docker worker exited but container cleanup is uncertain"
+                )
             container_id = None
             if not self._cleanup_attempt_image(attempt_image_tag):
-                raise DockerWorkExecutionUncertain("Docker worker exited but image cleanup is uncertain")
+                raise DockerWorkExecutionUncertain(
+                    "Docker worker exited but image cleanup is uncertain"
+                )
             attempt_image_id = None
             mcp_owner_stopped = True
-            return DockerWorkExecution(code, bytes(stdout), bytes(stderr))
+            return DockerWorkExecution(
+                code,
+                bytes(stdout),
+                bytes(stderr),
+                process_stopped=True,
+                container_removed=True,
+                image_removed=True,
+            )
         except TimeoutError:
             container_removed, image_removed = self._cleanup_failed_execution(
                 attempt_id, generation, container_id, attempt_image_tag

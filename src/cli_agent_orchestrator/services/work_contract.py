@@ -6,9 +6,9 @@ backend effect boundary. Revalidation authorizes only this admitted order agains
 its current durable grant; it does not reconstruct JWT scopes from stored rows.
 """
 
-from pathlib import Path
 import json
 import time
+from pathlib import Path
 
 from pydantic import ValidationError
 
@@ -76,9 +76,11 @@ class WorkContracts:
     def _contract(value):
         try:
             # Revalidate even model_copy/model_construct outputs, not just dicts.
-            payload = value.model_dump() if isinstance(
-                value, (EffectiveWorkContract, EffectiveWorkContractV2)
-            ) else value
+            payload = (
+                value.model_dump()
+                if isinstance(value, (EffectiveWorkContract, EffectiveWorkContractV2))
+                else value
+            )
             if not isinstance(payload, dict):
                 raise ValueError("contract must be an object")
             version = payload.get("schema_version", 1)
@@ -127,8 +129,7 @@ class WorkContracts:
     def _stored_contract(cls, connection, row):
         evidence = None
         if connection.execute(
-            "SELECT 1 FROM sqlite_schema WHERE type='table' "
-            "AND name='work_dispatch_v2_evidence'"
+            "SELECT 1 FROM sqlite_schema WHERE type='table' " "AND name='work_dispatch_v2_evidence'"
         ).fetchone():
             evidence = connection.execute(
                 "SELECT contract_json,contract_hash FROM work_dispatch_v2_evidence "
@@ -230,7 +231,22 @@ class WorkContracts:
             root = Path(resources.checkout_root).resolve(strict=True)
             if str(root) != resources.checkout_root or not root.is_dir():
                 raise ContractConflict("contract checkout must remain a canonical directory")
-            if not any(root.is_relative_to(Path(path)) for path in permissions.paths):
+            process_agent_step = (
+                isinstance(contract, EffectiveWorkContractV2)
+                and contract.operation_kind == "agent_step"
+            )
+            if process_agent_step and (
+                permissions.paths
+                or permissions.network
+                or permissions.artifacts
+                or resources.write_paths
+            ):
+                raise ContractConflict(
+                    "process agent-step contracts cannot grant workspace, network, or artifact access"
+                )
+            if not process_agent_step and not any(
+                root.is_relative_to(Path(path)) for path in permissions.paths
+            ):
                 raise AuthorityDenied("contract checkout exceeds its path permission")
             if resources.write_paths:
                 _, paths = WorkReservations._paths(root, resources.write_paths)

@@ -3,13 +3,13 @@
 The backend below is a test-only transport: no tmux process or provider CLI runs.
 """
 
-from concurrent.futures import ThreadPoolExecutor
 import asyncio
 import hashlib
 import multiprocessing
 import sqlite3
-from threading import Barrier, Event, Lock
 import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Event, Lock
 from types import SimpleNamespace
 
 import pytest
@@ -383,14 +383,18 @@ def test_unregistered_bubblewrap_rejection_precedes_dispatch_adapter_guard_and_e
     assert "attempt.sent" not in [
         event["event_type"] for event in context.repo.read_events(work["job_id"])["events"]
     ]
-    assert accounting(context.repo) == before == {
-        "held": 0,
-        "spent": 0,
-        "paths": 0,
-        "queued": 1,
-        "withdrawn": 0,
-        "sequence": 0,
-    }
+    assert (
+        accounting(context.repo)
+        == before
+        == {
+            "held": 0,
+            "spent": 0,
+            "paths": 0,
+            "queued": 1,
+            "withdrawn": 0,
+            "sequence": 0,
+        }
+    )
 
 
 def test_crash_after_committed_intent_keeps_reservations_without_restart_resend(context):

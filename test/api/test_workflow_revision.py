@@ -1,10 +1,10 @@
 """Conditional workflow editing uses exact source revisions, never last-writer-wins."""
 
-from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import multiprocessing
 import sqlite3
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 

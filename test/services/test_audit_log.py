@@ -422,6 +422,11 @@ class TestT9SyncVsNowait:
                 # mutation audit, emitted by the synchronous relationship service
                 # via write_audit_nowait (same path as the memory_* events).
                 "relationship_mutation",
+                # U5-B reconciliation outcomes. Registration precedes their
+                # emit sites because unlisted events are silently dropped.
+                "vault_reconcile_completed",
+                "vault_note_quarantined",
+                "vault_secret_quarantined",
             }
         )
 
@@ -450,7 +455,6 @@ class TestT9SyncVsNowait:
                 rf'_audit\(\s*\n?\s*"{ev}"', source
             ), f"{ev} missing _audit (nowait) call site"
 
-    @pytest.mark.skip(reason="memory_stored emit site in store() lands with the audit wiring unit")
     def test_memory_stored_uses_nowait(self):
         """``memory_stored`` is in NOWAIT set; the call site uses
         ``write_audit_nowait``.
@@ -507,9 +511,6 @@ class TestT10ReadOnlyCli:
             assert (flags & os.O_WRONLY) == 0
             assert (flags & os.O_RDWR) == 0
 
-    @pytest.mark.skip(
-        reason="U5 port: logs_cmd CLI deferred to avoid collision with memory.py edits"
-    )
     def test_cli_logs_command_rejects_malformed_date(self, audit_base, monkeypatch):
         from click.testing import CliRunner
 
@@ -521,9 +522,6 @@ class TestT10ReadOnlyCli:
         # Click's BadParameter exit code is 2.
         assert result.exit_code == 2
 
-    @pytest.mark.skip(
-        reason="U5 port: logs_cmd CLI deferred to avoid collision with memory.py edits"
-    )
     def test_cli_logs_command_reads_today_log(self, audit_base, monkeypatch):
         from click.testing import CliRunner
 
@@ -597,9 +595,6 @@ class TestRoundTrip:
 
 
 class TestU75PlanCases:
-    @pytest.mark.skip(
-        reason="U5 port: integration test depends on memory_stored audit call not yet ported"
-    )
     def test_store_writes_audit_log(self, audit_base, tmp_path, monkeypatch):
         """U7.5.a — full integration: ``MemoryService.store()`` produces a
         ``memory_stored`` audit-log entry on disk.
@@ -722,7 +717,6 @@ class TestU75PlanCases:
 
 
 class TestSettings:
-    @pytest.mark.skip(reason="U5 port: audit_log settings not yet added to settings_service.py")
     def test_settings_day_cap_default(self):
         from cli_agent_orchestrator.services.settings_service import (
             get_memory_settings,
@@ -765,7 +759,6 @@ class TestCrossCuttingSanitiserCallers:
             assert " " not in rec.getMessage()
             assert "\\n" in rec.getMessage()
 
-    @pytest.mark.skip(reason="U5 port: depends on U3 wiki_lint.py not yet ported")
     def test_lint_topic_log(self, caplog):
         from cli_agent_orchestrator.services import wiki_lint as wl
 

@@ -21,11 +21,11 @@ from cli_agent_orchestrator.models.memory import (
     KnowledgeScope,
 )
 from cli_agent_orchestrator.security.auth import Principal
-from cli_agent_orchestrator.services.secret_gate import scan_for_secrets
 from cli_agent_orchestrator.services.knowledge_policy import (
     KnowledgePolicy,
     redact_knowledge_content,
 )
+from cli_agent_orchestrator.services.secret_gate import scan_for_secrets
 from cli_agent_orchestrator.services.work_authority import WorkAuthority
 
 
@@ -567,11 +567,7 @@ class KnowledgeRevisions:
             )
             checkpoint = self._checkpoint(connection, scope, scope_id)
             now = self.clock()
-            if (
-                type(now) not in (int, float)
-                or not math.isfinite(now)
-                or not 0 < now < 1e15
-            ):
+            if type(now) not in (int, float) or not math.isfinite(now) or not 0 < now < 1e15:
                 raise ValueError("invalid knowledge clock")
             if cursor is None:
                 cursor_row = None
@@ -606,7 +602,10 @@ class KnowledgeRevisions:
                 for row in page_rows
             )
             if page_rows:
-                last_record_id, last_revision = page_rows[-1]["record_id"], page_rows[-1]["revision"]
+                last_record_id, last_revision = (
+                    page_rows[-1]["record_id"],
+                    page_rows[-1]["revision"],
+                )
             else:
                 last_record_id, last_revision = after_record_id, after_revision
             next_cursor = None

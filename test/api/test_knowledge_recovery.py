@@ -2,10 +2,9 @@
 
 import hashlib
 import time
+from test.api.test_knowledge_authority import authority, client  # noqa: F401
 
 import pytest
-
-from test.api.test_knowledge_authority import authority, client  # noqa: F401
 
 
 @pytest.mark.asyncio
@@ -38,7 +37,10 @@ async def test_recovery_pages_all_revisions_in_binary_keyset_order_with_opaque_c
         assert first.status_code == 200, first.text
         page = first.json()
         assert page["schema_version"] == 1
-        assert page["retention_policy"] == "immutable_history_tombstones_retain_metadata_cursor_ttl_only"
+        assert (
+            page["retention_policy"]
+            == "immutable_history_tombstones_retain_metadata_cursor_ttl_only"
+        )
         assert [(row["record_id"], row["revision"]) for row in page["revisions"]] == [
             ("B", 1),
             ("a", 1),
@@ -69,9 +71,7 @@ async def test_recovery_pages_all_revisions_in_binary_keyset_order_with_opaque_c
             },
         )
     assert second.status_code == 200, second.text
-    assert [(row["record_id"], row["revision"]) for row in second.json()["revisions"]] == [
-        ("a", 2)
-    ]
+    assert [(row["record_id"], row["revision"]) for row in second.json()["revisions"]] == [("a", 2)]
     assert second.json()["next_cursor"] is None
 
 
@@ -238,9 +238,9 @@ async def test_recovery_keeps_tombstone_metadata_and_ignores_other_scope_changes
         )
     assert continued.status_code == 200, continued.text
     tombstone = continued.json()["revisions"]
-    assert [(row["record_id"], row["revision"], row["tombstone"], row["content"]) for row in tombstone] == [
-        ("retired", 1, True, None)
-    ]
+    assert [
+        (row["record_id"], row["revision"], row["tombstone"], row["content"]) for row in tombstone
+    ] == [("retired", 1, True, None)]
 
 
 @pytest.mark.asyncio

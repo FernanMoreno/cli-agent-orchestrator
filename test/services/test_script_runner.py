@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import List, Optional
 
@@ -73,6 +74,12 @@ def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
     _migrate_workflow_run()
     _migrate_workflow_run_step()
+    # Manifest freeze exercises Git baseline capture, unrelated to the mocked
+    # subprocess lifecycle covered in this module. Avoid hashing the whole active
+    # workspace once cross-agent task artifacts are present.
+    monkeypatch.setattr(
+        script_runner.manifest_freeze, "build_manifest_json", lambda **_kwargs: None
+    )
     # Isolate the process-local registry between tests.
     from cli_agent_orchestrator.services import workflow_service
 
@@ -168,6 +175,7 @@ def _install_fake_spawn(monkeypatch: pytest.MonkeyPatch, process: _FakeProcess) 
     async def _fake_exec(*args, **kwargs):
         captured["args"] = args
         captured["env"] = kwargs.get("env")
+        captured["pass_fds"] = kwargs.get("pass_fds", ())
         return process
 
     monkeypatch.setattr(
@@ -175,6 +183,88 @@ def _install_fake_spawn(monkeypatch: pytest.MonkeyPatch, process: _FakeProcess) 
         _fake_exec,
     )
     return captured
+
+
+@pytest.mark.asyncio
+async def test_managed_run_capability_is_passed_by_inherited_fd_not_environment(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A script receives only the FD number in its constructed env, never the secret."""
+    import cli_agent_orchestrator.services.script_runner as runner
+
+    process = _FakeProcess(exit_rc=0)
+    captured = {}
+
+    async def fake_exec(*args, **kwargs):
+        env = kwargs["env"]
+        fd = int(env["CAO_WORKFLOW_AUTH_FD"])
+        captured["args"] = args
+        captured["env"] = dict(env)
+        captured["pass_fds"] = kwargs.get("pass_fds", ())
+        captured["credential"] = os.read(fd, 4096).decode("ascii")
+        return process
+
+    monkeypatch.setattr(runner.asyncio, "create_subprocess_exec", fake_exec)
+    credential = "opaque-run-capability-0123456789abcdef"
+    env = build_env("run-cap-fd", "1", {})
+
+    result = await runner._drive_process(
+        _make_record("run-cap-fd", process=None, generation="1"),
+        "/tmp/wf.py",
+        env,
+        run_credential=credential,
+    )
+
+    assert result.state == RunState.COMPLETED
+    assert captured["credential"] == credential
+    assert len(captured["pass_fds"]) == 1
+    assert captured["pass_fds"][0] == int(captured["env"]["CAO_WORKFLOW_AUTH_FD"])
+    assert credential not in captured["env"].values()
+    assert "CAO_WORKFLOW_AUTH_FD" not in env
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exit_rc", [0, 1])
+async def test_script_process_exit_does_not_settle_managed_work_pending_run(
+    monkeypatch: pytest.MonkeyPatch, exit_rc: int
+):
+    """A pending Work step remains live even if the orchestrating script exits."""
+    process = _FakeProcess(exit_rc=exit_rc, stderr=b"managed step pending")
+    _install_fake_spawn(monkeypatch, process)
+    record = _make_record("managed-script-pending", process=None, generation="1")
+    record.run_capability_required = True
+
+    class Run:
+        state = "running"
+        tier = "script"
+        generation = "1"
+        current_step_id = "step-a"
+
+    class Step:
+        step_id = "step-a"
+        state = "work_pending"
+        attempts = 1
+        output_json = None
+        error = "awaiting_authenticated_work_result"
+        terminal_id = None
+        call_fingerprint = "fingerprint"
+
+    monkeypatch.setattr(workflow_journal, "get_run", lambda _run_id: Run())
+    monkeypatch.setattr(workflow_journal, "get_steps", lambda _run_id: [Step()])
+    settled = []
+    monkeypatch.setattr(
+        workflow_journal,
+        "update_run_state",
+        lambda *args, **kwargs: settled.append((args, kwargs)),
+    )
+
+    result = await script_runner._drive_process(record, "/tmp/wf.py", build_env(record.run_id, "1"))
+
+    assert result.state == RunState.RUNNING
+    assert result.finished_at is None
+    assert result.steps[0].state == StepState.WORK_PENDING
+    assert result.steps[0].attempts == 1
+    assert settled == []
 
 
 # ---------------------------------------------------------------------------

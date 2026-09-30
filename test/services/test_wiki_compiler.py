@@ -177,9 +177,13 @@ class TestU17PlanCases:
         from cli_agent_orchestrator.clients.database import Base
         from cli_agent_orchestrator.services.memory_service import MemoryService
 
-        engine = create_engine(f"sqlite:///{tmp_path / 'metadata.db'}", connect_args={"check_same_thread": False})
+        engine = create_engine(
+            f"sqlite:///{tmp_path / 'metadata.db'}", connect_args={"check_same_thread": False}
+        )
         Base.metadata.create_all(bind=engine)
-        svc = MemoryService(base_dir=tmp_path / "memory", db_engine=engine)  # base_dir picked by service
+        svc = MemoryService(
+            base_dir=tmp_path / "memory", db_engine=engine
+        )  # base_dir picked by service
         ctx = {
             "terminal_id": "t1",
             "session_name": "s1",
@@ -793,7 +797,9 @@ class TestT10ModeFlagBypass:
         from cli_agent_orchestrator.clients.database import Base
         from cli_agent_orchestrator.services.memory_service import MemoryService
 
-        engine = create_engine(f"sqlite:///{tmp_path / 'metadata.db'}", connect_args={"check_same_thread": False})
+        engine = create_engine(
+            f"sqlite:///{tmp_path / 'metadata.db'}", connect_args={"check_same_thread": False}
+        )
         Base.metadata.create_all(bind=engine)
         svc = MemoryService(base_dir=tmp_path / "memory", db_engine=engine)
         ctx = {

@@ -1,36 +1,76 @@
 """Fail-closed checks for the Work MCP proxy isolation gate."""
 
 import json
-import sqlite3
 import os
 import platform
+import socket
+import sqlite3
 import subprocess
 import sys
-import time
-import socket
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
+from test.security.test_work_bubblewrap_bound_content import _bound_worker
 
 import pytest
 
+from cli_agent_orchestrator.services.work_docker_isolation_proof import (
+    issue_docker_runtime_isolation_proof,
+)
 from cli_agent_orchestrator.services.work_mcp_proxy import (
     WorkMcpProxy,
     WorkMcpProxyRejected,
     WorkMcpProxyUnavailable,
     WorkMcpProxyUncertain,
 )
-from cli_agent_orchestrator.services.work_docker_isolation_proof import (
-    issue_docker_runtime_isolation_proof,
-)
-from test.security.test_work_bubblewrap_bound_content import _bound_worker
 
 
 @pytest.fixture
 def short_proxy_root():
     with tempfile.TemporaryDirectory(prefix="wp-", dir="/tmp") as directory:
         yield Path(directory)
+
+
+def test_submit_result_mcp_request_allows_large_bounded_result_payload():
+    request = {
+        "jsonrpc": "2.0",
+        "id": "result-large",
+        "method": "tools/call",
+        "params": {
+            "name": "cao.work.submit_result",
+            "arguments": {
+                "schema_version": 1,
+                "status": "completed",
+                "output": {"text": "x" * 20000},
+            },
+        },
+    }
+    raw = json.dumps(request, separators=(",", ":"), ensure_ascii=False).encode("utf-8") + b"\n"
+
+    parsed = WorkMcpProxy._request(raw)
+
+    assert parsed["params"]["name"] == "cao.work.submit_result"
+    assert parsed["params"]["arguments"]["output"]["text"] == "x" * 20000
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        b'{"schema_version":1,"status":"completed","output":{"x":1,"x":2}}',
+        b'{"schema_version":1,"status":"completed","output":{"x":NaN}}',
+        b'{"schema_version":1,"status":"completed","output":{"x":Infinity}}',
+    ],
+)
+def test_submit_result_mcp_request_rejects_duplicate_keys_and_nonfinite_numbers(arguments):
+    raw = (
+        b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":'
+        b'{"name":"cao.work.submit_result","arguments":' + arguments + b"}}\n"
+    )
+
+    with pytest.raises(WorkMcpProxyRejected):
+        WorkMcpProxy._request(raw)
 
 
 _OPT_IN_WORKER = r"""
@@ -219,6 +259,7 @@ def test_revoke_closes_reserved_worker_endpoint_and_is_idempotent(tmp_path, shor
         contract_hash=binding.contract_hash,
         expires_at=time.time() + 30,
     )
+
     class LiveProof:
         def require_current(self, *_args):
             return None
@@ -226,9 +267,7 @@ def test_revoke_closes_reserved_worker_endpoint_and_is_idempotent(tmp_path, shor
     proxy._isolation_proof = LiveProof()
     proxy._secret = b"private"
     worker = socket.socket(fileno=os.dup(endpoint.worker_fd))
-    server = threading.Thread(
-        target=lambda: proxy.serve(binding.attempt_id, 1), daemon=True
-    )
+    server = threading.Thread(target=lambda: proxy.serve(binding.attempt_id, 1), daemon=True)
     server.start()
     try:
         proxy.revoke(binding.attempt_id, 1)
@@ -265,8 +304,11 @@ def test_revoke_waits_for_inflight_effect_and_prevents_later_effects(tmp_path, s
         upstream=upstream,
     )
     endpoint = proxy.create_bound_attempt(
-        attempt_id=binding.attempt_id, generation=1, expected_attempt_revision=1,
-        contract_hash=binding.contract_hash, expires_at=time.time() + 30,
+        attempt_id=binding.attempt_id,
+        generation=1,
+        expected_attempt_revision=1,
+        contract_hash=binding.contract_hash,
+        expires_at=time.time() + 30,
     )
     proxy._isolation_proof = LiveProof()
     proxy._secret = b"private"
@@ -300,12 +342,17 @@ def test_revoke_waits_for_inflight_effect_and_prevents_later_effects(tmp_path, s
         proxy.close()
     assert len(calls) == 1
     with repository.read_snapshot() as connection:
-        assert [row[0] for row in connection.execute(
-            "SELECT state FROM work_mcp_proxy_effect_events ORDER BY sequence"
-        )] == ["intent", "completed"]
+        assert [
+            row[0]
+            for row in connection.execute(
+                "SELECT state FROM work_mcp_proxy_effect_events ORDER BY sequence"
+            )
+        ] == ["intent", "completed"]
 
 
-def test_bound_proxy_issue_reserves_endpoint_without_secret_and_cannot_be_reissued(tmp_path, short_proxy_root):
+def test_bound_proxy_issue_reserves_endpoint_without_secret_and_cannot_be_reissued(
+    tmp_path, short_proxy_root
+):
     repository, binding, _, _ = _bound_worker(tmp_path)
     root = short_proxy_root
     calls = []
@@ -335,20 +382,25 @@ def test_bound_proxy_issue_reserves_endpoint_without_secret_and_cannot_be_reissu
     with repository.read_snapshot() as connection:
         assert connection.execute(
             "SELECT generation,attempt_revision,contract_hash FROM work_mcp_proxy_issues "
-            "WHERE attempt_id=?", (binding.attempt_id,)
+            "WHERE attempt_id=?",
+            (binding.attempt_id,),
         ).fetchone()[:] == (1, 1, binding.contract_hash)
     proxy.close()
     assert endpoint.worker_fd == -1
     assert list(root.iterdir()) == []
     replacement = WorkMcpProxy(
-        repository, endpoint_root=root,
+        repository,
+        endpoint_root=root,
         server_secret_factory=lambda: calls.append("replacement-secret") or b"other",
         upstream=lambda request, secret: {},
     )
     with pytest.raises(WorkMcpProxyRejected):
         replacement.create_bound_attempt(
-            attempt_id=binding.attempt_id, generation=1, expected_attempt_revision=1,
-            contract_hash=binding.contract_hash, expires_at=time.time() + 30,
+            attempt_id=binding.attempt_id,
+            generation=1,
+            expected_attempt_revision=1,
+            contract_hash=binding.contract_hash,
+            expires_at=time.time() + 30,
         )
     assert calls == []
 
@@ -363,7 +415,8 @@ def test_docker_attach_request_is_forwarded_through_the_reserved_work_proxy(
         repository,
         endpoint_root=short_proxy_root,
         server_secret_factory=lambda: b"server-only-secret",
-        upstream=lambda request, secret: calls.append((request, secret)) or {
+        upstream=lambda request, secret: calls.append((request, secret))
+        or {
             "jsonrpc": "2.0",
             "id": request["id"],
             "result": {"ok": True},
@@ -404,24 +457,31 @@ def test_docker_attach_request_is_forwarded_through_the_reserved_work_proxy(
     assert calls[0][1] == b"server-only-secret"
 
 
-def test_bound_proxy_without_activated_isolation_proof_never_calls_upstream(tmp_path, short_proxy_root):
+def test_bound_proxy_without_activated_isolation_proof_never_calls_upstream(
+    tmp_path, short_proxy_root
+):
     repository, binding, _, _ = _bound_worker(tmp_path)
     root = short_proxy_root
     calls = []
     proxy = WorkMcpProxy(
-        repository, endpoint_root=root,
+        repository,
+        endpoint_root=root,
         server_secret_factory=lambda: b"private",
-        upstream=lambda request, secret: calls.append((request, secret)) or {
-            "jsonrpc": "2.0", "id": request["id"], "result": {"ok": True}
-        },
+        upstream=lambda request, secret: calls.append((request, secret))
+        or {"jsonrpc": "2.0", "id": request["id"], "result": {"ok": True}},
     )
     endpoint = proxy.create_bound_attempt(
-        attempt_id=binding.attempt_id, generation=1, expected_attempt_revision=1,
-        contract_hash=binding.contract_hash, expires_at=time.time() + 30,
+        attempt_id=binding.attempt_id,
+        generation=1,
+        expected_attempt_revision=1,
+        contract_hash=binding.contract_hash,
+        expires_at=time.time() + 30,
     )
     client = socket.socket(fileno=os.dup(endpoint.worker_fd))
     try:
-        client.sendall(b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"Read","arguments":{}}}\n')
+        client.sendall(
+            b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"Read","arguments":{}}}\n'
+        )
         with pytest.raises(WorkMcpProxyRejected):
             proxy.serve_once(endpoint)
     finally:
@@ -458,12 +518,15 @@ def test_proxy_commits_effect_intent_before_upstream_without_holding_sqlite_writ
         assert transaction_depth == 0
         assert secret == b"private"
         with repository.read_snapshot() as connection:
-            assert connection.execute(
-                "SELECT state FROM work_mcp_proxy_effect_events "
-                "WHERE effect_id=(SELECT effect_id FROM work_mcp_proxy_effects "
-                "WHERE attempt_id=? ORDER BY created_at DESC LIMIT 1) ORDER BY sequence DESC LIMIT 1",
-                (binding.attempt_id,),
-            ).fetchone()[0] == "intent"
+            assert (
+                connection.execute(
+                    "SELECT state FROM work_mcp_proxy_effect_events "
+                    "WHERE effect_id=(SELECT effect_id FROM work_mcp_proxy_effects "
+                    "WHERE attempt_id=? ORDER BY created_at DESC LIMIT 1) ORDER BY sequence DESC LIMIT 1",
+                    (binding.attempt_id,),
+                ).fetchone()[0]
+                == "intent"
+            )
         calls.append(request)
         return {"jsonrpc": "2.0", "id": request["id"], "result": {"ok": True}}
 
@@ -474,8 +537,11 @@ def test_proxy_commits_effect_intent_before_upstream_without_holding_sqlite_writ
         upstream=upstream,
     )
     endpoint = proxy.create_bound_attempt(
-        attempt_id=binding.attempt_id, generation=1, expected_attempt_revision=1,
-        contract_hash=binding.contract_hash, expires_at=time.time() + 30,
+        attempt_id=binding.attempt_id,
+        generation=1,
+        expected_attempt_revision=1,
+        contract_hash=binding.contract_hash,
+        expires_at=time.time() + 30,
     )
     proxy._isolation_proof = LiveProof()
     proxy._secret = b"private"
@@ -540,8 +606,11 @@ def test_proxy_marks_ambiguous_upstream_failure_uncertain_and_recovery_does_not_
         upstream=upstream,
     )
     endpoint = proxy.create_bound_attempt(
-        attempt_id=binding.attempt_id, generation=1, expected_attempt_revision=1,
-        contract_hash=binding.contract_hash, expires_at=time.time() + 30,
+        attempt_id=binding.attempt_id,
+        generation=1,
+        expected_attempt_revision=1,
+        contract_hash=binding.contract_hash,
+        expires_at=time.time() + 30,
     )
     proxy._isolation_proof = LiveProof()
     proxy._secret = b"private"
@@ -556,9 +625,12 @@ def test_proxy_marks_ambiguous_upstream_failure_uncertain_and_recovery_does_not_
     finally:
         client.close()
     with repository.read_snapshot() as connection:
-        assert [row[0] for row in connection.execute(
-            "SELECT state FROM work_mcp_proxy_effect_events ORDER BY sequence"
-        )] == ["intent", "uncertain"]
+        assert [
+            row[0]
+            for row in connection.execute(
+                "SELECT state FROM work_mcp_proxy_effect_events ORDER BY sequence"
+            )
+        ] == ["intent", "uncertain"]
     assert calls == ["effect may have happened"]
 
 
@@ -576,13 +648,15 @@ def test_proxy_serves_sequential_calls_and_does_not_replay_identical_request(
         repository,
         endpoint_root=short_proxy_root,
         server_secret_factory=lambda: b"private",
-        upstream=lambda request, _secret: calls.append(request) or {
-            "jsonrpc": "2.0", "id": request["id"], "result": {"ok": True}
-        },
+        upstream=lambda request, _secret: calls.append(request)
+        or {"jsonrpc": "2.0", "id": request["id"], "result": {"ok": True}},
     )
     endpoint = proxy.create_bound_attempt(
-        attempt_id=binding.attempt_id, generation=1, expected_attempt_revision=1,
-        contract_hash=binding.contract_hash, expires_at=time.time() + 30,
+        attempt_id=binding.attempt_id,
+        generation=1,
+        expected_attempt_revision=1,
+        contract_hash=binding.contract_hash,
+        expires_at=time.time() + 30,
     )
     proxy._isolation_proof = LiveProof()
     proxy._secret = b"private"
@@ -591,9 +665,7 @@ def test_proxy_serves_sequential_calls_and_does_not_replay_identical_request(
         b'{"jsonrpc":"2.0","id":1,"method":"tools/call",'
         b'"params":{"name":"Read","arguments":{}}}\n'
     )
-    server = threading.Thread(
-        target=lambda: proxy.serve(binding.attempt_id, 1), daemon=True
-    )
+    server = threading.Thread(target=lambda: proxy.serve(binding.attempt_id, 1), daemon=True)
     reader = client.makefile("rb")
     server.start()
     try:
@@ -608,10 +680,79 @@ def test_proxy_serves_sequential_calls_and_does_not_replay_identical_request(
     assert not server.is_alive()
     assert len(calls) == 1
     with repository.read_snapshot() as connection:
-        assert connection.execute(
-            "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=?",
-            (binding.attempt_id,),
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=?",
+                (binding.attempt_id,),
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_proxy_accepts_monotonic_attempt_revision_progress_after_issue(tmp_path, short_proxy_root):
+    repository, binding, _, _ = _bound_worker(tmp_path)
+    calls = []
+
+    class LiveProof:
+        def require_current(self, *_args):
+            return None
+
+    def upstream(request, _secret):
+        calls.append(request)
+        if len(calls) == 1:
+            with repository.transaction() as connection:
+                connection.execute(
+                    "UPDATE work_attempts SET state='acknowledged',revision=revision+1 WHERE id=?",
+                    (binding.attempt_id,),
+                )
+        return {"jsonrpc": "2.0", "id": request["id"], "result": {"ok": True}}
+
+    proxy = WorkMcpProxy(
+        repository,
+        endpoint_root=short_proxy_root,
+        server_secret_factory=lambda: b"private",
+        upstream=upstream,
+    )
+    endpoint = proxy.create_bound_attempt(
+        attempt_id=binding.attempt_id,
+        generation=1,
+        expected_attempt_revision=1,
+        contract_hash=binding.contract_hash,
+        expires_at=time.time() + 30,
+    )
+    proxy._isolation_proof = LiveProof()
+    proxy._secret = b"private"
+    client = socket.socket(fileno=os.dup(endpoint.worker_fd))
+    reader = client.makefile("rb")
+    server = threading.Thread(target=lambda: proxy.serve(binding.attempt_id, 1), daemon=True)
+    server.start()
+    try:
+        for request_id in ("before-ack", "after-ack"):
+            client.sendall(
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "method": "tools/call",
+                        "params": {"name": "Read", "arguments": {}},
+                    },
+                    separators=(",", ":"),
+                ).encode()
+                + b"\n"
+            )
+            assert json.loads(reader.readline())["id"] == request_id
+        with repository.read_snapshot() as connection:
+            row = connection.execute(
+                "SELECT state,revision FROM work_attempts WHERE id=?", (binding.attempt_id,)
+            ).fetchone()
+        assert tuple(row) == ("acknowledged", 2)
+    finally:
+        reader.close()
+        client.close()
+        proxy.close()
+    server.join(timeout=2)
+    assert not server.is_alive()
+    assert len(calls) == 2
 
 
 def test_docker_attach_request_is_forwarded_through_the_reserved_work_proxy(
@@ -628,9 +769,8 @@ def test_docker_attach_request_is_forwarded_through_the_reserved_work_proxy(
         repository,
         endpoint_root=short_proxy_root,
         server_secret_factory=lambda: b"docker-private",
-        upstream=lambda request, secret: calls.append((request, secret)) or {
-            "jsonrpc": "2.0", "id": request["id"], "result": {"accepted": True}
-        },
+        upstream=lambda request, secret: calls.append((request, secret))
+        or {"jsonrpc": "2.0", "id": request["id"], "result": {"accepted": True}},
     )
     endpoint = proxy.create_bound_attempt(
         attempt_id=binding.attempt_id,
@@ -656,9 +796,7 @@ def test_docker_attach_request_is_forwarded_through_the_reserved_work_proxy(
         inspect_current=lambda: dict(docker_identity),
     )
     proxy.activate_with_isolation_proof(endpoint, proof)
-    server = threading.Thread(
-        target=lambda: proxy.serve(binding.attempt_id, 1), daemon=True
-    )
+    server = threading.Thread(target=lambda: proxy.serve(binding.attempt_id, 1), daemon=True)
     server.start()
     request = (
         b'{"jsonrpc":"2.0","id":"docker-1","method":"tools/call",'
@@ -667,7 +805,9 @@ def test_docker_attach_request_is_forwarded_through_the_reserved_work_proxy(
     try:
         response = proxy.forward_from_docker(endpoint, request)
         assert json.loads(response) == {
-            "jsonrpc": "2.0", "id": "docker-1", "result": {"accepted": True}
+            "jsonrpc": "2.0",
+            "id": "docker-1",
+            "result": {"accepted": True},
         }
     finally:
         proxy.close()
@@ -703,13 +843,19 @@ def test_proxy_recovery_turns_open_intent_into_uncertain(tmp_path):
     assert proxy.recover_incomplete_effects(binding.attempt_id, 1) == 1
     assert proxy.recover_incomplete_effects(binding.attempt_id, 1) == 0
     with repository.read_snapshot() as connection:
-        assert [row[0] for row in connection.execute(
-            "SELECT state FROM work_mcp_proxy_effect_events "
-            "WHERE effect_id='e1000000000000000000000000000000' ORDER BY sequence"
-        )] == ["intent", "uncertain"]
+        assert [
+            row[0]
+            for row in connection.execute(
+                "SELECT state FROM work_mcp_proxy_effect_events "
+                "WHERE effect_id='e1000000000000000000000000000000' ORDER BY sequence"
+            )
+        ] == ["intent", "uncertain"]
     proxy.reconcile_effect("e1000000000000000000000000000000", "operator confirmed no replay")
     with repository.read_snapshot() as connection:
-        assert connection.execute(
-            "SELECT state,resolution_sha256 FROM work_mcp_proxy_effect_events "
-            "WHERE effect_id='e1000000000000000000000000000000' ORDER BY sequence DESC LIMIT 1"
-        ).fetchone()[0] == "reconciled"
+        assert (
+            connection.execute(
+                "SELECT state,resolution_sha256 FROM work_mcp_proxy_effect_events "
+                "WHERE effect_id='e1000000000000000000000000000000' ORDER BY sequence DESC LIMIT 1"
+            ).fetchone()[0]
+            == "reconciled"
+        )

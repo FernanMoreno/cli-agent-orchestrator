@@ -2,7 +2,7 @@
 
 **Feature Branch**: `002-normalize-line-endings`
 **Created**: 2026-09-27
-**Status**: Draft
+**Status**: Completed — normalization and LF policy; historical validation recorded in tasks.md
 **Input**: User description: "Normalize line endings (CRLF to LF) of 97 dirty working-tree files to match HEAD so git diff --check passes; no semantic change."
 
 ## User Scenarios & Testing *(mandatory)*

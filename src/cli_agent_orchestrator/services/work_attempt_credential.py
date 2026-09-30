@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import fcntl
 import hashlib
 import hmac
-import fcntl
 import os
 import secrets
 import sqlite3
 import stat
 import time
+from dataclasses import dataclass, field
 
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.services.work_authority import AuthorityDenied
@@ -68,6 +68,7 @@ class WorkTaskReceiverCredentialContext:
     delivery_id: str
     delivery_hash: str
     expires_at: float
+    binding_id: str | None = None
 
 
 class WorkAttemptCredentials:
@@ -89,7 +90,9 @@ class WorkAttemptCredentials:
     @staticmethod
     def _require_transaction(connection: sqlite3.Connection) -> None:
         if not isinstance(connection, sqlite3.Connection) or not connection.in_transaction:
-            raise WorkAttemptCredentialRejected("credential operation requires a caller transaction")
+            raise WorkAttemptCredentialRejected(
+                "credential operation requires a caller transaction"
+            )
         main = next(
             (row[2] for row in connection.execute("PRAGMA database_list") if row[1] == "main"),
             None,
@@ -119,7 +122,9 @@ class WorkAttemptCredentials:
             )
             recovery = self.repository.assert_execution_allowed(connection)
         except (AuthorityDenied, ContractConflict, KeyError, TypeError, ValueError) as error:
-            raise WorkAttemptCredentialRejected("attempt binding is not currently authorized") from error
+            raise WorkAttemptCredentialRejected(
+                "attempt binding is not currently authorized"
+            ) from error
         attempt = connection.execute(
             "SELECT state,revision,lease_expires_at FROM work_attempts WHERE id=? AND generation=?",
             (binding.attempt_id, binding.generation),
@@ -127,8 +132,7 @@ class WorkAttemptCredentials:
         if (
             current != binding
             or attempt is None
-            or (attempt["state"], attempt["revision"])
-            != ("sent", expected_attempt_revision)
+            or (attempt["state"], attempt["revision"]) != ("sent", expected_attempt_revision)
             or attempt["lease_expires_at"] <= issued_at
         ):
             raise WorkAttemptCredentialRejected("credential requires this exact sent attempt")
@@ -138,6 +142,7 @@ class WorkAttemptCredentials:
         secret = secrets.token_bytes(32)
         digest = hashlib.sha256(secret).hexdigest()
         receiver_secret = None
+        workflow_receiver_binding = None
         receiver_origin = connection.execute(
             "SELECT * FROM work_child_origin_bindings "
             "WHERE child_attempt_id=? AND child_generation=?",
@@ -150,6 +155,24 @@ class WorkAttemptCredentials:
                 connection, receiver_origin
             )
             receiver_secret = secrets.token_bytes(32)
+        else:
+            from cli_agent_orchestrator.services.work_origin import WorkOrigins
+
+            workflow_origins = WorkOrigins(self.repository)
+            workflow_receiver_binding = workflow_origins._workflow_binding_for_attempt(
+                connection,
+                attempt_id=binding.attempt_id,
+                generation=binding.generation,
+                work_item_id=binding.work_item_id,
+            )
+            if workflow_receiver_binding is not None:
+                workflow_origins._require_workflow_receiver_action(
+                    connection, workflow_receiver_binding, action="task_received"
+                )
+                workflow_origins._require_workflow_receiver_action(
+                    connection, workflow_receiver_binding, action="task_result"
+                )
+                receiver_secret = secrets.token_bytes(32)
         try:
             connection.execute(
                 """INSERT INTO work_attempt_credentials
@@ -203,6 +226,29 @@ class WorkAttemptCredentials:
                         issued_at,
                     ),
                 )
+            elif workflow_receiver_binding is not None and receiver_secret is not None:
+                self.repository._record_workflow_step_receiver_credential(
+                    connection,
+                    binding_id=workflow_receiver_binding.binding_id,
+                    attempt_id=binding.attempt_id,
+                    generation=binding.generation,
+                    schema_version=1,
+                    job_id=binding.job_id,
+                    work_item_id=binding.work_item_id,
+                    receiver_subject_id=workflow_receiver_binding.receiver_subject_ref.subject_id,
+                    receiver_subject_revision=workflow_receiver_binding.receiver_subject_ref.revision,
+                    receiver_authorization_revision=workflow_receiver_binding.receiver_authorization_ref.revision,
+                    receiver_grant_id=workflow_receiver_binding.receiver_grant_id,
+                    receiver_grant_revision=workflow_receiver_binding.receiver_grant_revision,
+                    installation_uuid=recovery.installation_uuid,
+                    attempt_revision=expected_attempt_revision,
+                    lease_expires_at=attempt["lease_expires_at"],
+                    expires_at=expires_at,
+                    delivery_id=workflow_receiver_binding.delivery_id,
+                    delivery_hash=workflow_receiver_binding.delivery_hash,
+                    credential_sha256=hashlib.sha256(receiver_secret).hexdigest(),
+                    issued_at=issued_at,
+                )
         except sqlite3.IntegrityError as error:
             raise WorkAttemptCredentialConflict(
                 "attempt or receiver credential issue is already consumed or invalid"
@@ -221,13 +267,17 @@ class WorkAttemptCredentials:
         secret: bytes,
         *,
         now: float | None = None,
+        allow_finished: bool = False,
     ) -> WorkAttemptCredentialContext:
         """Authenticate the bearer and recheck installation, grant, attempt and lease."""
         self._require_transaction(connection)
         if type(secret) is not bytes or len(secret) != 32:
             raise WorkAttemptCredentialRejected("attempt credential is invalid")
         return self.authenticate_digest_in_transaction(
-            connection, hashlib.sha256(secret).hexdigest(), now=now
+            connection,
+            hashlib.sha256(secret).hexdigest(),
+            now=now,
+            allow_finished=allow_finished,
         )
 
     def authenticate_digest_in_transaction(
@@ -236,6 +286,7 @@ class WorkAttemptCredentials:
         digest: str,
         *,
         now: float | None = None,
+        allow_finished: bool = False,
     ) -> WorkAttemptCredentialContext:
         """Revalidate a digest retained only in a sealed server context."""
         self._require_transaction(connection)
@@ -260,7 +311,9 @@ class WorkAttemptCredentials:
                 connection, row["attempt_id"], generation=row["generation"]
             )
         except (AuthorityDenied, ContractConflict, KeyError, TypeError, ValueError) as error:
-            raise WorkAttemptCredentialRejected("attempt credential authority is no longer live") from error
+            raise WorkAttemptCredentialRejected(
+                "attempt credential authority is no longer live"
+            ) from error
         attempt = connection.execute(
             "SELECT state,revision,lease_expires_at FROM work_attempts WHERE id=? AND generation=?",
             (row["attempt_id"], row["generation"]),
@@ -274,7 +327,12 @@ class WorkAttemptCredentials:
             or binding.grant_revision != row["grant_revision"]
             or binding.contract_hash != row["contract_hash"]
             or attempt is None
-            or attempt["state"] not in {"sent", "acknowledged", "running"}
+            or attempt["state"]
+            not in (
+                {"sent", "acknowledged", "running", "finished"}
+                if allow_finished
+                else {"sent", "acknowledged", "running"}
+            )
             or attempt["revision"] < row["attempt_revision"]
             or attempt["lease_expires_at"] != row["lease_expires_at"]
             or row["expires_at"] > row["lease_expires_at"]
@@ -300,6 +358,7 @@ class WorkAttemptCredentials:
         secret: bytes,
         *,
         now: float | None = None,
+        allow_finished: bool = False,
     ) -> WorkTaskReceiverCredentialContext:
         """Authenticate receiver role separately from the attempt's executor."""
         self._require_transaction(connection)
@@ -314,6 +373,13 @@ class WorkAttemptCredentials:
             "SELECT * FROM work_task_receiver_credentials WHERE credential_sha256=?",
             (digest,),
         ).fetchone()
+        if row is None:
+            return self._authenticate_workflow_receiver_in_transaction(
+                connection,
+                digest,
+                checked_at=checked_at,
+                allow_finished=allow_finished,
+            )
         if row is None or not hmac.compare_digest(row["credential_sha256"], digest):
             raise WorkAttemptCredentialRejected("receiver credential is unknown")
         attempt_row = connection.execute(
@@ -324,7 +390,10 @@ class WorkAttemptCredentials:
         if attempt_row is None:
             raise WorkAttemptCredentialRejected("receiver attempt binding is unavailable")
         attempt = self.authenticate_digest_in_transaction(
-            connection, attempt_row["credential_sha256"], now=checked_at
+            connection,
+            attempt_row["credential_sha256"],
+            now=checked_at,
+            allow_finished=allow_finished,
         )
         origin = connection.execute(
             "SELECT * FROM work_child_origin_bindings WHERE child_attempt_id=? "
@@ -349,8 +418,7 @@ class WorkAttemptCredentials:
             or attempt.generation != row["generation"]
             or attempt.grant_id != origin["child_grant_id"]
             or attempt.grant_revision != origin["child_grant_revision"]
-            or (row["job_id"], row["work_item_id"])
-            != (attempt.job_id, attempt.work_item_id)
+            or (row["job_id"], row["work_item_id"]) != (attempt.job_id, attempt.work_item_id)
             or (
                 row["receiver_subject_id"],
                 row["receiver_subject_revision"],
@@ -392,6 +460,121 @@ class WorkAttemptCredentials:
             expires_at=row["expires_at"],
         )
 
+    def _authenticate_workflow_receiver_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        digest: str,
+        *,
+        checked_at: float,
+        allow_finished: bool,
+    ) -> WorkTaskReceiverCredentialContext:
+        row = connection.execute(
+            "SELECT * FROM work_workflow_step_receiver_credentials " "WHERE credential_sha256=?",
+            (digest,),
+        ).fetchone()
+        if row is None or not hmac.compare_digest(row["credential_sha256"], digest):
+            raise WorkAttemptCredentialRejected("receiver credential is unknown")
+        attempt_row = connection.execute(
+            "SELECT credential_sha256 FROM work_attempt_credentials "
+            "WHERE attempt_id=? AND generation=?",
+            (row["attempt_id"], row["generation"]),
+        ).fetchone()
+        if attempt_row is None:
+            raise WorkAttemptCredentialRejected("workflow receiver attempt is unavailable")
+        attempt = self.authenticate_digest_in_transaction(
+            connection,
+            attempt_row["credential_sha256"],
+            now=checked_at,
+            allow_finished=allow_finished,
+        )
+        from cli_agent_orchestrator.services.work_origin import WorkOrigins
+
+        workflow_origins = WorkOrigins(self.repository)
+        try:
+            binding = workflow_origins._workflow_binding_for_attempt(
+                connection,
+                attempt_id=row["attempt_id"],
+                generation=row["generation"],
+                work_item_id=row["work_item_id"],
+            )
+            if binding is None:
+                raise WorkAttemptCredentialRejected("workflow receiver binding is unavailable")
+            workflow_origins._require_workflow_receiver_action(
+                connection, binding, action="task_received"
+            )
+            workflow_origins._require_workflow_receiver_action(
+                connection, binding, action="task_result"
+            )
+        except WorkAttemptCredentialRejected:
+            raise
+        except Exception as error:
+            raise WorkAttemptCredentialRejected(
+                "workflow receiver authority is no longer live"
+            ) from error
+        live_attempt = connection.execute(
+            "SELECT state,revision,lease_expires_at FROM work_attempts "
+            "WHERE id=? AND generation=?",
+            (row["attempt_id"], row["generation"]),
+        ).fetchone()
+        allowed_states = {"sent", "acknowledged", "running"}
+        if allow_finished:
+            allowed_states.add("finished")
+        if (
+            attempt.attempt_id != row["attempt_id"]
+            or attempt.generation != row["generation"]
+            or attempt.job_id != row["job_id"]
+            or attempt.work_item_id != row["work_item_id"]
+            or attempt.grant_id != binding.grant_id
+            or attempt.grant_revision != binding.grant_revision
+            or attempt.contract_hash != binding.contract_hash
+            or binding.binding_id != row["binding_id"]
+            or (binding.work_attempt_id, binding.work_generation, binding.work_item_id)
+            != (row["attempt_id"], row["generation"], row["work_item_id"])
+            or (
+                row["receiver_subject_id"],
+                row["receiver_subject_revision"],
+                row["receiver_authorization_revision"],
+                row["receiver_grant_id"],
+                row["receiver_grant_revision"],
+                row["delivery_id"],
+                row["delivery_hash"],
+            )
+            != (
+                binding.receiver_subject_ref.subject_id,
+                binding.receiver_subject_ref.revision,
+                binding.receiver_authorization_ref.revision,
+                binding.receiver_grant_id,
+                binding.receiver_grant_revision,
+                binding.delivery_id,
+                binding.delivery_hash,
+            )
+            or row["installation_uuid"] != attempt.installation_uuid
+            or row["expires_at"] != attempt.expires_at
+            or live_attempt is None
+            or live_attempt["state"] not in allowed_states
+            or row["attempt_revision"] > live_attempt["revision"]
+            or row["lease_expires_at"] != live_attempt["lease_expires_at"]
+            or row["delivery_id"] != binding.delivery_id
+            or row["delivery_hash"] != binding.delivery_hash
+            or min(row["expires_at"], row["lease_expires_at"]) <= checked_at
+        ):
+            raise WorkAttemptCredentialRejected("workflow receiver credential is stale")
+        return WorkTaskReceiverCredentialContext(
+            attempt_id=row["attempt_id"],
+            generation=row["generation"],
+            job_id=row["job_id"],
+            work_item_id=row["work_item_id"],
+            receiver_subject_id=row["receiver_subject_id"],
+            receiver_subject_revision=row["receiver_subject_revision"],
+            receiver_authorization_revision=row["receiver_authorization_revision"],
+            receiver_grant_id=row["receiver_grant_id"],
+            receiver_grant_revision=row["receiver_grant_revision"],
+            delivery_id=row["delivery_id"],
+            delivery_hash=row["delivery_hash"],
+            expires_at=row["expires_at"],
+            binding_id=row["binding_id"],
+        )
+
 
 def create_attempt_credential_descriptor(secret: bytes) -> int:
     """Place the bearer in a sealed, close-on-exec anonymous descriptor."""
@@ -409,7 +592,10 @@ def create_attempt_credential_descriptor(secret: bytes) -> int:
             | getattr(fcntl, "F_SEAL_SEAL", 0x0001)
         )
         fcntl.fcntl(descriptor, getattr(fcntl, "F_ADD_SEALS", 1033), required_seals)
-        if fcntl.fcntl(descriptor, getattr(fcntl, "F_GET_SEALS", 1034)) & required_seals != required_seals:
+        if (
+            fcntl.fcntl(descriptor, getattr(fcntl, "F_GET_SEALS", 1034)) & required_seals
+            != required_seals
+        ):
             raise OSError("private credential descriptor could not be sealed")
         os.lseek(descriptor, 0, os.SEEK_SET)
         return descriptor
@@ -434,10 +620,16 @@ def validate_attempt_credential_descriptor(descriptor: int) -> None:
     try:
         identity = os.fstat(descriptor)
         seals = fcntl.fcntl(descriptor, getattr(fcntl, "F_GET_SEALS", 1034))
-        if not stat.S_ISREG(identity.st_mode) or identity.st_size != 32 or seals & required_seals != required_seals:
+        if (
+            not stat.S_ISREG(identity.st_mode)
+            or identity.st_size != 32
+            or seals & required_seals != required_seals
+        ):
             raise OSError("private credential descriptor identity is not sealed")
     except OSError as error:
-        raise WorkAttemptCredentialRejected("private credential descriptor cannot be verified") from error
+        raise WorkAttemptCredentialRejected(
+            "private credential descriptor cannot be verified"
+        ) from error
 
 
 def read_attempt_credential_descriptor(descriptor: int) -> bytes:
@@ -446,7 +638,9 @@ def read_attempt_credential_descriptor(descriptor: int) -> bytes:
     try:
         secret = os.pread(descriptor, 33, 0)
     except OSError as error:
-        raise WorkAttemptCredentialRejected("private credential descriptor cannot be read") from error
+        raise WorkAttemptCredentialRejected(
+            "private credential descriptor cannot be read"
+        ) from error
     if len(secret) != 32:
         raise WorkAttemptCredentialRejected("private credential descriptor content is invalid")
     return secret

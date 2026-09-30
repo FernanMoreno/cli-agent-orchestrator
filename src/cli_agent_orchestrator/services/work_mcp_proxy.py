@@ -22,30 +22,32 @@ only after the exact worker FD and durable setup ACK are proven.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
 import math
 import os
-from pathlib import Path
 import socket
 import sqlite3
 import threading
 import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 from uuid import uuid4
 
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_contract import EffectiveWorkContractV2
+from cli_agent_orchestrator.models.work_origin import MAX_WORKFLOW_STEP_RESULT_BYTES
 from cli_agent_orchestrator.services.work_bubblewrap_isolation_proof import (
     WorkBubblewrapRuntimeIsolationProof,
 )
+from cli_agent_orchestrator.services.work_contract import WorkContracts
 from cli_agent_orchestrator.services.work_docker_isolation_proof import (
     WorkDockerRuntimeIsolationProof,
 )
-from cli_agent_orchestrator.services.work_contract import WorkContracts
 
 _MAX_REQUEST_BYTES = 16384
+_MAX_SUBMIT_RESULT_REQUEST_BYTES = 3 * MAX_WORKFLOW_STEP_RESULT_BYTES + 4096
 _MAX_RESPONSE_BYTES = 65536
 _SOCKET_TIMEOUT_SECONDS = 5.0
 
@@ -371,7 +373,7 @@ class WorkMcpProxy:
 
     @staticmethod
     def _request(raw: bytes) -> dict:
-        if not raw.endswith(b"\n") or len(raw) > _MAX_REQUEST_BYTES:
+        if not raw.endswith(b"\n") or len(raw) > _MAX_SUBMIT_RESULT_REQUEST_BYTES:
             raise WorkMcpProxyRejected("invalid bounded proxy request")
 
         def unique_pairs(pairs):
@@ -388,7 +390,7 @@ class WorkMcpProxy:
                 object_pairs_hook=unique_pairs,
                 parse_constant=lambda _: (_ for _ in ()).throw(ValueError()),
             )
-        except (UnicodeError, ValueError, TypeError) as exc:
+        except (UnicodeError, ValueError, TypeError, RecursionError) as exc:
             raise WorkMcpProxyRejected("invalid JSON-RPC request") from exc
         if (
             type(value) is not dict
@@ -405,13 +407,20 @@ class WorkMcpProxy:
             or type(value["params"]["arguments"]) is not dict
         ):
             raise WorkMcpProxyRejected("unsupported or invalid JSON-RPC request")
+        maximum = (
+            _MAX_SUBMIT_RESULT_REQUEST_BYTES
+            if value["params"]["name"] == "cao.work.submit_result"
+            else _MAX_REQUEST_BYTES
+        )
+        if len(raw) > maximum:
+            raise WorkMcpProxyRejected("proxy request exceeds its tool-specific byte bound")
         return value
 
     @staticmethod
     def _read_request(client: socket.socket) -> dict:
         chunks = bytearray()
-        while len(chunks) <= _MAX_REQUEST_BYTES:
-            chunk = client.recv(_MAX_REQUEST_BYTES + 1 - len(chunks))
+        while len(chunks) <= _MAX_SUBMIT_RESULT_REQUEST_BYTES:
+            chunk = client.recv(_MAX_SUBMIT_RESULT_REQUEST_BYTES + 1 - len(chunks))
             if not chunk:
                 break
             chunks.extend(chunk)
@@ -492,6 +501,17 @@ class WorkMcpProxy:
                         "WHERE id=? AND generation=?",
                         (attempt_id, generation),
                     ).fetchone()
+                    receiver_tool = request["params"]["name"] in {
+                        "cao.work.task_received",
+                        "cao.work.submit_result",
+                    }
+                    allowed_states = {"sent", "acknowledged", "running"}
+                    if (
+                        receiver_tool
+                        and isinstance(current.contract, EffectiveWorkContractV2)
+                        and current.contract.operation_kind == "agent_step"
+                    ):
+                        allowed_states.add("finished")
                     issue = connection.execute(
                         "SELECT generation,attempt_revision,contract_hash,expires_at "
                         "FROM work_mcp_proxy_issues WHERE attempt_id=?",
@@ -500,8 +520,8 @@ class WorkMcpProxy:
                     if (
                         current.contract_hash != contract_hash
                         or attempt is None
-                        or attempt["state"] not in {"sent", "acknowledged", "running"}
-                        or attempt["revision"] != revision
+                        or attempt["state"] not in allowed_states
+                        or attempt["revision"] < revision
                         or issue is None
                         or tuple(issue) != (generation, revision, contract_hash, expires_at)
                         or min(attempt["lease_expires_at"], expires_at) <= time.time()

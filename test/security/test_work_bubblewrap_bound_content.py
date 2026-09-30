@@ -2,14 +2,6 @@
 
 import errno
 import os
-
-import pytest
-
-from cli_agent_orchestrator.services import work_bubblewrap_composition as composition
-from cli_agent_orchestrator.services.work_executable_content import WorkExecutableContent
-from cli_agent_orchestrator.services.work_elf_identity import identify_static_executable
-from cli_agent_orchestrator.services.work_bubblewrap_setup_intent import WorkBubblewrapSetupIntent
-from cli_agent_orchestrator.services.work_mcp_proxy import WorkMcpProxy
 from test.clients.test_work_bubblewrap_process_identity import _identity
 from test.security.test_work_bubblewrap_composition import (
     _TRUSTED_BWRAP_SHA256,
@@ -18,6 +10,14 @@ from test.security.test_work_bubblewrap_composition import (
     _real_bubblewrap,
 )
 from test.services.test_work_contract_binding import bind, context
+
+import pytest
+
+from cli_agent_orchestrator.services import work_bubblewrap_composition as composition
+from cli_agent_orchestrator.services.work_bubblewrap_setup_intent import WorkBubblewrapSetupIntent
+from cli_agent_orchestrator.services.work_elf_identity import identify_static_executable
+from cli_agent_orchestrator.services.work_executable_content import WorkExecutableContent
+from cli_agent_orchestrator.services.work_mcp_proxy import WorkMcpProxy
 
 
 def _bound_worker(tmp_path):
@@ -292,7 +292,7 @@ def test_recorded_bound_launch_reports_uncertainty_after_go_write(tmp_path, monk
     repository, binding, _, identity = _bound_worker(tmp_path)
     original_release = WorkBubblewrapSetupIntent.release_if_current
 
-    def fail_after_go(self, evidence, *, expected_attempt_revision, release):
+    def fail_after_go(self, evidence, *, expected_attempt_revision, release, authorize):
         def release_then_fail():
             release()
             raise OSError("injected failure after GO write")
@@ -302,6 +302,7 @@ def test_recorded_bound_launch_reports_uncertainty_after_go_write(tmp_path, monk
             evidence,
             expected_attempt_revision=expected_attempt_revision,
             release=release_then_fail,
+            authorize=authorize,
         )
 
     monkeypatch.setattr(WorkBubblewrapSetupIntent, "release_if_current", fail_after_go)

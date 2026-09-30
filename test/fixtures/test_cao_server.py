@@ -15,19 +15,19 @@ import contextlib
 import shutil
 import time
 from pathlib import Path
-from unittest.mock import Mock
 from test.conftest import mint_test_token
 from test.fixtures.cao_server import (
     AuthCaoServer,
     CaoServer,
-    _JWKSServer,
     _fixture_health_timeout,
+    _JWKSServer,
     _pick_free_port,
     _seed_omp_e2e_state,
     _session_rsa_keys,
     _start_cao_server,
     _wait_for_health,
 )
+from unittest.mock import Mock
 
 import pytest
 import requests

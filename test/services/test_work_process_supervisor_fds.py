@@ -20,7 +20,6 @@ from cli_agent_orchestrator.services.work_process_supervisor import (
     WorkProcessSupervisor,
 )
 
-
 _FD_PROBE = r"""
 import json, os, sys, time
 

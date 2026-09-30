@@ -1115,13 +1115,13 @@ class StatusMonitor:
         deterministic misread sails straight through the two-read confirm below, because
         both reads see the same bytes. Applied, that false ready sticky-latches, disarms
         _allow_processing_revert, and blocks the agent's genuine PROCESSING for the rest
-        of the turn. So the capture is routed through the two existing opt-in predicates:
+        of the turn. So the capture is routed through explicit provider capabilities:
         ``supports_screen_detection`` providers get their purpose-built
         ``get_status_from_screen()`` (calibrated for exactly this composited-viewport
-        shape), ``supports_direct_status_probe`` providers get ``get_status()`` (declared
-        safe on rendered snapshots — the same contract terminal_service's deferred-init
-        direct probe relies on), and providers with neither flag fail CLOSED: no capture,
-        no verdict, the terminal stays PROCESSING until the pipeline resolves it.
+        shape), providers that opt into either the broad direct-probe contract or the
+        narrower visible-pane stale-recovery contract get ``get_status()``. Providers
+        with neither capability fail CLOSED: no capture, no verdict, the terminal stays
+        PROCESSING until the pipeline resolves it.
         The read is viewport-only (``visible_only=True`` — capture-pane ``-S 0``): a
         ``tail_lines`` read would include scrollback ABOVE the viewport, and detectors
         that match anywhere in their input (kimi/kiro ERROR indicators) would resurrect
@@ -1163,12 +1163,13 @@ class StatusMonitor:
             return None
 
         use_screen = getattr(provider, "supports_screen_detection", False)
-        if not use_screen and not getattr(provider, "supports_direct_status_probe", False):
-            # Raw-stream-tuned detector with no snapshot-safe alternative (kiro_cli,
-            # cursor_cli): a rendered frame cannot be trusted as its input — see the
-            # docstring — so don't capture at all. Self-heal is opt-in via either flag,
-            # never a guess; these providers stay PROCESSING until the pipeline resolves
-            # them.
+        direct_probe = getattr(provider, "supports_direct_status_probe", False)
+        visible_pane_probe = getattr(provider, "supports_visible_pane_stale_probe", False)
+        if not use_screen and not direct_probe and not visible_pane_probe:
+            # Raw-stream-tuned detector with no snapshot-safe alternative: a rendered
+            # frame cannot be trusted as its input — see the docstring — so don't capture
+            # at all. Self-heal is opt-in, never a guess; these providers stay PROCESSING
+            # until the pipeline resolves them.
             return None
 
         try:

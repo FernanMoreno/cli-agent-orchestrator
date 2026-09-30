@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from urllib.error import HTTPError
 
 from cao_workflow._transport import _TRANSPORT_SLACK, _post
@@ -76,3 +77,35 @@ def test_http_error_translated_to_response_not_raised(monkeypatch):
 
     assert response.status == 422
     assert json.loads(response.body) == {"detail": "bad request"}
+
+
+def test_run_capability_is_read_from_inherited_fd_and_sent_only_as_header(monkeypatch):
+    from cao_workflow import _transport
+
+    read_fd, write_fd = os.pipe()
+    capability = "opaque-run-capability-0123456789abcdef"
+    os.write(write_fd, capability.encode())
+    os.close(write_fd)
+    monkeypatch.setenv("CAO_WORKFLOW_AUTH_FD", str(read_fd))
+    monkeypatch.setattr(_transport, "_run_capability_cache", None, raising=False)
+    captured = []
+
+    def fake_urlopen(request, timeout=None):
+        captured.append(request)
+        return _FakeCM(200, b"{}")
+
+    monkeypatch.setattr("cao_workflow._transport.urlopen", fake_urlopen)
+    try:
+        _post("http://localhost:9889/terminals/run-step", {"step": 1})
+        _post("http://localhost:9889/terminals/run-step", {"step": 2})
+    finally:
+        try:
+            os.close(read_fd)
+        except OSError:
+            pass
+
+    assert [request.get_header("X-cao-workflow-run-credential") for request in captured] == [
+        capability,
+        capability,
+    ]
+    assert os.environ.get("CAO_WORKFLOW_AUTH_FD") != "opaque-run-capability"

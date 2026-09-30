@@ -402,21 +402,13 @@ mod tests {
     #[test]
     fn argv_rejects_a_missing_empty_or_duplicate_work_item_selection() {
         for (args, expected_problem) in [
-            (
-                vec!["--work-item-id"],
-                "requires a non-empty work item ID",
-            ),
+            (vec!["--work-item-id"], "requires a non-empty work item ID"),
             (
                 vec!["--work-item-id", ""],
                 "requires a non-empty work item ID",
             ),
             (
-                vec![
-                    "--work-item-id",
-                    "work-one",
-                    "--work-item-id",
-                    "work-two",
-                ],
+                vec!["--work-item-id", "work-one", "--work-item-id", "work-two"],
                 "may only be supplied once",
             ),
         ] {
@@ -425,9 +417,7 @@ mod tests {
                     argument.contains(expected_problem),
                     "the refusal must make {expected_problem:?} visible, got {argument:?}"
                 ),
-                _ => panic!(
-                    "a malformed --work-item-id selection must be rejected: {args:?}"
-                ),
+                _ => panic!("a malformed --work-item-id selection must be rejected: {args:?}"),
             }
         }
     }

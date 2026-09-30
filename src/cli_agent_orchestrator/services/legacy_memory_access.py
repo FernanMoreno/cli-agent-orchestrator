@@ -50,6 +50,8 @@ def audited_legacy(action, *, owner=None):
                     if name in context
                 }
             target["operation"] = function.__name__
+            if values.get("db") is not None:
+                return service._legacy_operation(action, target, db=values["db"])
             return service._legacy_operation(action, target)
 
         if inspect.iscoroutinefunction(function):

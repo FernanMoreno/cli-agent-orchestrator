@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-22
 
-**Status**: Diseño aprobado; implementación incremental en curso. La integración universal y el cierre del programa siguen pendientes.
+**Status**: Alcance local acordado implementado, aceptado y cerrado documentalmente el 2026-09-30; 129 tareas completadas. T084 aceptada para la matriz autorizada y T085 preparada/verificada en candidato aislado. O03 ampliado, OpenCode v2 e integración upstream en main conservan sus límites. [Estado vigente](acceptance-status.md); no certifica producción ni cierre universal del programa.
 
 **Input**: «haz todo ai_workflow.md sobre todos», aplicado a los 19 ejes y seis
 pendientes de `docs/aipm-orchestration-roadmap.md`, analizados contra código.
@@ -279,12 +279,27 @@ edición obsoleta y ejecutar gates aplicables en un entorno controlado.
   terminal no son acuse. El receptor acredita aceptación durable exacta antes
   de emitir `TaskReceivedReceiptV1`; `WorkService` persiste receipt y Work ACK
   en la misma transición, sin ascender ACK nativo o telemetría legacy.
+  En un step Work de workflow, sólo el selector de provisión resuelto por el
+  servidor puede fijar su origen; un `TaskReceivedReceiptV1` autenticado y un
+  `WorkflowStepResultV1` durable deben quedar ligados a la misma entrega y al
+  intento/generación Work exactos antes de proyectar el resultado.
 - **FR-003 / R03**: El padre puede esperar, cancelar y recuperar hijos y resultados
   después de reiniciar, con renovación de lease y limpieza documentada. El
   vínculo de cada hijo/handoff/step gestionado conserva identidad de origen,
   intento y generación exactos; histórico sin procedencia no se certifica de nuevo.
   Perder el proxy de un intento enviado obliga a conciliar; no autoriza reemitir
-  su credencial ni repetir la entrega.
+  su credencial ni repetir la entrega. Cada step gestionado YAML o script resuelve
+  una provisión versionada por selector server-owned; su binding inmutable incluye
+  run/tier/generación/step/intento de workflow, Work item/intento/generación,
+  delivery/hash, contrato/snapshot y refs/revisiones de sujeto, autorización,
+  grant y receptor. Reanudar o reproducir recupera ese binding exacto. Un intento
+  nuevo sólo nace tras una decisión explícita y durable de retry del workflow;
+  timeout, reinicio, ACK ausente o fallo del projector no lo incrementan.
+  El receptor separado presenta `TaskReceivedReceiptV1` y envía un sobre JSON
+  `WorkflowStepResultV1`; el servidor valida el sobre contra el contrato y el
+  `output_schema` congelados, conserva el artefacto y aplica un projector CAS
+  reiniciable. Run/step legacy, salida de terminal y telemetría no son ACK ni
+  resultado Work.
 - **FR-004 / R04**: Cada cambio de trabajo, mensaje, recibo o decisión deja evidencia
   durable ordenada; pérdida o retención se declara al consumidor.
 - **FR-005 / R05**: Sólo ejecutan proveedores admitidos por job y capaces de realizar
@@ -301,7 +316,12 @@ edición obsoleta y ejecutar gates aplicables en un entorno controlado.
   El secreto bruto sólo llega al proxy MCP del servidor mediante descriptor
   privado heredado; nunca entra en delivery, prompt, entorno, terminal, log ni
   evento. El padre sólo selecciona refs preprovisionadas de hijo/receptor;
-  éstos se autentican separadamente y no heredan su credencial.
+  éstos se autentican separadamente y no heredan su credencial. El mismo
+  aislamiento aplica a workflows: el registro server-owned de cada step vincula
+  su sujeto/autorización de origen y un sujeto/autorización de receptor
+  preprovisionados; cada intento emite credenciales Work limitadas al binding y
+  generación exactos. Ninguna referencia de autoridad ni secreto del receptor
+  procede del YAML/script, inputs o `caller_id`.
 - **FR-007 / R07**: Escrituras concurrentes respetan reservas o aislamiento y conservan
   evidencia de conflictos e integración de cambios.
 - **FR-008 / R08**: La admisión respeta presupuestos, prioridad, equidad, backpressure
@@ -332,8 +352,9 @@ edición obsoleta y ejecutar gates aplicables en un entorno controlado.
   writers Work registrados; su evidencia versionada no atribuye
   quiescencia global a productores ajenos al registro. Cada perfil de recovery
   queda fijado a su versión exacta del schema y catálogo de tablas/FK; el perfil
-  v28/schema30 conserva verificación histórica, mientras v29/schema38 es el único
-  perfil actual capturable y restaurable. Los bundles v1 v24/v25 y los v2 v28
+  v28/schema30 y v29/schema38 conservan verificación histórica, mientras
+  v30/schema39 es el único perfil actual capturable y restaurable. Los bundles
+  v1 v24/v25 y los v2 v28/v29
   conservan verificación histórica sin autoridad de restore.
 - **FR-019 / R19**: Matriz real es opt-in y registra escenarios del roadmap por
   proveedor, resultados, omisiones y limitaciones.
@@ -402,9 +423,23 @@ edición obsoleta y ejecutar gates aplicables en un entorno controlado.
   interno por fases; no activa por sí misma nuevas entradas públicas, proveedores
   ni una DB de operador. Legacy mantiene lectura/replay exacto sin ascenso a
   origen gestionado; versiones incompatibles fallan cerradas.
-- La decisión T019 del 2026-09-25 acota una credencial interna por intento y un
-  proxy MCP server-owned. Su diseño no activa MCP público ni cambia el ingreso
-  ordinario `/sessions`; T017/T019/T035 siguen sujetos a sus gates separados.
+- La instrucción posterior del operador de completar toda la integración
+  pendiente autoriza implementar el ingreso público T035 en este checkout.
+  La activación queda explícita y separada por proceso mediante
+  `CAO_ENABLE_PUBLIC_WORK_INGRESS=true`; el valor por defecto rechaza HTTP y
+  MCP. Esta decisión no provisiona grants, habilita proveedores reales ni
+  solicita despliegue, cuentas externas o integración upstream.
+- T017 usa un modo local explícito `CAO_WORK_LAUNCH_MODE=required`: `cao launch`
+  ordinario envía la intención al ingreso Work autenticado ya existente y recibe
+  la identidad durable; el servidor rechaza altas de sesiones legacy mientras
+  el modo esté activo. La configuración predeterminada conserva la ruta legacy.
+  El selector es sólo una referencia opaca; `Principal`, provisión efectiva y
+  clave de operación se resuelven y fijan en el servidor. El modo exige un
+  backend Work registrado explícitamente y no registra uno por sí mismo.
+- La decisión T019 del 2026-09-25 acotó una credencial interna por intento y un
+  proxy MCP server-owned. En ese corte no activó MCP público ni cambió el
+  ingreso ordinario `/sessions`; los cierres posteriores de T019 y T017 se
+  limitan a los perfiles locales descritos aquí y T035 conserva su gate.
 - La aceptación T097/C08 pasó en el guest Ubuntu 26.10 fijado con QEMU TCG,
   orquestado desde GitHub-hosted `ubuntu-24.04` y descrito en plan.md. No hay
   host de despliegue previsto. Para T019 se eligió Docker local en dos papeles:

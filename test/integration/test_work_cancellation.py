@@ -2,6 +2,11 @@
 
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
+from test.clients.test_work_repository import (
+    legacy_admit,
+    legacy_v21_store,
+    migrate_legacy_v21_store,
+)
 from threading import Barrier, Event
 
 import pytest
@@ -9,11 +14,6 @@ import pytest
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 from cli_agent_orchestrator.services.work_service import WorkService
-from test.clients.test_work_repository import (
-    legacy_admit,
-    legacy_v21_store,
-    migrate_legacy_v21_store,
-)
 
 
 def _new_store(tmp_path, *, legacy=False):

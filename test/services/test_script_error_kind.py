@@ -157,6 +157,7 @@ async def test_api_producer_forwards_structured_kind_to_script_journal(
     script_journal, monkeypatch, tmp_path, kind, http_status
 ):
     from fastapi import BackgroundTasks, HTTPException, Request
+
     from cli_agent_orchestrator.api import main
 
     async def fail_execution(**kwargs):
@@ -166,6 +167,7 @@ async def test_api_producer_forwards_structured_kind_to_script_journal(
 
     monkeypatch.setattr(main, "run_agent_step", fail_execution)
     monkeypatch.setattr(main, "get_plugin_registry", lambda request: None)
+    monkeypatch.setattr(main.app.state, "work_workflow_origins", None, raising=False)
     body = main.RunStepRequest(
         provider="kiro_cli",
         agent="developer",
@@ -178,7 +180,7 @@ async def test_api_producer_forwards_structured_kind_to_script_journal(
         },
     )
     with pytest.raises(HTTPException) as failure:
-        await main.run_step(Request({"type": "http"}), BackgroundTasks(), body)
+        await main.run_step(Request({"type": "http", "app": main.app}), BackgroundTasks(), body)
     assert failure.value.status_code == http_status
     assert failure.value.detail["kind"] == (kind or "timeout")
     row = workflow_journal.get_step("typed-error", "step")

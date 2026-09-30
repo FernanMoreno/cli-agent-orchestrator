@@ -4,11 +4,6 @@ import importlib
 import importlib.util
 import sqlite3
 import threading
-
-import pytest
-
-from cli_agent_orchestrator.clients.work_repository import WorkRepository
-from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 from test.clients.test_work_repository import (
     admit,
     create_job,
@@ -17,6 +12,11 @@ from test.clients.test_work_repository import (
     migrate_legacy_v21_store,
 )
 from test.fixtures.work_store import work_store_paths  # noqa: F401
+
+import pytest
+
+from cli_agent_orchestrator.clients.work_repository import WorkRepository
+from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 
 
 def service_module():
@@ -310,6 +310,116 @@ def test_settlement_persists_retrievable_result_before_success(prepared, work_st
     assert reopened.read_result(work["id"], artifacts=artifacts) == b"verified output"
 
 
+def test_verified_nonzero_process_exit_fails_work_with_atomic_cleanup_proof(prepared):
+    module = service_module()
+    store, work, proof = prepared
+    attempt = work["attempts"][-1]
+    observation = module.DeliveryObservation.model_validate(
+        {
+            "process_failure": {
+                "attempt_id": attempt["id"],
+                "generation": attempt["generation"],
+                "exit_code": 23,
+                "process_stopped": True,
+                "container_removed": True,
+                "image_removed": True,
+            }
+        }
+    )
+
+    failed = module.WorkService(store).dispatch(
+        work["id"], lambda: observation, admission=proof, actor_id="operator"
+    )
+
+    assert failed["state"] == "failed"
+    assert failed["accepted_result_id"] is None
+    assert failed["attempts"][-1]["state"] == "failed"
+    assert failed["attempts"][-1]["cleanup_state"] == "complete"
+    failure_event = next(
+        event
+        for event in store.read_events(work["job_id"])["events"]
+        if event["event_type"] == "attempt.failed"
+    )
+    assert failure_event["metadata"] == {
+        "process_exit_code": 23,
+        "process_stopped": True,
+        "container_removed": True,
+        "image_removed": True,
+    }
+
+
+def test_late_nonzero_process_exit_cannot_replace_an_accepted_result(prepared, work_store_paths):
+    module = service_module()
+    from cli_agent_orchestrator.services.step_output_store import ImmutableResultStore
+
+    store, work, proof = prepared
+    service = module.WorkService(store)
+    attempt = work["attempts"][-1]
+    failure = module.DeliveryObservation.model_validate(
+        {
+            "process_failure": {
+                "attempt_id": attempt["id"],
+                "generation": attempt["generation"],
+                "exit_code": 23,
+                "process_stopped": True,
+                "container_removed": True,
+                "image_removed": True,
+            }
+        }
+    )
+
+    def send():
+        sent = store.get_work(work["id"])["attempts"][-1]
+        acknowledged = store.transition_attempt(
+            attempt_id=sent["id"],
+            generation=sent["generation"],
+            expected_revision=sent["revision"],
+            expected_state="sent",
+            target="acknowledged",
+            actor_id="trusted-test-receiver",
+            event_id="late-process-failure-receipt",
+            evidence=TransitionEvidence(
+                generation=sent["generation"],
+                expected_generation=sent["generation"],
+                task_received=True,
+            ),
+        )
+        current = acknowledged["attempts"][-1]
+        store.transition_attempt(
+            attempt_id=current["id"],
+            generation=current["generation"],
+            expected_revision=current["revision"],
+            expected_state="acknowledged",
+            target="running",
+            actor_id="trusted-test-receiver",
+            event_id="late-process-failure-running",
+            evidence=TransitionEvidence(
+                generation=current["generation"],
+                expected_generation=current["generation"],
+                execution_started=True,
+            ),
+        )
+        service.settle_attempt(
+            work["id"],
+            generation=sent["generation"],
+            content=b"accepted before process exit",
+            artifacts=ImmutableResultStore(work_store_paths.artifacts),
+            validate=lambda content: {"valid": content.startswith(b"accepted")},
+            validator_id="test-validator",
+            actor_id="operator",
+        )
+        return failure
+
+    completed = service.dispatch(work["id"], send, admission=proof, actor_id="operator")
+
+    assert completed["state"] == "succeeded"
+    assert completed["accepted_result_id"] is not None
+    assert completed["attempts"][-1]["state"] == "finished"
+    assert "attempt.failed" not in [
+        event["event_type"] for event in store.read_events(work["job_id"])["events"]
+    ]
+
+
 def test_result_validation_failure_never_accepts_result(prepared, work_store_paths):
     module = service_module()
     assert hasattr(module.WorkService, "settle_attempt"), "durable settlement missing"
@@ -368,8 +478,9 @@ def test_result_persistence_failure_leaves_orphan_not_success(prepared, work_sto
 def test_cancelled_work_retains_late_result_without_claiming_success(prepared, work_store_paths):
     module = service_module()
     assert hasattr(module.WorkService, "settle_attempt"), "durable settlement missing"
-    from cli_agent_orchestrator.services.step_output_store import ImmutableResultStore
     from test.clients.test_work_repository import advance
+
+    from cli_agent_orchestrator.services.step_output_store import ImmutableResultStore
 
     store, work, proof = prepared
     service = module.WorkService(store)

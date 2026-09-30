@@ -1056,15 +1056,8 @@ class TestClaudeCodeDialogDetection:
         status = provider.get_status(output)
         assert status == TerminalStatus.COMPLETED
 
-    @pytest.mark.xfail(
-        reason="Known limitation: agent prose containing '↑/↓ to navigate' "
-        "in the 6-line footer window causes false WAITING. Full fix needs "
-        "structural composer detection.",
-        strict=True,
-    )
     def test_agent_prose_with_nav_text_in_footer_false_waiting(self):
-        """KNOWN LIMITATION: agent prose echoing '↑/↓ to navigate' in the
-        bottom 6 lines of an idle prompt false-positives as WAITING."""
+        """A newer composer dismisses navigation text quoted in agent prose."""
         output = (
             "⏺ The dialog shows:\n"
             "Enter to select · ↑/↓ to navigate · Esc to cancel\n"
@@ -1074,7 +1067,6 @@ class TestClaudeCodeDialogDetection:
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0")
         status = provider.get_status(output)
-        # This SHOULD be COMPLETED but will be WAITING due to the known limitation
         assert status == TerminalStatus.COMPLETED
 
 
@@ -1993,6 +1985,7 @@ class TestClaudeCodeProviderStartupPrompts:
             "❯ No, exit\n"
             "  Yes, I trust this folder\n"
             "Enter to confirm · Esc to cancel\n",
+            "  No, exit\n❯ Yes, I trust this folder\nEnter to confirm · Esc to cancel\n",
             "Welcome to Claude Code v2.1.250",
         ]
 
@@ -2104,6 +2097,7 @@ class TestClaudeCodeProviderStartupPrompts:
             "❯ No, exit\n"
             "  Yes, I trust this folder\n"
             "Enter to confirm · Esc to cancel\n",
+            "  No, exit\n❯ Yes, I trust this folder\nEnter to confirm · Esc to cancel\n",
             "Welcome to Claude Code v2.1.276\n❯ ",
         ]
         provider = ClaudeCodeProvider("test123", "test-session", "window-0")
@@ -2126,9 +2120,7 @@ class TestClaudeCodeProviderStartupPrompts:
 
     @pytest.mark.asyncio
     @patch("cli_agent_orchestrator.backends.registry._backend")
-    async def test_handle_startup_prompts_never_selects_login_route_without_oauth(
-        self, mock_tmux
-    ):
+    async def test_handle_startup_prompts_never_selects_login_route_without_oauth(self, mock_tmux):
         """A normal login menu must remain visible for the operator."""
         mock_tmux.get_history.return_value = (
             "Select login method:\n"
@@ -2820,10 +2812,7 @@ class TestClaudeCodeQuotaDetection:
         parked behind its older quota banner."""
         output = (
             "  ⚠ Usage limit reached · continuing automatically at 5:30pm · esc to cancel\n"
-            "✢ Cultivating… (2s · ↓ 8 tokens)\n"
-            + self.BOX
-            + "\n❯\n"
-            + self.BOX
+            "✢ Cultivating… (2s · ↓ 8 tokens)\n" + self.BOX + "\n❯\n" + self.BOX
         )
 
         assert self._p().get_status(output) == TerminalStatus.PROCESSING
@@ -2833,10 +2822,7 @@ class TestClaudeCodeQuotaDetection:
         Claude's informational percentage warning."""
         quote = (
             "● The documentation quotes: Usage limit reached · continuing automatically at "
-            "5:30pm · esc to cancel.\n"
-            + self.BOX
-            + "\n❯\n"
-            + self.BOX
+            "5:30pm · esc to cancel.\n" + self.BOX + "\n❯\n" + self.BOX
         )
         percentage_warning = (
             "● Completed the task.\n✻ Cooked for 1s\n"
@@ -3110,3 +3096,62 @@ class TestBlocksOrchestratedInputWhileWaitingUserAnswer:
     def test_blocks_orchestrated_input_while_waiting_user_answer(self):
         provider = ClaudeCodeProvider("test123", "test-session", "window-0")
         assert provider.blocks_orchestrated_input_while_waiting_user_answer is True
+
+
+@pytest.mark.asyncio
+@patch("cli_agent_orchestrator.backends.registry._backend")
+async def test_partial_trust_frame_waits_for_selected_option(backend):
+    backend.get_history.side_effect = [
+        "Accessing workspace: /tmp/acceptance\nYes, I trust this folder\n",
+        "Accessing workspace: /tmp/acceptance\n❯ No, exit\n"
+        "  Yes, I trust this folder\nEnter to confirm · Esc to cancel\n",
+        "❯ No, exit\n  Yes, I trust this folder\n",
+        "  No, exit\n❯ Yes, I trust this folder\nEnter to confirm · Esc to cancel\n",
+        "Welcome to Claude Code v2.1.285",
+    ]
+    provider = ClaudeCodeProvider("test123", "test-session", "window-0")
+    with patch.object(
+        provider, "_observe_initial_viewport_state", new=AsyncMock(return_value=TerminalStatus.IDLE)
+    ):
+        await provider._handle_startup_prompts(idle_gap=5.0)
+    assert [call.args[2] for call in backend.send_special_key.call_args_list] == ["Down", "Enter"]
+
+
+@pytest.mark.asyncio
+@patch("cli_agent_orchestrator.backends.registry._backend")
+async def test_trust_navigation_retries_lost_down_before_enter(backend):
+    no = "❯ No, exit\n  Yes, I trust this folder\nEnter to confirm · Esc to cancel\n"
+    yes = "  No, exit\n❯ Yes, I trust this folder\nEnter to confirm · Esc to cancel\n"
+    backend.get_history.side_effect = [no, no, no, yes, "Welcome to Claude Code v2.1.285"]
+    provider = ClaudeCodeProvider("test123", "test-session", "window-0")
+    with patch.object(
+        provider, "_observe_initial_viewport_state", new=AsyncMock(return_value=TerminalStatus.IDLE)
+    ):
+        await provider._handle_startup_prompts(idle_gap=5.0)
+    assert [call.args[2] for call in backend.send_special_key.call_args_list] == [
+        "Down",
+        "Down",
+        "Enter",
+    ]
+
+
+@pytest.mark.parametrize("screen", [False, True])
+@pytest.mark.parametrize(
+    "footer",
+    [
+        "Enter to select · ↑/↓ to navigate · Esc to cancel",
+        "Enter to confirm · Esc to cancel",
+        "↑/↓ to navigate · enter to select",
+    ],
+)
+@pytest.mark.parametrize("dismissed", [False, True])
+def test_selection_footer_requires_no_newer_composer(screen, footer, dismissed):
+    rows = ["⏺ The dialog shows:", "  ❯ 1. Yes", "    2. No", footer]
+    if dismissed:
+        rows += ["────────────────────────", "❯ ", "────────────────────────"]
+    provider = ClaudeCodeProvider("test123", "test-session", "window-0")
+    status = (
+        provider.get_status_from_screen(rows) if screen else provider.get_status("\n".join(rows))
+    )
+    expected = TerminalStatus.COMPLETED if dismissed else TerminalStatus.WAITING_USER_ANSWER
+    assert status == expected

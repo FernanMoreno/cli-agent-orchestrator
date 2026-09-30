@@ -1,12 +1,28 @@
 """Internal durable launch provisioning; no transport, admission, or provider wiring."""
 
+import hashlib
+import json
+import re
+import secrets
 import time
+from contextlib import nullcontext
 from uuid import uuid4
 
 from pydantic import ValidationError
 
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
-from cli_agent_orchestrator.models.work_origin import ProvisionRef, ProvisionedLaunch
+from cli_agent_orchestrator.models.work_contract import EffectiveWorkContract
+from cli_agent_orchestrator.models.work_delivery import WorkDeliveryEnvelope
+from cli_agent_orchestrator.models.work_origin import (
+    OriginAuthorizationRef,
+    OriginSubjectRef,
+    ProvisionedLaunch,
+    ProvisionRef,
+)
+from cli_agent_orchestrator.models.workflow_managed import (
+    ProvisionedWorkflowStep,
+    WorkflowStepProvisionRef,
+)
 from cli_agent_orchestrator.security.auth import Principal
 from cli_agent_orchestrator.services.delegation_snapshot import (
     DelegationSnapshots,
@@ -18,6 +34,7 @@ from cli_agent_orchestrator.services.work_authority import (
     WorkAuthority,
 )
 from cli_agent_orchestrator.services.work_contract import ContractConflict, WorkContracts
+from cli_agent_orchestrator.services.work_origin import OriginDenied, WorkOriginAuthority
 
 
 class ProvisionDenied(PermissionError):
@@ -56,6 +73,73 @@ def _exact_positive(value, label, *, maximum=2**63 - 1):
     return value
 
 
+def _digest(value, label):
+    if (
+        type(value) is not str
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ProvisionDenied(f"invalid {label}")
+    return value
+
+
+def _canonical(value):
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    )
+
+
+def _workflow_delivery(value, *, adapter_version):
+    try:
+        envelope = WorkDeliveryEnvelope.model_validate(value)
+
+        def unique_pairs(pairs):
+            parsed = {}
+            for key, item in pairs:
+                if key in parsed:
+                    raise ValueError("duplicate delivery key")
+                parsed[key] = item
+            return parsed
+
+        parsed = json.loads(envelope.payload_json, object_pairs_hook=unique_pairs)
+        if not isinstance(parsed, dict):
+            raise ValueError("delivery payload must be an object")
+        if adapter_version == 1:
+            if set(parsed) != {"terminal_id", "agent_profile", "message"}:
+                raise ValueError("v1 workflow delivery has the wrong fields")
+            from cli_agent_orchestrator.services.work_agent_step import AgentStepPayload
+
+            payload = AgentStepPayload.model_validate(parsed)
+        elif adapter_version == 2:
+            if set(parsed) != {"agent_profile", "message"}:
+                raise ValueError("v2 workflow delivery has the wrong fields")
+            if (
+                type(parsed["agent_profile"]) is not str
+                or re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", parsed["agent_profile"]) is None
+                or type(parsed["message"]) is not str
+                or not parsed["message"]
+                or len(parsed["message"]) > 32768
+            ):
+                raise ValueError("v2 workflow task data is invalid")
+            payload = parsed
+        else:
+            raise ValueError("unsupported workflow delivery adapter")
+        if envelope.operation_kind != "agent_step" or envelope.adapter_version != adapter_version:
+            raise ValueError("workflow delivery adapter differs from its operation")
+        canonical_payload = _canonical(
+            payload.model_dump(mode="json") if hasattr(payload, "model_dump") else payload
+        )
+        canonical_envelope = WorkDeliveryEnvelope(
+            operation_kind=envelope.operation_kind,
+            adapter_version=envelope.adapter_version,
+            payload_json=canonical_payload,
+        )
+        encoded = _canonical(canonical_envelope.model_dump(mode="json"))
+        return canonical_envelope, encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    except Exception as error:
+        raise ProvisionDenied("workflow step requires a closed versioned delivery") from error
+
+
 class WorkProvisioning:
     """Create, replace, retire, and reconstruct internal v1 launch provisions.
 
@@ -89,13 +173,13 @@ class WorkProvisioning:
             raise ProvisionDenied("principal is not durably registered")
 
     @staticmethod
-    def _contract(value):
+    def _contract(value, *, operation_kind="launch"):
         try:
             contract = WorkContracts._contract(value)
         except (ContractConflict, ValidationError, TypeError, ValueError) as error:
             raise ProvisionDenied("canonical launch contract required") from error
-        if contract.operation_kind != "launch":
-            raise ProvisionDenied("launch provisioning requires a launch contract")
+        if contract.operation_kind != operation_kind:
+            raise ProvisionDenied(f"provisioning requires a {operation_kind} contract")
         return contract
 
     def _validate(
@@ -109,6 +193,7 @@ class WorkProvisioning:
         grant_revision,
         contract,
         issuer_id=None,
+        operation_kind="launch",
     ):
         """Validate one exact durable configuration without inferring absent settings."""
         self.repository._verify(connection)
@@ -120,7 +205,7 @@ class WorkProvisioning:
         _identity(job_id, "job id")
         _identity(grant_id, "grant id")
         _exact_positive(grant_revision, "grant revision")
-        contract = self._contract(contract)
+        contract = self._contract(contract, operation_kind=operation_kind)
         try:
             job = self.repository._job(connection, job_id)
             chain, chained_job = WorkAuthority(self.repository)._chain(
@@ -398,6 +483,491 @@ class WorkProvisioning:
                 lease_seconds=prior["lease_seconds"],
                 state="retired",
             )
+
+    @staticmethod
+    def _origin_revision(
+        connection,
+        *,
+        subject_ref,
+        authorization_ref,
+        required_actions,
+        job_id,
+        grant_id=None,
+        grant_revision=None,
+    ):
+        try:
+            subject_ref = OriginSubjectRef.model_validate(subject_ref)
+            authorization_ref = OriginAuthorizationRef.model_validate(authorization_ref)
+        except Exception as error:
+            raise ProvisionDenied(
+                "explicit origin subject and authorization refs are required"
+            ) from error
+        subject = connection.execute(
+            "SELECT * FROM work_origin_subjects WHERE subject_id=? ORDER BY revision DESC LIMIT 1",
+            (subject_ref.subject_id,),
+        ).fetchone()
+        authorization = connection.execute(
+            "SELECT * FROM work_origin_authorizations WHERE subject_id=? AND origin_kind=? "
+            "ORDER BY revision DESC LIMIT 1",
+            (authorization_ref.subject_id, authorization_ref.origin_kind),
+        ).fetchone()
+        if (
+            subject is None
+            or subject["revision"] != subject_ref.revision
+            or subject["origin_kind"] != subject_ref.kind
+            or subject["state"] != "active"
+            or authorization is None
+            or authorization["revision"] != authorization_ref.revision
+            or authorization["subject_revision"] != subject_ref.revision
+            or authorization["state"] != "active"
+            or authorization["expires_at"] <= time.time()
+            or authorization["issuer_id"] != subject["issuer_id"]
+            or authorization["job_id"] != job_id
+            or (grant_id is not None and authorization["grant_id"] != grant_id)
+            or (grant_revision is not None and authorization["grant_revision"] != grant_revision)
+        ):
+            raise ProvisionDenied(
+                "origin subject or authorization is stale, revoked, or unavailable"
+            )
+        try:
+            actions = set(json.loads(authorization["actions"]))
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise ProvisionDenied("origin authorization is corrupt") from error
+        if not required_actions.issubset(actions):
+            raise ProvisionDenied("origin authorization lacks required actions")
+        return subject_ref, authorization_ref, authorization
+
+    @staticmethod
+    def _workflow_provision_ref(row):
+        return WorkflowStepProvisionRef(
+            id=row["id"],
+            principal_id=row["principal_id"],
+            workflow_id=row["workflow_id"],
+            step_id=row["step_id"],
+            revision=row["revision"],
+        )
+
+    def provision_workflow_step(
+        self,
+        admin_context,
+        *,
+        subject,
+        workflow_id,
+        step_id,
+        expected_revision,
+        spec_hash,
+        job_id,
+        grant_id,
+        grant_revision,
+        subject_ref,
+        authorization_ref,
+        receiver_subject_ref,
+        receiver_authorization_ref,
+        contract,
+        delivery,
+        output_schema=None,
+        adapter_version=1,
+        lease_seconds=300,
+    ):
+        """Append a server-owned `(workflow, step)` selector for one exact source."""
+        workflow_id = _identity(workflow_id, "workflow identity")
+        step_id = _identity(step_id, "workflow step identity")
+        _digest(spec_hash, "workflow spec hash")
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ProvisionConflict("workflow provision revision must be nonnegative")
+        _exact_positive(adapter_version, "workflow adapter version")
+        _exact_positive(lease_seconds, "workflow lease", maximum=3600)
+        contract = self._contract(contract, operation_kind="agent_step")
+        if adapter_version == 1 and not isinstance(contract, EffectiveWorkContract):
+            raise ProvisionDenied("agent_step adapter v1 requires a frozen v1 contract")
+        if adapter_version == 2:
+            from cli_agent_orchestrator.models.work_contract import EffectiveWorkContractV2
+
+            if (
+                not isinstance(contract, EffectiveWorkContractV2)
+                or len(contract.executable_identities) != 1
+            ):
+                raise ProvisionDenied(
+                    "agent_step adapter v2 requires one frozen executable identity"
+                )
+        if adapter_version not in {1, 2}:
+            raise ProvisionDenied("unsupported workflow step adapter version")
+        delivery, delivery_json, delivery_hash = _workflow_delivery(
+            delivery, adapter_version=adapter_version
+        )
+        output_schema_json, output_schema_hash = self._workflow_output_schema(output_schema)
+
+        with self.repository.transaction() as connection:
+            self.repository._verify(connection)
+            prior = self._workflow_step_latest(connection, subject.id, workflow_id, step_id)
+            if prior is None:
+                if expected_revision != 0:
+                    raise ProvisionConflict(
+                        "workflow step provision is absent at expected revision"
+                    )
+            elif prior["revision"] != expected_revision or prior["state"] != "active":
+                raise ProvisionConflict("workflow step provision revision changed or is retired")
+            if (
+                self._workflow_step_for_spec(
+                    connection, subject.id, workflow_id, step_id, spec_hash
+                )
+                is not None
+            ):
+                raise ProvisionConflict("workflow source already has an immutable step provision")
+            job, canonical_contract, snapshot = self._validate(
+                connection,
+                admin=admin_context,
+                subject=subject,
+                job_id=job_id,
+                grant_id=grant_id,
+                grant_revision=grant_revision,
+                contract=contract,
+                operation_kind="agent_step",
+            )
+            workflow_subject_ref, workflow_authorization_ref, workflow_authorization = (
+                self._origin_revision(
+                    connection,
+                    subject_ref=subject_ref,
+                    authorization_ref=authorization_ref,
+                    required_actions={"admit_step", "execute"},
+                    job_id=job["id"],
+                    grant_id=grant_id,
+                    grant_revision=grant_revision,
+                )
+            )
+            if (
+                workflow_subject_ref.subject_id != subject.id
+                or workflow_subject_ref.kind != "workflow"
+                or workflow_authorization_ref.subject_id != subject.id
+                or workflow_authorization_ref.origin_kind != "workflow"
+            ):
+                raise ProvisionDenied(
+                    "workflow authority does not identify the authenticated subject"
+                )
+            receiver_subject_ref = OriginSubjectRef.model_validate(receiver_subject_ref)
+            receiver_authorization_ref = OriginAuthorizationRef.model_validate(
+                receiver_authorization_ref
+            )
+            if (
+                receiver_subject_ref.kind != "receiver"
+                or receiver_authorization_ref.subject_id != receiver_subject_ref.subject_id
+                or receiver_authorization_ref.origin_kind != "receiver"
+            ):
+                raise ProvisionDenied("receiver refs do not identify a registered receiver")
+            receiver_subject_ref, receiver_authorization_ref, receiver_authorization = (
+                self._origin_revision(
+                    connection,
+                    subject_ref=receiver_subject_ref,
+                    authorization_ref=receiver_authorization_ref,
+                    required_actions={"task_received", "task_result"},
+                    job_id=job["id"],
+                )
+            )
+            try:
+                receiver_chain, receiver_job = WorkAuthority(self.repository)._chain(
+                    connection,
+                    receiver_authorization["grant_id"],
+                    receiver_authorization["grant_revision"],
+                )
+            except (AuthorityDenied, GrantConflict, ValueError) as error:
+                raise ProvisionDenied("receiver grant ancestry is unavailable") from error
+            if (
+                receiver_job["id"] != job["id"]
+                or receiver_chain[0].principal_id != receiver_subject_ref.subject_id
+            ):
+                raise ProvisionDenied("receiver grant does not authorize this Work job")
+
+            revision = 1 if prior is None else prior["revision"] + 1
+            provision_id = uuid4().hex if prior is None else prior["id"]
+            provisional = ProvisionedWorkflowStep(
+                ref=WorkflowStepProvisionRef(
+                    id=provision_id,
+                    principal_id=subject.id,
+                    workflow_id=workflow_id,
+                    step_id=step_id,
+                    revision=revision,
+                ),
+                issuer_id=admin_context.id,
+                spec_hash=spec_hash,
+                workflow_subject_ref=workflow_subject_ref,
+                workflow_authorization_ref=workflow_authorization_ref,
+                job_id=job["id"],
+                grant_id=grant_id,
+                grant_revision=grant_revision,
+                contract=canonical_contract,
+                contract_hash=canonical_contract.canonical_hash(),
+                snapshot_id=snapshot.id,
+                snapshot_hash=snapshot.delivered_hash,
+                delivery_template=delivery,
+                delivery_template_hash=delivery_hash,
+                adapter_version=adapter_version,
+                lease_seconds=lease_seconds,
+                output_schema_json=output_schema_json,
+                output_schema_hash=output_schema_hash,
+                receiver_subject_ref=receiver_subject_ref,
+                receiver_authorization_ref=receiver_authorization_ref,
+                receiver_grant_id=receiver_authorization["grant_id"],
+                receiver_grant_revision=receiver_authorization["grant_revision"],
+            )
+            provisional = provisional.model_copy(
+                update={"provision_fingerprint": provisional.fingerprint()}
+            )
+            connection.execute(
+                "INSERT INTO work_workflow_step_provisions "
+                "(principal_id,workflow_id,step_id,revision,id,provision_fingerprint,schema_version,state,issuer_id,spec_hash,"
+                "workflow_subject_id,workflow_subject_revision,workflow_authorization_kind,workflow_authorization_revision,job_id,grant_id,grant_revision,"
+                "contract_id,contract_json,contract_hash,snapshot_id,snapshot_hash,delivery_json,delivery_template_hash,adapter_version,lease_seconds,"
+                "output_schema_json,output_schema_hash,receiver_subject_id,receiver_subject_revision,receiver_authorization_kind,receiver_authorization_revision,"
+                "receiver_grant_id,receiver_grant_revision,receiver_received_action,receiver_result_action,created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    subject.id,
+                    workflow_id,
+                    step_id,
+                    revision,
+                    provision_id,
+                    provisional.provision_fingerprint,
+                    1,
+                    "active",
+                    admin_context.id,
+                    spec_hash,
+                    workflow_subject_ref.subject_id,
+                    workflow_subject_ref.revision,
+                    "workflow",
+                    workflow_authorization_ref.revision,
+                    job["id"],
+                    grant_id,
+                    grant_revision,
+                    canonical_contract.id,
+                    canonical_contract.canonical_json(),
+                    canonical_contract.canonical_hash(),
+                    snapshot.id,
+                    snapshot.delivered_hash,
+                    delivery_json,
+                    delivery_hash,
+                    adapter_version,
+                    lease_seconds,
+                    output_schema_json,
+                    output_schema_hash,
+                    receiver_subject_ref.subject_id,
+                    receiver_subject_ref.revision,
+                    "receiver",
+                    receiver_authorization_ref.revision,
+                    receiver_authorization["grant_id"],
+                    receiver_authorization["grant_revision"],
+                    "task_received",
+                    "task_result",
+                    time.time(),
+                ),
+            )
+            return provisional.ref
+
+    def resolve_workflow_step(
+        self,
+        principal,
+        *,
+        workflow_id,
+        step_id,
+        spec_hash,
+        connection=None,
+        expected_ref=None,
+        expected_fingerprint=None,
+    ):
+        """Return one currently authorized exact-source provision or None if absent."""
+        workflow_id = _identity(workflow_id, "workflow identity")
+        step_id = _identity(step_id, "workflow step identity")
+        _digest(spec_hash, "workflow spec hash")
+        self._principal(principal)
+        if connection is not None and not connection.in_transaction:
+            raise ProvisionDenied("workflow provision resolution requires a stable transaction")
+        snapshot = (
+            self.repository.read_snapshot() if connection is None else nullcontext(connection)
+        )
+        with snapshot as connection:
+            self.repository._verify(connection)
+            row = self._workflow_step_for_spec(
+                connection, principal.id, workflow_id, step_id, spec_hash
+            )
+            if row is None:
+                any_provision = self._workflow_step_latest(
+                    connection, principal.id, workflow_id, step_id
+                )
+                if any_provision is not None:
+                    raise ProvisionUnavailable(
+                        "workflow step provision is bound to another source snapshot"
+                    )
+                if expected_ref is not None or expected_fingerprint is not None:
+                    raise ProvisionUnavailable("pinned workflow step provision is unavailable")
+                return None
+            self._registered(connection, principal)
+            if row["state"] != "active":
+                raise ProvisionUnavailable(
+                    "workflow step provision is retired or bound to another source"
+                )
+            current_ref = self._workflow_provision_ref(row)
+            if (
+                expected_ref is not None
+                and current_ref != expected_ref
+                or expected_fingerprint is not None
+                and row["provision_fingerprint"] != expected_fingerprint
+            ):
+                raise ProvisionUnavailable("workflow step provision revision changed")
+            try:
+                contract = self._contract(
+                    WorkContracts._from_json(row["contract_json"]), operation_kind="agent_step"
+                )
+                delivery_value = json.loads(row["delivery_json"])
+                delivery, delivery_json, delivery_hash = _workflow_delivery(
+                    delivery_value, adapter_version=row["adapter_version"]
+                )
+                schema_json, schema_hash = row["output_schema_json"], row["output_schema_hash"]
+                if schema_json is not None:
+                    canonical_schema, actual_hash = self._workflow_output_schema(
+                        json.loads(schema_json)
+                    )
+                    if (canonical_schema, actual_hash) != (schema_json, schema_hash):
+                        raise ValueError("workflow output schema checksum differs")
+                elif schema_hash is not None:
+                    raise ValueError("workflow output schema hash has no schema")
+                if (
+                    delivery_json != row["delivery_json"]
+                    or delivery_hash != row["delivery_template_hash"]
+                    or contract.canonical_json() != row["contract_json"]
+                    or contract.canonical_hash() != row["contract_hash"]
+                    or contract.id != row["contract_id"]
+                    or contract.snapshot.id != row["snapshot_id"]
+                    or contract.snapshot.delivered_hash != row["snapshot_hash"]
+                ):
+                    raise ValueError("workflow provision fields differ from their frozen hashes")
+                job, canonical_contract, snapshot = self._validate(
+                    connection,
+                    subject=principal,
+                    job_id=row["job_id"],
+                    grant_id=row["grant_id"],
+                    grant_revision=row["grant_revision"],
+                    contract=contract,
+                    issuer_id=row["issuer_id"],
+                    operation_kind="agent_step",
+                )
+                workflow_subject_ref, workflow_authorization_ref, _ = self._origin_revision(
+                    connection,
+                    subject_ref=OriginSubjectRef(
+                        subject_id=row["workflow_subject_id"],
+                        kind="workflow",
+                        revision=row["workflow_subject_revision"],
+                    ),
+                    authorization_ref=OriginAuthorizationRef(
+                        subject_id=row["workflow_subject_id"],
+                        origin_kind="workflow",
+                        revision=row["workflow_authorization_revision"],
+                    ),
+                    required_actions={"admit_step", "execute"},
+                    job_id=row["job_id"],
+                    grant_id=row["grant_id"],
+                    grant_revision=row["grant_revision"],
+                )
+                receiver_subject_ref, receiver_authorization_ref, receiver_authorization = (
+                    self._origin_revision(
+                        connection,
+                        subject_ref=OriginSubjectRef(
+                            subject_id=row["receiver_subject_id"],
+                            kind="receiver",
+                            revision=row["receiver_subject_revision"],
+                        ),
+                        authorization_ref=OriginAuthorizationRef(
+                            subject_id=row["receiver_subject_id"],
+                            origin_kind="receiver",
+                            revision=row["receiver_authorization_revision"],
+                        ),
+                        required_actions={"task_received", "task_result"},
+                        job_id=row["job_id"],
+                        grant_id=row["receiver_grant_id"],
+                        grant_revision=row["receiver_grant_revision"],
+                    )
+                )
+                receiver_chain, receiver_job = WorkAuthority(self.repository)._chain(
+                    connection, row["receiver_grant_id"], row["receiver_grant_revision"]
+                )
+                if (
+                    receiver_job["id"] != row["job_id"]
+                    or receiver_chain[0].principal_id != receiver_subject_ref.subject_id
+                ):
+                    raise ValueError("workflow receiver grant is no longer valid")
+                provision = ProvisionedWorkflowStep(
+                    ref=self._workflow_provision_ref(row),
+                    provision_fingerprint=row["provision_fingerprint"],
+                    issuer_id=row["issuer_id"],
+                    spec_hash=row["spec_hash"],
+                    workflow_subject_ref=workflow_subject_ref,
+                    workflow_authorization_ref=workflow_authorization_ref,
+                    job_id=job["id"],
+                    grant_id=row["grant_id"],
+                    grant_revision=row["grant_revision"],
+                    contract=canonical_contract,
+                    contract_hash=row["contract_hash"],
+                    snapshot_id=snapshot.id,
+                    snapshot_hash=snapshot.delivered_hash,
+                    delivery_template=delivery,
+                    delivery_template_hash=delivery_hash,
+                    adapter_version=row["adapter_version"],
+                    lease_seconds=row["lease_seconds"],
+                    output_schema_json=schema_json,
+                    output_schema_hash=schema_hash,
+                    receiver_subject_ref=receiver_subject_ref,
+                    receiver_authorization_ref=receiver_authorization_ref,
+                    receiver_grant_id=receiver_authorization["grant_id"],
+                    receiver_grant_revision=receiver_authorization["grant_revision"],
+                )
+                if not provision.has_valid_fingerprint():
+                    raise ValueError("workflow provision fingerprint differs")
+                return provision
+            except (
+                AuthorityDenied,
+                GrantConflict,
+                SnapshotUnavailable,
+                OriginDenied,
+                ProvisionDenied,
+                ValidationError,
+                TypeError,
+                ValueError,
+                json.JSONDecodeError,
+            ) as error:
+                raise ProvisionUnavailable(
+                    "workflow step provision is invalid or no longer authorized"
+                ) from error
+
+    @staticmethod
+    def _workflow_output_schema(output_schema):
+        if output_schema is None:
+            return None, None
+        if not isinstance(output_schema, dict):
+            raise ProvisionDenied("workflow output schema must be a JSON object")
+        try:
+            encoded = _canonical(output_schema)
+            if len(encoded.encode("utf-8")) > 32768:
+                raise ValueError("workflow output schema exceeds byte bound")
+            import jsonschema
+
+            jsonschema.Draft202012Validator.check_schema(output_schema)
+        except Exception as error:
+            raise ProvisionDenied("workflow output schema is invalid") from error
+        return encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _workflow_step_latest(connection, principal_id, workflow_id, step_id):
+        return connection.execute(
+            "SELECT * FROM work_workflow_step_provisions WHERE principal_id=? AND workflow_id=? "
+            "AND step_id=? ORDER BY revision DESC LIMIT 1",
+            (principal_id, workflow_id, step_id),
+        ).fetchone()
+
+    @staticmethod
+    def _workflow_step_for_spec(connection, principal_id, workflow_id, step_id, spec_hash):
+        return connection.execute(
+            "SELECT * FROM work_workflow_step_provisions WHERE principal_id=? AND workflow_id=? "
+            "AND step_id=? AND spec_hash=? ORDER BY revision DESC LIMIT 1",
+            (principal_id, workflow_id, step_id, spec_hash),
+        ).fetchone()
 
     def _resolve_launch(self, connection, authenticated_principal, selector, *, expected_ref=None):
         """Resolve with a caller-owned transaction, optionally fencing one exact revision.

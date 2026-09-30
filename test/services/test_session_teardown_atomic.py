@@ -35,8 +35,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
-from cli_agent_orchestrator.backends.registry import set_backend
 from cli_agent_orchestrator import constants
+from cli_agent_orchestrator.backends.registry import set_backend
 from cli_agent_orchestrator.clients import database
 from cli_agent_orchestrator.services import (
     session_env,

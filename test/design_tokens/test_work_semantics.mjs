@@ -47,7 +47,7 @@ function parseWebSemantics(source) {
 function parseTuiSemantics(source) {
   return Array.from(
     source.matchAll(
-      /WorkStatusSemantics \{ state: "([^"]+)", label: "([^"]+)", semantic_role: WorkSemanticRole::(\w+), observed_running_count: ([01]), observed_succeeded_count: ([01]) \},/g,
+      /WorkStatusSemantics\s*\{\s*state:\s*"([^"]+)",\s*label:\s*"([^"]+)",\s*semantic_role:\s*WorkSemanticRole::(\w+),\s*observed_running_count:\s*([01]),\s*observed_succeeded_count:\s*([01]),?\s*\},/g,
     ),
     ([, state, label, semanticRole, running, succeeded]) => ({
       state,

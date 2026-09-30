@@ -23,9 +23,9 @@ import logging
 import os
 import re
 import sqlite3
-from contextlib import closing
 import threading
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -93,11 +93,6 @@ from cli_agent_orchestrator.providers.kiro_capabilities import (
 )
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services import worktree_service
-from cli_agent_orchestrator.services.work_terminal import (
-    release_terminal_dispatch_lock,
-    terminal_dispatch_lock,
-    with_terminal_dispatch_lock,
-)
 from cli_agent_orchestrator.services.elastic_worker_gateway import (
     elastic_worker_gateway_headers,
 )
@@ -118,6 +113,12 @@ from cli_agent_orchestrator.services.session_lock import session_lifecycle_lock
 from cli_agent_orchestrator.services.settings_service import get_max_terminals
 from cli_agent_orchestrator.services.status_monitor import status_monitor
 from cli_agent_orchestrator.services.step_output_store import _validate_key_part
+from cli_agent_orchestrator.services.work_launch_mode import managed_launch_required
+from cli_agent_orchestrator.services.work_terminal import (
+    release_terminal_dispatch_lock,
+    terminal_dispatch_lock,
+    with_terminal_dispatch_lock,
+)
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 from cli_agent_orchestrator.utils.path_validation import resolve_and_validate_path
 from cli_agent_orchestrator.utils.skills import build_skill_catalog
@@ -196,16 +197,13 @@ def ensure_terminal_is_not_work_owned(terminal_id: str) -> None:
             work_tables = {
                 row[0]
                 for row in connection.execute(
-                    "SELECT name FROM sqlite_master "
-                    "WHERE type='table' AND name GLOB 'work_*'"
+                    "SELECT name FROM sqlite_master " "WHERE type='table' AND name GLOB 'work_*'"
                 )
             }
         if not work_tables:
             return
         if "work_migrations" not in work_tables:
-            raise WorkOwnershipStoreUnavailableError(
-                "durable Work ownership store is incomplete"
-            )
+            raise WorkOwnershipStoreUnavailableError("durable Work ownership store is incomplete")
         with WorkRepository(database_path).read_snapshot() as connection:
             owned = connection.execute(
                 "SELECT 1 FROM work_attempts WHERE terminal_id=? LIMIT 1",
@@ -1237,6 +1235,12 @@ async def create_terminal(
             server.max_terminals; unset = unlimited) is already reached
         TimeoutError: If provider initialization times out
     """
+    if new_session and managed_launch_required():
+        from cli_agent_orchestrator.services.work_terminal import current_managed_terminal_id
+
+        if current_managed_terminal_id() is None:
+            raise PermissionError("managed Work launch is required for new sessions")
+
     # Idempotency resolution runs BEFORE the terminal cap check below, and the
     # order is deliberate: a key HIT returns an already-existing terminal and
     # allocates nothing, so charging it against the cap would 429 a legitimate
@@ -1392,9 +1396,10 @@ async def create_terminal(
                 profile=getattr(profile, "engine", None),
             )
             if allowed_tools is None and profile is not None:
+                from cli_agent_orchestrator.agent_plugins.mcp_delivery import grantable_server_names
                 from cli_agent_orchestrator.utils.tool_mapping import resolve_allowed_tools
 
-                mcp_server_names = list(profile.mcpServers.keys()) if profile.mcpServers else None
+                mcp_server_names = grantable_server_names(profile)
                 allowed_tools = resolve_allowed_tools(
                     profile.allowedTools, profile.role, mcp_server_names
                 )
@@ -1422,15 +1427,19 @@ async def create_terminal(
 
         # Resolve tool policy before persistence for non-Kiro providers too.
         if allowed_tools is None and profile is not None:
+            from cli_agent_orchestrator.agent_plugins.mcp_delivery import grantable_server_names
             from cli_agent_orchestrator.utils.tool_mapping import resolve_allowed_tools
 
-            mcp_server_names = list(profile.mcpServers.keys()) if profile.mcpServers else None
+            mcp_server_names = grantable_server_names(profile)
             allowed_tools = resolve_allowed_tools(
                 profile.allowedTools, profile.role, mcp_server_names
             )
 
         # Step 1: Generate unique identifiers
-        if managed_terminal_id is not None and get_terminal_metadata(managed_terminal_id) is not None:
+        if (
+            managed_terminal_id is not None
+            and get_terminal_metadata(managed_terminal_id) is not None
+        ):
             raise ValueError("admitted launch terminal identity is already in use")
         terminal_id = managed_terminal_id or generate_terminal_id()
 
@@ -2168,9 +2177,7 @@ _DEFERRED_STARTED_STATUSES = {
 # is not successful pickup: its provider may resume the same turn later. The
 # deferred path must observe it promptly so it never falls through to a
 # redelivery while the original task is still pending.
-_DEFERRED_STARTED_OR_QUOTA_STATUSES = _DEFERRED_STARTED_STATUSES | {
-    TerminalStatus.WAITING_QUOTA
-}
+_DEFERRED_STARTED_OR_QUOTA_STATUSES = _DEFERRED_STARTED_STATUSES | {TerminalStatus.WAITING_QUOTA}
 
 
 def _quota_wait_blocked_error(
@@ -2431,6 +2438,7 @@ async def _confirm_worker_started_or_resubmit(
     still stuck at IDLE after all resubmit attempts. Blocking tmux/DB I/O runs
     off the loop via to_thread so concurrent deferred inits aren't frozen.
     """
+
     async def wait_for_pickup_or_quota() -> bool:
         """Wait for pickup evidence, surfacing quota before retry logic runs."""
         observed = await wait_until_status(
@@ -3439,6 +3447,7 @@ def _post_turn_receipt_candidate(
         or provider.pending_turn_receipt_state() is None
     ):
         return None
+
     def candidate_from(transcript: str, *, viewport: bool) -> Optional[str]:
         if not transcript:
             return None

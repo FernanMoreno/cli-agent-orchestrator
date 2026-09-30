@@ -493,6 +493,11 @@ def _start_cao_server(
             str(port),
         ],
         env=env,
+        # Manifest capture must describe this disposable test workspace. Using
+        # the operator's checkout adds unrelated files and OneDrive latency to
+        # every script submit, exceeding the real HTTP fixture's five-second gate.
+        # An absent Git baseline is recorded explicitly by the production code.
+        cwd=home_dir,
         stdout=log_handle,
         stderr=subprocess.STDOUT,
         start_new_session=True,

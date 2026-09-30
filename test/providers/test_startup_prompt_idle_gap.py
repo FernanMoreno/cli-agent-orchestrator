@@ -8,7 +8,7 @@ total runtime is hard-capped by ``provider_init_timeout``.
 Covers: ClaudeCodeProvider, KimiCliProvider, AntigravityCliProvider.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -59,6 +59,11 @@ class TestClaudeCodeIdleGap:
     @patch("cli_agent_orchestrator.providers.claude_code.asyncio.sleep")
     @patch("cli_agent_orchestrator.providers.claude_code.time")
     @patch("cli_agent_orchestrator.backends.registry._backend")
+    @patch.object(
+        ClaudeCodeProvider,
+        "_observe_initial_viewport_state",
+        new=AsyncMock(return_value=TerminalStatus.IDLE),
+    )
     async def test_late_prompt_handled(self, mock_backend, mock_time, mock_sleep):
         """A prompt at t=35s (past the old 20s window) is still handled.
 
@@ -82,7 +87,7 @@ class TestClaudeCodeIdleGap:
         # polling until it sees the version banner. Live startups do exactly this.
         mock_backend.get_history.side_effect = [
             "WARNING: Bypass\n1. No\n2. Yes, I accept\n",
-            "Yes, I trust this folder",
+            "❯ 1. Yes, I trust this folder",
             "Welcome to Claude Code v2.1.235",
         ]
 
@@ -131,6 +136,11 @@ class TestClaudeCodeIdleGap:
     @patch("cli_agent_orchestrator.providers.claude_code.asyncio.sleep")
     @patch("cli_agent_orchestrator.providers.claude_code.time")
     @patch("cli_agent_orchestrator.backends.registry._backend")
+    @patch.object(
+        ClaudeCodeProvider,
+        "_observe_initial_viewport_state",
+        new=AsyncMock(return_value=TerminalStatus.IDLE),
+    )
     async def test_first_prompt_later_than_idle_gap_still_handled(
         self, mock_backend, mock_time, mock_sleep
     ):
@@ -154,7 +164,7 @@ class TestClaudeCodeIdleGap:
         # (a model-upgrade nudge can follow it), so the loop needs a second frame
         # that ends it. A constant return_value would spin until the idle gap.
         mock_backend.get_history.side_effect = [
-            "Yes, I trust this folder",
+            "❯ 1. Yes, I trust this folder",
             "Welcome to Claude Code v2.1.235",
         ]
 
@@ -202,6 +212,11 @@ class TestClaudeCodeIdleGap:
     @patch("cli_agent_orchestrator.providers.claude_code.asyncio.sleep")
     @patch("cli_agent_orchestrator.providers.claude_code.time")
     @patch("cli_agent_orchestrator.backends.registry._backend")
+    @patch.object(
+        ClaudeCodeProvider,
+        "_observe_initial_viewport_state",
+        new=AsyncMock(return_value=TerminalStatus.IDLE),
+    )
     async def test_cascading_prompts_all_handled(self, mock_backend, mock_time, mock_sleep):
         """Multiple prompts in sequence — bypass then trust, both handled."""
         mock_time.monotonic.side_effect = [
@@ -216,7 +231,7 @@ class TestClaudeCodeIdleGap:
         ]
         mock_backend.get_history.side_effect = [
             "WARNING: Bypass\n1. No\n2. Yes, I accept\n",
-            "Yes, I trust this folder",
+            "❯ 1. Yes, I trust this folder",
             "Welcome to Claude Code v2.1.235",
         ]
 
@@ -232,6 +247,11 @@ class TestClaudeCodeIdleGap:
     @patch("cli_agent_orchestrator.providers.claude_code.asyncio.sleep")
     @patch("cli_agent_orchestrator.providers.claude_code.time")
     @patch("cli_agent_orchestrator.backends.registry._backend")
+    @patch.object(
+        ClaudeCodeProvider,
+        "_observe_initial_viewport_state",
+        new=AsyncMock(return_value=TerminalStatus.IDLE),
+    )
     async def test_idle_gap_resets_on_each_prompt(self, mock_backend, mock_time, mock_sleep):
         """First prompt at t=5s resets timer; second at t=22s still within gap of first."""
         # idle_gap=20. First prompt at t=5, resets last_prompt_time to 5.
@@ -249,7 +269,7 @@ class TestClaudeCodeIdleGap:
         ]
         mock_backend.get_history.side_effect = [
             "WARNING: Bypass\n1. No\n2. Yes, I accept\n",
-            "Yes, I trust this folder",
+            "❯ 1. Yes, I trust this folder",
             "Welcome to Claude Code v2.1.235",
         ]
 

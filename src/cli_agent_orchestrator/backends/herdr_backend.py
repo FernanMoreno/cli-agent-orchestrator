@@ -493,8 +493,11 @@ class HerdrBackend(TerminalBackend):
         # failure or unrecognized command name. Only probed when
         # force_bracketed_paste is actually requested -- an extra herdr
         # round-trip whose result would otherwise be discarded.
-        if (force_bracketed_paste and not plain_shell and
-                not self._pane_is_bracketed_paste_incompatible(session_name, window_name)):
+        if (
+            force_bracketed_paste
+            and not plain_shell
+            and not self._pane_is_bracketed_paste_incompatible(session_name, window_name)
+        ):
             text = "\x1b[200~" + keys + "\x1b[201~"
         else:
             text = keys

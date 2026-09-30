@@ -375,12 +375,12 @@ def test_bubblewrap_backend_preflight_still_rejects_before_effects(
     scratch_bubblewrap: ScratchBubblewrap, tmp_path: Path, monkeypatch
 ):
     """Characterization evidence does not register or authorize the backend."""
+    from cli_agent_orchestrator.backends import bubblewrap_backend as bubblewrap_module
     from cli_agent_orchestrator.backends.base import (
         ProcessRestrictionContract,
         UnsupportedWorkEnforcement,
     )
     from cli_agent_orchestrator.backends.bubblewrap_backend import BubblewrapWorkBackend
-    from cli_agent_orchestrator.backends import bubblewrap_backend as bubblewrap_module
 
     monkeypatch.setattr(bubblewrap_module, "_require_work_broker_identity", lambda _name: None)
     monkeypatch.setattr(bubblewrap_module, "_probe_bwrap_version", lambda _: (0, 13, 0))

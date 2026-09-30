@@ -1,6 +1,5 @@
 """Admission commits authorization, immutable order and queue as one SQLite unit."""
 
-from concurrent.futures import ThreadPoolExecutor
 import importlib
 import importlib.util
 import json
@@ -8,15 +7,16 @@ import multiprocessing
 import os
 import sqlite3
 import time
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
-from cli_agent_orchestrator.backends.tmux_backend import TmuxBackend
-from cli_agent_orchestrator.backends.base import UnsupportedWorkEnforcement
-from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator import constants
+from cli_agent_orchestrator.backends.base import UnsupportedWorkEnforcement
+from cli_agent_orchestrator.backends.tmux_backend import TmuxBackend
+from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.models.work_contract import (
     ContractPermissions,
     ContractResources,
@@ -361,7 +361,9 @@ def test_v2_replay_rejects_corrupt_or_missing_identity_before_preflight(context,
     admit(context, service, contract=contract)
 
     with sqlite3.connect(context.repo.path) as connection:
-        table = "work_dispatch_bindings" if corruption == "projection" else "work_dispatch_v2_evidence"
+        table = (
+            "work_dispatch_bindings" if corruption == "projection" else "work_dispatch_v2_evidence"
+        )
         action = "delete" if corruption == "missing" else "update"
         trigger = f"{table}_immutable_{action}"
         schema = DISPATCH_SCHEMA if corruption == "projection" else DISPATCH_V2_EVIDENCE_SCHEMA
@@ -369,13 +371,11 @@ def test_v2_replay_rejects_corrupt_or_missing_identity_before_preflight(context,
         if corruption == "missing":
             connection.execute("DELETE FROM work_dispatch_v2_evidence")
         elif corruption == "hash":
-            connection.execute(
-                "UPDATE work_dispatch_v2_evidence SET contract_hash=?", ("f" * 64,)
-            )
+            connection.execute("UPDATE work_dispatch_v2_evidence SET contract_hash=?", ("f" * 64,))
         else:
-            payload = json.loads(connection.execute(
-                f"SELECT contract_json FROM {table}"
-            ).fetchone()[0])
+            payload = json.loads(
+                connection.execute(f"SELECT contract_json FROM {table}").fetchone()[0]
+            )
             if corruption == "json":
                 payload["executable_identities"][0]["sha256_digest"] = "b" * 64
                 payload["executable_identities"][0]["content_reference"] = "sha256:" + "b" * 64
@@ -385,7 +385,9 @@ def test_v2_replay_rejects_corrupt_or_missing_identity_before_preflight(context,
                 f"UPDATE {table} SET contract_json=?",
                 (json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False),),
             )
-        connection.execute(next(statement for statement in schema if f"CREATE TRIGGER {trigger}" in statement))
+        connection.execute(
+            next(statement for statement in schema if f"CREATE TRIGGER {trigger}" in statement)
+        )
 
     with pytest.raises(ValueError):
         admit(context, service, contract=contract)
@@ -418,9 +420,11 @@ def test_malformed_v2_identity_fails_before_preflight_or_persistence(context, ma
     elif malformation == "missing_identity":
         contract = contract.model_copy(update={"executable_identities": ()})
     else:
-        contract = contract.model_copy(update={
-            "executable_identities": (identity.model_copy(update={"sha256_digest": "b" * 64}),)
-        })
+        contract = contract.model_copy(
+            update={
+                "executable_identities": (identity.model_copy(update={"sha256_digest": "b" * 64}),)
+            }
+        )
     backend = AdmissionOnlyBackend()
     backend.preflight_work = Mock()
     with pytest.raises(ValueError):

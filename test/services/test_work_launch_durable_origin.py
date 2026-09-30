@@ -1,25 +1,24 @@
 """Durable launch origin binding must survive a runtime restart."""
 
-from dataclasses import replace
 import json
 import sqlite3
-
-import pytest
-
+from dataclasses import replace
 from test.services.test_work_launch_runtime import (  # noqa: F401
     ProtectedFakeBackend,
-    make_runtime,
     intent,
+    make_runtime,
     provision,
     runtime_module,
     trusted_setup,
 )
 
+import pytest
+
 from cli_agent_orchestrator.clients.work_repository import WorkConflict
 from cli_agent_orchestrator.models.work_delivery import WorkDeliveryEnvelope
-from cli_agent_orchestrator.services.work_launch import launch_adapter
 from cli_agent_orchestrator.services.work_authority import AuthorityDenied
 from cli_agent_orchestrator.services.work_contract import ContractConflict
+from cli_agent_orchestrator.services.work_launch import launch_adapter
 from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
 
 

@@ -1,7 +1,7 @@
 """HTTP knowledge authority uses real SQLite, durable grants and ASGI authentication."""
 
-import hashlib
 import asyncio
+import hashlib
 import importlib
 import importlib.util
 import time
@@ -182,9 +182,7 @@ async def test_http_authority_contract_rejects_stale_cas_hides_tombstone_and_rev
         "limit": 1,
     }
     async with client(authority) as http:
-        created = await http.post(
-            "/v1/knowledge/records/a/revisions", params=selectors, json=body
-        )
+        created = await http.post("/v1/knowledge/records/a/revisions", params=selectors, json=body)
         assert created.status_code == 201, created.text
         stale_review = await http.post(
             "/v1/knowledge/records/a/revisions/1/review",
@@ -225,9 +223,7 @@ async def test_http_authority_contract_rejects_stale_cas_hides_tombstone_and_rev
         first_page = await http.get("/v1/knowledge/recovery", params=recovery)
         assert first_page.status_code == 200, first_page.text
         page = first_page.json()
-        assert [(row["record_id"], row["content"]) for row in page["revisions"]] == [
-            ("a", None)
-        ]
+        assert [(row["record_id"], row["content"]) for row in page["revisions"]] == [("a", None)]
         cursor = page["next_cursor"]
         assert isinstance(cursor, str) and cursor.startswith("kcr1_")
         control.revoke(actor, grant_id=grant.id, expected_grant_revision=1, reason="test")

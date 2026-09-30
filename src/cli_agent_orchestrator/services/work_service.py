@@ -7,26 +7,179 @@ Public entrypoints must supply server-verified admission evidence.
 
 import asyncio
 import hashlib
+import json
 import math
 import os
 import select
 import signal
 import stat
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Annotated, Callable, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, StrictBool, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    model_validator,
+)
 
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
+from cli_agent_orchestrator.models.work_origin import (
+    MAX_WORKFLOW_STEP_RESULT_BYTES,
+    WorkAttemptRef,
+    WorkflowStepResultV1,
+)
 from cli_agent_orchestrator.services.work_origin import (
-    OriginDenied,
     OriginConflict,
+    OriginDenied,
     TaskReceivedReceiptV1,
     WorkOrigins,
 )
 from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
+
+
+def validate_workflow_step_result(binding, content: bytes) -> dict:
+    """Validate canonical result bytes against one immutable workflow binding."""
+    if type(content) is not bytes or len(content) > MAX_WORKFLOW_STEP_RESULT_BYTES:
+        raise ValueError("workflow result envelope exceeds 1 MiB")
+    result = WorkflowStepResultV1.from_json_bytes(content)
+    if result.canonical_bytes() != content:
+        raise WorkConflict("workflow result envelope is not canonically encoded")
+
+    schema_json = getattr(binding, "output_schema_json", None)
+    schema_hash = getattr(binding, "output_schema_hash", None)
+    if (schema_json is None) != (schema_hash is None):
+        raise WorkConflict("workflow output schema binding is incomplete")
+    if schema_json is not None:
+        if type(schema_json) is not str or type(schema_hash) is not str:
+            raise WorkConflict("workflow output schema binding is invalid")
+
+        def unique_pairs(pairs):
+            value = {}
+            for key, item in pairs:
+                if key in value:
+                    raise ValueError("workflow output schema contains a duplicate key")
+                value[key] = item
+            return value
+
+        def reject_constant(_value):
+            raise ValueError("workflow output schema numbers must be finite")
+
+        try:
+            schema = json.loads(
+                schema_json,
+                object_pairs_hook=unique_pairs,
+                parse_constant=reject_constant,
+            )
+            canonical_schema = json.dumps(
+                schema,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+        except (UnicodeError, json.JSONDecodeError, TypeError, ValueError, RecursionError) as error:
+            raise WorkConflict("workflow output schema is not strict JSON") from error
+        if (
+            type(schema) is not dict
+            or canonical_schema != schema_json
+            or hashlib.sha256(schema_json.encode("utf-8")).hexdigest() != schema_hash
+        ):
+            raise WorkConflict("workflow output schema hash or canonical form changed")
+        try:
+            import jsonschema
+
+            validator = jsonschema.Draft202012Validator(schema)
+            validator.validate(result.output)
+        except jsonschema.SchemaError as error:
+            raise WorkConflict("frozen workflow output schema is invalid") from error
+        except jsonschema.ValidationError as error:
+            raise WorkConflict("workflow result output does not match its frozen schema") from error
+
+    binding_id = getattr(binding, "binding_id", None)
+    provision_fingerprint = getattr(binding, "provision_fingerprint", None)
+    if (
+        type(binding_id) is not str
+        or not binding_id
+        or type(provision_fingerprint) is not str
+        or len(provision_fingerprint) != 64
+        or any(character not in "0123456789abcdef" for character in provision_fingerprint)
+    ):
+        raise WorkConflict("workflow result has no immutable binding identity")
+    return {
+        "valid": True,
+        "content_hash": hashlib.sha256(content).hexdigest(),
+        "output_schema_hash": schema_hash,
+        "provision_fingerprint": provision_fingerprint,
+        "validator_id": "workflow-step-result-v1",
+        "workflow_binding_id": binding_id,
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptedWorkflowStepResult:
+    """Restart-readable proof for one accepted workflow result artifact."""
+
+    binding_id: str
+    binding_fingerprint: str
+    tier: str
+    run_id: str
+    run_generation: int
+    step_id: str
+    workflow_step_attempt: int
+    work_item_id: str
+    work_attempt_id: str
+    work_generation: int
+    delivery_id: str
+    delivery_hash: str
+    accepted_result_id: str
+    content_hash: str
+    byte_length: int
+    canonical_bytes: bytes = field(repr=False)
+    result: WorkflowStepResultV1
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowStepWorkState:
+    """Exact durable Work and attempt states for one immutable workflow binding."""
+
+    binding_id: str
+    work_item_id: str
+    work_attempt_id: str
+    work_generation: int
+    work_state: str
+    work_revision: int
+    attempt_state: str
+    attempt_revision: int
+    current_attempt_id: str
+    current_generation: int
+    current_attempt_state: str
+    accepted_result_id: str | None
+    cleanup_state: str
+
+
+class ProcessFailureEvidence(BaseModel):
+    """Server-owned proof that one Docker process exited unsuccessfully and was removed."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    attempt_id: StrictStr
+    generation: Annotated[StrictInt, Field(gt=0)]
+    exit_code: Annotated[StrictInt, Field(gt=0, le=255)]
+    process_stopped: Literal[True]
+    container_removed: Literal[True]
+    image_removed: Literal[True]
+
+    @model_validator(mode="after")
+    def validate_identity(self):
+        if not self.attempt_id or len(self.attempt_id) > 128:
+            raise ValueError("process failure attempt identity is invalid")
+        return self
 
 
 class DeliveryObservation(BaseModel):
@@ -36,6 +189,7 @@ class DeliveryObservation(BaseModel):
     task_received: StrictBool = False
     execution_started: StrictBool = False
     task_received_receipt: TaskReceivedReceiptV1 | None = None
+    process_failure: ProcessFailureEvidence | None = None
 
     @model_validator(mode="after")
     def execution_implies_receipt(self):
@@ -277,7 +431,13 @@ def _cleanup_bubblewrap_identity(identity: dict[str, object]) -> bool:
 
 
 class WorkService:
-    def __init__(self, repository: WorkRepository, *, origins: WorkOrigins | None = None):
+    def __init__(
+        self,
+        repository: WorkRepository,
+        *,
+        origins: WorkOrigins | None = None,
+        artifacts=None,
+    ):
         self.repository = repository
         if origins is not None and (
             not isinstance(origins, WorkOrigins)
@@ -285,6 +445,13 @@ class WorkService:
         ):
             raise ValueError("task receipt origin must use this work repository")
         self.origins = origins
+        if artifacts is not None and not all(
+            callable(getattr(artifacts, method, None)) for method in ("publish", "read")
+        ):
+            raise ValueError("workflow results require a durable artifact store")
+        self.artifacts = artifacts
+        if origins is not None and artifacts is not None:
+            origins._bind_result_service(self)
 
     def retry_work(
         self,
@@ -459,13 +626,58 @@ class WorkService:
         return self._record_delivery(sent, observation, actor_id=actor_id)
 
     def _record_delivery(self, sent, observation, *, actor_id):
-        """Only an authenticated receiver receipt can acknowledge delivery."""
+        """Record only authenticated receipts or the server's proven process failure."""
         work_item_id = sent["id"]
-        del actor_id
-        if observation.task_received_receipt is None:
-            # Legacy adapter telemetry remains readable but cannot promote Work.
-            return self.repository.get_work(work_item_id)
-        return self.record_task_received(observation.task_received_receipt)
+        current = self.repository.get_work(work_item_id)
+        if observation.task_received_receipt is not None:
+            current = self.record_task_received(observation.task_received_receipt)
+        if observation.process_failure is not None:
+            current = self._record_process_failure(
+                sent, observation.process_failure, actor_id=actor_id
+            )
+        return current
+
+    def _record_process_failure(
+        self, sent: dict, failure: ProcessFailureEvidence, *, actor_id: str
+    ) -> dict:
+        """Fail only the exact still-live attempt after Docker proves stop and cleanup."""
+        dispatched = sent["attempts"][-1]
+        current = self.repository.get_work(sent["id"])
+        latest = current["attempts"][-1]
+        if (
+            failure.attempt_id != dispatched["id"]
+            or failure.generation != dispatched["generation"]
+            or current["id"] != sent["id"]
+            or latest["id"] != dispatched["id"]
+            or latest["generation"] != dispatched["generation"]
+            or latest["state"] not in {"sent", "acknowledged", "running"}
+            or current["accepted_result_id"] is not None
+        ):
+            # Result acceptance, cancellation, a newer attempt, or any stale
+            # observation wins. It cannot be overwritten by an old process exit.
+            return current
+        evidence = TransitionEvidence(
+            generation=failure.generation,
+            expected_generation=failure.generation,
+            process_exit_code=failure.exit_code,
+            process_stopped=failure.process_stopped,
+            container_removed=failure.container_removed,
+            image_removed=failure.image_removed,
+        )
+        try:
+            return self.repository.transition_attempt(
+                attempt_id=failure.attempt_id,
+                generation=failure.generation,
+                expected_revision=latest["revision"],
+                expected_state=latest["state"],
+                target="failed",
+                actor_id=actor_id,
+                event_id=uuid4().hex,
+                evidence=evidence,
+            )
+        except WorkConflict:
+            # A result or another terminal observation may have won the CAS.
+            return self.repository.get_work(sent["id"])
 
     def record_task_received(self, receipt: TaskReceivedReceiptV1) -> dict:
         """Consume one server-issued receipt without accepting an adapter actor.
@@ -527,6 +739,7 @@ class WorkService:
         validate: Callable[[bytes], dict],
         validator_id: str,
         actor_id: str,
+        before_register: Callable[[object], None] | None = None,
     ) -> dict:
         """Accept bytes only after explicit validation and durable publication.
 
@@ -555,6 +768,7 @@ class WorkService:
                 validator_id=validator_id,
                 validation_evidence=validation,
                 actor_id=actor_id,
+                before_register=before_register,
             )
 
         current = self.repository.get_work(work_item_id)
@@ -611,6 +825,389 @@ class WorkService:
                 children_settled=True,
             ),
         )
+
+    def _require_workflow_task_received(
+        self, connection, binding, *, require_live_authority: bool = True
+    ) -> dict:
+        if self.origins is None:
+            raise WorkConflict("workflow receiver authority is unavailable")
+        if require_live_authority:
+            self.origins._require_workflow_receiver_action(
+                connection, binding, action="task_received"
+            )
+        receipt = self.repository._workflow_step_task_received_receipt(
+            connection, binding.work_attempt_id, binding.work_generation
+        )
+        acceptance = connection.execute(
+            "SELECT * FROM work_workflow_step_receiver_acceptances "
+            "WHERE attempt_id=? AND generation=?",
+            (binding.work_attempt_id, binding.work_generation),
+        ).fetchone()
+        expected_acceptance = self.origins._workflow_receiver_acceptance_hash(
+            binding_id=binding.binding_id,
+            attempt_ref=WorkAttemptRef(
+                work_item_id=binding.work_item_id,
+                attempt_id=binding.work_attempt_id,
+                generation=binding.work_generation,
+            ),
+            receiver_subject_ref=binding.receiver_subject_ref,
+            receiver_authorization_ref=binding.receiver_authorization_ref,
+            delivery_id=binding.delivery_id,
+            delivery_hash=binding.delivery_hash,
+        )
+        if receipt is None or acceptance is None:
+            raise WorkConflict("workflow result requires a durable authenticated task receipt")
+        expected_receipt = (
+            binding.binding_id,
+            binding.work_attempt_id,
+            binding.work_generation,
+            binding.work_item_id,
+            binding.job_id,
+            binding.receiver_subject_ref.subject_id,
+            binding.receiver_subject_ref.revision,
+            "receiver",
+            binding.receiver_authorization_ref.revision,
+            binding.receiver_grant_id,
+            binding.receiver_grant_revision,
+            binding.delivery_id,
+            binding.delivery_hash,
+        )
+        actual_receipt = (
+            receipt["binding_id"],
+            receipt["attempt_id"],
+            receipt["generation"],
+            receipt["work_item_id"],
+            receipt["job_id"],
+            receipt["receiver_subject_id"],
+            receipt["receiver_subject_revision"],
+            receipt["receiver_authorization_kind"],
+            receipt["receiver_authorization_revision"],
+            receipt["receiver_grant_id"],
+            receipt["receiver_grant_revision"],
+            receipt["delivery_id"],
+            receipt["delivery_hash"],
+        )
+        if (
+            actual_receipt != expected_receipt
+            or not isinstance(receipt["nonce"], str)
+            or not receipt["nonce"]
+            or not isinstance(receipt["receipt_hash"], str)
+            or len(receipt["receipt_hash"]) != 64
+            or any(ch not in "0123456789abcdef" for ch in receipt["receipt_hash"])
+            or acceptance["binding_id"] != binding.binding_id
+            or acceptance["acceptance_sha256"] != expected_acceptance
+        ):
+            raise WorkConflict("durable workflow task receipt does not match its binding")
+        return dict(receipt)
+
+    def _authenticate_workflow_result(self, connection, *, attempt_credential, receiver_credential):
+        from cli_agent_orchestrator.services.work_attempt_credential import (
+            WorkAttemptCredentialRejected,
+            WorkAttemptCredentials,
+        )
+
+        credentials = WorkAttemptCredentials(self.repository)
+        try:
+            attempt = credentials.authenticate_in_transaction(
+                connection, attempt_credential, allow_finished=True
+            )
+            receiver = credentials.authenticate_receiver_in_transaction(
+                connection, receiver_credential, allow_finished=True
+            )
+        except WorkAttemptCredentialRejected as error:
+            raise WorkConflict(
+                "workflow result credentials are expired, revoked, or stale"
+            ) from error
+        if (attempt.attempt_id, attempt.generation, attempt.work_item_id) != (
+            receiver.attempt_id,
+            receiver.generation,
+            receiver.work_item_id,
+        ) or receiver.binding_id is None:
+            raise WorkConflict("workflow result credentials do not identify one managed binding")
+        binding = self.origins._workflow_binding_for_attempt(
+            connection,
+            attempt_id=attempt.attempt_id,
+            generation=attempt.generation,
+            work_item_id=attempt.work_item_id,
+        )
+        if binding is None or binding.binding_id != receiver.binding_id:
+            raise WorkConflict("workflow result credentials have no exact immutable binding")
+        self.origins._require_workflow_receiver_action(connection, binding, action="task_result")
+        if (
+            attempt.job_id != binding.job_id
+            or attempt.grant_id != binding.grant_id
+            or attempt.grant_revision != binding.grant_revision
+            or attempt.contract_hash != binding.contract_hash
+            or receiver.receiver_subject_id != binding.receiver_subject_ref.subject_id
+            or receiver.receiver_subject_revision != binding.receiver_subject_ref.revision
+            or receiver.receiver_authorization_revision
+            != binding.receiver_authorization_ref.revision
+            or receiver.receiver_grant_id != binding.receiver_grant_id
+            or receiver.receiver_grant_revision != binding.receiver_grant_revision
+            or receiver.delivery_id != binding.delivery_id
+            or receiver.delivery_hash != binding.delivery_hash
+        ):
+            raise WorkConflict("workflow result credential differs from its immutable binding")
+        self._require_workflow_task_received(connection, binding)
+        return attempt, receiver, binding, credentials
+
+    def submit_workflow_step_result(
+        self,
+        *,
+        attempt_credential: bytes,
+        receiver_credential: bytes,
+        result: WorkflowStepResultV1,
+    ) -> dict:
+        """Accept only receiver-authenticated result bytes for one ACKed workflow attempt."""
+        if self.origins is None or self.artifacts is None:
+            raise WorkConflict("managed workflow result owner is not configured")
+        if not isinstance(result, WorkflowStepResultV1):
+            raise ValueError("typed workflow result envelope required")
+        content = result.canonical_bytes()
+        with self.repository.transaction() as connection:
+            self.repository._verify(connection)
+            attempt, receiver, binding, _credentials = self._authenticate_workflow_result(
+                connection,
+                attempt_credential=attempt_credential,
+                receiver_credential=receiver_credential,
+            )
+            work = self.repository._work(connection, binding.work_item_id)
+            if work["attempts"][-1]["id"] != binding.work_attempt_id:
+                raise WorkConflict("workflow result attempt is no longer current")
+            if work["accepted_result_id"] is not None:
+                accepted = self.read_accepted_workflow_result(binding)
+                if accepted is None or accepted.canonical_bytes != content:
+                    raise WorkConflict("workflow result conflicts with the accepted bytes")
+                return work
+            if (
+                attempt.attempt_id != binding.work_attempt_id
+                or attempt.generation != binding.work_generation
+            ):
+                raise WorkConflict("workflow result attempt generation changed")
+            actor_id = self.repository._job(connection, binding.job_id)["principal_id"]
+
+        validation = validate_workflow_step_result(binding, content)
+
+        def before_register(connection):
+            self.repository._verify(connection)
+            _attempt, _receiver, current_binding, _credentials = self._authenticate_workflow_result(
+                connection,
+                attempt_credential=attempt_credential,
+                receiver_credential=receiver_credential,
+            )
+            if current_binding != binding:
+                raise WorkConflict("workflow binding changed before result acceptance")
+
+        settled = self.settle_attempt(
+            binding.work_item_id,
+            generation=binding.work_generation,
+            content=content,
+            artifacts=self.artifacts,
+            validate=lambda raw: validate_workflow_step_result(binding, raw),
+            validator_id="workflow-step-result-v1",
+            actor_id=actor_id,
+            before_register=before_register,
+        )
+        latest = settled["attempts"][-1]
+        if (
+            settled["accepted_result_id"] is None
+            or latest["id"] != binding.work_attempt_id
+            or latest["generation"] != binding.work_generation
+            or latest["state"] != "finished"
+        ):
+            raise WorkConflict("workflow result was not durably accepted by Work")
+        accepted = self.read_accepted_workflow_result(binding)
+        if (
+            accepted is None
+            or accepted.accepted_result_id != settled["accepted_result_id"]
+            or accepted.content_hash != hashlib.sha256(content).hexdigest()
+            or accepted.canonical_bytes != content
+        ):
+            raise WorkConflict("workflow result was not durably accepted by Work")
+        return settled
+
+    def read_accepted_workflow_result(self, binding) -> AcceptedWorkflowStepResult | None:
+        """Rehydrate and revalidate one durable accepted result after process restart."""
+        if self.artifacts is None or self.origins is None:
+            raise WorkConflict("managed workflow result reader is not configured")
+        from cli_agent_orchestrator.services.step_output_store import ArtifactRef
+        from cli_agent_orchestrator.services.work_workflow import WorkWorkflowOrigins
+
+        try:
+            exact = WorkWorkflowOrigins(self.repository).read_step_binding(
+                tier=binding.tier,
+                run_id=binding.run_id,
+                run_generation=binding.run_generation,
+                step_id=binding.step_id,
+                workflow_step_attempt=binding.workflow_step_attempt,
+            )
+        except Exception as error:
+            raise WorkConflict("workflow result binding could not be revalidated") from error
+        if (
+            exact is None
+            or exact != binding
+            or exact.computed_fingerprint() != exact.binding_fingerprint
+        ):
+            raise WorkConflict("workflow result binding is absent, changed, or corrupt")
+        with self.repository.read_snapshot() as connection:
+            self.repository._verify(connection)
+            work = self.repository._work(connection, exact.work_item_id)
+            attempt = connection.execute(
+                "SELECT * FROM work_attempts WHERE id=? AND generation=?",
+                (exact.work_attempt_id, exact.work_generation),
+            ).fetchone()
+            if work["accepted_result_id"] is None:
+                return None
+            # The private submit endpoint requires both receiver actions to be
+            # live when it accepts bytes. Once accepted, projection relies on
+            # the immutable receipt/acceptance proof and artifact; later grant
+            # expiry or revocation cannot erase that historical fact.
+            self._require_workflow_task_received(connection, exact, require_live_authority=False)
+            result_row = connection.execute(
+                "SELECT * FROM work_results WHERE id=?",
+                (work["accepted_result_id"],),
+            ).fetchone()
+            if (
+                result_row is None
+                or attempt is None
+                or work["id"] != exact.work_item_id
+                or work["job_id"] != exact.job_id
+                or work["attempts"][-1]["id"] != exact.work_attempt_id
+                or work["attempts"][-1]["generation"] != exact.work_generation
+                or result_row["attempt_id"] != exact.work_attempt_id
+                or attempt["result_id"] != result_row["id"]
+                or attempt["state"] != "finished"
+                or work["state"] != "succeeded"
+                or result_row["validation_state"] != "verified"
+                or result_row["validator_id"] != "workflow-step-result-v1"
+            ):
+                raise WorkConflict("accepted workflow result reference is inconsistent")
+
+            def unique_pairs(pairs):
+                decoded = {}
+                for key, value in pairs:
+                    if key in decoded:
+                        raise ValueError("duplicate validation evidence key")
+                    decoded[key] = value
+                return decoded
+
+            def reject_constant(_value):
+                raise ValueError("non-finite validation evidence number")
+
+            try:
+                evidence = json.loads(
+                    result_row["validation_evidence"],
+                    object_pairs_hook=unique_pairs,
+                    parse_constant=reject_constant,
+                )
+            except (TypeError, ValueError, json.JSONDecodeError, RecursionError) as error:
+                raise WorkConflict(
+                    "accepted workflow result validation evidence is corrupt"
+                ) from error
+            ref = ArtifactRef(
+                result_row["content_hash"],
+                result_row["immutable_location"],
+                result_row["byte_length"],
+            )
+            raw = self.artifacts.read(ref)
+        validation = validate_workflow_step_result(exact, raw)
+        if evidence != validation:
+            raise WorkConflict("accepted workflow result validation evidence changed")
+        return AcceptedWorkflowStepResult(
+            binding_id=exact.binding_id,
+            binding_fingerprint=exact.provision_fingerprint,
+            tier=exact.tier,
+            run_id=exact.run_id,
+            run_generation=exact.run_generation,
+            step_id=exact.step_id,
+            workflow_step_attempt=exact.workflow_step_attempt,
+            work_item_id=exact.work_item_id,
+            work_attempt_id=exact.work_attempt_id,
+            work_generation=exact.work_generation,
+            delivery_id=exact.delivery_id,
+            delivery_hash=exact.delivery_hash,
+            accepted_result_id=result_row["id"],
+            content_hash=result_row["content_hash"],
+            byte_length=result_row["byte_length"],
+            canonical_bytes=raw,
+            result=WorkflowStepResultV1.from_json_bytes(raw),
+        )
+
+    def read_workflow_step_state(self, binding, *, connection=None) -> WorkflowStepWorkState:
+        """Read raw durable Work states for the exact immutable workflow binding.
+
+        This reader does not interpret terminal observations or authorize retry.
+        It uses one SQLite snapshot for the binding, bound attempt, current
+        attempt, and item state so callers can distinguish a current terminal
+        attempt from a stale binding after an explicit Work replacement.
+        """
+        from cli_agent_orchestrator.services.work_workflow import WorkWorkflowOrigins
+
+        try:
+            attempt_id = binding.work_attempt_id
+            generation = binding.work_generation
+            work_item_id = binding.work_item_id
+            binding_id = binding.binding_id
+        except AttributeError as error:
+            raise WorkConflict("workflow Work state requires an immutable binding") from error
+        if (
+            not isinstance(binding_id, str)
+            or not binding_id
+            or not isinstance(attempt_id, str)
+            or not attempt_id
+            or not isinstance(work_item_id, str)
+            or not work_item_id
+            or type(generation) is not int
+            or generation <= 0
+        ):
+            raise WorkConflict("workflow Work state binding identity is invalid")
+
+        def read(snapshot):
+            if not snapshot.in_transaction:
+                raise WorkConflict("workflow Work state reads require a stable SQLite snapshot")
+            self.repository._verify(snapshot)
+            exact = WorkWorkflowOrigins(self.repository).read_binding_for_attempt(
+                attempt_id,
+                generation,
+                work_item_id,
+                connection=snapshot,
+            )
+            if exact is None or exact != binding:
+                raise WorkConflict("workflow Work state binding is absent or changed")
+            work = self.repository._work(snapshot, work_item_id)
+            if work["job_id"] != exact.job_id or not work["attempts"]:
+                raise WorkConflict("workflow binding does not identify a durable Work item")
+            attempt = next(
+                (
+                    item
+                    for item in work["attempts"]
+                    if item["id"] == attempt_id and item["generation"] == generation
+                ),
+                None,
+            )
+            if attempt is None:
+                raise WorkConflict("workflow binding does not identify a durable Work attempt")
+            current = work["attempts"][-1]
+            return WorkflowStepWorkState(
+                binding_id=exact.binding_id,
+                work_item_id=work["id"],
+                work_attempt_id=attempt["id"],
+                work_generation=attempt["generation"],
+                work_state=work["state"],
+                work_revision=work["revision"],
+                attempt_state=attempt["state"],
+                attempt_revision=attempt["revision"],
+                current_attempt_id=current["id"],
+                current_generation=current["generation"],
+                current_attempt_state=current["state"],
+                accepted_result_id=work["accepted_result_id"],
+                cleanup_state=attempt["cleanup_state"],
+            )
+
+        if connection is not None:
+            return read(connection)
+        with self.repository.read_snapshot() as snapshot:
+            return read(snapshot)
 
     def read_result(self, work_item_id: str, *, artifacts) -> bytes:
         from cli_agent_orchestrator.services.step_output_store import ArtifactRef
@@ -724,7 +1321,7 @@ class WorkService:
                 )
                 if bwrap_identity is not None:
                     confirmed = (
-                        supervisor.cleanup_bubblewrap_identity(bwrap_identity)
+                        supervisor.cleanup_bubblewrap_identity(bwrap_identity) is True
                         if supervisor is not None
                         else _original_bubblewrap_pair_gone(bwrap_identity)
                     )
@@ -748,9 +1345,7 @@ class WorkService:
                             )
                             confirmed = observer.original_pair_terminated(identity) is True
                     elif backend_reconciler is not None:
-                        reconcile_attempt = getattr(
-                            backend_reconciler, "reconcile_attempt", None
-                        )
+                        reconcile_attempt = getattr(backend_reconciler, "reconcile_attempt", None)
                         if callable(reconcile_attempt):
                             cleanup = reconcile_attempt(attempt_id, current["generation"])
                             confirmed = (

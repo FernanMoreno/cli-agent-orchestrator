@@ -150,6 +150,7 @@ Timeouts and buffer sizes used by the CAO runtime. All values have safe defaults
 | `compile_mode` | `"llm"` | `llm` or `append`. `append` skips the LLM wiki-compiler entirely. |
 | `flush_threshold` | `0.85` | Context-usage fraction that triggers a memory flush. |
 | `compile_timeout_s` | `120.0` | Wall-clock timeout for the wiki compile call. |
+| `vault` | `{}` | Validated Obsidian vault source configuration. `CAO_MEMORY_VAULT_ENABLED=false` can disable it but cannot enable an absent or file-disabled configuration. |
 | `learning_enabled` | `false` | Opt-in switch for workflow self-learning (outcome capture via `report_outcome` / `/outcomes`). Requires `enabled=true` — a disabled memory subsystem forces learning off. Env override: `CAO_MEMORY_LEARNING_ENABLED`. See [Self-Learning](self-learning.md). |
 | `instruction_promotion_enabled` | `false` | Opt-in switch for promoting reinforced lessons into agent profile files (`cao memory promote --apply`). Requires `learning_enabled=true` (promotion ⊂ learning ⊂ memory). Env override: `CAO_MEMORY_INSTRUCTION_PROMOTION_ENABLED`. ⚠️ Promoted lesson text is agent-generated: review every promote diff as an untrusted-instruction change before applying — see [Self-Learning](self-learning.md#phase-2--instruction-promotion). |
 | `workflow_journal_capture_output` | `false` | ⚠️ **Security-relevant opt-in, but narrower than it sounds — read the note below this table.** Governs exactly two surfaces: the **event log's** output digest, and the **diagnostics bundle's** output excerpts. Turning it ON adds step output text to those two. It does **not** control the `workflow_run_step` projection, which retains output unconditionally either way. Retained text is size-capped (below) and cleaned through the shared `audit_log` sanitizer — transport hygiene (control-character stripping, size limiting), **not** secret redaction: a credential in a step's output is retained verbatim. |
@@ -185,6 +186,17 @@ Timeouts and buffer sizes used by the CAO runtime. All values have safe defaults
 > - An earlier revision of this table claimed the journal stored "execution metadata
 >   only … never prompt text or step output" when the flag was off. That was wrong in
 >   the security-relevant direction and is corrected above.
+
+#### Obsidian vault
+
+`memory.vault` is an optional, file-defined configuration for one managed
+Obsidian vault. It defines the vault root, mappings from vault-relative folders
+to memory scopes, and the CAO-owned managed folder. The environment variable
+`CAO_MEMORY_VAULT_ENABLED` can only disable that configuration; it cannot
+configure a root, folder mapping, or scope.
+
+See [Obsidian Vault](obsidian-vault.md) for the complete configuration example,
+limits, secret-gate behavior, safety model, and maintenance commands.
 
 ### Terminal backend (`terminal`)
 
@@ -281,6 +293,7 @@ Every `CAO_*` variable below maps to a `settings.json` key. An explicit caller o
 | `CAO_MEMORY_LINT_ENABLED` | `memory.lint_enabled` | bool; either source can disable |
 | `CAO_MEMORY_COMPILE_MODE` | `memory.compile_mode` | str (`llm`/`append`) |
 | `CAO_MEMORY_FLUSH_THRESHOLD` | `memory.flush_threshold` | float |
+| `CAO_MEMORY_VAULT_ENABLED` | `memory.vault.enabled` | bool (disable-only) |
 | `CAO_MCP_REQUEST_TIMEOUT` | `server.mcp_request_timeout` | int |
 | `CAO_EVENT_BUS_MAX_QUEUE_SIZE` | `server.event_bus_max_queue_size` | int |
 | `CAO_PROVIDER_INIT_TIMEOUT` | `server.provider_init_timeout` | int |
@@ -358,6 +371,9 @@ Rows group related variables by owner. These are runtime inputs, not a promise o
 | `CAO_HOME_DIR`, `CAO_AGENTS_DIR`, `CAO_API_HOST`, `CAO_API_PORT` | [constants.py](../src/cli_agent_orchestrator/constants.py): import-time paths/bind defaults; port uses direct `int()` conversion. `CAO_AGENTS_DIR` changes the Kiro directory constant. |
 | `CAO_GRAPH_EXPORT_ROOT` | `constants.graph_export_root()`: call-time graph export confinement root, default `<CAO_HOME_DIR>/graph-exports`. |
 | `CAO_MAX_TERMINALS` | `settings_service.get_max_terminals()`: env > `server.max_terminals` > unlimited. Invalid/nonpositive explicit values resolve to unlimited, not the lower-priority file value. |
+| `CAO_WORK_LAUNCH_MODE` | `work_launch_mode.managed_launch_required()`: unset/`legacy` keeps ordinary session routing; `required` sends `cao launch` to `/work-launches` and rejects legacy new sessions. Set it on both CLI and server. Unknown values stop server startup. Because `/work-launches` is the separately gated public ingress, admission also requires `CAO_ENABLE_PUBLIC_WORK_INGRESS=true` on the server, an existing launch provision, a verified bearer and an explicitly registered Work backend; this setting creates none of them. |
+| `CAO_ENABLE_PUBLIC_WORK_INGRESS` | Exact `true` enables HTTP `/work-launches` in the API process and MCP `work_launch` in the MCP process; set it in each process used. Every other value keeps that process's ingress disabled, and the API gate still rejects MCP forwarding if the API flag is off. This switch does not create a principal, grant, provision, backend or task receipt. |
+| `CAO_WORK_DOCKER_LOCAL`, `CAO_WORK_DOCKER_IMAGE_ID` | Explicit local-only Work backend composition. Exact `CAO_WORK_DOCKER_LOCAL=1` requires an immutable `sha256:<64 lowercase hex>` image ID and constructs `docker-local` with the same Work repository as the launch gateway. The process-wide `WORK_BACKENDS` default remains empty. This profile runs the accepted static worker contract, not an arbitrary interactive provider CLI. See [local Docker demo](local-work-docker.md). |
 | `CAO_MEMORY_LEARNING_ENABLED`, `CAO_MEMORY_INSTRUCTION_PROMOTION_ENABLED`, `CAO_WORKFLOW_REQUIRE_APPROVAL` | `settings_service`: dedicated readers and security exceptions described above. |
 | `CAO_PROJECT_ID`, `CAO_MEMORY_API_URL` | [memory_service.py](../src/cli_agent_orchestrator/services/memory_service.py): env project ID precedes `memory.project_id`; [memory_gateway.py](../src/cli_agent_orchestrator/services/memory_gateway.py): nonblank remote memory URL selects remote routing. |
 | `CAO_FORWARDED_ALLOW_IPS`, `CAO_PROFILE_ALLOWED_HOSTS`, `AUTH0_DOMAIN`, `AUTH0_AUDIENCE`, `CAO_AUTH_LOCAL_TOKEN` | Direct network/download/auth boundaries above; no central registry entries. |
@@ -409,7 +425,6 @@ See [api.md](api.md) for the full API reference.
 ## Migrating from the old two-file setup
 
 Previously, `terminal_backend` / `herdr_session` lived in a separate `~/.aws/cli-agent-orchestrator/config.json`, read inline by `backends/factory.py`. On first read after upgrading, if `config.json` exists and `settings.json` has no `terminal` section yet, `ConfigService` copies `terminal_backend` → `terminal.backend` and `herdr_session` → `terminal.herdr_session` into `settings.json` and logs the move once. `config.json` is left on disk untouched but is no longer read afterward — it is deprecated.
-
 
 ## Personal browser login configuration
 

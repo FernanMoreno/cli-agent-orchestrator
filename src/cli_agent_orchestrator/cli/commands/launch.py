@@ -18,6 +18,7 @@ from cli_agent_orchestrator.constants import (
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.security.auth import get_local_bearer
 from cli_agent_orchestrator.services.settings_service import get_server_settings
+from cli_agent_orchestrator.services.work_launch_mode import managed_launch_required
 from cli_agent_orchestrator.utils.forwarded_env import (
     ForwardedEnvError,
     validate_forwarded_env,
@@ -265,6 +266,8 @@ def launch(
 ):
     """Launch cao session with specified agent profile."""
     try:
+        work_mode_required = managed_launch_required()
+        queue_work = queue_work or work_mode_required
         if work_selection is not None and not queue_work:
             raise click.ClickException("--work-selection requires --queue-work")
         if queue_work:
@@ -309,6 +312,7 @@ def launch(
         forwarded_env = _parse_env_pairs(env_pairs) if env_pairs else {}
 
         # Resolve allowedTools: --yolo > --allowed-tools CLI > profile/role defaults
+        from cli_agent_orchestrator.agent_plugins.mcp_delivery import grantable_server_names
         from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
         from cli_agent_orchestrator.utils.tool_mapping import (
             format_tool_summary,
@@ -322,11 +326,15 @@ def launch(
             resolved_allowed_tools = ["*"]
         elif allowed_tools:
             resolved_allowed_tools = list(allowed_tools)
+        elif queue_work:
+            # The server provision owns the Work tool ceiling. Never turn a
+            # local profile's role defaults into an implicit Work request.
+            resolved_allowed_tools = []
         else:
             # Load profile to get role-based defaults
             try:
                 profile = load_agent_profile(agents)
-                mcp_server_names = list(profile.mcpServers.keys()) if profile.mcpServers else None
+                mcp_server_names = grantable_server_names(profile)
                 no_role_set = not profile.role and not profile.allowedTools
                 resolved_allowed_tools = resolve_allowed_tools(
                     profile.allowedTools, profile.role, mcp_server_names
@@ -572,11 +580,7 @@ def launch(
                 error_payload = e.response.json()
             except (ValueError, TypeError, AttributeError):
                 error_payload = None
-            detail = (
-                error_payload.get("detail")
-                if isinstance(error_payload, dict)
-                else None
-            )
+            detail = error_payload.get("detail") if isinstance(error_payload, dict) else None
             safe_detail = _safe_cli_work_launch_detail(detail)
             if safe_detail is not None:
                 message, required_action = safe_detail

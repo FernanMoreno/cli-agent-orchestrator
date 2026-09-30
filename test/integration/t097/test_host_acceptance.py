@@ -12,31 +12,31 @@ import random
 import shutil
 import subprocess
 from pathlib import Path
-
-import pytest
-
-from cli_agent_orchestrator.backends.bubblewrap_backend import (
-    BubblewrapWorkBackend,
-    _BWRAP_SHA256_ALLOWLIST,
-)
-from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
-from cli_agent_orchestrator.services.work_service import DeliveryUncertain
-from cli_agent_orchestrator.services.work_bubblewrap_composition import (
-    WorkBubblewrapExecutionUncertain,
-)
-from cli_agent_orchestrator.services.work_launch_gateway import build_durable_launch_gateway
-from cli_agent_orchestrator.services.work_process_landlock import _query_abi_version
-from cli_agent_orchestrator.services.work_process_supervisor import (
-    WorkProcessState,
-    WorkProcessSupervisor,
-)
 from test.integration.t098.test_work_launch_dispatch import (
     _WORKER_MARKER,
     _adversarial_static_worker,
     _minimal_static_worker,
     _setup,
 )
+
+import pytest
+
+from cli_agent_orchestrator.backends.bubblewrap_backend import (
+    _BWRAP_SHA256_ALLOWLIST,
+    BubblewrapWorkBackend,
+)
+from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
+from cli_agent_orchestrator.services.work_bubblewrap_composition import (
+    WorkBubblewrapExecutionUncertain,
+)
 from cli_agent_orchestrator.services.work_bubblewrap_setup_intent import WorkBubblewrapSetupIntent
+from cli_agent_orchestrator.services.work_launch_gateway import build_durable_launch_gateway
+from cli_agent_orchestrator.services.work_process_landlock import _query_abi_version
+from cli_agent_orchestrator.services.work_process_supervisor import (
+    WorkProcessState,
+    WorkProcessSupervisor,
+)
+from cli_agent_orchestrator.services.work_service import DeliveryUncertain
 
 pytestmark = [pytest.mark.integration, pytest.mark.t097_host]
 

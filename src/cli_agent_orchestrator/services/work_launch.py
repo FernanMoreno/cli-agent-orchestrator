@@ -1,7 +1,6 @@
 """Versioned legacy and process-backed launch delivery adapters."""
 
 import asyncio
-
 from typing import Annotated
 
 from pydantic import Field, StringConstraints, field_validator

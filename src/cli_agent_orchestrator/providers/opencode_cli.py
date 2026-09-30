@@ -19,14 +19,23 @@ The provider detects the following terminal states:
 """
 
 import asyncio
-from collections import Counter
 import logging
+import os
 import re
 import shlex
+import subprocess
+import textwrap
+from collections import Counter
+from pathlib import Path
 from typing import List, Optional
 
 from cli_agent_orchestrator.backends.registry import get_backend
-from cli_agent_orchestrator.constants import OPENCODE_CONFIG_DIR, OPENCODE_CONFIG_FILE
+from cli_agent_orchestrator.constants import (
+    CAO_HOME_DIR,
+    OPENCODE_AGENTS_DIR,
+    OPENCODE_CONFIG_DIR,
+    OPENCODE_CONFIG_FILE,
+)
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
 from cli_agent_orchestrator.services.settings_service import get_server_settings
@@ -49,19 +58,24 @@ USER_MESSAGE_PATTERN = r"^┃\s{2}"
 # OpenCode formats duration as "Ns" for short runs and "Nm Ns" once the turn
 # exceeds 60 seconds (e.g. "1m 8s").  Both forms must be matched.
 COMPLETION_MARKER_PATTERN = r"▣\s+\S+\s+·\s+.+?\s+·\s+(?:\d+m\s+)?\d+(?:\.\d+)?s"
+V2_COMPLETION_MARKER_PATTERN = (
+    r"(?m)^\s*[^\n·┃›]+\s+·\s+[^\n]+?\s+·\s+(?:\d+m\s+)?\d+(?:\.\d+)?s\s*$"
+)
 
 # Processing footer — keybind hint present while the agent is generating.
 PROCESSING_FOOTER_PATTERN = r"\besc interrupt\b"
 
 # Idle footer anchor — present when waiting for the next user message.
-IDLE_FOOTER_PATTERN = r"ctrl\+p\s+commands"
+IDLE_FOOTER_PATTERN = r"ctrl\+p\s+(?:commands|menu)"
 
 # Permission prompt heading — both initial request and "Always allow" sub-confirmation.
 PERMISSION_PROMPT_PATTERN = r"△\s+(?:Permission required|Always allow)\b"
 
 # Provider/runtime failure overlay. It can be rendered above an otherwise normal
 # idle footer, so it must win over every prompt/footer-based state.
-PROVIDER_ERROR_PATTERN = r"\b(?:Error from provider|Provider error)\b"
+PROVIDER_ERROR_PATTERN = (
+    r"\b(?:Error from provider|Provider error|Model unavailable|Agent not found)\b"
+)
 
 # A quota refusal is operationally different from a broken model/provider:
 # the already-delivered turn must be retained and never blindly resent.  Keep
@@ -124,6 +138,17 @@ def _has_current_quota_provider_error(text: str) -> bool:
     )
 
 
+def detect_opencode_major() -> int:
+    """Probe the executable used by this server; unsupported versions fail closed."""
+    output = subprocess.check_output(
+        ["opencode", "--version"], text=True, timeout=10, stderr=subprocess.STDOUT
+    )
+    match = re.fullmatch(r"(?:opencode\s+v?)?(\d+)\.\d+\.\d+(?:[-+][\w.-]+)?\s*", output.strip())
+    if match is None or int(match[1]) not in (1, 2):
+        raise ValueError("unsupported OpenCode CLI version")
+    return int(match[1])
+
+
 class OpenCodeCliProvider(BaseProvider):
     """Provider for OpenCode CLI integration.
 
@@ -165,6 +190,8 @@ class OpenCodeCliProvider(BaseProvider):
         self._agent_profile = agent_profile or ""
         self._model = model
         self._initialized = False
+        self._cli_major = 1
+        self._v2_config_dir = None
 
     @property
     def paste_enter_count(self) -> int:
@@ -175,8 +202,12 @@ class OpenCodeCliProvider(BaseProvider):
     def paste_submit_delay(self) -> float:
         """OpenCode's TUI can swallow an Enter sent too soon after the bracketed-paste
         end marker. 1.0s (matching kiro_cli) is conservative and avoids the
-        deferred-init "never started processing" race (see #479)."""
-        return 1.0
+        deferred-init "never started processing" race (see #479). Mini v2's
+        renderer needs the longer settlement interval: an Enter during paste
+        leaves the entire task in its composer without submitting a turn.
+        Keep one submitting Enter and never replay the payload.
+        """
+        return 2.0 if self._cli_major == 2 else 1.0
 
     # Opt-in for the deferred-init direct status probe (capture-pane bypass).
     # OpenCode's get_status() detector is line-oriented and works correctly on a
@@ -224,6 +255,20 @@ class OpenCodeCliProvider(BaseProvider):
         if not await wait_for_shell(self.terminal_id, timeout=init_timeout):
             raise TimeoutError(f"Shell initialization timed out after {init_timeout}s")
 
+        self._cli_major = await asyncio.to_thread(detect_opencode_major)
+        if self._cli_major == 2:
+            from cli_agent_orchestrator.utils.opencode_config import read_config
+            from cli_agent_orchestrator.utils.opencode_v2 import write_v2_configuration
+
+            self._v2_config_dir = write_v2_configuration(
+                CAO_HOME_DIR / "opencode-v2" / self.terminal_id,
+                source_agents=OPENCODE_AGENTS_DIR,
+                source_config=read_config(),
+                selected_model=self._model,
+                session_id=self.terminal_id,
+                source_auth=Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share")))
+                / "opencode/auth.json",
+            )
         command = self._build_launch_command()
         # A generated native child starts at a shell prompt.  It must
         # never be inferred from a racy foreground-process probe: instruct the
@@ -261,9 +306,8 @@ class OpenCodeCliProvider(BaseProvider):
         targets = {TerminalStatus.IDLE, TerminalStatus.COMPLETED}
         deadline = asyncio.get_running_loop().time() + timeout
         while True:
-            current = await asyncio.to_thread(status_monitor.get_status, self.terminal_id)
-            if current in targets:
-                return True
+            # A native IDLE can belong to the startup shell. Require the
+            # OpenCode composer itself before delivering the first prompt.
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 return False
@@ -304,11 +348,28 @@ class OpenCodeCliProvider(BaseProvider):
             "TERM=xterm-256color",
         ]
         cmd_parts = ["opencode"]
+        if self._cli_major == 2:
+            # Private servers keep child sessions out of the operator's shared
+            # v2 daemon; mini exposes agent/model flags and terminal input.
+            cmd_parts += ["mini", "--standalone"]
         if self._agent_profile:
             cmd_parts += ["--agent", self._agent_profile]
         if self._model:
             cmd_parts += ["--model", self._model]
         # env vars are shell words; join cmd parts with shlex for proper quoting
+        if self._v2_config_dir is not None:
+            env_pairs[:2] = [
+                "OPENCODE_CONFIG=" + shlex.quote(str(self._v2_config_dir / "opencode.json")),
+                "OPENCODE_CONFIG_DIR=" + shlex.quote(str(self._v2_config_dir)),
+            ]
+            return (
+                ". "
+                + shlex.quote(str(self._v2_config_dir / "provider.env"))
+                + " && "
+                + " ".join(env_pairs)
+                + " "
+                + shlex.join(cmd_parts)
+            )
         return " ".join(env_pairs) + " " + shlex.join(cmd_parts)
 
     def get_status(self, output: str) -> TerminalStatus:
@@ -368,6 +429,9 @@ class OpenCodeCliProvider(BaseProvider):
         # (alt-screen remnant), ``esc interrupt`` is on an earlier line and the
         # new idle footer appears on a *later* line — that later-line presence
         # means processing has ended.
+        completion_pattern = (
+            V2_COMPLETION_MARKER_PATTERN if self._cli_major == 2 else COMPLETION_MARKER_PATTERN
+        )
         lines = clean.split("\n")
         last_esc_line = -1
         for i, line in enumerate(lines):
@@ -378,7 +442,7 @@ class OpenCodeCliProvider(BaseProvider):
         if last_esc_line >= 0:
             later = lines[last_esc_line + 1 :]
             has_idle_later = any(re.search(IDLE_FOOTER_PATTERN, l) for l in later)
-            has_completion_later = any(re.search(COMPLETION_MARKER_PATTERN, l) for l in later)
+            has_completion_later = any(re.search(completion_pattern, l) for l in later)
             if not has_idle_later and not has_completion_later:
                 return TerminalStatus.PROCESSING
             # Guard fired: esc interrupt is a stale alt-screen remnant.
@@ -388,11 +452,13 @@ class OpenCodeCliProvider(BaseProvider):
         # Requires the last full completion marker (with duration) followed by the
         # idle footer and no subsequent ``▣`` token (which would indicate a new
         # incomplete turn visible in the scrollback).
-        completion_matches = list(re.finditer(COMPLETION_MARKER_PATTERN, clean))
+        completion_matches = list(re.finditer(completion_pattern, clean))
         if completion_matches:
             last_end = completion_matches[-1].end()
             after = clean[last_end:]
-            if re.search(IDLE_FOOTER_PATTERN, after) and not re.search(r"▣", after):
+            if re.search(IDLE_FOOTER_PATTERN, after) and not re.search(
+                r"(?m)^\s*›" if self._cli_major == 2 else r"▣", after
+            ):
                 return TerminalStatus.COMPLETED
 
         # ── 5. IDLE ──────────────────────────────────────────────────────────
@@ -425,6 +491,9 @@ class OpenCodeCliProvider(BaseProvider):
         5. IDLE — idle footer present
         6. UNKNOWN — fallback
         """
+        completion_pattern = (
+            V2_COMPLETION_MARKER_PATTERN if self._cli_major == 2 else COMPLETION_MARKER_PATTERN
+        )
         rows = [ln.rstrip() for ln in screen_lines if ln.strip()]
         if not rows:
             return TerminalStatus.UNKNOWN
@@ -455,17 +524,19 @@ class OpenCodeCliProvider(BaseProvider):
         if last_esc_line >= 0:
             later = rows[last_esc_line + 1 :]
             has_idle_later = any(re.search(IDLE_FOOTER_PATTERN, row) for row in later)
-            has_completion_later = any(re.search(COMPLETION_MARKER_PATTERN, row) for row in later)
+            has_completion_later = any(re.search(completion_pattern, row) for row in later)
             if not has_idle_later and not has_completion_later:
                 return TerminalStatus.PROCESSING
             esc_is_stale = True
 
         # ── 4. COMPLETED ────────────────────────────────────────────────
-        completion_matches = list(re.finditer(COMPLETION_MARKER_PATTERN, joined))
+        completion_matches = list(re.finditer(completion_pattern, joined))
         if completion_matches:
             last_end = completion_matches[-1].end()
             after = joined[last_end:]
-            if re.search(IDLE_FOOTER_PATTERN, after) and not re.search(r"▣", after):
+            if re.search(IDLE_FOOTER_PATTERN, after) and not re.search(
+                r"(?m)^\s*›" if self._cli_major == 2 else r"▣", after
+            ):
                 return TerminalStatus.COMPLETED
 
         # ── 5. IDLE ─────────────────────────────────────────────────────
@@ -499,6 +570,31 @@ class OpenCodeCliProvider(BaseProvider):
             ValueError: If no user message or completion marker is found.
         """
         clean = _crop_auxiliary_sidebar(re.sub(ANSI_CODE_PATTERN, "", script_output))
+
+        if self._cli_major == 2:
+            if self.get_status(clean) != TerminalStatus.COMPLETED:
+                raise ValueError("OpenCode v2 turn is not completed")
+            completion = list(re.finditer(V2_COMPLETION_MARKER_PATTERN, clean))[-1]
+            before = clean[: completion.start()]
+            users = list(re.finditer(r"(?m)^\s*›\s+", before))
+            if not users:
+                raise ValueError("No user message found in OpenCode v2 output")
+            turn = before[users[-1].end() :]
+            # Mini separates the complete user block from the assistant with
+            # an empty line. Preserve all later line feeds, including receipts.
+            blocks = re.split(r"\n[ \t]*\n", turn, maxsplit=1)
+            if len(blocks) != 2:
+                raise ValueError("Empty OpenCode v2 response")
+            response = blocks[1].strip()
+            if response.startswith("Thinking:"):
+                thinking = re.split(r"\n[ \t]*\n", response, maxsplit=1)
+                response = thinking[1] if len(thinking) == 2 else ""
+            result = textwrap.dedent(response).strip()
+            result = re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]", "", result)
+            result = re.sub(r"[ \t]+$", "", result, flags=re.MULTILINE)
+            if not result:
+                raise ValueError("Empty OpenCode v2 response")
+            return result
 
         # Find the last FULL completion marker to anchor the turn boundary.
         all_completions = list(re.finditer(COMPLETION_MARKER_PATTERN, clean))

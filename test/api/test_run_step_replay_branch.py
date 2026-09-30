@@ -310,6 +310,27 @@ def _seed_replayable(run_id: str, body: dict, envelope: StepResultEnvelope) -> N
 class TestReplayCreatesNothing:
     """The response flag proves none of these, which is why none of them is it."""
 
+    def test_managed_work_pending_row_cannot_replay_a_legacy_terminal_result(self, client):
+        """A managed marker blocks both legacy execution and a stale replay envelope."""
+        body = _body(env_vars=_env("run-work-pending"))
+        _seed_replayable("run-work-pending", body, _envelope())
+        from cli_agent_orchestrator.constants import DATABASE_FILE
+
+        with sqlite3.connect(str(DATABASE_FILE)) as connection:
+            connection.execute(
+                "UPDATE workflow_run_step SET state='work_pending' "
+                "WHERE run_id=? AND step_id='s1'",
+                ("run-work-pending",),
+            )
+
+        with patch(_RUN_STEP, new=AsyncMock(return_value=_ok_result())) as run_step:
+            response = client.post(TERMINALS_RUN_STEP_ROUTE, json=body)
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["kind"] == "work_pending"
+        run_step.assert_not_awaited()
+        assert _raw_row("run-work-pending")[2] == "work_pending"
+
     def test_replay_creates_no_terminal(self, client):
         body = _body(env_vars=_env("run-replay-a"))
         _seed_replayable("run-replay-a", body, _envelope())

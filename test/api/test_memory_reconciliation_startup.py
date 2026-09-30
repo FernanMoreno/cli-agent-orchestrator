@@ -52,6 +52,17 @@ async def _quick_task(*args, **kwargs) -> None:
     await asyncio.sleep(0)
 
 
+def test_authenticated_startup_skips_local_operator_only_memory_repair(monkeypatch):
+    """JWT servers must not invoke a repair reserved for the local operator."""
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.settings_service.is_memory_enabled", lambda: True
+    )
+    monkeypatch.setattr("cli_agent_orchestrator.security.auth.is_auth_enabled", lambda: True)
+    with patch.object(memory_reconciliation.MemoryReconciliationService, "apply") as repair:
+        assert memory_reconciliation.reconcile_memory_startup() is None
+    repair.assert_not_called()
+
+
 def test_unexpected_reconciliation_failure_logs_and_returns(caplog) -> None:
     report = RepairReport(
         records=(

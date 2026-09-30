@@ -36,8 +36,8 @@
 //! borders would be a layout change interacting with NFR-6's sub-80x24 stacked mode, which is a
 //! different piece of work. (#556)
 
-use ratatui::style::{Color, Modifier, Style};
 use crate::work_status_generated::WorkSemanticRole;
+use ratatui::style::{Color, Modifier, Style};
 
 /// The number of semantic roles. A seventh role must update [`Theme::roles`], whose return type
 /// is a fixed-size array — so the count and the accessor cannot drift apart silently.

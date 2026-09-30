@@ -29,11 +29,19 @@ def _proof(monkeypatch):
         "monitor_pid": 100,
         "init_pid": 200,
         "init_parent_pid": 100,
+        "monitor_start_time_ticks": 1,
+        "init_start_time_ticks": 2,
+        "pid_namespace": [42, 43],
         "identity_sha256": "a" * 64,
     }
     repository = _Repository()
     repository.identity = identity
     monkeypatch.setattr(proof_module, "_namespace_inode", lambda pid, _ns: 20 if pid == 200 else 10)
+    monkeypatch.setattr(
+        proof_module, "_process_start_time_ticks", lambda pid: 2 if pid == 200 else 1
+    )
+    monkeypatch.setattr(proof_module, "_namespace_identity", lambda _pid, _ns: (42, 43))
+    monkeypatch.setattr(proof_module, "_require_yama_ptrace_scope", lambda: 1)
     dead = set()
 
     def require_live(descriptor, _pid):
@@ -87,6 +95,21 @@ def test_isolation_proof_rejects_exited_pidfd_and_changed_snapshot(monkeypatch):
             proof.require_current("attempt-1", 4, "c" * 64)
         dead.clear()
         proof._snapshot.digest = "f" * 64
+        with pytest.raises(proof_module.WorkBubblewrapIsolationExpired):
+            proof.require_current("attempt-1", 4, "c" * 64)
+    finally:
+        peer.close()
+        proof.close()
+
+
+@pytest.mark.parametrize("changed", ["starttime", "namespace"])
+def test_isolation_proof_rejects_reused_pid_or_changed_namespace(monkeypatch, changed):
+    proof, peer, _dead = _proof(monkeypatch)
+    try:
+        if changed == "starttime":
+            monkeypatch.setattr(proof_module, "_process_start_time_ticks", lambda _pid: 999)
+        else:
+            monkeypatch.setattr(proof_module, "_namespace_identity", lambda _pid, _ns: (42, 99))
         with pytest.raises(proof_module.WorkBubblewrapIsolationExpired):
             proof.require_current("attempt-1", 4, "c" * 64)
     finally:

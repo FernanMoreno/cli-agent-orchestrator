@@ -1044,6 +1044,103 @@ def _queued_work_args(*extra):
     ]
 
 
+def test_required_launch_mode_routes_ordinary_cli_to_durable_admission(monkeypatch):
+    monkeypatch.setenv("CAO_WORK_LAUNCH_MODE", "required")
+    receipt = {
+        "work_item_id": "work-required",
+        "attempt_id": "attempt-required",
+        "generation": 1,
+        "state": "queued",
+    }
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            return_value="verified-local-token",
+        ),
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+        patch("cli_agent_orchestrator.cli.commands.launch.get_server_settings") as mock_settings,
+    ):
+        mock_settings.return_value = {"mcp_request_timeout": 9}
+        mock_post.return_value.json.return_value = receipt
+        result = CliRunner().invoke(
+            launch,
+            [
+                "--agents",
+                "test-agent",
+                "--session-name",
+                "managed-session",
+                "--allowed-tools",
+                "fs_read",
+                "work text",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert mock_post.call_args.args[0].endswith("/work-launches")
+    assert mock_post.call_args.kwargs["json"] == {
+        "agent_profile": "test-agent",
+        "session_name": "managed-session",
+        "message": "work text",
+        "allowed_tools": ["fs_read"],
+    }
+    assert "work-required" in result.output
+
+
+def test_required_launch_mode_rejects_missing_bearer_before_network(monkeypatch):
+    monkeypatch.setenv("CAO_WORK_LAUNCH_MODE", "required")
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            return_value=None,
+        ),
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+    ):
+        result = CliRunner().invoke(
+            launch,
+            ["--agents", "test-agent", "--session-name", "managed-session", "work text"],
+        )
+
+    assert result.exit_code != 0
+    assert "bearer token" in result.output
+    mock_post.assert_not_called()
+
+
+def test_required_launch_mode_omits_profile_default_tools(monkeypatch):
+    monkeypatch.setenv("CAO_WORK_LAUNCH_MODE", "required")
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            return_value="token",
+        ),
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
+        patch("cli_agent_orchestrator.cli.commands.launch.get_server_settings") as mock_settings,
+    ):
+        mock_settings.return_value = {"mcp_request_timeout": 9}
+        mock_post.return_value.json.return_value = {
+            "work_item_id": "work-default",
+            "attempt_id": "attempt-default",
+            "generation": 1,
+            "state": "queued",
+        }
+        result = CliRunner().invoke(
+            launch,
+            ["--agents", "test-agent", "--session-name", "managed-session", "work text"],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert mock_post.call_args.kwargs["json"]["allowed_tools"] == []
+
+
+def test_unknown_launch_mode_rejects_explicit_queue_before_network(monkeypatch):
+    monkeypatch.setenv("CAO_WORK_LAUNCH_MODE", "unrecognized")
+    with patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post:
+        result = CliRunner().invoke(launch, _queued_work_args())
+
+    assert result.exit_code != 0
+    assert "CAO_WORK_LAUNCH_MODE" in result.output
+    mock_post.assert_not_called()
+
+
 def test_queue_work_launch_posts_intent_and_displays_only_receipt():
     runner = CliRunner()
     receipt = {
@@ -1064,12 +1161,8 @@ def test_queue_work_launch_posts_intent_and_displays_only_receipt():
         patch("cli_agent_orchestrator.cli.commands.launch.get_server_settings") as mock_settings,
         patch("cli_agent_orchestrator.cli.commands.launch.get_backend") as mock_backend,
         patch("cli_agent_orchestrator.cli.commands.launch.sync_backend_from_server") as mock_sync,
-        patch(
-            "cli_agent_orchestrator.cli.commands.launch.wait_until_terminal_status"
-        ) as mock_wait,
-        patch(
-            "cli_agent_orchestrator.utils.agent_profiles.resolve_provider"
-        ) as mock_provider,
+        patch("cli_agent_orchestrator.cli.commands.launch.wait_until_terminal_status") as mock_wait,
+        patch("cli_agent_orchestrator.utils.agent_profiles.resolve_provider") as mock_provider,
     ):
         mock_settings.return_value = {"mcp_request_timeout": 9}
         mock_post.return_value.json.return_value = receipt
@@ -1081,9 +1174,7 @@ def test_queue_work_launch_posts_intent_and_displays_only_receipt():
     mock_bearer.assert_called_once()
     mock_post.assert_called_once()
     assert mock_post.call_args.args[0].endswith("/work-launches")
-    assert mock_post.call_args.kwargs["headers"] == {
-        "Authorization": "Bearer verified-local-token"
-    }
+    assert mock_post.call_args.kwargs["headers"] == {"Authorization": "Bearer verified-local-token"}
     assert mock_post.call_args.kwargs["timeout"] == 9
     assert mock_post.call_args.kwargs["json"] == {
         "selection": "opaque-selection",
@@ -1237,9 +1328,7 @@ def test_queue_work_launch_never_falls_back_to_legacy_after_error():
         patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as mock_post,
         patch("cli_agent_orchestrator.cli.commands.launch.get_backend") as mock_backend,
         patch("cli_agent_orchestrator.cli.commands.launch.sync_backend_from_server") as mock_sync,
-        patch(
-            "cli_agent_orchestrator.cli.commands.launch.wait_until_terminal_status"
-        ) as mock_wait,
+        patch("cli_agent_orchestrator.cli.commands.launch.wait_until_terminal_status") as mock_wait,
     ):
         mock_post.side_effect = requests.exceptions.ConnectionError("offline")
 
@@ -1285,9 +1374,7 @@ def test_queue_work_http_error_displays_server_message_and_required_action(
     response = MagicMock()
     response.status_code = status_code
     response.json.return_value = {"detail": detail}
-    http_error = requests.exceptions.HTTPError(
-        f"HTTP {status_code}", response=response
-    )
+    http_error = requests.exceptions.HTTPError(f"HTTP {status_code}", response=response)
 
     with (
         patch(
@@ -1495,9 +1582,7 @@ def test_launch_without_queue_work_keeps_legacy_sessions_endpoint():
         }
         mock_post.return_value.raise_for_status.return_value = None
 
-        result = runner.invoke(
-            launch, ["--agents", "test-agent", "--headless", "--yolo"]
-        )
+        result = runner.invoke(launch, ["--agents", "test-agent", "--headless", "--yolo"])
 
     assert result.exit_code == 0
     assert mock_post.call_args.args[0].endswith("/sessions")
@@ -1601,9 +1686,7 @@ def test_work_selection_without_queue_work_is_rejected_before_auth_or_network():
         "message-too-long",
     ],
 )
-def test_queue_work_rejects_invalid_identity_or_oversize_message_before_auth(
-    field, invalid_value
-):
+def test_queue_work_rejects_invalid_identity_or_oversize_message_before_auth(field, invalid_value):
     args = _queued_work_args()
     if field == "MESSAGE":
         args[-1] = invalid_value

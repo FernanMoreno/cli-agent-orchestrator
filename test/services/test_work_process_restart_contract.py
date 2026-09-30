@@ -20,14 +20,14 @@ from cli_agent_orchestrator.services.work_mcp_proxy import (
     WorkMcpProxy,
     WorkMcpProxyUnavailable,
 )
-from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 from cli_agent_orchestrator.services.work_process_supervisor import (
-    WorkProcessIsolationUnavailable,
     WorkProcessAttempt,
     WorkProcessIdentity,
+    WorkProcessIsolationUnavailable,
     WorkProcessState,
     WorkProcessSupervisor,
 )
+from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 from cli_agent_orchestrator.services.work_service import (
     DeliveryObservation,
     DeliveryUncertain,

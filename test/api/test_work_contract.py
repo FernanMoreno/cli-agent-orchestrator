@@ -129,7 +129,7 @@ def test_unverified_remote_reader_is_rejected(durable_work):
 
 
 def test_uncertain_delivery_does_not_claim_provider_is_blocked(client, durable_work):
-    from cli_agent_orchestrator.services.work_service import WorkService, DeliveryUncertain
+    from cli_agent_orchestrator.services.work_service import DeliveryUncertain, WorkService
 
     repository, principal, job, work = durable_work
 

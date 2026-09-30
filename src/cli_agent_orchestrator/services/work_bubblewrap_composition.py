@@ -31,18 +31,27 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from cli_agent_orchestrator.services.work_process_supervisor import (
-    WorkProcessAttempt,
-    WorkProcessState,
-    WorkProcessSupervisor,
-)
-
-from cli_agent_orchestrator.models.work_contract import ExecutableIdentity
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
-from cli_agent_orchestrator.services.work_contract import WorkContracts
+from cli_agent_orchestrator.models.work_contract import ExecutableIdentity
+from cli_agent_orchestrator.services.work_bubblewrap_isolation_proof import (
+    WorkBubblewrapRuntimeIsolationProof,
+    _issue_runtime_isolation_proof,
+)
+from cli_agent_orchestrator.services.work_bubblewrap_runtime_snapshot import (
+    RuntimeSnapshot,
+    RuntimeSnapshotError,
+    prepare_runtime_snapshot,
+)
 from cli_agent_orchestrator.services.work_bubblewrap_setup_intent import (
     WorkBubblewrapReleaseUncertain,
     WorkBubblewrapSetupIntent,
+)
+from cli_agent_orchestrator.services.work_contract import WorkContracts
+from cli_agent_orchestrator.services.work_executable_content import WorkExecutableContent
+from cli_agent_orchestrator.services.work_executable_staging import (
+    StagedExecutable,
+    bubblewrap_bind_data_arguments,
+    stage_static_executable,
 )
 from cli_agent_orchestrator.services.work_mcp_proxy import (
     WorkMcpEndpoint,
@@ -50,22 +59,12 @@ from cli_agent_orchestrator.services.work_mcp_proxy import (
     WorkMcpProxyError,
     WorkMcpProxyUncertain,
 )
-from cli_agent_orchestrator.services.work_executable_content import WorkExecutableContent
-from cli_agent_orchestrator.services.work_executable_staging import (
-    StagedExecutable,
-    bubblewrap_bind_data_arguments,
-    stage_static_executable,
-)
-from cli_agent_orchestrator.services.work_bubblewrap_runtime_snapshot import (
-    RuntimeSnapshot,
-    RuntimeSnapshotError,
-    prepare_runtime_snapshot,
+from cli_agent_orchestrator.services.work_process_supervisor import (
+    WorkProcessAttempt,
+    WorkProcessState,
+    WorkProcessSupervisor,
 )
 from cli_agent_orchestrator.work_bubblewrap_policy import BUBBLEWRAP_VERSION_TEXT
-from cli_agent_orchestrator.services.work_bubblewrap_isolation_proof import (
-    WorkBubblewrapRuntimeIsolationProof,
-    _issue_runtime_isolation_proof,
-)
 
 _BWRAP_VERSION = BUBBLEWRAP_VERSION_TEXT
 _CANONICAL_SYSTEM_BWRAP = Path("/usr/bin/bwrap")

@@ -124,6 +124,30 @@ class TestReplayedIsTruthfulOnBothSurfaces:
 
         assert handle.replayed is True
 
+    def test_managed_work_replay_returns_json_without_a_terminal(self, full_env, monkeypatch):
+        response = _Response(
+            status=200,
+            body=json.dumps(
+                {
+                    "status": "completed",
+                    "replayed": True,
+                    "work_result": {
+                        "schema_version": 1,
+                        "status": "completed",
+                        "output": {"value": "accepted-work-result"},
+                    },
+                }
+            ),
+        )
+        monkeypatch.setattr(cao_workflow, "_post", lambda *a, **k: response)
+
+        handle = cao_workflow.run_step("kiro_cli", "reviewer", "hi")
+
+        assert handle.terminal_id is None
+        assert handle.output == {"value": "accepted-work-result"}
+        assert handle.status == "completed"
+        assert handle.replayed is True
+
     def test_run_step_reports_an_executed_result_as_not_replayed(self, full_env, monkeypatch):
         monkeypatch.setattr(cao_workflow, "_post", lambda *a, **k: _response(replayed=False))
 

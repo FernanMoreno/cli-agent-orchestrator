@@ -135,3 +135,24 @@ cierra para el alcance actual porque no existe ni se prevé un host de
 producción; `WORK_BACKENDS={}` permanece vacío y T019 sigue abierto y diferido.
 Si se decide desplegar Work más adelante, hará falta una tarea nueva con un
 target concreto y aceptación en ese host.
+
+
+## Aceptación local gratuita de las omisiones — 2026-09-30
+
+QEMU/KVM dentro de `caos-acceptance-qemu:local`, guest Ubuntu 26.10 fijado por
+el checksum anterior, kernel 7.3.0-5-generic y Landlock ABI 11. El source
+Bubblewrap 0.13.0 se verificó contra el hash oficial anterior y se compiló con
+GCC 15.3.0-4ubuntu1/Meson 1.10.1, usando las mismas opciones release del runner.
+El path del build fue `/tmp/caos-exec/T097/bubblewrap-build` y el source se
+extrajo en `/tmp/bwrap-source/bubblewrap-0.13.0`; los paths de build afectan
+al digest. El hash exacto revisado fue
+`efd07a9dfd55016ec5cb16facb67aac2735fa900e261f6a44be1517dcf31c015`.
+El executable canónico quedó root:root 0755 y la copia scratch también 0755.
+
+La suite T097 completa pasó como `caos-work-broker` (UID 999, nologin):
+**8 passed en 22,86 s**, sin override del timeout normal de 10 s, sin skips.
+Las pruebas de seguridad adicionales mantuvieron controles negativos reales
+de ficheros, red, FD, procesos y ejecución. Los tests que requieren UID 1000
+se ejecutaron como runner; mknod y FS casefold dentro del guest aislado.
+Reportes/hash por nodeid: `specs/001-verifiable-orchestration/omitted-acceptance.json`.
+No cambia la aceptación de un host de producción ni registra WORK_BACKENDS.

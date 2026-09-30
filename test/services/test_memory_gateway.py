@@ -7,7 +7,10 @@ import requests
 
 from cli_agent_orchestrator.models.memory import Memory
 from cli_agent_orchestrator.services import memory_gateway
-from cli_agent_orchestrator.services.memory_service import MemoryPartialWriteError
+from cli_agent_orchestrator.services.memory_service import (
+    ForgetResult,
+    MemoryPartialWriteError,
+)
 
 
 def _memory() -> Memory:
@@ -115,6 +118,31 @@ async def test_remote_store_serializes_context(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_remote_forget_reconstructs_typed_result(monkeypatch):
+    monkeypatch.setenv("CAO_MEMORY_API_URL", "http://memory-owner:9889")
+
+    async def run_inline(function, *args):
+        return function(*args)
+
+    monkeypatch.setattr(memory_gateway.asyncio, "to_thread", run_inline)
+    response = Mock(status_code=200)
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "deleted": ForgetResult("deindexed", "vault", "CAO/topic.md").__dict__
+    }
+    with patch.object(memory_gateway.requests, "post", return_value=response):
+        result = await memory_gateway.forget_memory(
+            key="topic",
+            scope="project",
+            terminal_context=None,
+        )
+
+    assert result.action == "deindexed"
+    assert result.path == "CAO/topic.md"
+    assert bool(result) is True
+
+
+@pytest.mark.asyncio
 async def test_remote_store_reconstructs_partial_write_error(monkeypatch):
     monkeypatch.setenv("CAO_MEMORY_API_URL", "http://memory-owner:9889")
 
@@ -210,7 +238,9 @@ def test_propose_revision_uses_the_versioned_cas_authority(monkeypatch):
         )
 
     assert result == _revision_payload()
-    assert post.call_args.args[0] == "http://memory-owner:9889/v1/knowledge/records/record/revisions"
+    assert (
+        post.call_args.args[0] == "http://memory-owner:9889/v1/knowledge/records/record/revisions"
+    )
     assert post.call_args.kwargs["params"] == {
         "job_id": "job-1",
         "grant_id": "grant-1",
@@ -899,8 +929,8 @@ def test_recovery_rejects_an_invalid_authority_url_before_transport(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_local_mcp_memory_also_crosses_authenticated_http(monkeypatch):
-    from cli_agent_orchestrator.mcp_server import server
     from cli_agent_orchestrator.constants import API_BASE_URL
+    from cli_agent_orchestrator.mcp_server import server
 
     monkeypatch.delenv("CAO_MEMORY_API_URL", raising=False)
     monkeypatch.setattr(server, "_get_terminal_context_from_env", lambda: None)

@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-
 _T097_ROOT = Path("/tmp/caos-exec/T097")
 _SCRATCH_BWRAP = _T097_ROOT / "bubblewrap-build" / "bwrap"
 _VERSION_RE = re.compile(r"^bubblewrap\s+(\d+)\.(\d+)\.(\d+)(?:\s.*)?$")
@@ -154,9 +153,10 @@ def scratch_bubblewrap() -> Path:
         scratch_root = _T097_ROOT.resolve(strict=True)
     except (OSError, RuntimeError) as exc:
         pytest.skip(f"could not resolve T097 scratch Bubblewrap: {exc}")
-    if not executable.is_relative_to(scratch_root) or executable == Path(
-        "/usr/bin/bwrap"
-    ).resolve():
+    if (
+        not executable.is_relative_to(scratch_root)
+        or executable == Path("/usr/bin/bwrap").resolve()
+    ):
         pytest.skip("T097 Bubblewrap resolves outside its scratch tree; refusing fallback")
     if not os.access(executable, os.X_OK):
         pytest.skip(f"T097 scratch Bubblewrap is not executable: {executable}")
@@ -246,7 +246,8 @@ def static_socket_worker(tmp_path_factory) -> Path:
 
 
 def test_late_socket_in_read_only_runtime_tree_remains_connectable_without_snapshot(
-    scratch_bubblewrap: Path, tmp_path: Path,
+    scratch_bubblewrap: Path,
+    tmp_path: Path,
 ) -> None:
     """Positive characterization: a mutable ro-bind does not fence AF_UNIX."""
     compiler = shutil.which("cc")
@@ -257,18 +258,36 @@ def test_late_socket_in_read_only_runtime_tree_remains_connectable_without_snaps
     source.write_text(_LATE_SOCKET_SOURCE)
     build = subprocess.run(
         [compiler, "-static", "-O2", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(worker)],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if build.returncode != 0:
         pytest.skip(f"static worker build unavailable: {build.stderr}")
     runtime = tmp_path / "runtime"
     runtime.mkdir(mode=0o700)
     process = subprocess.Popen(
-        [str(scratch_bubblewrap), "--unshare-all", "--die-with-parent",
-         "--dir", "/runtime", "--ro-bind", str(runtime), "/runtime",
-         "--ro-bind", str(worker), "/worker", "--", "/worker"],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, env={"LC_ALL": "C"}, close_fds=True,
+        [
+            str(scratch_bubblewrap),
+            "--unshare-all",
+            "--die-with-parent",
+            "--dir",
+            "/runtime",
+            "--ro-bind",
+            str(runtime),
+            "/runtime",
+            "--ro-bind",
+            str(worker),
+            "/worker",
+            "--",
+            "/worker",
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env={"LC_ALL": "C"},
+        close_fds=True,
     )
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:

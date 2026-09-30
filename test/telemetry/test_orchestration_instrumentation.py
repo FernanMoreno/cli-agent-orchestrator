@@ -15,6 +15,7 @@ already uses for the no-extra fallback probes.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -35,8 +36,12 @@ provider = TracerProvider()
 provider.add_span_processor(SimpleSpanProcessor(exporter))
 trace.set_tracer_provider(provider)
 
+from cli_agent_orchestrator.clients.work_repository import WorkRepository
+from cli_agent_orchestrator.constants import DATABASE_FILE
 from cli_agent_orchestrator.models.inbox import OrchestrationType
 from cli_agent_orchestrator.services import terminal_service
+
+WorkRepository(DATABASE_FILE).initialize()
 
 captured = {}
 
@@ -80,12 +85,14 @@ print("OK")
 """
 
 
-def test_send_message_seam_records_span_and_propagates_traceparent() -> None:
+def test_send_message_seam_records_span_and_propagates_traceparent(tmp_path) -> None:
+    probe_env = dict(os.environ, CAO_HOME_DIR=str(tmp_path / "cao-home"))
     proc = subprocess.run(
         [sys.executable, "-c", _SEAM_PROBE],
         capture_output=True,
         text=True,
         timeout=120,
+        env=probe_env,
     )
     assert proc.returncode == 0, f"stderr:\n{proc.stderr}\nstdout:\n{proc.stdout}"
     assert "OK" in proc.stdout

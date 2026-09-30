@@ -28,9 +28,9 @@ from cli_agent_orchestrator.services.delegation_snapshot import (
 from cli_agent_orchestrator.services.knowledge_policy import KnowledgePolicy
 from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
 from cli_agent_orchestrator.services.work_launch import launch_adapter
+from cli_agent_orchestrator.services.work_origin import WorkOrigins
 from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
 from cli_agent_orchestrator.services.work_scheduler import WorkScheduler
-from cli_agent_orchestrator.services.work_origin import WorkOrigins
 
 
 def runtime_module():
@@ -92,7 +92,8 @@ def trusted_setup(tmp_path):
         job_id=job["id"],
         providers={"mock_cli"},
         permissions=Permissions(
-            tools={"knowledge.read", "tool.read"}, paths={str(tmp_path)},
+            tools={"knowledge.read", "tool.read"},
+            paths={str(tmp_path)},
             commands={"/bin/alpha", "/bin/beta"},
         ),
         expires_at=time.time() + 600,
@@ -404,9 +405,7 @@ def test_omitted_selection_ignores_retired_history_and_other_principals(trusted_
 
 
 @pytest.mark.parametrize("mutation_phase", ["before_admission", "during_preflight"])
-def test_omitted_selection_rechecks_uniqueness_before_work_admission(
-    trusted_setup, mutation_phase
-):
+def test_omitted_selection_rechecks_uniqueness_before_work_admission(trusted_setup, mutation_phase):
     module = runtime_module()
     provision(trusted_setup)
     module, runtime, backend = make_runtime(trusted_setup)

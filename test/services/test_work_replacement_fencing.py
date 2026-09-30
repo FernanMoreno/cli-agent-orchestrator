@@ -180,7 +180,9 @@ def test_stop_verifier_runs_without_sqlite_transaction(tmp_path):
         observed.append(owner.attempt_id)
         return StoppedWriter(owner.attempt_id, owner.generation, owner.revision, "exit")
 
-    replacement = _retry(WorkService(repository), reconcile, WorkScheduler(repository, stop_verifier=verify))
+    replacement = _retry(
+        WorkService(repository), reconcile, WorkScheduler(repository, stop_verifier=verify)
+    )
 
     assert observed == [held.attempt_id]
     assert replacement["attempts"][-1]["generation"] == 2
@@ -222,7 +224,9 @@ def test_revision_changed_during_verifier_keeps_slot_and_generation(tmp_path):
 
     def verify(owner):
         with repository.transaction() as connection:
-            connection.execute("UPDATE work_items SET revision=revision+1 WHERE id=?", (reconcile["id"],))
+            connection.execute(
+                "UPDATE work_items SET revision=revision+1 WHERE id=?", (reconcile["id"],)
+            )
         return StoppedWriter(owner.attempt_id, owner.generation, owner.revision, "exit")
 
     scheduler = WorkScheduler(repository, stop_verifier=verify)

@@ -10,8 +10,8 @@ from cli_agent_orchestrator.models.agent_profile import AgentProfile
 from cli_agent_orchestrator.providers.base import BaseProvider
 from cli_agent_orchestrator.providers.catalog import registered_provider_descriptors
 from cli_agent_orchestrator.providers.claude_code import ClaudeCodeProvider
-from cli_agent_orchestrator.providers.copilot_cli import CopilotCliProvider
 from cli_agent_orchestrator.providers.codex import CodexProvider
+from cli_agent_orchestrator.providers.copilot_cli import CopilotCliProvider
 from cli_agent_orchestrator.providers.manager import ProviderManager
 
 

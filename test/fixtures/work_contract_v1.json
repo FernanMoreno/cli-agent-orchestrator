@@ -69,6 +69,55 @@
         "succeeded_count": 0
       }
     ],
+    "work_transitions": [
+      {
+        "from": "queued",
+        "to": "running",
+        "evidence": {
+          "contract_confirmed": true,
+          "grant_confirmed": true,
+          "capacity_confirmed": true,
+          "reservations_confirmed": true
+        }
+      },
+      { "from": "queued", "to": "failed", "evidence": {} },
+      { "from": "queued", "to": "cancelled", "evidence": {} },
+      { "from": "running", "to": "waiting_children", "evidence": {} },
+      {
+        "from": "running",
+        "to": "succeeded",
+        "evidence": {
+          "result_durable": true,
+          "result_validated": true,
+          "children_settled": true
+        }
+      },
+      { "from": "running", "to": "failed", "evidence": {} },
+      { "from": "running", "to": "reconcile", "evidence": {} },
+      { "from": "running", "to": "cancelled", "evidence": {} },
+      {
+        "from": "waiting_children",
+        "to": "succeeded",
+        "evidence": {
+          "result_durable": true,
+          "result_validated": true,
+          "children_settled": true
+        }
+      },
+      { "from": "waiting_children", "to": "failed", "evidence": {} },
+      { "from": "waiting_children", "to": "reconcile", "evidence": {} },
+      { "from": "waiting_children", "to": "cancelled", "evidence": {} },
+      {
+        "from": "reconcile",
+        "to": "queued",
+        "evidence": {
+          "prior_stopped": true,
+          "reconciliation_authorized": true
+        }
+      },
+      { "from": "reconcile", "to": "failed", "evidence": {} },
+      { "from": "reconcile", "to": "cancelled", "evidence": {} }
+    ],
     "terminal_independence": {
       "work_state": "running",
       "turn_state": "ready",

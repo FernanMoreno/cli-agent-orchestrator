@@ -659,11 +659,13 @@ class HerdrInboxService:
             get_terminal_metadata,
             list_terminals_by_session,
         )
+        from cli_agent_orchestrator.services.session_lock import session_lifecycle_lock
         from cli_agent_orchestrator.services.terminal_service import (
             delete_terminal as teardown_terminal,
+        )
+        from cli_agent_orchestrator.services.terminal_service import (
             ensure_terminal_is_not_work_owned,
         )
-        from cli_agent_orchestrator.services.session_lock import session_lifecycle_lock
         from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
         if event_type == "pane.closed":

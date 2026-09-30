@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -25,7 +25,10 @@ from cli_agent_orchestrator.services.delegation_snapshot import (
 from cli_agent_orchestrator.services.knowledge_policy import KnowledgePolicy
 from cli_agent_orchestrator.services.step_output_store import ArtifactRef, ImmutableResultStore
 from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
-from cli_agent_orchestrator.services.work_continuation import ContinuationRejected, WorkContinuations
+from cli_agent_orchestrator.services.work_continuation import (
+    ContinuationRejected,
+    WorkContinuations,
+)
 from cli_agent_orchestrator.services.work_contract import ContractConflict, WorkContracts
 from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 from cli_agent_orchestrator.services.work_service import DeliveryObservation, WorkService
@@ -254,7 +257,9 @@ def _export(completed: CompletedWork) -> bytes:
 def _rehashed(payload: dict) -> bytes:
     unsigned = dict(payload)
     unsigned.pop("package_hash", None)
-    encoded = json.dumps(unsigned, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
+    encoded = json.dumps(
+        unsigned, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode()
     return json.dumps(
         {**unsigned, "package_hash": hashlib.sha256(encoded).hexdigest()},
         ensure_ascii=False,
@@ -294,53 +299,71 @@ def test_completed_work_continues_to_a_reopened_fake_adapter_without_effects(tmp
     assert first.source_generation == completed.binding.generation
     assert first.source_work_item_id == completed.work["id"]
     assert first.package_hash == hashlib.sha256(package).hexdigest()
-    assert WorkService(repository_b).read_result(completed.work["id"], artifacts=artifacts_b) == _OUTPUT
+    assert (
+        WorkService(repository_b).read_result(completed.work["id"], artifacts=artifacts_b)
+        == _OUTPUT
+    )
     assert repository_b.get_result(completed.work["accepted_result_id"]) == winner
-    assert continuity_b.import_continuation(
-        package,
-        principal=completed.principal,
-        grant_id=completed.grant.id,
-        expected_grant_revision=completed.grant.revision,
-    ) == first
+    assert (
+        continuity_b.import_continuation(
+            package,
+            principal=completed.principal,
+            grant_id=completed.grant.id,
+            expected_grant_revision=completed.grant.revision,
+        )
+        == first
+    )
 
     repository_reopened = WorkRepository(completed.database)
     artifacts_reopened = ImmutableResultStore(completed.artifacts_root)
     continuity_reopened = WorkContinuations(repository_reopened, artifacts_reopened)
-    assert continuity_reopened.export_continuation(
-        principal=completed.principal,
-        source_attempt_id=completed.binding.attempt_id,
-        generation=completed.binding.generation,
-        grant_id=completed.grant.id,
-        expected_grant_revision=completed.grant.revision,
-        reason="provider replacement",
-    ) == package
-    assert continuity_reopened.import_continuation(
-        package,
-        principal=completed.principal,
-        grant_id=completed.grant.id,
-        expected_grant_revision=completed.grant.revision,
-    ) == first
-    assert WorkService(repository_reopened).read_result(
-        completed.work["id"], artifacts=artifacts_reopened
-    ) == _OUTPUT
+    assert (
+        continuity_reopened.export_continuation(
+            principal=completed.principal,
+            source_attempt_id=completed.binding.attempt_id,
+            generation=completed.binding.generation,
+            grant_id=completed.grant.id,
+            expected_grant_revision=completed.grant.revision,
+            reason="provider replacement",
+        )
+        == package
+    )
+    assert (
+        continuity_reopened.import_continuation(
+            package,
+            principal=completed.principal,
+            grant_id=completed.grant.id,
+            expected_grant_revision=completed.grant.revision,
+        )
+        == first
+    )
+    assert (
+        WorkService(repository_reopened).read_result(
+            completed.work["id"], artifacts=artifacts_reopened
+        )
+        == _OUTPUT
+    )
 
     with pytest.raises(ContractConflict):
         WorkContracts(repository_reopened).revalidate_order(
             completed.binding.attempt_id, generation=completed.binding.generation
         )
-    assert WorkService(repository_reopened).dispatch(
-        completed.work["id"],
-        adapter_b.send,
-        admission=TransitionEvidence(
-            generation=completed.binding.generation,
-            expected_generation=completed.binding.generation,
-            contract_confirmed=True,
-            grant_confirmed=True,
-            capacity_confirmed=True,
-            reservations_confirmed=True,
-        ),
-        actor_id="owner",
-    )["state"] == "succeeded"
+    assert (
+        WorkService(repository_reopened).dispatch(
+            completed.work["id"],
+            adapter_b.send,
+            admission=TransitionEvidence(
+                generation=completed.binding.generation,
+                expected_generation=completed.binding.generation,
+                contract_confirmed=True,
+                grant_confirmed=True,
+                capacity_confirmed=True,
+                reservations_confirmed=True,
+            ),
+            actor_id="owner",
+        )["state"]
+        == "succeeded"
+    )
     assert adapter_a.sends == adapter_a.executions == adapter_a.callbacks == 1
     assert adapter_b.sends == adapter_b.executions == adapter_b.callbacks == 0
     assert _durable_snapshot(repository_reopened, artifacts_reopened) == before
@@ -381,7 +404,10 @@ def test_late_nonwinner_never_replaces_completed_result_or_causes_b_effect(tmp_p
     artifacts_b = ImmutableResultStore(completed.artifacts_root)
     continuity_b = WorkContinuations(repository_b, artifacts_b)
     assert _import(continuity_b, completed, package)
-    assert WorkService(repository_b).read_result(completed.work["id"], artifacts=artifacts_b) == _OUTPUT
+    assert (
+        WorkService(repository_b).read_result(completed.work["id"], artifacts=artifacts_b)
+        == _OUTPUT
+    )
 
     nonwinner_only = dict(payload)
     nonwinner_only["artifacts"] = [payload["artifacts"][0]]

@@ -22,17 +22,14 @@ from pathlib import Path
 
 import pytest
 
-
 _T097_ROOT = Path("/tmp/caos-exec/T097")
 _SCRATCH_BWRAP = _T097_ROOT / "bubblewrap-build" / "bwrap"
 _VERSION_RE = re.compile(r"^bubblewrap\s+(\d+)\.(\d+)\.(\d+)(?:\s.*)?$")
-_FIXTURE_SOURCE = (
-    Path(__file__).resolve().parents[1] / "fixtures" / "work_bubblewrap_fd_probe.c"
-)
+_FIXTURE_SOURCE = Path(__file__).resolve().parents[1] / "fixtures" / "work_bubblewrap_fd_probe.c"
 _REPORT_PREFIX = "T097_NOEXEC_REPORT="
 
 
-_NAMESPACE_HELPER = r'''
+_NAMESPACE_HELPER = r"""
 import ctypes
 import json
 import os
@@ -163,7 +160,7 @@ finally:
         raise OSError(error, os.strerror(error), str(mountpoint))
 
 print("T097_NOEXEC_REPORT=" + json.dumps(report), flush=True)
-'''
+"""
 
 
 def _scratch_bubblewrap() -> Path:
@@ -324,9 +321,7 @@ def test_allowed_loader_cannot_run_elf_from_private_noexec_tmpfs():
             timeout=5,
         )
         assert headers.returncode == 0, f"readelf could not inspect probe ELF:\n{headers.stderr}"
-        interpreter = re.search(
-            r"Requesting program interpreter:\s*([^\]]+)\]", headers.stdout
-        )
+        interpreter = re.search(r"Requesting program interpreter:\s*([^\]]+)\]", headers.stdout)
         if interpreter is None:
             pytest.skip("compiler produced no PT_INTERP segment for the allowed-loader probe")
         loader = Path(interpreter.group(1).strip())
@@ -366,13 +361,11 @@ def test_allowed_loader_cannot_run_elf_from_private_noexec_tmpfs():
             if filesystem[0] == "tmpfs" and filesystem[1] == "t097-noexec"
         ]
         assert len(passed_mounts) == 1, (
-            "sandbox mountinfo does not show the exact private tmpfs at /dev/shm: "
-            f"{entries!r}"
+            "sandbox mountinfo does not show the exact private tmpfs at /dev/shm: " f"{entries!r}"
         )
         mountinfo, _filesystem = passed_mounts[0]
         assert entries[-1] == passed_mounts[0], (
-            "the passed noexec tmpfs is not the topmost /dev/shm mount: "
-            f"{entries!r}"
+            "the passed noexec tmpfs is not the topmost /dev/shm mount: " f"{entries!r}"
         )
         mount_options = set(mountinfo[5].split(","))
         assert "noexec" in mount_options, f"sandbox /dev/shm is not noexec: {mountinfo!r}"

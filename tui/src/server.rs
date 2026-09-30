@@ -469,8 +469,17 @@ fn route(id: CommandId) -> Option<Route> {
         CommandId::MemoryRelationshipsReject => None,
         CommandId::MemoryImport => None,
         CommandId::MemoryLint => None,
+        CommandId::MemoryLogs => None,
         CommandId::MemoryPromote => None,
         CommandId::MemoryRepair => None,
+        // HIDE: U11-A vault maintenance commands intentionally have no TUI route or MCP
+        // equivalent. A rescan may read a curator's files, so only an operator-selected CLI
+        // invocation can trigger it. U11-B may add a read-only status endpoint separately.
+        CommandId::MemoryVaultMigrate => None,
+        CommandId::MemoryVaultRebuild => None,
+        CommandId::MemoryVaultReconcile => None,
+        CommandId::MemoryVaultScan => None,
+        CommandId::MemoryVaultStatus => None,
 
         // ── `cao profile *` ──────────────────────────────────────────────────────────────
         CommandId::ProfileList => plain(Method::Get, "/agents/profiles"),
@@ -584,6 +593,22 @@ fn route(id: CommandId) -> Option<Route> {
         CommandId::SessionStatus => {
             templated(Method::Get, "/terminals/{terminal_id}", &["terminal_id"])
         }
+
+        // ── `cao plugin *` — HIDE, all four ───────────────────────────────────────────────
+        // Routeless on purpose, not for want of endpoints: `/plugins` exists (and now carries a
+        // read-scope gate). `catalog.rs` classifies all four as `Policy::Hidden`, which is what
+        // requirements.md 16.5 requires while the verb is unresolved (M1): a HANDOFF row is
+        // offered in navigation and drives the terminal, so it would ship the surface just as
+        // much as IN-APP, and only HIDE is "not offered at all" (FR-4.3).
+        //
+        // **When M1 lands these become HANDOFF, not IN-APP**, and they stay routeless even then:
+        // `remove` requires a warn-then-confirm exchange that a captured one-shot request cannot
+        // carry, and `add` runs untrusted content whose warning belongs on real stdio. Wiring a
+        // route here would satisfy the table while defeating the confirmation.
+        CommandId::PluginAdd => None,
+        CommandId::PluginList => None,
+        CommandId::PluginRemove => None,
+        CommandId::PluginValidate => None,
 
         // ── `cao skills *` — HANDOFF, all three (OQ-6) ───────────────────────────────────
         // The entire group is routeless. `GET/POST /settings/skill-dirs` is NOT this: it returns
@@ -734,6 +759,7 @@ fn route(id: CommandId) -> Option<Route> {
         // for the same reason every other HIDE row is, and `no HANDOFF or HIDE command may carry a
         // route` is asserted below.
         CommandId::WorkflowStep => None,
+        CommandId::WorkflowWork | CommandId::WorkflowWorkEvents => None,
     }
 }
 
@@ -926,12 +952,24 @@ fn field_text(flow: &crate::guided_flow::GuidedFlow, name: &str) -> Option<Strin
 /// Holds configuration only — no conversation state, no cached responses. The launch *sequence*
 /// (`create_session` → poll → hand off) is owned by `renderer`, not here.
 #[allow(dead_code)] // consumed by `guided-flow` (Bolt 4) and `renderer` (Bolt 5). (#321)
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ServerClient {
     /// `http://<host>:<port>`, resolved once from the environment at construction.
     base_url: String,
     /// Per-request bound. **Not** the 30-second readiness cap (TS-3).
     timeout: Duration,
+    bearer: Option<String>,
+}
+
+impl std::fmt::Debug for ServerClient {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ServerClient")
+            .field("base_url", &self.base_url)
+            .field("timeout", &self.timeout)
+            .field("authenticated", &self.bearer.is_some())
+            .finish()
+    }
 }
 
 impl Default for ServerClient {
@@ -965,7 +1003,11 @@ impl ServerClient {
             .and_then(|raw| raw.trim().parse::<u16>().ok())
             .unwrap_or(DEFAULT_API_PORT);
 
-        Self::with_base_url(format!("http://{host}:{port}"))
+        let mut client = Self::with_base_url(format!("http://{host}:{port}"));
+        client.bearer = std::env::var("CAO_AUTH_LOCAL_TOKEN")
+            .ok()
+            .filter(|token| !token.is_empty());
+        client
     }
 
     /// Builds a client against an explicit base URL.
@@ -978,6 +1020,7 @@ impl ServerClient {
         Self {
             base_url: base_url.into(),
             timeout: Duration::from_secs(REQUEST_TIMEOUT_SECS),
+            bearer: None,
         }
     }
 
@@ -1252,7 +1295,8 @@ impl ServerClient {
                 .with_body(body.to_string());
         }
 
-        let mut lazy = request
+        let mut lazy = self
+            .authenticated(request)?
             .send_lazy()
             .map_err(|error| self.unreachable(&error))?;
         let status = lazy.status_code;
@@ -1348,11 +1392,34 @@ impl ServerClient {
     /// cosmetic: they call for different remedies (start the server vs. read the status), and
     /// `await_ready` treats them differently — only an explicit 5xx is conclusive (BR-12).
     fn send(&self, request: minreq::Request) -> Result<RawResponse, TuiError> {
-        let response = request.send().map_err(|error| self.unreachable(&error))?;
+        let response = self
+            .authenticated(request)?
+            .send()
+            .map_err(|error| self.unreachable(&error))?;
         Ok(RawResponse {
             status: response.status_code,
             body: response.as_bytes().to_vec(),
         })
+    }
+
+    fn authenticated(&self, request: minreq::Request) -> Result<minreq::Request, TuiError> {
+        match self.bearer.as_deref() {
+            Some(token) => {
+                if token
+                    .bytes()
+                    .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
+                {
+                    return Err(TuiError::Validation(
+                        "invalid local bearer token".to_string(),
+                    ));
+                }
+                // A redirected response must never forward the local bearer to another host.
+                Ok(request
+                    .with_header("Authorization", format!("Bearer {token}"))
+                    .with_max_redirects(0))
+            }
+            None => Ok(request),
+        }
     }
 
     /// One operator-facing line naming the address actually used (SR-6).
@@ -1529,6 +1596,7 @@ mod tests {
         query: String,
         /// The request body, or `""`.
         body: String,
+        authorization: Option<String>,
     }
 
     impl Captured {
@@ -1741,6 +1809,7 @@ mod tests {
         };
 
         let mut content_length = 0usize;
+        let mut authorization = None;
         loop {
             let mut header = String::new();
             if reader.read_line(&mut header).ok()? == 0 {
@@ -1751,6 +1820,9 @@ mod tests {
                 break;
             }
             if let Some((name, value)) = header.split_once(':') {
+                if name.eq_ignore_ascii_case("authorization") {
+                    authorization = Some(value.trim().to_string());
+                }
                 if name.eq_ignore_ascii_case("content-length") {
                     content_length = value.trim().parse().unwrap_or(0);
                 }
@@ -1767,6 +1839,7 @@ mod tests {
             path,
             query,
             body: String::from_utf8_lossy(&body).to_string(),
+            authorization,
         })
     }
 
@@ -1787,6 +1860,47 @@ mod tests {
         }
     }
 
+    #[test]
+    fn personal_bearer_is_sent_without_exposing_it_in_debug() {
+        let stub = StubServer::new(200, "{}");
+        let mut client = stub.client();
+        client.bearer = Some("test.signed.token".to_string());
+        let _: serde_json::Value = client.get_json("/sessions").unwrap();
+        assert_eq!(
+            stub.next_request().authorization.as_deref(),
+            Some("Bearer test.signed.token")
+        );
+        assert!(!format!("{client:?}").contains("test.signed.token"));
+    }
+
+    #[test]
+    fn personal_bearer_is_also_sent_for_streamed_commands() {
+        let stub = StubServer::new(200, "{}");
+        let mut client = stub.client();
+        client.bearer = Some("test.signed.token".to_string());
+        let mut sink = Vec::new();
+        assert_eq!(
+            client
+                .run(CommandId::WorkflowGet, &["nightly"], &[], None, &mut sink)
+                .unwrap(),
+            200
+        );
+        assert_eq!(
+            stub.next_request().authorization.as_deref(),
+            Some("Bearer test.signed.token")
+        );
+    }
+
+    #[test]
+    fn malformed_personal_bearer_is_rejected_before_transport() {
+        let mut client = client_on_closed_port();
+        client.bearer = Some("token\r\nInjected: value".to_string());
+        assert!(matches!(
+            client.get_json::<serde_json::Value>("/sessions"),
+            Err(TuiError::Validation(_))
+        ));
+    }
+
     /// The `POST /sessions` response body: the four-field `Terminal` projection.
     fn terminal_body() -> String {
         r#"{"id":"a1b2c3d4","name":"planner-1","session_name":"work","status":"idle"}"#.to_string()
@@ -1795,10 +1909,9 @@ mod tests {
     // ── Mandatory assertion 1 (SR-2, VR-3) ───────────────────────────────────────────────
 
     fn fixture_http_work_view(work_item_id: &str, schema_version: u64) -> String {
-        let envelope: serde_json::Value = serde_json::from_str(include_str!(
-            "../../test/fixtures/work_contract_v1.json"
-        ))
-        .expect("the checked-in work contract fixture must be JSON");
+        let envelope: serde_json::Value =
+            serde_json::from_str(include_str!("../../test/fixtures/work_contract_v1.json"))
+                .expect("the checked-in work contract fixture must be JSON");
         let mut view = envelope["views"][0].clone();
         view["schema_version"] = serde_json::json!(schema_version);
         view["work_item_id"] = serde_json::json!(work_item_id);
@@ -2729,7 +2842,7 @@ mod tests {
 
     /// **23 routes for the 24 IN-APP commands, and `profile find` is the one without.**
     ///
-    /// The distribution is settled ground truth — 24 IN-APP / 18 HANDOFF / 44 HIDE = 86 — and
+    /// The distribution is settled ground truth — 24 IN-APP / 18 HANDOFF / 49 HIDE = 91 — and
     /// every number below is a **hard-coded literal**. Deriving any of them from `route()` or
     /// from the catalog would compare production against itself, which is the vacuous shape this
     /// project has hit repeatedly.
@@ -2793,7 +2906,7 @@ mod tests {
             .count();
         assert_eq!(
             in_app, 24,
-            "the settled distribution is 24 IN-APP / 18 HANDOFF / 44 HIDE = 86; if this moved, \
+            "the settled distribution is 24 IN-APP / 18 HANDOFF / 49 HIDE = 91; if this moved, \
              the 23-route figure above needs re-deriving rather than adjusting"
         );
     }

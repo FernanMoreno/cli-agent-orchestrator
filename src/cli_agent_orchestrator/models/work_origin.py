@@ -2,12 +2,15 @@
 
 import hashlib
 import json
-
-from typing import Annotated, Literal
+import math
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
-from cli_agent_orchestrator.models.work_contract import EffectiveWorkContract, EffectiveWorkContractV2
+from cli_agent_orchestrator.models.work_contract import (
+    EffectiveWorkContract,
+    EffectiveWorkContractV2,
+)
 from cli_agent_orchestrator.models.work_delivery import WorkDeliveryEnvelope
 
 Identity = Annotated[
@@ -23,6 +26,7 @@ OriginAction = Literal[
     "admit_step",
     "execute",
     "task_received",
+    "task_result",
     "delegate",
 ]
 LineageKind = Literal["child", "handoff"]
@@ -333,6 +337,102 @@ class WorkAttemptRef(FrozenOriginModel):
         if type(value) is not int:
             raise ValueError("attempt versions and generations must be integers")
         return value
+
+
+MAX_WORKFLOW_STEP_RESULT_BYTES = 1024 * 1024
+
+
+def _require_json_value(value: Any) -> None:
+    """Reject Python values that cannot be represented as strict finite JSON."""
+    if value is None or type(value) in {bool, int, str}:
+        return
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ValueError("workflow result numbers must be finite")
+        return
+    if type(value) is list:
+        for item in value:
+            _require_json_value(item)
+        return
+    if type(value) is dict:
+        if any(type(key) is not str for key in value):
+            raise ValueError("workflow result object keys must be strings")
+        for item in value.values():
+            _require_json_value(item)
+        return
+    raise ValueError("workflow result output must contain JSON values only")
+
+
+class WorkflowStepResultV1(FrozenOriginModel):
+    """Strict, bounded result envelope submitted by a managed workflow receiver."""
+
+    schema_version: Literal[1] = 1
+    status: Literal["completed"]
+    output: dict[str, Any]
+
+    @classmethod
+    def from_payload(cls, payload: Any) -> "WorkflowStepResultV1":
+        if type(payload) is not dict or set(payload) != {
+            "schema_version",
+            "status",
+            "output",
+        }:
+            raise ValueError("workflow result envelope has an invalid shape")
+        if type(payload["schema_version"]) is not int or payload["schema_version"] != 1:
+            raise ValueError("workflow result schema_version must be integer 1")
+        if type(payload["status"]) is not str or payload["status"] != "completed":
+            raise ValueError("workflow result status must be completed")
+        if type(payload["output"]) is not dict:
+            raise ValueError("workflow result output must be a JSON object")
+        _require_json_value(payload["output"])
+        result = cls.model_validate(payload)
+        result.canonical_bytes()
+        return result
+
+    @classmethod
+    def from_json_bytes(cls, raw: bytes) -> "WorkflowStepResultV1":
+        if type(raw) is not bytes or len(raw) > MAX_WORKFLOW_STEP_RESULT_BYTES:
+            raise ValueError("workflow result envelope exceeds 1 MiB")
+
+        def unique_pairs(pairs):
+            value = {}
+            for key, item in pairs:
+                if key in value:
+                    raise ValueError("workflow result contains a duplicate JSON key")
+                value[key] = item
+            return value
+
+        def reject_constant(_value):
+            raise ValueError("workflow result numbers must be finite")
+
+        try:
+            payload = json.loads(
+                raw.decode("utf-8"),
+                object_pairs_hook=unique_pairs,
+                parse_constant=reject_constant,
+            )
+        except (UnicodeError, json.JSONDecodeError, RecursionError) as error:
+            raise ValueError("workflow result is not strict JSON") from error
+        return cls.from_payload(payload)
+
+    def canonical_bytes(self) -> bytes:
+        payload = self.model_dump(mode="python")
+        if type(payload["output"]) is not dict:
+            raise ValueError("workflow result output must be a JSON object")
+        _require_json_value(payload["output"])
+        try:
+            encoded = json.dumps(
+                payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError, UnicodeError, RecursionError) as error:
+            raise ValueError("workflow result is not strict JSON") from error
+        if len(encoded) > MAX_WORKFLOW_STEP_RESULT_BYTES:
+            raise ValueError("workflow result envelope exceeds 1 MiB")
+        return encoded
 
 
 class ManagedLineageIntent(FrozenOriginModel):

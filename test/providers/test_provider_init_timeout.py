@@ -268,7 +268,7 @@ class TestStartupPromptHandlerHonorsOuterTimeout:
         # trust_accepted guard stops the dismissed dialog's lingering text from
         # being answered a second time.
         mock_backend.get_history.side_effect = [
-            "Yes, I trust this folder",
+            "❯ 1. Yes, I trust this folder",
             "Welcome to Claude Code v2.1.235",
         ]
 

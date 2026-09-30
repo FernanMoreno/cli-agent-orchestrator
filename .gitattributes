@@ -1,2 +1,5 @@
 # Keep LF in the repository and in the working tree, even on Windows/OneDrive.
 * text=auto eol=lf
+
+# Recorded terminal frames retain blank screen rows at the end.
+test/fixtures/opencode/v2-completed.txt whitespace=-blank-at-eof

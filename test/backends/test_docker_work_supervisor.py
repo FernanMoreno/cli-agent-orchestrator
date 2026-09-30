@@ -2,12 +2,11 @@
 
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
-
 
 _ROOT = Path(__file__).resolve().parents[2]
 _SUPERVISOR_SOURCE = _ROOT / "src/cli_agent_orchestrator/backends/docker_work_supervisor.c"
@@ -20,7 +19,17 @@ def _compile(source: str, output: Path) -> None:
     source_path = output.with_suffix(".c")
     source_path.write_text(source, encoding="utf-8")
     result = subprocess.run(
-        [compiler, "-static", "-O2", "-Wall", "-Wextra", "-Werror", str(source_path), "-o", str(output)],
+        [
+            compiler,
+            "-static",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            str(source_path),
+            "-o",
+            str(output),
+        ],
         check=False,
         capture_output=True,
         text=True,
@@ -51,7 +60,7 @@ def _supervisor_command(binary: Path, worker: Path, *, mcp: bool) -> list[str]:
         str(os.getuid()),
         "--gid",
         str(os.getgid()),
-        *( ["--mcp"] if mcp else [] ),
+        *(["--mcp"] if mcp else []),
     ]
 
 
@@ -86,7 +95,7 @@ def test_docker_supervisor_gates_worker_and_preserves_private_mcp_fd3(tmp_path):
             "-Wextra",
             "-Werror",
             str(_SUPERVISOR_SOURCE),
-            "-DCAO_SUPERVISOR_SOURCE_SHA256=\"test\"",
+            '-DCAO_SUPERVISOR_SOURCE_SHA256="test"',
             "-o",
             str(supervisor),
         ],
@@ -165,7 +174,7 @@ def test_docker_supervisor_relays_only_bounded_mcp_frames(tmp_path):
             "-Wextra",
             "-Werror",
             str(_SUPERVISOR_SOURCE),
-            "-DCAO_SUPERVISOR_SOURCE_SHA256=\"test\"",
+            '-DCAO_SUPERVISOR_SOURCE_SHA256="test"',
             "-o",
             str(supervisor),
         ],

@@ -34,10 +34,9 @@ would be.
 DISCLOSED (never a passing stub):
 - The drive-to-COMPLETED-over-real-HTTP assertion is proven for the SCRIPT tier only.
   The YAML/agent tier cannot complete in a bare subprocess (no provider CLI, no tmux);
-  its full-drive proof remains owned by the provider-gated ``test/e2e`` suite and the
-  in-process TestClient guard (which stubs only the ``run_agent_step`` leaf). See the
-  ``test_yaml_tier_drive_to_completed_needs_provider_env`` skip below -- an explicit
-  skip-with-reason, not a green stub that would pretend the assertion ran.
+  its full-drive proof uses the opt-in ``live_workflow_server`` fixture below,
+  with a real installed CLI and authorized subscription/free account. The usual
+  suite keeps this prerequisite gate; live acceptance asserts durable completion.
 - The AA-3 "CLI Ctrl-C detaches, does not cancel" behavior is a property of the ``cao``
   CLI follower process, not the server; it stays owned by the CLI unit/e2e tests.
 
@@ -66,6 +65,7 @@ import time
 import uuid
 from pathlib import Path
 from test.fixtures.cao_server import CaoServer
+from test.fixtures.live_workflow import live_workflow_server
 from typing import Optional
 
 import pytest
@@ -376,26 +376,38 @@ def test_unknown_ids_404_over_real_http(cao_server: CaoServer) -> None:
 
 
 # ===========================================================================
-# RS-7 (DISCLOSED DEFERRAL): the YAML/agent tier's drive-to-COMPLETED cannot be
-# proven over a bare real subprocess -- it has no provider CLI and no tmux agent
-# substrate, so an agent step never settles. This is an explicit skip-with-reason
-# (NOT a green stub): the YAML full-drive proof is owned by the provider-gated
-# test/e2e suite and by the in-process TestClient guard (which stubs only the
-# run_agent_step leaf). The submit+durable-read+list+cancel+404 assertions above
-# already exercise the YAML-agnostic composition over real HTTP; only the
-# terminal-COMPLETED-of-an-agent-run assertion needs the provider e2e environment.
+# RS-7: YAML/agent completion over a real provider and real HTTP.
+# Full YAML completion requires the opt-in real CLI/account fixture. No leaf
+# is mocked: submission, provider turn, receipt and durable result cross HTTP.
 # ===========================================================================
-@pytest.mark.skip(
-    reason=(
-        "YAML/agent-tier drive-to-COMPLETED needs a provider CLI + tmux substrate the "
-        "bare cao-server subprocess lacks; owned by the provider-gated test/e2e suite "
-        "and the in-process TestClient guard. Disclosed, never faked."
+@pytest.mark.live_provider
+def test_yaml_tier_drive_to_completed_needs_provider_env(live_workflow_server) -> None:
+    """A real provider step settles and is retained over the real HTTP boundary."""
+    server = live_workflow_server
+    name = f"rs-live-{uuid.uuid4().hex[:8]}"
+    spec_dir = server.home_dir / ".aws" / "cli-agent-orchestrator" / "workflows"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    (spec_dir / f"{name}.yaml").write_text(
+        f"name: {name}\nmode: sequential\nsteps:\n"
+        f"  - id: answer\n    provider: {os.environ.get('CAO_LIVE_WORKFLOW_PROVIDER', 'claude_code')}\n    agent: live-workflow\n"
+        "    prompt: 'Reply with CAO_WORKFLOW_LIVE_OK, followed by the required completion receipt on its own final line.'\n",
+        encoding="utf-8",
     )
-)
-def test_yaml_tier_drive_to_completed_needs_provider_env(  # pragma: no cover
-    cao_server: CaoServer,
-) -> None:
-    """When run in the provider e2e environment, this would submit a YAML workflow
-    over real HTTP and assert it drives to COMPLETED. Intentionally skipped here (not
-    stubbed green) because the bare subprocess cannot run a real agent step."""
-    raise AssertionError("requires the provider e2e environment (provider CLI + tmux)")
+    run_id = _rid("yaml-live")
+    try:
+        submitted = _submit(server, name, run_id)
+        assert submitted.status_code == 202, submitted.text
+        deadline = time.monotonic() + 240
+        final = None
+        while time.monotonic() < deadline:
+            final = _get_state(server, run_id)
+            if final in ("completed", "failed", "cancelled"):
+                break
+            time.sleep(0.5)
+        result = requests.get(f"{server.url}/workflows/runs/{run_id}/result", timeout=5)
+        assert final == "completed", result.text
+        assert result.status_code == 200, result.text
+        assert result.json()["run_id"] == run_id
+        assert result.json()["state"] == "completed"
+    finally:
+        requests.post(f"{server.url}/workflows/runs/{run_id}/cancel", timeout=5)

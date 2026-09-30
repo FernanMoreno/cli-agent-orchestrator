@@ -2,18 +2,20 @@
 
 import asyncio
 import hashlib
+import importlib
 import sqlite3
 import time
 from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
+from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.api import main
-from cli_agent_orchestrator.backends.herdr_backend import HerdrBackend
 from cli_agent_orchestrator.backends import work_registry
+from cli_agent_orchestrator.backends.herdr_backend import HerdrBackend
 from cli_agent_orchestrator.backends.tmux_backend import TmuxBackend
 from cli_agent_orchestrator.clients.work_repository import SchemaMismatch, WorkRepository
 from cli_agent_orchestrator.models.work_contract import (
@@ -25,20 +27,19 @@ from cli_agent_orchestrator.models.work_contract import (
     ObservedValue,
 )
 from cli_agent_orchestrator.security import auth
-from cli_agent_orchestrator.services.delegation_snapshot import (
-    DelegationSnapshots,
-    ResolvedSnapshot,
-)
-from cli_agent_orchestrator.services.knowledge_policy import KnowledgePolicy
 from cli_agent_orchestrator.services import (
     agui_enablement,
     herdr_inbox_registry,
     work_launch_gateway,
 )
+from cli_agent_orchestrator.services.delegation_snapshot import (
+    DelegationSnapshots,
+    ResolvedSnapshot,
+)
+from cli_agent_orchestrator.services.knowledge_policy import KnowledgePolicy
 from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
 from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
 from cli_agent_orchestrator.services.work_scheduler import WorkScheduler
-
 
 _UNAVAILABLE = {
     "detail": {
@@ -79,6 +80,19 @@ def _durable_counts(repository):
                 "work_dispatch_bindings",
                 "work_delivery_orders",
                 "work_scheduler_requests",
+            )
+        )
+
+
+def _public_authority_counts(repository):
+    with repository.connection() as connection:
+        return tuple(
+            connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            for table in (
+                "work_grants",
+                "work_reservation_sets",
+                "work_path_reservations",
+                "work_task_received_receipts",
             )
         )
 
@@ -226,6 +240,9 @@ class _StartupTaskTracker:
 @pytest.fixture
 def composed_server(tmp_path, monkeypatch):
     """A server whose lifespan sees one already-verified temporary Work store."""
+    monkeypatch.setenv("CAO_ENABLE_PUBLIC_WORK_INGRESS", "true")
+    monkeypatch.delenv("CAO_WORK_DOCKER_LOCAL", raising=False)
+    monkeypatch.delenv("CAO_WORK_DOCKER_IMAGE_ID", raising=False)
     repository = WorkRepository(tmp_path / "composition.sqlite3")
     repository.initialize()
     calls = _install_lifespan_sandbox(monkeypatch)
@@ -266,12 +283,94 @@ def test_server_owned_work_registry_defaults_to_empty():
     assert work_registry.WORK_BACKENDS == {}
 
 
+def test_lifespan_passes_repository_aware_local_backends_to_gateway(composed_server, monkeypatch):
+    """The local backend and Work runtime must share one repository object."""
+    backend = CapableBackend()
+    backend_map = {"docker-local": backend}
+    configured_repositories = []
+    builder_inputs = []
+
+    real_builder = work_launch_gateway.build_durable_launch_gateway
+
+    def local_work_backends_for(repository, *, environ=None):
+        configured_repositories.append(repository)
+        return dict(backend_map)
+
+    def build_gateway(repository, *, backends):
+        builder_inputs.append((repository, backends))
+        return real_builder(repository, backends=backends)
+
+    monkeypatch.setattr(
+        work_registry, "local_work_backends_for", local_work_backends_for, raising=False
+    )
+    monkeypatch.setattr(work_launch_gateway, "build_durable_launch_gateway", build_gateway)
+
+    with TestClient(main.app, base_url="http://localhost"):
+        pass
+
+    assert len(configured_repositories) == 1
+    assert configured_repositories[0].path == composed_server.repository.path
+    assert len(builder_inputs) == 1
+    repository, backends = builder_inputs[0]
+    assert repository is configured_repositories[0]
+    assert backends == backend_map
+    assert backends["docker-local"] is backend
+    assert work_registry.WORK_BACKENDS == {}
+    for owner in (
+        "durable_launch_gateway",
+        "work_workflow_origins",
+        "work_workflow_result_service",
+        "workflow_step_projector",
+    ):
+        assert getattr(main.app.state, owner, None) is None
+
+
+def test_invalid_local_docker_opt_in_fails_before_startup_effects(composed_server, monkeypatch):
+    monkeypatch.setenv("CAO_WORK_DOCKER_LOCAL", "1")
+    monkeypatch.setenv("CAO_WORK_DOCKER_IMAGE_ID", "mutable:latest")
+
+    with pytest.raises(ValueError, match="CAO_WORK_DOCKER_IMAGE_ID"):
+        with TestClient(main.app, base_url="http://localhost"):
+            pytest.fail("invalid local Docker configuration must reject startup")
+
+    assert composed_server.calls == []
+
+
+def test_required_launch_mode_rejects_legacy_sessions_before_effect(composed_server, monkeypatch):
+    monkeypatch.setenv("CAO_WORK_LAUNCH_MODE", "required")
+    legacy_calls = []
+
+    async def record_legacy_session_call(**kwargs):
+        legacy_calls.append(kwargs)
+        raise AssertionError("legacy session effect must not run")
+
+    monkeypatch.setattr(main.session_service, "create_session", record_legacy_session_call)
+    with TestClient(main.app, base_url="http://localhost") as client:
+        response = client.post("/sessions", params={"agent_profile": "developer"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Managed Work launch is required; use /work-launches."
+    assert legacy_calls == []
+
+
+def test_unknown_launch_mode_rejects_server_startup_before_effect(composed_server, monkeypatch):
+    monkeypatch.setenv("CAO_WORK_LAUNCH_MODE", "unrecognized")
+
+    with pytest.raises(ValueError, match="CAO_WORK_LAUNCH_MODE"):
+        with TestClient(main.app, base_url="http://localhost"):
+            pass
+
+    assert composed_server.calls == []
+
+
 @pytest.mark.parametrize("registry", [{}, {"other": CapableBackend()}])
 def test_lifespan_preserves_fixed_503_without_a_registered_exact_backend(
     composed_server, monkeypatch, registry
 ):
     """Breaks if an unregistered contract backend falls back to tmux or another key."""
-    principal = _provisioned_launch(composed_server.repository, composed_server.root, backend="exact")
+    principal = _provisioned_launch(
+        composed_server.repository, composed_server.root, backend="exact"
+    )
     monkeypatch.setattr(work_registry, "WORK_BACKENDS", registry)
 
     with _client_for(principal) as client:
@@ -286,7 +385,9 @@ def test_lifespan_preserves_fixed_503_without_a_registered_exact_backend(
 
 def test_lifespan_rejects_an_incapable_exact_backend_without_effects(composed_server, monkeypatch):
     """Breaks if registration alone bypasses the effective contract's preflight."""
-    principal = _provisioned_launch(composed_server.repository, composed_server.root, backend="exact")
+    principal = _provisioned_launch(
+        composed_server.repository, composed_server.root, backend="exact"
+    )
     monkeypatch.setattr(work_registry, "WORK_BACKENDS", {"exact": TmuxBackend()})
 
     with _client_for(principal) as client:
@@ -297,13 +398,18 @@ def test_lifespan_rejects_an_incapable_exact_backend_without_effects(composed_se
     assert _durable_counts(composed_server.repository) == (0, 0, 0, 0, 0)
 
 
+@pytest.mark.parametrize("launch_mode", ["legacy", "required"])
 def test_lifespan_admits_queued_work_only_through_the_exact_registered_backend(
-    composed_server, monkeypatch
+    composed_server, monkeypatch, launch_mode
 ):
     """Breaks if the lifespan omits gateway composition or admission dispatches a terminal."""
+    monkeypatch.setenv("CAO_WORK_LAUNCH_MODE", launch_mode)
     backend = CapableBackend()
-    principal = _provisioned_launch(composed_server.repository, composed_server.root, backend="exact")
+    principal = _provisioned_launch(
+        composed_server.repository, composed_server.root, backend="exact"
+    )
     monkeypatch.setattr(work_registry, "WORK_BACKENDS", {"exact": backend})
+    grants_before = _public_authority_counts(composed_server.repository)[0]
 
     with _client_for(principal) as client:
         response = client.post("/work-launches", json=_launch_body())
@@ -314,6 +420,133 @@ def test_lifespan_admits_queued_work_only_through_the_exact_registered_backend(
     assert _durable_counts(composed_server.repository) == (1, 1, 1, 1, 1)
     assert len(backend.preflights) == 1
     assert backend.effects == []
+    grants, reservation_sets, path_reservations, task_receipts = _public_authority_counts(
+        composed_server.repository
+    )
+    assert grants == grants_before
+    assert reservation_sets == 0
+    assert path_reservations == 0
+    assert task_receipts == 0
+
+
+def test_public_api_foreign_selection_cannot_create_authority_or_reservation(
+    composed_server, monkeypatch
+):
+    backend = CapableBackend()
+    principal = _provisioned_launch(
+        composed_server.repository, composed_server.root, backend="exact"
+    )
+    monkeypatch.setattr(work_registry, "WORK_BACKENDS", {"exact": backend})
+    before = _public_authority_counts(composed_server.repository)
+
+    with _client_for(principal) as client:
+        response = client.post(
+            "/work-launches", json={**_launch_body(), "selection": "another-principals-selector"}
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": {
+            "code": "launch_context_unavailable",
+            "message": "Trusted launch context is unavailable.",
+            "retryable": False,
+            "required_action": "provision_launch_context",
+        }
+    }
+    assert _durable_counts(composed_server.repository) == (0, 0, 0, 0, 0)
+    assert _public_authority_counts(composed_server.repository) == before
+    assert backend.preflights == []
+    assert backend.effects == []
+
+
+def test_verified_launch_body_cannot_supply_job_or_grant(composed_server, monkeypatch):
+    backend = CapableBackend()
+    principal = _provisioned_launch(
+        composed_server.repository, composed_server.root, backend="exact"
+    )
+    monkeypatch.setattr(work_registry, "WORK_BACKENDS", {"exact": backend})
+    monkeypatch.setenv("CAO_WORK_LAUNCH_MODE", "required")
+    body = _launch_body()
+    body.update({"job_id": "forged-job", "grant_id": "forged-grant"})
+
+    with _client_for(principal) as client:
+        response = client.post("/work-launches", json=body)
+
+    assert response.status_code == 422
+    assert _durable_counts(composed_server.repository) == (0, 0, 0, 0, 0)
+    assert backend.preflights == []
+    assert backend.effects == []
+
+
+def test_required_ordinary_cli_launch_replays_one_http_work_admission(composed_server, monkeypatch):
+    backend = CapableBackend()
+    principal = _provisioned_launch(
+        composed_server.repository, composed_server.root, backend="exact"
+    )
+    monkeypatch.setattr(work_registry, "WORK_BACKENDS", {"exact": backend})
+    monkeypatch.setenv("CAO_WORK_LAUNCH_MODE", "required")
+    monkeypatch.setattr(main, "principal_from_token", lambda token: principal)
+    cli_launch = importlib.import_module("cli_agent_orchestrator.cli.commands.launch")
+    monkeypatch.setattr(cli_launch, "get_local_bearer", lambda: "verified-token")
+    monkeypatch.setattr(cli_launch, "get_server_settings", lambda: {"mcp_request_timeout": 9})
+    arguments = [
+        "--agents",
+        "developer",
+        "--session-name",
+        "composition-session",
+        "--work-selection",
+        "opaque",
+        "--allowed-tools",
+        "tool.read",
+        "admit only",
+    ]
+
+    with TestClient(main.app, base_url="http://localhost") as client:
+
+        def post_to_local_app(url, *, json, headers, timeout):
+            assert url.endswith("/work-launches")
+            assert timeout == 9
+            return client.post("/work-launches", json=json, headers=headers)
+
+        monkeypatch.setattr(cli_launch.requests, "post", post_to_local_app)
+        first = CliRunner().invoke(cli_launch.launch, arguments)
+        replay = CliRunner().invoke(cli_launch.launch, arguments)
+
+    assert first.exit_code == 0, first.output
+    assert replay.exit_code == 0, replay.output
+    assert first.output == replay.output
+    assert _durable_counts(composed_server.repository) == (1, 1, 1, 1, 1)
+    assert backend.effects == []
+
+
+def test_required_cli_launch_needs_public_work_ingress_enabled(composed_server, monkeypatch):
+    backend = CapableBackend()
+    principal = _provisioned_launch(
+        composed_server.repository, composed_server.root, backend="exact"
+    )
+    monkeypatch.setattr(work_registry, "WORK_BACKENDS", {"exact": backend})
+    monkeypatch.setenv("CAO_WORK_LAUNCH_MODE", "required")
+    monkeypatch.delenv("CAO_ENABLE_PUBLIC_WORK_INGRESS", raising=False)
+    monkeypatch.setattr(main, "principal_from_token", lambda token: principal)
+    cli_launch = importlib.import_module("cli_agent_orchestrator.cli.commands.launch")
+    monkeypatch.setattr(cli_launch, "get_local_bearer", lambda: "verified-token")
+    monkeypatch.setattr(cli_launch, "get_server_settings", lambda: {"mcp_request_timeout": 9})
+
+    with TestClient(main.app, base_url="http://localhost") as client:
+
+        def post_to_local_app(url, *, json, headers, timeout):
+            return client.post("/work-launches", json=json, headers=headers)
+
+        monkeypatch.setattr(cli_launch.requests, "post", post_to_local_app)
+        result = CliRunner().invoke(
+            cli_launch.launch,
+            ["--agents", "developer", "--work-selection", "opaque", "admit only"],
+        )
+
+    assert result.exit_code != 0
+    assert _durable_counts(composed_server.repository) == (0, 0, 0, 0, 0)
+    assert backend.preflights == []
+    assert backend.effects == []
 
 
 def test_lifespan_composes_omitted_selection_through_durable_work_only(
@@ -321,7 +554,9 @@ def test_lifespan_composes_omitted_selection_through_durable_work_only(
 ):
     """An omitted selector uses the composed queue path without legacy sessions."""
     backend = CapableBackend()
-    principal = _provisioned_launch(composed_server.repository, composed_server.root, backend="exact")
+    principal = _provisioned_launch(
+        composed_server.repository, composed_server.root, backend="exact"
+    )
     monkeypatch.setattr(work_registry, "WORK_BACKENDS", {"exact": backend})
     legacy_session_calls = []
 
@@ -407,12 +642,8 @@ async def test_lifespan_cleans_up_when_plugin_registry_load_is_cancelled(
 
     monkeypatch.setattr(main.PluginRegistry, "load", wait_for_cancellation)
     monkeypatch.setattr(main.PluginRegistry, "teardown", record_registry_teardown)
-    monkeypatch.setattr(
-        main.fifo_manager, "stop_watchdog", lambda: hooks.append("watchdog_stop")
-    )
-    monkeypatch.setattr(
-        main, "shutdown_telemetry", lambda: hooks.append("telemetry_shutdown")
-    )
+    monkeypatch.setattr(main.fifo_manager, "stop_watchdog", lambda: hooks.append("watchdog_stop"))
+    monkeypatch.setattr(main, "shutdown_telemetry", lambda: hooks.append("telemetry_shutdown"))
 
     previous_service = herdr_inbox_registry.get_herdr_inbox_service()
     unrelated_service = object()
@@ -440,6 +671,7 @@ async def test_lifespan_failure_after_herdr_registration_clears_service_and_awai
     composed_server, monkeypatch
 ):
     """Post-registration startup failure cancels the Herdr task and clears its singleton."""
+
     class FakeHerdrBackend(HerdrBackend):
         def __init__(self):
             self._herdr_session = "temporary-test-session"
@@ -501,11 +733,17 @@ async def test_lifespan_failure_after_herdr_registration_clears_service_and_awai
             task for source, task in task_tracker.created if source is herdr_coroutine
         )
         assert herdr_task.done() and herdr_task.cancelled()
-        assert any(
-            herdr_task in awaited_group for awaited_group in task_tracker.awaited_groups
+        assert any(herdr_task in awaited_group for awaited_group in task_tracker.awaited_groups)
+        # Awaited runtime initialization lets finite maintenance finish before
+        # this failure. Every task is reaped; perpetual services must be cancelled.
+        assert all(task.done() for task in task_tracker.tasks)
+        assert all(
+            task.cancelled()
+            for source, task in task_tracker.created
+            if source.__qualname__.endswith(("never_returns", "wait_forever"))
         )
-        assert all(task.done() and task.cancelled() for task in task_tracker.tasks)
         assert herdr_inbox_registry.get_herdr_inbox_service() is None
+        assert getattr(main.app.state, "work_workflow_origins", None) is None
     finally:
         pending_tasks = [task for task in task_tracker.tasks if not task.done()]
         for task in pending_tasks:
@@ -563,14 +801,13 @@ async def test_lifespan_cleans_started_resources_when_gateway_composition_fails(
 
     def fail_gateway_builder(repository, *, backends):
         assert repository.path == composed_server.repository.path
-        assert backends is work_registry.WORK_BACKENDS
+        assert backends == work_registry.WORK_BACKENDS
+        assert backends is not work_registry.WORK_BACKENDS
         composed_server.calls.append("build_gateway")
         raise startup_error
 
     monkeypatch.setattr(main.PluginRegistry, "teardown", record_registry_teardown)
-    monkeypatch.setattr(
-        main, "cleanup_expired_memories", wait_until_cancelled("memory_cleanup")
-    )
+    monkeypatch.setattr(main, "cleanup_expired_memories", wait_until_cancelled("memory_cleanup"))
     monkeypatch.setattr(main, "flow_daemon", wait_until_cancelled("flow_daemon"))
     monkeypatch.setattr(
         main, "opencode_inbox_delivery_daemon", wait_until_cancelled("opencode_inbox")
@@ -578,13 +815,9 @@ async def test_lifespan_cleans_started_resources_when_gateway_composition_fails(
     monkeypatch.setattr(
         main, "inbox_reconciliation_daemon", wait_until_cancelled("inbox_reconcile")
     )
-    monkeypatch.setattr(
-        main.status_monitor, "run", wait_until_cancelled("status_monitor")
-    )
+    monkeypatch.setattr(main.status_monitor, "run", wait_until_cancelled("status_monitor"))
     monkeypatch.setattr(main.log_writer, "run", wait_until_cancelled("log_writer"))
-    monkeypatch.setattr(
-        main.inbox_service, "run", wait_until_cancelled("inbox_service")
-    )
+    monkeypatch.setattr(main.inbox_service, "run", wait_until_cancelled("inbox_service"))
     monkeypatch.setattr(agui_enablement, "agui_surface_enabled", lambda: False)
     monkeypatch.setattr(
         main.fifo_manager,
@@ -614,8 +847,7 @@ async def test_lifespan_cleans_started_resources_when_gateway_composition_fails(
         assert task_tracker.tasks
         assert all(task.done() and task.cancelled() for task in task_tracker.tasks)
         assert any(
-            set(task_group) == set(task_tracker.tasks)
-            for task_group in task_tracker.awaited_groups
+            set(task_group) == set(task_tracker.tasks) for task_group in task_tracker.awaited_groups
         )
     finally:
         pending_tasks = [task for task in task_tracker.tasks if not task.done()]

@@ -6,7 +6,6 @@ import hashlib
 import hmac
 import json
 import os
-from pathlib import Path
 import shutil
 import signal
 import subprocess
@@ -14,35 +13,36 @@ import sys
 import threading
 import time
 from dataclasses import replace
+from pathlib import Path
+from test.integration.t098.test_work_launch_dispatch import (
+    ProcessOnlyBackend,
+    _minimal_static_worker,
+    _setup,
+)
 
 import pytest
 
 from cli_agent_orchestrator.backends.docker_backend import DockerWorkBackend
-from cli_agent_orchestrator.models.work_delivery import WorkDeliveryEnvelope
 from cli_agent_orchestrator.models.work_contract import (
     ContractSnapshot,
     EffectiveWorkContractV2,
 )
+from cli_agent_orchestrator.models.work_delivery import WorkDeliveryEnvelope
 from cli_agent_orchestrator.models.work_origin import ManagedLineageIntent, WorkAttemptRef
 from cli_agent_orchestrator.security import auth
-from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
-from cli_agent_orchestrator.services.work_contract import WorkContracts
 from cli_agent_orchestrator.services.delegation_snapshot import (
     DelegationSnapshots,
     ResolvedSnapshot,
 )
 from cli_agent_orchestrator.services.knowledge_policy import KnowledgePolicy
+from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
+from cli_agent_orchestrator.services.work_contract import WorkContracts
 from cli_agent_orchestrator.services.work_launch_gateway import (
     DurableLaunchRequest,
     build_durable_launch_gateway,
 )
 from cli_agent_orchestrator.services.work_mcp_proxy import WorkMcpProxy
 from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
-from test.integration.t098.test_work_launch_dispatch import (
-    ProcessOnlyBackend,
-    _minimal_static_worker,
-    _setup,
-)
 
 
 def _minimal_static_mcp_worker(tmp_path):
@@ -52,7 +52,17 @@ def _minimal_static_mcp_worker(tmp_path):
     source = Path(__file__).resolve().parents[2] / "fixtures" / "work_docker_mcp_worker.c"
     executable = tmp_path / "cao-work-mcp-worker"
     built = subprocess.run(
-        [compiler, "-static", "-O2", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(executable)],
+        [
+            compiler,
+            "-static",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            str(source),
+            "-o",
+            str(executable),
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -69,7 +79,17 @@ def _minimal_static_waiting_worker(tmp_path):
     source = Path(__file__).resolve().parents[2] / "fixtures" / "work_docker_waiting_worker.c"
     executable = tmp_path / "cao-work-waiting-worker"
     built = subprocess.run(
-        [compiler, "-static", "-O2", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(executable)],
+        [
+            compiler,
+            "-static",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            str(source),
+            "-o",
+            str(executable),
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -86,7 +106,17 @@ def _minimal_static_mcp_worker_from(tmp_path, fixture_name):
     source = Path(__file__).resolve().parents[2] / "fixtures" / fixture_name
     executable = tmp_path / fixture_name.removesuffix(".c")
     built = subprocess.run(
-        [compiler, "-static", "-O2", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(executable)],
+        [
+            compiler,
+            "-static",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            str(source),
+            "-o",
+            str(executable),
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -102,7 +132,7 @@ def _minimal_static_sibling_probe_worker(tmp_path):
         pytest.skip("a static C compiler is required for the Docker MCP acceptance")
     source = tmp_path / "cao-work-sibling-probe.c"
     source.write_text(
-        r'''#include <errno.h>
+        r"""#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -241,12 +271,22 @@ int main(void) {
         write_all(STDOUT_FILENO, response, response_size) != 0) return 18;
     return 0;
 }
-''',
+""",
         encoding="utf-8",
     )
     executable = tmp_path / "cao-work-sibling-probe"
     built = subprocess.run(
-        [compiler, "-static", "-O2", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(executable)],
+        [
+            compiler,
+            "-static",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            str(source),
+            "-o",
+            str(executable),
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -306,9 +346,7 @@ def _provision_second_docker_selection(repository, principal, first_binding, sel
 
 def _docker_sibling_worker_pid(backend, attempt_id, generation):
     name = backend._container_name(attempt_id, generation)
-    inspected = backend._run(
-        ["container", "inspect", "--format", "{{json .}}", name], check=False
-    )
+    inspected = backend._run(["container", "inspect", "--format", "{{json .}}", name], check=False)
     assert inspected.returncode == 0, "Docker container was not inspectable while blocked"
     container = json.loads(inspected.stdout)
     state = container.get("State", {})
@@ -324,9 +362,7 @@ def _docker_sibling_worker_pid(backend, attempt_id, generation):
     supervisor_pid = state.get("Pid")
     assert type(supervisor_pid) is int and supervisor_pid > 2
 
-    top = backend._run(
-        ["container", "top", name, "-eo", "pid,ppid"], check=False
-    )
+    top = backend._run(["container", "top", name, "-eo", "pid,ppid"], check=False)
     assert top.returncode == 0, "Docker did not expose the blocked worker process table"
     rows = []
     for line in top.stdout.splitlines()[1:]:
@@ -411,7 +447,14 @@ def _preprovision_lineage(runtime, repository, owner, tmp_path, *, tools):
         expires_at=min(receiver_grant.expires_at, time.time() + 120),
         expected_revision=0,
     )
-    return child, receiver, child_subject, child_authorization, receiver_subject, receiver_authorization
+    return (
+        child,
+        receiver,
+        child_subject,
+        child_authorization,
+        receiver_subject,
+        receiver_authorization,
+    )
 
 
 def _managed_launch_intent(contract, *, message, allowed_tools):
@@ -493,10 +536,13 @@ async def test_docker_backend_runs_one_bound_static_worker_and_removes_container
             (receipt.attempt_id, receipt.generation),
         ).fetchall()
         assert [row[0] for row in issue_states] == ["issued", "abandoned"]
-        assert connection.execute(
-            "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=? AND generation=?",
-            (receipt.attempt_id, receipt.generation),
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=? AND generation=?",
+                (receipt.attempt_id, receipt.generation),
+            ).fetchone()[0]
+            == 0
+        )
     create = next(call for call in docker_calls if call[:2] == ("container", "create"))
     assert "--network=none" in create
     assert "--cap-drop=ALL" in create
@@ -507,14 +553,12 @@ async def test_docker_backend_runs_one_bound_static_worker_and_removes_container
     assert "--mount" not in create
     image_tag = backend._attempt_image_tag(receipt.attempt_id, receipt.generation)
     assert any(
-        call[:3] == ("image", "build", "--platform=linux/amd64")
-        and call[-2:] == (image_tag, "-")
+        call[:3] == ("image", "build", "--platform=linux/amd64") and call[-2:] == (image_tag, "-")
         for call in docker_calls
     )
     assert not any(call[:2] == ("image", "import") for call in docker_calls)
     assert any(
-        call[:3] == ("container", "inspect", "--format")
-        and "{{json .}}" in call
+        call[:3] == ("container", "inspect", "--format") and "{{json .}}" in call
         for call in docker_calls
     )
     container_name = backend._container_name(receipt.attempt_id, receipt.generation)
@@ -542,9 +586,9 @@ async def test_docker_backend_bridges_only_managed_work_mcp_without_container_ne
         )
         backend_holder.append(backend)
         execute = backend.execute_bound_process
-        backend.execute_bound_process = lambda *args, **kwargs: outputs.append(
-            execute(*args, **kwargs)
-        ) or outputs[-1]
+        backend.execute_bound_process = (
+            lambda *args, **kwargs: outputs.append(execute(*args, **kwargs)) or outputs[-1]
+        )
         return backend
 
     repository, principal, gateway, _backend, _marker, request = _setup(
@@ -569,10 +613,13 @@ async def test_docker_backend_bridges_only_managed_work_mcp_without_container_ne
     assert response["error"] == {"code": -32001, "message": "Managed Work request rejected"}
     assert outputs[0].stderr == b""
     with repository.read_snapshot() as connection:
-        assert connection.execute(
-            "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=?",
-            (receipt.attempt_id,),
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=?",
+                (receipt.attempt_id,),
+            ).fetchone()[0]
+            == 1
+        )
     backend = backend_holder[0]
     container_name = backend._container_name(receipt.attempt_id, receipt.generation)
     image_tag = backend._attempt_image_tag(receipt.attempt_id, receipt.generation)
@@ -590,9 +637,7 @@ async def test_docker_mcp_admits_only_preprovisioned_managed_child(tmp_path):
 
     outputs = []
     backend_holder = []
-    worker_binary = _minimal_static_mcp_worker_from(
-        tmp_path, "work_docker_child_worker.c"
-    )
+    worker_binary = _minimal_static_mcp_worker_from(tmp_path, "work_docker_child_worker.c")
 
     def backend_factory(_marker, repository):
         backend = DockerWorkBackend(
@@ -602,9 +647,9 @@ async def test_docker_mcp_admits_only_preprovisioned_managed_child(tmp_path):
         )
         backend_holder.append(backend)
         execute = backend.execute_bound_process
-        backend.execute_bound_process = lambda *args, **kwargs: outputs.append(
-            execute(*args, **kwargs)
-        ) or outputs[-1]
+        backend.execute_bound_process = (
+            lambda *args, **kwargs: outputs.append(execute(*args, **kwargs)) or outputs[-1]
+        )
         return backend
 
     repository, owner, gateway, _backend, _marker, request = _setup(
@@ -616,14 +661,19 @@ async def test_docker_mcp_admits_only_preprovisioned_managed_child(tmp_path):
         contract_paths=(str(tmp_path),),
         contract_write_paths=(),
     )
-    child, receiver, child_subject, child_authorization, receiver_subject, receiver_authorization = (
-        _preprovision_lineage(
-            gateway._launch_runtime_provider._runtime,
-            repository,
-            owner,
-            tmp_path,
-            tools={"cao.work.child"},
-        )
+    (
+        child,
+        receiver,
+        child_subject,
+        child_authorization,
+        receiver_subject,
+        receiver_authorization,
+    ) = _preprovision_lineage(
+        gateway._launch_runtime_provider._runtime,
+        repository,
+        owner,
+        tmp_path,
+        tools={"cao.work.child"},
     )
     parent_contract = gateway._launch_runtime_provider._runtime._provisioning.resolve_launch(
         owner, "t098-selection"
@@ -677,10 +727,17 @@ async def test_docker_mcp_admits_only_preprovisioned_managed_child(tmp_path):
         )
         assert child_binding.principal_id == child.id
     backend = backend_holder[0]
-    assert backend._run(
-        ["container", "inspect", backend._container_name(receipt.attempt_id, receipt.generation)],
-        check=False,
-    ).returncode != 0
+    assert (
+        backend._run(
+            [
+                "container",
+                "inspect",
+                backend._container_name(receipt.attempt_id, receipt.generation),
+            ],
+            check=False,
+        ).returncode
+        != 0
+    )
 
 
 @pytest.mark.integration
@@ -691,9 +748,7 @@ async def test_docker_mcp_commits_exact_receiver_acceptance_before_receipt(tmp_p
     if not image_id:
         pytest.skip("run test/integration/t019/run-docker-backend-acceptance.sh for real Docker")
 
-    worker_binary = _minimal_static_mcp_worker_from(
-        tmp_path, "work_docker_receiver_worker.c"
-    )
+    worker_binary = _minimal_static_mcp_worker_from(tmp_path, "work_docker_receiver_worker.c")
 
     def test_backend_factory(marker, repository):
         return ProcessOnlyBackend(marker, repository)
@@ -718,14 +773,19 @@ async def test_docker_mcp_commits_exact_receiver_acceptance_before_receipt(tmp_p
         backends={"test": test_backend, "docker": docker_backend},
     )
     runtime = gateway._launch_runtime_provider._runtime
-    child, receiver, child_subject, child_authorization, receiver_subject, receiver_authorization = (
-        _preprovision_lineage(
-            runtime,
-            repository,
-            owner,
-            tmp_path,
-            tools={"cao.work.task_received"},
-        )
+    (
+        child,
+        receiver,
+        child_subject,
+        child_authorization,
+        receiver_subject,
+        receiver_authorization,
+    ) = _preprovision_lineage(
+        runtime,
+        repository,
+        owner,
+        tmp_path,
+        tools={"cao.work.task_received"},
     )
     parent_receipt = gateway.admit(owner, request)
 
@@ -789,17 +849,22 @@ async def test_docker_mcp_commits_exact_receiver_acceptance_before_receipt(tmp_p
             generation=child_work["attempts"][0]["generation"],
         )
         assert child_binding.principal_id == child.id
-        assert connection.execute(
-            "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=?",
-            (child_work["attempts"][0]["id"],),
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=?",
+                (child_work["attempts"][0]["id"],),
+            ).fetchone()[0]
+            == 1
+        )
     container_name = docker_backend._container_name(
         child_work["attempts"][0]["id"], child_work["attempts"][0]["generation"]
     )
     image_tag = docker_backend._attempt_image_tag(
         child_work["attempts"][0]["id"], child_work["attempts"][0]["generation"]
     )
-    assert docker_backend._run(["container", "inspect", container_name], check=False).returncode != 0
+    assert (
+        docker_backend._run(["container", "inspect", container_name], check=False).returncode != 0
+    )
     assert docker_backend._run(["image", "inspect", image_tag], check=False).returncode != 0
 
 
@@ -921,9 +986,7 @@ async def test_docker_sibling_cannot_observe_or_duplicate_victim_mcp_fd(tmp_path
         assert victim_pid > 2
 
         second_selector = "t019-sibling-probe"
-        _provision_second_docker_selection(
-            repository, principal, first_binding, second_selector
-        )
+        _provision_second_docker_selection(repository, principal, first_binding, second_selector)
         second_receipt = gateway.admit(
             principal,
             DurableLaunchRequest(
@@ -961,7 +1024,9 @@ async def test_docker_sibling_cannot_observe_or_duplicate_victim_mcp_fd(tmp_path
             result = backend._run(
                 ["container", "inspect", "--format", "{{json .}}", name], check=False
             )
-            assert result.returncode == 0, "concurrent Docker container disappeared before probe completion"
+            assert (
+                result.returncode == 0
+            ), "concurrent Docker container disappeared before probe completion"
             return json.loads(result.stdout)
 
         victim_container = inspect_attempt(first_receipt)
@@ -1046,7 +1111,10 @@ async def test_docker_sibling_cannot_observe_or_duplicate_victim_mcp_fd(tmp_path
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_docker_fresh_repository_reconciles_stopped_artifacts_without_redelivery(tmp_path):
+@pytest.mark.parametrize("delay_exit_reader", [False, True])
+async def test_docker_fresh_repository_reconciles_stopped_artifacts_without_redelivery(
+    tmp_path, monkeypatch, delay_exit_reader
+):
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
     from cli_agent_orchestrator.services.work_launch_gateway import build_durable_launch_gateway
     from cli_agent_orchestrator.services.work_service import DeliveryUncertain, WorkService
@@ -1055,6 +1123,36 @@ async def test_docker_fresh_repository_reconciles_stopped_artifacts_without_rede
     docker_cli = os.environ.get("CAO_T019_DOCKER_CLI", "docker")
     if not image_id:
         pytest.skip("run test/integration/t019/run-docker-backend-acceptance.sh for real Docker")
+
+    delayed_exits = []
+    if delay_exit_reader:
+        original_popen = subprocess.Popen
+
+        class DelayedExitReader:
+            def __init__(self, pipe, process):
+                self.pipe = pipe
+                self.process = process
+
+            def readline(self, *args):
+                header = self.pipe.readline(*args)
+                if header.startswith(b"CAO-EXIT/1 "):
+                    # The attach process can exit while its valid frame is still
+                    # buffered and the protocol reader has not consumed it.
+                    self.process.wait(timeout=5)
+                    delayed_exits.append(header)
+                    time.sleep(0.15)
+                return header
+
+            def __getattr__(self, name):
+                return getattr(self.pipe, name)
+
+        def delayed_popen(arguments, *args, **kwargs):
+            process = original_popen(arguments, *args, **kwargs)
+            if "--attach" in arguments:
+                process.stdout = DelayedExitReader(process.stdout, process)
+            return process
+
+        monkeypatch.setattr(subprocess, "Popen", delayed_popen)
 
     cleanup_container_calls = []
     cleanup_image_calls = []
@@ -1145,6 +1243,8 @@ async def test_docker_fresh_repository_reconciles_stopped_artifacts_without_rede
         assert image_labels["org.cao.work.attempt_sha256"] == attempt_hash
         assert image_labels["org.cao.work.generation"] == str(receipt.generation)
         assert cleanup_container_calls == [(container["Id"], False), (container["Id"], True)]
+        if delay_exit_reader:
+            assert len(delayed_exits) == 1
         assert cleanup_image_calls == [image_tag]
 
         recovered = WorkService(fresh_repository).recover_process_cleanup(
@@ -1264,7 +1364,9 @@ asyncio.run(gateway.dispatch_registered_next())
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             if owner.poll() is not None:
-                pytest.fail(f"Docker owner exited before its container became live: {owner.returncode}")
+                pytest.fail(
+                    f"Docker owner exited before its container became live: {owner.returncode}"
+                )
             running = backend._run(
                 ["container", "inspect", "--format", "{{.State.Running}}", container_name],
                 check=False,
@@ -1292,12 +1394,11 @@ asyncio.run(gateway.dispatch_registered_next())
         assert artifact_after_owner_death.returncode == 0
         container = json.loads(artifact_after_owner_death.stdout)
         assert container["State"]["Running"] in (True, False)
-        assert container["Config"]["Labels"]["cao.work.attempt_sha256"] == hashlib.sha256(
-            receipt.attempt_id.encode("utf-8")
-        ).hexdigest()
-        assert container["Config"]["Labels"]["cao.work.generation"] == str(
-            receipt.generation
+        assert (
+            container["Config"]["Labels"]["cao.work.attempt_sha256"]
+            == hashlib.sha256(receipt.attempt_id.encode("utf-8")).hexdigest()
         )
+        assert container["Config"]["Labels"]["cao.work.generation"] == str(receipt.generation)
 
         attempt = fresh_repository.get_attempt(receipt.attempt_id)
         with monkeypatch.context() as clock:
@@ -1329,13 +1430,19 @@ asyncio.run(gateway.dispatch_registered_next())
             ).fetchone()[0]
         assert [row[0] for row in issue_states] == ["issued", "abandoned"]
         assert effect_count == 0
-        assert cleanup_backend._inspect_reports_present(
-            cleanup_backend._run(["container", "inspect", container_name], check=False)
-        ) is False
+        assert (
+            cleanup_backend._inspect_reports_present(
+                cleanup_backend._run(["container", "inspect", container_name], check=False)
+            )
+            is False
+        )
         image_tag = backend._attempt_image_tag(receipt.attempt_id, receipt.generation)
-        assert cleanup_backend._inspect_reports_present(
-            cleanup_backend._run(["image", "inspect", image_tag], check=False)
-        ) is False
+        assert (
+            cleanup_backend._inspect_reports_present(
+                cleanup_backend._run(["image", "inspect", image_tag], check=False)
+            )
+            is False
+        )
 
         def reject_redelivery(*_args, **_kwargs):
             raise AssertionError("recovered Docker work must not be dispatched again")

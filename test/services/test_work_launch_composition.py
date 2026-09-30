@@ -1,6 +1,12 @@
 """The launch gateway factory composes only verified, non-authoritative infrastructure."""
 
 import sqlite3
+from test.services.test_work_launch_runtime import (
+    ProtectedFakeBackend,
+    durable_counts,
+    provision,
+    trusted_setup,
+)
 
 import pytest
 
@@ -15,12 +21,6 @@ from cli_agent_orchestrator.models.work_contract import (
 from cli_agent_orchestrator.security import auth
 from cli_agent_orchestrator.services.work_authority import WorkAuthority
 from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
-from test.services.test_work_launch_runtime import (
-    ProtectedFakeBackend,
-    durable_counts,
-    provision,
-    trusted_setup,
-)
 
 
 def _authority_counts(repository):
@@ -80,9 +80,7 @@ def test_factory_composes_verified_sqlite_then_resolves_later_provision_and_repl
     backend = ProcessLaunchFakeBackend()
     before_factory = _authority_counts(repository)
 
-    gateway = gateway_module.build_durable_launch_gateway(
-        repository, backends={"test": backend}
-    )
+    gateway = gateway_module.build_durable_launch_gateway(repository, backends={"test": backend})
 
     assert _authority_counts(repository) == before_factory
     assert durable_counts(repository) == (0, 0, 0, 0, 0)
@@ -128,6 +126,53 @@ def test_factory_registers_private_managed_agent_step_delivery(trusted_setup):
 
     assert set(adapters) == {("launch", 2), ("agent_step", 1)}
     assert adapters[("agent_step", 1)].payload_model.__name__ == "AgentStepPayload"
+
+
+def test_factory_registers_process_agent_step_only_for_opt_in_local_docker(
+    trusted_setup, monkeypatch
+):
+    """V2 process execution requires T020 opt-in and the local Docker backend."""
+    from cli_agent_orchestrator.backends.docker_backend import DockerWorkBackend
+    from cli_agent_orchestrator.services import work_launch_gateway as gateway_module
+
+    monkeypatch.delenv("CAO_T020_ACCEPTANCE", raising=False)
+    repository, *_ = trusted_setup
+    docker_backend = DockerWorkBackend(
+        image_ref="sha256:" + "d" * 64,
+        repository=repository,
+    )
+    gateway = gateway_module.build_durable_launch_gateway(
+        repository, backends={"docker-local": docker_backend}
+    )
+    adapters = gateway._launch_runtime_provider._runtime._admission.deliveries.adapters
+
+    assert set(adapters) == {("launch", 2), ("agent_step", 1)}
+
+    monkeypatch.setenv("CAO_T020_ACCEPTANCE", "1")
+    legacy_docker_gateway = gateway_module.build_durable_launch_gateway(
+        repository, backends={"test": docker_backend}
+    )
+    legacy_docker_adapters = (
+        legacy_docker_gateway._launch_runtime_provider._runtime._admission.deliveries.adapters
+    )
+    assert set(legacy_docker_adapters) == {("launch", 2), ("agent_step", 1)}
+
+    opt_in_gateway = gateway_module.build_durable_launch_gateway(
+        repository, backends={"docker-local": docker_backend}
+    )
+    adapters = opt_in_gateway._launch_runtime_provider._runtime._admission.deliveries.adapters
+
+    assert set(adapters) == {("launch", 2), ("agent_step", 1), ("agent_step", 2)}
+    assert adapters[("agent_step", 1)].payload_model.__name__ == "AgentStepPayload"
+    assert adapters[("agent_step", 2)].payload_model.__name__ == "ProcessAgentStepPayloadV2"
+
+    ordinary_gateway = gateway_module.build_durable_launch_gateway(
+        repository, backends={"test": ProtectedFakeBackend()}
+    )
+    ordinary_adapters = (
+        ordinary_gateway._launch_runtime_provider._runtime._admission.deliveries.adapters
+    )
+    assert set(ordinary_adapters) == {("launch", 2), ("agent_step", 1)}
 
 
 @pytest.mark.parametrize("change", ("retire", "revoke"))
@@ -181,9 +226,7 @@ def test_factory_rejects_unverified_store_invalid_backend_and_unsupported_adapte
     before_invalid_backend = _authority_counts(repository)
 
     with pytest.raises(ValueError, match="explicit server backend registry required"):
-        gateway_module.build_durable_launch_gateway(
-            repository, backends={"test": object()}
-        )
+        gateway_module.build_durable_launch_gateway(repository, backends={"test": object()})
     assert _authority_counts(repository) == before_invalid_backend
     assert durable_counts(repository) == (0, 0, 0, 0, 0)
 
@@ -191,9 +234,7 @@ def test_factory_rejects_unverified_store_invalid_backend_and_unsupported_adapte
     with sqlite3.connect(incompatible.path) as connection:
         connection.execute("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)")
     with pytest.raises(SchemaMismatch, match="work schema is incomplete"):
-        gateway_module.build_durable_launch_gateway(
-            incompatible, backends={"test": backend}
-        )
+        gateway_module.build_durable_launch_gateway(incompatible, backends={"test": backend})
 
     WorkProvisioning(repository).provision_launch(
         principal,
@@ -207,9 +248,7 @@ def test_factory_rejects_unverified_store_invalid_backend_and_unsupported_adapte
         adapter_version=3,
         lease_seconds=300,
     )
-    gateway = gateway_module.build_durable_launch_gateway(
-        repository, backends={"test": backend}
-    )
+    gateway = gateway_module.build_durable_launch_gateway(repository, backends={"test": backend})
 
     with pytest.raises(gateway_module.DurableLaunchGatewayError) as unsupported:
         gateway.admit(principal, _request(gateway_module))

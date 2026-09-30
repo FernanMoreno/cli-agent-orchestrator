@@ -299,9 +299,12 @@ class TestDeliverPending:
 
         # A provider may allow mid-turn inbox work, so exercise the delivery
         # path itself rather than relying on the normal status gate.
-        with patch("cli_agent_orchestrator.services.inbox_service.EAGER_INBOX_DELIVERY", True), patch(
-            "cli_agent_orchestrator.services.inbox_service.provider_manager"
-        ) as mock_provider_manager:
+        with (
+            patch("cli_agent_orchestrator.services.inbox_service.EAGER_INBOX_DELIVERY", True),
+            patch(
+                "cli_agent_orchestrator.services.inbox_service.provider_manager"
+            ) as mock_provider_manager,
+        ):
             provider = MagicMock()
             provider.accepts_input_while_processing = True
             mock_provider_manager.get_provider.return_value = provider

@@ -32,3 +32,8 @@
 
 Estas casillas evalúan el documento. No equivalen a aprobación del diseño, tests de producto
 pasados, implementación completa ni signoff de AI_WORKFLOW.md.
+
+Revisión de trazabilidad del 2026-09-29: `spec.md` contiene 25 FR y 10 SC;
+`tasks.md` tiene una fila de cobertura para cada uno. El cierre de producto
+permanece pendiente mientras las tareas y gates abiertos de `tasks.md` no
+tengan aceptación propia; esta comprobación no los convierte en pasados.

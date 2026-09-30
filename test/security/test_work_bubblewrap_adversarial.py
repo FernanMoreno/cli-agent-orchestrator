@@ -426,12 +426,12 @@ def test_allowed_loader_runs_memfd_payload_through_proc_self_fd(
 def test_process_preflight_does_not_enable_legacy_terminal_effects(
     scratch_bubblewrap, tmp_path, monkeypatch
 ):
+    from cli_agent_orchestrator.backends import bubblewrap_backend as bubblewrap_module
     from cli_agent_orchestrator.backends.base import (
         ProcessRestrictionContract,
         UnsupportedWorkEnforcement,
     )
     from cli_agent_orchestrator.backends.bubblewrap_backend import BubblewrapWorkBackend
-    from cli_agent_orchestrator.backends import bubblewrap_backend as bubblewrap_module
     from cli_agent_orchestrator.backends.work_backend import WorkBackendView
     from cli_agent_orchestrator.models.work_contract import (
         ContractPermissions,

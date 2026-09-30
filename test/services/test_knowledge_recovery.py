@@ -3,6 +3,7 @@
 import sqlite3
 import threading
 import time
+from test.services.test_knowledge_policy import policy_context  # noqa: F401
 
 import pytest
 
@@ -15,7 +16,6 @@ from cli_agent_orchestrator.services.knowledge_revisions import (
     KnowledgeRevisions,
 )
 from cli_agent_orchestrator.services.work_authority import Permissions
-from test.services.test_knowledge_policy import policy_context  # noqa: F401
 
 
 def _proposal(service, principal, record_id, expected_version=0):
@@ -99,9 +99,7 @@ def test_recovery_cursor_expires_while_waiting_for_sqlite_writer(policy_context)
             assert release_clock.wait(5)
         return sampled
 
-    reader = KnowledgeRevisions(
-        repository, authorize=policy, cursor_ttl_seconds=1, clock=clock
-    )
+    reader = KnowledgeRevisions(repository, authorize=policy, cursor_ttl_seconds=1, clock=clock)
     first = reader.recovery_page(
         owner,
         scope="project",
@@ -155,9 +153,7 @@ def test_recovery_rechecks_a_revoked_ancestor_before_the_next_page(policy_contex
     writer = KnowledgeRevisions(repository, authorize=owner_policy)
     for record_id in ("first", "second"):
         _proposal(writer, owner, record_id)
-    child = auth._verified_principal(
-        "https://issuer.test", "reader", [auth.SCOPE_READ], "jwt"
-    )
+    child = auth._verified_principal("https://issuer.test", "reader", [auth.SCOPE_READ], "jwt")
     delegated = authority.delegate(
         owner,
         parent_grant_id=grant.id,

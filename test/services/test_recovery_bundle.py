@@ -111,6 +111,21 @@ EXPECTED_V29_TABLES = tuple(
         )
     )
 )
+EXPECTED_V30_TABLES = tuple(
+    sorted(
+        (
+            *EXPECTED_V29_TABLES,
+            "work_workflow_run_capabilities",
+            "work_workflow_step_bindings",
+            "work_workflow_step_projections",
+            "work_workflow_step_provisions",
+            "work_workflow_step_receiver_acceptances",
+            "work_workflow_step_receiver_credentials",
+            "work_workflow_step_retry_authorizations",
+            "work_workflow_step_task_received_receipts",
+        )
+    )
+)
 
 EXPECTED_REFERENCE_FAMILIES = tuple(
     sorted(
@@ -388,8 +403,8 @@ def _inventory_module(connection: sqlite3.Connection):
 
 
 @pytest.fixture
-def v24_connection(initialized_cao_connection):
-    return initialized_cao_connection
+def v24_connection(historical_v29_connection):
+    return historical_v29_connection
 
 
 @pytest.fixture
@@ -415,6 +430,29 @@ def initialized_cao_connection(tmp_path, monkeypatch):
 
 
 @pytest.fixture
+def historical_v29_connection(tmp_path, monkeypatch):
+    """Build a closed schema-v38 fixture for v29 compatibility checks."""
+    from cli_agent_orchestrator import constants
+    from cli_agent_orchestrator.clients import database
+
+    database_path = tmp_path / "cao-v29.sqlite3"
+    engine = create_engine(f"sqlite:///{database_path}", connect_args={"check_same_thread": False})
+    monkeypatch.setattr(constants, "DATABASE_FILE", database_path)
+    monkeypatch.setattr(database, "DB_DIR", database_path.parent)
+    monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=engine))
+    database.init_db()
+    engine.dispose()
+    connection = sqlite3.connect(database_path)
+    _downgrade_work_schema(connection, version=38)
+    _historical_native_schema(connection)
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
+@pytest.fixture
 def historical_v28_connection(tmp_path, monkeypatch):
     """Build a real schema-v30 store while retaining the legacy application tables."""
     from cli_agent_orchestrator import constants
@@ -431,10 +469,39 @@ def historical_v28_connection(tmp_path, monkeypatch):
 
     connection = sqlite3.connect(database_path)
     _downgrade_work_schema(connection, version=30)
+    _historical_native_schema(connection)
     try:
         yield connection
     finally:
         connection.close()
+
+
+def _historical_native_schema(connection):
+    """Freeze pre-upstream native DDL; never relabel current tables historical."""
+    for table in (
+        "handoff_results",
+        "vault_exclusion",
+        "vault_finding",
+        "vault_migration_receipt",
+        "vault_note",
+        "vault_note_alias",
+        "vault_recall_counter",
+    ):
+        assert connection.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0] == 0
+        connection.execute(f'DROP TABLE "{table}"')
+    assert connection.execute("SELECT count(*) FROM memory_metadata").fetchone()[0] == 0
+    connection.execute("DROP TABLE memory_metadata")
+    connection.execute("""CREATE TABLE memory_metadata (
+        id VARCHAR NOT NULL PRIMARY KEY, key VARCHAR NOT NULL,
+        memory_type VARCHAR NOT NULL, scope VARCHAR NOT NULL, scope_id VARCHAR,
+        file_path VARCHAR NOT NULL, tags VARCHAR NOT NULL,
+        source_provider VARCHAR, source_terminal_id VARCHAR, token_estimate INTEGER,
+        created_at DATETIME, updated_at DATETIME, access_count INTEGER DEFAULT '0' NOT NULL,
+        last_accessed_at DATETIME, last_compiled_at DATETIME, related_keys TEXT,
+        CONSTRAINT uq_memory_key_scope UNIQUE (key, scope, scope_id),
+        CONSTRAINT ck_related_keys_length CHECK (related_keys IS NULL OR length(related_keys)<1024)
+    )""")
+    connection.commit()
 
 
 def _downgrade_work_schema(connection: sqlite3.Connection, *, version: int) -> None:
@@ -457,16 +524,53 @@ def _downgrade_work_schema(connection: sqlite3.Connection, *, version: int) -> N
     repository.WorkRepository._verify(connection, version=version)
 
 
-def test_real_init_db_store_has_an_explicit_closed_v29_inventory(initialized_cao_connection):
-    """The normal CAO store includes the legacy tables alongside the verified Work profile."""
-    before = _database_state(initialized_cao_connection)
+def test_historical_v29_store_has_an_explicit_closed_inventory(historical_v29_connection):
+    """The historical v29 profile stays available after v30 becomes current."""
+    before = _database_state(historical_v29_connection)
     module = importlib.import_module("cli_agent_orchestrator.services.recovery_inventory")
 
-    assert _table_names(initialized_cao_connection) == EXPECTED_V29_TABLES
-    inventory = module.inspect_work_store(initialized_cao_connection)
+    assert _table_names(historical_v29_connection) == EXPECTED_V29_TABLES
+    inventory = module.inspect_work_store(historical_v29_connection, profile_version=29)
 
     assert inventory.profile_version == 29
     assert inventory.tables == EXPECTED_V29_TABLES
+    assert _database_state(historical_v29_connection) == before
+
+
+def test_real_init_db_store_has_an_explicit_closed_v31_inventory(initialized_cao_connection):
+    """The current schema-v39 profile includes only its reviewed workflow tables/FKs."""
+    before = _database_state(initialized_cao_connection)
+    module = importlib.import_module("cli_agent_orchestrator.services.recovery_inventory")
+
+    inventory = module.inspect_work_store(initialized_cao_connection)
+
+    assert inventory.profile_version == 31
+    assert module._PROFILE_SCHEMA_VERSIONS[31] == 39
+    assert inventory.tables == tuple(
+        sorted(
+            (
+                *EXPECTED_V30_TABLES,
+                "handoff_results",
+                "vault_exclusion",
+                "vault_finding",
+                "vault_migration_receipt",
+                "vault_note",
+                "vault_note_alias",
+                "vault_recall_counter",
+            )
+        )
+    )
+    assert {
+        "work_workflow_step_provisions",
+        "work_workflow_step_bindings",
+        "work_workflow_step_projections",
+        "work_workflow_run_capabilities",
+        "work_workflow_step_receiver_credentials",
+        "work_workflow_step_receiver_acceptances",
+        "work_workflow_step_task_received_receipts",
+        "work_workflow_step_retry_authorizations",
+    }.issubset(inventory.tables)
+    assert inventory.foreign_keys == module._V30_FOREIGN_KEYS
     assert _database_state(initialized_cao_connection) == before
 
 
@@ -475,7 +579,7 @@ def test_v29_inventory_is_closed_canonical_and_read_only(v24_connection):
     before = _database_state(v24_connection)
     module = _inventory_module(v24_connection)
 
-    inventory = module.inspect_work_store(v24_connection)
+    inventory = module.inspect_work_store(v24_connection, profile_version=29)
 
     assert inventory.profile_version == 29
     assert inventory.tables == EXPECTED_V29_TABLES
@@ -525,13 +629,13 @@ def test_v29_inventory_checksums_cover_every_migration_after_frozen_v28(v24_conn
             "UPDATE work_migrations SET checksum=? WHERE version=?", ("0" * 64, version)
         )
         with pytest.raises(module.RecoveryInventoryError, match="recovery inventory incompatible"):
-            module.inspect_work_store(v24_connection)
+            module.inspect_work_store(v24_connection, profile_version=29)
         v24_connection.execute(
             "UPDATE work_migrations SET checksum=? WHERE version=?",
             (repository._CHECKSUMS[version], version),
         )
 
-    assert module.inspect_work_store(v24_connection).profile_version == 29
+    assert module.inspect_work_store(v24_connection, profile_version=29).profile_version == 29
 
 
 def test_v28_inventory_still_verifies_historical_schema_v30_without_writes(
@@ -556,7 +660,7 @@ def test_sqlite_reference_families_have_closed_verified_column_mappings(v24_conn
     before = _database_state(v24_connection)
     module = _inventory_module(v24_connection)
 
-    inventory = module.inspect_work_store(v24_connection)
+    inventory = module.inspect_work_store(v24_connection, profile_version=29)
     sqlite_relations = tuple(
         (
             reference.family,
@@ -597,7 +701,7 @@ def test_inventory_rejects_an_unclassified_table(v24_connection):
     v24_connection.execute("CREATE TABLE work_unclassified_future_table (id TEXT PRIMARY KEY)")
 
     with pytest.raises(module.RecoveryInventoryError, match="recovery inventory incompatible"):
-        module.inspect_work_store(v24_connection)
+        module.inspect_work_store(v24_connection, profile_version=29)
 
 
 def test_inventory_rejects_a_missing_required_table(v24_connection):
@@ -606,7 +710,7 @@ def test_inventory_rejects_a_missing_required_table(v24_connection):
     v24_connection.execute("DROP TABLE work_recovery_context")
 
     with pytest.raises(module.RecoveryInventoryError, match="recovery inventory incompatible"):
-        module.inspect_work_store(v24_connection)
+        module.inspect_work_store(v24_connection, profile_version=29)
 
 
 def test_inventory_rejects_a_missing_executable_content_table(v24_connection):
@@ -615,7 +719,7 @@ def test_inventory_rejects_a_missing_executable_content_table(v24_connection):
     v24_connection.execute("DROP TABLE work_executable_contents")
 
     with pytest.raises(module.RecoveryInventoryError, match="recovery inventory incompatible"):
-        module.inspect_work_store(v24_connection)
+        module.inspect_work_store(v24_connection, profile_version=29)
 
 
 def test_inventory_rejects_a_required_relation_without_adopting_it(v24_connection):
@@ -629,7 +733,7 @@ def test_inventory_rejects_a_required_relation_without_adopting_it(v24_connectio
     )
 
     with pytest.raises(module.RecoveryInventoryError, match="recovery inventory incompatible"):
-        module.inspect_work_store(v24_connection)
+        module.inspect_work_store(v24_connection, profile_version=29)
 
 
 def test_inventory_rejects_an_extra_legacy_foreign_key(v24_connection):
@@ -638,7 +742,7 @@ def test_inventory_rejects_an_extra_legacy_foreign_key(v24_connection):
     _replace_flows_with_an_extra_foreign_key(v24_connection)
 
     with pytest.raises(module.RecoveryInventoryError, match="recovery inventory incompatible"):
-        module.inspect_work_store(v24_connection)
+        module.inspect_work_store(v24_connection, profile_version=29)
 
 
 def test_foreign_key_extraction_is_canonical_and_preserves_multiplicity():
@@ -912,7 +1016,7 @@ def _register_executable_bytes(connection: sqlite3.Connection, root: Path) -> tu
 def test_capture_and_restore_keep_exact_executable_bytes_in_bundle_only(
     initialized_cao_connection, tmp_path
 ):
-    """A V29 row selects binary bytes, excludes orphans, and restores no live content root."""
+    """A v30 row selects binary bytes, excludes orphans, and restores no live content root."""
     module = _recovery_bundle_module()
     source = _database_path(initialized_cao_connection)
     root = tmp_path / "source.sqlite3.executable-content"
@@ -924,7 +1028,7 @@ def test_capture_and_restore_keep_exact_executable_bytes_in_bundle_only(
     )
 
     manifest = json.loads((receipt.bundle_path / "manifest.json").read_bytes())
-    assert manifest["profile_version"] == 29
+    assert manifest["profile_version"] == 31
     assert (receipt.bundle_path / "objects" / digest).read_bytes() == content
     assert [
         (item["role"], item["identifier"], item["digest"], item["size"])
@@ -1152,14 +1256,14 @@ def test_capture_verifies_a_real_v29_store_and_publishes_only_declared_objects(
         == json.dumps(manifest, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
     )
     assert str(source) not in manifest_bytes.decode()
-    assert manifest["profile_version"] == 29
+    assert manifest["profile_version"] == 31
     sqlite_roles = {
         role
         for object_ in manifest["objects"]
         for role in object_["roles"]
         if role.startswith("sqlite-v")
     }
-    assert sqlite_roles == {"sqlite-v29"}
+    assert sqlite_roles == {"sqlite-v31"}
     assert {entry["digest"] for entry in manifest["objects"]} >= {result.content_hash}
     assert all(
         entry["path"] == f"objects/{entry['digest']}"
@@ -1172,7 +1276,7 @@ def test_capture_verifies_a_real_v29_store_and_publishes_only_declared_objects(
     ).read_bytes() == b"offline recovery result bytes"
     assert orphan.content_hash not in {entry["digest"] for entry in manifest["objects"]}
     sqlite_object = next(
-        object_ for object_ in manifest["objects"] if "sqlite-v29" in object_["roles"]
+        object_ for object_ in manifest["objects"] if "sqlite-v31" in object_["roles"]
     )
     sqlite_object["roles"] = ["sqlite-v25"]
     inconsistent_manifest = json.dumps(
@@ -1226,7 +1330,7 @@ def test_capture_of_a_real_work_store_requires_v29_cut_evidence_before_publicati
 
     manifest = json.loads((receipt.bundle_path / "manifest.json").read_bytes())
     assert manifest["format"] == "recovery-bundle-v2"
-    assert manifest["profile_version"] == 29
+    assert manifest["profile_version"] == 31
     assert set(manifest["cut_evidence"]) == {
         "capture_id",
         "coverage",
@@ -1642,7 +1746,7 @@ def test_v2_capture_records_phase_observations_and_inventory_before_returning_re
     assert set(evidence["phases"]) == {"before", "after", "promote"}
     for phase in evidence["phases"].values():
         assert phase["writer_count"] == 0
-        assert phase["inventory"]["profile_version"] == 29
+        assert phase["inventory"]["profile_version"] == 31
         assert phase["lease"]["store_identity"] != str(source.resolve())
         assert phase["lease"]["store_identity"] == evidence["store_identity"]
 
@@ -1730,7 +1834,7 @@ def test_historic_v1_is_verify_only_and_malformed_or_mixed_v2_fails_closed(
     historic["format"] = "recovery-bundle-v1"
     historic["profile_version"] = 24
     historic["objects"] = [dict(item) for item in manifest["objects"]]
-    next(item for item in historic["objects"] if "sqlite-v29" in item["roles"])["roles"] = [
+    next(item for item in historic["objects"] if "sqlite-v31" in item["roles"])["roles"] = [
         "sqlite-v24"
     ]
     historic_bytes = json.dumps(historic, separators=(",", ":"), sort_keys=True).encode()
@@ -2085,7 +2189,7 @@ def test_capture_compacts_deleted_sqlite_secret_before_hashing(
     if deleted_bytes not in source.read_bytes():
         pytest.fail("fixture did not retain deleted credential bytes")
     before = _database_state(initialized_cao_connection)
-    inventory_module = _inventory_module(initialized_cao_connection)
+    inventory_module = importlib.import_module("cli_agent_orchestrator.services.recovery_inventory")
     source_inventory = inventory_module.inspect_work_store(initialized_cao_connection)
     source_identity = inventory_module.verified_inbox_store_identity(initialized_cao_connection)
     module = _recovery_bundle_module()
@@ -2183,21 +2287,23 @@ def test_portable_inventory_accepts_a_closed_copy_without_making_it_executable(
     """Would fail if portable capture adopted the staging path or weakened execution fencing."""
     module = _inventory_module(v24_connection)
     before = _database_state(v24_connection)
-    source_inventory = module.inspect_work_store(v24_connection)
-    source_identity = module.verified_inbox_store_identity(v24_connection)
+    source_inventory = module.inspect_work_store(v24_connection, profile_version=29)
+    source_identity = module.verified_inbox_store_identity(v24_connection, profile_version=29)
     copy = _portable_copy(v24_connection, tmp_path)
     copied_connection = sqlite3.connect(copy)
     try:
         assert (
             module.inspect_portable_work_store(
-                copied_connection, expected_source_identity=source_identity
+                copied_connection,
+                expected_source_identity=source_identity,
+                profile_version=29,
             )
             == source_inventory
         )
         from cli_agent_orchestrator.clients.work_repository import SchemaMismatch, WorkRepository
 
         with pytest.raises(SchemaMismatch, match="managed inbox store context names another file"):
-            WorkRepository._verify(copied_connection, version=module._WORK_SCHEMA_VERSION)
+            WorkRepository._verify(copied_connection, version=module._PROFILE_SCHEMA_VERSIONS[29])
     finally:
         copied_connection.close()
     assert _database_state(v24_connection) == before
@@ -2208,14 +2314,16 @@ def test_portable_inventory_rejects_a_copy_with_required_work_index_removed(
 ):
     """Would fail if a staging scan checked rows but not the exact v24 DDL profile."""
     module = _inventory_module(v24_connection)
-    source_identity = module.verified_inbox_store_identity(v24_connection)
+    source_identity = module.verified_inbox_store_identity(v24_connection, profile_version=29)
     copy = _portable_copy(v24_connection, tmp_path)
     copied_connection = sqlite3.connect(copy)
     try:
         copied_connection.execute("DROP INDEX work_items_idempotency")
         with pytest.raises(module.RecoveryInventoryError, match="recovery inventory incompatible"):
             module.inspect_portable_work_store(
-                copied_connection, expected_source_identity=source_identity
+                copied_connection,
+                expected_source_identity=source_identity,
+                profile_version=29,
             )
     finally:
         copied_connection.close()
@@ -2233,7 +2341,7 @@ def test_portable_inventory_rejects_any_inbox_identity_pair_not_verified_at_sour
 ):
     """Would fail if an arbitrary persisted path or UUID could authorize the copied profile."""
     module = _inventory_module(v24_connection)
-    source_identity = module.verified_inbox_store_identity(v24_connection)
+    source_identity = module.verified_inbox_store_identity(v24_connection, profile_version=29)
     copy = _portable_copy(v24_connection, tmp_path)
     copied_connection = sqlite3.connect(copy)
     try:
@@ -2245,7 +2353,9 @@ def test_portable_inventory_rejects_any_inbox_identity_pair_not_verified_at_sour
         copied_connection.execute(trigger)
         with pytest.raises(module.RecoveryInventoryError, match="recovery inventory incompatible"):
             module.inspect_portable_work_store(
-                copied_connection, expected_source_identity=source_identity
+                copied_connection,
+                expected_source_identity=source_identity,
+                profile_version=29,
             )
     finally:
         copied_connection.close()
@@ -2255,7 +2365,7 @@ def test_portable_inventory_rejects_any_inbox_identity_pair_not_verified_at_sour
 def test_portable_inventory_rejects_durable_profile_corruption(v24_connection, tmp_path, damage):
     """Would fail if portable validation omitted a v24 verifier boundary beyond DDL."""
     module = _inventory_module(v24_connection)
-    source_identity = module.verified_inbox_store_identity(v24_connection)
+    source_identity = module.verified_inbox_store_identity(v24_connection, profile_version=29)
     copy = _portable_copy(v24_connection, tmp_path)
     copied_connection = sqlite3.connect(copy)
     try:
@@ -2283,7 +2393,9 @@ def test_portable_inventory_rejects_durable_profile_corruption(v24_connection, t
             copied_connection.execute("PRAGMA foreign_keys=ON")
         with pytest.raises(module.RecoveryInventoryError, match="recovery inventory incompatible"):
             module.inspect_portable_work_store(
-                copied_connection, expected_source_identity=source_identity
+                copied_connection,
+                expected_source_identity=source_identity,
+                profile_version=29,
             )
     finally:
         copied_connection.close()
@@ -2616,3 +2728,44 @@ def test_restore_discards_staging_when_t095_rejects(
     assert source.read_bytes() == source_before
     assert not destination.exists()
     assert not list(tmp_path.glob(".recovery-restore-*"))
+
+
+def test_historical_v30_bundle_remains_verify_only_after_upstream_profile(
+    initialized_cao_connection, monkeypatch, tmp_path
+):
+    """v31 must not redefine a previously accepted v30 receipt or restore it."""
+    inventory = importlib.import_module("cli_agent_orchestrator.services.recovery_inventory")
+    module = _recovery_bundle_module()
+    _historical_native_schema(initialized_cao_connection)
+    assert (
+        inventory.inspect_work_store(initialized_cao_connection, profile_version=30).tables
+        == EXPECTED_V30_TABLES
+    )
+    source = _database_path(initialized_cao_connection)
+    with monkeypatch.context() as historical:
+        historical.setattr(module, "WORK_SQLITE_PROFILE_VERSION", 30)
+        historical.setattr(
+            module,
+            "inspect_work_store",
+            lambda c: inventory.inspect_work_store(c, profile_version=30),
+        )
+        historical.setattr(
+            module,
+            "verified_inbox_store_identity",
+            lambda c: inventory.verified_inbox_store_identity(c, profile_version=30),
+        )
+        historical.setattr(
+            module,
+            "inspect_portable_work_store",
+            lambda c, *, expected_source_identity: inventory.inspect_portable_work_store(
+                c, expected_source_identity=expected_source_identity, profile_version=30
+            ),
+        )
+        receipt = _capture_with_work_authority(
+            module, module.RecoveryCaptureSource(database_path=source), tmp_path / "historical-v30"
+        )
+    assert module.verify_recovery_bundle(receipt) == receipt
+    destination = tmp_path / "v30-restore.sqlite3"
+    with pytest.raises(module.RecoveryBundleError, match="recovery bundle rejected"):
+        module.restore_recovery_bundle(receipt, destination)
+    assert not destination.exists()

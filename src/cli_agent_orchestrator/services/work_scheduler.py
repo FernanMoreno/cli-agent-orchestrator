@@ -15,8 +15,8 @@ from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.services.work_reservations import (
     ReservationConflict,
     StoppedWriter,
-    WriterIdentity,
     WorkReservations,
+    WriterIdentity,
 )
 
 

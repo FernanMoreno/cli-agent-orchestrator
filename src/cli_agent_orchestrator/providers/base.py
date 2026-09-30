@@ -247,6 +247,12 @@ class BaseProvider(ABC):
     # this False — their COMPLETED/IDLE split is not screen-detectable.
     supports_direct_status_probe: bool = False
 
+    # Opt-in only to StatusMonitor's two-read, visible-viewport recovery probe
+    # for a cached PROCESSING state. This is separate from the direct retry /
+    # redelivery capability above: the monitor supplies the current viewport,
+    # while terminal_service may supply scrollback as well.
+    supports_visible_pane_stale_probe: bool = False
+
     # Opt-in for the mid-burst PROCESSING probe (StatusMonitor._midburst_processing_probe).
     # Set True ONLY alongside a probe_processing_from_screen() override that is
     # side-effect free. The probe runs on a HALF-DRAWN frame, off the two edges

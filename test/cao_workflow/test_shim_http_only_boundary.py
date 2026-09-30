@@ -91,6 +91,7 @@ def test_no_third_party_imports():
         "dataclasses",
         "json",
         "os",
+        "re",
         "threading",
         "typing",
         "urllib",

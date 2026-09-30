@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from test.services.test_work_process_cleanup_recovery import _reconciled_held
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -16,7 +17,6 @@ import pytest
 
 from cli_agent_orchestrator.services import work_service
 from cli_agent_orchestrator.services.work_service import WorkService
-from test.services.test_work_process_cleanup_recovery import _reconciled_held
 
 
 def _bubblewrap_identity():
@@ -70,9 +70,8 @@ def test_restart_uses_persisted_bubblewrap_identity_only_for_cleanup(tmp_path, m
     repository, work, held = _reconciled_held(tmp_path)
     identity = _bubblewrap_identity()
     _store_identity(repository, held.attempt_id, identity)
-    cleanup = Mock(return_value=True)
-    monkeypatch.setattr(work_service, "_cleanup_bubblewrap_identity", cleanup, raising=False)
     legacy_supervisor = Mock()
+    legacy_supervisor.cleanup_bubblewrap_identity.return_value = True
 
     recovered = WorkService(repository).recover_process_cleanup(
         held.attempt_id, supervisor=legacy_supervisor, actor_id="owner"
@@ -80,9 +79,20 @@ def test_restart_uses_persisted_bubblewrap_identity_only_for_cleanup(tmp_path, m
 
     assert recovered["state"] == "reconcile"
     assert recovered["attempts"][-1]["cleanup_state"] == "complete"
-    cleanup.assert_called_once_with(identity)
+    legacy_supervisor.cleanup_bubblewrap_identity.assert_called_once_with(identity)
     legacy_supervisor.reattach.assert_not_called()
     legacy_supervisor.terminate.assert_not_called()
+
+
+def test_truthy_cleanup_response_is_not_confirmation(tmp_path):
+    repository, _work, held = _reconciled_held(tmp_path)
+    _store_identity(repository, held.attempt_id, _bubblewrap_identity())
+    supervisor = Mock()
+    supervisor.cleanup_bubblewrap_identity.return_value = object()
+    recovered = WorkService(repository).recover_process_cleanup(
+        held.attempt_id, supervisor=supervisor, actor_id="owner"
+    )
+    assert recovered["attempts"][-1]["cleanup_state"] == "failed"
 
 
 def test_both_original_processes_gone_complete_without_signal(tmp_path, monkeypatch):

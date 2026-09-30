@@ -539,7 +539,12 @@ class AgentHandoffWithApproval(AguiConstruct):
 
     @staticmethod
     def _binding_text(value: Any, label: str, maximum: int = 512) -> str:
-        if not isinstance(value, str) or not value or value != value.strip() or len(value) > maximum:
+        if (
+            not isinstance(value, str)
+            or not value
+            or value != value.strip()
+            or len(value) > maximum
+        ):
             raise DurableApprovalConflict(f"{label} must be a bounded nonempty string")
         return value
 
@@ -669,9 +674,7 @@ class AgentHandoffWithApproval(AguiConstruct):
         """
         binding = self._durable_bindings.get(interrupt_id)
         if binding is not None:
-            return await self._resume_bound(
-                interrupt_id, decision, edited_text, principal, binding
-            )
+            return await self._resume_bound(interrupt_id, decision, edited_text, principal, binding)
         async with self._lock:
             interrupt = self._interrupts.get(interrupt_id)
             if interrupt is None:
@@ -791,7 +794,9 @@ class AgentHandoffWithApproval(AguiConstruct):
                 task.add_done_callback(_cleanup)
         return await asyncio.shield(task)
 
-    async def _bound_delivery(self, binding: _DurableApprovalBinding, action: Dict[str, Any]) -> None:
+    async def _bound_delivery(
+        self, binding: _DurableApprovalBinding, action: Dict[str, Any]
+    ) -> None:
         """Run terminal I/O only after decision/claim transactions have committed."""
         if self._answer_delivery is None:
             raise DeliveryUncertain("bound terminal delivery target is unavailable")
@@ -851,7 +856,9 @@ class AgentHandoffWithApproval(AguiConstruct):
                     # WorkDecisions owns both SQLite transactions and rechecks the
                     # current binding/grant during consume_effect.  No transaction
                     # can survive to the terminal call below.
-                    raise DurableApprovalConflict("bound durable effect could not be claimed") from error
+                    raise DurableApprovalConflict(
+                        "bound durable effect could not be claimed"
+                    ) from error
                 if not claimed:
                     self._durable_uncertain.add(interrupt.id)
                     raise DeliveryUncertain("bound effect was already claimed; delivery is unknown")

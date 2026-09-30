@@ -5,10 +5,9 @@ import importlib.util
 import sqlite3
 import time
 from contextlib import contextmanager
+from test.fixtures.work_store import work_store_paths  # noqa: F401
 
 import pytest
-
-from test.fixtures.work_store import work_store_paths  # noqa: F401
 
 
 def repository_module():
@@ -1108,7 +1107,9 @@ def test_v32_to_v33_adds_immutable_one_shot_proxy_issue_without_changing_attempt
     _sent_attempt(store)
     with store.connection() as connection:
         old_objects = module._schema_objects(connection)
-        old_attempt = tuple(connection.execute("SELECT * FROM work_attempts WHERE id='a'").fetchone())
+        old_attempt = tuple(
+            connection.execute("SELECT * FROM work_attempts WHERE id='a'").fetchone()
+        )
 
     store.initialize()
     store.initialize()
@@ -1116,19 +1117,24 @@ def test_v32_to_v33_adds_immutable_one_shot_proxy_issue_without_changing_attempt
     with store.connection() as connection:
         objects = module._schema_objects(connection)
         assert set(old_objects.items()).issubset(set(objects.items()))
-        assert tuple(connection.execute("SELECT * FROM work_attempts WHERE id='a'").fetchone()) == old_attempt
+        assert (
+            tuple(connection.execute("SELECT * FROM work_attempts WHERE id='a'").fetchone())
+            == old_attempt
+        )
         assert connection.execute("SELECT count(*) FROM work_mcp_proxy_issues").fetchone()[0] == 0
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
-        assert [row[0] for row in connection.execute(
-            "SELECT version FROM work_migrations ORDER BY version"
-        )] == list(range(1, module.SCHEMA_VERSION + 1))
+        assert [
+            row[0]
+            for row in connection.execute("SELECT version FROM work_migrations ORDER BY version")
+        ] == list(range(1, module.SCHEMA_VERSION + 1))
         with pytest.raises(module.SchemaMismatch):
             module.WorkRepository._verify(connection, version=32)
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
                 "INSERT INTO work_mcp_proxy_issues "
                 "(attempt_id,generation,attempt_revision,contract_hash,expires_at,issued_at) "
-                "VALUES ('a',1,1,?,10.0,1.0)", ("a" * 64,)
+                "VALUES ('a',1,1,?,10.0,1.0)",
+                ("a" * 64,),
             )
 
 
@@ -1140,16 +1146,24 @@ def test_v33_to_v34_adds_append_only_mcp_effect_journal(work_store_paths):
     _sent_attempt(store)
     with store.connection() as connection:
         old_objects = module._schema_objects(connection)
-        old_attempt = tuple(connection.execute("SELECT * FROM work_attempts WHERE id='a'").fetchone())
+        old_attempt = tuple(
+            connection.execute("SELECT * FROM work_attempts WHERE id='a'").fetchone()
+        )
 
     store.initialize()
     store.initialize()
     with store.connection() as connection:
         objects = module._schema_objects(connection)
         assert set(old_objects.items()).issubset(set(objects.items()))
-        assert tuple(connection.execute("SELECT * FROM work_attempts WHERE id='a'").fetchone()) == old_attempt
+        assert (
+            tuple(connection.execute("SELECT * FROM work_attempts WHERE id='a'").fetchone())
+            == old_attempt
+        )
         assert connection.execute("SELECT count(*) FROM work_mcp_proxy_effects").fetchone()[0] == 0
-        assert connection.execute("SELECT count(*) FROM work_mcp_proxy_effect_events").fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT count(*) FROM work_mcp_proxy_effect_events").fetchone()[0]
+            == 0
+        )
         assert module._EXPECTED_SCHEMAS[module.SCHEMA_VERSION] == objects
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         with pytest.raises(module.SchemaMismatch):
@@ -1171,12 +1185,13 @@ def test_v36_attempt_credentials_migrate_additively_without_backfill(tmp_path, m
     repository.initialize()
     with repository.connection() as connection:
         columns = {
-            row["name"]
-            for row in connection.execute("PRAGMA table_info(work_attempt_credentials)")
+            row["name"] for row in connection.execute("PRAGMA table_info(work_attempt_credentials)")
         }
         assert "credential_sha256" in columns
         assert not {"credential", "secret", "token"} & columns
-        assert connection.execute("SELECT count(*) FROM work_attempt_credentials").fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT count(*) FROM work_attempt_credentials").fetchone()[0] == 0
+        )
         assert connection.execute("SELECT max(version) FROM work_migrations").fetchone()[0] == 36
         assert module._schema_objects(connection) == module._EXPECTED_SCHEMAS[36]
 
@@ -1193,9 +1208,10 @@ def test_v37_receiver_acceptance_migrates_without_legacy_proofs(tmp_path, monkey
     monkeypatch.setattr(module, "SCHEMA_VERSION", 37)
     repository.initialize()
     with repository.connection() as connection:
-        assert connection.execute(
-            "SELECT count(*) FROM work_task_receiver_acceptances"
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT count(*) FROM work_task_receiver_acceptances").fetchone()[0]
+            == 0
+        )
         assert connection.execute("SELECT max(version) FROM work_migrations").fetchone()[0] == 37
         assert module._schema_objects(connection) == module._EXPECTED_SCHEMAS[37]
 
@@ -1213,9 +1229,10 @@ def test_v38_receiver_credentials_migrate_without_legacy_secrets(tmp_path, monke
     monkeypatch.setattr(module, "SCHEMA_VERSION", 38)
     repository.initialize()
     with repository.connection() as connection:
-        assert connection.execute(
-            "SELECT count(*) FROM work_task_receiver_credentials"
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT count(*) FROM work_task_receiver_credentials").fetchone()[0]
+            == 0
+        )
         columns = {
             row["name"]
             for row in connection.execute("PRAGMA table_info(work_task_receiver_credentials)")
@@ -1224,3 +1241,35 @@ def test_v38_receiver_credentials_migrate_without_legacy_secrets(tmp_path, monke
         assert not {"credential", "secret", "token"} & columns
         assert connection.execute("SELECT max(version) FROM work_migrations").fetchone()[0] == 38
         assert module._schema_objects(connection) == module._EXPECTED_SCHEMAS[38]
+
+
+def test_v39_workflow_step_bindings_are_additive_and_never_backfilled(tmp_path, monkeypatch):
+    """Managed workflow evidence is new history; old workflow rows stay legacy."""
+    module = repository_module()
+    repository = module.WorkRepository(tmp_path / "workflow-step-v39.sqlite3")
+
+    monkeypatch.setattr(module, "SCHEMA_VERSION", 38)
+    repository.initialize()
+    with repository.connection() as connection:
+        assert "work_workflow_step_bindings" not in module._schema_objects(connection)
+
+    monkeypatch.setattr(module, "SCHEMA_VERSION", 39)
+    repository.initialize()
+    with repository.connection() as connection:
+        objects = module._schema_objects(connection)
+        v39_tables = {
+            "work_workflow_step_provisions",
+            "work_workflow_step_bindings",
+            "work_workflow_step_projections",
+            "work_workflow_run_capabilities",
+            "work_workflow_step_receiver_credentials",
+            "work_workflow_step_receiver_acceptances",
+            "work_workflow_step_task_received_receipts",
+            "work_workflow_step_retry_authorizations",
+        }
+        assert v39_tables <= set(objects)
+        for table in sorted(v39_tables):
+            assert connection.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0] == 0
+        assert connection.execute("SELECT max(version) FROM work_migrations").fetchone()[0] == 39
+        assert module._schema_objects(connection) == module._EXPECTED_SCHEMAS[39]
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []

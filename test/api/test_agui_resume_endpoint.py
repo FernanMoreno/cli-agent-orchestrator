@@ -416,9 +416,7 @@ def test_bound_resume_forwards_only_verified_principal_and_rejects_extra_fields(
     monkeypatch.setattr(main_mod, "get_current_principal", verified)
     app.state.approval_bridge = SimpleNamespace(construct=BoundConstruct())
     try:
-        response = client.post(
-            "/agui/v1/interrupts/bound-one/resume", json={"decision": "approve"}
-        )
+        response = client.post("/agui/v1/interrupts/bound-one/resume", json={"decision": "approve"})
         extra = client.post(
             "/agui/v1/interrupts/bound-one/resume",
             json={"decision": "approve", "principal_id": "forged"},
@@ -471,9 +469,10 @@ def test_bound_conflict_is_a_structured_409_not_a_value_error_422(monkeypatch):
 
 def test_bound_backend_failure_is_502_uncertain_and_replay_is_fenced(monkeypatch, tmp_path):
     """Post-claim backend failures have one non-retryable REST outcome."""
+    from test.services.test_work_decisions import EFFECT, EVIDENCE, _decision_context
+
     import cli_agent_orchestrator.api.main as main_mod
     from cli_agent_orchestrator.services.work_decisions import WorkDecisions
-    from test.services.test_work_decisions import EFFECT, EVIDENCE, _decision_context
 
     context = _decision_context(tmp_path)
     deliveries = []
@@ -534,4 +533,6 @@ def test_bound_backend_failure_is_502_uncertain_and_replay_is_fenced(monkeypatch
     assert deliveries == [("t-bound-failure", "Enter")]
     with context.repository.read_snapshot() as connection:
         assert connection.execute("SELECT count(*) FROM work_human_decisions").fetchone()[0] == 1
-        assert connection.execute("SELECT count(*) FROM work_human_decision_claims").fetchone()[0] == 1
+        assert (
+            connection.execute("SELECT count(*) FROM work_human_decision_claims").fetchone()[0] == 1
+        )

@@ -1,0 +1,244 @@
+{
+  "date": "2026-09-30",
+  "scope": "current main worktree, authorized personal/local deployment; retained unaffected passes and focused corrected-case reruns",
+  "head_unchanged": "0d1b4ff9cf9caa88d28f16a1c9f54c22678813f4",
+  "integrated_upstream": "2fcc3efa6c6e70039e5b9a7308ee67cd1f024885",
+  "candidate_tree": "e158384dd6567ab7be2b4daceaeea6126d38f62e",
+  "providers": {
+    "codex": "gpt-6-luna subscription",
+    "claude_code": "claude-haiku-4-5 subscription",
+    "opencode_cli": "2.0.18, opencode-go/longcat-2.5-preview-free"
+  },
+  "cells": [
+    {
+      "backend": "tmux",
+      "cell": "codex->codex",
+      "status": "passed",
+      "original_report": "personal-current-matrix.xml",
+      "revalidation_reports": []
+    },
+    {
+      "backend": "tmux",
+      "cell": "codex->claude_code",
+      "status": "passed",
+      "original_report": "personal-current-matrix.xml",
+      "revalidation_reports": []
+    },
+    {
+      "backend": "tmux",
+      "cell": "codex->opencode_cli",
+      "status": "passed",
+      "original_report": "personal-current-matrix.xml",
+      "revalidation_reports": []
+    },
+    {
+      "backend": "tmux",
+      "cell": "claude_code->codex",
+      "status": "passed",
+      "original_report": "personal-current-matrix.xml",
+      "revalidation_reports": []
+    },
+    {
+      "backend": "tmux",
+      "cell": "claude_code->claude_code",
+      "status": "passed",
+      "original_report": "personal-current-matrix.xml",
+      "revalidation_reports": []
+    },
+    {
+      "backend": "tmux",
+      "cell": "claude_code->opencode_cli",
+      "status": "corrected_and_revalidated",
+      "original_report": "personal-current-matrix.xml",
+      "revalidation_reports": [
+        "personal-paste-retry.xml",
+        "personal-paste-repeat.xml"
+      ]
+    },
+    {
+      "backend": "tmux",
+      "cell": "opencode_cli->codex",
+      "status": "passed",
+      "original_report": "personal-current-matrix.xml",
+      "revalidation_reports": []
+    },
+    {
+      "backend": "tmux",
+      "cell": "opencode_cli->claude_code",
+      "status": "passed",
+      "original_report": "personal-current-matrix.xml",
+      "revalidation_reports": []
+    },
+    {
+      "backend": "tmux",
+      "cell": "opencode_cli->opencode_cli",
+      "status": "passed",
+      "original_report": "personal-current-matrix.xml",
+      "revalidation_reports": []
+    },
+    {
+      "backend": "herdr0.9.1",
+      "cell": "codex->codex",
+      "status": "passed",
+      "report": "personal-current-herdr.json"
+    },
+    {
+      "backend": "herdr0.9.1",
+      "cell": "codex->claude_code",
+      "status": "passed",
+      "report": "personal-current-herdr.json"
+    },
+    {
+      "backend": "herdr0.9.1",
+      "cell": "codex->opencode_cli",
+      "status": "passed",
+      "report": "personal-current-herdr.json"
+    },
+    {
+      "backend": "herdr0.9.1",
+      "cell": "claude_code->codex",
+      "status": "passed",
+      "report": "personal-current-herdr.json"
+    },
+    {
+      "backend": "herdr0.9.1",
+      "cell": "claude_code->claude_code",
+      "status": "passed",
+      "report": "personal-current-herdr.json"
+    },
+    {
+      "backend": "herdr0.9.1",
+      "cell": "claude_code->opencode_cli",
+      "status": "passed",
+      "report": "personal-current-herdr.json"
+    },
+    {
+      "backend": "herdr0.9.1",
+      "cell": "opencode_cli->codex",
+      "status": "passed",
+      "report": "personal-current-herdr.json"
+    },
+    {
+      "backend": "herdr0.9.1",
+      "cell": "opencode_cli->claude_code",
+      "status": "passed",
+      "report": "personal-current-herdr.json"
+    },
+    {
+      "backend": "herdr0.9.1",
+      "cell": "opencode_cli->opencode_cli",
+      "status": "passed",
+      "report": "personal-current-herdr.json"
+    }
+  ],
+  "reports": {
+    "joint-focused.log": {
+      "path": "/home/felni/ct/personal-deployment/joint-focused.log",
+      "sha256": "ce3886bfacabaa45bc6d512fe7ef0aaa3ad5d2f6886eb6be66a6962bbda156a4"
+    },
+    "joint-focused.xml": {
+      "path": "/home/felni/ct/personal-deployment/joint-focused.xml",
+      "sha256": "8062bee5b334a6529c4ee6b6868a9e55550c710faddaf41a30a017606a223606"
+    },
+    "focused-skips-accepted.log": {
+      "path": "/home/felni/ct/personal-deployment/focused-skips-accepted.log",
+      "sha256": "12ad3e1d2c49f75ee5abf1448a7f18694ce48469520ccfc9531ee551abdab08c"
+    },
+    "focused-skips-accepted.xml": {
+      "path": "/home/felni/ct/personal-deployment/focused-skips-accepted.xml",
+      "sha256": "cd239273150f0411d8b0c6b6904bf6cf0904831b77e7968156c2f6a0687e3449"
+    },
+    "last-regressions.log": {
+      "path": "/home/felni/ct/personal-deployment/last-regressions.log",
+      "sha256": "4b0a8c9efd94a803e2007ed6717ac82b1c938f41b4f1dbe5fc2517d30d03cc68"
+    },
+    "tui-complete-auth.log": {
+      "path": "/home/felni/ct/personal-deployment/tui-complete-auth.log",
+      "sha256": "e3e2ae2ed1ae04344572b97a45d6d435de28eabd4853f727e67c30074fb11d17"
+    },
+    "claude-workflows-installed.log": {
+      "path": "/home/felni/ct/personal-deployment/claude-workflows-installed.log",
+      "sha256": "bf2ec8ce3b9c2bcc4626738831856f13517accdf040d473d84e5506de4d5582d"
+    },
+    "docker-acceptance.log": {
+      "path": "/home/felni/ct/personal-deployment/docker-acceptance.log",
+      "sha256": "8d115679147dd4d4f044dce50def0ef834482a496f497992a32f8805681a7fa4"
+    },
+    "composition-final.log": {
+      "path": "/home/felni/ct/personal-deployment/composition-final.log",
+      "sha256": "754496c607b1969e979d75d14f659ab5ad05e8fc50b4a8c0e667046b3c4c645b"
+    },
+    "mypy-v2.log": {
+      "path": "/home/felni/ct/personal-deployment/mypy-v2.log",
+      "sha256": "f9b031e5c45aa702cd4fef028d465551cb20a2c4698e0913c7b00766b20ac4d8"
+    },
+    "v1-install-final.log": {
+      "path": "/home/felni/ct/personal-deployment/v1-install-final.log",
+      "sha256": "6039720ad2f04453a6a6233974cca98b9f03daf4fbb18c480b54977eea908c9c"
+    },
+    "v2-mcp-session.log": {
+      "path": "/home/felni/ct/personal-deployment/v2-mcp-session.log",
+      "sha256": "bc9ce079af9607d25307829f309ba76d8ba96556f4187f227a77719ff6fd8a81"
+    },
+    "personal-provider-work.log": {
+      "path": "/home/felni/ct/personal-deployment/personal-provider-work.log",
+      "sha256": "16e39cea569f02077f97f6fb0a8ab4f3ae961592b259e45b4b835ca6372c1f12"
+    },
+    "personal-static-cleanup.log": {
+      "path": "/home/felni/ct/personal-deployment/personal-static-cleanup.log",
+      "sha256": "974ef425d2ced4cbcc2e248067e5ecabdfedd9aba4a39234f25fc85fe7b0132d"
+    },
+    "upstream-build-gates.log": {
+      "path": "/home/felni/ct/personal-deployment/upstream-build-gates.log",
+      "sha256": "8bcb5ada19cef72a2edfadcf615176854ff0ef13d8a7d4e94503870332d6a4e2"
+    },
+    "personal-final-health.log": {
+      "path": "/home/felni/ct/personal-deployment/personal-final-health.log",
+      "sha256": "bd3bd48667a0ae39e6c76fafe04eddcf1a7c7a4cbd7ac2c8ef2d6f263eb2cad5"
+    },
+    "web-auth-all.log": {
+      "path": "/home/felni/ct/personal-deployment/web-auth-all.log",
+      "sha256": "437e1e1efdc12ba7d518f39768e3a74d21bef62c6f779d203fdf099c8a927c26"
+    },
+    "web-link-python.log": {
+      "path": "/home/felni/ct/personal-deployment/web-link-python.log",
+      "sha256": "e96fe6576d90eae81321e108d3d4fc912771cbe824c23039c59a929cf7d23f32"
+    },
+    "web-auth-build.log": {
+      "path": "/home/felni/ct/personal-deployment/web-auth-build.log",
+      "sha256": "7eee213d82d0b7d787daf351a5d5a1868ae4a526bc7855bfede7e551de8aad8d"
+    },
+    "web-auth-live.log": {
+      "path": "/home/felni/ct/personal-deployment/web-auth-live.log",
+      "sha256": "839a87a53465c54b2f9b163bb41b25a0a135070cbb84d2f79165fbcba766e879"
+    },
+    "web-auth-composition.log": {
+      "path": "/home/felni/ct/personal-deployment/web-auth-composition.log",
+      "sha256": "754496c607b1969e979d75d14f659ab5ad05e8fc50b4a8c0e667046b3c4c645b"
+    },
+    "web-auth-install.log": {
+      "path": "/home/felni/ct/personal-deployment/web-auth-install.log",
+      "sha256": "b1058351920d8e0204b581af5858fb145e8333b06cbbcbc3d1e048a5a9afb181"
+    },
+    "web-auth-wheel.log": {
+      "path": "/home/felni/ct/personal-deployment/web-auth-wheel.log",
+      "sha256": "4fae71276bb990f4232b054eed812a21a93c625caa149cbba1e81fb46efa8347"
+    }
+  },
+  "limits": [
+    "Not a single default all-green Python invocation; results are recorded by applicable environment.",
+    "Other external providers were not authorized; inventory records them as not accepted.",
+    "Real quota exhaustion/continuation is not induced or claimed.",
+    "Docker static launch is not a model result; the separate T020 worker accepts authenticated result routes.",
+    "Git commit/push/history merge/release are not part of this incorporation.",
+    "Computer/WSL shutdown interrupts service availability."
+  ],
+  "browser_followup": {
+    "root_cause": "Browser UI sent no bearer, protected polling returned 401",
+    "web_tests_passed": 372,
+    "deployment_tests_passed": 9,
+    "real_browser": "Live; protected sessions/profiles 200; missing/rejected bearer prompts; fragment consumed; fresh link reconnects",
+    "operator_command": "personal_deployment.py web",
+    "windows_browser_open_command_exit": 0
+  }
+}

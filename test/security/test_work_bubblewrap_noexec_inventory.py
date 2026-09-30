@@ -20,7 +20,6 @@ from pathlib import Path
 
 import pytest
 
-
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _T097_ROOT = Path("/tmp/caos-exec/T097")
 _SCRATCH_BWRAP = _T097_ROOT / "bubblewrap-build" / "bwrap"
@@ -30,7 +29,7 @@ _REPORT_PREFIX = "T097_INVENTORY_REPORT="
 _TRUSTED_RUNNER = "/usr/bin/sed"
 
 
-_NAMESPACE_HELPER = r'''
+_NAMESPACE_HELPER = r"""
 import ctypes
 import errno
 import json
@@ -348,19 +347,24 @@ finally:
     report["cleanup_errors"] = cleanup_errors
 
 print("T097_INVENTORY_REPORT=" + json.dumps(report), flush=True)
-'''
+"""
 
 
 def _scratch_bubblewrap() -> Path:
     """Resolve only the pinned scratch build; never fall back to PATH."""
     if not _SCRATCH_BWRAP.is_file():
-        pytest.skip(f"T097 scratch Bubblewrap is absent at {_SCRATCH_BWRAP}; installed bwrap is not used")
+        pytest.skip(
+            f"T097 scratch Bubblewrap is absent at {_SCRATCH_BWRAP}; installed bwrap is not used"
+        )
     try:
         executable = _SCRATCH_BWRAP.resolve(strict=True)
         scratch_root = _T097_ROOT.resolve(strict=True)
     except (OSError, RuntimeError) as exc:
         pytest.skip(f"could not resolve T097 scratch Bubblewrap: {exc}")
-    if not executable.is_relative_to(scratch_root) or executable == Path("/usr/bin/bwrap").resolve():
+    if (
+        not executable.is_relative_to(scratch_root)
+        or executable == Path("/usr/bin/bwrap").resolve()
+    ):
         pytest.skip("T097 Bubblewrap does not resolve to its private scratch build")
     if not os.access(executable, os.X_OK):
         pytest.skip(f"T097 scratch Bubblewrap is not executable: {executable}")
@@ -375,12 +379,18 @@ def _scratch_bubblewrap() -> Path:
     )
     match = _VERSION_RE.fullmatch(version.stdout.strip())
     if version.returncode != 0 or match is None or tuple(map(int, match.groups())) != (0, 13, 0):
-        pytest.skip(f"T097 scratch Bubblewrap 0.13.0 is required; observed {version.stdout.strip()!r}")
+        pytest.skip(
+            f"T097 scratch Bubblewrap 0.13.0 is required; observed {version.stdout.strip()!r}"
+        )
     return executable
 
 
 def _parse_report(output: str) -> dict[str, object]:
-    reports = [line[len(_REPORT_PREFIX):] for line in output.splitlines() if line.startswith(_REPORT_PREFIX)]
+    reports = [
+        line[len(_REPORT_PREFIX) :]
+        for line in output.splitlines()
+        if line.startswith(_REPORT_PREFIX)
+    ]
     assert len(reports) == 1, f"namespace helper did not return one inventory: {output!r}"
     return json.loads(reports[0])
 
@@ -448,7 +458,17 @@ def test_pinned_bubblewrap_inventory_keeps_all_writable_surfaces_noexec(tmp_path
 
     runner_build = tmp_path / "fd-probe-build"
     build = subprocess.run(
-        [compiler, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", str(_FIXTURE_SOURCE), "-o", str(runner_build)],
+        [
+            compiler,
+            "-std=c11",
+            "-O2",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            str(_FIXTURE_SOURCE),
+            "-o",
+            str(runner_build),
+        ],
         check=False,
         capture_output=True,
         text=True,
@@ -475,10 +495,18 @@ def test_pinned_bubblewrap_inventory_keeps_all_writable_surfaces_noexec(tmp_path
     namespace = _run_process_group(
         [
             unshare,
-            "--user", "--map-root-user", "--mount", "--fork", "--",
+            "--user",
+            "--map-root-user",
+            "--mount",
+            "--fork",
+            "--",
             sys.executable,
-            "-c", _NAMESPACE_HELPER,
-            str(mounts_root), str(bwrap), str(runner_build), str(loader),
+            "-c",
+            _NAMESPACE_HELPER,
+            str(mounts_root),
+            str(bwrap),
+            str(runner_build),
+            str(loader),
         ],
         timeout=75,
     )
@@ -519,36 +547,44 @@ def test_pinned_bubblewrap_inventory_keeps_all_writable_surfaces_noexec(tmp_path
     }
     for name, (mountpoint, source) in expected.items():
         entry = surfaces[name]
-        assert entry["mountpoint"] == mountpoint and entry["source"] == source and entry["fstype"] == "tmpfs", (
-            f"Bwrap did not retain the exact {name} tmpfs as its topmost mount: {entry!r}"
-        )
-        assert "rw" in entry["options"] and "noexec" in entry["options"], (
-            f"Bwrap {name} mount is not writable+noexec: {entry!r}"
-        )
+        assert (
+            entry["mountpoint"] == mountpoint
+            and entry["source"] == source
+            and entry["fstype"] == "tmpfs"
+        ), f"Bwrap did not retain the exact {name} tmpfs as its topmost mount: {entry!r}"
+        assert (
+            "rw" in entry["options"] and "noexec" in entry["options"]
+        ), f"Bwrap {name} mount is not writable+noexec: {entry!r}"
     runner_mount = surfaces["runner"]
-    assert runner_mount["mountpoint"] == _TRUSTED_RUNNER and "ro" in runner_mount["options"], (
-        f"trusted runner is not read-only at its fixed path: {runner_mount!r}"
-    )
-    assert "noexec" not in runner_mount["options"], (
-        f"trusted runner path is unexpectedly noexec: {runner_mount!r}"
-    )
+    assert (
+        runner_mount["mountpoint"] == _TRUSTED_RUNNER and "ro" in runner_mount["options"]
+    ), f"trusted runner is not read-only at its fixed path: {runner_mount!r}"
+    assert (
+        "noexec" not in runner_mount["options"]
+    ), f"trusted runner path is unexpectedly noexec: {runner_mount!r}"
 
-    statuses = re.findall(r"^T097_PROBE_STATUS=(workspace|tmp|shm),(loader|descendant),(\d+)$", report["bwrap_stdout"], re.M)
+    statuses = re.findall(
+        r"^T097_PROBE_STATUS=(workspace|tmp|shm),(loader|descendant),(\d+)$",
+        report["bwrap_stdout"],
+        re.M,
+    )
     assert len(statuses) == 6, f"not all per-surface probes reported a status: {statuses!r}"
-    if "landlock-unavailable:" in report["bwrap_stderr"] or any(int(code) == 78 for _, _, code in statuses):
+    if "landlock-unavailable:" in report["bwrap_stderr"] or any(
+        int(code) == 78 for _, _, code in statuses
+    ):
         pytest.skip("kernel Landlock EXECUTE probe is unavailable")
     for surface, mode, code in statuses:
         assert int(code) == 127, (
             f"{mode} probe from {surface} changed its noexec outcome; status={code}; "
             f"stderr={report['bwrap_stderr']!r}"
         )
-    assert report["bwrap_stdout"].count("direct-exec-denied=1") == 6, (
-        "fixture did not confirm direct exec denial for both probes on all three surfaces"
-    )
+    assert (
+        report["bwrap_stdout"].count("direct-exec-denied=1") == 6
+    ), "fixture did not confirm direct exec denial for both probes on all three surfaces"
     for name, markers in report["markers"].items():
-        assert not markers["loader"] and not markers["descendant"], (
-            f"a noexec {name} surface ran its inert ELF marker: {markers!r}"
-        )
+        assert (
+            not markers["loader"] and not markers["descendant"]
+        ), f"a noexec {name} surface ran its inert ELF marker: {markers!r}"
 
     writable_exec = [
         {
@@ -568,25 +604,29 @@ def test_pinned_bubblewrap_inventory_keeps_all_writable_surfaces_noexec(tmp_path
         report["bwrap_stdout"],
         re.M,
     )
-    assert len(alias_statuses) == 6, f"not all /proc/self/fd/3 probes reported a status: {alias_statuses!r}"
+    assert (
+        len(alias_statuses) == 6
+    ), f"not all /proc/self/fd/3 probes reported a status: {alias_statuses!r}"
     assert {(surface, mode) for surface, mode, _ in alias_statuses} == {
-        (surface, mode)
-        for surface in ("workspace", "tmp", "shm")
-        for mode in ("direct", "loader")
+        (surface, mode) for surface in ("workspace", "tmp", "shm") for mode in ("direct", "loader")
     }, f"/proc/self/fd/3 probe statuses are incomplete or duplicated: {alias_statuses!r}"
     alias_report = []
     for surface, mode, code in alias_statuses:
         marker = report["fd_alias_markers"][surface][mode]
         stderr = report["fd_alias_stderr"][surface][mode]
         expected_code = 126 if mode == "direct" else 127
-        expected_error = "Permission denied" if mode == "direct" else "failed to map segment from shared object"
-        alias_report.append({
-            "surface": surface,
-            "mode": mode,
-            "status": int(code),
-            "marker": marker,
-            "stderr": stderr.strip(),
-        })
+        expected_error = (
+            "Permission denied" if mode == "direct" else "failed to map segment from shared object"
+        )
+        alias_report.append(
+            {
+                "surface": surface,
+                "mode": mode,
+                "status": int(code),
+                "marker": marker,
+                "stderr": stderr.strip(),
+            }
+        )
         assert int(code) == expected_code and not marker and expected_error in stderr, (
             f"/proc/self/fd/3 {mode} exec residual on {surface}: "
             f"status={code}, marker={marker}, stderr={stderr!r}, "

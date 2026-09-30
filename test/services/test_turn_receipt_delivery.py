@@ -46,12 +46,10 @@ def _receipt_provider() -> MagicMock:
     # state that witnesses its receipt (rather than assuming COMPLETED itself).
     # This mock represents a normal provider with a conventional completed
     # renderer; the Codex post-turn dialog has a dedicated WAITING witness.
-    provider.receipt_result_terminal_status.side_effect = (
-        lambda transcript, _result: (
-            TerminalStatus.COMPLETED
-            if provider.get_status(transcript) == TerminalStatus.COMPLETED
-            else None
-        )
+    provider.receipt_result_terminal_status.side_effect = lambda transcript, _result: (
+        TerminalStatus.COMPLETED
+        if provider.get_status(transcript) == TerminalStatus.COMPLETED
+        else None
     )
     return provider
 

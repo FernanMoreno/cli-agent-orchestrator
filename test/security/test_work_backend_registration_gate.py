@@ -24,8 +24,8 @@ from cli_agent_orchestrator.models.work_contract import (
     ContractPermissions,
     ContractResources,
     ContractSnapshot,
-    ExecutableIdentity,
     EffectiveWorkContract,
+    ExecutableIdentity,
 )
 
 

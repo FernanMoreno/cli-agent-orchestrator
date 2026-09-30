@@ -9,6 +9,7 @@ import sqlite3
 import time
 from dataclasses import dataclass, field
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import field_validator
 
@@ -16,13 +17,14 @@ from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_origin import (
     Digest,
     FrozenOriginModel,
+    Identity,
     ManagedLineageIntent,
     OriginAuthorization,
     OriginAuthorizationRef,
     OriginSubjectRef,
-    Identity,
     Positive,
     WorkAttemptRef,
+    WorkflowStepResultV1,
     lineage_integrity_fingerprint,
 )
 from cli_agent_orchestrator.security.auth import SCOPE_WRITE, Principal, _verified_principal
@@ -141,6 +143,7 @@ class WorkOriginAuthority:
             "admit_step",
             "execute",
             "task_received",
+            "task_result",
             "delegate",
         }
     )
@@ -494,6 +497,7 @@ class WorkOrigins:
         self._runtime_identity = object()
         self._handoff_secret = secrets.token_bytes(32)
         self._admission = None
+        self._result_service = None
 
     def _bind_admission(self, admission) -> None:
         """Pair private origin tools with their one runtime admission owner."""
@@ -506,6 +510,20 @@ class WorkOrigins:
         ):
             raise OriginDenied("managed origin endpoint belongs to another Work runtime")
         self._admission = admission
+
+    def _bind_result_service(self, service) -> None:
+        """Bind the artifact-owning result service for this private MCP endpoint."""
+        from cli_agent_orchestrator.services.work_service import WorkService
+
+        if (
+            not isinstance(service, WorkService)
+            or service.repository is not self.repository
+            or service.origins is not self
+            or service.artifacts is None
+            or (self._result_service is not None and self._result_service is not service)
+        ):
+            raise OriginDenied("workflow result service belongs to another Work runtime")
+        self._result_service = service
 
     @staticmethod
     def _principal_payload(principal: Principal) -> dict:
@@ -603,7 +621,9 @@ class WorkOrigins:
         if row is None:
             raise OriginDenied("attempt principal is no longer registered")
         try:
-            principal = _verified_principal(row["issuer"], row["subject"], [SCOPE_WRITE], row["kind"])
+            principal = _verified_principal(
+                row["issuer"], row["subject"], [SCOPE_WRITE], row["kind"]
+            )
         except Exception as error:
             raise OriginDenied("attempt principal identity is corrupt") from error
         if principal.id != principal_id:
@@ -678,9 +698,7 @@ class WorkOrigins:
                 receiver, receiver_ref, receiver_auth_ref = self._preprovisioned_subject(
                     connection, receiver_subject_id, "receiver"
                 )
-                context = self._credential_context(
-                    requester, (child, receiver), digest
-                )
+                context = self._credential_context(requester, (child, receiver), digest)
         except WorkAttemptCredentialRejected as error:
             raise OriginDenied("attempt credential is expired, revoked or stale") from error
         return self.admit(
@@ -733,16 +751,47 @@ class WorkOrigins:
                         "content": [
                             {
                                 "type": "text",
+                                "text": json.dumps(result, sort_keys=True, separators=(",", ":")),
+                            }
+                        ]
+                    },
+                }
+            if name == "cao.work.submit_result":
+                if type(receiver_credential) is not bytes:
+                    raise OriginDenied("workflow result requires its separate receiver credential")
+                if set(arguments) != {"schema_version", "status", "output"}:
+                    raise OriginDenied("workflow result arguments are invalid")
+                result = WorkflowStepResultV1.from_payload(arguments)
+                service = self._result_service
+                if service is None:
+                    raise OriginDenied("managed workflow result owner is unavailable")
+                work = service.submit_workflow_step_result(
+                    attempt_credential=credential,
+                    receiver_credential=receiver_credential,
+                    result=result,
+                )
+                attempt = work["attempts"][-1]
+                result_summary = {
+                    "attempt_id": attempt["id"],
+                    "generation": attempt["generation"],
+                    "state": attempt["state"],
+                    "work_item_id": work["id"],
+                }
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
                                 "text": json.dumps(
-                                    result, sort_keys=True, separators=(",", ":")
+                                    result_summary, sort_keys=True, separators=(",", ":")
                                 ),
                             }
                         ]
                     },
                 }
-            kind = {"cao.work.child": "child", "cao.work.handoff": "handoff"}.get(
-                name
-            )
+            kind = {"cao.work.child": "child", "cao.work.handoff": "handoff"}.get(name)
             if kind is None or self._admission is None:
                 raise OriginDenied("managed Work proxy tool is unavailable")
             if set(arguments) != {
@@ -932,8 +981,7 @@ class WorkOrigins:
             or origin["receiver_authorization_kind"] != "receiver"
             or receiver_authorization_ref.subject_id != receiver_subject_ref.subject_id
             or receiver_authorization_ref.origin_kind != "receiver"
-            or origin["receiver_authorization_revision"]
-            != receiver_authorization_ref.revision
+            or origin["receiver_authorization_revision"] != receiver_authorization_ref.revision
             or (delivery_id is not None and origin["delivery_id"] != delivery_id)
             or (delivery_hash is not None and origin["delivery_hash"] != delivery_hash)
         ):
@@ -992,8 +1040,7 @@ class WorkOrigins:
             delivery_hash=origin["delivery_hash"],
         )
         prior = connection.execute(
-            "SELECT * FROM work_task_receiver_acceptances "
-            "WHERE attempt_id=? AND generation=?",
+            "SELECT * FROM work_task_receiver_acceptances " "WHERE attempt_id=? AND generation=?",
             (attempt_ref.attempt_id, attempt_ref.generation),
         ).fetchone()
         expected = (
@@ -1038,6 +1085,139 @@ class WorkOrigins:
             ).fetchone()
         )
 
+    @staticmethod
+    def _workflow_receiver_acceptance_hash(
+        *,
+        binding_id,
+        attempt_ref,
+        receiver_subject_ref,
+        receiver_authorization_ref,
+        delivery_id,
+        delivery_hash,
+    ) -> str:
+        return hashlib.sha256(
+            _canonical(
+                {
+                    "attempt": attempt_ref.model_dump(mode="json"),
+                    "binding_id": binding_id,
+                    "delivery_hash": delivery_hash,
+                    "delivery_id": delivery_id,
+                    "receiver_authorization_ref": receiver_authorization_ref.model_dump(
+                        mode="json"
+                    ),
+                    "receiver_subject_ref": receiver_subject_ref.model_dump(mode="json"),
+                    "schema_version": 1,
+                }
+            ).encode("utf-8")
+        ).hexdigest()
+
+    def _record_workflow_receiver_acceptance(self, connection, *, attempt_ref, binding) -> dict:
+        self._require_workflow_receiver_action(connection, binding, action="task_received")
+        acceptance_sha256 = self._workflow_receiver_acceptance_hash(
+            binding_id=binding.binding_id,
+            attempt_ref=attempt_ref,
+            receiver_subject_ref=binding.receiver_subject_ref,
+            receiver_authorization_ref=binding.receiver_authorization_ref,
+            delivery_id=binding.delivery_id,
+            delivery_hash=binding.delivery_hash,
+        )
+        return self.repository._record_workflow_step_receiver_acceptance(
+            connection,
+            binding_id=binding.binding_id,
+            attempt_id=binding.work_attempt_id,
+            generation=binding.work_generation,
+            receiver_subject_id=binding.receiver_subject_ref.subject_id,
+            receiver_subject_revision=binding.receiver_subject_ref.revision,
+            receiver_authorization_kind="receiver",
+            receiver_authorization_revision=binding.receiver_authorization_ref.revision,
+            delivery_id=binding.delivery_id,
+            delivery_hash=binding.delivery_hash,
+            acceptance_sha256=acceptance_sha256,
+            accepted_at=time.time(),
+            schema_version=1,
+        )
+
+    def validate_workflow_task_received_receipt(
+        self, connection: sqlite3.Connection, receipt: TaskReceivedReceiptV1, binding
+    ) -> dict:
+        """Validate workflow ACK proof and refs before the repository ACK CAS."""
+        if not connection.in_transaction:
+            raise ValueError("caller-owned transaction required")
+        if not isinstance(receipt, TaskReceivedReceiptV1) or not hmac.compare_digest(
+            receipt.proof, self._seal_task_receipt(receipt)
+        ):
+            raise OriginDenied("workflow task receipt was not issued by this server runtime")
+        attempt = receipt.attempt
+        if (
+            (attempt.attempt_id, attempt.generation, attempt.work_item_id)
+            != (binding.work_attempt_id, binding.work_generation, binding.work_item_id)
+            or receipt.receiver_subject_ref != binding.receiver_subject_ref
+            or receipt.receiver_authorization_ref != binding.receiver_authorization_ref
+            or receipt.delivery_id != binding.delivery_id
+            or receipt.delivery_hash != binding.delivery_hash
+        ):
+            raise OriginDenied("workflow task receipt differs from its immutable binding")
+        live = connection.execute(
+            "SELECT state,revision FROM work_attempts WHERE id=? AND generation=?",
+            (binding.work_attempt_id, binding.work_generation),
+        ).fetchone()
+        if live is None or live["state"] != "sent" or live["revision"] != receipt.attempt_revision:
+            raise OriginDenied("workflow task receipt attempt is stale or no longer sent")
+        self._require_workflow_receiver_action(connection, binding, action="task_received")
+        expected_acceptance = self._workflow_receiver_acceptance_hash(
+            binding_id=binding.binding_id,
+            attempt_ref=attempt,
+            receiver_subject_ref=binding.receiver_subject_ref,
+            receiver_authorization_ref=binding.receiver_authorization_ref,
+            delivery_id=binding.delivery_id,
+            delivery_hash=binding.delivery_hash,
+        )
+        acceptance = connection.execute(
+            "SELECT * FROM work_workflow_step_receiver_acceptances "
+            "WHERE attempt_id=? AND generation=?",
+            (attempt.attempt_id, attempt.generation),
+        ).fetchone()
+        if acceptance is None or (
+            acceptance["binding_id"],
+            acceptance["receiver_subject_id"],
+            acceptance["receiver_subject_revision"],
+            acceptance["receiver_authorization_kind"],
+            acceptance["receiver_authorization_revision"],
+            acceptance["delivery_id"],
+            acceptance["delivery_hash"],
+            acceptance["acceptance_sha256"],
+        ) != (
+            binding.binding_id,
+            binding.receiver_subject_ref.subject_id,
+            binding.receiver_subject_ref.revision,
+            "receiver",
+            binding.receiver_authorization_ref.revision,
+            binding.delivery_id,
+            binding.delivery_hash,
+            expected_acceptance,
+        ):
+            raise OriginDenied("workflow task receipt requires exact durable receiver acceptance")
+        return {
+            "binding_id": binding.binding_id,
+            "attempt_id": attempt.attempt_id,
+            "generation": attempt.generation,
+            "schema_version": 1,
+            "work_item_id": attempt.work_item_id,
+            "job_id": binding.job_id,
+            "attempt_revision": receipt.attempt_revision,
+            "receiver_subject_id": binding.receiver_subject_ref.subject_id,
+            "receiver_subject_revision": binding.receiver_subject_ref.revision,
+            "receiver_authorization_kind": "receiver",
+            "receiver_authorization_revision": binding.receiver_authorization_ref.revision,
+            "receiver_grant_id": binding.receiver_grant_id,
+            "receiver_grant_revision": binding.receiver_grant_revision,
+            "delivery_id": binding.delivery_id,
+            "delivery_hash": binding.delivery_hash,
+            "nonce": receipt.nonce,
+            "receipt_hash": receipt.fingerprint(),
+            "received_at": time.time(),
+        }
+
     def accept_task_received_with_credentials(
         self, *, attempt_credential: bytes, receiver_credential: bytes
     ) -> dict:
@@ -1054,10 +1234,10 @@ class WorkOrigins:
             with self.repository.transaction() as connection:
                 self.repository._verify(connection)
                 executor = credentials.authenticate_in_transaction(
-                    connection, attempt_credential
+                    connection, attempt_credential, allow_finished=True
                 )
                 receiver = credentials.authenticate_receiver_in_transaction(
-                    connection, receiver_credential
+                    connection, receiver_credential, allow_finished=True
                 )
                 if (
                     executor.attempt_id,
@@ -1086,6 +1266,25 @@ class WorkOrigins:
                 ).fetchone()
                 if attempt is None:
                     raise OriginDenied("receiver attempt no longer exists")
+                if receiver.binding_id is not None:
+                    workflow_binding = self._workflow_binding_for_attempt(
+                        connection,
+                        attempt_id=attempt_ref.attempt_id,
+                        generation=attempt_ref.generation,
+                        work_item_id=attempt_ref.work_item_id,
+                    )
+                    if (
+                        workflow_binding is None
+                        or workflow_binding.binding_id != receiver.binding_id
+                    ):
+                        raise OriginDenied("workflow receiver binding is unavailable or stale")
+                    return self._accept_workflow_task_received_in_transaction(
+                        connection,
+                        attempt_ref=attempt_ref,
+                        receiver=receiver,
+                        binding=workflow_binding,
+                        attempt=attempt,
+                    )
                 if attempt["state"] == "acknowledged":
                     origin = connection.execute(
                         "SELECT * FROM work_child_origin_bindings "
@@ -1153,13 +1352,75 @@ class WorkOrigins:
                     nonce=uuid4().hex,
                     proof="0" * 64,
                 )
-                receipt = receipt.model_copy(
-                    update={"proof": self._seal_task_receipt(receipt)}
-                )
+                receipt = receipt.model_copy(update={"proof": self._seal_task_receipt(receipt)})
                 validated = self.validate_task_received_receipt(connection, receipt)
                 return self.repository._record_task_received_receipt(connection, **validated)
         except WorkAttemptCredentialRejected as error:
             raise OriginDenied("receiver acceptance credential is expired or stale") from error
+
+    def _accept_workflow_task_received_in_transaction(
+        self, connection, *, attempt_ref, receiver, binding, attempt
+    ) -> dict:
+        if (
+            (receiver.attempt_id, receiver.generation, receiver.work_item_id)
+            != (attempt_ref.attempt_id, attempt_ref.generation, attempt_ref.work_item_id)
+            or receiver.binding_id != binding.binding_id
+            or receiver.receiver_subject_id != binding.receiver_subject_ref.subject_id
+            or receiver.receiver_subject_revision != binding.receiver_subject_ref.revision
+            or receiver.receiver_authorization_revision
+            != binding.receiver_authorization_ref.revision
+            or receiver.receiver_grant_id != binding.receiver_grant_id
+            or receiver.receiver_grant_revision != binding.receiver_grant_revision
+            or receiver.delivery_id != binding.delivery_id
+            or receiver.delivery_hash != binding.delivery_hash
+        ):
+            raise OriginDenied("workflow receiver credential does not match its durable binding")
+        self._require_workflow_receiver_action(connection, binding, action="task_received")
+        if attempt["state"] in {"acknowledged", "running", "finished"}:
+            receipt = self.repository._workflow_step_task_received_receipt(
+                connection, attempt_ref.attempt_id, attempt_ref.generation
+            )
+            acceptance = connection.execute(
+                "SELECT * FROM work_workflow_step_receiver_acceptances "
+                "WHERE attempt_id=? AND generation=?",
+                (attempt_ref.attempt_id, attempt_ref.generation),
+            ).fetchone()
+            expected_hash = self._workflow_receiver_acceptance_hash(
+                binding_id=binding.binding_id,
+                attempt_ref=attempt_ref,
+                receiver_subject_ref=binding.receiver_subject_ref,
+                receiver_authorization_ref=binding.receiver_authorization_ref,
+                delivery_id=binding.delivery_id,
+                delivery_hash=binding.delivery_hash,
+            )
+            if (
+                receipt is None
+                or acceptance is None
+                or (receipt["binding_id"], receipt["delivery_id"], receipt["delivery_hash"])
+                != (binding.binding_id, binding.delivery_id, binding.delivery_hash)
+                or acceptance["binding_id"] != binding.binding_id
+                or acceptance["acceptance_sha256"] != expected_hash
+            ):
+                raise OriginConflict("acknowledged workflow Work has incomplete receiver evidence")
+            return self.repository._work(connection, attempt_ref.work_item_id)
+        if attempt["state"] != "sent":
+            raise OriginDenied("workflow receiver can acknowledge only the current sent attempt")
+        self._record_workflow_receiver_acceptance(
+            connection, attempt_ref=attempt_ref, binding=binding
+        )
+        receipt = TaskReceivedReceiptV1(
+            attempt=attempt_ref,
+            attempt_revision=attempt["revision"],
+            receiver_subject_ref=binding.receiver_subject_ref,
+            receiver_authorization_ref=binding.receiver_authorization_ref,
+            delivery_id=binding.delivery_id,
+            delivery_hash=binding.delivery_hash,
+            nonce=uuid4().hex,
+            proof="0" * 64,
+        )
+        receipt = receipt.model_copy(update={"proof": self._seal_task_receipt(receipt)})
+        validated = self.validate_workflow_task_received_receipt(connection, receipt, binding)
+        return self.repository._record_workflow_step_task_received_receipt(connection, **validated)
 
     def record_task_received_acceptance(
         self,
@@ -1333,9 +1594,7 @@ class WorkOrigins:
             self._require_receiver_acceptance(connection, provisional, origin)
             return provisional.model_copy(update={"proof": self._seal_task_receipt(provisional)})
 
-    def validate_task_received_receipt(
-        self, connection: sqlite3.Connection, receipt
-    ) -> dict:
+    def validate_task_received_receipt(self, connection: sqlite3.Connection, receipt) -> dict:
         """Validate a sealed receipt in the caller's ACK transaction."""
         if not connection.in_transaction:
             raise ValueError("caller-owned transaction required")
@@ -1407,6 +1666,44 @@ class WorkOrigins:
         except (AuthorityDenied, KeyError, TypeError, ValueError) as error:
             raise OriginDenied("managed lineage grant chain is not live") from error
 
+    def _workflow_binding_for_attempt(
+        self, connection, *, attempt_id: str, generation: int, work_item_id: str
+    ):
+        """Read only the durable workflow binding for this exact Work attempt."""
+        from cli_agent_orchestrator.services.work_workflow import WorkWorkflowOrigins
+
+        return WorkWorkflowOrigins(self.repository).read_binding_for_attempt(
+            attempt_id, generation, work_item_id, connection=connection
+        )
+
+    def _require_workflow_receiver_action(self, connection, binding, *, action: str):
+        """Revalidate one frozen receiver action against current subject/grant state."""
+        expected_action = {
+            "task_received": binding.receiver_received_action,
+            "task_result": binding.receiver_result_action,
+        }.get(action)
+        if expected_action != action:
+            raise OriginDenied("workflow receiver binding does not permit this action")
+        try:
+            subject, authorization, _chain, _job = self._authorization(
+                connection,
+                subject_ref=binding.receiver_subject_ref,
+                authorization_ref=binding.receiver_authorization_ref,
+                expected_kind="receiver",
+                action=action,
+                job_id=binding.job_id,
+            )
+        except (OriginDenied, OriginConflict) as error:
+            raise OriginDenied("workflow receiver action is absent, stale, or revoked") from error
+        if (
+            subject["subject_id"] != binding.receiver_subject_ref.subject_id
+            or subject["revision"] != binding.receiver_subject_ref.revision
+            or authorization["grant_id"] != binding.receiver_grant_id
+            or authorization["grant_revision"] != binding.receiver_grant_revision
+        ):
+            raise OriginDenied("workflow receiver authority differs from its immutable binding")
+        return subject, authorization
+
     @staticmethod
     def _authorization_grant(connection, *, subject_id: str, origin_kind: str, revision: int):
         """Read only the exact persisted grant pair selected by the sealed ref."""
@@ -1453,20 +1750,16 @@ class WorkOrigins:
             )
 
             try:
-                credential = WorkAttemptCredentials(self.repository).authenticate_digest_in_transaction(
-                    connection, context.credential_sha256
-                )
+                credential = WorkAttemptCredentials(
+                    self.repository
+                ).authenticate_digest_in_transaction(connection, context.credential_sha256)
             except WorkAttemptCredentialRejected as error:
                 raise OriginDenied("attempt credential authority is no longer live") from error
-            if (
-                (credential.attempt_id, credential.generation, credential.work_item_id)
-                != (
-                    parent_attempt_ref.attempt_id,
-                    parent_attempt_ref.generation,
-                    parent_attempt_ref.work_item_id,
-                )
-                or credential.principal_id != context.requester.id
-            ):
+            if (credential.attempt_id, credential.generation, credential.work_item_id) != (
+                parent_attempt_ref.attempt_id,
+                parent_attempt_ref.generation,
+                parent_attempt_ref.work_item_id,
+            ) or credential.principal_id != context.requester.id:
                 raise OriginDenied("attempt credential does not authorize this parent attempt")
         contract = self.contracts._contract(intent.contract)
         delivery = WorkDeliveries.envelope(intent.delivery, contract.operation_kind)

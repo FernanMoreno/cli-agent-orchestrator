@@ -76,51 +76,64 @@ async def test_memory_graph_cannot_bypass_legacy_boundary_with_cached_projection
         assert response.status_code == 403
         project.assert_not_called()
         from cli_agent_orchestrator.api.knowledge_routes import repository
+
         with repository().connection() as connection:
-            audit = [dict(row) for row in connection.execute('SELECT * FROM work_memory_access_audit')]
+            audit = [
+                dict(row) for row in connection.execute("SELECT * FROM work_memory_access_audit")
+            ]
         assert len(audit) == 1
-        assert audit[0]['phase'] == 'denied'
-        assert audit[0]['action'] == ('export' if method == 'POST' else 'graph')
-        assert audit[0]['actor_id'] == actor.id
+        assert audit[0]["phase"] == "denied"
+        assert audit[0]["action"] == ("export" if method == "POST" else "graph")
+        assert audit[0]["actor_id"] == actor.id
     finally:
         main.app.dependency_overrides.clear()
         main.app.dependency_overrides.update(previous)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('audit_fails', [False, True])
+@pytest.mark.parametrize("audit_fails", [False, True])
 async def test_remote_store_denial_is_durable_or_unavailable(monkeypatch, tmp_path, audit_fails):
     from cli_agent_orchestrator.api import knowledge_routes
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
-    store = WorkRepository(tmp_path / 'denial.sqlite')
+    store = WorkRepository(tmp_path / "denial.sqlite")
     store.initialize()
     if audit_fails:
         with store.connection() as connection:
-            connection.execute("CREATE TRIGGER reject_denied BEFORE INSERT ON work_memory_access_audit BEGIN SELECT RAISE(ABORT,'PRIVATE DATABASE ERROR'); END")
-    actor = auth._verified_principal('issuer', 'worker', [auth.SCOPE_ADMIN], 'jwt')
+            connection.execute(
+                "CREATE TRIGGER reject_denied BEFORE INSERT ON work_memory_access_audit BEGIN SELECT RAISE(ABORT,'PRIVATE DATABASE ERROR'); END"
+            )
+    actor = auth._verified_principal("issuer", "worker", [auth.SCOPE_ADMIN], "jwt")
     previous = dict(main.app.dependency_overrides)
     main.app.dependency_overrides[auth.get_current_principal] = lambda: actor
     main.app.dependency_overrides[knowledge_routes.repository] = lambda: store
-    monkeypatch.setattr(auth, 'is_auth_enabled', lambda: False)
+    monkeypatch.setattr(auth, "is_auth_enabled", lambda: False)
     service = SimpleNamespace(store=Mock())
-    monkeypatch.setattr(main, '_get_memory_service', lambda: service)
+    monkeypatch.setattr(main, "_get_memory_service", lambda: service)
     try:
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app, client=('127.0.0.1', 1234)), base_url='http://127.0.0.1') as client:
-            response = await client.post('/internal/memory/store?secret=PRIVATE_QUERY', json={'content': 'PRIVATE BODY', 'key': 'PRIVATE KEY'})
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=main.app, client=("127.0.0.1", 1234)),
+            base_url="http://127.0.0.1",
+        ) as client:
+            response = await client.post(
+                "/internal/memory/store?secret=PRIVATE_QUERY",
+                json={"content": "PRIVATE BODY", "key": "PRIVATE KEY"},
+            )
         assert response.status_code == (503 if audit_fails else 403)
-        assert 'PRIVATE' not in response.text
+        assert "PRIVATE" not in response.text
         service.store.assert_not_called()
         with store.connection() as connection:
-            audit = [dict(row) for row in connection.execute('SELECT * FROM work_memory_access_audit')]
+            audit = [
+                dict(row) for row in connection.execute("SELECT * FROM work_memory_access_audit")
+            ]
         if audit_fails:
             assert audit == []
         else:
             assert len(audit) == 1
-            assert audit[0]['phase'] == 'denied'
-            assert audit[0]['action'] == 'store'
-            assert audit[0]['actor_id'] == actor.id
-            assert 'PRIVATE' not in str(audit)
+            assert audit[0]["phase"] == "denied"
+            assert audit[0]["action"] == "store"
+            assert audit[0]["actor_id"] == actor.id
+            assert "PRIVATE" not in str(audit)
     finally:
         main.app.dependency_overrides.clear()
         main.app.dependency_overrides.update(previous)

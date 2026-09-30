@@ -14,11 +14,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator import constants
+from cli_agent_orchestrator.backends.work_backend import WorkBackendView
 from cli_agent_orchestrator.clients import database
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.services import terminal_service
-from cli_agent_orchestrator.backends.work_backend import WorkBackendView
 from cli_agent_orchestrator.services.work_admission import WorkAdmission
 
 
@@ -86,12 +86,8 @@ def isolated_api_database(tmp_path, monkeypatch):
     engine.dispose()
 
 
-def test_work_owned_input_and_key_are_rejected_before_backend_effect(
-    client, isolated_api_database
-):
-    _insert_work_attempt(
-        isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234"
-    )
+def test_work_owned_input_and_key_are_rejected_before_backend_effect(client, isolated_api_database):
+    _insert_work_attempt(isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234")
     _insert_terminal("abcd1234")
 
     input_response = client.post(
@@ -105,17 +101,13 @@ def test_work_owned_input_and_key_are_rejected_before_backend_effect(
     assert isolated_api_database.backend.effects == []
 
 
-def test_work_job_id_collision_does_not_claim_an_ordinary_terminal(
-    client, isolated_api_database
-):
+def test_work_job_id_collision_does_not_claim_an_ordinary_terminal(client, isolated_api_database):
     _insert_work_attempt(
         isolated_api_database.repository, job_id="beefcafe", terminal_id="abcd1234"
     )
     _insert_terminal("beefcafe")
 
-    input_response = client.post(
-        "/terminals/beefcafe/input", params={"message": "legacy input"}
-    )
+    input_response = client.post("/terminals/beefcafe/input", params={"message": "legacy input"})
     key_response = client.post("/terminals/beefcafe/key", params={"key": "Enter"})
 
     assert input_response.status_code == 200
@@ -123,12 +115,8 @@ def test_work_job_id_collision_does_not_claim_an_ordinary_terminal(
     assert [effect[0] for effect in isolated_api_database.backend.effects] == ["input", "key"]
 
 
-def test_missing_terminal_remains_not_found_without_backend_effect(
-    client, isolated_api_database
-):
-    input_response = client.post(
-        "/terminals/cafecafe/input", params={"message": "missing"}
-    )
+def test_missing_terminal_remains_not_found_without_backend_effect(client, isolated_api_database):
+    input_response = client.post("/terminals/cafecafe/input", params={"message": "missing"})
     key_response = client.post("/terminals/cafecafe/key", params={"key": "Enter"})
 
     assert input_response.status_code == 404
@@ -137,9 +125,7 @@ def test_missing_terminal_remains_not_found_without_backend_effect(
 
 
 def test_work_owned_service_calls_are_independently_fenced(isolated_api_database):
-    _insert_work_attempt(
-        isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234"
-    )
+    _insert_work_attempt(isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234")
     _insert_terminal("abcd1234")
 
     with pytest.raises(Exception, match="owned by Work"):
@@ -770,10 +756,10 @@ def test_ordinary_send_holds_terminal_dispatch_lock_from_guard_through_transport
 
     backend = LockProbeBackend()
     monkeypatch.setattr(terminal_service, "get_backend", lambda: backend)
+    monkeypatch.setattr(terminal_service.provider_manager, "get_provider", lambda *_args: None)
     monkeypatch.setattr(
-        terminal_service.provider_manager, "get_provider", lambda *_args: None
+        terminal_service, "ensure_terminal_is_not_work_owned", observe_ownership_check
     )
-    monkeypatch.setattr(terminal_service, "ensure_terminal_is_not_work_owned", observe_ownership_check)
     monkeypatch.setattr(
         terminal_service.status_monitor, "notify_input_sent", lambda *_args, **_kwargs: None
     )
@@ -812,9 +798,7 @@ def test_ordinary_send_releases_terminal_dispatch_lock_before_plugin_callback(
         assert terminal_service.send_input(terminal_id, "nested input") is True
 
     monkeypatch.setattr(terminal_service, "dispatch_plugin_event", observe_plugin_dispatch)
-    monkeypatch.setattr(
-        terminal_service.provider_manager, "get_provider", lambda *_args: None
-    )
+    monkeypatch.setattr(terminal_service.provider_manager, "get_provider", lambda *_args: None)
     monkeypatch.setattr(
         terminal_service.status_monitor, "notify_input_sent", lambda *_args, **_kwargs: None
     )
@@ -824,13 +808,16 @@ def test_ordinary_send_releases_terminal_dispatch_lock_before_plugin_callback(
         lambda *_args, **_kwargs: None,
     )
 
-    assert terminal_service.send_input(
-        terminal_id,
-        "ordinary input",
-        registry=object(),
-        sender_id="operator",
-        orchestration_type=OrchestrationType.SEND_MESSAGE,
-    ) is True
+    assert (
+        terminal_service.send_input(
+            terminal_id,
+            "ordinary input",
+            registry=object(),
+            sender_id="operator",
+            orchestration_type=OrchestrationType.SEND_MESSAGE,
+        )
+        is True
+    )
 
     assert callback_calls == [True]
     assert [record[0] for record in isolated_api_database.backend.effects] == [
@@ -842,9 +829,7 @@ def test_ordinary_send_releases_terminal_dispatch_lock_before_plugin_callback(
 def test_managed_input_rejects_a_session_window_mismatch_before_service_side_effects(
     isolated_api_database, monkeypatch
 ):
-    _insert_work_attempt(
-        isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234"
-    )
+    _insert_work_attempt(isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234")
     _insert_terminal("abcd1234")
     side_effects = []
 
@@ -909,9 +894,7 @@ def test_managed_input_rejects_a_session_window_mismatch_before_service_side_eff
 def test_managed_special_key_rejects_a_session_window_mismatch_before_notify(
     isolated_api_database, monkeypatch
 ):
-    _insert_work_attempt(
-        isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234"
-    )
+    _insert_work_attempt(isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234")
     _insert_terminal("abcd1234")
     side_effects = []
 
@@ -961,9 +944,7 @@ def test_managed_special_key_rejects_a_session_window_mismatch_before_notify(
 def test_managed_input_revalidates_immediately_before_receipt_claim(
     isolated_api_database, monkeypatch
 ):
-    _insert_work_attempt(
-        isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234"
-    )
+    _insert_work_attempt(isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234")
     _insert_terminal("abcd1234")
     effects = []
     guard_calls = 0
@@ -1039,9 +1020,7 @@ def test_managed_input_revalidates_immediately_before_receipt_claim(
 def test_managed_special_key_revalidates_immediately_before_monitor_notify(
     isolated_api_database, monkeypatch
 ):
-    _insert_work_attempt(
-        isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234"
-    )
+    _insert_work_attempt(isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234")
     _insert_terminal("abcd1234")
     effects = []
     guard_calls = 0
@@ -1098,9 +1077,7 @@ def test_work_terminal_fence_survives_service_process_restart(tmp_path):
     from sqlalchemy import create_engine
 
     home = tmp_path / "server-home"
-    database_path = (
-        home / ".aws" / "cli-agent-orchestrator" / "db" / "cli-agent-orchestrator.db"
-    )
+    database_path = home / ".aws" / "cli-agent-orchestrator" / "db" / "cli-agent-orchestrator.db"
     database_path.parent.mkdir(parents=True)
     repository = WorkRepository(database_path)
     repository.initialize()
@@ -1109,8 +1086,7 @@ def test_work_terminal_fence_survives_service_process_restart(tmp_path):
     _insert_work_attempt(repository, job_id="job-1", terminal_id="abcd1234")
     with sqlite3.connect(database_path) as connection:
         connection.execute(
-            "INSERT INTO terminals (id,tmux_session,tmux_window,provider) "
-            "VALUES (?,?,?,?)",
+            "INSERT INTO terminals (id,tmux_session,tmux_window,provider) " "VALUES (?,?,?,?)",
             ("abcd1234", "missing-session", "missing-window", "mock_cli"),
         )
     engine.dispose()

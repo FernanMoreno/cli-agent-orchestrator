@@ -2,7 +2,7 @@
 
 **Branch real**: `main` | **Feature**: `001-verifiable-orchestration` | **Date**: 2026-09-22
 **Spec**: [spec.md](spec.md)
-**Status**: diseño aprobado; implementación incremental en curso. El estado por tarea y la evidencia acotada se mantienen en tasks.md y workflow-status.md.
+**Status**: diseño implementado y aceptado en el alcance local acordado; cierre documental el 2026-09-30. Estado vigente y límites en [acceptance-status.md](acceptance-status.md); tareas en tasks.md y registro histórico en workflow-status.md.
 
 ## Summary
 
@@ -272,15 +272,60 @@ reactivación automática. La aprobación
 T093 no autoriza activar nuevas entradas públicas, MCP, proveedores reales ni
 usar la DB de operador.
 
-La ruta ordinaria actual `cao launch → POST /sessions → session_service →
-terminal_service` no proporciona `Principal`, selector de provisión ni una
-idempotency key server-owned para Work. El parámetro `idempotency_key` legacy
-de `/sessions` es opcional y proviene del caller; no equivale al binding de
-Work. Antes de implementar T017 debe aprobarse/componerse un ingreso interno
-autenticado que entregue esas tres piezas y el handoff a `LaunchRuntime`;
-no se derivan de `agents`, nombre de sesión, request body o `caller_id`.
-Mientras falte ese contrato, el RED de no-efecto no puede recibir un GREEN
-honesto y la ruta legacy permanece distinta del ingreso durable.
+### T020: bridge YAML/script a Work y resultado durable
+
+T020 reutiliza `WorkProvisioning`, `WorkWorkflowOrigins`, `WorkAdmission`,
+`WorkContracts`, `WorkOrigins` y `WorkService`; el helper de admisión actual no
+basta porque no fija una provisión por step ni binding de receptor/resultado.
+El inicio autenticado obtiene `Principal` fuera del body y resuelve por
+`(principal, workflow_id/revision, step_id)` una provisión server-owned. La
+resolución fija refs de sujeto/autorización workflow y receiver, grant, contrato,
+snapshot, adapter y lease. YAML pasa el callback por
+`workflow_service.start_run`; script usa la misma resolución del run record en
+`api/main.py:run_step`. Ningún caller, archivo YAML/script, run ID ni terminal
+puede suministrar refs de autoridad. Step sin provisión conserva el camino
+legacy, sin reclasificación retrospectiva.
+
+La migración Work v39 (aditiva tras v38, sin backfill) persiste revisiones de
+provisión y un binding append-only por tier/run/run-generation/step/workflow
+step-attempt. El binding congela hash de spec, refs/revisiones de origen,
+contrato, snapshot, delivery/hash, Work item/attempt/generation y refs/revisiones
+del receiver. WorkAdmission y binding deben commit antes del dispatch; una
+recovery previa al binding sólo repite la misma admisión idempotente. Retry
+explícito incrementa workflow step-attempt; restart, timeout, falta de ACK,
+replay o reconciliación no crean Work ni Work generation nuevos.
+
+El proxy MCP privado conserva `cao.work.task_received` y añade
+`cao.work.submit_result`. `WorkOrigins` autentica receptor y binding exactos;
+`WorkService` es dueño de ACK y resultado. `WorkflowStepResultV1` es JSON
+estricto, validado server-side contra el schema del step congelado y publicado
+como artefacto durable antes del Work finish CAS. La salida/terminación de
+terminal no cuenta como resultado. Un projector reiniciable vuelve a leer ese
+artefacto y en una sola transacción SQLite hace CAS de journal y marca de
+proyección con run-generation/step-attempt/Work-attempt exactos. Resume recupera
+primero/proyecta el pending y no avanza run-generation mientras siga pendiente.
+Un conflicto, Work incierto, revocación o drift queda pendiente/bloqueado para
+conciliación explícita.
+
+La aceptación de T020 usa Docker local sólo desde un flag de test opt-in y un
+worker determinista `agent_step` que habla por el proxy MCP real; reutiliza el
+aislamiento T019 sin proveedor externo. El worker está separado del demo `launch`
+existente, imagen/digest fijados; `WORK_BACKENDS` sigue vacío por defecto. Este
+perfil acredita sólo aceptación local. Contrato de payload, transacciones,
+recovery y matriz mínima están en
+[`contracts/workflow-managed.md`](contracts/workflow-managed.md).
+
+T017 compone el ingreso autenticado ya existente de `/work-launches` y
+`LaunchRuntime` bajo el modo local explícito `CAO_WORK_LAUNCH_MODE=required`.
+`cao launch` ordinario envía sólo intención y selector opaco y recibe un
+`LaunchReceipt` durable; el servidor deriva `Principal` del bearer, resuelve la
+provisión vigente y fija la idempotency key en `LaunchRuntime`. El modo bloquea
+la entrada `/sessions` y la creación ordinaria de sesiones en
+`terminal_service` antes de cualquier efecto, incluso si otro cliente intenta
+eludir el CLI. Sin el modo, `/sessions` conserva su compatibilidad legacy.
+Un valor de modo desconocido falla cerrado. Esta composición no registra un
+backend Work ni autoriza despliegue o una nueva entrada pública. El parámetro
+`idempotency_key` legacy de `/sessions` no se eleva a identidad Work.
 
 No equiparar allowed_tools ni prompt con sandbox. El contrato declara nivel de enforcement:
 control-plane para operaciones CAO y aislamiento verificable para rutas/comandos/red del
@@ -401,14 +446,15 @@ aislado, conciliación explícita de todo estado posterior y autorización
 separada de restore T070: no hay downgrade in-place, DROP ni pérdida tácita.
 Transporte queda fuera de este contrato.
 
-#### Cierre de perfil con Work schema v38 (2026-09-29)
+#### Cierre de perfil con Work schema v39 (2026-09-30)
 
 El inventario fija perfiles separados por versión del schema: v28 conserva el
 catálogo cerrado de Work schema30 y sirve sólo para verificar bundles v2
 históricos; v29 añade las tablas y FKs de las migraciones31–38 y verifica el
-ledger completo con sus checksums hasta schema38. La captura nueva usa v29.
-El verificador acepta v28/v29 con sus catálogos respectivos, pero restore sólo
-admite el perfil actual v29. Los bundles v1 v24/v25 mantienen su verificación
+ledger completo con sus checksums hasta schema38. v30 añade la migración39
+y su catálogo cerrado. La captura nueva usa v30/schema39.
+El verificador acepta v28/v29/v30 con sus catálogos respectivos, pero restore
+sólo admite el perfil actual v30. Los bundles v1 v24/v25 mantienen su verificación
 de integridad histórica y no obtienen autoridad de restore.
 
 ### US7: operación, mantenibilidad y release
@@ -505,3 +551,14 @@ La escala requiere siete entregas; un commit monolítico no permitiría aislar f
 Se rechazan event sourcing integral, motor distribuido nuevo y reescritura de proveedores:
 el estado transaccional más eventos durables cubre las garantías requeridas.
 No se justifica una excepción a la constitución.
+
+
+#### Perfil de recuperación del candidato T085 (2026-09-30)
+
+El candidato aislado que incorpora upstream usa el perfil cerrado v31 con
+Work schema39. Incluye las siete tablas nuevas de handoff/vault y la columna
+`memory_metadata.source_kind`. Los catálogos históricos v28/v29/v30 permanecen
+inmutables y verificables; restore sólo admite v31. Las referencias a fuentes
+canónicas externas del vault se registran como `requires_future_profile`:
+el bundle no incluye sus archivos ni acredita su recuperación. Este cambio
+pertenece al candidato T085 y no al checkout original, que conserva v30.

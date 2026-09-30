@@ -380,9 +380,10 @@ class TestPostTurnReceiptProbe:
         mock_settle.assert_not_called()
         provider.mark_turn_receipt_result_verified.assert_not_called()
 
-        assert settle_post_turn_receipt_result(
-            "receipt-terminal", "finished\nCAO_TURN_RECEIPT_x"
-        ) == "finished\nCAO_TURN_RECEIPT_x"
+        assert (
+            settle_post_turn_receipt_result("receipt-terminal", "finished\nCAO_TURN_RECEIPT_x")
+            == "finished\nCAO_TURN_RECEIPT_x"
+        )
         assert mock_buffer.call_count == 2
         mock_settle.assert_called_once_with(
             "receipt-terminal",
@@ -391,9 +392,7 @@ class TestPostTurnReceiptProbe:
             hashlib.sha256("finished\nCAO_TURN_RECEIPT_x".encode("utf-8")).hexdigest(),
         )
         provider.mark_turn_receipt_result_verified.assert_called_once()
-        mock_publish.assert_called_once_with(
-            "receipt-terminal", TerminalStatus.WAITING_USER_ANSWER
-        )
+        mock_publish.assert_called_once_with("receipt-terminal", TerminalStatus.WAITING_USER_ANSWER)
         mock_backend.assert_not_called()
 
     @patch(f"{_TS}.get_backend")
@@ -423,9 +422,10 @@ class TestPostTurnReceiptProbe:
         assert probe_post_turn_receipt_result("receipt-terminal") == (
             "finished\nCAO_TURN_RECEIPT_x"
         )
-        assert settle_post_turn_receipt_result(
-            "receipt-terminal", "finished\nCAO_TURN_RECEIPT_x"
-        ) == "finished\nCAO_TURN_RECEIPT_x"
+        assert (
+            settle_post_turn_receipt_result("receipt-terminal", "finished\nCAO_TURN_RECEIPT_x")
+            == "finished\nCAO_TURN_RECEIPT_x"
+        )
 
         provider.extract_post_turn_completion_result.assert_not_called()
         mock_publish.assert_called_once_with("receipt-terminal", TerminalStatus.COMPLETED)
@@ -476,9 +476,10 @@ class TestPostTurnReceiptProbe:
         assert probe_post_turn_receipt_result("receipt-terminal") == (
             "finished\nCAO_TURN_RECEIPT_x"
         )
-        assert settle_post_turn_receipt_result(
-            "receipt-terminal", "finished\nCAO_TURN_RECEIPT_x"
-        ) == "finished\nCAO_TURN_RECEIPT_x"
+        assert (
+            settle_post_turn_receipt_result("receipt-terminal", "finished\nCAO_TURN_RECEIPT_x")
+            == "finished\nCAO_TURN_RECEIPT_x"
+        )
 
         mock_backend.return_value.get_history.assert_has_calls(
             [

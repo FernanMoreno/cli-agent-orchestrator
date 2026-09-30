@@ -161,7 +161,7 @@ def test_the_resume_endpoint_answers_403_and_not_400_or_409():
     from cli_agent_orchestrator.api.main import app
 
     _insert_failed_script_run("run-403")
-    client = TestClient(app, base_url="http://localhost")
+    client = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
 
     response = client.post("/workflows/runs/run-403/resume")
 
@@ -195,7 +195,7 @@ def test_the_resume_endpoint_answers_503_when_the_approval_store_is_unreadable(m
     # keeps its own connection, so the admission ladder still reaches the approval gate.
     monkeypatch.setattr(approval_store, "_connect", unreadable_store)
 
-    client = TestClient(app, base_url="http://localhost")
+    client = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
     response = client.post("/workflows/runs/run-503/resume")
 
     assert response.status_code == 503, (
@@ -269,7 +269,7 @@ def test_store_fault_refuses_start_before_writing_a_run(endpoint, monkeypatch):
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(approval_store, "_connect", unreadable_store)
-    response = TestClient(app, base_url="http://localhost").post(
+    response = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)).post(
         endpoint, json={"name_or_path": "store-fault", "run_id": "refused-start"}
     )
     assert response.status_code == 503, response.text

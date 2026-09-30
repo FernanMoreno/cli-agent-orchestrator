@@ -3,6 +3,11 @@
 import importlib
 import sqlite3
 import time
+from test.clients.test_work_repository import (
+    legacy_admit,
+    legacy_v21_store,
+    migrate_legacy_v21_store,
+)
 
 import pytest
 from pydantic import ValidationError
@@ -15,11 +20,6 @@ from cli_agent_orchestrator.services.delegation_snapshot import (
 )
 from cli_agent_orchestrator.services.knowledge_policy import KnowledgePolicy
 from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
-from test.clients.test_work_repository import (
-    legacy_admit,
-    legacy_v21_store,
-    migrate_legacy_v21_store,
-)
 
 
 @pytest.mark.parametrize("payload", ['{"schema_version":1}', '{"schema_version":1,"id":null}'])
@@ -78,7 +78,8 @@ def context(tmp_path, *, legacy=False):
         job_id=job["id"],
         providers={"mock_cli"},
         permissions=Permissions(
-            tools={"knowledge.read", "Read"}, paths={str(tmp_path)},
+            tools={"knowledge.read", "Read"},
+            paths={str(tmp_path)},
             commands={"/bin/alpha", "/bin/beta"},
         ),
         expires_at=time.time() + 600,
@@ -472,6 +473,41 @@ def _v2_identity(**changes):
     }
     identity.update(changes)
     return identity
+
+
+@pytest.mark.parametrize("grant_checkout_path", [False, True])
+def test_process_agent_step_checkout_metadata_does_not_grant_workspace_access(
+    tmp_path, grant_checkout_path
+):
+    models = importlib.import_module("cli_agent_orchestrator.models.work_contract")
+    module = importlib.import_module("cli_agent_orchestrator.services.work_contract")
+    contract = models.EffectiveWorkContractV2(
+        id="contract",
+        operation_kind="agent_step",
+        provider="mock_cli",
+        backend="docker-local",
+        permissions=models.ContractPermissions(
+            commands=("/usr/bin/tool",),
+            paths=(str(tmp_path),) if grant_checkout_path else (),
+        ),
+        resources=models.ContractResources(checkout_root=str(tmp_path), units=1),
+        snapshot=models.ContractSnapshot(state="present", id="snapshot", delivered_hash="a" * 64),
+        executable_identities=(_v2_identity(),),
+    )
+    attempt = {
+        "contract_id": contract.id,
+        "operation_kind": contract.operation_kind,
+        "provider": contract.provider,
+        "snapshot_id": contract.snapshot.id,
+        "job_id": "job",
+        "work_item_id": "work",
+    }
+
+    if grant_checkout_path:
+        with pytest.raises(module.ContractConflict, match="cannot grant workspace"):
+            module.WorkContracts._relationships(sqlite3.connect(":memory:"), attempt, contract)
+    else:
+        module.WorkContracts._relationships(sqlite3.connect(":memory:"), attempt, contract)
 
 
 def _v2_payload(**changes):

@@ -380,7 +380,7 @@ class TestResumeTierDispatch:
         row = workflow_journal.RunRow(
             run_id=run_id,
             workflow_name="wf",
-            spec_snapshot="{}",
+            spec_snapshot='{"source":"# frozen test script"}' if tier == "script" else "{}",
             inputs_json="{}",
             state="failed",
             current_step_id=None,

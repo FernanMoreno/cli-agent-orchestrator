@@ -83,8 +83,10 @@ use crate::guided_flow::{self, Field, FieldKind, GuidedFlow, PickerState, UNLOAD
 use crate::handoff::{HandoffDriver, Host, ServerRead};
 use crate::results_pane::{PaneState, ResultsPane};
 use crate::theme::Theme;
+use crate::types::{
+    Health, Profile, Provider, Readiness, SessionParams, Terminal, TerminalStatus, WorkView,
+};
 use crate::work_status_generated::{work_status_semantics, WorkSemanticRole};
-use crate::types::{Health, Profile, Provider, Readiness, SessionParams, Terminal, TerminalStatus, WorkView};
 
 /// The minimum terminal the two-column layout needs (NFR-6). Below either bound the layout
 /// **stacks** — degraded but fully usable, never an error state.
@@ -1427,9 +1429,7 @@ impl<'a, S: ServerApi, H: Host> Renderer<'a, S, H> {
         };
 
         match self.work_view.as_ref() {
-            Some(Ok(work))
-                if work.work_item_id == selected_id && work.schema_version == 1 =>
-            {
+            Some(Ok(work)) if work.work_item_id == selected_id && work.schema_version == 1 => {
                 if let Some(semantics) = work_status_semantics(&work.work_state) {
                     vec![
                         Line::raw(format!(
@@ -2847,23 +2847,15 @@ impl<'a, S: ServerApi, H: Host> Renderer<'a, S, H> {
                 .first()
                 .map(ToString::to_string)
                 .unwrap_or_else(|| format!("results [{}]", pane_state_word(self.pane.state())));
-            buf.set_string(
-                area.x,
-                area.y,
-                summary,
-                Style::default(),
-            );
+            buf.set_string(area.x, area.y, summary, Style::default());
             return;
         }
         let work_height = wrapped_heights(&work_lines, area.width)
             .iter()
             .sum::<usize>()
             .min(usize::from(area.height - 1)) as u16;
-        let [work_area, pane_area] = Layout::vertical([
-            Constraint::Length(work_height),
-            Constraint::Min(1),
-        ])
-        .areas(area);
+        let [work_area, pane_area] =
+            Layout::vertical([Constraint::Length(work_height), Constraint::Min(1)]).areas(area);
         paragraph(&work_lines).render(work_area, buf);
         (&self.pane).render(pane_area, buf);
     }
@@ -3492,7 +3484,9 @@ mod tests {
     use crate::handoff::{Host, ServerRead};
     use crate::results_pane::PaneState;
     use crate::theme::Theme;
-    use crate::types::{Health, Profile, Provider, SessionParams, Terminal, TerminalStatus, WorkView};
+    use crate::types::{
+        Health, Profile, Provider, SessionParams, Terminal, TerminalStatus, WorkView,
+    };
     use crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::style::Color;
     use ratatui::text::Line;
@@ -3770,9 +3764,7 @@ mod tests {
         }
 
         fn work(&self, work_item_id: &str) -> Result<WorkView, TuiError> {
-            self.work_calls
-                .borrow_mut()
-                .push(work_item_id.to_string());
+            self.work_calls.borrow_mut().push(work_item_id.to_string());
             match self.work_answer.borrow().as_ref() {
                 Ok(work) => Ok(work.clone()),
                 Err(message) => Err(TuiError::Unreachable(message.clone())),
@@ -3990,6 +3982,54 @@ mod tests {
         .expect("the selected semantic role must have a foreground in the colour theme")
     }
 
+    fn assert_work_presentation_matches_fixture(
+        shell: &Renderer<'_, FakeServer, FakeHost>,
+        expected: &serde_json::Value,
+        phase: &str,
+    ) {
+        let state = expected["state"].as_str().expect("fixture state is text");
+        let label = expected["label"].as_str().expect("fixture label is text");
+        let role = expected["semantic_role"]
+            .as_str()
+            .expect("fixture role is text");
+        let running = expected["running_count"]
+            .as_u64()
+            .expect("fixture running count is numeric");
+        let succeeded = expected["succeeded_count"]
+            .as_u64()
+            .expect("fixture succeeded count is numeric");
+        let semantics = crate::work_status_generated::work_status_semantics(state)
+            .expect("fixture state must have generated presentation semantics");
+        assert_eq!(semantics.state, state, "{phase}: rendered fixture state");
+        assert_eq!(semantics.label, label, "{phase}: rendered fixture label");
+        assert_eq!(
+            semantics.semantic_role.as_str(),
+            role,
+            "{phase}: rendered fixture semantic role"
+        );
+        assert_eq!(u64::from(semantics.observed_running_count), running);
+        assert_eq!(u64::from(semantics.observed_succeeded_count), succeeded);
+
+        let frame_text = joined(&shell.render().results, "\n");
+        let expected_line = format!(
+            "Work: {label} · Observed running: {running} · Observed succeeded: {succeeded}"
+        );
+        assert!(
+            frame_text.contains(&expected_line),
+            "{phase} state {state:?} must follow the fixture: expected {expected_line:?}; got \
+             {frame_text:?}"
+        );
+        assert!(
+            frame_text.contains(&format!("durable state: job=running work={state}")),
+            "{phase} state {state:?} must remain visible as durable Work text: {frame_text:?}"
+        );
+        assert_eq!(
+            drawn_foreground(shell, 120, 90, label),
+            expected_work_role_colour(role),
+            "{phase} state {state:?} must render its {role:?} signal through the TUI theme"
+        );
+    }
+
     #[test]
     fn running_work_with_terminal_idle_renders_observed_counts_and_info_role() {
         let server = FakeServer::healthy().with_terminal_script(vec![
@@ -4015,11 +4055,20 @@ mod tests {
         let frame = shell.render();
         let frame_text = joined(&frame.results, "\n");
         assert!(frame_text.contains("Work: Running"), "got {frame_text:?}");
-        assert!(frame_text.contains("Observed running: 1"), "got {frame_text:?}");
-        assert!(frame_text.contains("Observed succeeded: 0"), "got {frame_text:?}");
+        assert!(
+            frame_text.contains("Observed running: 1"),
+            "got {frame_text:?}"
+        );
+        assert!(
+            frame_text.contains("Observed succeeded: 0"),
+            "got {frame_text:?}"
+        );
         assert_eq!(
             drawn_foreground(&shell, 120, 90, "Running"),
-            Theme::colour().focus.fg.expect("info uses the theme foreground"),
+            Theme::colour()
+                .focus
+                .fg
+                .expect("info uses the theme foreground"),
             "running Work must use the Info role even when terminal status is idle"
         );
 
@@ -4048,9 +4097,8 @@ mod tests {
 
     #[test]
     fn succeeded_work_with_terminal_processing_renders_counts_and_accent_role() {
-        let server = FakeServer::healthy().with_terminal_script(vec![
-            Reply::Status(Some(TerminalStatus::Processing)),
-        ]);
+        let server = FakeServer::healthy()
+            .with_terminal_script(vec![Reply::Status(Some(TerminalStatus::Processing))]);
         let terminal = ServerRead::terminal(&server, "terminal-1").expect("terminal status reads");
         assert_eq!(terminal.status, Some(TerminalStatus::Processing));
         set_work_state(&server, "succeeded", 4);
@@ -4062,21 +4110,29 @@ mod tests {
 
         let frame_text = joined(&shell.render().results, "\n");
         assert!(frame_text.contains("Work: Succeeded"), "got {frame_text:?}");
-        assert!(frame_text.contains("Observed running: 0"), "got {frame_text:?}");
-        assert!(frame_text.contains("Observed succeeded: 1"), "got {frame_text:?}");
+        assert!(
+            frame_text.contains("Observed running: 0"),
+            "got {frame_text:?}"
+        );
+        assert!(
+            frame_text.contains("Observed succeeded: 1"),
+            "got {frame_text:?}"
+        );
         assert_eq!(
             drawn_foreground(&shell, 120, 90, "Succeeded"),
-            Theme::colour().ok.fg.expect("accent uses the theme foreground"),
+            Theme::colour()
+                .ok
+                .fg
+                .expect("accent uses the theme foreground"),
             "succeeded Work must use Accent regardless of terminal processing"
         );
     }
 
     #[test]
     fn fixture_work_states_render_their_labels_counts_and_semantic_roles() {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../test/fixtures/work_contract_v1.json"
-        ))
-        .expect("the shared WorkView contract fixture is JSON");
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../test/fixtures/work_contract_v1.json"))
+                .expect("the shared WorkView contract fixture is JSON");
         let expected_states = fixture["presentation_expectations"]["work_states"]
             .as_array()
             .expect("the shared fixture contains presentation expectations");
@@ -4118,6 +4174,73 @@ mod tests {
     }
 
     #[test]
+    fn fixture_work_transitions_replay_all_fifteen_edges_and_render_each_target() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../test/fixtures/work_contract_v1.json"))
+                .expect("the shared WorkView contract fixture is JSON");
+        let presentation = &fixture["presentation_expectations"];
+        let expected_states = presentation["work_states"]
+            .as_array()
+            .expect("the shared fixture contains presentation states");
+        let transitions = presentation["work_transitions"]
+            .as_array()
+            .expect("the shared fixture contains Work transition edges");
+        assert_eq!(
+            transitions.len(),
+            15,
+            "the fixture must cover every legal Work edge"
+        );
+
+        let mut seen_edges = Vec::new();
+        let host = FakeHost::outside_tmux();
+        for transition in transitions {
+            let from = transition["from"]
+                .as_str()
+                .expect("transition source is text");
+            let to = transition["to"]
+                .as_str()
+                .expect("transition target is text");
+            let edge = format!("{from}->{to}");
+            assert!(
+                !seen_edges.contains(&edge),
+                "the fixture must not repeat Work transition {edge}"
+            );
+            seen_edges.push(edge);
+
+            let from_expected = expected_states
+                .iter()
+                .find(|expected| expected["state"] == from)
+                .unwrap_or_else(|| panic!("fixture has no presentation state for {from:?}"));
+            let to_expected = expected_states
+                .iter()
+                .find(|expected| expected["state"] == to)
+                .unwrap_or_else(|| panic!("fixture has no presentation state for {to:?}"));
+
+            let server = FakeServer::healthy();
+            set_work_state(&server, from, 3);
+            let mut shell = Renderer::new(&server, &host, MIN_COLS, MIN_ROWS)
+                .with_work_item_id(Some("work-fixture".to_string()));
+            shell.set_theme(Theme::colour());
+            assert_work_presentation_matches_fixture(&shell, from_expected, "source");
+
+            set_work_state(&server, to, 4);
+            shell.refresh_work_item();
+            assert_work_presentation_matches_fixture(&shell, to_expected, "target");
+            assert_eq!(
+                server.work_calls.borrow().as_slice(),
+                ["work-fixture", "work-fixture"],
+                "the renderer must read the selected Work item at both edge endpoints"
+            );
+        }
+
+        assert_eq!(
+            seen_edges.len(),
+            15,
+            "every fixture edge must be replayed once"
+        );
+    }
+
+    #[test]
     fn unavailable_or_invalid_work_observation_renders_unknown_counts_not_zero() {
         let host = FakeHost::outside_tmux();
         let cases = ["load error", "wrong ID", "invalid version", "unknown state"];
@@ -4138,15 +4261,16 @@ mod tests {
                         .work_item_id = "other".to_string();
                 }
                 "invalid version" => {
-                    server.work_answer.borrow_mut().as_mut().unwrap().schema_version = 2;
-                }
-                "unknown state" => {
                     server
                         .work_answer
                         .borrow_mut()
                         .as_mut()
                         .unwrap()
-                        .work_state = "future_state".to_string();
+                        .schema_version = 2;
+                }
+                "unknown state" => {
+                    server.work_answer.borrow_mut().as_mut().unwrap().work_state =
+                        "future_state".to_string();
                 }
                 _ => unreachable!(),
             }
@@ -4185,8 +4309,14 @@ mod tests {
             stale_text.contains("Work: Running"),
             "lower revision replaced current state: {stale_text:?}"
         );
-        assert!(stale_text.contains("Observed running: 1"), "got {stale_text:?}");
-        assert!(stale_text.contains("Observed succeeded: 0"), "got {stale_text:?}");
+        assert!(
+            stale_text.contains("Observed running: 1"),
+            "got {stale_text:?}"
+        );
+        assert!(
+            stale_text.contains("Observed succeeded: 0"),
+            "got {stale_text:?}"
+        );
 
         set_work_state(&server, "succeeded", 3);
         shell.refresh_work_item();
@@ -4211,8 +4341,14 @@ mod tests {
         let text = shell.render().plain_lines().join("\n");
 
         assert!(text.contains("No work selected"), "got {text:?}");
-        assert!(!text.contains("Observed running:"), "no selection has no totals: {text:?}");
-        assert!(!text.contains("Observed succeeded:"), "no selection has no totals: {text:?}");
+        assert!(
+            !text.contains("Observed running:"),
+            "no selection has no totals: {text:?}"
+        );
+        assert!(
+            !text.contains("Observed succeeded:"),
+            "no selection has no totals: {text:?}"
+        );
     }
 
     #[test]
@@ -4243,7 +4379,8 @@ mod tests {
             Reply::Status(Some(TerminalStatus::Idle)),
             Reply::Status(Some(TerminalStatus::Completed)),
         ]);
-        let idle = ServerRead::terminal(&server, "terminal-1").expect("terminal status is readable");
+        let idle =
+            ServerRead::terminal(&server, "terminal-1").expect("terminal status is readable");
         let completed =
             ServerRead::terminal(&server, "terminal-1").expect("terminal status is readable");
         assert_eq!(idle.status, Some(TerminalStatus::Idle));
@@ -4276,7 +4413,12 @@ mod tests {
         }
 
         let drawn = screen(&shell, MIN_COLS, MIN_ROWS);
-        for expected in ["work-fixture", "job-fixture", "work=running", "process=alive"] {
+        for expected in [
+            "work-fixture",
+            "job-fixture",
+            "work=running",
+            "process=alive",
+        ] {
             assert!(
                 drawn.contains(expected),
                 "selected WorkView data must reach the actual drawn results area: {expected:?}; \
@@ -4296,7 +4438,11 @@ mod tests {
             "absence of an explicit work ID must not trigger WorkView discovery"
         );
         assert!(
-            !shell.render().plain_lines().join("\n").contains("work-fixture"),
+            !shell
+                .render()
+                .plain_lines()
+                .join("\n")
+                .contains("work-fixture"),
             "legacy readiness rendering stays independent when no durable work was selected"
         );
     }
@@ -4319,8 +4465,7 @@ mod tests {
             "refresh must reread the explicitly selected ID"
         );
         assert!(
-            text.contains("work work-fixture: unavailable")
-                && text.contains("HTTP 401"),
+            text.contains("work work-fixture: unavailable") && text.contains("HTTP 401"),
             "a failed selected read must stay visible as unavailable with its cause; got {text:?}"
         );
         assert!(
@@ -7241,7 +7386,10 @@ mod tests {
     ) -> Color {
         assert!(needle.is_ascii(), "row indexing here is by byte offset");
         let cells = drawn_cells(shell, width, height);
-        let needle_cells: Vec<String> = needle.chars().map(|character| character.to_string()).collect();
+        let needle_cells: Vec<String> = needle
+            .chars()
+            .map(|character| character.to_string())
+            .collect();
         for row in cells.chunks(width as usize) {
             if let Some(start) = row.windows(needle_cells.len()).position(|window| {
                 window

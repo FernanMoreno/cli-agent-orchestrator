@@ -8,8 +8,8 @@ import json
 import multiprocessing
 import os
 import select
-import signal
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -21,16 +21,16 @@ import pytest
 
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.services import work_process_supervisor
-from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 from cli_agent_orchestrator.services.work_process_supervisor import (
     WorkProcessAttempt,
     WorkProcessIdentity,
     WorkProcessIsolationUnavailable,
-    WorkProcessState,
     WorkProcessStartUncertain,
+    WorkProcessState,
     WorkProcessSupervisor,
     WorkProcessSupervisorBlocked,
 )
+from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 from cli_agent_orchestrator.services.work_service import (
     DeliveryUncertain,
     WorkService,

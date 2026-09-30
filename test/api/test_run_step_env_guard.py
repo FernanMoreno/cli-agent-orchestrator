@@ -371,6 +371,46 @@ class TestScriptStepCompletion:
         finally:
             workflow_service.run_registry.pop("run-step-fail", None)
 
+    def test_legacy_completion_cannot_overwrite_managed_work_pending(self):
+        """A late terminal outcome is not an authenticated Work result or ACK."""
+        from cli_agent_orchestrator.services import workflow_journal, workflow_service
+        from cli_agent_orchestrator.services.script_runner import record_step_completion
+
+        run_id = "run-step-managed-pending"
+        env = dict(self._ENV, CAO_WORKFLOW_RUN_ID=run_id)
+        record = self._register_script_record(run_id)
+        try:
+            workflow_journal.insert_run(
+                run_id,
+                "wf",
+                "{}",
+                "{}",
+                "running",
+                "2026-07-10T00:00:00Z",
+                "script",
+                "1",
+            )
+            workflow_journal.insert_steps(run_id, [("s1", "pending")], "2026-07-10T00:00:00Z")
+            workflow_journal.update_run_current_step(run_id, "s1")
+            workflow_journal.mark_work_pending(
+                run_id=run_id,
+                step_id="s1",
+                generation="1",
+                step_attempt=1,
+                tier="script",
+                updated_at="2026-07-10T00:00:01Z",
+            )
+
+            callback = record_step_completion(env)
+            callback("abc12345", None, "legacy terminal output", "completed")
+
+            assert record.step_states == {}
+            step = workflow_journal.get_step(run_id, "s1")
+            assert step.state == "work_pending"
+            assert step.result_json is None
+        finally:
+            workflow_service.run_registry.pop(run_id, None)
+
     def test_non_script_caller_no_step_state_side_effect(self, client):
         """A plain handoff call (no run/step env) must not create any script
         step state — the completion path is a strict no-op for it."""

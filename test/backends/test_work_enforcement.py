@@ -74,9 +74,12 @@ def test_contract_rejects_relative_checkout_root():
             paths=(), commands=(), network=(), checkout_root="relative/checkout"
         )
 
-    assert module.ProcessRestrictionContract(
-        paths=(), commands=(), network=(), checkout_root="/checkout"
-    ).checkout_root == "/checkout"
+    assert (
+        module.ProcessRestrictionContract(
+            paths=(), commands=(), network=(), checkout_root="/checkout"
+        ).checkout_root
+        == "/checkout"
+    )
 
 
 @pytest.mark.parametrize("forged", [None, {}, {"process_boundary": True}, True])

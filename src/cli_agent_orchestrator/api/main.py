@@ -2,6 +2,7 @@
 
 import asyncio
 import fcntl
+import hashlib
 import json
 import logging
 import os
@@ -58,14 +59,17 @@ from cli_agent_orchestrator.api.work_routes import router as work_router
 from cli_agent_orchestrator.backends import TerminalBackendError, TerminalNotFoundError
 from cli_agent_orchestrator.backends.herdr_backend import HerdrBackend
 from cli_agent_orchestrator.backends.registry import get_backend
+from cli_agent_orchestrator.cli.commands.agent_plugin import UNTRUSTED_CONTENT_WARNING
 from cli_agent_orchestrator.cli.commands.init import seed_default_skills
 from cli_agent_orchestrator.clients.database import (
     create_inbox_message,
+    get_handoff_result,
     get_inbox_messages,
     get_native_child,
     get_terminal_metadata,
     init_db,
     list_native_children,
+    upsert_handoff_result,
 )
 from cli_agent_orchestrator.constants import (
     ALLOWED_HOSTS,
@@ -73,6 +77,7 @@ from cli_agent_orchestrator.constants import (
     CAO_HOME_DIR,
     CORS_ORIGINS,
     DEFAULT_PROVIDER,
+    HANDOFF_RESULTS_ROUTE,
     INBOX_POLLING_INTERVAL,
     INBOX_RECONCILE_INTERVAL,
     MODEL_ID_MAX_LEN,
@@ -131,6 +136,7 @@ from cli_agent_orchestrator.security.auth import (
     get_current_principal,
     get_current_scopes,
     is_auth_enabled,
+    is_verified_principal,
     principal_from_token,
     require_any_scope,
 )
@@ -498,11 +504,18 @@ class WorkLaunchBody(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    selection: Optional[str] = None
-    agent_profile: str
-    session_name: str
-    message: str
-    allowed_tools: List[str]
+    selection: Optional[str] = Field(default=None, max_length=128)
+    agent_profile: str = Field(min_length=1, max_length=128)
+    session_name: str = Field(min_length=1, max_length=128)
+    message: str = Field(max_length=32768)
+    allowed_tools: List[str] = Field(max_length=128)
+
+    @field_validator("allowed_tools")
+    @classmethod
+    def bounded_tool_names(cls, value: List[str]) -> List[str]:
+        if any(not name or len(name) > 128 for name in value):
+            raise ValueError("requested tool names must be 1–128 characters")
+        return value
 
 
 class RunStepRequest(BaseModel):
@@ -672,6 +685,28 @@ class RunStepRequest(BaseModel):
         default=None, description="Explicit Kiro engine for this child step"
     )
 
+    job_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Caller-generated opaque identifier for this job (issue #447). "
+            "When present, the server persists state and result under this key "
+            "so the caller can retrieve the result via GET /handoff-results/{job_id} "
+            "if the transport times out before the response arrives. "
+            "Must be a 32-character lowercase hex string (uuid4().hex)."
+        ),
+    )
+
+    @field_validator("job_id")
+    @classmethod
+    def _validate_job_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if not re.fullmatch(r"[0-9a-f]{32}", v):
+            raise ValueError(
+                "job_id must be a 32-character lowercase hex string (e.g. uuid4().hex)"
+            )
+        return v
+
 
 class RunStepResponse(BaseModel):
     """Response wrapping an ``AgentStepResult`` from ``run_agent_step``.
@@ -681,9 +716,10 @@ class RunStepResponse(BaseModel):
     happened at all (issue #583, FR-1).
     """
 
-    terminal_id: str
-    last_message: str
+    terminal_id: Optional[str] = None
+    last_message: Optional[str] = None
     status: str
+    work_result: Optional[Dict[str, Any]] = None
     replayed: bool = Field(
         default=False,
         description=(
@@ -763,6 +799,22 @@ class ResumeRunRequest(BaseModel):
             "400 and applies nothing at all."
         ),
     )
+
+
+class ManagedStepRetryRequest(BaseModel):
+    """Exact stale-write fences for one operator-authorized Work retry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_generation: int = Field(strict=True, gt=0)
+    workflow_step_attempt: int = Field(strict=True, gt=0)
+    work_attempt_id: str = Field(
+        strict=True,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    )
+    work_generation: int = Field(strict=True, gt=0)
 
 
 class StepReplayRequest(BaseModel):
@@ -1229,6 +1281,11 @@ class MemorySummary(BaseModel):
     tags: str
     created_at: datetime
     updated_at: datetime
+    source_kind: str = "native"
+    source_path: Optional[str] = None
+    indexed_at: Optional[datetime] = None
+    index_freshness: Optional[str] = None
+    content_truncated: bool = False
 
 
 class MemoryDetail(MemorySummary):
@@ -1356,11 +1413,70 @@ async def _run_registered_work_dispatcher(gateway) -> None:
             await asyncio.sleep(0.5)
 
 
+def _compose_managed_workflow_runtime(app: FastAPI, repository, gateway):
+    """Bind workflow origins, accepted-result storage, and replay projector.
+
+    All components share the exact launch runtime's WorkAdmission and the same
+    repository. The artifact store is paired with the SQLite path so a restarted
+    server reads accepted result bytes from the same durable content namespace.
+    """
+    from cli_agent_orchestrator.services.step_output_store import ImmutableResultStore
+    from cli_agent_orchestrator.services.work_service import WorkService
+    from cli_agent_orchestrator.services.work_workflow import WorkWorkflowOrigins
+    from cli_agent_orchestrator.services.workflow_step_projector import WorkflowStepProjector
+
+    try:
+        runtime = gateway._launch_runtime_provider._runtime
+        admission = runtime._admission
+        if runtime.repository is not repository or admission.repository is not repository:
+            raise ValueError("managed workflow runtime must share the gateway repository")
+        workflow_origins = WorkWorkflowOrigins(repository)
+        workflow_origins._bind_admission(admission)
+        if admission.workflow_origins not in (None, workflow_origins):
+            raise ValueError("managed workflow origin belongs to another Work admission")
+        admission.workflow_origins = workflow_origins
+        runtime.workflow_origins = workflow_origins
+
+        result_artifacts = ImmutableResultStore(
+            repository.path.with_name(repository.path.name + ".result-content")
+        )
+        result_service = WorkService(
+            repository,
+            origins=runtime.origins,
+            artifacts=result_artifacts,
+        )
+        projector = WorkflowStepProjector(repository, workflow_origins, result_service)
+    except Exception:
+        logger.exception("managed workflow runtime composition failed")
+        raise
+
+    app.state.work_workflow_origins = workflow_origins
+    app.state.work_workflow_result_service = result_service
+    app.state.workflow_step_projector = projector
+    return projector
+
+
+async def _initialize_managed_workflow_runtime(app: FastAPI, repository, gateway):
+    """Compose and run durable result projection before serving requests."""
+    projector = _compose_managed_workflow_runtime(app, repository, gateway)
+    await asyncio.to_thread(projector.project_pending_at_startup)
+    return projector
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
     from cli_agent_orchestrator.api.browser_auth_routes import configure_browser_auth
     configure_browser_auth(app)
+    from cli_agent_orchestrator.services.work_launch_mode import managed_launch_required
+
+    managed_launch_required()
+    from cli_agent_orchestrator.backends import work_registry
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+
+    work_repository = WorkRepository(DATABASE_FILE)
+    work_backends = work_registry.local_work_backends_for(work_repository)
     logger.info("Starting CLI Agent Orchestrator server...")
     setup_logging()
     # Scrub credential query params (``?access_token=`` / ``?ticket=``) from
@@ -1390,6 +1506,7 @@ async def lifespan(app: FastAPI):
     startup_tasks: list[asyncio.Task] = []
     herdr_service_registered = False
     work_dispatcher_task: Optional[asyncio.Task] = None
+    owned_work_runtime: Dict[str, Any] = {}
 
     def start_lifespan_task(coroutine):
         task = asyncio.create_task(coroutine)
@@ -1397,6 +1514,11 @@ async def lifespan(app: FastAPI):
         return task
 
     async def shutdown_lifespan_resources(*, best_effort: bool) -> None:
+        # A stopped lifespan must not leave capability/result owners attached to
+        # a store that a later lifespan or test has replaced.
+        for name, owner in owned_work_runtime.items():
+            if getattr(app.state, name, None) is owner:
+                delattr(app.state, name)
         if not best_effort:
             fifo_manager.stop_watchdog()
             try:
@@ -1508,18 +1630,27 @@ async def lifespan(app: FastAPI):
         # (additive; no-op for tmux). See #271.
         herdr_inbox_task: Optional[asyncio.Task] = None
         backend = get_backend()
-        from cli_agent_orchestrator.backends import work_registry
-        from cli_agent_orchestrator.clients.work_repository import WorkRepository
-        from cli_agent_orchestrator.constants import DATABASE_FILE
         from cli_agent_orchestrator.services.work_launch_gateway import (
             build_durable_launch_gateway,
         )
 
-        work_repository = WorkRepository(DATABASE_FILE)
-        work_backends = work_registry.local_work_backends_for(work_repository)
         app.state.durable_launch_gateway = build_durable_launch_gateway(
             work_repository, backends=work_backends
         )
+        owned_work_runtime["durable_launch_gateway"] = app.state.durable_launch_gateway
+        try:
+            await _initialize_managed_workflow_runtime(
+                app, work_repository, app.state.durable_launch_gateway
+            )
+        finally:
+            for name in (
+                "work_workflow_origins",
+                "work_workflow_result_service",
+                "workflow_step_projector",
+            ):
+                owner = getattr(app.state, name, None)
+                if getattr(owner, "repository", None) is work_repository:
+                    owned_work_runtime[name] = owner
         if work_backends:
             work_dispatcher_task = start_lifespan_task(
                 _run_registered_work_dispatcher(app.state.durable_launch_gateway)
@@ -1686,6 +1817,12 @@ _WORK_LAUNCH_IDENTITY_REQUIRED_DETAIL = {
     "retryable": False,
     "required_action": "authenticate",
 }
+_WORK_INGRESS_DISABLED_DETAIL = {
+    "code": "work_ingress_disabled",
+    "message": "Public managed Work ingress is disabled.",
+    "retryable": False,
+    "required_action": "enable_public_work_ingress",
+}
 _WORK_LAUNCH_ERROR_STATUS = {
     "launch_authority_denied": status.HTTP_403_FORBIDDEN,
     "launch_intent_invalid": status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1726,6 +1863,12 @@ _WORK_LAUNCH_SAFE_ERROR_DETAILS = frozenset(
             "Verified work store is unavailable.",
             True,
             "retry_same_intent",
+        ),
+        (
+            "work_ingress_disabled",
+            "Public managed Work ingress is disabled.",
+            False,
+            "enable_public_work_ingress",
         ),
         (
             "launch_runtime_unavailable",
@@ -1818,6 +1961,32 @@ def create_work_launch(
     principal: Annotated[Principal, Depends(get_work_launch_principal)],
 ) -> Dict[str, Any]:
     """Adapt verified HTTP launch content to the server-owned durable gateway."""
+    if os.environ.get("CAO_ENABLE_PUBLIC_WORK_INGRESS") != "true":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=dict(_WORK_INGRESS_DISABLED_DETAIL),
+        )
+    if not is_verified_principal(principal):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "launch_authority_denied",
+                "message": "Verified launch authority is required.",
+                "retryable": False,
+                "required_action": "authenticate",
+            },
+        )
+    if not getattr(principal, "scopes", frozenset()) & {SCOPE_WRITE, SCOPE_ADMIN}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "launch_authority_denied",
+                "message": "Verified launch authority is required.",
+                "retryable": False,
+                "required_action": "reauthorize",
+            },
+        )
+
     gateway = getattr(request.app.state, "durable_launch_gateway", None)
     if not isinstance(gateway, DurableLaunchGateway):
         raise _work_launch_unavailable()
@@ -1860,6 +2029,75 @@ def create_work_launch(
 # guards these — GET/HEAD/OPTIONS stay open (reads leak nothing stateful, and
 # OPTIONS preflights must reach CORSMiddleware unchanged).
 _STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_MAX_WORK_LAUNCH_BODY_BYTES = 512 * 1024
+
+
+class WorkLaunchBodyLimitMiddleware:
+    """Bound public launch JSON before FastAPI parses or validates its fields."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Dict[str, Any], receive: Any, send: Any) -> None:
+        if (
+            scope["type"] != "http"
+            or scope["method"] != "POST"
+            or scope["path"] != "/work-launches"
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        async def too_large() -> None:
+            response = JSONResponse(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                content={
+                    "detail": {
+                        "code": "launch_body_too_large",
+                        "message": "Launch request body is too large.",
+                        "retryable": False,
+                        "required_action": "reduce_launch_request",
+                    }
+                },
+            )
+            await response(scope, receive, send)
+
+        for name, value in scope.get("headers", []):
+            if name.lower() == b"content-length":
+                try:
+                    declared_size = int(value)
+                except ValueError:
+                    break
+                if declared_size > _MAX_WORK_LAUNCH_BODY_BYTES:
+                    await too_large()
+                    return
+                break
+
+        parts = []
+        total = 0
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":
+                return
+            chunk = message.get("body", b"")
+            total += len(chunk)
+            if total > _MAX_WORK_LAUNCH_BODY_BYTES:
+                await too_large()
+                return
+            parts.append(chunk)
+            if not message.get("more_body", False):
+                break
+
+        body = b"".join(parts)
+        replayed = False
+
+        async def replay_receive() -> Dict[str, Any]:
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return await receive()
+
+        await self.app(scope, replay_receive, send)
 
 
 class OriginCheckMiddleware:
@@ -1905,9 +2143,10 @@ class OriginCheckMiddleware:
 
 # Security: CSRF / Cross-Origin Request Forgery (CWE-352). See the middleware
 # docstring; the guard must sit INSIDE TrustedHostMiddleware's Host validation
-# (add_middleware stacks last-added outermost), hence it is registered first.
+# (add_middleware stacks last-added outermost). The body limit is innermost.
 from cli_agent_orchestrator.api.browser_auth_routes import BrowserSessionLifetimeMiddleware
 app.add_middleware(BrowserSessionLifetimeMiddleware)
+app.add_middleware(WorkLaunchBodyLimitMiddleware)
 app.add_middleware(OriginCheckMiddleware)
 
 # Security: DNS Rebinding Protection
@@ -3345,6 +3584,255 @@ async def get_skill_content(
         )
 
 
+# =============================================================================
+# Agent Plugins (Agent Plugins 1.0.0) — NOT the event-plugin system
+# =============================================================================
+# Added inline next to the /skills and /settings/skill-dirs handlers because
+# api/main.py is flat (no routers package). Naming is unresolved maintainer
+# decision M1; per requirements.md 16.5 this surface must not ship to end users
+# before that is settled, so every route below is gated on
+# CAO_AGENT_PLUGINS_ENABLED (default off) and 404s without it — the routes are
+# constructed but not executable, mirroring the AG-UI gate above. The scope
+# dependencies are authorization, not the gate: they are a no-op when auth is
+# disabled.
+
+
+def _require_plugins_enabled() -> None:
+    """Raise 404 when the agent-plugin surface is disabled (default-off).
+
+    Requirement 16.5's ship-gate. Shares one predicate with the CLI group so the
+    two surfaces cannot disagree about whether the surface is live.
+
+    Applied as a **route dependency**, not as the handler's first statement, and
+    that distinction is the gate: FastAPI validates the request body and solves
+    the scope dependency *before* the handler body runs, so an in-body check still
+    answered a malformed payload with 422 and an unauthorized caller with 401/403 —
+    both of which disclose that the gated route exists. A route-level dependency is
+    solved first, so every request to a disabled surface gets the same 404 an
+    unregistered path would (verified for a malformed body and for a failing auth
+    dependency). "First in the handler" is not "first in the request".
+    """
+
+    from cli_agent_orchestrator.agent_plugins.gate import agent_plugins_surface_enabled
+
+    if not agent_plugins_surface_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="agent plugin surface disabled",
+        )
+
+
+class PluginInstallRequest(BaseModel):
+    """Body for ``POST /plugins`` and ``POST /plugins/validate``."""
+
+    source: str
+    kind: Optional[str] = None
+    """``"path"`` or ``"git"``. Inferred from the source string when omitted."""
+
+    ref: Optional[str] = None
+    subdir: Optional[str] = None
+    force: bool = False
+
+
+def _plugin_source(body: "PluginInstallRequest"):
+    """Build a PluginSource, reusing the CLI's source-kind detection.
+
+    Shared rather than reimplemented so a source string that installs from the
+    CLI installs identically from the panel.
+    """
+    from cli_agent_orchestrator.agent_plugins.models import PluginSource
+    from cli_agent_orchestrator.cli.commands.agent_plugin import _looks_like_git
+
+    if body.kind == "git" or (body.kind != "path" and _looks_like_git(body.source)):
+        kind: Literal["path", "git"] = "git"
+    else:
+        kind = "path"
+    return PluginSource(kind=kind, location=body.source, ref=body.ref, subdir=body.subdir)
+
+
+def _with_untrusted_warning(payload: Dict) -> Dict:
+    """Attach the untrusted-content warning to an agent-plugin response.
+
+    Every response describing a plugin carries it — list, install, validate, and
+    the 422 body for an unloadable install — so a client cannot render an install
+    affordance without having been handed the text to show beside it. Requirement
+    22.1 puts the obligation on CAO, and a warning present only on the *list*
+    response is satisfiable by a client that never calls list.
+
+    That the unloadable-install 422 carries it too is the case worth stating:
+    "this plugin is not loadable" is exactly the moment a user is deciding whether
+    to try a different source, which is a decision about trust.
+    """
+    return {**payload, "untrusted_content_warning": UNTRUSTED_CONTENT_WARNING}
+
+
+@app.get("/plugins", dependencies=[Depends(_require_plugins_enabled)])
+async def list_agent_plugins(
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
+) -> Dict:
+    """List installed agent plugins with findings and projected skill names.
+
+    Also reports, per plugin, which live sessions reference a skill it provides,
+    so a client can render the removal warning *before* the operator commits to
+    a DELETE.
+
+    Read-scope gated when auth is enabled, following ``GET /settings/agent-dirs``
+    and for a strictly larger version of its reason. That route is gated because it
+    discloses local filesystem layout; this one discloses that **plus** live
+    operational state: every plugin's original source path or repository URL, and
+    per plugin the terminal IDs, session names, profile names, and skill names of
+    running work. The read floor rather than write/admin, because read-only
+    callers — the web panel, a status script — are exactly who this is for.
+    """
+    from cli_agent_orchestrator.agent_plugins.installer import affected_sessions_by_plugin
+    from cli_agent_orchestrator.agent_plugins.store import InstalledPluginStore
+
+    store = InstalledPluginStore()
+    # Deliberately does NOT sweep dangling projections. This is a GET a panel
+    # polls, and `sweep_dangling_projections` mutates the filesystem — a read
+    # route that deletes things is both surprising and, on the event loop, a
+    # per-poll directory walk. The sweep still runs where it belongs: on every
+    # projection rebuild, i.e. install and removal. Read paths already tolerate a
+    # dangling link on their own (`list_skills()` gates on `is_dir()` and
+    # `SKILL.md is_file()`, both False rather than raising for a broken link), so
+    # nothing here depends on having swept first.
+    # One live-state walk for the whole response. Calling `affected_sessions`
+    # per record re-enumerated sessions, terminals and profiles for every plugin —
+    # identical work each time, on a route a panel polls.
+    affected_by_plugin = affected_sessions_by_plugin(store=store)
+
+    plugins = []
+    for record in store.list_installed():
+        entry = record.to_dict()
+        entry["affected_sessions"] = [
+            session.to_dict() for session in affected_by_plugin.get(record.name, [])
+        ]
+        plugins.append(entry)
+
+    return _with_untrusted_warning({"plugins": plugins})
+
+
+@app.post(
+    "/plugins",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_require_plugins_enabled)],
+)
+async def install_agent_plugin(
+    body: PluginInstallRequest,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
+) -> Dict:
+    """Install an agent plugin from a local path or a git URL."""
+    from cli_agent_orchestrator.agent_plugins.installer import (
+        PluginBusyError,
+        PluginInstallError,
+        install,
+    )
+
+    try:
+        # Offloaded: a git source can block in `subprocess.run` for up to 300s and a
+        # large local source blocks in `copytree`. Run on the event loop, that window
+        # is one where the server serves no health/session request and runs no status
+        # or inbox task. `asyncio.to_thread` is the convention already used throughout
+        # this module.
+        outcome = await asyncio.to_thread(install, _plugin_source(body), force=body.force)
+    except PluginBusyError as exc:
+        # 409, not 400: nothing is wrong with the request -- it collided with
+        # another lifecycle operation and is safe to retry verbatim. Placed BEFORE
+        # the PluginInstallError branch because it subclasses it; the wider handler
+        # would otherwise answer 400 and tell the operator to change their request.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except PluginInstallError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to install agent plugin: {exc}",
+        )
+
+    if not outcome.installed:
+        # A plugin that is not loadable is the caller's input being wrong, not a
+        # server fault: return the full report so the panel can render every
+        # finding rather than a bare error string.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_with_untrusted_warning(outcome.to_dict()),
+        )
+    return _with_untrusted_warning(outcome.to_dict())
+
+
+@app.post("/plugins/validate", dependencies=[Depends(_require_plugins_enabled)])
+async def validate_agent_plugin(
+    body: PluginInstallRequest,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
+) -> Dict:
+    """Validate a plugin source without installing it.
+
+    Scope-gated despite installing nothing, unlike the other ``/validate``
+    endpoints, which are pure computation over a document the caller already
+    supplied. This one **resolves the source first**: a git source is cloned and
+    a path source is copied into staging. That is real outbound network and disk
+    work performed on the caller's behalf, so exempting it on the strength of the
+    shared ``/validate`` suffix would be reading the name rather than the
+    behaviour.
+    """
+    from cli_agent_orchestrator.agent_plugins.installer import PluginInstallError, validate_source
+
+    try:
+        # Offloaded for the same reason as the install path: validating a source
+        # resolves it first, which clones or copies before any parsing happens.
+        report = await asyncio.to_thread(validate_source, _plugin_source(body))
+    except PluginInstallError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to validate agent plugin: {exc}",
+        )
+    return _with_untrusted_warning(report.to_dict())
+
+
+@app.delete("/plugins/{name}", dependencies=[Depends(_require_plugins_enabled)])
+async def uninstall_agent_plugin(
+    name: str,
+    purge_data: bool = False,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
+) -> Dict:
+    """Uninstall an agent plugin.
+
+    The response reports which live sessions referenced a skill this plugin
+    provided. Note that reporting is all this endpoint can do — the
+    warn-and-confirm gate itself belongs to the client, which must render that
+    information and wait for the operator *before* issuing the DELETE.
+    """
+    from cli_agent_orchestrator.agent_plugins.installer import (
+        PluginBusyError,
+        PluginInstallError,
+        uninstall,
+    )
+
+    try:
+        # Offloaded: removal walks the store and rebuilds the skill projection,
+        # both synchronous filesystem work.
+        outcome = await asyncio.to_thread(uninstall, name, purge_data=purge_data)
+    except PluginBusyError as exc:
+        # 409, not 400: nothing is wrong with the request -- it collided with
+        # another lifecycle operation and is safe to retry verbatim. Placed BEFORE
+        # the PluginInstallError branch because it subclasses it; the wider handler
+        # would otherwise answer 400 and tell the operator to change their request.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except PluginInstallError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to uninstall agent plugin: {exc}",
+        )
+    # Deliberately NOT warned: removal is the safe direction, and a warning about
+    # installing untrusted content beside a successful uninstall is noise that
+    # trains operators to ignore the text where it matters.
+    return outcome.to_dict()
+
+
 @app.post("/sessions", response_model=Terminal, status_code=status.HTTP_201_CREATED)
 async def create_session(
     request: Request,
@@ -3416,6 +3904,20 @@ async def create_session(
     terminal has since been torn down is stale, not conflicting, and simply
     creates fresh.
     """
+    from cli_agent_orchestrator.services.work_launch_mode import managed_launch_required
+
+    try:
+        if managed_launch_required():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Managed Work launch is required; use /work-launches.",
+            )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Launch mode configuration is invalid.",
+        ) from error
+
     initial_message = body.initial_message if body else None
     initial_message_orchestration_type = None
     prompt_redelivery = body.prompt_redelivery if body else True
@@ -4303,6 +4805,177 @@ def _schedule_elastic_terminal_ended(
         background_tasks.add_task(_notify_elastic_terminal_ended, terminal_id)
 
 
+async def _resolve_managed_step_admitters(
+    *,
+    request: Request,
+    principal: Principal,
+    workflow_name: str,
+    spec_hash: str,
+    step_ids: Sequence[str],
+) -> Dict[str, Any]:
+    """Resolve only server-owned, principal-bound YAML step provisions.
+
+    A missing selector row is the explicit legacy path. Any present but stale,
+    revoked, or mismatched row fails closed in ``WorkWorkflowOrigins`` and is
+    mapped here without exposing provisioning details.
+    """
+    origins = getattr(request.app.state, "work_workflow_origins", None)
+    if origins is None:
+        return {}
+    if not is_verified_principal(principal):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="verified workflow identity required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not set(principal.scopes) & {SCOPE_WRITE, SCOPE_ADMIN}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="workflow scope required")
+    resolver = getattr(origins, "resolve_step_admitter", None)
+    if not callable(resolver):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="managed workflow runtime is unavailable",
+        )
+
+    resolved: Dict[str, Any] = {}
+    for step_id in step_ids:
+        try:
+            callback = await asyncio.to_thread(
+                resolver, principal, workflow_name, spec_hash, step_id
+            )
+        except PermissionError:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="managed workflow authority is unavailable",
+            ) from None
+        except (LookupError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="managed workflow source is stale or unavailable",
+            ) from None
+        except Exception:
+            logger.warning("managed workflow provision resolution failed", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="managed workflow runtime is unavailable",
+            ) from None
+        if callback is None:
+            continue
+        if not callable(callback):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="managed workflow runtime returned an invalid step capability",
+            )
+        resolved[step_id] = callback
+    return resolved
+
+
+async def _managed_run_credential_factory(
+    *,
+    request: Request,
+    principal: Principal,
+    workflow_id: str,
+    tier: str,
+    spec_hash: str,
+):
+    """Bind a child-process credential factory to verified run source identity."""
+    origins = getattr(request.app.state, "work_workflow_origins", None)
+    if origins is None:
+        return None
+    if not is_verified_principal(principal):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="verified workflow identity required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not set(principal.scopes) & {SCOPE_WRITE, SCOPE_ADMIN}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="workflow scope required")
+    selector = getattr(origins, "requires_run_capability", None)
+    if not callable(selector):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="managed workflow capability selection is unavailable",
+        )
+    try:
+        required = await asyncio.to_thread(selector, principal, workflow_id, spec_hash)
+    except PermissionError as error:
+        raise HTTPException(
+            status_code=403, detail="managed workflow authority is unavailable"
+        ) from error
+    except (LookupError, ValueError) as error:
+        raise HTTPException(status_code=409, detail="managed workflow provision changed") from error
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="managed workflow selection failed") from error
+    if required is False:
+        return None
+    if required is not True:
+        raise HTTPException(status_code=503, detail="invalid managed workflow selection")
+    issuer = getattr(origins, "create_run_capability", None)
+    if not callable(issuer):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="managed workflow run capability is unavailable",
+        )
+
+    def issue(run_id: str, run_generation: str) -> str:
+        return issuer(
+            principal,
+            run_id=run_id,
+            workflow_id=workflow_id,
+            tier=tier,
+            run_generation=int(run_generation),
+            spec_hash=spec_hash,
+            ttl_seconds=3600,
+        )
+
+    return issue
+
+
+async def _project_pending_work_before_resume(request: Request, run_id: str) -> List[str]:
+    """Project accepted results and return unresolved managed step IDs."""
+    from cli_agent_orchestrator.services import workflow_journal
+
+    projector = getattr(request.app.state, "workflow_step_projector", None)
+    if projector is not None:
+        project = getattr(projector, "project_pending_for_run", None)
+        if not callable(project):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="managed workflow result projector is unavailable",
+            )
+        try:
+            await asyncio.to_thread(project, run_id)
+        except Exception:
+            logger.warning("managed workflow result projection failed", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "managed Work result could not be verified for resume",
+                    "kind": "work_pending",
+                },
+            ) from None
+
+    try:
+        pending = [
+            step.step_id
+            for step in await asyncio.to_thread(workflow_journal.get_steps, run_id)
+            if step.state == "work_pending"
+        ]
+    except Exception:
+        logger.warning("managed workflow pending-step read failed", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="workflow journal is unavailable",
+        ) from None
+    if pending:
+        if projector is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="managed workflow result projector is unavailable",
+            )
+    return pending
+
+
 async def _optional_run_step_principal(
     request: Request, authorization: Optional[str] = Header(default=None)
 ) -> Optional[Principal]:
@@ -4312,9 +4985,397 @@ async def _optional_run_step_principal(
     return await get_current_principal(request, authorization)
 
 
+async def _managed_script_response(
+    request, body, workflow_run_credential, env_vars
+) -> Optional[RunStepResponse]:
+    """Resolve and drive only a capability-authenticated script Work step."""
+    from cli_agent_orchestrator.services import workflow_journal, workflow_service
+    from cli_agent_orchestrator.services.step_fingerprint import StepCallFields, compute
+
+    run_id = env_vars.get("CAO_WORKFLOW_RUN_ID")
+    step_id = env_vars.get("CAO_WORKFLOW_STEP_ID")
+    generation_text = env_vars.get("CAO_WORKFLOW_GENERATION")
+    if not (run_id and step_id and generation_text):
+        if workflow_run_credential is not None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="workflow run capability requires a complete run identity",
+            )
+        return None
+
+    source_step = workflow_journal.get_step(run_id, step_id)
+    live_record = workflow_service.run_registry.get(run_id)
+    capability_required = bool(
+        getattr(live_record, "run_capability_required", False)
+        or getattr(live_record, "managed_step_admitters", {})
+    )
+    if workflow_run_credential is None:
+        origins = getattr(request.app.state, "work_workflow_origins", None)
+        durable_managed_candidate = False
+        if origins is not None and not (
+            live_record is not None
+            and getattr(live_record, "process", None) is not None
+            and not capability_required
+        ):
+            durable_run = await asyncio.to_thread(workflow_journal.get_run, run_id)
+            durable_managed_candidate = bool(
+                durable_run is not None
+                and durable_run.tier == "script"
+                and durable_run.state == "running"
+            )
+        if capability_required or durable_managed_candidate:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="managed workflow run capability is required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        # Preserve the legacy no-token path, but a durable pending marker
+        # remains a fence and can never become terminal execution authority.
+        if source_step is not None and source_step.state == "work_pending":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"message": "managed Work result remains pending", "kind": "work_pending"},
+            )
+        return None
+
+    origins = getattr(request.app.state, "work_workflow_origins", None)
+    authenticate = getattr(origins, "authenticate_run_capability", None)
+    if not callable(authenticate):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="managed workflow run capability is unavailable",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        run_generation = int(generation_text)
+        if run_generation <= 0 or str(run_generation) != generation_text:
+            raise ValueError("run generation is invalid")
+        capability_principal = await asyncio.to_thread(
+            authenticate, run_id, run_generation, workflow_run_credential
+        )
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="managed workflow run capability is invalid",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from error
+    projection_reader = getattr(workflow_journal, "get_work_step_projection", None)
+    try:
+        projection = (
+            await asyncio.to_thread(projection_reader, run_id, step_id)
+            if callable(projection_reader)
+            else None
+        )
+    except Exception as error:
+        logger.warning("managed workflow projection lookup failed", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "managed workflow result could not be verified",
+                "kind": "work_pending",
+            },
+        ) from error
+    row = await asyncio.to_thread(workflow_journal.get_run, run_id)
+    if (
+        row is None
+        or row.tier != "script"
+        or row.generation != generation_text
+        or row.state != "running"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="managed workflow run identity is stale",
+        )
+    try:
+        snapshot = json.loads(row.spec_snapshot)
+        frozen_source = snapshot["source"]
+        if not isinstance(frozen_source, str):
+            raise ValueError("script source is invalid")
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="managed workflow snapshot is corrupt",
+        ) from error
+    spec_hash = hashlib.sha256(frozen_source.encode("utf-8")).hexdigest()
+    resolver = getattr(origins, "resolve_step_admitter", None)
+    if not callable(resolver):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="managed workflow runtime is unavailable",
+        )
+    try:
+        managed_admitter = await asyncio.to_thread(
+            resolver, capability_principal, row.workflow_name, spec_hash, step_id
+        )
+    except PermissionError as error:
+        raise HTTPException(
+            status_code=403, detail="managed workflow authority is unavailable"
+        ) from error
+    except (LookupError, ValueError) as error:
+        raise HTTPException(status_code=409, detail="managed workflow source is stale") from error
+    except Exception as error:
+        logger.warning("managed workflow step resolver failed", exc_info=True)
+        raise HTTPException(
+            status_code=503, detail="managed workflow runtime is unavailable"
+        ) from error
+
+    # An active provision selects the managed path. A projected managed result
+    # with a missing/revoked provision fails closed instead of falling through
+    # to the terminal replay path.
+    if managed_admitter is None:
+        if projection is not None or (
+            source_step is not None and source_step.state == "work_pending"
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="managed workflow provision is unavailable",
+            )
+        return None
+
+    effective_directory = body.working_directory
+    call_fingerprint = compute(
+        StepCallFields(
+            provider=body.provider,
+            agent=body.agent,
+            prompt=body.prompt,
+            model=body.model,
+            engine=(body.engine.value if isinstance(body.engine, KiroEngine) else body.engine),
+            allowed_tools=None if body.allowed_tools is None else tuple(body.allowed_tools),
+            effective_working_directory=effective_directory,
+            use_worktree=body.use_worktree,
+            reused_terminal=body.reuse_terminal_id is not None,
+            timeout=body.timeout,
+        )
+    )
+
+    def _typed_projection_response(projected, projected_step):
+        from cli_agent_orchestrator.models.work_origin import WorkflowStepResultV1
+
+        if (
+            projected.run_id != run_id
+            or projected.step_id != step_id
+            or projected.tier != "script"
+            or projected.run_generation > run_generation
+            or projected_step is None
+            or projected_step.state != "completed"
+            or projected_step.attempts != projected.step_attempt
+            # T121 salts an explicitly retried attempt's journal fingerprint
+            # with the durable retry authorization ID and fingerprint. The
+            # exact accepted Work binding/result remains the replay authority
+            # for those attempts; the script body cannot replace its frozen
+            # provision delivery or Work result.
+            or (projected.step_attempt == 1 and projected_step.call_fingerprint != call_fingerprint)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="managed workflow result does not match this script call",
+            )
+        try:
+            result = WorkflowStepResultV1.from_json_bytes(projected.result_json.encode("utf-8"))
+            if result.canonical_bytes().decode("utf-8") != projected.result_json:
+                raise ValueError("noncanonical managed result")
+        except Exception as error:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="managed workflow result is invalid",
+            ) from error
+        return RunStepResponse(
+            status=result.status,
+            replayed=True,
+            work_result=result.model_dump(mode="json"),
+        )
+
+    if projection is not None:
+        return _typed_projection_response(projection, source_step)
+
+    if source_step is not None and source_step.state not in {"pending", "running", "work_pending"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="managed workflow step requires an explicit authorized retry",
+        )
+    recover = source_step is not None and source_step.state == "work_pending"
+    retry_authorization = None
+    result_service = getattr(request.app.state, "work_workflow_result_service", None)
+    if recover and source_step.attempts > 1:
+        read_binding = getattr(origins, "read_step_binding", None)
+        resolve_retry = getattr(origins, "resolve_step_retry_authorization", None)
+        if not callable(read_binding) or not callable(resolve_retry) or result_service is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="managed retry recovery is unavailable",
+            )
+        prior_attempt = source_step.attempts - 1
+        try:
+            prior_binding = await asyncio.to_thread(
+                read_binding,
+                "script",
+                run_id,
+                run_generation,
+                step_id,
+                prior_attempt,
+            )
+            if prior_binding is None:
+                raise ValueError("prior retry binding is absent")
+            retry_authorization = await asyncio.to_thread(
+                resolve_retry,
+                capability_principal,
+                row.workflow_name,
+                spec_hash,
+                "script",
+                run_id,
+                run_generation,
+                step_id,
+                prior_attempt,
+                prior_binding.work_attempt_id,
+                prior_binding.work_generation,
+            )
+            if retry_authorization is None:
+                raise ValueError("retry authorization is absent")
+        except PermissionError as error:
+            raise HTTPException(
+                status_code=403, detail="managed retry authority is unavailable"
+            ) from error
+        except Exception as error:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="managed retry authorization is stale",
+            ) from error
+    try:
+        attempt = await asyncio.to_thread(
+            workflow_journal.begin_managed_work_step,
+            run_id,
+            step_id,
+            generation_text,
+            call_fingerprint,
+            workflow_service._now(),
+            **(
+                {
+                    "retry_authorization": retry_authorization,
+                    "principal": capability_principal,
+                    "workflow_origins": origins,
+                    "work_service": result_service,
+                }
+                if retry_authorization is not None
+                else {}
+            ),
+        )
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="managed workflow step identity changed",
+        ) from error
+
+    try:
+        work = await managed_admitter(
+            tier="script",
+            run_id=run_id,
+            run_generation=run_generation,
+            step_id=step_id,
+            step_attempt=attempt,
+            workflow_step_attempt=attempt,
+            workflow_id=row.workflow_name,
+            spec_hash=spec_hash,
+            recover=recover,
+            prompt=body.prompt,
+            inputs=json.loads(row.inputs_json),
+            call_fingerprint=call_fingerprint,
+        )
+    except Exception as error:
+        logger.warning("managed workflow Work admission/recovery remains pending", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"message": "managed Work attempt remains pending", "kind": "work_pending"},
+        ) from error
+    if (
+        not isinstance(work, dict)
+        or not isinstance(work.get("id"), str)
+        or not work["id"]
+        or not isinstance(work.get("attempts"), list)
+        or not work["attempts"]
+        or not isinstance(work["attempts"][0].get("id"), str)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="managed workflow admission returned no durable Work attempt",
+        )
+    projector = getattr(request.app.state, "workflow_step_projector", None)
+    if projector is not None:
+        try:
+            await asyncio.to_thread(projector.project_pending_for_run, run_id)
+        except Exception as error:
+            logger.warning("managed workflow result projection failed", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "managed Work result could not be verified",
+                    "kind": "work_pending",
+                },
+            ) from error
+        projected = await asyncio.to_thread(projection_reader, run_id, step_id)
+        if projected is not None:
+            projected_step = await asyncio.to_thread(workflow_journal.get_step, run_id, step_id)
+            return _typed_projection_response(projected, projected_step)
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"message": "managed Work attempt remains pending", "kind": "work_pending"},
+    )
+
+
+async def _record_job_state(job_id: Optional[str], state: str, **fields: Any) -> None:
+    """Best-effort ``handoff_results`` write for a run-step call (issue #447).
+
+    No-op when the caller supplied no ``job_id`` — durability is opt-in, so a
+    request without one behaves exactly as it did before this existed. A write
+    failure is logged and swallowed: durability bookkeeping must never turn a
+    step's own outcome into a different one.
+
+    EVERY terminal exit of ``run_step`` that can follow the ``state="running"``
+    write must reach this, or the job is stranded at "running" until the
+    retention sweep deletes the row and a caller polling
+    ``GET /handoff-results`` after a transport timeout never learns the step
+    ended (PR #453 review, blocking). A new ``except`` arm on that route is
+    incomplete without a call here.
+
+    Off the loop for the same reason ``run_agent_step``'s completed-write is
+    (PR #453 review nit): the write is SQLite I/O, and the handler is async.
+
+    MODULE-LEVEL ON PURPOSE, not nested in ``run_step`` beside ``_settle_step``:
+    every arm that persists needs the same guard, and inlining it nine times
+    would both duplicate it and spend the route body's ``logger``-call budget
+    that ``run-step-replay-branch`` SR-7 pins to the two step-bookkeeping
+    guards. Nothing here closes over request state, so there is no reason for it
+    to live inside the route.
+    """
+    if not job_id:
+        return
+    try:
+        await asyncio.to_thread(upsert_handoff_result, job_id, state, **fields)
+    except Exception as exc:  # noqa: BLE001 — durability is best-effort; never fail the step
+        # PREFIX ONLY, never the whole id (PR #453 review finding 4): job_id is the
+        # SOLE retrieval capability for a row that can carry worker prompts and
+        # output, so a full id in the server log escalates any log reader to that
+        # worker's result. Eight hex chars is enough to correlate this line with a
+        # job_id its legitimate holder already has, and 96 bits short of guessing one.
+        #
+        # EXCEPTION CLASS NAME ONLY -- no ``exc_info``, no ``str(exc)``. A
+        # SQLAlchemy DBAPI error stringifies its bound parameters
+        # (``[parameters: ('<job_id>', 'running', ...)]``), so either one would
+        # reprint in full the id the line above deliberately truncates, defeating
+        # the whole point of the prefix. The class name still separates the cases
+        # an operator acts on differently (OperationalError = locked/unwritable DB,
+        # IntegrityError = key collision) without echoing any row content.
+        logger.warning(
+            "run_step: failed to persist job_id_prefix=%s as %s (%s)",
+            job_id[:8],
+            state,
+            type(exc).__name__,
+        )
+
+
 @app.post(
     TERMINALS_RUN_STEP_ROUTE,
     response_model=RunStepResponse,
+    response_model_exclude_none=True,
     summary="Run one agent step (shared substrate)",
     description=(
         "Failure contract: a non-2xx body is a structured object "
@@ -4332,6 +5393,9 @@ async def run_step(
     body: RunStepRequest,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
     principal: Optional[Principal] = Depends(_optional_run_step_principal),
+    workflow_run_credential: Annotated[
+        Optional[str], Header(alias="X-CAO-Workflow-Run-Credential")
+    ] = None,
 ) -> RunStepResponse:
     """Run a single agent step through the shared substrate (N0, #312).
 
@@ -4362,12 +5426,25 @@ async def run_step(
 
     The plugin registry is threaded so teardown's ``post_kill_terminal`` hooks
     fire (parity with the DELETE endpoint).
+
+    Durability (issue #447): when the caller supplies a ``job_id``, the handler
+    records state="running" at request start. On success, ``run_agent_step``
+    itself persists state="completed" BETWEEN extraction and teardown (not
+    here, and not after it returns) — the terminal being torn down is the only
+    other place the result lives, so persistence must land before that
+    happens, not merely before the HTTP response. On failure, this handler
+    persists state="error". A caller that misses the response due to an
+    MCP-transport timeout can retrieve the result via
+    ``GET /handoff-results/{job_id}`` at any point thereafter. Requests without
+    a ``job_id`` behave exactly as before (no persistence overhead).
     """
+    job_id = body.job_id  # None when the caller omits it (backward-compatible)
+
     # BR-31: for a script-tier run-step call, record the live terminal into the
     # shared ScriptRunRecord's step_states as soon as it exists, so U4's orphan sweep
     # can tear it down if the subprocess dies mid-call. No-op for YAML/handoff
     # callers (no run/step env or no script record in the registry).
-    from cli_agent_orchestrator.services import step_replay, workflow_service
+    from cli_agent_orchestrator.services import step_replay, workflow_journal, workflow_service
     from cli_agent_orchestrator.services.script_runner import (
         make_step_terminal_recorder,
         record_step_completion,
@@ -4461,6 +5538,17 @@ async def run_step(
         except KeyError as e:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
+    managed_response = await _managed_script_response(
+        request, body, workflow_run_credential, env_vars
+    )
+    if managed_response is not None:
+        return managed_response
+    # Mark the job as in-progress before the long-running substrate starts.
+    # This is best-effort; a failure here must not block execution. Placed
+    # AFTER the generation fence above so a fenced-out (stale-generation)
+    # call never leaves a job_id stuck at "running" with no terminal state.
+    await _record_job_state(job_id, "running")
+
     # ---- issue #583, unit ``run-step-replay-branch``: the replay branch ----------
     #
     # THE BRANCH ENGAGES FOR SCRIPT-TIER CALLS ONLY (BR-2/SR-5): both
@@ -4474,6 +5562,24 @@ async def run_step(
     # script run's stored result.
     replay_run_id = env_vars.get("CAO_WORKFLOW_RUN_ID")
     replay_step_id = env_vars.get("CAO_WORKFLOW_STEP_ID")
+
+    # A durable managed-step marker is a fence against the legacy terminal path.
+    # The marker does not supply Work authority or prove receipt; it only says the
+    # old terminal replay/execution branch must stop until a Work result adapter
+    # can validate the exact authenticated receiver receipt and stored result.
+    # Check after generation fencing and before CWD resolution or replay so stale
+    # terminal output cannot be returned for a step awaiting Work.
+    if replay_run_id and replay_step_id:
+        source_step = workflow_journal.get_step(replay_run_id, replay_step_id)
+        if source_step is not None and source_step.state == "work_pending":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "managed Work step is pending an authenticated result",
+                    "kind": "work_pending",
+                    "step_id": replay_step_id,
+                },
+            )
 
     # The three values the gate needs, or None for a non-script-tier call. They
     # travel as ONE optional triple rather than three separate Optionals so the
@@ -4647,6 +5753,7 @@ async def run_step(
             model=body.model,
             use_worktree=body.use_worktree,
             prompt_redelivery=body.prompt_redelivery,
+            job_id=job_id,
         )
         # Success -> transition the script step RUNNING->COMPLETED (no-op for
         # non-script callers). Before building the response so a settle failure
@@ -4662,6 +5769,12 @@ async def run_step(
             teardown=body.teardown,
             reuse_terminal_id=body.reuse_terminal_id,
         )
+
+        # NOTE (issue #447 / PR #453 review): the "completed" persist happens
+        # INSIDE run_agent_step, between extraction and teardown — not here.
+        # Persisting only after this call returns would run after the terminal
+        # (the only other copy of the result) has already been torn down,
+        # contradicting the "persist result, then tear down" requirement.
         return RunStepResponse(
             terminal_id=result.terminal_id,
             last_message=result.last_message,
@@ -4724,6 +5837,10 @@ async def run_step(
             code = status.HTTP_502_BAD_GATEWAY
         else:
             code = status.HTTP_504_GATEWAY_TIMEOUT
+        if e.kind not in {"quota_wait", "reconcile", "contract_rejected"}:
+            await _record_job_state(
+                job_id, "error", terminal_id=e.terminal_id, error_message=str(e)
+            )
         raise HTTPException(
             status_code=code,
             detail={
@@ -4753,6 +5870,7 @@ async def run_step(
                     "delivery_may_have_occurred": e.delivery_may_have_occurred,
                 }
             )
+        await _record_job_state(job_id, "error", error_message=str(e))
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail=detail,
@@ -4761,6 +5879,7 @@ async def run_step(
         # Ordered before the ValueError arm they subclass: an engine rejection is
         # a bad request, not an unknown terminal.
         _settle_step(None, str(e))
+        await _record_job_state(job_id, "error", error_message=str(e))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except OutputExtractionError as e:
         # Also ordered before the ValueError arm it subclasses. The terminal and
@@ -4769,24 +5888,29 @@ async def run_step(
         # endpoint's documented contract above ("any other failure -> 500",
         # plain-string detail, no ``kind``), not 404 (issue #570).
         _settle_step(None, str(e))
+        await _record_job_state(job_id, "error", error_message=str(e))
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
     except TerminalLimitError as e:
         # The node is at its tracked-terminal cap (CAO_MAX_TERMINALS) — surfaced
         # as 429 so a step scheduler can retry on a different node instead of
         # reading a kind-less 500.
         _settle_step(None, str(e))
+        await _record_job_state(job_id, "error", error_message=str(e))
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(e))
     except ValueError as e:
         # Unknown terminal / bad input surfaced by the terminal layer.
+        await _record_job_state(job_id, "error", error_message=str(e))
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except WorktreeError as e:
         # use_worktree=true against a working_directory that isn't a git repo,
         # or the 'git worktree add' itself failed -- a client-input problem
         # (bad/missing repo), not a server crash.
         _settle_step(None, str(e))
+        await _record_job_state(job_id, "error", error_message=str(e))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         _settle_step(None, str(e))
+        await _record_job_state(job_id, "error", error_message=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to run step: {str(e)}",
@@ -5146,7 +6270,13 @@ def _get_drive_semaphore() -> asyncio.Semaphore:
 
 
 def _schedule_background_drive(
-    record: Any, spec: Any, run_id: str, tier: str, inputs: Dict[str, Any]
+    record: Any,
+    spec: Any,
+    run_id: str,
+    tier: str,
+    inputs: Dict[str, Any],
+    *,
+    run_credential: Optional[str] = None,
 ) -> "asyncio.Task":
     """Schedule a background drive, holding a STRONG reference to its Task (BG-1).
 
@@ -5155,7 +6285,7 @@ def _schedule_background_drive(
     Task so a caller/test can await or cancel it.
     """
     task = asyncio.create_task(
-        _run_in_background(record, spec, run_id, tier, inputs),
+        _run_in_background(record, spec, run_id, tier, inputs, run_credential=run_credential),
         name=f"workflow-drive-{run_id}",
     )
     _background_drives.add(task)
@@ -5164,7 +6294,13 @@ def _schedule_background_drive(
 
 
 async def _run_in_background(
-    record: Any, spec: Any, run_id: str, tier: str, inputs: Dict[str, Any]
+    record: Any,
+    spec: Any,
+    run_id: str,
+    tier: str,
+    inputs: Dict[str, Any],
+    *,
+    run_credential: Optional[str] = None,
 ) -> None:
     """The fire-and-forget background drive for an async-submitted run (U2, C2).
 
@@ -5210,6 +6346,19 @@ async def _run_in_background(
     def _failed_backstop(why: str) -> None:
         """Mark the run FAILED **only if still RUNNING**; itself guarded so it can never re-raise."""
         try:
+            steps = workflow_journal.get_steps(run_id)
+            if any(
+                step.state == "work_pending"
+                or (step.state == "failed" and step.error_kind == "managed_work_failed")
+                for step in steps
+            ):
+                logger.warning(
+                    "background workflow run '%s' retains a managed Work attempt; "
+                    "terminal backstop withheld (%s)",
+                    run_id,
+                    why,
+                )
+                return
             settled = workflow_journal.settle_run_state_if_running(
                 run_id, RunState.FAILED.value, workflow_service._now()
             )
@@ -5225,7 +6374,7 @@ async def _run_in_background(
                 )
         except Exception:  # noqa: BLE001 — the backstop is itself best-effort
             logger.error(
-                "background workflow run '%s' FAILED-backstop journal write failed (%s)",
+                "background workflow run '%s' FAILED-backstop journal check/write failed (%s)",
                 run_id,
                 why,
                 exc_info=True,
@@ -5237,7 +6386,12 @@ async def _run_in_background(
                 await workflow_service.start_run_prepared(record)
             else:
                 env = script_runner.build_env(run_id, "1", inputs)
-                await script_runner.run_script_workflow_prepared(record, spec.path, env)
+                await script_runner.run_script_workflow_prepared(
+                    record,
+                    spec.path,
+                    env,
+                    **({"run_credential": run_credential} if run_credential is not None else {}),
+                )
     except asyncio.CancelledError:
         # BR-2a: cancellation is NOT an Exception subclass — settle the durable row
         # before letting the cancellation continue to propagate.
@@ -5391,8 +6545,10 @@ async def get_workflow_run_plan_endpoint(
 
 @app.post("/workflows/runs")
 async def start_workflow_run_endpoint(
+    request: Request,
     body: WorkflowRunRequest,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
+    principal: Principal = Depends(get_current_principal),
 ) -> Dict:
     """Resolve a spec, run it to completion inline, return the WorkflowRunResult.
 
@@ -5452,8 +6608,24 @@ async def start_workflow_run_endpoint(
             workflow_service._check_run_id_available(run_id)
         except KeyError as e:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        run_credential_factory = await _managed_run_credential_factory(
+            request=request,
+            principal=principal,
+            workflow_id=spec.name,
+            tier="script",
+            spec_hash=hashlib.sha256(spec.source.encode("utf-8")).hexdigest(),
+        )
         try:
-            result = await script_runner.run_script_workflow(spec, resolved, run_id)
+            result = await script_runner.run_script_workflow(
+                spec,
+                resolved,
+                run_id,
+                **(
+                    {"run_credential_factory": run_credential_factory}
+                    if run_credential_factory is not None
+                    else {}
+                ),
+            )
         except script_runner.ScriptLintError as e:
             raise HTTPException(
                 status_code=422,
@@ -5470,7 +6642,26 @@ async def start_workflow_run_endpoint(
         return result.model_dump()
 
     try:
-        result = await workflow_service.start_run(spec, body.inputs, run_id)
+        try:
+            workflow_service._check_run_id_available(run_id)
+        except KeyError as e:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        managed_step_admitters = await _resolve_managed_step_admitters(
+            request=request,
+            principal=principal,
+            workflow_name=spec.name,
+            spec_hash=hashlib.sha256(spec.model_dump_json().encode("utf-8")).hexdigest(),
+            step_ids=[step.id for step in spec.steps],
+        )
+        if managed_step_admitters:
+            result = await workflow_service.start_run(
+                spec,
+                body.inputs,
+                run_id,
+                managed_step_admitters=managed_step_admitters,
+            )
+        else:
+            result = await workflow_service.start_run(spec, body.inputs, run_id)
     except NotBuiltYetError as e:
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(e))
     except KeyError as e:
@@ -5486,7 +6677,9 @@ async def start_workflow_run_endpoint(
 @app.post("/workflows/runs:submit", status_code=status.HTTP_202_ACCEPTED)
 async def submit_workflow_run_endpoint(
     body: WorkflowRunRequest,
+    request: Request,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
+    principal: Principal = Depends(get_current_principal),
 ) -> Dict:
     """Submit a workflow run asynchronously: durably record it, ack 202, drive in background.
 
@@ -5598,6 +6791,8 @@ async def submit_workflow_run_endpoint(
     started_at = workflow_service._now()
     record: Any
     tier: str
+    managed_step_admitters: Dict[str, Any] = {}
+    run_credential: Optional[str] = None
 
     # Steps 4-6 branch by tier via ONE ``isinstance`` check (mirrors the blocking
     # route's tier split). Each arm: (4) its pre-insert gate, which raises BEFORE
@@ -5677,6 +6872,22 @@ async def submit_workflow_run_endpoint(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"failed to durably record run '{run_id}': {e}",
             )
+        run_credential_factory = await _managed_run_credential_factory(
+            request=request,
+            principal=principal,
+            workflow_id=spec.name,
+            tier="script",
+            spec_hash=hashlib.sha256(spec.source.encode("utf-8")).hexdigest(),
+        )
+        if run_credential_factory is not None:
+            try:
+                run_credential = await asyncio.to_thread(run_credential_factory, run_id, "1")
+            except Exception as error:
+                logger.warning("managed script run capability issuance failed", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="managed workflow run capability could not be issued",
+                ) from error
         # Step 6 — the live script record.
         record = script_runner.ScriptRunRecord(
             run_id=run_id,
@@ -5690,6 +6901,7 @@ async def submit_workflow_run_endpoint(
             started_at=started_at,
             finished_at=None,
             tier="script",
+            run_capability_required=run_credential_factory is not None,
         )
         tier = "script"
     else:
@@ -5701,6 +6913,13 @@ async def submit_workflow_run_endpoint(
                 workflow_service._dispatch_reserved_mode(spec)
             except NotBuiltYetError as e:
                 raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(e))
+        managed_step_admitters = await _resolve_managed_step_admitters(
+            request=request,
+            principal=principal,
+            workflow_name=spec.name,
+            spec_hash=hashlib.sha256(spec.model_dump_json().encode("utf-8")).hexdigest(),
+            step_ids=[step.id for step in spec.steps],
+        )
         # Step 5 — the awaited HARD ATOMIC durable insert (INV-1, TR-1): the run row
         # AND its seeded step rows commit in ONE transaction, so a failure leaves
         # NEITHER (no phantom RUNNING row). Its failure aborts with 500 + NO 202.
@@ -5743,6 +6962,7 @@ async def submit_workflow_run_endpoint(
                 step.id: workflow_service.StepRunState(step_id=step.id) for step in spec.steps
             },
             started_at=started_at,
+            managed_step_admitters=managed_step_admitters,
         )
         tier = "yaml"
 
@@ -5752,7 +6972,14 @@ async def submit_workflow_run_endpoint(
     # Via the registry helper, NOT a bare create_task: the Task must be strongly
     # referenced or it can be collected mid-drive (BG-1), and the drive itself is
     # admission-bounded (AB-1) inside the task.
-    _schedule_background_drive(record, spec, run_id, tier, resolved)
+    _schedule_background_drive(
+        record,
+        spec,
+        run_id,
+        tier,
+        resolved,
+        **({"run_credential": run_credential} if run_credential is not None else {}),
+    )
 
     # --- Step 8: ack 202. The insert (step 5) is awaited and durable before this,
     # so the instant this returns, get_run(run_id) finds the row (INV-1). ---
@@ -6948,8 +8175,10 @@ async def cancel_workflow_run_endpoint(
 @app.post("/workflows/runs/{run_id}/resume")
 async def resume_workflow_run_endpoint(
     run_id: str,
+    request: Request,
     body: Optional[ResumeRunRequest] = None,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
+    principal: Principal = Depends(get_current_principal),
 ) -> Dict:
     """Resume a crashed/failed run from its durable journal (FR-6.2, N6, U5 A4).
 
@@ -6994,14 +8223,104 @@ async def resume_workflow_run_endpoint(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown run '{run_id}'")
 
+    pending_work_steps = await _project_pending_work_before_resume(request, run_id)
+    # Projection may have changed only step state; reload the durable run so
+    # later tier/spec decisions still use the journal's current snapshot.
+    row = workflow_journal.get_run(run_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown run '{run_id}'")
+
     if row.tier == "script":
         try:
+            if pending_work_steps:
+                try:
+                    snapshot = json.loads(row.spec_snapshot)
+                    frozen_source = snapshot["source"]
+                    if not isinstance(frozen_source, str):
+                        raise ValueError("script source is invalid")
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                    raise workflow_service.ResumeCorruptError(
+                        f"run '{run_id}' snapshot is corrupt"
+                    ) from error
+                step_id = pending_work_steps[0]
+                if len(pending_work_steps) != 1:
+                    raise workflow_service.ResumeNotAllowedError(
+                        "script run has multiple unresolved managed Work steps"
+                    )
+                step = await asyncio.to_thread(workflow_journal.get_step, run_id, step_id)
+                if step is None or step.state != "work_pending" or step.attempts <= 0:
+                    raise workflow_service.ResumeNotAllowedError(
+                        "managed script step identity is unavailable"
+                    )
+                step_admitters = await _resolve_managed_step_admitters(
+                    request=request,
+                    principal=principal,
+                    workflow_name=row.workflow_name,
+                    spec_hash=hashlib.sha256(frozen_source.encode("utf-8")).hexdigest(),
+                    step_ids=[step_id],
+                )
+                recover = step_admitters.get(step_id)
+                if recover is None:
+                    raise workflow_service.ResumeNotAllowedError(
+                        "managed Work step has no active provision-bound recovery adapter"
+                    )
+                try:
+                    parsed_inputs = json.loads(row.inputs_json)
+                    inputs = parsed_inputs if isinstance(parsed_inputs, dict) else {}
+                    await recover(
+                        tier="script",
+                        run_id=run_id,
+                        run_generation=int(row.generation),
+                        step_id=step_id,
+                        step_attempt=step.attempts,
+                        workflow_step_attempt=step.attempts,
+                        recover=True,
+                        inputs=inputs,
+                    )
+                except Exception as error:
+                    raise workflow_service.ResumeNotAllowedError(
+                        "managed Work attempt remains pending"
+                    ) from error
+                pending_work_steps = await _project_pending_work_before_resume(request, run_id)
+                if pending_work_steps:
+                    raise workflow_service.ResumeNotAllowedError(
+                        "managed Work attempt remains pending"
+                    )
+                row = await asyncio.to_thread(workflow_journal.get_run, run_id)
+                if row is None:
+                    raise KeyError(f"unknown run '{run_id}'")
+            snapshot = json.loads(row.spec_snapshot)
+            frozen_source = snapshot["source"]
+            if not isinstance(frozen_source, str):
+                raise workflow_service.ResumeCorruptError(f"run '{run_id}' snapshot is corrupt")
+            run_credential_factory = await _managed_run_credential_factory(
+                request=request,
+                principal=principal,
+                workflow_id=row.workflow_name,
+                tier="script",
+                spec_hash=hashlib.sha256(frozen_source.encode("utf-8")).hexdigest(),
+            )
             if decisions:
-                result = await script_runner.resume_script_run(run_id, decisions=decisions)
+                result = await script_runner.resume_script_run(
+                    run_id,
+                    decisions=decisions,
+                    **(
+                        {"run_credential_factory": run_credential_factory}
+                        if run_credential_factory is not None
+                        else {}
+                    ),
+                )
             else:
                 # Byte-identical to the pre-#583 call, so an ordinary resume cannot
                 # regress on a code path it never enters.
-                result = await script_runner.resume_script_run(run_id)
+                result = await script_runner.resume_script_run(
+                    run_id,
+                    **(
+                        {"run_credential_factory": run_credential_factory}
+                        if run_credential_factory is not None
+                        else {}
+                    ),
+                )
         except KeyError:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown run '{run_id}'"
@@ -7034,8 +8353,38 @@ async def resume_workflow_run_endpoint(
             ),
         )
 
+    managed_step_admitters: Dict[str, Any] = {}
+    if getattr(request.app.state, "work_workflow_origins", None) is not None:
+        from cli_agent_orchestrator.models.workflow import WorkflowSpec
+
+        try:
+            frozen_spec = WorkflowSpec.model_validate_json(row.spec_snapshot)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"run '{run_id}' snapshot is corrupt: {e}",
+            ) from e
+        if frozen_spec.name != row.workflow_name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"run '{run_id}' snapshot workflow identity does not match journal",
+            )
+        managed_step_admitters = await _resolve_managed_step_admitters(
+            request=request,
+            principal=principal,
+            workflow_name=row.workflow_name,
+            spec_hash=hashlib.sha256(row.spec_snapshot.encode("utf-8")).hexdigest(),
+            step_ids=[step.id for step in frozen_spec.steps],
+        )
+
     try:
-        result = await workflow_service.resume_from_last_completed(run_id)
+        if managed_step_admitters:
+            result = await workflow_service.resume_from_last_completed(
+                run_id,
+                managed_step_admitters=managed_step_admitters,
+            )
+        else:
+            result = await workflow_service.resume_from_last_completed(run_id)
     except KeyError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown run '{run_id}'")
     except workflow_service.ResumeNotAllowedError as e:
@@ -7049,6 +8398,300 @@ async def resume_workflow_run_endpoint(
     except workflow_service.WorkflowEngineError as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
     return result.model_dump()
+
+
+@app.post(
+    "/workflows/runs/{run_id}/steps/{step_id}/retry",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_managed_workflow_step_endpoint(
+    run_id: str,
+    step_id: str,
+    request: Request,
+    body: ManagedStepRetryRequest,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_ADMIN)),
+    principal: Principal = Depends(get_current_principal),
+) -> Dict[str, Any]:
+    """Authorize and admit one retry of the exact current failed managed attempt.
+
+    The caller supplies only compare-and-set expectations. Provision, delegation,
+    delivery, result routing, and retry authorization are resolved from the durable
+    run and Work origin stores. The T121 journal transition consumes the T118
+    authorization before the provision-bound callback can admit another Work item.
+    Repeating this exact request after a lost response reuses the same authorization
+    and workflow attempt; a changed or stale fence cannot increment it.
+    """
+    from cli_agent_orchestrator.models.workflow import WorkflowSpec
+    from cli_agent_orchestrator.services import script_runner, workflow_journal, workflow_service
+
+    if (
+        not is_verified_principal(principal)
+        or SCOPE_ADMIN not in _scopes
+        or SCOPE_ADMIN not in principal.scopes
+    ):
+        raise HTTPException(status_code=403, detail="administrator identity required")
+    if run_id in workflow_service._active_drives or run_id in script_runner._active_drives:
+        raise HTTPException(status_code=409, detail="workflow run is currently executing")
+
+    try:
+        row = await asyncio.to_thread(workflow_journal.get_run, run_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"unknown run '{run_id}'")
+        if row.tier not in {"yaml", "script"}:
+            raise HTTPException(status_code=409, detail="workflow tier cannot retry managed Work")
+        if row.state != "running" or row.generation != str(body.run_generation):
+            raise HTTPException(status_code=409, detail="workflow run generation is stale")
+        step_row = await asyncio.to_thread(workflow_journal.get_step, run_id, step_id)
+        failed_expected_attempt = bool(
+            step_row is not None
+            and step_row.state == "failed"
+            and step_row.attempts == body.workflow_step_attempt
+            and step_row.error_kind == "managed_work_failed"
+        )
+        retry_already_claimed = bool(
+            step_row is not None
+            and step_row.state == "work_pending"
+            and step_row.attempts == body.workflow_step_attempt + 1
+            and step_row.error_kind is None
+        )
+        if not (failed_expected_attempt or retry_already_claimed):
+            raise HTTPException(
+                status_code=409, detail="workflow step is not this failed Work attempt"
+            )
+        if row.current_step_id != step_id:
+            raise HTTPException(status_code=409, detail="workflow step is no longer current")
+
+        step = None
+        record = None
+        inputs: Dict[str, Any] = {}
+        if row.tier == "yaml":
+            try:
+                frozen_spec = WorkflowSpec.model_validate_json(row.spec_snapshot)
+            except Exception as error:
+                raise HTTPException(
+                    status_code=422, detail="workflow snapshot is corrupt"
+                ) from error
+            if frozen_spec.name != row.workflow_name:
+                raise HTTPException(status_code=422, detail="workflow snapshot identity differs")
+            step = next(
+                (candidate for candidate in frozen_spec.steps if candidate.id == step_id), None
+            )
+            if step is None:
+                raise HTTPException(
+                    status_code=409, detail="workflow step is absent from its snapshot"
+                )
+            retries = (
+                step.retries
+                if step.retries is not None
+                else workflow_service.WORKFLOW_DEFAULT_STEP_RETRIES
+            )
+            if body.workflow_step_attempt >= retries + 1:
+                raise HTTPException(
+                    status_code=409, detail="workflow step retry policy is exhausted"
+                )
+            spec_hash = hashlib.sha256(row.spec_snapshot.encode("utf-8")).hexdigest()
+            record = await asyncio.to_thread(workflow_service._rebuild_record_from_journal, run_id)
+            if record is None:
+                raise HTTPException(
+                    status_code=422, detail="workflow run snapshot cannot be recovered"
+                )
+            try:
+                prompt = workflow_service._substitute(step.prompt, record)
+            except workflow_service.WorkflowEngineError as error:
+                raise HTTPException(
+                    status_code=409, detail="workflow retry inputs are unavailable"
+                ) from error
+            inputs = record.inputs
+        else:
+            try:
+                snapshot = json.loads(row.spec_snapshot)
+                frozen_source = snapshot["source"]
+                if not isinstance(frozen_source, str):
+                    raise ValueError("source is invalid")
+                parsed_inputs = json.loads(row.inputs_json)
+                if not isinstance(parsed_inputs, dict):
+                    raise ValueError("inputs are invalid")
+                inputs = parsed_inputs
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                raise HTTPException(
+                    status_code=422, detail="script run snapshot is corrupt"
+                ) from error
+            spec_hash = hashlib.sha256(frozen_source.encode("utf-8")).hexdigest()
+            prompt = None
+
+        origins = getattr(request.app.state, "work_workflow_origins", None)
+        projector = getattr(request.app.state, "workflow_step_projector", None)
+        result_service = getattr(request.app.state, "work_workflow_result_service", None)
+        authorize = getattr(origins, "authorize_step_retry", None)
+        resolver = getattr(origins, "resolve_step_admitter", None)
+        if (
+            not callable(authorize)
+            or not callable(resolver)
+            or projector is None
+            or result_service is None
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail="managed workflow retry runtime is unavailable",
+            )
+
+        try:
+            authorization = await asyncio.to_thread(
+                authorize,
+                principal,
+                workflow_id=row.workflow_name,
+                spec_hash=spec_hash,
+                tier=row.tier,
+                run_id=run_id,
+                run_generation=body.run_generation,
+                step_id=step_id,
+                workflow_step_attempt=body.workflow_step_attempt,
+                work_attempt_id=body.work_attempt_id,
+                work_generation=body.work_generation,
+            )
+        except PermissionError as error:
+            raise HTTPException(
+                status_code=403, detail="managed retry authority is unavailable"
+            ) from error
+        except (ValueError, LookupError) as error:
+            raise HTTPException(
+                status_code=409, detail="managed retry expectation is stale"
+            ) from error
+        except Exception as error:
+            logger.warning("managed workflow retry authorization failed", exc_info=True)
+            raise HTTPException(
+                status_code=503, detail="managed workflow retry is unavailable"
+            ) from error
+
+        if (
+            getattr(authorization, "run_id", None) != run_id
+            or getattr(authorization, "run_generation", None) != body.run_generation
+            or getattr(authorization, "workflow_id", None) != row.workflow_name
+            or getattr(authorization, "spec_hash", None) != spec_hash
+            or getattr(authorization, "tier", None) != row.tier
+            or getattr(authorization, "step_id", None) != step_id
+            or getattr(authorization, "workflow_step_attempt", None) != body.workflow_step_attempt
+            or getattr(authorization, "work_attempt_id", None) != body.work_attempt_id
+            or getattr(authorization, "work_generation", None) != body.work_generation
+        ):
+            raise HTTPException(
+                status_code=409, detail="managed retry authorization differs from request"
+            )
+
+        try:
+            admitter = await asyncio.to_thread(
+                resolver, principal, row.workflow_name, spec_hash, step_id
+            )
+        except PermissionError as error:
+            raise HTTPException(
+                status_code=403, detail="managed workflow authority is unavailable"
+            ) from error
+        except (ValueError, LookupError) as error:
+            raise HTTPException(
+                status_code=409, detail="managed workflow source is stale"
+            ) from error
+        except Exception as error:
+            logger.warning("managed workflow retry resolver failed", exc_info=True)
+            raise HTTPException(
+                status_code=503, detail="managed workflow runtime is unavailable"
+            ) from error
+        if admitter is None or not callable(admitter):
+            raise HTTPException(status_code=403, detail="managed workflow provision is unavailable")
+
+        if retry_already_claimed:
+            # A lost response or process restart may replay the exact request
+            # after T121 has durably consumed the authorization. T118 has just
+            # revalidated that prior failed binding and authorization;
+            # recover=True reuses N+1 through the same-key admission fallback.
+            next_attempt = step_row.attempts
+        else:
+            try:
+                next_attempt = await asyncio.to_thread(
+                    workflow_journal.begin_managed_work_step,
+                    run_id,
+                    step_id,
+                    row.generation,
+                    step_row.call_fingerprint,
+                    workflow_service._now(),
+                    retry_authorization=authorization,
+                    principal=principal,
+                    workflow_origins=origins,
+                    work_service=result_service,
+                )
+            except PermissionError as error:
+                raise HTTPException(
+                    status_code=403, detail="managed retry authority changed"
+                ) from error
+            except (ValueError, LookupError) as error:
+                raise HTTPException(
+                    status_code=409, detail="managed retry transition is stale"
+                ) from error
+            except Exception as error:
+                logger.warning("managed workflow retry transition failed", exc_info=True)
+                raise HTTPException(
+                    status_code=503, detail="managed workflow retry is unavailable"
+                ) from error
+
+        try:
+            admitted = await admitter(
+                tier=row.tier,
+                run_id=run_id,
+                run_generation=body.run_generation,
+                step_id=step_id,
+                step_attempt=next_attempt,
+                workflow_step_attempt=next_attempt,
+                recover=retry_already_claimed,
+                inputs=inputs,
+                **(
+                    {"prompt": prompt, "step": step, "record": record} if row.tier == "yaml" else {}
+                ),
+            )
+        except Exception as error:
+            # The attempt transition is already durable. A repeated identical
+            # request resolves the same authorization and admission key.
+            logger.warning("authorized managed workflow retry remains pending", exc_info=True)
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "authorized Work retry remains pending", "kind": "work_pending"},
+            ) from error
+        if (
+            not isinstance(admitted, dict)
+            or not isinstance(admitted.get("id"), str)
+            or not admitted["id"]
+            or not isinstance(admitted.get("attempts"), list)
+            or not admitted["attempts"]
+            or not isinstance(admitted["attempts"][0], dict)
+            or not isinstance(admitted["attempts"][0].get("id"), str)
+        ):
+            raise HTTPException(
+                status_code=503, detail="managed retry admission returned no Work attempt"
+            )
+        try:
+            await asyncio.to_thread(projector.project_pending_for_run, run_id)
+        except Exception as error:
+            logger.warning("authorized managed workflow retry projection failed", exc_info=True)
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "authorized Work retry remains pending", "kind": "work_pending"},
+            ) from error
+
+        work_attempt = admitted["attempts"][0]
+        return {
+            "run_id": run_id,
+            "step_id": step_id,
+            "state": "retry_admitted",
+            "workflow_step_attempt": next_attempt,
+            "work_attempt_id": work_attempt["id"],
+            "work_generation": work_attempt.get("generation"),
+            "authorization_id": authorization.authorization_id,
+        }
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.warning("managed workflow retry handler failed", exc_info=True)
+        raise HTTPException(
+            status_code=503, detail="managed workflow retry is unavailable"
+        ) from error
 
 
 @app.post("/workflows/runs/{run_id}/steps/{step_id}:replay")
@@ -7253,6 +8896,64 @@ async def export_graph_endpoint(
         )
 
     return {"written_files": written_files, "sink": body.sink, "dest": body.dest}
+
+
+@app.get(
+    HANDOFF_RESULTS_ROUTE,
+    summary="Retrieve a durable handoff step result (issue #447)",
+    description=(
+        "Returns the persisted state and result for a handoff job identified by "
+        "``job_id`` (generated by the MCP client and passed to ``POST /terminals/run-step`` "
+        "in the ``job_id`` field). Use this to recover a result that was not delivered "
+        "over the original request because the MCP transport timed out. "
+        "Possible ``state`` values: ``running`` (step still in progress), "
+        "``completed`` (result in ``last_message``), ``error`` (failure in ``error_message``)."
+    ),
+)
+async def get_handoff_result_endpoint(
+    job_id: str,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
+) -> Dict:
+    """Retrieve a durable handoff step result by job_id (issue #447).
+
+    Returns the persisted record when found; 404 when the job_id is unknown
+    (either the caller never sent a job_id, or the record has been purged by
+    the retention sweep). Scope-gated (PR #453 review finding 4): ``last_message``
+    can carry worker output (prompts/secrets), so this follows the same
+    ``require_any_scope`` posture as other content-serving GETs (``/events``,
+    ``/memory/export``) rather than staying open. A no-op when auth is
+    disabled (the default) — ``require_any_scope`` only enforces when an IdP
+    is configured.
+    """
+    try:
+        record = get_handoff_result(job_id)
+    except Exception as exc:  # noqa: BLE001 — see the leak note below
+        # A storage failure must never hand the job_id to the ASGI error logger.
+        # This handler has no generic exception handler above it, so an escaping
+        # SQLAlchemy DBAPI error (a locked SQLite file being the realistic case)
+        # reaches uvicorn's ServerErrorMiddleware, which logs the whole traceback
+        # to ``uvicorn.error`` -- and that traceback prints the bound parameters,
+        # ``[parameters: ('<job_id>',)]``. The access-log filter in
+        # ``utils/logging.py`` scrubs the request PATH and never sees this
+        # surface, so the read path needs its own guard even though the write
+        # path is already covered (PR #453 review, read-error path).
+        # EXCEPTION CLASS NAME ONLY, and ``from None`` so nothing downstream can
+        # walk ``__cause__``/``__context__`` back to the parameter-bearing error.
+        logger.error(
+            "get_handoff_result: lookup failed for job_id_prefix=%s (%s)",
+            job_id[:8],
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Handoff result lookup failed; the record may still exist, retry shortly",
+        ) from None
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Handoff result not found for job_id '{job_id}'",
+        )
+    return record
 
 
 @app.delete("/terminals/{terminal_id}")
@@ -8064,7 +9765,48 @@ def _to_memory_summary(mem, base_dir: Path) -> MemorySummary:
         tags=mem.tags,
         created_at=mem.created_at,
         updated_at=mem.updated_at,
+        source_kind=getattr(mem, "source_kind", "native"),
+        source_path=getattr(mem, "source_path", None),
+        indexed_at=getattr(mem, "indexed_at", None),
+        index_freshness=getattr(mem, "index_freshness", None),
+        content_truncated=bool(getattr(mem, "content_truncated", False)),
     )
+
+
+@app.get("/memory/vault/status")
+async def vault_status_endpoint(
+    vault_id: Optional[str] = None,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
+) -> Dict:
+    """Return the existing read-only, content-free vault status projection."""
+    from cli_agent_orchestrator.services.settings_service import get_vault_config
+    from cli_agent_orchestrator.services.vault.binding import VaultConfigUnavailableError
+    from cli_agent_orchestrator.services.vault.status import get_vault_status
+
+    try:
+        config = get_vault_config()
+    except (VaultConfigUnavailableError, ValueError):
+        return {"configured": False, "vaults": []}
+    if not config.enabled:
+        return {"configured": False, "vaults": []}
+
+    return {
+        "configured": True,
+        "vaults": [
+            {
+                "vault_id": item.vault_id,
+                "status_counts": dict(item.status_counts),
+                "finding_counts": dict(item.finding_counts),
+                "warnings": list(item.warnings),
+                "recall_counters": dict(item.recall_counters),
+                "process_local_unmapped_project_writes": item.process_local_unmapped_project_writes,
+                "process_local_unmapped_project_identities": item.process_local_unmapped_project_identities,
+                "process_local_non_writable_write_refusals": item.process_local_non_writable_write_refusals,
+                "process_local_secret_gate_write_refusals": item.process_local_secret_gate_write_refusals,
+            }
+            for item in get_vault_status(config, vault_id=vault_id)
+        ],
+    }
 
 
 @app.get(
@@ -8443,12 +10185,17 @@ async def delete_memory_endpoint(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete memory: {str(e)}",
         )
-    if not deleted:
+    if deleted.action == "absent":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Memory '{key}' not found in scope '{scope.value}'",
         )
-    return {"success": True}
+    return {
+        "success": True,
+        "action": deleted.action,
+        "path": deleted.path,
+        "source_kind": deleted.source_kind,
+    }
 
 
 @app.delete("/memory", dependencies=[Depends(legacy_memory_operator)])
@@ -8488,7 +10235,12 @@ async def clear_memories_endpoint(
         try:
             # session/agent results carry scope_id natively; project results
             # need the query param (their recalled scope_id is None).
-            if await svc.forget(key=mem.key, scope=scope.value, scope_id=mem.scope_id or scope_id):
+            result = await svc.forget(
+                key=mem.key,
+                scope=scope.value,
+                scope_id=mem.scope_id or scope_id,
+            )
+            if result.action in {"deleted", "deindexed", "deleted_and_deindexed"}:
                 deleted_count += 1
         except MemoryDisabledError:
             raise HTTPException(

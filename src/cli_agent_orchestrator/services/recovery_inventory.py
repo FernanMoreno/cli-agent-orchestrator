@@ -23,9 +23,9 @@ from cli_agent_orchestrator.clients.work_repository import (
     _stored_recovery_context,
 )
 
-WORK_SQLITE_PROFILE_VERSION = 29
-_WORK_SCHEMA_VERSION = 38
-_PROFILE_SCHEMA_VERSIONS = {28: 30, 29: 38}
+WORK_SQLITE_PROFILE_VERSION = 31
+_WORK_SCHEMA_VERSION = 39
+_PROFILE_SCHEMA_VERSIONS = {28: 30, 29: 38, 30: 39, 31: 39}
 _INCOMPATIBLE = "recovery inventory incompatible"
 
 _V25_TABLES = (
@@ -1331,6 +1331,17 @@ _V29_ADDITIONAL_TABLES = (
     "work_task_receiver_credentials",
 )
 _V29_TABLES = tuple(sorted((*_V25_TABLES, *_V29_ADDITIONAL_TABLES)))
+_V30_ADDITIONAL_TABLES = (
+    "work_workflow_run_capabilities",
+    "work_workflow_step_bindings",
+    "work_workflow_step_projections",
+    "work_workflow_step_provisions",
+    "work_workflow_step_receiver_acceptances",
+    "work_workflow_step_receiver_credentials",
+    "work_workflow_step_retry_authorizations",
+    "work_workflow_step_task_received_receipts",
+)
+_V30_TABLES = tuple(sorted((*_V29_TABLES, *_V30_ADDITIONAL_TABLES)))
 
 
 def _known_v29_fk(
@@ -1496,8 +1507,419 @@ _V29_FOREIGN_KEYS = tuple(
     )
 )
 
-_PROFILE_TABLES = {28: _V25_TABLES, 29: _V29_TABLES}
-_PROFILE_FOREIGN_KEYS = {28: _V28_FOREIGN_KEYS, 29: _V29_FOREIGN_KEYS}
+# Frozen foreign-key catalog introduced by v39.  This is an explicit additive
+# inventory; inspection never learns accepted references from the store itself.
+_V30_FOREIGN_KEYS = tuple(
+    sorted(
+        (
+            *_V29_FOREIGN_KEYS,
+            *(
+                _known_v29_fk(*reference)
+                for reference in (
+                    (
+                        "work_workflow_run_capabilities",
+                        ("principal_id",),
+                        "work_principals",
+                        ("id",),
+                    ),
+                    ("work_workflow_run_capabilities", ("run_id",), "workflow_run", ("run_id",)),
+                    ("work_workflow_step_bindings", ("job_id",), "work_jobs", ("id",)),
+                    (
+                        "work_workflow_step_bindings",
+                        ("job_id", "grant_id", "grant_revision"),
+                        "work_grants",
+                        ("job_id", "id", "revision"),
+                    ),
+                    (
+                        "work_workflow_step_bindings",
+                        ("job_id", "receiver_grant_id", "receiver_grant_revision"),
+                        "work_grants",
+                        ("job_id", "id", "revision"),
+                    ),
+                    ("work_workflow_step_bindings", ("principal_id",), "work_principals", ("id",)),
+                    (
+                        "work_workflow_step_bindings",
+                        (
+                            "principal_id",
+                            "workflow_id",
+                            "step_id",
+                            "provision_revision",
+                            "provision_id",
+                        ),
+                        "work_workflow_step_provisions",
+                        ("principal_id", "workflow_id", "step_id", "revision", "id"),
+                    ),
+                    (
+                        "work_workflow_step_bindings",
+                        (
+                            "receiver_subject_id",
+                            "receiver_authorization_kind",
+                            "receiver_authorization_revision",
+                        ),
+                        "work_origin_authorizations",
+                        ("subject_id", "origin_kind", "revision"),
+                    ),
+                    (
+                        "work_workflow_step_bindings",
+                        ("receiver_subject_id", "receiver_subject_revision"),
+                        "work_origin_subjects",
+                        ("subject_id", "revision"),
+                    ),
+                    ("work_workflow_step_bindings", ("run_id",), "workflow_run", ("run_id",)),
+                    (
+                        "work_workflow_step_bindings",
+                        ("snapshot_id",),
+                        "work_delegation_snapshots",
+                        ("id",),
+                    ),
+                    (
+                        "work_workflow_step_bindings",
+                        ("work_attempt_id", "work_generation"),
+                        "work_dispatch_bindings",
+                        ("attempt_id", "generation"),
+                    ),
+                    ("work_workflow_step_bindings", ("work_item_id",), "work_items", ("id",)),
+                    (
+                        "work_workflow_step_bindings",
+                        ("work_item_id", "work_attempt_id", "work_generation"),
+                        "work_attempts",
+                        ("work_item_id", "id", "generation"),
+                    ),
+                    (
+                        "work_workflow_step_bindings",
+                        (
+                            "workflow_subject_id",
+                            "workflow_authorization_kind",
+                            "workflow_authorization_revision",
+                        ),
+                        "work_origin_authorizations",
+                        ("subject_id", "origin_kind", "revision"),
+                    ),
+                    (
+                        "work_workflow_step_bindings",
+                        ("workflow_subject_id", "workflow_subject_revision"),
+                        "work_origin_subjects",
+                        ("subject_id", "revision"),
+                    ),
+                    (
+                        "work_workflow_step_projections",
+                        ("accepted_result_id",),
+                        "work_results",
+                        ("id",),
+                    ),
+                    (
+                        "work_workflow_step_projections",
+                        ("binding_id",),
+                        "work_workflow_step_bindings",
+                        ("binding_id",),
+                    ),
+                    ("work_workflow_step_provisions", ("issuer_id",), "work_principals", ("id",)),
+                    ("work_workflow_step_provisions", ("job_id",), "work_jobs", ("id",)),
+                    (
+                        "work_workflow_step_provisions",
+                        ("job_id", "grant_id", "grant_revision"),
+                        "work_grants",
+                        ("job_id", "id", "revision"),
+                    ),
+                    (
+                        "work_workflow_step_provisions",
+                        ("job_id", "receiver_grant_id", "receiver_grant_revision"),
+                        "work_grants",
+                        ("job_id", "id", "revision"),
+                    ),
+                    (
+                        "work_workflow_step_provisions",
+                        ("principal_id",),
+                        "work_principals",
+                        ("id",),
+                    ),
+                    (
+                        "work_workflow_step_provisions",
+                        (
+                            "receiver_subject_id",
+                            "receiver_authorization_kind",
+                            "receiver_authorization_revision",
+                        ),
+                        "work_origin_authorizations",
+                        ("subject_id", "origin_kind", "revision"),
+                    ),
+                    (
+                        "work_workflow_step_provisions",
+                        ("receiver_subject_id", "receiver_subject_revision"),
+                        "work_origin_subjects",
+                        ("subject_id", "revision"),
+                    ),
+                    (
+                        "work_workflow_step_provisions",
+                        ("snapshot_id",),
+                        "work_delegation_snapshots",
+                        ("id",),
+                    ),
+                    (
+                        "work_workflow_step_provisions",
+                        (
+                            "workflow_subject_id",
+                            "workflow_authorization_kind",
+                            "workflow_authorization_revision",
+                        ),
+                        "work_origin_authorizations",
+                        ("subject_id", "origin_kind", "revision"),
+                    ),
+                    (
+                        "work_workflow_step_provisions",
+                        ("workflow_subject_id", "workflow_subject_revision"),
+                        "work_origin_subjects",
+                        ("subject_id", "revision"),
+                    ),
+                    (
+                        "work_workflow_step_receiver_acceptances",
+                        ("binding_id",),
+                        "work_workflow_step_bindings",
+                        ("binding_id",),
+                    ),
+                    (
+                        "work_workflow_step_receiver_acceptances",
+                        ("binding_id", "attempt_id", "generation"),
+                        "work_workflow_step_bindings",
+                        ("binding_id", "work_attempt_id", "work_generation"),
+                    ),
+                    (
+                        "work_workflow_step_receiver_acceptances",
+                        (
+                            "receiver_subject_id",
+                            "receiver_authorization_kind",
+                            "receiver_authorization_revision",
+                        ),
+                        "work_origin_authorizations",
+                        ("subject_id", "origin_kind", "revision"),
+                    ),
+                    (
+                        "work_workflow_step_receiver_acceptances",
+                        ("receiver_subject_id", "receiver_subject_revision"),
+                        "work_origin_subjects",
+                        ("subject_id", "revision"),
+                    ),
+                    (
+                        "work_workflow_step_receiver_credentials",
+                        ("attempt_id", "generation"),
+                        "work_attempt_credentials",
+                        ("attempt_id", "generation"),
+                    ),
+                    (
+                        "work_workflow_step_receiver_credentials",
+                        ("binding_id",),
+                        "work_workflow_step_bindings",
+                        ("binding_id",),
+                    ),
+                    (
+                        "work_workflow_step_receiver_credentials",
+                        ("binding_id", "attempt_id", "generation", "work_item_id"),
+                        "work_workflow_step_bindings",
+                        ("binding_id", "work_attempt_id", "work_generation", "work_item_id"),
+                    ),
+                    (
+                        "work_workflow_step_receiver_credentials",
+                        ("job_id", "receiver_grant_id", "receiver_grant_revision"),
+                        "work_grants",
+                        ("job_id", "id", "revision"),
+                    ),
+                    (
+                        "work_workflow_step_receiver_credentials",
+                        ("job_id", "work_item_id"),
+                        "work_items",
+                        ("job_id", "id"),
+                    ),
+                    (
+                        "work_workflow_step_receiver_credentials",
+                        ("receiver_subject_id",),
+                        "work_principals",
+                        ("id",),
+                    ),
+                    (
+                        "work_workflow_step_receiver_credentials",
+                        ("work_item_id", "attempt_id", "generation"),
+                        "work_attempts",
+                        ("work_item_id", "id", "generation"),
+                    ),
+                    (
+                        "work_workflow_step_retry_authorizations",
+                        ("binding_id", "work_attempt_id", "work_generation", "work_item_id"),
+                        "work_workflow_step_bindings",
+                        ("binding_id", "work_attempt_id", "work_generation", "work_item_id"),
+                    ),
+                    (
+                        "work_workflow_step_retry_authorizations",
+                        ("principal_id",),
+                        "work_principals",
+                        ("id",),
+                    ),
+                    (
+                        "work_workflow_step_retry_authorizations",
+                        (
+                            "principal_id",
+                            "workflow_id",
+                            "step_id",
+                            "provision_revision",
+                            "provision_id",
+                        ),
+                        "work_workflow_step_provisions",
+                        ("principal_id", "workflow_id", "step_id", "revision", "id"),
+                    ),
+                    (
+                        "work_workflow_step_retry_authorizations",
+                        ("work_item_id",),
+                        "work_items",
+                        ("id",),
+                    ),
+                    (
+                        "work_workflow_step_task_received_receipts",
+                        ("binding_id",),
+                        "work_workflow_step_bindings",
+                        ("binding_id",),
+                    ),
+                    (
+                        "work_workflow_step_task_received_receipts",
+                        ("binding_id", "attempt_id", "generation", "work_item_id"),
+                        "work_workflow_step_bindings",
+                        ("binding_id", "work_attempt_id", "work_generation", "work_item_id"),
+                    ),
+                    (
+                        "work_workflow_step_task_received_receipts",
+                        ("job_id",),
+                        "work_jobs",
+                        ("id",),
+                    ),
+                    (
+                        "work_workflow_step_task_received_receipts",
+                        ("job_id", "receiver_grant_id", "receiver_grant_revision"),
+                        "work_grants",
+                        ("job_id", "id", "revision"),
+                    ),
+                    (
+                        "work_workflow_step_task_received_receipts",
+                        ("receiver_subject_id",),
+                        "work_principals",
+                        ("id",),
+                    ),
+                    (
+                        "work_workflow_step_task_received_receipts",
+                        (
+                            "receiver_subject_id",
+                            "receiver_authorization_kind",
+                            "receiver_authorization_revision",
+                        ),
+                        "work_origin_authorizations",
+                        ("subject_id", "origin_kind", "revision"),
+                    ),
+                    (
+                        "work_workflow_step_task_received_receipts",
+                        ("receiver_subject_id", "receiver_subject_revision"),
+                        "work_origin_subjects",
+                        ("subject_id", "revision"),
+                    ),
+                    (
+                        "work_workflow_step_task_received_receipts",
+                        ("work_item_id",),
+                        "work_items",
+                        ("id",),
+                    ),
+                )
+            ),
+        )
+    )
+)
+
+# v31 incorporates upstream handoff and derived vault metadata. Historical
+# profiles retain their exact native-column and table catalogs.
+_V31_NATIVE_COLUMNS = {
+    **_LEGACY_TABLE_COLUMNS,
+    "memory_metadata": (
+        *_LEGACY_TABLE_COLUMNS["memory_metadata"][:5],
+        "source_kind",
+        *_LEGACY_TABLE_COLUMNS["memory_metadata"][5:],
+    ),
+    "handoff_results": (
+        "job_id",
+        "state",
+        "terminal_id",
+        "last_message",
+        "error_message",
+        "created_at",
+        "updated_at",
+    ),
+    "vault_exclusion": (
+        "vault_id",
+        "scope",
+        "scope_id",
+        "cao_key",
+        "last_known_relpath",
+        "content_sha256",
+        "key_source",
+        "key_source_reason",
+        "created_at",
+    ),
+    "vault_finding": (
+        "id",
+        "vault_id",
+        "vault_relpath",
+        "code",
+        "severity",
+        "detail",
+        "reconcile_run_id",
+        "created_at",
+    ),
+    "vault_migration_receipt": (
+        "receipt_id",
+        "scope",
+        "scope_id",
+        "cao_key",
+        "native_relpath",
+        "native_snapshot_sha256",
+        "vault_id",
+        "managed_relpath",
+        "vault_note_uid",
+        "published_content_sha256",
+        "superseded_edges",
+        "status",
+        "created_at",
+    ),
+    "vault_note": (
+        "note_uid",
+        "vault_id",
+        "scope",
+        "scope_id",
+        "cao_key",
+        "vault_relpath",
+        "managed",
+        "content_sha256",
+        "frontmatter_sha256",
+        "size_bytes",
+        "mtime_ns",
+        "status",
+        "last_reconciled_at",
+        "key_source",
+        "key_source_reason",
+    ),
+    "vault_note_alias": (
+        "vault_id",
+        "former_relpath",
+        "cao_key",
+        "scope",
+        "scope_id",
+        "content_sha256",
+        "created_at",
+    ),
+    "vault_recall_counter": ("vault_id", "counter_name", "value"),
+}
+_V31_TABLES = tuple(sorted(set(_V30_TABLES) | set(_V31_NATIVE_COLUMNS)))
+
+_PROFILE_TABLES = {28: _V25_TABLES, 29: _V29_TABLES, 30: _V30_TABLES, 31: _V31_TABLES}
+_PROFILE_FOREIGN_KEYS = {
+    28: _V28_FOREIGN_KEYS,
+    29: _V29_FOREIGN_KEYS,
+    30: _V30_FOREIGN_KEYS,
+    31: _V30_FOREIGN_KEYS,
+}
 
 
 @dataclass(frozen=True, order=True)
@@ -1832,8 +2254,10 @@ def _foreign_keys(
     return tuple(sorted(relationships))
 
 
-def _validate_reference_catalog(connection: sqlite3.Connection, tables: tuple[str, ...]) -> None:
-    for reference in _REFERENCE_FAMILIES:
+def _validate_reference_catalog(
+    connection: sqlite3.Connection, tables: tuple[str, ...], references
+) -> None:
+    for reference in references:
         if reference.source_table not in tables:
             raise RecoveryInventoryError(_INCOMPATIBLE)
         source_columns = {
@@ -1859,8 +2283,9 @@ def _validate_reference_catalog(connection: sqlite3.Connection, tables: tuple[st
             raise RecoveryInventoryError(_INCOMPATIBLE)
 
 
-def _validate_legacy_tables(connection: sqlite3.Connection) -> None:
-    for table, expected_columns in _LEGACY_TABLE_COLUMNS.items():
+def _validate_legacy_tables(connection: sqlite3.Connection, profile_version: int) -> None:
+    catalog = _V31_NATIVE_COLUMNS if profile_version == 31 else _LEGACY_TABLE_COLUMNS
+    for table, expected_columns in catalog.items():
         columns = tuple(row[1] for row in connection.execute(f'PRAGMA table_info("{table}")'))
         if columns != expected_columns:
             raise RecoveryInventoryError(_INCOMPATIBLE)
@@ -1897,8 +2322,35 @@ def _inspect_work_profile(
         tables = _user_tables(connection)
         if tables != tables_expected:
             raise RecoveryInventoryError(_INCOMPATIBLE)
-        _validate_legacy_tables(connection)
-        _validate_reference_catalog(connection, tables)
+        _validate_legacy_tables(connection, profile_version)
+        references = _REFERENCE_FAMILIES
+        if profile_version == 31:
+            references = tuple(
+                sorted(
+                    (
+                        *references,
+                        ReferenceFamily(
+                            "handoff_payload",
+                            "sqlite_content",
+                            "handoff_results",
+                            ("last_message", "error_message"),
+                        ),
+                        ReferenceFamily(
+                            "vault_canonical_source",
+                            "requires_future_profile",
+                            "vault_note",
+                            ("vault_id", "vault_relpath"),
+                        ),
+                        ReferenceFamily(
+                            "vault_migration_native_source",
+                            "requires_future_profile",
+                            "vault_migration_receipt",
+                            ("native_relpath",),
+                        ),
+                    )
+                )
+            )
+        _validate_reference_catalog(connection, tables, references)
         foreign_keys = _foreign_keys(connection, tables)
         if foreign_keys != foreign_keys_expected:
             raise RecoveryInventoryError(_INCOMPATIBLE)
@@ -1908,7 +2360,7 @@ def _inspect_work_profile(
         profile_version=profile_version,
         tables=tables,
         foreign_keys=foreign_keys,
-        references=_REFERENCE_FAMILIES,
+        references=references,
     )
 
 

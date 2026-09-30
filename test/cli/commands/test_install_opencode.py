@@ -91,6 +91,11 @@ def _write_profile(
 
 def _help_lists_subcommand(help_output: str, subcommand: str) -> bool:
     """Return whether an OpenCode help page advertises one exact subcommand."""
+    # v1 uses yargs Commands; v2 uses a SUBCOMMANDS table.
+    if re.search(
+        rf"(?m)^\s*opencode\s+(?:(?:debug|agent)\s+)?{re.escape(subcommand)}(?:\s|$)", help_output
+    ):
+        return True
     lines = help_output.splitlines()
     try:
         section_start = next(i for i, line in enumerate(lines) if line.strip() == "SUBCOMMANDS")
@@ -610,7 +615,7 @@ class TestOpencodeAgentListIntegration:
             "OPENCODE_DISABLE_AUTOUPDATE": "1",
         }
 
-        opencode = shutil.which("opencode")
+        opencode = os.environ.get("CAO_TEST_OPENCODE_BINARY") or shutil.which("opencode")
         assert opencode is not None
         root_help = subprocess.run(
             [opencode, "--help"],
@@ -621,8 +626,8 @@ class TestOpencodeAgentListIntegration:
         )
         assert root_help.returncode == 0, root_help.stderr
 
-        if not _help_lists_subcommand(root_help.stdout, "agent"):
-            if _help_lists_subcommand(root_help.stdout, "debug"):
+        if not _help_lists_subcommand(root_help.stdout + root_help.stderr, "agent"):
+            if _help_lists_subcommand(root_help.stdout + root_help.stderr, "debug"):
                 debug_help = subprocess.run(
                     [opencode, "debug", "--help"],
                     capture_output=True,
@@ -631,17 +636,28 @@ class TestOpencodeAgentListIntegration:
                     timeout=15,
                 )
                 assert debug_help.returncode == 0, debug_help.stderr
-                if _help_lists_subcommand(debug_help.stdout, "agents"):
+                if _help_lists_subcommand(debug_help.stdout + debug_help.stderr, "agent"):
+                    details = subprocess.run(
+                        [opencode, "debug", "agent", "smoke-test-agent"],
+                        capture_output=True,
+                        text=True,
+                        env={**os.environ, **env},
+                        timeout=60,
+                    )
+                    assert details.returncode == 0, details.stderr or details.stdout
+                    resolved = json.loads(details.stdout)
+                    assert resolved["name"] == "smoke-test-agent"
+                    assert resolved["mode"] == "all"
+                    return
+                if _help_lists_subcommand(debug_help.stdout + debug_help.stderr, "agents"):
                     pytest.skip(
                         "OpenCode exposes `debug agents` through its persistent service; "
                         "skip only that service-backed listing to keep this check scoped "
                         "to the isolated discovery directory. The installed agent and "
                         "opencode.json were validated above."
                     )
-            pytest.skip(
-                "OpenCode does not advertise an isolated `agent list` command; "
-                "the installed agent and opencode.json were validated in the "
-                "test discovery directory."
+            pytest.fail(
+                "No isolated agent discovery command: " + root_help.stdout + root_help.stderr
             )
 
         agent_help = subprocess.run(
@@ -652,7 +668,7 @@ class TestOpencodeAgentListIntegration:
             timeout=15,
         )
         assert agent_help.returncode == 0, agent_help.stderr
-        if not _help_lists_subcommand(agent_help.stdout, "list"):
+        if not _help_lists_subcommand(agent_help.stdout + agent_help.stderr, "list"):
             pytest.skip(
                 "OpenCode advertises `agent` but not its `list` subcommand; "
                 "the installed agent and opencode.json were validated above."

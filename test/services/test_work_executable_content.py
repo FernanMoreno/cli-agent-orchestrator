@@ -6,6 +6,8 @@ import os
 import time
 from array import array
 from contextlib import contextmanager
+from test.services.test_work_contract_binding import bind, context
+from test.services.test_work_executable_staging import _minimal_static_elf
 
 import pytest
 
@@ -16,8 +18,6 @@ from cli_agent_orchestrator.services.work_elf_identity import identify_static_ex
 from cli_agent_orchestrator.services.work_executable_staging import (
     WorkExecutableStagingUnavailable,
 )
-from test.services.test_work_contract_binding import bind, context
-from test.services.test_work_executable_staging import _minimal_static_elf
 
 
 def executable_content_module():

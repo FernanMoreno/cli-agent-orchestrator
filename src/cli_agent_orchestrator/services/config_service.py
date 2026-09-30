@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel, Field
 
 from cli_agent_orchestrator.constants import CAO_HOME_DIR
+from cli_agent_orchestrator.services.vault.config import VaultConfig
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,7 @@ class MemoryConfig(BaseModel):
     flush_threshold: float = 0.85
     compile_timeout_s: float = 120.0
     lint_enabled: bool = True
+    vault: VaultConfig = Field(default_factory=VaultConfig)
     learning_enabled: bool = False
     instruction_promotion_enabled: bool = False
     workflow_journal_capture_output: bool = False
@@ -200,6 +202,7 @@ ENV_REGISTRY: Dict[str, Tuple[str, str, Any]] = {
     "CAO_MEMORY_LINT_ENABLED": ("memory.lint_enabled", "bool", True),
     "CAO_MEMORY_COMPILE_MODE": ("memory.compile_mode", "str", "llm"),
     "CAO_MEMORY_FLUSH_THRESHOLD": ("memory.flush_threshold", "float", 0.85),
+    "CAO_MEMORY_VAULT_ENABLED": ("memory.vault.enabled", "bool", False),
     "CAO_MCP_REQUEST_TIMEOUT": ("server.mcp_request_timeout", "int", 30),
     "CAO_EVENT_BUS_MAX_QUEUE_SIZE": ("server.event_bus_max_queue_size", "int", 1024),
     "CAO_PROVIDER_INIT_TIMEOUT": ("server.provider_init_timeout", "int", 120),
@@ -370,6 +373,7 @@ CONFIG_REGISTRY.update(
         "agents.disabled_dirs": ConfigOption("list", []),
         "agents.roles": ConfigOption("dict", {}),
         "skills.extra_dirs": ConfigOption("list", []),
+        "memory.vault": ConfigOption("dict", {}),
         "memory.compile_timeout_s": ConfigOption("float", 120.0),
         "memory.workflow_journal_capture_output": ConfigOption("bool", False),
         "memory.workflow_journal_output_cap_bytes": ConfigOption("int", 8192),
@@ -632,6 +636,15 @@ def _get_value(path: str, default: Any = None, override: Optional[Any] = None) -
             return override
         return _validate_value(path, override)
 
+    if path == "memory.vault" or path == "memory.vault.enabled":
+        from cli_agent_orchestrator.services import settings_service
+
+        try:
+            vault = settings_service.get_vault_config()
+        except ValueError as exc:
+            logger.warning("Invalid vault configuration disabled for config lookup: %s", exc)
+            vault = VaultConfig()
+        return vault.model_dump(mode="json") if path == "memory.vault" else vault.enabled
     # Delegate before generic env coercion: these readers own validation and
     # safety exceptions (lint veto, approval enable-only, learning parent gates).
     section = path.split(".", 1)[0]
@@ -771,7 +784,15 @@ class ConfigService:
         Reflects the same precedence ``get()`` uses (env beats file beats
         default). Intended for ``cao config list`` and debugging.
         """
-        return {p: _get_value(p) for p in _ALL_PATHS}
+        values = {
+            path: _get_value(path)
+            for path in _ALL_PATHS
+            if path not in {"memory.vault", "memory.vault.enabled"}
+        }
+        vault = _get_value("memory.vault")
+        values["memory.vault"] = vault
+        values["memory.vault.enabled"] = vault["enabled"]
+        return values
 
     @staticmethod
     def get_config() -> CAOConfig:
@@ -816,6 +837,7 @@ class ConfigService:
                 compile_mode=_get_value("memory.compile_mode", default="llm"),
                 flush_threshold=_get_value("memory.flush_threshold", default=0.85),
                 compile_timeout_s=_get_value("memory.compile_timeout_s", default=120.0),
+                vault=_get_value("memory.vault", default={}),
             ),
             terminal=TerminalConfig(
                 backend=_get_value("terminal.backend", default="tmux"),

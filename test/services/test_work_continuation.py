@@ -1,11 +1,12 @@
 """Reject unverified continuity packages before they affect durable work state."""
 
-from dataclasses import FrozenInstanceError, dataclass
 import hashlib
 import importlib
 import importlib.util
 import json
 import time
+from dataclasses import FrozenInstanceError, dataclass
+from test.fixtures.work_store import work_store_paths  # noqa: F401
 
 import pytest
 
@@ -25,7 +26,6 @@ from cli_agent_orchestrator.services.knowledge_policy import KnowledgePolicy
 from cli_agent_orchestrator.services.step_output_store import ArtifactRef, ImmutableResultStore
 from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
 from cli_agent_orchestrator.services.work_contract import WorkContracts
-from test.fixtures.work_store import work_store_paths  # noqa: F401
 
 
 def continuation_module():

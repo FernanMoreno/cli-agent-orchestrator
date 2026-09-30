@@ -30,7 +30,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, Set, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Protocol, Set, Union
 
 if TYPE_CHECKING:  # avoid a runtime circular import (script_runner imports this module)
     from cli_agent_orchestrator.services.script_runner import ScriptRunRecord
@@ -206,6 +206,11 @@ class RunRecord:
     # constructed here; it binds to the running loop lazily on first await, so
     # building a RunRecord outside a loop (unit tests) is safe.
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
+    # Optional trusted admission capabilities for managed steps. They are never
+    # reconstructed from the journal or from run/step identifiers.
+    managed_step_admitters: Dict[str, Callable] = field(default_factory=dict, repr=False)
+    work_pending: bool = False
+    run_generation: int = 1
 
 
 # Process-local run registry (ADR-8, B3-LC-2 singleton). A process restart loses
@@ -226,6 +231,15 @@ run_registry: Dict[str, Union[RunRecord, "ScriptRunRecord"]] = {}
 # when a drive starts (start_run / _drive_resume), removed in a ``finally`` on
 # EVERY exit path (complete, fail, engine error, cancel).
 _active_drives: Set[str] = set()
+
+
+def _legacy_result_envelope(result) -> str:
+    """The producer redacts/bounds the legacy result before the DAL stores it."""
+    from cli_agent_orchestrator.services.step_result import build_envelope, serialise_envelope
+
+    return serialise_envelope(
+        build_envelope(result.last_message, result.status.value, result.terminal_id)
+    )
 
 
 def _now() -> str:
@@ -844,6 +858,17 @@ async def _collect_structured_output(record: RunRecord, step: WorkflowStep) -> S
                 )
             raise
         st.terminal_id = result.terminal_id
+        if reprompt_recorder.contract_attempt_number is not None:
+            await asyncio.to_thread(
+                workflow_journal.record_yaml_step_result,
+                record.run_id,
+                step.id,
+                "1",
+                reprompt_recorder.contract_attempt_number,
+                reprompt_recorder.contract_call_fingerprint,
+                result,
+                result_json=_legacy_result_envelope(result),
+            )
         rec = step_output_store.get(record.run_id, step.id)
         if rec is not None and rec.validated:
             st.output = rec
@@ -912,6 +937,58 @@ async def _run_step(record: RunRecord, step: WorkflowStep) -> None:
             retry_count=step.retries,
         )
         try:
+            managed_admitter = record.managed_step_admitters.get(step.id)
+            if managed_admitter is not None:
+                st.state = StepState.WORK_PENDING
+                st.error = "awaiting_authenticated_work_result"
+                record.work_pending = True
+                # This is a pre-effect fence, not a best-effort projection.
+                # If it fails, the Work admission callback is never invoked.
+                await asyncio.to_thread(
+                    workflow_journal.mark_work_pending,
+                    run_id=record.run_id,
+                    step_id=step.id,
+                    generation=str(record.run_generation),
+                    step_attempt=attempt,
+                    tier="yaml",
+                    updated_at=_now(),
+                    call_fingerprint=_yaml_call_fingerprint(step, prompt),
+                )
+                work = await managed_admitter(
+                    tier="yaml",
+                    run_id=record.run_id,
+                    run_generation=record.run_generation,
+                    step_id=step.id,
+                    step_attempt=attempt,
+                    workflow_step_attempt=attempt,
+                    recover=False,
+                    prompt=prompt,
+                    step=step,
+                    record=record,
+                    inputs=record.inputs,
+                )
+                if (
+                    not isinstance(work, dict)
+                    or not isinstance(work.get("id"), str)
+                    or not work["id"]
+                    or not isinstance(work.get("attempts"), list)
+                    or not work["attempts"]
+                    or not isinstance(work["attempts"][0].get("id"), str)
+                ):
+                    raise WorkflowEngineError(
+                        "managed workflow step admission returned no durable Work attempt"
+                    )
+                # Admission is not acknowledgment or completion. Keep this run
+                # open until a separate authenticated result path supplies output.
+                await _ajournal(_journal_step, record, step.id)
+                await _journal_event(
+                    record,
+                    "step.work.pending",
+                    step_id=step.id,
+                    attempt=attempt,
+                    state=st.state.value,
+                )
+                return
             result = await run_agent_step(
                 provider=step.provider,
                 agent=step.agent,
@@ -927,6 +1004,17 @@ async def _run_step(record: RunRecord, step: WorkflowStep) -> None:
                 cancel_event=record.cancel_event,
             )
             st.terminal_id = result.terminal_id
+            if attempt_recorder.contract_attempt_number is not None:
+                await asyncio.to_thread(
+                    workflow_journal.record_yaml_step_result,
+                    record.run_id,
+                    step.id,
+                    "1",
+                    attempt_recorder.contract_attempt_number,
+                    attempt_recorder.contract_call_fingerprint,
+                    result,
+                    result_json=_legacy_result_envelope(result),
+                )
             # U2 emission: a terminal exists for this step (after the id is bound).
             await _journal_event(
                 record,
@@ -1167,7 +1255,53 @@ async def _drive(record: RunRecord, order: List[WorkflowStep]) -> WorkflowRunRes
             st = record.step_states[step.id]
             if st.state in (StepState.COMPLETED, StepState.COMPLETED_UNVALIDATED):
                 continue  # kept on resume (B4-BR-9) — do not re-run a done step
+            if st.state == StepState.WORK_PENDING:
+                managed_admitter = record.managed_step_admitters.get(step.id)
+                if managed_admitter is None:
+                    raise ResumeNotAllowedError(
+                        "managed Work step is waiting for an authenticated Work result; "
+                        "recovery requires its provision-bound adapter"
+                    )
+                try:
+                    work = await managed_admitter(
+                        tier="yaml",
+                        run_id=record.run_id,
+                        run_generation=record.run_generation,
+                        step_id=step.id,
+                        step_attempt=st.attempts,
+                        workflow_step_attempt=st.attempts,
+                        recover=True,
+                        prompt=_substitute(step.prompt, record),
+                        step=step,
+                        record=record,
+                        inputs=record.inputs,
+                    )
+                except Exception as error:
+                    # An uncertain Work read/admission is not a workflow failure
+                    # and cannot authorize another attempt. Keep the durable marker
+                    # and let a later recovery inspect the same tuple again.
+                    record.work_pending = True
+                    raise ResumeNotAllowedError(
+                        "managed Work step could not be recovered; its durable attempt remains pending"
+                    ) from error
+                if (
+                    not isinstance(work, dict)
+                    or not isinstance(work.get("id"), str)
+                    or not work["id"]
+                    or not isinstance(work.get("attempts"), list)
+                    or not work["attempts"]
+                    or not isinstance(work["attempts"][0].get("id"), str)
+                ):
+                    record.work_pending = True
+                    raise ResumeNotAllowedError(
+                        "managed workflow recovery returned no durable Work attempt"
+                    )
+                record.work_pending = True
+                break
             await _run_step(record, step)
+            if st.state == StepState.WORK_PENDING:
+                record.work_pending = True
+                break
             if record.state == RunState.FAILED:  # halt (B3-BR-4 on_failure=halt)
                 await _skip_remaining(record, order, from_index=index + 1)
                 break
@@ -1196,6 +1330,13 @@ async def _drive(record: RunRecord, order: List[WorkflowStep]) -> WorkflowRunRes
         await _ajournal(_journal_run_state, record)
         logger.error("drive: run '%s' failed with an engine error", record.run_id)
         raise
+
+    if record.work_pending:
+        # Keep the existing RUNNING state and current step durable. The Work
+        # dispatcher and authenticated receiver own any further progress.
+        await _ajournal(_journal_current_step, record)
+        await _ajournal(_journal_run_state, record)
+        return _build_result(record, order)
 
     # Finalize. A cancel that interrupted the FINAL (or only) step's in-flight
     # wait (#409b) leaves the loop with no further boundary iteration to observe
@@ -1273,10 +1414,31 @@ def _check_run_id_available(run_id: str) -> None:
         raise KeyError(f"run_id '{run_id}' already exists")
 
 
+def _validate_managed_step_admitters(spec: WorkflowSpec, admitters) -> Dict[str, Callable]:
+    """Validate API-resolved callbacks without reconstructing provision authority."""
+    if admitters is None:
+        return {}
+    if not isinstance(admitters, Mapping) or any(
+        not isinstance(step_id, str) or not callable(admitter)
+        for step_id, admitter in admitters.items()
+    ):
+        raise ValueError("managed workflow step admitters must map step IDs to trusted callables")
+    known_steps = {step.id for step in spec.steps}
+    if any(step_id not in known_steps for step_id in admitters):
+        raise ValueError("managed workflow step source names an unknown step")
+    return dict(admitters)
+
+
 # ---------------------------------------------------------------------------
 # §1 — start_run entry point
 # ---------------------------------------------------------------------------
-async def start_run(spec: WorkflowSpec, inputs: Dict[str, Any], run_id: str) -> WorkflowRunResult:
+async def start_run(
+    spec: WorkflowSpec,
+    inputs: Dict[str, Any],
+    run_id: str,
+    *,
+    managed_step_admitters: Optional[Mapping[str, Callable]] = None,
+) -> WorkflowRunResult:
     """Run a validated workflow spec to completion, awaited inline (§1, Q1=A).
 
     Steps: validate the run_id key (B3-BR-1, shared validator) and the inputs
@@ -1300,6 +1462,8 @@ async def start_run(spec: WorkflowSpec, inputs: Dict[str, Any], run_id: str) -> 
     # 2. Validate inputs BEFORE any side effect (B3-BR-2 / FR-1.5, fail fast).
     resolved_inputs = _validate_inputs(spec, inputs)
 
+    step_admitters = _validate_managed_step_admitters(spec, managed_step_admitters)
+
     # Non-sequential mode dispatches to a reserved seam — NEVER silently run as
     # sequential (B3-BR-6/B3-BR-10).
     if spec.mode != "sequential":
@@ -1316,6 +1480,7 @@ async def start_run(spec: WorkflowSpec, inputs: Dict[str, Any], run_id: str) -> 
         cancelled=False,
         step_states={step.id: StepRunState(step_id=step.id) for step in spec.steps},
         started_at=_now(),
+        managed_step_admitters=step_admitters,
     )
     # 4. Register (in-memory floor) + mark the drive live + journal the run +
     # seed every step (§1). The ``finally`` guarantees the liveness mark is
@@ -1685,7 +1850,11 @@ def _dispatch_reserved_mode(spec: WorkflowSpec) -> None:
     raise NotBuiltYetError(f"workflow mode '{spec.mode}' is reserved (not built yet)")
 
 
-async def resume_from_last_completed(run_id: str) -> WorkflowRunResult:
+async def resume_from_last_completed(
+    run_id: str,
+    *,
+    managed_step_admitters: Optional[Mapping[str, Callable]] = None,
+) -> WorkflowRunResult:
     """Resume a crashed/failed run from its durable journal (§3, FR-6.2, N6).
 
     Un-reserves the B3-BR-10 stub. The algorithm (business-logic-model §3):
@@ -1764,29 +1933,70 @@ async def resume_from_last_completed(run_id: str) -> WorkflowRunResult:
         # The row existed above but the rebuild degraded it to absent (e.g.
         # corrupt inputs_json) — surface as unknown rather than resuming garbage.
         raise KeyError(f"unknown run_id '{run_id}'")
+    record.managed_step_admitters = _validate_managed_step_admitters(
+        record.spec, managed_step_admitters
+    )
+    try:
+        record.run_generation = int(row.generation)
+    except (TypeError, ValueError) as error:
+        raise ResumeCorruptError(f"run '{run_id}' has corrupt generation") from error
+    if record.run_generation <= 0 or str(record.run_generation) != row.generation:
+        raise ResumeCorruptError(f"run '{run_id}' has corrupt generation")
+    pending_managed_steps = [
+        step
+        for step in record.spec.steps
+        if record.step_states[step.id].state == StepState.WORK_PENDING
+    ]
+    if pending_managed_steps:
+        if (
+            len(pending_managed_steps) != 1
+            or pending_managed_steps[0].id not in record.managed_step_admitters
+        ):
+            raise ResumeNotAllowedError(
+                "managed Work step is waiting for an authenticated Work result; "
+                "recovery requires its provision-bound adapter"
+            )
+        # Recovery is an exact read/replay of the durable binding. Preserve its
+        # attempt, generation, fingerprint, and current-step pointer; a retry is
+        # never inferred from a process restart.
+        record.work_pending = True
+        record.current_step_id = pending_managed_steps[0].id
     for step in record.spec.steps:
         st = record.step_states[step.id]
-        if st.attempts:
+        if not st.attempts:
+            continue
+        if st.state == StepState.WORK_PENDING and step.id in record.managed_step_admitters:
+            continue
+        if step.id in record.managed_step_admitters:
             try:
-                _assert_yaml_contract_history(record, step, _substitute(step.prompt, record))
-            except WorkflowEngineError as error:
+                if workflow_journal.get_work_step_projection(run_id, step.id) is not None:
+                    continue
+            except Exception as error:
                 raise ResumeCorruptError(
-                    f"run '{run_id}' step '{step.id}' cannot recover its YAML contract"
+                    f"run '{run_id}' step '{step.id}' cannot recover its managed Work projection"
                 ) from error
-    for st in record.step_states.values():
-        if st.state in (StepState.COMPLETED, StepState.COMPLETED_UNVALIDATED):
-            continue  # keep done; output reused for {{steps.<id>.output.<field>}}
-        st.state = StepState.PENDING
-        st.attempts = 0
-        st.reprompted = False
-        st.terminal_id = None  # fresh terminal on re-run (B4-BR-10)
-        st.error = None
-        st.output = None
+        try:
+            _assert_yaml_contract_history(record, step, _substitute(step.prompt, record))
+        except WorkflowEngineError as error:
+            raise ResumeCorruptError(
+                f"run '{run_id}' step '{step.id}' cannot recover its YAML contract"
+            ) from error
+    if not pending_managed_steps:
+        for st in record.step_states.values():
+            if st.state in (StepState.COMPLETED, StepState.COMPLETED_UNVALIDATED):
+                continue  # keep done; output reused for {{steps.<id>.output.<field>}}
+            st.state = StepState.PENDING
+            st.attempts = 0
+            st.reprompted = False
+            st.terminal_id = None  # fresh terminal on re-run (B4-BR-10)
+            st.error = None
+            st.output = None
 
     # Re-open the run and re-register the rebuilt record as the live cache.
     record.state = RunState.RUNNING
     record.cancelled = False
-    record.current_step_id = None
+    if not pending_managed_steps:
+        record.current_step_id = None
     record.finished_at = None
     run_registry[run_id] = record
     # Mark the drive live BEFORE the first await: the off-loop journal writes

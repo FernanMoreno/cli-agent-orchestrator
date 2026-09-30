@@ -104,6 +104,33 @@ const semanticRoleClasses = {
   neutral: { foreground: 'text-cao-neutral', background: 'bg-cao-neutral/10' },
 } as const
 
+function workStateExpectation(state: string) {
+  const expected = workContractFixture.presentation_expectations.work_states.find(
+    (entry) => entry.state === state,
+  )
+  if (!expected) throw new Error(`fixture has no presentation expectation for ${state}`)
+  return expected
+}
+
+async function expectWorkPresentation(state: string) {
+  const expected = workStateExpectation(state)
+  const semantics = workStatusSemantics(state)
+  expect(semantics).toMatchObject({
+    state: expected.state,
+    label: expected.label,
+    semanticRole: expected.semantic_role,
+    observedRunningCount: expected.running_count,
+    observedSucceededCount: expected.succeeded_count,
+  })
+
+  const workLabel = await screen.findByText(expected.label)
+  const roleClasses = semanticRoleClasses[expected.semantic_role as keyof typeof semanticRoleClasses]
+  expect(workLabel).toHaveClass(roleClasses.foreground)
+  expect(workLabel.parentElement).toHaveClass(roleClasses.background)
+  expect(screen.getByText(`Observed running: ${expected.running_count}`)).toBeInTheDocument()
+  expect(screen.getByText(`Observed succeeded: ${expected.succeeded_count}`)).toBeInTheDocument()
+}
+
 describe('work state display', () => {
   it.each(workContractFixture.presentation_expectations.work_states)(
     'renders fixture semantics and counters for $state',
@@ -128,6 +155,43 @@ describe('work state display', () => {
       expect(screen.getByText(`Observed running: ${running_count}`)).toBeInTheDocument()
       expect(screen.getByText(`Observed succeeded: ${succeeded_count}`)).toBeInTheDocument()
       expect(screen.getByText('Idle')).toBeInTheDocument()
+    },
+  )
+
+  it('lists all 15 fixture transition edges exactly once', () => {
+    const transitions = workContractFixture.presentation_expectations.work_transitions
+    const edges = transitions.map(({ from, to }) => `${from}->${to}`)
+
+    expect(transitions).toHaveLength(15)
+    expect(new Set(edges).size).toBe(15)
+  })
+
+  it.each(workContractFixture.presentation_expectations.work_transitions)(
+    'replays fixture Work transition $from → $to',
+    async ({ from, to }) => {
+      vi.stubGlobal('WebSocket', TestWebSocket)
+      vi.stubGlobal('ResizeObserver', TestResizeObserver)
+      const getWorkItem = vi.spyOn(api, 'getWorkItem')
+        .mockResolvedValueOnce({
+          ...workViewFor('work-transition', from as WorkView['work_state']),
+          revision: 3,
+        })
+        .mockResolvedValueOnce({
+          ...workViewFor('work-transition', to as WorkView['work_state']),
+          revision: 4,
+        })
+
+      render(<TerminalView terminalId="terminal-1" terminalStatus="idle" onClose={() => {}} />)
+      submitManualWork('work-transition')
+      await expectWorkPresentation(from)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Clear observed work' }))
+      expect(screen.getByText('No work selected')).toBeInTheDocument()
+      submitManualWork('work-transition')
+      await expectWorkPresentation(to)
+
+      expect(getWorkItem).toHaveBeenNthCalledWith(1, 'work-transition')
+      expect(getWorkItem).toHaveBeenNthCalledWith(2, 'work-transition')
     },
   )
 

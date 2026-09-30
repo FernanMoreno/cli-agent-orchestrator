@@ -6,6 +6,7 @@ the verified principal and opaque selector; this gateway maps only public launch
 content into ``LaunchIntent`` and returns the receipt from that exact admission.
 """
 
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -13,11 +14,14 @@ from typing import Protocol, runtime_checkable
 from cli_agent_orchestrator.backends.base import TerminalBackend
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.security.auth import Principal
+from cli_agent_orchestrator.services.work_agent_step import (
+    agent_step_adapter,
+    agent_step_process_adapter,
+)
 from cli_agent_orchestrator.services.work_authority import AuthorityDenied, WorkAuthority
 from cli_agent_orchestrator.services.work_launch import (
     process_launch_adapter,
 )
-from cli_agent_orchestrator.services.work_agent_step import agent_step_adapter
 from cli_agent_orchestrator.services.work_launch_runtime import (
     LaunchIntent,
     LaunchReceipt,
@@ -226,14 +230,23 @@ def build_durable_launch_gateway(
     if not isinstance(repository, WorkRepository):
         raise ValueError("verified work repository required")
     repository.verify_schema()
+    # Process-managed child steps are acceptance-only and require the locally
+    # configured Docker backend. Keep v2 out of default and non-Docker runtimes.
+    from cli_agent_orchestrator.backends.docker_backend import DockerWorkBackend
+
+    delivery_adapters = {
+        ("launch", 2): process_launch_adapter(),
+        # This is reachable only through WorkOrigins' server-sealed child
+        # admission path; DurableLaunchGateway exposes no agent-step intake.
+        ("agent_step", 1): agent_step_adapter(),
+    }
+    if os.environ.get("CAO_T020_ACCEPTANCE") == "1" and isinstance(
+        backends.get("docker-local"), DockerWorkBackend
+    ):
+        delivery_adapters[("agent_step", 2)] = agent_step_process_adapter()
     runtime = LaunchRuntime(
         repository,
         backends=backends,
-        delivery_adapters={
-            ("launch", 2): process_launch_adapter(),
-            # This is reachable only through WorkOrigins' server-sealed child
-            # admission path; DurableLaunchGateway exposes no agent-step intake.
-            ("agent_step", 1): agent_step_adapter(),
-        },
+        delivery_adapters=delivery_adapters,
     )
     return DurableLaunchGateway(_ComposedLaunchRuntimeProvider(runtime))

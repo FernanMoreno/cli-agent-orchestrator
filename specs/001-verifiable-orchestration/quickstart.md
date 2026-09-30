@@ -1,7 +1,9 @@
 # Guía de validación
 
-Estado: preparación. Las suites nuevas de tasks.md aún no existen. No copiar comandos
-de pruebas futuras y presentar un error de archivo ausente como regresión reproducida.
+Estado: alcance local aceptado; consultar [acceptance-status.md](acceptance-status.md)
+para resultados y límites vigentes. Las pruebas de proveedores reales son opt-in:
+T084 acredita las 18 celdas autorizadas y los workflows recientes usan Codex.
+Las pruebas con mocks no acreditan proveedores reales.
 
 ## Prerrequisitos
 
@@ -39,9 +41,9 @@ La ejecución anterior al plan obtuvo 85 passed; no se reutiliza como signoff de
 .venv/bin/python -m pytest -o addopts= -x -q test/services/test_manifest_freeze.py
 ```
 
-Fallo conocido del checkout: baseline no disponible por hashing de archivos no versionados
-mayor a 64 MiB. T045 debe aislar repositorio de prueba y cubrir ausencia explícita de baseline;
-no cambiar presupuesto o excluir silenciosamente código para conseguir verde.
+El fallo histórico de baseline por archivos no versionados mayores a 64 MiB
+motivó T045. La suite actual usa un repositorio aislado y cubre la ausencia
+explícita de baseline; ejecutar el comando para obtener evidencia fresca.
 
 ## Gate de composición
 
@@ -50,10 +52,10 @@ project-composition-check "$(cat .ai/project-name)"
 ```
 
 Si falta .ai/project-name, diagnosticar registro antes de escribirlo. Nombre registrado
-observado: caos. El comando con nombre explícito permite diagnosticar launcher, pero no
-resuelve que Import Linter sólo cubra cao_workflow. Revisar paquetes antes de ampliar reglas.
+observado: caos. Import Linter cubre cao_workflow y cli_agent_orchestrator,
+incluyendo modelos, reducer, repository y el projector de workflows.
 
-## Validación por entrega, después de crear las suites
+## Validación por entrega
 
 | Entrega | Pruebas objetivo | Evidencia esperada |
 |---|---|---|
@@ -125,7 +127,8 @@ seguir docs/real-provider-e2e.md con manifiesto de proveedores/modelos/cuentas e
 Registrar por celda arranque, entrega, hijo, inbox, cancelación, cuota, continuidad,
 cleanup y reconciliación. Un skip de cuota no demuestra continuidad.
 
-Upstream: T081 sólo lee refs y prepara resolución; T085 requiere petición explícita.
+Upstream: T081 examinó refs locales; T085 ya preparó/verificó el candidato aislado
+con autorización. Su integración en main continúa como acción separada.
 No ejecutar merge, push ni publicar release para validar documentación o contratos.
 
 ## Cierre
@@ -147,3 +150,14 @@ uv run pytest -q test/services/test_settlement_rewire.py
 
 Las pruebas de persistencia usan SQLite temporal con el esquema Work inicializado; un
 test que no lo inicialice no representa el contrato vigente de `begin_step_with_contract`.
+
+## T020 y ciclo mock_cli
+
+```bash
+CAO_T020_DOCKER_ACCEPTANCE=1 ./test/integration/t020/run-docker-acceptance.sh
+uv run pytest -o addopts= -q test/e2e/test_work_lifecycle.py
+```
+
+Docker verifica Work autenticado y resultados de YAML/script. La suite mock_cli
+combina contratos managed con reinicio y rutas legacy HTTP/tmux reales.
+No confundir una respuesta legacy de terminal con un resultado Work autenticado.

@@ -11,6 +11,7 @@ import time
 from unittest.mock import MagicMock, patch
 
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.providers.mock_cli import MockCliProvider
 from cli_agent_orchestrator.services.status_monitor import (
     STALE_PROCESSING_BUFFER_QUIET_S,
     STALE_PROCESSING_CONFIRM_TTL_S,
@@ -248,6 +249,104 @@ class TestStaleProcessingCapturePane:
         provider.supports_direct_status_probe = True
         provider.get_status.return_value = status
         return provider
+
+    @patch("cli_agent_orchestrator.backends.registry.get_backend")
+    @patch("cli_agent_orchestrator.services.status_monitor.provider_manager")
+    def test_mock_cli_stale_status_recovers_from_confirmed_rendered_prompt(
+        self, mock_pm, mock_get_backend
+    ):
+        provider = MockCliProvider("t1", "s1", "w1")
+        provider.supports_visible_pane_stale_probe = True
+        mock_pm.get_provider.return_value = provider
+        backend = _backend(event_inbox=False)
+        backend.get_native_status.return_value = None
+        backend.get_history.side_effect = [
+            "MockCli ready.\n❯ task still processing",
+            "MockCli ready.\n❯ ",
+            "MockCli ready.\n❯ ",
+        ]
+        mock_get_backend.return_value = backend
+
+        sm = StatusMonitor()
+        sm._last_status["t1"] = TerminalStatus.PROCESSING
+        # The FIFO buffer has stopped before the final prompt, while tmux still
+        # has the current rendered pane available.
+        sm._buffers["t1"] = "MockCli ready.\n❯ task"
+        sm._buffer_changed_at["t1"] = self._quiet_since()
+
+        def poll_again():
+            # Skip only the production probe rate limit; the confirmation rule
+            # and actual MockCliProvider parser remain active.
+            sm._last_stale_capture_check["t1"] = None
+            return sm.get_status("t1")
+
+        assert sm.get_status("t1") == TerminalStatus.PROCESSING
+        assert poll_again() == TerminalStatus.PROCESSING
+        assert poll_again() == TerminalStatus.IDLE
+        assert sm._last_status["t1"] == TerminalStatus.IDLE
+        assert backend.get_history.call_count == 3
+        assert all(
+            call.kwargs == {"strip_escapes": True, "visible_only": True}
+            for call in backend.get_history.call_args_list
+        )
+
+    @patch("cli_agent_orchestrator.backends.registry.get_backend")
+    @patch("cli_agent_orchestrator.services.status_monitor.provider_manager")
+    def test_mock_cli_busy_rendered_prompt_after_old_response_stays_processing(
+        self, mock_pm, mock_get_backend
+    ):
+        provider = MockCliProvider("t1", "s1", "w1")
+        provider.supports_visible_pane_stale_probe = True
+        mock_pm.get_provider.return_value = provider
+        backend = _backend(event_inbox=False)
+        backend.get_native_status.return_value = None
+        backend.get_history.return_value = (
+            "MockCli ready.\n❯ \n> MOCK: previous task\n❯ current task is running"
+        )
+        mock_get_backend.return_value = backend
+
+        sm = StatusMonitor()
+        sm._last_status["t1"] = TerminalStatus.PROCESSING
+        sm._buffers["t1"] = "old output"
+        sm._buffer_changed_at["t1"] = self._quiet_since()
+
+        assert sm.get_status("t1") == TerminalStatus.PROCESSING
+        sm._last_stale_capture_check["t1"] = None
+        assert sm.get_status("t1") == TerminalStatus.PROCESSING
+        assert sm._last_status["t1"] == TerminalStatus.PROCESSING
+        assert backend.get_history.call_count == 2
+
+    @patch("cli_agent_orchestrator.backends.registry.get_backend")
+    @patch("cli_agent_orchestrator.services.status_monitor.provider_manager")
+    def test_mock_cli_visible_probe_candidate_does_not_cross_new_input_epoch(
+        self, mock_pm, mock_get_backend
+    ):
+        provider = MockCliProvider("t1", "s1", "w1")
+        mock_pm.get_provider.return_value = provider
+        backend = _backend(event_inbox=False)
+        backend.get_native_status.return_value = None
+        backend.get_history.side_effect = [
+            "MockCli ready.\n❯ ",
+            "MockCli ready.\n❯ current task is running",
+        ]
+        mock_get_backend.return_value = backend
+
+        sm = StatusMonitor()
+        sm._last_status["t1"] = TerminalStatus.PROCESSING
+        sm._buffers["t1"] = "old output"
+        sm._buffer_changed_at["t1"] = self._quiet_since()
+
+        assert sm.get_status("t1") == TerminalStatus.PROCESSING
+        assert "t1" in sm._pending_stale_capture
+        sm.notify_input_sent("t1")
+        assert "t1" not in sm._pending_stale_capture
+
+        sm._last_stale_capture_check["t1"] = None
+        assert sm.get_status("t1") == TerminalStatus.PROCESSING
+        assert sm._last_status["t1"] == TerminalStatus.PROCESSING
+        assert sm._allow_processing_revert["t1"] is True
+        assert "t1" not in sm._pending_stale_capture
+        assert backend.get_history.call_count == 2
 
     @patch("cli_agent_orchestrator.backends.registry.get_backend")
     @patch("cli_agent_orchestrator.services.status_monitor.provider_manager")

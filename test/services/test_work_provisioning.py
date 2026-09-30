@@ -45,7 +45,8 @@ def trusted_launch_setup(repository, root, subject):
         job_id=job["id"],
         providers={"mock_cli"},
         permissions=Permissions(
-            tools={"knowledge.read", "tool.read"}, paths={str(root)},
+            tools={"knowledge.read", "tool.read"},
+            paths={str(root)},
             commands={"pytest", "/bin/alpha"},
         ),
         expires_at=time.time() + 600,
@@ -97,9 +98,7 @@ def test_v2_provision_roundtrips_ordered_executable_identity(tmp_path):
     module = provisioning_module()
     repository = WorkRepository(tmp_path / "v2-provision.sqlite3")
     repository.initialize()
-    actor = auth._verified_principal(
-        "https://issuer.test", "v2-owner", [auth.SCOPE_ADMIN], "jwt"
-    )
+    actor = auth._verified_principal("https://issuer.test", "v2-owner", [auth.SCOPE_ADMIN], "jwt")
     job, grant, original = trusted_launch_setup(repository, tmp_path, actor)
     identity = models.ExecutableIdentity(
         command_token="/bin/alpha",
@@ -121,7 +120,9 @@ def test_v2_provision_roundtrips_ordered_executable_identity(tmp_path):
     ref = service.provision_launch(
         actor, **provision_arguments(actor, job, grant, contract, expected_revision=0)
     )
-    resolved = module.WorkProvisioning(WorkRepository(repository.path)).resolve_launch(actor, ref.selector)
+    resolved = module.WorkProvisioning(WorkRepository(repository.path)).resolve_launch(
+        actor, ref.selector
+    )
     assert resolved.contract == contract
     assert resolved.contract.executable_identities == (identity,)
     assert resolved.contract_hash == contract.canonical_hash()

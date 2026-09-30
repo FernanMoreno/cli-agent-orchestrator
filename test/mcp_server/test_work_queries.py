@@ -5,8 +5,7 @@ from unittest.mock import Mock
 import pytest
 import requests
 
-from cli_agent_orchestrator.mcp_server import server
-from cli_agent_orchestrator.mcp_server import utils
+from cli_agent_orchestrator.mcp_server import server, utils
 
 
 def tool_function(name):

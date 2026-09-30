@@ -114,6 +114,113 @@ def test_preflight_rejects_landlock_abi_below_nine_before_bubblewrap_probe(monke
         bubblewrap_backend.BubblewrapWorkBackend().preflight_work(contract)
 
 
+@pytest.mark.parametrize("action", ["cao.work.task_received", "cao.work.submit_result"])
+def test_bubblewrap_receiver_actions_read_only_their_separate_descriptor(action):
+    from cli_agent_orchestrator.backends import bubblewrap_backend
+    from cli_agent_orchestrator.services.work_attempt_credential import (
+        create_attempt_credential_descriptor,
+    )
+
+    secret = b"receiver-result-secret".ljust(32, b"!")
+    descriptor = create_attempt_credential_descriptor(secret)
+    try:
+        assert (
+            bubblewrap_backend._receiver_credential_for_request(
+                {"params": {"name": action}}, descriptor
+            )
+            == secret
+        )
+    finally:
+        bubblewrap_backend.os.close(descriptor)
+
+
+@pytest.mark.parametrize("action", ["cao.work.task_received", "cao.work.submit_result"])
+def test_bubblewrap_receiver_actions_reject_missing_separate_descriptor(action):
+    from cli_agent_orchestrator.backends import bubblewrap_backend
+
+    with pytest.raises(
+        bubblewrap_backend.UnsupportedWorkEnforcement,
+        match="separate credential",
+    ):
+        bubblewrap_backend._receiver_credential_for_request({"params": {"name": action}}, None)
+
+
+@pytest.mark.parametrize("action", ["cao.work.task_received", "cao.work.submit_result"])
+def test_bubblewrap_process_preflight_requires_receiver_descriptor_for_receiver_action(
+    tmp_path, attempt_credential_fd, action
+):
+    from types import SimpleNamespace
+
+    from cli_agent_orchestrator.backends import bubblewrap_backend
+    from cli_agent_orchestrator.backends.base import (
+        ProcessRestrictionContract,
+        UnsupportedWorkEnforcement,
+    )
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.models.work_contract import (
+        ContractPermissions,
+        ContractResources,
+        ContractSnapshot,
+        EffectiveWorkContractV2,
+        ExecutableIdentity,
+    )
+
+    name = action.rsplit(".", 1)[-1]
+    repository = WorkRepository(tmp_path / f"bubblewrap-{name}.sqlite3")
+    repository.initialize()
+    executable = ExecutableIdentity(
+        command_token="/worker",
+        content_reference="sha256:" + "a" * 64,
+        sha256_digest="a" * 64,
+        elf_machine="x86_64",
+        elf_class="ELF64",
+        endianness="little",
+        static=True,
+    )
+    contract = EffectiveWorkContractV2(
+        id=f"bubblewrap-{name}",
+        operation_kind="launch",
+        provider="scratch",
+        backend="bubblewrap",
+        permissions=ContractPermissions(commands=("/worker",), tools=(action,)),
+        resources=ContractResources(checkout_root=str(tmp_path), write_paths=(), units=1),
+        snapshot=ContractSnapshot(state="absent", absence_reason="legacy_parent_has_no_snapshot"),
+        executable_identities=(executable,),
+    )
+    binding = SimpleNamespace(
+        attempt_id=f"bubblewrap-{name}-attempt",
+        generation=1,
+        contract=contract,
+    )
+    restriction = ProcessRestrictionContract(
+        paths=(),
+        commands=("/worker",),
+        network=(),
+        tools=(action,),
+        executable_identities=(executable,),
+    )
+    backend = bubblewrap_backend.BubblewrapWorkBackend(
+        repository=repository,
+        bwrap_sha256_digest="b" * 64,
+        mcp_proxy_factory=lambda *_args: pytest.fail(
+            "receiver descriptor gate must run before proxy setup"
+        ),
+    )
+
+    with pytest.raises(UnsupportedWorkEnforcement, match="separate credential"):
+        backend.execute_bound_process(
+            restriction,
+            binding=binding,
+            command_token="/worker",
+            worker_input=b"bounded task",
+            expected_attempt_revision=1,
+            attempt_credential_fd=attempt_credential_fd,
+            before_effect=lambda: None,
+            authorize_setup=lambda _connection: None,
+            authorize_go=lambda _connection: None,
+        )
+
+
 def test_work_backend_view_routes_initial_and_later_windows_through_protected_methods(tmp_path):
     from cli_agent_orchestrator.backends.base import (
         ProcessRestrictionContract,
@@ -717,6 +824,7 @@ def test_tool_contract_fails_preflight_without_attempt_bound_proxy_factory(monke
 def test_work_backend_view_rejects_unenforceable_commands_before_tmux_effects(
     tmp_path, commands, reason, monkeypatch
 ):
+    from cli_agent_orchestrator.backends import bubblewrap_backend
     from cli_agent_orchestrator.backends.base import (
         UnsupportedWorkEnforcement,
         WorkEffectAuthorizationRequired,
@@ -724,7 +832,6 @@ def test_work_backend_view_rejects_unenforceable_commands_before_tmux_effects(
     from cli_agent_orchestrator.backends.bubblewrap_backend import BubblewrapWorkBackend
     from cli_agent_orchestrator.backends.work_backend import WorkBackendView
     from cli_agent_orchestrator.constants import FIFO_DIR
-    from cli_agent_orchestrator.backends import bubblewrap_backend
 
     monkeypatch.setattr(bubblewrap_backend, "_query_abi_version", lambda: 9)
     client = NoTmuxEffects()

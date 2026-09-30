@@ -39,14 +39,38 @@ which is observably identical to the pre-extension shape.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import sqlite3
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from cli_agent_orchestrator.services.workflow_errors import ReplayDivergenceError
 
 logger = logging.getLogger(__name__)
+
+
+class WorkflowProjectionConflict(RuntimeError):
+    """The durable workflow rows no longer match a managed result projection."""
+
+
+@dataclass(frozen=True, slots=True)
+class WorkStepProjection:
+    """Durable proof linking one completed journal row to its accepted Work result."""
+
+    run_id: str
+    step_id: str
+    binding_id: str
+    tier: str
+    run_generation: int
+    step_attempt: int
+    accepted_result_id: str
+    content_hash: str
+    result_json: str
+
 
 # Database paths whose journal schema has been VERIFIED PRESENT in THIS process (issue #583).
 # Keyed on PATH, not a boolean: five test modules repoint DATABASE_FILE to a temporary
@@ -568,6 +592,899 @@ def update_step(
         )
 
 
+def mark_work_pending(
+    *,
+    run_id: str,
+    step_id: str,
+    generation: str,
+    step_attempt: int,
+    tier: str,
+    updated_at: str,
+    call_fingerprint: str | None = None,
+) -> None:
+    """Durably fence one workflow step before its Work admission can begin.
+
+    Unlike ordinary projections this write is a pre-effect gate: failure raises,
+    so a caller cannot admit or dispatch Work unless a restart will see the step
+    as managed and refuse legacy replay. Repeating the exact marker is safe after
+    an ambiguous admission response; a different generation or attempt is not.
+    """
+    if (
+        not isinstance(run_id, str)
+        or not run_id
+        or not isinstance(step_id, str)
+        or not step_id
+        or not isinstance(generation, str)
+        or not generation.isdecimal()
+        or str(int(generation)) != generation
+        or type(step_attempt) is not int
+        or step_attempt <= 0
+        or tier not in {"yaml", "script"}
+        or not isinstance(updated_at, str)
+        or not updated_at
+        or (
+            call_fingerprint is not None
+            and (not isinstance(call_fingerprint, str) or not call_fingerprint)
+        )
+    ):
+        raise ValueError("managed workflow step identity is invalid")
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        run = conn.execute(
+            "SELECT state,tier,generation,current_step_id FROM workflow_run WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        step = conn.execute(
+            "SELECT state,attempts,call_fingerprint FROM workflow_run_step "
+            "WHERE run_id=? AND step_id=?",
+            (run_id, step_id),
+        ).fetchone()
+        if (
+            run is None
+            or step is None
+            or tuple(run[:3]) != ("running", tier, generation)
+            or run[3] not in (None, step_id)
+        ):
+            raise ValueError("workflow generation or step source is not current")
+        if step[0] == "work_pending":
+            if run[3] != step_id:
+                raise ValueError("managed workflow pending step is not current")
+            if step[1] != step_attempt:
+                raise ValueError("managed workflow step attempt changed")
+            if call_fingerprint is not None:
+                if step[2] not in (None, call_fingerprint):
+                    raise ValueError("managed workflow pending step fingerprint changed")
+                if step[2] is None:
+                    conn.execute(
+                        "UPDATE workflow_run_step SET call_fingerprint=? WHERE run_id=? "
+                        "AND step_id=? AND state='work_pending' AND attempts=? "
+                        "AND call_fingerprint IS NULL",
+                        (call_fingerprint, run_id, step_id, step_attempt),
+                    )
+            return
+        if step[0] not in {"pending", "running"}:
+            raise ValueError("workflow step cannot enter managed Work from its current state")
+        if step[1] + 1 != step_attempt:
+            raise ValueError("managed workflow step must use the next workflow step attempt")
+        if call_fingerprint is not None and step[2] not in (None, call_fingerprint):
+            raise ValueError("managed workflow step fingerprint changed")
+        conn.execute(
+            "UPDATE workflow_run_step SET state='work_pending', attempts=?, error=?, "
+            "error_kind=NULL, updated_at=?,call_fingerprint=COALESCE(call_fingerprint,?) "
+            "WHERE run_id=? AND step_id=?",
+            (
+                step_attempt,
+                "awaiting_authenticated_work_result",
+                updated_at,
+                call_fingerprint,
+                run_id,
+                step_id,
+            ),
+        )
+        conn.execute(
+            "UPDATE workflow_run SET current_step_id=? WHERE run_id=?",
+            (step_id, run_id),
+        )
+
+
+_RETRY_AUTHORIZATION_FIELDS = (
+    "authorization_id",
+    "authorization_fingerprint",
+    "binding_id",
+    "binding_fingerprint",
+    "tier",
+    "run_id",
+    "run_generation",
+    "workflow_id",
+    "spec_hash",
+    "step_id",
+    "workflow_step_attempt",
+    "principal_id",
+    "provision_id",
+    "provision_revision",
+    "provision_fingerprint",
+    "work_item_id",
+    "work_attempt_id",
+    "work_generation",
+    "authorized_at",
+)
+
+
+def _retry_authorization_value(authorization, field):
+    try:
+        return getattr(authorization, field)
+    except AttributeError as error:
+        raise ValueError(f"managed retry authorization is missing {field}") from error
+
+
+def _verify_retry_authorization_fingerprint(authorization) -> tuple[str, str]:
+    authorization_id = _retry_authorization_value(authorization, "authorization_id")
+    fingerprint = _retry_authorization_value(authorization, "authorization_fingerprint")
+    computed = getattr(authorization, "computed_fingerprint", None)
+    if (
+        not isinstance(authorization_id, str)
+        or not authorization_id
+        or not isinstance(fingerprint, str)
+        or len(fingerprint) != 64
+        or any(character not in "0123456789abcdef" for character in fingerprint)
+        or not callable(computed)
+        or computed() != fingerprint
+    ):
+        raise ValueError("managed retry authorization fingerprint is invalid")
+    return authorization_id, fingerprint
+
+
+def _managed_retry_call_fingerprint(call_fingerprint: str, authorization) -> str:
+    authorization_id, authorization_fingerprint = _verify_retry_authorization_fingerprint(
+        authorization
+    )
+    payload = {
+        "call_fingerprint": call_fingerprint,
+        "retry_authorization_id": authorization_id,
+        "retry_authorization_fingerprint": authorization_fingerprint,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _verify_retry_authorization_tuple(
+    authorization,
+    *,
+    tier,
+    run_id,
+    run_generation,
+    step_id,
+    workflow_step_attempt,
+    principal_id,
+):
+    _verify_retry_authorization_fingerprint(authorization)
+    expected = {
+        "tier": tier,
+        "run_id": run_id,
+        "run_generation": run_generation,
+        "step_id": step_id,
+        "workflow_step_attempt": workflow_step_attempt,
+        "principal_id": principal_id,
+    }
+    for field, expected_value in expected.items():
+        if _retry_authorization_value(authorization, field) != expected_value:
+            raise ValueError(f"managed retry authorization has a different {field}")
+
+
+def begin_managed_work_step(
+    run_id: str,
+    step_id: str,
+    generation: str,
+    call_fingerprint: str,
+    updated_at: str,
+    *,
+    retry_authorization=None,
+    principal=None,
+    workflow_origins=None,
+    work_service=None,
+) -> int:
+    """Atomically claim a managed Work step or consume an exact retry grant.
+
+    The ordinary path initializes attempt zero to one and otherwise reuses the
+    exact positive durable count. An explicit retry grant is consumed only from
+    the exact ``failed`` journal row whose Work binding is still the current
+    failed attempt; it advances that row once to ``work_pending/N+1``. A replay
+    with the same grant and fingerprint returns N+1 without re-reading Work or
+    incrementing again, including after Work admission has advanced its attempt.
+    """
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+
+    if (
+        not isinstance(run_id, str)
+        or not run_id
+        or not isinstance(step_id, str)
+        or not step_id
+        or not isinstance(generation, str)
+        or not generation.isdecimal()
+        or str(int(generation)) != generation
+        or not isinstance(call_fingerprint, str)
+        or not call_fingerprint
+        or not isinstance(updated_at, str)
+        or not updated_at
+    ):
+        raise ValueError("managed workflow step identity is invalid")
+
+    authorized_retry = retry_authorization is not None
+    if authorized_retry:
+        if principal is None or workflow_origins is None or work_service is None:
+            raise ValueError("managed retry authorization requires its principal and readers")
+        origin_repository = getattr(workflow_origins, "repository", None)
+        service_repository = getattr(work_service, "repository", None)
+        if (
+            not isinstance(origin_repository, WorkRepository)
+            or not isinstance(service_repository, WorkRepository)
+            or Path(origin_repository.path).resolve() != Path(DATABASE_FILE).resolve()
+            or Path(service_repository.path).resolve() != Path(DATABASE_FILE).resolve()
+        ):
+            raise ValueError("managed retry readers must use the configured Work repository")
+
+    effective_fingerprint = (
+        _managed_retry_call_fingerprint(call_fingerprint, retry_authorization)
+        if authorized_retry
+        else call_fingerprint
+    )
+
+    with _connect() as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute("BEGIN IMMEDIATE")
+        WorkRepository._verify(connection)
+        run = connection.execute(
+            "SELECT state,tier,generation,current_step_id FROM workflow_run WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        if run is None:
+            raise ValueError("managed workflow run does not exist")
+        if authorized_retry:
+            run_tier = _retry_authorization_value(retry_authorization, "tier")
+            if run_tier not in {"yaml", "script"}:
+                raise ValueError("managed retry authorization has an invalid tier")
+        else:
+            run_tier = "script"
+        if tuple(run[:3]) != ("running", run_tier, generation) or run[3] not in (
+            (step_id,) if authorized_retry else (None, step_id)
+        ):
+            raise ValueError("managed workflow run generation or current step is stale")
+
+        step = connection.execute(
+            "SELECT state,attempts,call_fingerprint,error,error_kind FROM workflow_run_step "
+            "WHERE run_id=? AND step_id=?",
+            (run_id, step_id),
+        ).fetchone()
+        if step is not None and step[0] == "work_pending":
+            if authorized_retry:
+                prior_attempt = _retry_authorization_value(
+                    retry_authorization, "workflow_step_attempt"
+                )
+                if (
+                    type(prior_attempt) is not int
+                    or prior_attempt <= 0
+                    or step[1] != prior_attempt + 1
+                ):
+                    raise ValueError(
+                        "managed retry authorization is stale for this pending attempt"
+                    )
+                _verify_retry_authorization_tuple(
+                    retry_authorization,
+                    tier=run_tier,
+                    run_id=run_id,
+                    run_generation=int(generation),
+                    step_id=step_id,
+                    workflow_step_attempt=prior_attempt,
+                    principal_id=getattr(principal, "id", None),
+                )
+            if (
+                type(step[1]) is not int
+                or step[1] <= 0
+                or step[2] != effective_fingerprint
+                or run[3] != step_id
+            ):
+                raise ValueError("managed workflow pending step fingerprint or identity changed")
+            return step[1]
+
+        if authorized_retry:
+            if step is None or step[0] != "failed":
+                raise ValueError("managed retry requires the prior failed workflow attempt")
+            prior_attempt = step[1]
+            if (
+                type(prior_attempt) is not int
+                or prior_attempt <= 0
+                or step[3] != "managed Work attempt failed"
+                or step[4] != "managed_work_failed"
+            ):
+                raise ValueError("managed retry requires a durable managed Work failure")
+            _verify_retry_authorization_tuple(
+                retry_authorization,
+                tier=run_tier,
+                run_id=run_id,
+                run_generation=int(generation),
+                step_id=step_id,
+                workflow_step_attempt=prior_attempt,
+                principal_id=getattr(principal, "id", None),
+            )
+
+            durable_authorization = workflow_origins.read_step_retry_authorization(
+                principal,
+                workflow_id=_retry_authorization_value(retry_authorization, "workflow_id"),
+                spec_hash=_retry_authorization_value(retry_authorization, "spec_hash"),
+                tier=run_tier,
+                run_id=run_id,
+                run_generation=int(generation),
+                step_id=step_id,
+                workflow_step_attempt=prior_attempt,
+                work_attempt_id=_retry_authorization_value(retry_authorization, "work_attempt_id"),
+                work_generation=_retry_authorization_value(retry_authorization, "work_generation"),
+                connection=connection,
+            )
+            if durable_authorization is None:
+                raise ValueError("managed retry authorization is absent from durable Work state")
+            if any(
+                _retry_authorization_value(durable_authorization, field)
+                != _retry_authorization_value(retry_authorization, field)
+                for field in _RETRY_AUTHORIZATION_FIELDS
+            ):
+                raise ValueError("managed retry authorization differs from its durable record")
+
+            binding = workflow_origins.read_step_binding(
+                run_tier,
+                run_id,
+                int(generation),
+                step_id,
+                prior_attempt,
+                connection=connection,
+            )
+            if binding is None:
+                raise ValueError("managed retry prior workflow binding is absent")
+            binding_expectations = {
+                "binding_id": _retry_authorization_value(retry_authorization, "binding_id"),
+                "binding_fingerprint": _retry_authorization_value(
+                    retry_authorization, "binding_fingerprint"
+                ),
+                "tier": run_tier,
+                "run_id": run_id,
+                "run_generation": int(generation),
+                "step_id": step_id,
+                "workflow_step_attempt": prior_attempt,
+                "workflow_id": _retry_authorization_value(retry_authorization, "workflow_id"),
+                "spec_hash": _retry_authorization_value(retry_authorization, "spec_hash"),
+                "work_item_id": _retry_authorization_value(retry_authorization, "work_item_id"),
+                "work_attempt_id": _retry_authorization_value(
+                    retry_authorization, "work_attempt_id"
+                ),
+                "work_generation": _retry_authorization_value(
+                    retry_authorization, "work_generation"
+                ),
+            }
+            for field, expected_value in binding_expectations.items():
+                if getattr(binding, field, None) != expected_value:
+                    raise ValueError(f"managed retry binding differs from authorization {field}")
+
+            work_state = work_service.read_workflow_step_state(binding, connection=connection)
+            if (
+                getattr(work_state, "binding_id", None) != binding_expectations["binding_id"]
+                or getattr(work_state, "work_item_id", None) != binding_expectations["work_item_id"]
+                or getattr(work_state, "work_attempt_id", None)
+                != binding_expectations["work_attempt_id"]
+                or getattr(work_state, "work_generation", None)
+                != binding_expectations["work_generation"]
+                or getattr(work_state, "work_state", None) != "failed"
+                or getattr(work_state, "attempt_state", None) != "failed"
+                or getattr(work_state, "current_attempt_id", None)
+                != binding_expectations["work_attempt_id"]
+                or getattr(work_state, "current_generation", None)
+                != binding_expectations["work_generation"]
+                or getattr(work_state, "current_attempt_state", None) != "failed"
+                or getattr(work_state, "accepted_result_id", None) is not None
+                or type(getattr(work_state, "work_revision", None)) is not int
+                or work_state.work_revision <= 0
+                or type(getattr(work_state, "attempt_revision", None)) is not int
+                or work_state.attempt_revision <= 0
+            ):
+                raise ValueError("managed retry requires the exact current failed Work attempt")
+
+            run_cas = connection.execute(
+                "UPDATE workflow_run SET current_step_id=? WHERE run_id=? AND state='running' "
+                "AND tier=? AND generation=? AND current_step_id=?",
+                (step_id, run_id, run_tier, generation, step_id),
+            )
+            if run_cas.rowcount != 1:
+                raise ValueError("managed retry workflow run changed before it was claimed")
+            next_attempt = prior_attempt + 1
+            step_cas = connection.execute(
+                "UPDATE workflow_run_step SET state='work_pending',attempts=?,"
+                "output_json=NULL,result_json=NULL,error='awaiting_authenticated_work_result',"
+                "error_kind=NULL,updated_at=?,call_fingerprint=? "
+                "WHERE run_id=? AND step_id=? AND state='failed' AND attempts=? "
+                "AND error='managed Work attempt failed' AND error_kind='managed_work_failed'",
+                (
+                    next_attempt,
+                    updated_at,
+                    effective_fingerprint,
+                    run_id,
+                    step_id,
+                    prior_attempt,
+                ),
+            )
+            if step_cas.rowcount != 1:
+                raise ValueError("managed retry workflow step changed before it was claimed")
+            return next_attempt
+
+        if run_tier != "script":
+            raise ValueError("managed script run generation or current step is stale")
+        if step is not None:
+            if step[0] not in {"pending", "running"}:
+                raise ValueError("managed workflow step cannot start from its current state")
+            if type(step[1]) is not int or step[1] < 0:
+                raise ValueError("managed workflow step attempt count is invalid")
+            if step[2] not in (None, effective_fingerprint):
+                raise ValueError("managed workflow step call fingerprint changed")
+            step_attempt = step[1] if step[1] > 0 else 1
+        else:
+            step_attempt = 1
+
+        run_cas = connection.execute(
+            "UPDATE workflow_run SET current_step_id=? WHERE run_id=? AND state='running' "
+            "AND tier='script' AND generation=? AND current_step_id IS ?",
+            (step_id, run_id, generation, run[3]),
+        )
+        if run_cas.rowcount != 1:
+            raise ValueError("managed script run changed before the step was claimed")
+
+        if step is None:
+            connection.execute(
+                "INSERT INTO workflow_run_step "
+                "(run_id,step_id,state,attempts,output_json,error,updated_at,"
+                "call_fingerprint,error_kind,result_json) "
+                "VALUES (?,?,'work_pending',?,NULL,?,?,?,NULL,NULL)",
+                (
+                    run_id,
+                    step_id,
+                    step_attempt,
+                    "awaiting_authenticated_work_result",
+                    updated_at,
+                    effective_fingerprint,
+                ),
+            )
+        else:
+            step_cas = connection.execute(
+                "UPDATE workflow_run_step SET state='work_pending',attempts=?,"
+                "output_json=NULL,error='awaiting_authenticated_work_result',"
+                "error_kind=NULL,updated_at=?,call_fingerprint=?,result_json=NULL "
+                "WHERE run_id=? AND step_id=? AND state=? AND attempts=? "
+                "AND call_fingerprint IS ?",
+                (
+                    step_attempt,
+                    updated_at,
+                    effective_fingerprint,
+                    run_id,
+                    step_id,
+                    step[0],
+                    step[1],
+                    step[2],
+                ),
+            )
+            if step_cas.rowcount != 1:
+                raise ValueError("managed workflow step changed before it was claimed")
+    return step_attempt
+
+
+def project_work_result(
+    *,
+    repository,
+    run_id: str,
+    run_generation: int,
+    tier: str,
+    step_id: str,
+    step_attempt: int,
+    binding,
+    accepted_result,
+    updated_at: str,
+) -> str:
+    """Atomically settle one pending workflow step from its accepted Work result.
+
+    The Work binding, workflow run/step CAS, and append-only projection marker
+    share one ``WorkRepository.transaction`` on the configured database. An
+    exact marker is idempotent after restart; a different result or a stale
+    journal identity raises without replacing durable state.
+    """
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+    from cli_agent_orchestrator.models.work_origin import WorkflowStepResultV1
+
+    if (
+        not isinstance(repository, WorkRepository)
+        or Path(repository.path).resolve() != Path(DATABASE_FILE).resolve()
+    ):
+        raise WorkflowProjectionConflict(
+            "workflow journal and Work projection must use the configured database"
+        )
+    if (
+        not isinstance(run_id, str)
+        or not run_id
+        or type(run_generation) is not int
+        or run_generation <= 0
+        or tier not in {"yaml", "script"}
+        or not isinstance(step_id, str)
+        or not step_id
+        or type(step_attempt) is not int
+        or step_attempt <= 0
+        or not isinstance(updated_at, str)
+        or not updated_at
+    ):
+        raise ValueError("workflow projection identity is invalid")
+
+    def proof_value(value, name):
+        try:
+            return getattr(value, name)
+        except AttributeError as error:
+            raise WorkflowProjectionConflict(
+                f"workflow projection proof is missing {name}"
+            ) from error
+
+    binding_id = proof_value(binding, "binding_id")
+    provision_fingerprint = proof_value(binding, "provision_fingerprint")
+    result_id = proof_value(accepted_result, "accepted_result_id")
+    content_hash = proof_value(accepted_result, "content_hash")
+    raw = proof_value(accepted_result, "canonical_bytes")
+    byte_length = proof_value(accepted_result, "byte_length")
+    if (
+        not isinstance(binding_id, str)
+        or not binding_id
+        or not isinstance(provision_fingerprint, str)
+        or not provision_fingerprint
+        or not isinstance(result_id, str)
+        or not result_id
+        or type(raw) is not bytes
+        or type(byte_length) is not int
+        or byte_length != len(raw)
+        or not isinstance(content_hash, str)
+        or hashlib.sha256(raw).hexdigest() != content_hash
+    ):
+        raise WorkflowProjectionConflict(
+            "accepted Work result reference or content hash is invalid"
+        )
+    try:
+        parsed_result = WorkflowStepResultV1.from_json_bytes(raw)
+        if parsed_result.canonical_bytes() != raw or parsed_result != proof_value(
+            accepted_result, "result"
+        ):
+            raise ValueError("result envelope differs from its accepted bytes")
+    except (TypeError, ValueError) as error:
+        raise WorkflowProjectionConflict("accepted Work result envelope is invalid") from error
+
+    expected = {
+        "tier": tier,
+        "run_id": run_id,
+        "run_generation": run_generation,
+        "step_id": step_id,
+        "workflow_step_attempt": step_attempt,
+        "binding_id": binding_id,
+        "provision_fingerprint": provision_fingerprint,
+        "work_item_id": proof_value(binding, "work_item_id"),
+        "work_attempt_id": proof_value(binding, "work_attempt_id"),
+        "work_generation": proof_value(binding, "work_generation"),
+        "delivery_id": proof_value(binding, "delivery_id"),
+        "delivery_hash": proof_value(binding, "delivery_hash"),
+    }
+    for field, expected_value in expected.items():
+        accepted_field = "binding_fingerprint" if field == "provision_fingerprint" else field
+        if proof_value(accepted_result, accepted_field) != expected_value:
+            raise WorkflowProjectionConflict(f"accepted Work result does not match binding {field}")
+
+    output_json = json.dumps(
+        parsed_result.output,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    result_json = raw.decode("utf-8")
+    binding_columns = (
+        "binding_id,tier,run_id,run_generation,step_id,workflow_step_attempt,"
+        "provision_fingerprint,work_item_id,work_attempt_id,work_generation,"
+        "delivery_id,delivery_hash"
+    )
+
+    with repository.transaction() as connection:
+        repository._verify(connection)
+        stored_binding = connection.execute(
+            f"SELECT {binding_columns} FROM work_workflow_step_bindings WHERE binding_id=?",
+            (binding_id,),
+        ).fetchone()
+        if stored_binding is None or any(
+            stored_binding[field] != expected_value for field, expected_value in expected.items()
+        ):
+            raise WorkflowProjectionConflict("workflow Work binding changed or is absent")
+
+        prior_projection = connection.execute(
+            "SELECT accepted_result_id,content_hash FROM work_workflow_step_projections "
+            "WHERE binding_id=?",
+            (binding_id,),
+        ).fetchone()
+        if prior_projection is not None:
+            if (
+                prior_projection["accepted_result_id"] == result_id
+                and prior_projection["content_hash"] == content_hash
+            ):
+                return "already_projected"
+            raise WorkflowProjectionConflict(
+                "workflow binding already projects a different accepted Work result"
+            )
+
+        work = connection.execute(
+            "SELECT state,accepted_result_id FROM work_items WHERE id=?",
+            (expected["work_item_id"],),
+        ).fetchone()
+        bound_attempt = connection.execute(
+            "SELECT work_item_id,generation,state FROM work_attempts WHERE id=?",
+            (expected["work_attempt_id"],),
+        ).fetchone()
+        current_attempt = connection.execute(
+            "SELECT id,generation,state FROM work_attempts WHERE work_item_id=? "
+            "ORDER BY attempt_number DESC LIMIT 1",
+            (expected["work_item_id"],),
+        ).fetchone()
+        if (
+            work is None
+            or bound_attempt is None
+            or current_attempt is None
+            or tuple(work) != ("succeeded", result_id)
+            or tuple(bound_attempt)
+            != (expected["work_item_id"], expected["work_generation"], "finished")
+            or tuple(current_attempt)
+            != (
+                expected["work_attempt_id"],
+                expected["work_generation"],
+                "finished",
+            )
+        ):
+            raise WorkflowProjectionConflict(
+                "durable Work success is no longer the current accepted attempt"
+            )
+
+        run = connection.execute(
+            "SELECT state,tier,generation,current_step_id FROM workflow_run WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        step = connection.execute(
+            "SELECT state,attempts FROM workflow_run_step WHERE run_id=? AND step_id=?",
+            (run_id, step_id),
+        ).fetchone()
+        if (
+            run is None
+            or step is None
+            or tuple(run) != ("running", tier, str(run_generation), step_id)
+            or tuple(step) != ("work_pending", step_attempt)
+        ):
+            raise WorkflowProjectionConflict(
+                "workflow run or step compare-and-set no longer matches the pending result"
+            )
+
+        run_cas = connection.execute(
+            "UPDATE workflow_run SET current_step_id=? WHERE run_id=? AND state=? "
+            "AND tier=? AND generation=? AND current_step_id=?",
+            (step_id, run_id, "running", tier, str(run_generation), step_id),
+        )
+        if run_cas.rowcount != 1:
+            raise WorkflowProjectionConflict("workflow run compare-and-set was lost")
+        step_cas = connection.execute(
+            "UPDATE workflow_run_step SET state='completed',output_json=?,result_json=?,"
+            "error=NULL,error_kind=NULL,updated_at=? WHERE run_id=? AND step_id=? "
+            "AND state='work_pending' AND attempts=?",
+            (output_json, result_json, updated_at, run_id, step_id, step_attempt),
+        )
+        if step_cas.rowcount != 1:
+            raise WorkflowProjectionConflict("workflow step compare-and-set was lost")
+        connection.execute(
+            "INSERT INTO work_workflow_step_projections "
+            "(binding_id,schema_version,accepted_result_id,content_hash,projected_at) "
+            "VALUES (?,1,?,?,?)",
+            (binding_id, result_id, content_hash, time.time()),
+        )
+    return "projected"
+
+
+def project_work_failure(
+    *,
+    repository,
+    run_id: str,
+    run_generation: int,
+    tier: str,
+    step_id: str,
+    step_attempt: int,
+    binding,
+    work_state,
+    updated_at: str,
+) -> str:
+    """Durably fail a pending step only from its exact current failed Work attempt.
+
+    Work failure has no accepted result artifact, so it cannot use the successful
+    result marker table. Instead, this transaction rechecks the immutable binding,
+    failed item/attempt revisions, and current-attempt identity before CASing the
+    journal row to ``failed``. The generic diagnostic deliberately carries no Work
+    error text; ``reconcile`` and stale attempts are never projected as failures.
+    """
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+
+    if (
+        not isinstance(repository, WorkRepository)
+        or Path(repository.path).resolve() != Path(DATABASE_FILE).resolve()
+    ):
+        raise WorkflowProjectionConflict(
+            "workflow journal and Work projection must use the configured database"
+        )
+    if (
+        not isinstance(run_id, str)
+        or not run_id
+        or type(run_generation) is not int
+        or run_generation <= 0
+        or tier not in {"yaml", "script"}
+        or not isinstance(step_id, str)
+        or not step_id
+        or type(step_attempt) is not int
+        or step_attempt <= 0
+        or not isinstance(updated_at, str)
+        or not updated_at
+    ):
+        raise ValueError("workflow failure projection identity is invalid")
+
+    def proof_value(value, name):
+        try:
+            return getattr(value, name)
+        except AttributeError as error:
+            raise WorkflowProjectionConflict(f"workflow failure proof is missing {name}") from error
+
+    binding_id = proof_value(binding, "binding_id")
+    provision_fingerprint = proof_value(binding, "provision_fingerprint")
+    work_item_id = proof_value(binding, "work_item_id")
+    work_attempt_id = proof_value(binding, "work_attempt_id")
+    work_generation = proof_value(binding, "work_generation")
+    if (
+        not isinstance(binding_id, str)
+        or not binding_id
+        or not isinstance(provision_fingerprint, str)
+        or not provision_fingerprint
+        or not isinstance(work_item_id, str)
+        or not work_item_id
+        or not isinstance(work_attempt_id, str)
+        or not work_attempt_id
+        or type(work_generation) is not int
+        or work_generation <= 0
+    ):
+        raise WorkflowProjectionConflict("workflow failure binding identity is invalid")
+
+    work_revision = proof_value(work_state, "work_revision")
+    attempt_revision = proof_value(work_state, "attempt_revision")
+    current_attempt_id = proof_value(work_state, "current_attempt_id")
+    current_generation = proof_value(work_state, "current_generation")
+    if (
+        proof_value(work_state, "binding_id") != binding_id
+        or proof_value(work_state, "work_item_id") != work_item_id
+        or proof_value(work_state, "work_attempt_id") != work_attempt_id
+        or proof_value(work_state, "work_generation") != work_generation
+        or proof_value(work_state, "work_state") != "failed"
+        or proof_value(work_state, "attempt_state") != "failed"
+        or current_attempt_id != work_attempt_id
+        or current_generation != work_generation
+        or proof_value(work_state, "current_attempt_state") != "failed"
+        or proof_value(work_state, "accepted_result_id") is not None
+        or type(work_revision) is not int
+        or work_revision <= 0
+        or type(attempt_revision) is not int
+        or attempt_revision <= 0
+    ):
+        raise WorkflowProjectionConflict(
+            "durable Work failure is not the exact current failed attempt"
+        )
+
+    expected = {
+        "tier": tier,
+        "run_id": run_id,
+        "run_generation": run_generation,
+        "step_id": step_id,
+        "workflow_step_attempt": step_attempt,
+        "binding_id": binding_id,
+        "provision_fingerprint": provision_fingerprint,
+        "work_item_id": work_item_id,
+        "work_attempt_id": work_attempt_id,
+        "work_generation": work_generation,
+    }
+    binding_columns = ",".join(expected)
+
+    with repository.transaction() as connection:
+        repository._verify(connection)
+        stored_binding = connection.execute(
+            f"SELECT {binding_columns} FROM work_workflow_step_bindings WHERE binding_id=?",
+            (binding_id,),
+        ).fetchone()
+        if stored_binding is None or any(
+            stored_binding[field] != expected_value for field, expected_value in expected.items()
+        ):
+            raise WorkflowProjectionConflict("workflow Work binding changed or is absent")
+
+        work = connection.execute(
+            "SELECT state,revision,accepted_result_id FROM work_items WHERE id=?",
+            (work_item_id,),
+        ).fetchone()
+        attempt = connection.execute(
+            "SELECT work_item_id,generation,state,revision,cleanup_state FROM work_attempts "
+            "WHERE id=?",
+            (work_attempt_id,),
+        ).fetchone()
+        current_attempt = connection.execute(
+            "SELECT id,generation,state FROM work_attempts WHERE work_item_id=? "
+            "ORDER BY attempt_number DESC LIMIT 1",
+            (work_item_id,),
+        ).fetchone()
+        if (
+            work is None
+            or attempt is None
+            or current_attempt is None
+            or tuple(work) != ("failed", work_revision, None)
+            or tuple(attempt[:4]) != (work_item_id, work_generation, "failed", attempt_revision)
+            or attempt[4] != proof_value(work_state, "cleanup_state")
+            or tuple(current_attempt) != (work_attempt_id, work_generation, "failed")
+        ):
+            raise WorkflowProjectionConflict("durable Work failure changed before journal CAS")
+
+        if connection.execute(
+            "SELECT 1 FROM work_workflow_step_projections WHERE binding_id=?",
+            (binding_id,),
+        ).fetchone():
+            raise WorkflowProjectionConflict("workflow binding already has a successful projection")
+
+        run = connection.execute(
+            "SELECT state,tier,generation,current_step_id FROM workflow_run WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        step = connection.execute(
+            "SELECT state,attempts,output_json,result_json,error,error_kind "
+            "FROM workflow_run_step WHERE run_id=? AND step_id=?",
+            (run_id, step_id),
+        ).fetchone()
+        if step is not None and tuple(step) == (
+            "failed",
+            step_attempt,
+            None,
+            None,
+            "managed Work attempt failed",
+            "managed_work_failed",
+        ):
+            return "already_failed"
+        if (
+            run is None
+            or step is None
+            or tuple(run) != ("running", tier, str(run_generation), step_id)
+            or tuple(step[:2]) != ("work_pending", step_attempt)
+        ):
+            raise WorkflowProjectionConflict(
+                "workflow run or step compare-and-set no longer matches failed Work"
+            )
+
+        run_cas = connection.execute(
+            "UPDATE workflow_run SET current_step_id=? WHERE run_id=? AND state=? "
+            "AND tier=? AND generation=? AND current_step_id=?",
+            (step_id, run_id, "running", tier, str(run_generation), step_id),
+        )
+        if run_cas.rowcount != 1:
+            raise WorkflowProjectionConflict("workflow run compare-and-set was lost")
+        step_cas = connection.execute(
+            "UPDATE workflow_run_step SET state='failed',output_json=NULL,result_json=NULL,"
+            "error='managed Work attempt failed',error_kind='managed_work_failed',"
+            "updated_at=? WHERE run_id=? AND step_id=? AND state='work_pending' AND attempts=?",
+            (updated_at, run_id, step_id, step_attempt),
+        )
+        if step_cas.rowcount != 1:
+            raise WorkflowProjectionConflict("workflow step compare-and-set was lost")
+    return "failed"
+
+
 def update_run_current_step(run_id: str, current_step_id: Optional[str]) -> None:
     """UPDATE ``workflow_run.current_step_id`` (FR-6.4 "which step is live")."""
     with _connect() as conn:
@@ -893,6 +1810,16 @@ def revoke_unconsumed_decisions(run_id: str, prior_states: Mapping[str, str]) ->
 # ---------------------------------------------------------------------------
 # Reads (rebuild + resume read path, business-logic-model §2/§3).
 # ---------------------------------------------------------------------------
+def list_work_pending_run_ids() -> List[str]:
+    """Return every run with a managed step awaiting durable Work projection."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT run_id FROM workflow_run_step WHERE state='work_pending' "
+            "ORDER BY run_id"
+        ).fetchall()
+    return [row[0] for row in rows]
+
+
 def get_run(run_id: str) -> Optional[RunRow]:
     """Return the ``workflow_run`` row for ``run_id``, or ``None`` if absent (E1).
 
@@ -999,6 +1926,79 @@ def get_step(run_id: str, step_id: str) -> Optional[StepRow]:
         reprompted=row[9],
         error_kind=row[10],
         result_json=row[11],
+    )
+
+
+def get_work_step_projection(run_id: str, step_id: str) -> Optional[WorkStepProjection]:
+    """Read a completed managed step only when its durable Work marker matches.
+
+    The run may have advanced generations since projection. This lookup binds
+    through the completed step's workflow attempt to its immutable Work binding
+    and marker, then verifies that the journal envelope is canonical and hashes
+    to the accepted Work result content hash.
+    """
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+    from cli_agent_orchestrator.models.work_origin import WorkflowStepResultV1
+
+    if not isinstance(run_id, str) or not run_id or not isinstance(step_id, str) or not step_id:
+        raise ValueError("workflow projection identity is invalid")
+    with WorkRepository(DATABASE_FILE).read_snapshot() as connection:
+        step = connection.execute(
+            "SELECT state,attempts,output_json,result_json FROM workflow_run_step "
+            "WHERE run_id=? AND step_id=?",
+            (run_id, step_id),
+        ).fetchone()
+        if step is None:
+            return None
+        rows = connection.execute(
+            "SELECT binding.binding_id,binding.tier,binding.run_generation,"
+            "binding.workflow_step_attempt,projection.accepted_result_id,"
+            "projection.content_hash FROM work_workflow_step_bindings AS binding "
+            "JOIN work_workflow_step_projections AS projection "
+            "ON projection.binding_id=binding.binding_id "
+            "WHERE binding.run_id=? AND binding.step_id=? "
+            "AND binding.workflow_step_attempt=?",
+            (run_id, step_id, step[1]),
+        ).fetchall()
+    if not rows:
+        return None
+    if len(rows) != 1 or step[0] != "completed" or step[3] is None:
+        raise WorkflowProjectionConflict("journal step and Work projection marker do not match")
+
+    marker = rows[0]
+    result_json = step[3]
+    try:
+        raw = result_json.encode("utf-8")
+        result = WorkflowStepResultV1.from_json_bytes(raw)
+        output_json = json.dumps(
+            result.output,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (AttributeError, TypeError, UnicodeError, ValueError) as error:
+        raise WorkflowProjectionConflict("projected workflow result envelope is invalid") from error
+    if (
+        result.canonical_bytes() != raw
+        or step[2] != output_json
+        or hashlib.sha256(raw).hexdigest() != marker[5]
+        or not isinstance(marker[4], str)
+        or not marker[4]
+    ):
+        raise WorkflowProjectionConflict("projected workflow result differs from its Work marker")
+
+    return WorkStepProjection(
+        run_id=run_id,
+        step_id=step_id,
+        binding_id=marker[0],
+        tier=marker[1],
+        run_generation=marker[2],
+        step_attempt=marker[3],
+        accepted_result_id=marker[4],
+        content_hash=marker[5],
+        result_json=result_json,
     )
 
 
@@ -1390,6 +2390,41 @@ def begin_yaml_step_with_contract(
         return number
 
 
+def record_yaml_step_result(
+    run_id: str,
+    step_id: str,
+    generation: str,
+    attempt_number: int,
+    call_fingerprint: str,
+    result,
+    *,
+    result_json: str,
+) -> None:
+    """Persist the producer-owned envelope before the engine publishes completion."""
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        WorkRepository._verify(conn)
+        run = conn.execute(
+            "SELECT generation,state,tier FROM workflow_run WHERE run_id=?", (run_id,)
+        ).fetchone()
+        latest = conn.execute(
+            "SELECT MAX(attempt_number) FROM work_step_contracts "
+            "WHERE run_id=? AND step_id=? AND generation=?",
+            (run_id, step_id, generation),
+        ).fetchone()[0]
+        if run != (generation, "running", "yaml") or latest != attempt_number:
+            raise ValueError("YAML result attempt is no longer current")
+        changed = conn.execute(
+            "UPDATE workflow_run_step SET result_json=?,terminal_id=? "
+            "WHERE run_id=? AND step_id=? AND state='running' AND call_fingerprint=?",
+            (result_json, result.terminal_id, run_id, step_id, call_fingerprint),
+        ).rowcount
+        if changed != 1:
+            raise ValueError("YAML result attempt is no longer deliverable")
+
+
 def fail_yaml_step_attempt(
     run_id: str,
     step_id: str,
@@ -1721,6 +2756,10 @@ def begin_step(run_id: str, step_id: str, updated_at: str, call_fingerprint: str
         )
 
 
+class ManagedStepSettlementRefused(ValueError):
+    """A legacy settlement cannot replace a step now owned by managed Work."""
+
+
 def settle_step(
     run_id: str,
     step_id: str,
@@ -1825,7 +2864,7 @@ def settle_step(
             ).fetchone()
             is not None
         )
-        conn.execute(
+        changed = conn.execute(
             "INSERT INTO workflow_run_step "
             "(run_id, step_id, state, attempts, output_json, error, updated_at, "
             " result_json, error_kind) "
@@ -1837,9 +2876,12 @@ def settle_step(
             "error = excluded.error, "
             "updated_at = excluded.updated_at, "
             "result_json = excluded.result_json, "
-            "error_kind = excluded.error_kind",
+            "error_kind = excluded.error_kind "
+            "WHERE workflow_run_step.state IS NOT 'work_pending'",
             (run_id, step_id, state, output_json, error, updated_at, result_json, error_kind),
-        )
+        ).rowcount
+        if changed != 1:
+            raise ManagedStepSettlementRefused("managed Work owns the step at settlement")
     return existed
 
 

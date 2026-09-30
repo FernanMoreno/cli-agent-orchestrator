@@ -1,0 +1,992 @@
+{
+  "date": "2026-09-30",
+  "scope": "isolated T085 candidate; retained unaffected passes plus fresh case-specific acceptance, not a single all-green default pytest invocation",
+  "selected_cases": 13491,
+  "counts": {
+    "passed": 13491
+  },
+  "original_incidents": 119,
+  "resolved": 119,
+  "new_regression_cases": 15,
+  "qemu": {
+    "kernel": "7.3.0-5-generic",
+    "landlock_abi": 11,
+    "broker": "caos-work-broker, UID 999, nologin",
+    "host_acceptance": "8 passed with normal 10-second worker timeout",
+    "bubblewrap_version": "0.13.0",
+    "bubblewrap_sha256": "efd07a9dfd55016ec5cb16facb67aac2735fa900e261f6a44be1517dcf31c015",
+    "guest_image_sha256": "6001247f681e87448e3f403b2e5ca859fb23a6cbbf0813f01a456a072b70a529",
+    "source_sha256": "4734237473c0e5d695e4e9034a34e43b2dbf5164655bd13fa59ae376b2b7a765"
+  },
+  "limits": [
+    "ordinary runs retain honest skip gates when real dependencies are absent",
+    "libtmux strict-parser case validated using isolated 0.53.1 installation; pinned application dependency unchanged",
+    "Historical workflow run observed expired Claude login; subsequent auth status confirmed active claude.ai Pro login. No Claude workflow rerun after renewal; accepted live workflows use authorized Codex gpt-6-luna subscription",
+    "OpenCode acceptance uses 1.18.32; v2 is outside this acceptance",
+    "WORK_BACKENDS remains empty by default; no production host acceptance or upstream merge/publication"
+  ],
+  "cases": [
+    {
+      "nodeid": "test/agent_plugins/test_git_source_forms.py::TestUnsupportedFormsAreRefused::test_an_unsupported_git_plus_transport_is_refused_with_a_clear_message[git+https://]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skipcontracts-final.xml",
+      "report_sha256": "6acd5b128666253347edf338799e5c748406e0f0e05ea79e5f2935d5ba244930"
+    },
+    {
+      "nodeid": "test/agent_plugins/test_git_source_forms.py::TestUnsupportedFormsAreRefused::test_an_unsupported_git_plus_transport_is_refused_with_a_clear_message[git+ssh://]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skipcontracts-final.xml",
+      "report_sha256": "6acd5b128666253347edf338799e5c748406e0f0e05ea79e5f2935d5ba244930"
+    },
+    {
+      "nodeid": "test/api/test_workflow_lifecycle_realserver.py::test_yaml_tier_drive_to_completed_needs_provider_env",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "real Codex / ChatGPT subscription",
+      "report": "lwf-final.xml",
+      "report_sha256": "11f0142228b96fae577f87cf64bda186d09b715c3eb3c61e985b4c5d190de38e"
+    },
+    {
+      "nodeid": "test/cli/commands/test_install_opencode.py::TestOpencodeAgentListIntegration::test_installed_agent_visible_in_opencode_list",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "opencode-final.xml",
+      "report_sha256": "2038533c285e679234e766367b85c10fb450264175efe63c0d339a7a5d85e3e8"
+    },
+    {
+      "nodeid": "test/clients/test_tmux_lookup_error.py::TestUpstreamParseOutput::test_one_field_short_row_raises_value_error",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skiplibtmux.xml",
+      "report_sha256": "54d91ca6c5b8378cb1f3a36090b5d1297ca1e73d37ac37bf04ec16733fd64298"
+    },
+    {
+      "nodeid": "test/integration/t019/test_docker_backend.py::test_docker_backend_runs_one_bound_static_worker_and_removes_container",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "Docker Engine Linux",
+      "report": "skipdocker.xml",
+      "report_sha256": "6adcc901aa66c28381161c891021765b8dffe6b62b74fe95fde2c092890b4108"
+    },
+    {
+      "nodeid": "test/integration/t019/test_docker_backend.py::test_docker_backend_bridges_only_managed_work_mcp_without_container_network",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "Docker Engine Linux",
+      "report": "skipdocker.xml",
+      "report_sha256": "6adcc901aa66c28381161c891021765b8dffe6b62b74fe95fde2c092890b4108"
+    },
+    {
+      "nodeid": "test/integration/t019/test_docker_backend.py::test_docker_mcp_admits_only_preprovisioned_managed_child",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "Docker Engine Linux",
+      "report": "skipdocker.xml",
+      "report_sha256": "6adcc901aa66c28381161c891021765b8dffe6b62b74fe95fde2c092890b4108"
+    },
+    {
+      "nodeid": "test/integration/t019/test_docker_backend.py::test_docker_mcp_commits_exact_receiver_acceptance_before_receipt",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "Docker Engine Linux",
+      "report": "skipdocker.xml",
+      "report_sha256": "6adcc901aa66c28381161c891021765b8dffe6b62b74fe95fde2c092890b4108"
+    },
+    {
+      "nodeid": "test/integration/t019/test_docker_backend.py::test_docker_sibling_cannot_observe_or_duplicate_victim_mcp_fd",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "Docker Engine Linux",
+      "report": "skipdocker.xml",
+      "report_sha256": "6adcc901aa66c28381161c891021765b8dffe6b62b74fe95fde2c092890b4108"
+    },
+    {
+      "nodeid": "test/integration/t019/test_docker_backend.py::test_docker_fresh_repository_reconciles_stopped_artifacts_without_redelivery[False]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "Docker Engine Linux",
+      "report": "skipdocker.xml",
+      "report_sha256": "6adcc901aa66c28381161c891021765b8dffe6b62b74fe95fde2c092890b4108"
+    },
+    {
+      "nodeid": "test/integration/t019/test_docker_backend.py::test_docker_fresh_repository_reconciles_stopped_artifacts_without_redelivery[True]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "Docker Engine Linux",
+      "report": "skipdocker.xml",
+      "report_sha256": "6adcc901aa66c28381161c891021765b8dffe6b62b74fe95fde2c092890b4108"
+    },
+    {
+      "nodeid": "test/integration/t019/test_docker_backend.py::test_docker_owner_process_death_reconciles_artifacts_without_redelivery",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "Docker Engine Linux",
+      "report": "skipdocker.xml",
+      "report_sha256": "6adcc901aa66c28381161c891021765b8dffe6b62b74fe95fde2c092890b4108"
+    },
+    {
+      "nodeid": "test/integration/t019/test_local_work_setup.py::test_local_setup_dispatches_bundled_worker_and_cleans_attempt",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "Docker Engine Linux",
+      "report": "skiplocalreal.xml",
+      "report_sha256": "4ed874566343e9761a224bf2356cf75825092788849573a56e1b651f77cb23ae"
+    },
+    {
+      "nodeid": "test/integration/t020/test_workflow_acceptance.py::test_yaml_docker_work_result_projects_after_restart_without_changing_frozen_inputs",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "Docker Engine Linux",
+      "report": "skipdocker.xml",
+      "report_sha256": "6adcc901aa66c28381161c891021765b8dffe6b62b74fe95fde2c092890b4108"
+    },
+    {
+      "nodeid": "test/integration/t020/test_workflow_acceptance.py::test_script_run_step_returns_only_verified_work_result_after_runtime_restart",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "Docker Engine Linux",
+      "report": "skipdocker.xml",
+      "report_sha256": "6adcc901aa66c28381161c891021765b8dffe6b62b74fe95fde2c092890b4108"
+    },
+    {
+      "nodeid": "test/integration/t020/test_workflow_acceptance.py::test_no_result_stays_pending_after_restart_without_step_or_work_retry[yaml]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "Docker Engine Linux",
+      "report": "skipdocker.xml",
+      "report_sha256": "6adcc901aa66c28381161c891021765b8dffe6b62b74fe95fde2c092890b4108"
+    },
+    {
+      "nodeid": "test/integration/t020/test_workflow_acceptance.py::test_no_result_stays_pending_after_restart_without_step_or_work_retry[script]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "Docker Engine Linux",
+      "report": "skipdocker.xml",
+      "report_sha256": "6adcc901aa66c28381161c891021765b8dffe6b62b74fe95fde2c092890b4108"
+    },
+    {
+      "nodeid": "test/integration/t020/test_workflow_acceptance.py::test_docker_process_failure_requires_explicit_fenced_workflow_retry[yaml]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "Docker Engine Linux",
+      "report": "skipdocker.xml",
+      "report_sha256": "6adcc901aa66c28381161c891021765b8dffe6b62b74fe95fde2c092890b4108"
+    },
+    {
+      "nodeid": "test/integration/t020/test_workflow_acceptance.py::test_docker_process_failure_requires_explicit_fenced_workflow_retry[script]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "Docker Engine Linux",
+      "report": "skipdocker.xml",
+      "report_sha256": "6adcc901aa66c28381161c891021765b8dffe6b62b74fe95fde2c092890b4108"
+    },
+    {
+      "nodeid": "test/integration/t097/test_host_acceptance.py::test_durable_gateway_executes_bound_worker_after_real_host_preflight",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "t097.xml",
+      "report_sha256": "67515eca78247112789fb1e4f39f91f8b742a574781eadf66af58a06a9f803c6"
+    },
+    {
+      "nodeid": "test/integration/t097/test_host_acceptance.py::test_gateway_enforces_descendant_exec_policy_on_approved_host",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "t097.xml",
+      "report_sha256": "67515eca78247112789fb1e4f39f91f8b742a574781eadf66af58a06a9f803c6"
+    },
+    {
+      "nodeid": "test/integration/t097/test_host_acceptance.py::test_gateway_contains_filesystem_network_ipc_fds_and_proc_environment",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "t097.xml",
+      "report_sha256": "67515eca78247112789fb1e4f39f91f8b742a574781eadf66af58a06a9f803c6"
+    },
+    {
+      "nodeid": "test/integration/t097/test_host_acceptance.py::test_revocation_after_ack_withholds_go_and_prevents_redelivery",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "t097.xml",
+      "report_sha256": "67515eca78247112789fb1e4f39f91f8b742a574781eadf66af58a06a9f803c6"
+    },
+    {
+      "nodeid": "test/integration/t097/test_host_acceptance.py::test_lost_result_ack_reconciles_without_worker_redelivery",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "t097.xml",
+      "report_sha256": "67515eca78247112789fb1e4f39f91f8b742a574781eadf66af58a06a9f803c6"
+    },
+    {
+      "nodeid": "test/integration/t097/test_proxy_concurrency.py::test_two_concurrent_work_attempts_use_distinct_live_proxy_endpoints",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "t097.xml",
+      "report_sha256": "67515eca78247112789fb1e4f39f91f8b742a574781eadf66af58a06a9f803c6"
+    },
+    {
+      "nodeid": "test/integration/t097/test_proxy_concurrency.py::test_uncertain_proxy_effect_survives_restart_without_replay",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "t097.xml",
+      "report_sha256": "67515eca78247112789fb1e4f39f91f8b742a574781eadf66af58a06a9f803c6"
+    },
+    {
+      "nodeid": "test/integration/t097/test_sibling_isolation.py::test_same_uid_sibling_cannot_read_proc_or_extract_target_fds",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "t097.xml",
+      "report_sha256": "67515eca78247112789fb1e4f39f91f8b742a574781eadf66af58a06a9f803c6"
+    },
+    {
+      "nodeid": "test/integration/t098/test_work_launch_dispatch.py::test_gateway_runs_scratch_worker_through_bubblewrap_and_supervisor",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/integration/t098/test_work_launch_dispatch.py::test_double_fork_descendants_can_exec_only_the_bound_static_elf",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/integration/t098/test_work_launch_dispatch.py::test_go_authority_revocation_leaves_no_worker_effect_or_redelivery",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/integration/t098/test_work_launch_dispatch.py::test_uncertain_cleanup_is_reconciled_without_process_redelivery",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/providers/test_claude_code_unit.py::TestClaudeCodeDialogDetection::test_agent_prose_with_nav_text_in_footer_false_waiting",
+      "previous": "xfailed",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "cfgreen.xml",
+      "report_sha256": "6191b680c713f1190656eb7b21bd478202537af88b702b8eb2a07f9cd4ef9eca"
+    },
+    {
+      "nodeid": "test/providers/test_codex_provider_unit.py::TestCodexProviderUpdateDialogLive::test_check_for_update_on_startup_accepted_by_binary",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skiptools.xml",
+      "report_sha256": "97b5ff1a9b47a0fbfa87f007bd5a0961a44443ae2ad81cfef18a6764a4a7896d"
+    },
+    {
+      "nodeid": "test/providers/test_codex_provider_unit.py::TestCodexProviderUpdateDialogLive::test_bogus_config_key_rejected_negative_control",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skiptools.xml",
+      "report_sha256": "97b5ff1a9b47a0fbfa87f007bd5a0961a44443ae2ad81cfef18a6764a4a7896d"
+    },
+    {
+      "nodeid": "test/providers/test_codex_provider_unit.py::TestCodexLaunchFlagsValidity::test_codex_launch_flags_are_valid",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skiptools.xml",
+      "report_sha256": "97b5ff1a9b47a0fbfa87f007bd5a0961a44443ae2ad81cfef18a6764a4a7896d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_adversarial.py::test_pt_interp_elf_under_write_path_is_denied_by_kernel_execve",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_adversarial.py::test_pt_interp_bootstrap_is_denied_when_only_the_write_path_elf_is_allowed",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_adversarial.py::test_direct_loader_is_denied_when_only_the_write_path_elf_is_allowed",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_adversarial.py::test_allowed_direct_loader_runs_the_same_write_path_elf",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_adversarial.py::test_proc_self_fd_to_write_path_elf_preserves_the_kernel_denial",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_adversarial.py::test_memfd_execve_through_proc_self_fd_runs_the_payload",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_adversarial.py::test_memfd_execveat_empty_path_runs_the_payload",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_adversarial.py::test_allowed_loader_runs_memfd_payload_through_proc_self_fd",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_adversarial.py::test_process_preflight_does_not_enable_legacy_terminal_effects",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_bound_content.py::test_bound_v2_launch_uses_one_owned_stage_and_persists_identity_before_go",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_bound_content.py::test_recorded_bound_launch_runs_real_worker_after_pending_setup",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_bound_content.py::test_recorded_bound_launch_activates_private_proxy_only_after_ack_and_durable_setup",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_bound_content.py::test_recorded_bound_launch_reports_uncertainty_after_go_write",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security-fixes.xml",
+      "report_sha256": "5f4f8e815707709a569a2d916bae48d5dd94c8a487524c6e10cdbdca52996f44"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_wrong_bubblewrap_digest_rejects_before_version_spawn_or_callback",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_in_place_mutation_after_bubblewrap_copy_rejects_before_version_probe",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_source_mutation_after_final_revalidation_still_runs_sealed_bubblewrap",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_bubblewrap_execution_descriptor_is_sealed_against_writes",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_memfd_creation_failure_rejects_before_version_probe",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_bubblewrap_seal_failure_rejects_before_version_probe",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_real_static_worker_runs_only_after_ack_persistence_and_fresh_authorization",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_late_socket_in_live_usr_bind_is_denied_by_composed_seccomp_after_ack",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_source_mutation_after_ack_cannot_change_mounted_runtime_snapshot",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security-fixes.xml",
+      "report_sha256": "5f4f8e815707709a569a2d916bae48d5dd94c8a487524c6e10cdbdca52996f44"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_authorization_denial_never_releases_worker_and_reaps_bubblewrap",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_persistence_exception_never_releases_worker_and_reaps_bubblewrap",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_version_spoofing_wrapper_is_rejected_before_launch_or_callback",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_changed_designated_identity_is_rejected_before_spawn",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_pinned_descriptor_close_failure_after_spawn_reaps_monitor",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_spawn_uses_pinned_bubblewrap_fd_if_path_changes_after_revalidation",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_bubblewrap_setup_failure_before_ack_never_calls_parent_gate_or_executes_worker",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_pre_ack_timeout_reports_confirmed_namespace_cleanup",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_worker_timeout_reports_execution_uncertainty_after_confirmed_cleanup",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_malformed_bubblewrap_info_never_signals_its_unvalidated_child",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_recycled_namespace_init_identity_is_never_signaled",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_composition.py::test_timeout_kills_pid1_by_pidfd_and_kernel_removes_detached_descendant",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_controller_pty.py::test_direct_bubblewrap_worker_reports_controller_pty_and_open_fds",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_controller_pty.py::test_trusted_bootstrap_attaches_pty_before_static_worker_exec[inherited-session]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_controller_pty.py::test_trusted_bootstrap_attaches_pty_before_static_worker_exec[bwrap-new-session]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_noexec_bind_workspace.py::test_allowed_loader_cannot_run_elf_from_private_noexec_workspace_bind",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_noexec_inventory.py::test_pinned_bubblewrap_inventory_keeps_all_writable_surfaces_noexec",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_noexec_loader.py::test_allowed_loader_cannot_run_elf_from_private_noexec_tmpfs",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_open_questions.py::test_bubblewrap_0130_passes_explicit_memfd_to_exact_probe_launcher",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_open_questions.py::test_allowed_loader_runs_elf_copied_to_writable_dev_shm",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_open_questions.py::test_allowed_loader_runs_writable_elf_from_setsid_double_fork_descendant",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_open_questions.py::test_bubblewrap_backend_preflight_still_rejects_before_effects",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_process_identity.py::test_parent_persists_exact_process_identity_before_worker_release",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_process_identity.py::test_identity_persistence_error_withholds_worker_release",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_process_identity.py::test_callback_without_process_identity_never_releases_worker",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_ro_bind_data.py::test_sealed_static_elf_is_executable_readonly_and_source_fd_is_closed",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_runtime_snapshot.py::test_snapshot_rejects_device_nodes_when_runner_can_create_them[character]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "devices.xml",
+      "report_sha256": "e8a115991410c0bc7d6e15fc80058bd60613ba66edff9f90183c73a8a9ceb395"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_runtime_snapshot.py::test_snapshot_rejects_device_nodes_when_runner_can_create_them[block]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "devices.xml",
+      "report_sha256": "e8a115991410c0bc7d6e15fc80058bd60613ba66edff9f90183c73a8a9ceb395"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_sibling_userns.py::test_same_host_uid_userns_sibling_cannot_inspect_nondumpable_target",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "sibling.xml",
+      "report_sha256": "e7eb574950a640be31152988745fd30170b53685ba94e3e1564dc4aa0504724b"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_socket_mount.py::test_late_socket_in_read_only_runtime_tree_remains_connectable_without_snapshot",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/security/test_work_bubblewrap_socket_mount.py::test_parent_and_static_worker_exchange_over_mounted_socket_path",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/services/test_audit_log.py::TestT9SyncVsNowait::test_memory_stored_uses_nowait",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "audit-composition.xml",
+      "report_sha256": "c7c778509f4a22118148e314f35295ca169d6af34118d9911418ed4e5a898b61"
+    },
+    {
+      "nodeid": "test/services/test_audit_log.py::TestT10ReadOnlyCli::test_cli_logs_command_rejects_malformed_date",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "audit-composition.xml",
+      "report_sha256": "c7c778509f4a22118148e314f35295ca169d6af34118d9911418ed4e5a898b61"
+    },
+    {
+      "nodeid": "test/services/test_audit_log.py::TestT10ReadOnlyCli::test_cli_logs_command_reads_today_log",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "audit-composition.xml",
+      "report_sha256": "c7c778509f4a22118148e314f35295ca169d6af34118d9911418ed4e5a898b61"
+    },
+    {
+      "nodeid": "test/services/test_audit_log.py::TestU75PlanCases::test_store_writes_audit_log",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "audit-composition.xml",
+      "report_sha256": "c7c778509f4a22118148e314f35295ca169d6af34118d9911418ed4e5a898b61"
+    },
+    {
+      "nodeid": "test/services/test_audit_log.py::TestSettings::test_settings_day_cap_default",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "audit-composition.xml",
+      "report_sha256": "c7c778509f4a22118148e314f35295ca169d6af34118d9911418ed4e5a898b61"
+    },
+    {
+      "nodeid": "test/services/test_audit_log.py::TestCrossCuttingSanitiserCallers::test_lint_topic_log",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "audit-composition.xml",
+      "report_sha256": "c7c778509f4a22118148e314f35295ca169d6af34118d9911418ed4e5a898b61"
+    },
+    {
+      "nodeid": "test/services/test_work_bubblewrap_cleanup_recovery.py::test_dead_monitor_recovery_cleans_surviving_exact_init",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/services/test_work_process_landlock.py::test_linux_resolve_unix_allows_listed_and_denies_unlisted_pathname_sockets",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "security3.xml",
+      "report_sha256": "9f481570f33a42a507c7a476779ba584634ff12f0c6386efc755ee61fff89a8d"
+    },
+    {
+      "nodeid": "test/services/vault/test_vault_reconcile_concurrency.py::test_projection_lock_serializes_case_variant_root_spellings",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "casefold.xml",
+      "report_sha256": "b20d6eb854a02777cec9a022275c87dc36fb5b4ffc5dfcef71880bbfd46694a7"
+    },
+    {
+      "nodeid": "test/services/vault/test_vault_reconcile_concurrency.py::test_projection_lock_reenters_across_case_variant_spellings",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "QEMU Linux 7.3 / ABI 11",
+      "report": "casefold.xml",
+      "report_sha256": "b20d6eb854a02777cec9a022275c87dc36fb5b4ffc5dfcef71880bbfd46694a7"
+    },
+    {
+      "nodeid": "test/test_gitleaks_config.py::test_aws_secret_access_key_caught",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skiptools.xml",
+      "report_sha256": "97b5ff1a9b47a0fbfa87f007bd5a0961a44443ae2ad81cfef18a6764a4a7896d"
+    },
+    {
+      "nodeid": "test/test_gitleaks_config.py::test_aws_secret_caught_with_base64_chars",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skiptools.xml",
+      "report_sha256": "97b5ff1a9b47a0fbfa87f007bd5a0961a44443ae2ad81cfef18a6764a4a7896d"
+    },
+    {
+      "nodeid": "test/test_gitleaks_config.py::test_aws_secret_caught_when_terminated_by_punctuation_or_eof",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skiptools.xml",
+      "report_sha256": "97b5ff1a9b47a0fbfa87f007bd5a0961a44443ae2ad81cfef18a6764a4a7896d"
+    },
+    {
+      "nodeid": "test/test_gitleaks_config.py::test_aws_secret_rule_requires_exactly_40_chars",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skiptools.xml",
+      "report_sha256": "97b5ff1a9b47a0fbfa87f007bd5a0961a44443ae2ad81cfef18a6764a4a7896d"
+    },
+    {
+      "nodeid": "test/test_gitleaks_config.py::test_github_fine_grained_pat_caught",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skiptools.xml",
+      "report_sha256": "97b5ff1a9b47a0fbfa87f007bd5a0961a44443ae2ad81cfef18a6764a4a7896d"
+    },
+    {
+      "nodeid": "test/test_gitleaks_config.py::test_placeholders_not_flagged",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skiptools.xml",
+      "report_sha256": "97b5ff1a9b47a0fbfa87f007bd5a0961a44443ae2ad81cfef18a6764a4a7896d"
+    },
+    {
+      "nodeid": "test/test_gitleaks_config.py::test_hashes_and_ids_not_flagged",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skiptools.xml",
+      "report_sha256": "97b5ff1a9b47a0fbfa87f007bd5a0961a44443ae2ad81cfef18a6764a4a7896d"
+    },
+    {
+      "nodeid": "test/test_gitleaks_config.py::test_github_pat_low_entropy_placeholder_not_flagged",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skiptools.xml",
+      "report_sha256": "97b5ff1a9b47a0fbfa87f007bd5a0961a44443ae2ad81cfef18a6764a4a7896d"
+    },
+    {
+      "nodeid": "test/test_gitleaks_config.py::test_aws_example_key_allowlisted",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skiptools.xml",
+      "report_sha256": "97b5ff1a9b47a0fbfa87f007bd5a0961a44443ae2ad81cfef18a6764a4a7896d"
+    },
+    {
+      "nodeid": "test/test_gitleaks_config.py::test_allowlist_does_not_exempt_other_secrets",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skiptools.xml",
+      "report_sha256": "97b5ff1a9b47a0fbfa87f007bd5a0961a44443ae2ad81cfef18a6764a4a7896d"
+    },
+    {
+      "nodeid": "test/test_no_ffi_guard.py::test_real_graph_is_clean",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skiptools.xml",
+      "report_sha256": "97b5ff1a9b47a0fbfa87f007bd5a0961a44443ae2ad81cfef18a6764a4a7896d"
+    },
+    {
+      "nodeid": "test/test_skill_packaging_parity.py::TestPackagingParity::test_references_subdir_is_mirrored[cao-agent-routing]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skipcontracts-final.xml",
+      "report_sha256": "6acd5b128666253347edf338799e5c748406e0f0e05ea79e5f2935d5ba244930"
+    },
+    {
+      "nodeid": "test/test_skill_packaging_parity.py::TestPackagingParity::test_references_subdir_is_mirrored[cao-session-management]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skipcontracts-final.xml",
+      "report_sha256": "6acd5b128666253347edf338799e5c748406e0f0e05ea79e5f2935d5ba244930"
+    },
+    {
+      "nodeid": "test/test_skill_packaging_parity.py::TestPackagingParity::test_references_subdir_is_mirrored[cao-session-liveness]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skipcontracts-final.xml",
+      "report_sha256": "6acd5b128666253347edf338799e5c748406e0f0e05ea79e5f2935d5ba244930"
+    },
+    {
+      "nodeid": "test/test_skill_packaging_parity.py::TestPackagingParity::test_references_subdir_is_mirrored[cao-supervisor-protocols]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skipcontracts-final.xml",
+      "report_sha256": "6acd5b128666253347edf338799e5c748406e0f0e05ea79e5f2935d5ba244930"
+    },
+    {
+      "nodeid": "test/test_skill_packaging_parity.py::TestPackagingParity::test_references_subdir_is_mirrored[cao-worker-protocols]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skipcontracts-final.xml",
+      "report_sha256": "6acd5b128666253347edf338799e5c748406e0f0e05ea79e5f2935d5ba244930"
+    },
+    {
+      "nodeid": "test/test_skill_packaging_parity.py::TestPackagingParity::test_references_subdir_is_mirrored[cao-memory]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skipcontracts-final.xml",
+      "report_sha256": "6acd5b128666253347edf338799e5c748406e0f0e05ea79e5f2935d5ba244930"
+    },
+    {
+      "nodeid": "test/test_skill_packaging_parity.py::TestPackagingParity::test_references_subdir_is_mirrored[cao-learning]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skipcontracts-final.xml",
+      "report_sha256": "6acd5b128666253347edf338799e5c748406e0f0e05ea79e5f2935d5ba244930"
+    },
+    {
+      "nodeid": "test/test_skill_packaging_parity.py::TestPackagingParity::test_references_subdir_is_mirrored[cao-workflow]",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "local pinned tools or contract tests",
+      "report": "skipcontracts-final.xml",
+      "report_sha256": "6acd5b128666253347edf338799e5c748406e0f0e05ea79e5f2935d5ba244930"
+    },
+    {
+      "nodeid": "examples/workflow/tests/test_workflow_live.py::test_workflow_runs_end_to_end_with_a_real_provider",
+      "previous": "skipped",
+      "current": "passed",
+      "environment": "real Codex / ChatGPT subscription",
+      "report": "lwf-final.xml",
+      "report_sha256": "11f0142228b96fae577f87cf64bda186d09b715c3eb3c61e985b4c5d190de38e"
+    }
+  ],
+  "claude_auth_observation": {
+    "date": "2026-09-30",
+    "command": "claude auth status",
+    "exit_code": 0,
+    "loggedIn": true,
+    "authMethod": "claude.ai",
+    "subscriptionType": "pro",
+    "model_call_performed": false,
+    "workflow_rerun_after_renewal": false
+  }
+}

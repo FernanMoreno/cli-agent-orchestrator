@@ -137,7 +137,7 @@ def test_schema_damage_after_effect_cannot_report_success(repository, principal)
 
 
 def test_v12_upgrade_preserves_prior_ledger_and_audit(tmp_path, principal):
-    from cli_agent_orchestrator.clients.work_repository import _MIGRATIONS, _CHECKSUMS
+    from cli_agent_orchestrator.clients.work_repository import _CHECKSUMS, _MIGRATIONS
 
     repository = WorkRepository(tmp_path / "upgrade.sqlite")
     with repository.transaction() as connection:

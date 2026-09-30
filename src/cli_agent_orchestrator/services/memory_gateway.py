@@ -16,9 +16,12 @@ from cli_agent_orchestrator.security.auth import get_local_bearer
 from cli_agent_orchestrator.services.elastic_worker_gateway import (
     elastic_worker_gateway_headers,
 )
-from cli_agent_orchestrator.services.memory_service import MemoryPartialWriteError, MemoryService
+from cli_agent_orchestrator.services.memory_service import (
+    ForgetResult,
+    MemoryPartialWriteError,
+    MemoryService,
+)
 from cli_agent_orchestrator.services.secret_gate import scan_for_secrets
-
 
 _IDENTIFIER = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 _RECOVERY_CURSOR = re.compile(r"kcr1_[A-Za-z0-9_-]{43}")
@@ -119,7 +122,11 @@ def _knowledge_authority_url() -> str:
 
 
 def _is_identifier(value: Any) -> bool:
-    return isinstance(value, str) and bool(_IDENTIFIER.fullmatch(value)) and not scan_for_secrets(value)
+    return (
+        isinstance(value, str)
+        and bool(_IDENTIFIER.fullmatch(value))
+        and not scan_for_secrets(value)
+    )
 
 
 def _require_identifier(value: Any, field: str) -> str:
@@ -172,7 +179,9 @@ def _require_proposal_inputs(
         raise ValueError("invalid content")
     if not isinstance(evidence_refs, list) or len(evidence_refs) > 64:
         raise ValueError("invalid evidence_refs")
-    references = tuple(_require_identifier(reference, "evidence_refs") for reference in evidence_refs)
+    references = tuple(
+        _require_identifier(reference, "evidence_refs") for reference in evidence_refs
+    )
     if len(set(references)) != len(references):
         raise ValueError("invalid evidence_refs")
     if not _is_number(confidence, minimum=0, maximum=1):
@@ -310,9 +319,9 @@ def _post(path: str, body: dict[str, Any]) -> dict[str, Any]:
 
 def _require_enabled():
     from cli_agent_orchestrator.services.memory_service import (
-        _is_memory_enabled,
-        MemoryDisabledError,
         MEMORY_DISABLED_MESSAGE,
+        MemoryDisabledError,
+        _is_memory_enabled,
     )
 
     if not _is_memory_enabled():
@@ -383,14 +392,14 @@ async def forget_memory(
     key: str,
     scope: str,
     terminal_context: Optional[dict[str, Any]],
-) -> bool:
+) -> ForgetResult:
     _require_enabled()
     payload = await asyncio.to_thread(
         _post,
         "/internal/memory/forget",
         {"key": key, "scope": scope, "terminal_context": terminal_context},
     )
-    return bool(payload["deleted"])
+    return ForgetResult(**payload["deleted"])
 
 
 def memory_context_for_terminal(terminal_id: str, task_description: str = "") -> str:

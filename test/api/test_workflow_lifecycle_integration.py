@@ -138,7 +138,9 @@ def portal_client(journal_db):
     drive at its first ``await`` -- the run would never leave RUNNING.)
     """
     app.state.plugin_registry = PluginRegistry()
-    with TestClientWithHost(app) as client:
+    with TestClientWithHost(
+        app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)
+    ) as client:
         yield client
 
 

@@ -2,7 +2,7 @@
 
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work import EventPage, WorkView
-from cli_agent_orchestrator.security.auth import Principal, SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE
+from cli_agent_orchestrator.security.auth import SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE, Principal
 
 
 def project_work(job: dict, work: dict) -> WorkView:

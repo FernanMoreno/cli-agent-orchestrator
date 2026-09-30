@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from test.services.test_work_decisions import EFFECT, EVIDENCE, _decision_context
+
 import pytest
 
 from cli_agent_orchestrator.services.agui.base import RecordingUiEmitter
@@ -12,7 +14,6 @@ from cli_agent_orchestrator.services.agui.handoff_approval import (
     DeliveryUncertain,
 )
 from cli_agent_orchestrator.services.work_decisions import WorkDecisions
-from test.services.test_work_decisions import EFFECT, EVIDENCE, _decision_context
 
 
 class Delivery:

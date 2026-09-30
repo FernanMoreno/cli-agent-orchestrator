@@ -1,0 +1,895 @@
+{
+  "date": "2026-09-30",
+  "scope": "Codex, Claude, OpenCode v1; tmux and Herdr0.9.1; local acceptance",
+  "authorized_extra_spend_eur": 0,
+  "versions": {
+    "codex": "0.159.2",
+    "claude_code": "2.1.285",
+    "opencode_cli": "1.18.32"
+  },
+  "quota_scenarios": "not_applicable: no quota exhaustion observed",
+  "cells": [
+    {
+      "backend": "tmux",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "codex->codex",
+        "child_model": "gpt-6-luna",
+        "child_provider": "codex",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "gpt-6-luna",
+        "parent_provider": "codex",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    },
+    {
+      "backend": "tmux",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "codex->claude_code",
+        "child_model": "claude-haiku-4-5",
+        "child_provider": "claude_code",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "gpt-6-luna",
+        "parent_provider": "codex",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    },
+    {
+      "backend": "tmux",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "codex->opencode_cli",
+        "child_model": "opencode-go/longcat-2.5-preview-free",
+        "child_provider": "opencode_cli",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "gpt-6-luna",
+        "parent_provider": "codex",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    },
+    {
+      "backend": "tmux",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "claude_code->codex",
+        "child_model": "gpt-6-luna",
+        "child_provider": "codex",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "claude-haiku-4-5",
+        "parent_provider": "claude_code",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    },
+    {
+      "backend": "tmux",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "claude_code->claude_code",
+        "child_model": "claude-haiku-4-5",
+        "child_provider": "claude_code",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "claude-haiku-4-5",
+        "parent_provider": "claude_code",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    },
+    {
+      "backend": "tmux",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "claude_code->opencode_cli",
+        "child_model": "opencode-go/longcat-2.5-preview-free",
+        "child_provider": "opencode_cli",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "claude-haiku-4-5",
+        "parent_provider": "claude_code",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    },
+    {
+      "backend": "tmux",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "opencode_cli->codex",
+        "child_model": "gpt-6-luna",
+        "child_provider": "codex",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "opencode-go/longcat-2.5-preview-free",
+        "parent_provider": "opencode_cli",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    },
+    {
+      "backend": "tmux",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "opencode_cli->claude_code",
+        "child_model": "claude-haiku-4-5",
+        "child_provider": "claude_code",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "opencode-go/longcat-2.5-preview-free",
+        "parent_provider": "opencode_cli",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    },
+    {
+      "backend": "tmux",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "opencode_cli->opencode_cli",
+        "child_model": "opencode-go/longcat-2.5-preview-free",
+        "child_provider": "opencode_cli",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "opencode-go/longcat-2.5-preview-free",
+        "parent_provider": "opencode_cli",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    },
+    {
+      "backend": "herdr0.9.1",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "codex->codex",
+        "child_model": "gpt-6-luna",
+        "child_provider": "codex",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "gpt-6-luna",
+        "parent_provider": "codex",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    },
+    {
+      "backend": "herdr0.9.1",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "codex->claude_code",
+        "child_model": "claude-haiku-4-5",
+        "child_provider": "claude_code",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "gpt-6-luna",
+        "parent_provider": "codex",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    },
+    {
+      "backend": "herdr0.9.1",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "codex->opencode_cli",
+        "child_model": "opencode-go/longcat-2.5-preview-free",
+        "child_provider": "opencode_cli",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "gpt-6-luna",
+        "parent_provider": "codex",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    },
+    {
+      "backend": "herdr0.9.1",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "claude_code->codex",
+        "child_model": "gpt-6-luna",
+        "child_provider": "codex",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "claude-haiku-4-5",
+        "parent_provider": "claude_code",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    },
+    {
+      "backend": "herdr0.9.1",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "claude_code->claude_code",
+        "child_model": "claude-haiku-4-5",
+        "child_provider": "claude_code",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "claude-haiku-4-5",
+        "parent_provider": "claude_code",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    },
+    {
+      "backend": "herdr0.9.1",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "claude_code->opencode_cli",
+        "child_model": "opencode-go/longcat-2.5-preview-free",
+        "child_provider": "opencode_cli",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "claude-haiku-4-5",
+        "parent_provider": "claude_code",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    },
+    {
+      "backend": "herdr0.9.1",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "opencode_cli->codex",
+        "child_model": "gpt-6-luna",
+        "child_provider": "codex",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "opencode-go/longcat-2.5-preview-free",
+        "parent_provider": "opencode_cli",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    },
+    {
+      "backend": "herdr0.9.1",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "opencode_cli->claude_code",
+        "child_model": "claude-haiku-4-5",
+        "child_provider": "claude_code",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "opencode-go/longcat-2.5-preview-free",
+        "parent_provider": "opencode_cli",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    },
+    {
+      "backend": "herdr0.9.1",
+      "outcome": "passed",
+      "evidence": {
+        "cell": "opencode_cli->opencode_cli",
+        "child_model": "opencode-go/longcat-2.5-preview-free",
+        "child_provider": "opencode_cli",
+        "cleanup": {
+          "quota_terminal": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "session": {
+            "status": "validated"
+          }
+        },
+        "parent_model": "opencode-go/longcat-2.5-preview-free",
+        "parent_provider": "opencode_cli",
+        "quota_observation": {
+          "elapsed_seconds": null,
+          "limit_seconds": null,
+          "started_at_utc": null
+        },
+        "scenarios": {
+          "quota_continuation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "quota_wait_reconciliation": {
+            "reason": "not_applicable",
+            "status": "skipped"
+          },
+          "sibling_cancellation_cleanup": {
+            "status": "validated"
+          },
+          "sibling_message_delivery": {
+            "status": "validated"
+          },
+          "successful_provider_turn": {
+            "status": "validated"
+          },
+          "timeout_reconciliation": {
+            "status": "validated"
+          }
+        },
+        "schema_version": 1,
+        "status": "validated"
+      }
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 """Additive v1 knowledge authority; no legacy memory or recovery-cursor fallback."""
 
-from contextlib import contextmanager
 import sqlite3
+from contextlib import contextmanager
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
@@ -19,11 +19,11 @@ from cli_agent_orchestrator.services.knowledge_policy import (
     audit_legacy_memory_denied,
     require_legacy_operator,
 )
-from cli_agent_orchestrator.services.memory_service import MemoryService, MemoryDisabledError
 from cli_agent_orchestrator.services.knowledge_revisions import (
     KnowledgeConflict,
     KnowledgeCursorExpired,
 )
+from cli_agent_orchestrator.services.memory_service import MemoryDisabledError, MemoryService
 
 
 def _error(code: str, message: str, *, retryable=False, required_action="check_request"):

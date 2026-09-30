@@ -301,7 +301,9 @@ def locked_atomic_write(
             "overwrite=False with must_exist=True can never succeed: it demands a "
             "target that exists and refuses to replace it."
         )
-    if mode is not None and (not isinstance(mode, int) or isinstance(mode, bool) or mode < 0 or mode > 0o777):
+    if mode is not None and (
+        not isinstance(mode, int) or isinstance(mode, bool) or mode < 0 or mode > 0o777
+    ):
         raise ValueError("mode must be an integer permission mask between 0 and 0o777")
 
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -378,9 +380,7 @@ def locked_atomic_delete(
         target.unlink()
 
 
-def _atomic_publish(
-    target: Path, content: str, encoding: str, *, mode: int | None = None
-) -> None:
+def _atomic_publish(target: Path, content: str, encoding: str, *, mode: int | None = None) -> None:
     """Write ``content`` to ``target`` via a unique temp file + ``os.replace``.
 
     Shared by :func:`locked_atomic_rewrite` and :func:`locked_atomic_write`.

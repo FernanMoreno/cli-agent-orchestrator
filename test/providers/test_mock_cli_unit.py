@@ -37,6 +37,14 @@ class TestMockCliProviderStatus:
         provider = MockCliProvider("t1", "sess", "win")
         assert provider.get_status("MockCli ready.\nhello") == TerminalStatus.PROCESSING
 
+    def test_old_response_and_prompt_do_not_hide_current_busy_input(self):
+        provider = MockCliProvider("t1", "sess", "win")
+        # A capture-pane frame can still show the previous turn's prompt and
+        # response above the current prompt line. Only the prompt at the end
+        # of the frame proves the current turn is ready.
+        buffer = "MockCli ready.\n❯ \n> MOCK: previous task\n❯ current task is running"
+        assert provider.get_status(buffer) == TerminalStatus.PROCESSING
+
     def test_completed_after_response_with_trailing_prompt(self):
         provider = MockCliProvider("t1", "sess", "win")
         buffer = f"MockCli ready.\n{_PROMPT}hello\n> MOCK: hello\n{_PROMPT}"

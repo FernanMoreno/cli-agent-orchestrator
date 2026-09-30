@@ -1,0 +1,50 @@
+
+▪ oc mini v2.0.18 · ~/ct/personal-deployment/v2-authorized/workspace
+
+› Reply with exactly CAO_V2_OK. Do not use any tools.
+
+Thinking: The user wants a specific exact string response with no tool usage.
+I should just reply with the exact text.
+
+CAO_V2_OK
+
+Build · LongCat 2.5 Preview Free · 4.0s
+
+┃
+
+Build · LongCat 2.5 Preview Free · 11.8K (1%) · OpenCode Go · ctrl+p menu
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

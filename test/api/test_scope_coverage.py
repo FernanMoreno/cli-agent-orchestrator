@@ -17,8 +17,10 @@ with no auth configured.
 
 import pytest
 
+from cli_agent_orchestrator.api import work_routes
 from cli_agent_orchestrator.api.knowledge_routes import authority as knowledge_authority
 from cli_agent_orchestrator.api.main import app, get_work_launch_principal
+from cli_agent_orchestrator.api import work_routes
 from cli_agent_orchestrator.security import auth
 
 # Mutating HTTP methods that must be scope-gated when present on a route.
@@ -77,6 +79,19 @@ def _has_verified_work_launch_authority(route) -> bool:
     return get_work_launch_principal in calls
 
 
+def _has_verified_work_read_authority(route) -> bool:
+    """These exact handlers enforce read scope and owner inside WorkQueries."""
+    if getattr(route, "endpoint", None) not in {work_routes.get_work, work_routes.get_work_events}:
+        return False
+    stack = list(getattr(route.dependant, "dependencies", []))
+    while stack:
+        dep = stack.pop()
+        if getattr(dep, "call", None) is auth.get_current_principal:
+            return True
+        stack.extend(getattr(dep, "dependencies", []))
+    return False
+
+
 def _mutating_routes():
     for route in app.routes:
         methods = getattr(route, "methods", None)
@@ -104,6 +119,140 @@ def test_every_mutating_route_is_scope_or_verified_work_authority_gated():
         "mutating routes missing scope, verified knowledge authority, or verified work authority: "
         + ", ".join(missing)
     )
+
+
+# --------------------------------------------------------------------------- #
+# Disclosure-bearing GET routes.
+#
+# The mutating-route guard above cannot see the failure mode the agent-plugins
+# adoption audit found (R2): `GET /plugins` shipped with no scope dependency while
+# disclosing every plugin's source path plus the terminal IDs, session names,
+# profile names and skill names of running work. Nothing enumerated GETs, so
+# nothing caught it.
+#
+# Gating all 28 pre-existing ungated reads is NOT the fix — it would change the
+# auth posture of shipped routes and could break existing unauthenticated readers,
+# the same trade-off recorded for the `/workflows` reads below. So the guard
+# inverts the default for GETs and pins today's state as data: a GET route must
+# either carry a scope dependency or appear in `_OPEN_READS`. A new route is
+# gated by default, and opening one becomes a visible, reviewable diff to this
+# list rather than an omission nobody sees.
+#
+# `/plugins` is deliberately ABSENT from this list: it is gated.
+# --------------------------------------------------------------------------- #
+_OPEN_READS = {
+    # Protocol/discovery surfaces that must answer before a caller can hold a
+    # token at all, and CAO's liveness probe.
+    "/.well-known/oauth-protected-resource",
+    "/health",
+    # Agent profile and provider catalogs. Schema/search/template discovery plus
+    # which provider binaries are present. The profile *content* routes
+    # (`/agents/profiles`, `/agents/profiles/{name}`) are gated upstream and so
+    # are deliberately absent.
+    "/agents/profiles/schema",
+    "/agents/profiles/search",
+    "/agents/profiles/templates",
+    "/agents/profiles/templates/{category}/{name}/schema",
+    "/agents/providers",
+    # AG-UI event stream; carries its own auth story.
+    "/agui/v1/stream",
+    # Settings reads.
+    "/settings/memory",
+    "/settings/skill-dirs",
+    # Live session and terminal state that remains ungated upstream. The rest of
+    # this surface — `/sessions`, `/terminals/{terminal_id}` and its inbox,
+    # memory-context and output reads — is now scope-gated, which is the
+    # direction that motivated gating `/plugins`.
+    "/sessions/{session_name}/terminals",
+    "/terminals/{terminal_id}/working-directory",
+}
+
+
+def _has_verified_work_read_authority(route) -> bool:
+    """These exact handlers enforce read scope and owner inside WorkQueries."""
+    if getattr(route, "endpoint", None) not in {work_routes.get_work, work_routes.get_work_events}:
+        return False
+    stack = list(getattr(route.dependant, "dependencies", []))
+    while stack:
+        dep = stack.pop()
+        if getattr(dep, "call", None) is auth.get_current_principal:
+            return True
+        stack.extend(getattr(dep, "dependencies", []))
+    return False
+
+
+def _api_get_routes():
+    """Every GET route that FastAPI resolved a dependency tree for.
+
+    Skips the routes Starlette mounts itself — ``/docs``, ``/redoc``,
+    ``/openapi.json``, ``/docs/oauth2-redirect`` — which have no ``dependant`` and
+    are not application endpoints.
+    """
+    for route in app.routes:
+        methods = getattr(route, "methods", None) or set()
+        if "GET" not in methods:
+            continue
+        if getattr(route, "dependant", None) is None:
+            continue
+        yield route
+
+
+def test_every_disclosure_bearing_get_route_is_gated_or_explicitly_open():
+    """A GET route is scope-gated unless it is listed as deliberately open.
+
+    The assertion is one-directional on purpose: it fails for a *new* ungated GET,
+    not for one that becomes gated. Tightening a route should never require
+    editing a test to permit it.
+    """
+    unlisted = [
+        route.path
+        for route in _api_get_routes()
+        if not (
+            _has_scope_dependency(route)
+            or _has_knowledge_authority(route)
+            or _has_verified_work_read_authority(route)
+        )
+        and route.path not in _OPEN_READS
+    ]
+    assert not unlisted, (
+        "ungated GET route(s) not listed in _OPEN_READS: "
+        + ", ".join(sorted(unlisted))
+        + ". Add a scope dependency, or add the path to _OPEN_READS with a comment "
+        "saying what it discloses and why that is acceptable."
+    )
+
+
+def test_the_open_reads_list_has_no_stale_entries():
+    """Keeps `_OPEN_READS` honest in the other direction.
+
+    Without this, a path that was gated (or deleted) would linger in the list and
+    silently pre-authorize a *future* route that happened to reuse the path. This
+    test is why gating a route requires removing it from the list — which is the
+    reviewable diff the list exists to produce.
+    """
+    registered_ungated = {
+        route.path for route in _api_get_routes() if not _has_scope_dependency(route)
+    }
+    stale = sorted(_OPEN_READS - registered_ungated)
+    assert not stale, (
+        "_OPEN_READS lists path(s) that are no longer ungated GET routes: "
+        + ", ".join(stale)
+        + ". Remove them — a stale entry would pre-authorize a future route reusing the path."
+    )
+
+
+def test_plugins_list_is_gated_and_not_exempted():
+    """`GET /plugins` specifically — the route the audit found ungated (R2).
+
+    Named rather than left to the generic guard because the generic guard would
+    also pass if someone added `/plugins` to `_OPEN_READS`, and that would be
+    exactly the regression. This asserts the route carries the dependency AND that
+    the exemption list does not mention it.
+    """
+    matches = [route for route in _api_get_routes() if route.path == "/plugins"]
+    assert matches, "GET /plugins is not registered"
+    assert _has_scope_dependency(matches[0]), "GET /plugins lost its scope dependency"
+    assert "/plugins" not in _OPEN_READS, "GET /plugins must not be exempted from the read floor"
 
 
 def _override_scopes(scopes):
@@ -191,6 +340,20 @@ def test_read_token_admitted_on_diagnostics(client, auth_on):
     """A cao:read token passes the dependency (404 for an unknown run, not 403)."""
     app.dependency_overrides[auth.get_current_scopes] = _override_scopes([auth.SCOPE_READ])
     resp = client.get("/workflows/runs/r1/diagnostics")
+    assert resp.status_code != 403
+
+
+def test_unscoped_token_forbidden_on_vault_status(client, auth_on):
+    """Vault operational status is read-scoped even though it is content-free."""
+    app.dependency_overrides[auth.get_current_scopes] = _override_scopes([])
+    resp = client.get("/memory/vault/status")
+    assert resp.status_code == 403
+
+
+def test_read_token_admitted_on_vault_status(client, auth_on):
+    """A read token reaches the status handler rather than being scope-rejected."""
+    app.dependency_overrides[auth.get_current_scopes] = _override_scopes([auth.SCOPE_READ])
+    resp = client.get("/memory/vault/status")
     assert resp.status_code != 403
 
 
@@ -469,3 +632,21 @@ def test_read_token_admitted_on_profile_source(client, auth_on):
     app.dependency_overrides[auth.get_current_scopes] = _override_scopes([auth.SCOPE_READ])
     resp = client.get("/agents/profiles/x/source")
     assert resp.status_code != 403
+
+
+def test_owned_reads_require_verified_identity_and_are_never_open():
+    from types import SimpleNamespace
+
+    routes = {route.path: route for route in _api_get_routes()}
+    for path in ("/work-items/{work_item_id}", "/jobs/{job_id}/events"):
+        route = routes[path]
+        assert path not in _OPEN_READS
+        assert _has_verified_work_read_authority(route)
+        without_identity = SimpleNamespace(
+            endpoint=route.endpoint, dependant=SimpleNamespace(dependencies=[])
+        )
+        assert not _has_verified_work_read_authority(without_identity)
+    for path, route in routes.items():
+        if path.startswith("/v1/knowledge/"):
+            assert path not in _OPEN_READS
+            assert _has_knowledge_authority(route)

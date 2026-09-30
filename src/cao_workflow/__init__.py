@@ -142,6 +142,28 @@ def _execute_step(
         raise ShimHTTPError(response.status, response.body)
 
     data = json.loads(response.body)
+    work_result = data.get("work_result")
+    if work_result is not None:
+        if (
+            type(work_result) is not dict
+            or set(work_result) != {"schema_version", "status", "output"}
+            or type(work_result.get("schema_version")) is not int
+            or work_result["schema_version"] != 1
+            or work_result.get("status") != "completed"
+            or type(work_result.get("output")) is not dict
+        ):
+            raise ShimError("server returned an invalid managed workflow result")
+        try:
+            json.dumps(work_result["output"], allow_nan=False)
+        except (TypeError, ValueError, RecursionError) as error:
+            raise ShimError("server returned an invalid managed workflow result") from error
+        return StepHandle(
+            step_id=key,
+            terminal_id=None,
+            output=work_result["output"],
+            status=data["status"],
+            replayed=data["replayed"],
+        )
     return StepHandle(
         step_id=key,
         terminal_id=data["terminal_id"],

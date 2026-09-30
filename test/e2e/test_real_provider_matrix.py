@@ -567,6 +567,18 @@ def _write_profile(cao_server: CaoServer, name: str, provider: str, model: str) 
         "delegate work, or start background work unless the request explicitly requires it.\n",
         encoding="utf-8",
     )
+    if provider == "opencode_cli":
+        # OpenCode resolves --agent from its native installed profile store.
+        # Writing the CAO source profile alone let v1 silently use a default
+        # agent; v2 correctly rejects that missing native configuration.
+        response = _request(
+            "POST",
+            f"{cao_server.url}/agents/profiles/install",
+            json={"source": name, "provider": provider},
+        )
+        assert (
+            response.status_code == 200
+        ), f"OpenCode profile installation returned HTTP {response.status_code}"
 
 
 def _request(method: str, url: str, **kwargs) -> requests.Response:

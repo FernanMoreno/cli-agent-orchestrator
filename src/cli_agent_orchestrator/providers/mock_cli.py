@@ -27,8 +27,8 @@ from typing import List, Optional
 from cli_agent_orchestrator.backends.registry import get_backend
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
-from cli_agent_orchestrator.utils.text import strip_terminal_escapes
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
+from cli_agent_orchestrator.utils.text import strip_terminal_escapes
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,7 @@ class MockCliProvider(BaseProvider):
     """
 
     BINARY_NAME = "mock_cli"
+    supports_visible_pane_stale_probe = True
 
     def __init__(
         self,
@@ -120,8 +121,10 @@ class MockCliProvider(BaseProvider):
             if not has_answer:
                 return TerminalStatus.WAITING_USER_ANSWER
 
-        has_idle = re.search(IDLE_PROMPT_PATTERN, clean, re.MULTILINE)
-        if not has_idle:
+        # A visible pane may retain an older idle prompt and response above the
+        # current input. Only an idle prompt at the end of the capture proves the
+        # current screen is ready; a prompt with current task text after it is busy.
+        if not clean.rstrip().endswith("❯"):
             return TerminalStatus.PROCESSING
 
         responses = list(re.finditer(RESPONSE_INDICATOR_PATTERN, clean, re.MULTILINE))
