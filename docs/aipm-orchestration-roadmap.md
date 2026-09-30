@@ -1014,7 +1014,7 @@ operador. Dictamen: `/tmp/caos-exec/T094/sol-closure-review.md`.
 ## T094: receipt interno cerrado con async real (2026-09-24)
 
 T094 queda `[x]` sólo para el recibo interno; las notas previas abiertas
-quedan superadas. En snapshot ext4 SHA-idéntico y venv ext4 con plugin
+quedan superadas. En snapshot ext4 SHA-idéntico y venv ext4 con extensión
 `pytest-asyncio` real, los cinco módulos de service/lineage, migraciones,
 dispatch y delivery dieron **125 PASS sin fallos ni omisiones**. Las dos
 pruebas async corregidas conservan loop/intención/snapshot/no-redelivery y
@@ -1159,16 +1159,16 @@ produce un recibo `queued` en SQLite temporal, sin terminal ni proveedor.
 El seguimiento cubrió cancelación durante `PluginRegistry.load()` conservando
 `CancelledError` y un singleton Herdr ajeno, rechazo del schema corrupto por
 el factory real después de `init_db()`, y limpieza condicional del Herdr propio
-tras una falla posterior al registro. `PluginRegistry` limpia el plugin cuyo
+tras una falla posterior al registro. `PluginRegistry` limpia el event plugin cuyo
 setup falla o se cancela antes de registrarlo, incluso bajo cancelación repetida;
 un fallo de cleanup no sustituye el error original. En teardown normal aísla
-`CancelledError` originado por un plugin. La cancelación externa se transmite
-al plugin activo, se espera su fin y el de los siguientes, y después se
+`CancelledError` originado por un event plugin. La cancelación externa se transmite
+al event plugin activo, se espera su fin y el de los siguientes, y después se
 propaga al caller; están cubiertas la cancelación repetida y la carrera antes
 del primer paso de la tarea. El lifespan cierra telemetría en `finally`.
 Gate ext4 con hashes coincidentes: 100 pruebas afectadas PASS, 4 warnings,
 exit 0 en 6,92 s; composición PASS (271 archivos, 1006 dependencias,
-4 contratos kept/0 broken); revisión Sol PASS. Un plugin que suprima la
+4 contratos kept/0 broken); revisión Sol PASS. Un event plugin que suprima la
 cancelación indefinidamente aún puede bloquear el teardown. **T017/T019/T035
 siguen `[ ]`**; no se activan ingreso público, proveedor ni DB del operador.
 Evidencia: `specs/001-verifiable-orchestration/workflow-status.md`,
