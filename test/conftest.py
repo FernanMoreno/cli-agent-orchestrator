@@ -104,9 +104,9 @@ def auth_enabled_env(monkeypatch):
 
     monkeypatch.setenv("AUTH0_DOMAIN", _AUTH_TEST_DOMAIN)
     monkeypatch.setenv("AUTH0_AUDIENCE", _AUTH_TEST_AUDIENCE)
-    _auth_mod.reset_jwks_cache()
+    _auth_mod.get_jwks_cache().clear()
     yield
-    _auth_mod.reset_jwks_cache()
+    _auth_mod.get_jwks_cache().clear()
 
 
 @pytest.fixture

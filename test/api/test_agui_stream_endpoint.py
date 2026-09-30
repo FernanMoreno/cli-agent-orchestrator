@@ -45,11 +45,10 @@ def _agui_on(monkeypatch):
     monkeypatch.setenv("CAO_AGUI_ENABLED", "true")
 
 
-def test_stream_requires_token_when_auth_enabled(monkeypatch):
-    monkeypatch.setattr(main, "is_auth_enabled", lambda: True)
+def test_stream_requires_token_when_auth_enabled(auth_enabled_env):
     resp = client.get("/agui/v1/stream")
     assert resp.status_code == 401
-    assert "access_token" in resp.text
+    assert resp.headers["WWW-Authenticate"] == "Bearer"
 
 
 def test_stream_rejects_insufficient_scope(monkeypatch):
