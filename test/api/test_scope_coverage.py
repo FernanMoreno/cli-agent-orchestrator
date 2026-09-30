@@ -17,7 +17,7 @@ with no auth configured.
 
 import pytest
 
-from cli_agent_orchestrator.api import work_routes
+from cli_agent_orchestrator.api import browser_auth_routes, work_routes
 from cli_agent_orchestrator.api.knowledge_routes import authority as knowledge_authority
 from cli_agent_orchestrator.api.main import app, get_work_launch_principal
 from cli_agent_orchestrator.api import work_routes
@@ -62,6 +62,32 @@ def _has_knowledge_authority(route) -> bool:
         calls.add(getattr(dep, "call", None))
         stack.extend(getattr(dep, "dependencies", []))
     return {auth.get_current_principal, knowledge_authority}.issubset(calls)
+
+
+def _has_browser_auth_authority(route) -> bool:
+    """Exact browser handlers enforce bootstrap, password, or session authority.
+
+    Login cannot require an existing scope-bearing session. Setup verifies the
+    configured operator token; login checks credentials; the remaining handlers
+    verify the browser session. Their origin and denial contracts are exercised
+    in test_browser_auth.py and test_browser_setup.py.
+    """
+    handlers = {
+        ("POST", "/auth/setup"): browser_auth_routes.setup,
+        ("POST", "/auth/login"): browser_auth_routes.login,
+        ("POST", "/auth/renew"): browser_auth_routes.renew,
+        ("POST", "/auth/logout"): browser_auth_routes.logout,
+        ("POST", "/auth/logout-all"): browser_auth_routes.logout_all,
+        ("POST", "/auth/password"): browser_auth_routes.password,
+        ("GET", "/auth/session"): browser_auth_routes.session,
+    }
+    methods = getattr(route, "methods", None) or set()
+    if len(methods) != 1:
+        return False
+    expected = handlers.get(
+        (next(iter(methods)), getattr(route, "path", None))
+    )
+    return expected is not None and expected is getattr(route, "endpoint", None)
 
 
 def _has_verified_work_launch_authority(route) -> bool:
@@ -112,6 +138,7 @@ def test_every_mutating_route_is_scope_or_verified_work_authority_gated():
         if not (
             _has_scope_dependency(route)
             or _has_knowledge_authority(route)
+            or _has_browser_auth_authority(route)
             or _has_verified_work_launch_authority(route)
         ):
             missing.append(f"{sorted(mutating)} {route.path}")
@@ -145,6 +172,9 @@ _OPEN_READS = {
     # token at all, and CAO's liveness probe.
     "/.well-known/oauth-protected-resource",
     "/health",
+    # Public login mode, timeout policy, and setup availability; no account or
+    # session identity.
+    "/auth/config",
     # Agent profile and provider catalogs. Schema/search/template discovery plus
     # which provider binaries are present. The profile *content* routes
     # (`/agents/profiles`, `/agents/profiles/{name}`) are gated upstream and so
@@ -210,6 +240,7 @@ def test_every_disclosure_bearing_get_route_is_gated_or_explicitly_open():
         if not (
             _has_scope_dependency(route)
             or _has_knowledge_authority(route)
+            or _has_browser_auth_authority(route)
             or _has_verified_work_read_authority(route)
         )
         and route.path not in _OPEN_READS
