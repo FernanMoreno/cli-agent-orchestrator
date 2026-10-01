@@ -22,6 +22,7 @@ def request(client="127.0.0.1", server="127.0.0.1", headers=()):
     return Request(
         {
             "type": "http",
+            "app": SimpleNamespace(state=SimpleNamespace()),
             "client": (client, 1234),
             "server": (server, 9889),
             "headers": list(headers),
