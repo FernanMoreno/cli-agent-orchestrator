@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 import sqlite3
+from threading import Barrier
 import pytest
 
 BINDING = dict(
@@ -171,10 +172,20 @@ def test_local_pending_account_verification_creates_no_session(service):
         assert db.execute("SELECT COUNT(*) FROM browser_sessions").fetchone()[0] == 0
 
 
-def test_concurrent_failures_cannot_bypass_threshold(service):
+def test_concurrent_failures_cannot_bypass_threshold(service, monkeypatch):
+    from cli_agent_orchestrator.services import browser_auth
+
     auth, _, _ = service
+    # Exercise concurrent limiter transactions independently of scrypt's bounded
+    # worker queue, whose safe overload response is auth_unavailable.
+    monkeypatch.setattr(browser_auth, "verify_password", lambda *_: False)
+    # Pin storage availability so this test measures the atomic quota rather
+    # than the repository's separately tested fail-fast overload policy.
+    auth.repository.busy_timeout_ms = 5000
+    start = Barrier(12)
 
     def attempt(_):
+        start.wait(timeout=10)
         try:
             auth.login("owner", "wrong", peer="attacker")
         except Exception as exc:
@@ -185,6 +196,15 @@ def test_concurrent_failures_cannot_bypass_threshold(service):
         outcomes = list(pool.map(attempt, range(12)))
     assert outcomes.count("credentials_rejected") == 10
     assert outcomes.count("login_throttled") == 2
+    with auth.repository.transaction() as db:
+        rows = db.execute(
+            "SELECT failures,pending_count,blocked_until FROM browser_login_limits"
+        ).fetchall()
+        assert rows
+        assert all(
+            row["failures"] == 10 and row["pending_count"] == 0 and row["blocked_until"] == 1060
+            for row in rows
+        )
     error("login_throttled", lambda: auth.login("owner", PASSWORD, peer="different"))
 
 
