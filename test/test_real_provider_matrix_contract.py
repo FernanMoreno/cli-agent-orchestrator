@@ -1304,13 +1304,19 @@ def test_missing_native_child_capability_keeps_all_skip_diagnostics(
 
 
 def test_profile_persists_explicit_model_as_frontmatter(tmp_path) -> None:
-    server = SimpleNamespace(home_dir=tmp_path)
+    server = SimpleNamespace(home_dir=tmp_path, url="http://matrix.test")
 
-    matrix._write_profile(
-        server,
-        "matrix-child",
-        "opencode_cli",
-        "opencode/mimo-v2.5-free",
+    with patch.object(matrix, "_request", return_value=_response(200, {})) as request:
+        matrix._write_profile(
+            server,
+            "matrix-child",
+            "opencode_cli",
+            "opencode/mimo-v2.5-free",
+        )
+    request.assert_called_once_with(
+        "POST",
+        "http://matrix.test/agents/profiles/install",
+        json={"source": "matrix-child", "provider": "opencode_cli"},
     )
 
     profile = (
