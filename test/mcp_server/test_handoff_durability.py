@@ -214,13 +214,16 @@ class TestGetHandoffResultAuthAndPlacement:
         assert mock_get.call_args.kwargs["headers"] is None
 
     def test_local_retrieval_targets_the_supervisor_node(self):
-        from cli_agent_orchestrator.constants import API_BASE_URL
+        supervisor_url = "http://supervisor.test:9889"
 
-        with patch("cli_agent_orchestrator.mcp_server.server.requests.get") as mock_get:
+        with (
+            patch("cli_agent_orchestrator.mcp_server.server.API_BASE_URL", supervisor_url),
+            patch("cli_agent_orchestrator.mcp_server.server.requests.get") as mock_get,
+        ):
             self._ok_get(mock_get)
             get_handoff_result(self.JOB)
 
-        assert mock_get.call_args[0][0] == f"{API_BASE_URL}/handoff-results/{self.JOB}"
+        assert mock_get.call_args[0][0] == f"{supervisor_url}/handoff-results/{self.JOB}"
 
     def test_remote_retrieval_targets_the_node_that_ran_the_step(self):
         """handoff(target_host=...) persists the row in THAT node's database, so
