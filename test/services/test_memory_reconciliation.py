@@ -1131,7 +1131,7 @@ def test_repair_audit_failure_prevents_projection_changes(tmp_path, engine):
     assert not (topic.parent.parent / "index.md").exists()
 
 
-def test_startup_repair_uses_same_authority_before_scan(tmp_path, engine, monkeypatch):
+def test_startup_skips_authenticated_repair_before_scan(tmp_path, engine, monkeypatch):
     from cli_agent_orchestrator.security import auth
     from cli_agent_orchestrator.services import memory_reconciliation, settings_service
 
@@ -1142,6 +1142,5 @@ def test_startup_repair_uses_same_authority_before_scan(tmp_path, engine, monkey
     monkeypatch.setattr(
         service, "_iter_candidates", lambda: pytest.fail("unauthorized startup scan")
     )
-    with pytest.raises(PermissionError):
-        memory_reconciliation.reconcile_memory_startup()
+    assert memory_reconciliation.reconcile_memory_startup() is None
     assert _rows(engine) == []
