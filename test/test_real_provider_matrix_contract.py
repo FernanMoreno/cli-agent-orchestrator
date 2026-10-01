@@ -562,6 +562,9 @@ def test_failure(monkeypatch, record_property):
     junit_path = tmp_path / "matrix-results.xml"
     env = os.environ.copy()
     env.pop("CAO_RUN_LIVE_PROVIDER_TESTS", None)
+    # The child owns its test selection and temporary directory. Inheriting
+    # --basetemp can delete the parent's active fixtures before collection.
+    env.pop("PYTEST_ADDOPTS", None)
     result = subprocess.run(
         [
             sys.executable,

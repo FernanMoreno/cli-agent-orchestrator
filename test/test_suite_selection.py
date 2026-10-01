@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +11,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _collect(path: Path, *args: str) -> str:
+    env = os.environ.copy()
+    # Inspect the project's suite defaults, independent of the parent runner.
+    env.pop("PYTEST_ADDOPTS", None)
     result = subprocess.run(
         [
             sys.executable,
@@ -24,6 +28,7 @@ def _collect(path: Path, *args: str) -> str:
             *args,
         ],
         cwd=REPO_ROOT,
+        env=env,
         check=False,
         capture_output=True,
         text=True,
