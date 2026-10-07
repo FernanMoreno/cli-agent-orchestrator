@@ -137,3 +137,5 @@ Después de completar la matriz se repitió `project-composition-check caos`: ex
 La comprobación de seguridad actual del árbol congelado y sus locks está en [evidencia de sandbox y seguridad](final-sandbox-security-evidence.md); los resultados históricos mantienen sus identidades anteriores.
 
 T072 queda completada tras la revisión del diff, el índice seleccionado, los 482 enlaces Markdown y los scanners reales del árbol congelado. T073 queda pendiente hasta verificar publicación y CI; no se acredita ningún push todavía.
+
+El primer commit y el hook completo pasan, pero el primer transporte SSH falla sin publicar; el estado preciso se conserva en [verificación del fork](final-fork-publication-evidence.md). T073 sigue pendiente.
