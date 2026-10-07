@@ -134,9 +134,21 @@ class MatrixCell:
 
 
 def _configured_auth_home() -> Path:
-    """Return the operator home which owns the reusable CLI logins."""
+    """Require a dedicated home which owns only the reviewed reusable CLI logins."""
     configured_home = os.environ.get(_AUTH_HOME_ENV, "").strip()
-    return Path(configured_home).expanduser() if configured_home else Path.home()
+    if not configured_home:
+        pytest.fail(f"{_AUTH_HOME_ENV} must identify an explicit isolated auth directory")
+    home = Path(configured_home)
+    runner_home = os.environ.get("HOME")
+    if (
+        not home.is_absolute()
+        or not home.is_dir()
+        or (runner_home and home.resolve() == Path(runner_home).resolve())
+    ):
+        pytest.fail(
+            f"{_AUTH_HOME_ENV} must identify an existing isolated auth directory outside runner HOME"
+        )
+    return home.resolve()
 
 
 def _manifest_failure(message: str) -> NoReturn:
@@ -494,19 +506,22 @@ def _matrix_cells() -> list[pytest.ParameterSet]:
 def live_provider_cao_server(tmp_path: Path) -> Iterator[CaoServer]:
     """Start one fresh, isolated CAO server for the selected matrix cell.
 
-    Provider login files are linked after startup by ``_link_auth_material``.
+    Provider login files are copied after startup by ``_link_auth_material``.
     In particular, do not convert the access token inside a renewable OAuth
     receipt into ``CLAUDE_CODE_OAUTH_TOKEN``: those are distinct auth inputs.
     """
-    server = _start_cao_server(
-        tmp_path / "live_provider_cao_home",
-        _pick_free_port(),
-        deadline=_fixture_health_timeout(),
-    )
+    _configured_auth_home()  # Never launch a subprocess before isolation is verified.
+    home = tmp_path / "live_provider_cao_home"
+    server = None
     try:
+        server = _start_cao_server(home, _pick_free_port(), deadline=_fixture_health_timeout())
         yield server
     finally:
-        server.stop()
+        try:
+            if server is not None:
+                server.stop()
+        finally:
+            shutil.rmtree(home, ignore_errors=False) if home.exists() else None
 
 
 def _link_auth_material(cao_server: CaoServer, provider: MatrixProvider) -> None:
@@ -515,17 +530,16 @@ def _link_auth_material(cao_server: CaoServer, provider: MatrixProvider) -> None
     The managed server deliberately redirects HOME to keep its database,
     profiles and logs isolated.  Copying a complete provider directory would
     both leak unrelated state into artifacts and let a test mutate it.  A
-    Symlink every documented auth record for the selected provider, while
+    Copy every documented auth record for the selected provider, while
     keeping all unrelated provider state out of the test HOME.  Some CLIs
     split renewable credentials and account/session metadata across more than
-    one file; linking only the first one can make a logged-in CLI reopen an
-    interactive browser flow.  API-key based setups need no filesystem link.
+    one file; copying only the first one can make a logged-in CLI reopen an
+    interactive browser flow.  API-key based setups still require the explicit isolated home.
     """
 
+    auth_home = _configured_auth_home()
     if any(os.environ.get(key) for key in provider.auth_env):
         return
-
-    auth_home = _configured_auth_home()
     linked_any = False
     for relative_path in provider.auth_files:
         source = auth_home / relative_path
@@ -533,12 +547,15 @@ def _link_auth_material(cao_server: CaoServer, provider: MatrixProvider) -> None
             continue
         target = cao_server.home_dir / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
+        if not source.resolve().is_relative_to(auth_home):
+            pytest.fail("Auth record resolves outside isolated auth home")
         if target.exists() or target.is_symlink():
-            if target.resolve() != source.resolve():
+            if target.is_symlink() or target.read_bytes() != source.read_bytes():
                 pytest.fail(f"Refusing to replace existing isolated auth path {target}")
             linked_any = True
             continue
-        target.symlink_to(source)
+        shutil.copy2(source, target)
+        target.chmod(0o600)
         linked_any = True
 
     if linked_any:

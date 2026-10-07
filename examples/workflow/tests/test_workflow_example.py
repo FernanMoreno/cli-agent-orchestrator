@@ -32,6 +32,23 @@ _WORKFLOW_PATH = Path(__file__).resolve().parents[1] / "workflow.py"
 _WORKFLOW_SOURCE = _WORKFLOW_PATH.read_text(encoding="utf-8")
 
 
+@pytest.fixture(autouse=True)
+def _legacy_approval_posture(tmp_path, monkeypatch, _temp_db):
+    """Select legacy compatibility only for this module's fake-HTTP script proofs.
+
+    These tests run real script subprocesses without a prepared scoped plan.
+    Other modules and production retain the default-required approval posture.
+    """
+    from cli_agent_orchestrator.services import settings_service
+
+    settings_file = tmp_path / "workflow-example-settings.json"
+    settings_file.write_text(
+        json.dumps({"workflow": {"require_approval": False}}), encoding="utf-8"
+    )
+    monkeypatch.setattr(settings_service, "SETTINGS_FILE", settings_file)
+    monkeypatch.delenv("CAO_WORKFLOW_REQUIRE_APPROVAL", raising=False)
+
+
 def _load_workflow_module():
     """Import workflow.py from its path, for the few pure helpers worth unit-testing.
 

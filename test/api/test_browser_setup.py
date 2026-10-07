@@ -6,9 +6,9 @@ from pathlib import Path
 
 import jwt
 import pytest
+from cryptography.hazmat.primitives import serialization
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from cryptography.hazmat.primitives import serialization
 
 from cli_agent_orchestrator.api.browser_auth_routes import configure_browser_auth, router
 from cli_agent_orchestrator.security import auth

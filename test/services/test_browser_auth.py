@@ -1,6 +1,7 @@
-from concurrent.futures import ThreadPoolExecutor
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+
 import pytest
 
 BINDING = dict(
@@ -256,8 +257,8 @@ def test_login_rechecks_limit_after_password_verification(service, monkeypatch):
 def test_verifier_failure_releases_capacity_without_password_failure(
     service, monkeypatch, operation
 ):
-    from cli_agent_orchestrator.services import browser_auth
     from cli_agent_orchestrator.models.browser_auth import BrowserAuthError
+    from cli_agent_orchestrator.services import browser_auth
 
     auth, _, _ = service
     secret, _ = auth.login("owner", PASSWORD)
@@ -280,8 +281,8 @@ def test_verifier_failure_releases_capacity_without_password_failure(
 
 
 def test_password_hash_failure_releases_capacity(service, monkeypatch):
-    from cli_agent_orchestrator.services import browser_auth
     from cli_agent_orchestrator.models.browser_auth import BrowserAuthError
+    from cli_agent_orchestrator.services import browser_auth
 
     auth, _, _ = service
     secret, _ = auth.login("owner", PASSWORD)
@@ -315,8 +316,8 @@ def test_invalid_new_password_rejected_before_reservation(service, new_password)
 
 
 def test_failed_old_verifier_does_not_release_new_window_capacity(service, monkeypatch):
-    from cli_agent_orchestrator.services import browser_auth
     from cli_agent_orchestrator.models.browser_auth import BrowserAuthError
+    from cli_agent_orchestrator.services import browser_auth
 
     auth, now, _ = service
 

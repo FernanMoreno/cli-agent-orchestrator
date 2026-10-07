@@ -60,7 +60,7 @@ def _mcp_timeout() -> float:
     return float(get_server_settings()["mcp_request_timeout"])
 
 
-def _auth_headers() -> Dict[str, str]:
+def _auth_headers(destination: Optional[str] = None) -> Dict[str, str]:
     """Return the ``Authorization`` header for the internal client->API hop, if any.
 
     Mirrors ``mcp_server.utils._auth_headers`` / ``mcp_server.app_tools._auth_headers``:
@@ -72,6 +72,14 @@ def _auth_headers() -> Dict[str, str]:
     surface (assign, handoff, send_message, status, result, cancel, delete_terminal)
     cannot be used at all.
     """
+    from urllib.parse import urlsplit
+
+    target = urlsplit(destination or API_BASE_URL)
+    local = urlsplit(API_BASE_URL)
+    if (target.scheme, target.hostname, target.port) != (local.scheme, local.hostname, local.port):
+        return {}
+    if target.username or target.password or target.scheme not in ("http", "https"):
+        return {}
     token = get_local_bearer()
     return {"Authorization": f"Bearer {token}"} if token else {}
 
@@ -124,6 +132,7 @@ def _get_cleanup_nudge() -> str:
         resp = requests.get(
             f"{API_BASE_URL}/terminals/{current_terminal_id}",
             headers=_auth_headers() or None,
+            allow_redirects=False,
             timeout=_mcp_timeout(),
         )
         if resp.status_code != 200:
@@ -134,6 +143,7 @@ def _get_cleanup_nudge() -> str:
         resp = requests.get(
             f"{API_BASE_URL}/sessions/{session_name}/terminals",
             headers=_auth_headers() or None,
+            allow_redirects=False,
             timeout=_mcp_timeout(),
         )
         if resp.status_code != 200:
@@ -333,9 +343,10 @@ def _cleanup_remote_terminal(base_url: str, terminal_id: str) -> bool:
             f"{base_url}/terminals/{terminal_id}",
             timeout=(REMOTE_CONNECT_TIMEOUT, _mcp_timeout()),
         )
-        if response.status_code == 404:
+        status_code: int = response.status_code
+        if status_code == 404:
             return True
-        return response.status_code < 400
+        return status_code < 400
     except requests.RequestException as exc:
         logger.warning("Cleanup of remote terminal %s at %s failed: %s", terminal_id, base_url, exc)
         return False
@@ -463,6 +474,7 @@ def _create_terminal(
         response = requests.get(
             f"{API_BASE_URL}/terminals/{current_terminal_id}",
             headers=_auth_headers() or None,
+            allow_redirects=False,
             timeout=_mcp_timeout(),
         )
         response.raise_for_status()
@@ -479,6 +491,7 @@ def _create_terminal(
                 response = requests.get(
                     f"{API_BASE_URL}/terminals/{current_terminal_id}/working-directory",
                     headers=_auth_headers() or None,
+                    allow_redirects=False,
                     timeout=_mcp_timeout(),
                 )
                 if response.status_code == 200:
@@ -535,6 +548,7 @@ def _create_terminal(
             params=params,
             json=json_body,
             headers=_auth_headers() or None,
+            allow_redirects=False,
             timeout=create_timeout if create_timeout is not None else _mcp_timeout(),
         )
         response.raise_for_status()
@@ -603,6 +617,7 @@ def _create_terminal(
             params=params,
             json=json_body,
             headers=_auth_headers() or None,
+            allow_redirects=False,
             timeout=create_timeout if create_timeout is not None else _mcp_timeout(),
         )
         response.raise_for_status()
@@ -635,6 +650,7 @@ def _send_direct_input(
             "orchestration_type": orchestration_type,
         },
         headers=_auth_headers() or None,
+        allow_redirects=False,
         timeout=_mcp_timeout(),
     )
     response.raise_for_status()
@@ -724,6 +740,7 @@ def _resolve_handoff_provider(agent_profile: str) -> HandoffContext:
     response = requests.get(
         f"{API_BASE_URL}/terminals/{current_terminal_id}",
         headers=_auth_headers() or None,
+        allow_redirects=False,
         timeout=_mcp_timeout(),
     )
     response.raise_for_status()
@@ -827,11 +844,12 @@ def _send_to_inbox(receiver_id: str, message: str) -> Dict[str, Any]:
     # elastic deployment genuinely needs both on the same request. Each is
     # empty when its own feature is off, so the default-off posture is still
     # byte-for-byte `None`.
-    request_headers = {**_auth_headers(), **elastic_worker_gateway_headers()} or None
+    request_headers = {**_auth_headers(base_url), **elastic_worker_gateway_headers()} or None
     response = requests.post(
         f"{base_url}/terminals/{receiver_id}/inbox/messages",
         params=params,
         headers=request_headers,
+        allow_redirects=False,
         timeout=_mcp_timeout(),
     )
     if response.status_code == 404 and callback_url and base_url != callback_url:
@@ -841,7 +859,8 @@ def _send_to_inbox(receiver_id: str, message: str) -> Dict[str, Any]:
         response = requests.post(
             f"{callback_url}/terminals/{receiver_id}/inbox/messages",
             params=params,
-            headers=request_headers,
+            headers={**_auth_headers(callback_url), **elastic_worker_gateway_headers()} or None,
+            allow_redirects=False,
             timeout=_mcp_timeout(),
         )
     response.raise_for_status()
@@ -936,7 +955,8 @@ async def _run_step_and_build_result(
         response = requests.post(
             f"{base_url}/terminals/run-step",
             json=payload,
-            headers=_auth_headers() or None,
+            headers=_auth_headers(base_url) or None,
+            allow_redirects=False,
             timeout=request_timeout,
         )
     except requests.Timeout:
@@ -1391,10 +1411,11 @@ def _assign_remote(
     ready_wait_seconds: float = 0.0,
     callback_url: Optional[str] = None,
     remote_session_name: Optional[str] = None,
+    operation_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create an assign worker on a REMOTE CAO node (one-agent-per-pod topology).
 
-    Uses the remote node's ``POST /sessions`` deferred-init path: a fresh
+    Uses the remote node's ``POST /assignments`` durable deferred-init path: a fresh
     session is created there (the supervisor's session exists only on this
     node) and the task is delivered once the remote provider initializes. The
     remote node resolves the provider from its OWN installed profile store
@@ -1446,56 +1467,63 @@ def _assign_remote(
     base_url = _resolve_target_base_url(target_host)
     if ready_wait_seconds > 0:
         _wait_remote_ready(base_url, ready_wait_seconds)
-    params: Dict[str, Any] = {"agent_profile": agent_profile}
-    if remote_session_name:
-        params["session_name"] = remote_session_name
-    if working_directory:
-        # Interpreted on the REMOTE node's filesystem; the supervisor's own
-        # cwd is deliberately NOT inherited cross-node (it is meaningless
-        # on another pod's filesystem).
-        params["working_directory"] = working_directory
-    if engine is not None:
-        params["engine"] = engine
-    if model is not None:
-        params["model"] = model
-
-    response = requests.post(
-        f"{base_url}/sessions",
-        params=params,
-        json={
-            "initial_message": worker_message,
-            "initial_message_orchestration_type": OrchestrationType.ASSIGN.value,
-            "env_vars": {
-                CALLBACK_URL_ENV: advertised_url.rstrip("/"),
-                CALLBACK_TERMINAL_ID_ENV: current_terminal_id,
-            },
-        },
-        timeout=(REMOTE_CONNECT_TIMEOUT, _mcp_timeout()),
-    )
-    if response.status_code >= 400:
-        # Surface the remote node's JSON detail (e.g. a 429 "Terminal limit
-        # reached ... target a different node" from a full max=1 worker)
-        # instead of a bare status line the supervisor cannot act on.
-        detail = _extract_error_detail(response, f"status {response.status_code}")
+    if not operation_key:
         return {
             "success": False,
             "terminal_id": None,
-            "target_host": target_host,
-            "message": f"Assignment failed on node {target_host}: {detail}",
+            "error_kind": "assignment_operation_key_required",
+            "message": "Cross-node assignment requires a stable operation_key.",
         }
-    data = response.json()
-    terminal_id = data["id"]
+    body = {
+        "operation_key": operation_key,
+        "agent_profile": agent_profile,
+        "message": worker_message,
+        "callback_url": advertised_url.rstrip("/"),
+        "callback_terminal_id": current_terminal_id,
+    }
+    if remote_session_name:
+        body["session_name"] = remote_session_name
+    if working_directory:
+        body["working_directory"] = working_directory
+    if engine is not None:
+        body["engine"] = engine
+    if model is not None:
+        body["model"] = model
+    uncertain = {
+        "success": False,
+        "terminal_id": None,
+        "target_host": target_host,
+        "operation_key": operation_key,
+        "state": "reconcile",
+        "error_kind": "assignment_reconcile_required",
+        "message": "Remote assignment response unavailable. Inspect or retry with the same operation_key; do not create another worker.",
+    }
+    try:
+        response = requests.post(
+            f"{base_url}/assignments", json=body, timeout=(REMOTE_CONNECT_TIMEOUT, _mcp_timeout())
+        )
+        if response.status_code in (400, 401, 403, 409, 422, 429):
+            return {
+                "success": False,
+                "terminal_id": None,
+                "target_host": target_host,
+                "operation_key": operation_key,
+                "state": "refused",
+                "message": _extract_error_detail(response, f"status {response.status_code}"),
+            }
+        if response.status_code >= 400:
+            return uncertain
+        data = response.json()
+        if not isinstance(data, dict) or not data.get("assignment_id"):
+            return uncertain
+    except (requests.RequestException, ValueError):
+        return uncertain
+    if not data.get("success"):
+        return {**data, "target_host": target_host, "operation_key": operation_key}
+    terminal_id = data.get("terminal_id")
     session_name = data.get("session_name")
-    if remote_session_name and session_name != remote_session_name:
-        return {
-            "success": False,
-            "terminal_id": terminal_id,
-            "target_host": target_host,
-            "message": (
-                f"Assignment failed on node {target_host}: requested bound session "
-                f"{remote_session_name!r}, but remote node returned {session_name!r}"
-            ),
-        }
+    if not terminal_id or (remote_session_name and session_name != remote_session_name):
+        return {**uncertain, "assignment_id": data["assignment_id"], "terminal_id": terminal_id}
     # Ready-made cleanup route. NOTE: DELETE /sessions/{name} requires the
     # admin scope (SCOPE_ADMIN) when the node's OAuth layer is enabled;
     # DELETE /terminals/{id} (write scope) is the lighter alternative.
@@ -1517,6 +1545,9 @@ def _assign_remote(
         )
     )
     result = {
+        "assignment_id": data["assignment_id"],
+        "operation_key": operation_key,
+        "state": data.get("state", "submitted"),
         "success": True,
         "terminal_id": terminal_id,
         "target_host": target_host,
@@ -1540,6 +1571,7 @@ def _assign_impl(
     ready_wait_seconds: float = 0.0,
     callback_url: Optional[str] = None,
     remote_session_name: Optional[str] = None,
+    operation_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Implementation of assign logic.
 
@@ -1597,6 +1629,46 @@ def _assign_impl(
         else:
             worker_message = message
 
+        # One durable identity owns launch plus the deferred initial message.
+        # A receipt generation makes repeated identical model calls converge.
+        # Legacy providers can carry an explicit key and inspect its receipt.
+        generation = None
+        turn = requests.get(
+            f"{API_BASE_URL}/terminals/{current_terminal_id}/turn",
+            headers=_auth_headers() or None,
+            allow_redirects=False,
+            timeout=_mcp_timeout(),
+        )
+        turn.raise_for_status()
+        turn_data = turn.json()
+        if isinstance(turn_data, dict):
+            generation = turn_data.get("generation")
+        request_body = {
+            "agent_profile": agent_profile,
+            "message": worker_message,
+            "working_directory": working_directory,
+            "engine": engine,
+            "model": model,
+            "use_worktree": use_worktree,
+            "generation": generation,
+        }
+        if operation_key is None:
+            import hashlib
+            import json
+
+            if not generation:
+                return {
+                    "success": False,
+                    "terminal_id": None,
+                    "state": "refused",
+                    "error_kind": "assignment_operation_key_required",
+                    "message": "No authoritative parent turn. Supply a stable operation_key and reuse it after response loss.",
+                }
+            operation_key = (
+                "assign-"
+                + hashlib.sha256(json.dumps(request_body, sort_keys=True).encode()).hexdigest()
+            )
+        request_body["operation_key"] = operation_key
         if target_host:
             return _assign_remote(
                 agent_profile=agent_profile,
@@ -1610,35 +1682,57 @@ def _assign_impl(
                 ready_wait_seconds=ready_wait_seconds,
                 callback_url=callback_url,
                 remote_session_name=remote_session_name,
+                operation_key=operation_key,
             )
 
-        # Create terminal in DEFERRED-INIT mode: cao-server returns as soon
-        # as the tmux window is up and the DB row is written; the actual
-        # provider.initialize() and initial-message delivery run as a
-        # background task on the server. The call typically returns
-        # in under 2 seconds regardless of how long init takes.
-        terminal_id, _ = _create_terminal(
-            agent_profile,
-            working_directory,
-            engine=engine,
-            defer_init=True,
-            initial_message=worker_message,
-            initial_message_orchestration_type=OrchestrationType.ASSIGN,
-            model=model,
-            use_worktree=use_worktree,
-        )
-
-        return {
-            "success": True,
-            "terminal_id": terminal_id,
-            "message": (
-                f"Task assigned to {agent_profile} (terminal: {terminal_id}). "
-                f"Worker is initializing in the background; your task will be "
-                f"delivered once it is ready. "
-                f"Call delete_terminal('{terminal_id}') when you no longer need this terminal."
-                + _get_cleanup_nudge()
-            ),
-        }
+        try:
+            response = requests.post(
+                f"{API_BASE_URL}/terminals/{current_terminal_id}/assignments",
+                json=request_body,
+                headers=_auth_headers() or None,
+                allow_redirects=False,
+                timeout=_mcp_timeout(),
+            )
+            response.raise_for_status()
+            result = response.json()
+            if not isinstance(result, dict) or "assignment_id" not in result:
+                raise ValueError("invalid durable assignment receipt")
+            return {**result, "operation_key": operation_key}
+        except requests.HTTPError as error:
+            if error.response is not None and error.response.status_code in {
+                400,
+                401,
+                403,
+                409,
+                422,
+                429,
+            }:
+                detail = _extract_error_detail(error.response, "assignment refused")
+                return {
+                    "success": False,
+                    "terminal_id": None,
+                    "state": "refused",
+                    "error_kind": "assignment_refused",
+                    "operation_key": operation_key,
+                    "message": detail,
+                }
+            return {
+                "success": False,
+                "terminal_id": None,
+                "state": "reconcile",
+                "error_kind": "assignment_response_unknown",
+                "operation_key": operation_key,
+                "message": "Assignment response unavailable. Inspect or retry with the same operation_key; do not create another worker.",
+            }
+        except Exception:
+            return {
+                "success": False,
+                "terminal_id": None,
+                "state": "reconcile",
+                "error_kind": "assignment_response_unknown",
+                "operation_key": operation_key,
+                "message": "Assignment response unavailable. Inspect or retry with the same operation_key; do not create another worker.",
+            }
 
     except Exception as e:
         # Surface the terminal_id when creation succeeded before the failure
@@ -1682,6 +1776,7 @@ def _send_message_impl(receiver_id: Optional[str], message: str) -> Dict[str, An
             response = requests.get(
                 f"{API_BASE_URL}/terminals/{own_terminal_id}",
                 headers=_auth_headers() or None,
+                allow_redirects=False,
                 timeout=_mcp_timeout(),
             )
             try:
@@ -1769,7 +1864,8 @@ def _delete_terminal_impl(terminal_id: str, target_host: Optional[str] = None) -
         base_url = _resolve_target_base_url(target_host) if target_host else API_BASE_URL
         response = requests.delete(
             f"{base_url}/terminals/{terminal_id}",
-            headers=_auth_headers() or None,
+            headers=_auth_headers(base_url) or None,
+            allow_redirects=False,
             # A remote node that is unreachable must fail on CONNECT rather than
             # hang for the full read timeout; a local delete keeps its single
             # scalar timeout so default-path behavior is unchanged.
@@ -1826,6 +1922,7 @@ def _status_impl(terminal_id: str) -> Dict[str, Any]:
         response = requests.get(
             f"{API_BASE_URL}/terminals/{terminal_id}",
             headers=_auth_headers() or None,
+            allow_redirects=False,
             timeout=_mcp_timeout(),
         )
         if response.status_code == 404:
@@ -1839,7 +1936,14 @@ def _status_impl(terminal_id: str) -> Dict[str, Any]:
         return {
             "success": True,
             "terminal_id": terminal.get("id", terminal_id),
-            "status": terminal.get("status"),
+            "status": (
+                terminal.get("turn", {}).get("state")
+                if terminal.get("status") not in {"waiting_user_answer", "waiting_quota"}
+                and isinstance(terminal.get("turn"), dict)
+                and terminal["turn"].get("state") in {"reconcile", "cancelling", "cancelled"}
+                else terminal.get("status")
+            ),
+            **({"turn": terminal["turn"]} if terminal.get("turn") is not None else {}),
             "agent_profile": terminal.get("agent_profile"),
             "provider": terminal.get("provider"),
             "session_name": terminal.get("session_name"),
@@ -1873,6 +1977,7 @@ def _result_impl(terminal_id: str) -> Dict[str, Any]:
             f"{API_BASE_URL}/terminals/{terminal_id}/output",
             params={"mode": "last"},
             headers=_auth_headers() or None,
+            allow_redirects=False,
             timeout=_mcp_timeout(),
         )
         if response.status_code == 404:
@@ -1881,6 +1986,10 @@ def _result_impl(terminal_id: str) -> Dict[str, Any]:
                 "terminal_id": terminal_id,
                 "error": f"Terminal {terminal_id} not found",
             }
+        if response.status_code in (202, 409):
+            detail = response.json().get("detail", {})
+            if isinstance(detail, dict):
+                return {**detail, "success": False, "terminal_id": terminal_id}
         response.raise_for_status()
         return {
             "success": True,
@@ -1902,13 +2011,87 @@ def _result_impl(terminal_id: str) -> Dict[str, Any]:
         return {"success": False, "terminal_id": terminal_id, "error": str(e)}
 
 
+def _inspect_turn_impl(terminal_id: str) -> Dict[str, Any]:
+    """Read turn identity; never infer an empty turn from an outage."""
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/terminals/{terminal_id}/turn",
+            headers=_auth_headers() or None,
+            allow_redirects=False,
+            timeout=_mcp_timeout(),
+        )
+        response.raise_for_status()
+        return {**response.json(), "success": True}
+    except requests.ConnectionError:
+        return {
+            "success": False,
+            "terminal_id": terminal_id,
+            "error": "Failed to connect to cao-server. The server may not be running.",
+        }
+    except requests.HTTPError as exc:
+        return {
+            "success": False,
+            "terminal_id": terminal_id,
+            "error": (
+                _extract_error_detail(exc.response, str(exc))
+                if exc.response is not None
+                else str(exc)
+            ),
+        }
+    except Exception as exc:
+        return {"success": False, "terminal_id": terminal_id, "error": str(exc)}
+
+
+def _turn_action_impl(terminal_id: str, generation: str, action: str) -> Dict[str, Any]:
+    """Send a fenced recovery action and preserve typed conflicts."""
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/terminals/{terminal_id}/turn/{action}",
+            params={"generation": generation},
+            headers=_auth_headers() or None,
+            allow_redirects=False,
+            timeout=_mcp_timeout(),
+        )
+        if response.status_code in (403, 409, 503):
+            detail = response.json().get("detail")
+            if isinstance(detail, dict):
+                return {**detail, "success": False, "terminal_id": terminal_id}
+        response.raise_for_status()
+        turn = response.json()
+        return {
+            **turn,
+            "success": turn.get("state") == ("verified" if action == "verify" else "cancelled"),
+        }
+    except requests.HTTPError as exc:
+        return {
+            "success": False,
+            "terminal_id": terminal_id,
+            "error": (
+                _extract_error_detail(exc.response, str(exc))
+                if exc.response is not None
+                else str(exc)
+            ),
+        }
+    except Exception as exc:
+        return {"success": False, "terminal_id": terminal_id, "error": str(exc)}
+
+
+def _verify_impl(terminal_id: str) -> Dict[str, Any]:
+    """Verify current evidence without resending input."""
+    turn = _inspect_turn_impl(terminal_id)
+    if not turn.get("success"):
+        return turn
+    if not turn.get("generation") or "verify" not in turn.get("allowed_actions", []):
+        return {**turn, "success": False, "error": "Turn does not allow verification"}
+    return _turn_action_impl(terminal_id, turn["generation"], "verify")
+
+
 def _cancel_impl(terminal_id: str, delete: bool = False) -> Dict[str, Any]:
     """Stop a worker terminal: interrupt its current turn, or free it entirely.
 
-    Backs ``cao agent cancel`` (issue #616). Default (``delete=False``) sends
-    a tmux interrupt (C-c) -- cooperative, matching this codebase's other
-    "cancel" verb (``cao workflow cancel``): the terminal survives so it can
-    be reassigned. ``delete=True`` instead frees the terminal via the same
+    Receipt-backed turns use a generation-fenced recovery action. Legacy
+    providers without a durable turn receive a cooperative tmux interrupt.
+    A failed identity lookup blocks cancellation. ``delete=True`` instead frees the terminal via the same
     path as the ``delete_terminal`` MCP tool -- for "I'm done with this
     worker", the cleanup verb assign's own success message already points
     callers at.
@@ -1916,11 +2099,20 @@ def _cancel_impl(terminal_id: str, delete: bool = False) -> Dict[str, Any]:
     if delete:
         return _delete_terminal_impl(terminal_id)
 
+    turn = _inspect_turn_impl(terminal_id)
+    if not turn.get("success"):
+        return turn
+    if turn.get("generation"):
+        if "cancel" not in turn.get("allowed_actions", []):
+            return {**turn, "success": False, "error": "Turn does not allow cancellation"}
+        return _turn_action_impl(terminal_id, turn["generation"], "cancel")
+
     try:
         response = requests.post(
             f"{API_BASE_URL}/terminals/{terminal_id}/key",
             params={"key": "C-c"},
             headers=_auth_headers() or None,
+            allow_redirects=False,
             timeout=_mcp_timeout(),
         )
         if response.status_code == 404:
@@ -1962,6 +2154,7 @@ def _list_native_children_impl(parent_terminal_id: Optional[str] = None) -> Dict
         response = requests.get(
             f"{API_BASE_URL}/terminals/{parent}/children",
             headers=_auth_headers() or None,
+            allow_redirects=False,
             timeout=_mcp_timeout(),
         )
         response.raise_for_status()
@@ -1984,6 +2177,7 @@ def _join_native_child_impl(child_id: str, timeout_seconds: float = 0.0) -> Dict
             f"{API_BASE_URL}/native-children/{child_id}/join",
             params={"timeout_seconds": timeout_seconds},
             headers=_auth_headers() or None,
+            allow_redirects=False,
             timeout=max(_mcp_timeout(), timeout_seconds + 5.0),
         )
         if response.status_code == 404:

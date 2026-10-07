@@ -478,12 +478,16 @@ def test_managed_script_replay_returns_typed_projected_work_result(client, monke
         2,
         "opaque-run-capability",
     )
-    assert seen[1][1:] == (
-        principal.id,
-        "script-workflow",
-        hashlib.sha256(source.encode("utf-8")).hexdigest(),
-        "step-a",
-    )
+    assert [event for event in seen if event[0] == "resolve"] == [
+        (
+            "resolve",
+            principal.id,
+            "script-workflow",
+            hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            "step-a",
+        )
+    ]
+    assert [event for event in seen if event[0] == "authenticate"] == [seen[0], seen[0]]
     legacy.assert_not_awaited()
 
 
@@ -686,6 +690,7 @@ async def test_managed_workflow_runtime_composition_binds_startup_projector(
     from cli_agent_orchestrator.services import work_launch_gateway, workflow_step_projector
 
     repository, *_rest = trusted_setup
+    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", repository.path)
     gateway = work_launch_gateway.build_durable_launch_gateway(
         repository, backends={"test": ProtectedFakeBackend()}
     )

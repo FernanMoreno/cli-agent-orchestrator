@@ -373,7 +373,7 @@ class WorkScheduler:
         )
         # Aging chooses a base-priority group. Within each group, strict job
         # round-robin wins over arrival age, then FIFO chooses that job's request.
-        scores = {}
+        scores: dict[int, int] = {}
         for row in candidates:
             priority = row["priority"]
             scores[priority] = max(
@@ -381,7 +381,7 @@ class WorkScheduler:
                 priority + int(max(0, now - row["queued_at"]) // policy["aging_seconds"]),
             )
         priority = max(scores, key=lambda value: (scores[value], value))
-        frontiers = {}
+        frontiers: dict[str, int] = {}
         for candidate in candidates:
             job_id = candidate["job_id"]
             frontiers[job_id] = min(

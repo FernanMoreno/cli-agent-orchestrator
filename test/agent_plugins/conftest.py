@@ -208,3 +208,28 @@ def make_plugin(tmp_path) -> Callable[..., Path]:
         return build_plugin(tmp_path / "sources" / name, name, **kwargs)
 
     return _make
+
+
+@pytest.fixture(autouse=True)
+def _approve_legacy_delivery_fixtures(request, monkeypatch):
+    """Existing delivery suites model plugins the operator already approved.
+
+    This fixture stamps real content at the test store publication boundary,
+    rather than bypassing production trust checks. US5 regressions deliberately
+    use the default policy with no fixture approval.
+    """
+    if request.node.name.startswith("test_us5_"):
+        return
+    from dataclasses import replace
+
+    from cli_agent_orchestrator.agent_plugins.trust import evidence
+
+    original = InstalledPluginStore.publish
+
+    def approved_publish(self, staged, record, **kwargs):
+        trust = record.trust or evidence(staged, record.source, record.resolved_ref)
+        return original(
+            self, staged, replace(record, trust=trust, approval=trust["review_id"]), **kwargs
+        )
+
+    monkeypatch.setattr(InstalledPluginStore, "publish", approved_publish)

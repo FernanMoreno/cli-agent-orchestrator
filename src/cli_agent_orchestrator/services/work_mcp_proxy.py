@@ -132,7 +132,9 @@ class WorkMcpProxy:
         self._secret: bytes | None = None
         self._issue: tuple[str, int, int, str, float] | None = None
         self._worker_socket_identity: tuple[int, int] | None = None
-        self._isolation_proof: object | None = None
+        self._isolation_proof: (
+            WorkBubblewrapRuntimeIsolationProof | WorkDockerRuntimeIsolationProof | None
+        ) = None
         self._consumed = False
         self._request_timeout: float | None = _SOCKET_TIMEOUT_SECONDS
         self._lifecycle_lock = threading.RLock()
@@ -299,6 +301,7 @@ class WorkMcpProxy:
             raise WorkMcpProxyRejected(
                 "launch isolation expired before endpoint activation"
             ) from exc
+        assert self._secret_factory is not None
         secret = self._secret_factory()
         if type(secret) is not bytes or not secret or len(secret) > 65536:
             self.close()
@@ -476,11 +479,16 @@ class WorkMcpProxy:
         effect_id: str | None = None
         effect_finalized = False
         try:
+            assert self._broker_socket is not None
+            assert self._issue is not None
+            assert self._repository is not None
             client = socket.socket(fileno=os.dup(self._broker_socket.fileno()))
             with client:
                 client.settimeout(self._request_timeout)
                 request = self._read_request(client)
                 try:
+                    if self._isolation_proof is None:
+                        raise WorkMcpProxyRejected("proxy was revoked before proxy effect")
                     self._isolation_proof.require_current(*self._issue[:2], self._issue[3])
                 except (AttributeError, RuntimeError) as exc:
                     raise WorkMcpProxyRejected(
@@ -545,6 +553,8 @@ class WorkMcpProxy:
                 # with revoke. A returned revoke cannot race an active request.
                 with self._lifecycle_lock:
                     try:
+                        if self._isolation_proof is None or self._issue is None:
+                            raise WorkMcpProxyRejected("proxy was revoked before proxy effect")
                         self._isolation_proof.require_current(*self._issue[:2], self._issue[3])
                     except (AttributeError, RuntimeError) as exc:
                         raise WorkMcpProxyRejected(

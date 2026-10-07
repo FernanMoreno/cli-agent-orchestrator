@@ -30,11 +30,11 @@ from __future__ import annotations
 import contextlib
 import logging
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import mkdtemp
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from cli_agent_orchestrator.agent_plugins.git_source import UnsupportedGitSourceError
 from cli_agent_orchestrator.agent_plugins.models import (
@@ -52,6 +52,7 @@ from cli_agent_orchestrator.agent_plugins.resolver import ResolverError, resolve
 from cli_agent_orchestrator.agent_plugins.store import InstalledPluginStore
 from cli_agent_orchestrator.agent_plugins.store import PluginBusyError as _StoreBusyError
 from cli_agent_orchestrator.agent_plugins.store import PluginStoreError
+from cli_agent_orchestrator.agent_plugins.trust import evidence, review_record
 from cli_agent_orchestrator.agent_plugins.validation import validate_plugin
 
 logger = logging.getLogger(__name__)
@@ -168,6 +169,7 @@ def install(
             skill_names=report.skill_names,
             projected_skill_names=(),
             findings=report.findings,
+            trust=evidence(resolved.root, source, resolved.resolved_ref, report),
         )
 
         # Snapshot before publishing: writing the new record overwrites the
@@ -505,3 +507,97 @@ def installed_findings(record: PluginRecord) -> Tuple[Finding, ...]:
 def has_fatal(findings: Tuple[Finding, ...]) -> bool:
     """Whether any finding is fatal. Small helper shared by the CLI and API."""
     return any(finding.severity is Severity.FATAL for finding in findings)
+
+
+def review_installed(name: str, *, store: Optional[InstalledPluginStore] = None) -> Dict[str, Any]:
+    store = store or InstalledPluginStore()
+    record = store.get(name)
+    if record is None:
+        raise PluginInstallError(f"Agent plugin '{name}' is not installed.")
+    try:
+        return review_record(record, store.plugin_root(name))
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        # An unavailable package must not hide healthy entries in CLI/API lists.
+        # Keep known installation facts visible, but never invent current evidence.
+        return {
+            "producer": None,
+            "producer_status": "unverified",
+            "producer_reason": "Current package content could not be read.",
+            "source": record.source.to_dict(),
+            "resolved_ref": record.resolved_ref,
+            "version": record.version,
+            "schema_id": record.schema_id,
+            "content_sha256": None,
+            "compatibility": "unavailable",
+            "cao_requirement": None,
+            "permissions": [],
+            "permissions_available": False,
+            "review_id": None,
+            "integrity": "unavailable",
+            "enabled": False,
+            "policy": "explicit-local-approval",
+            "decision_reason": f"Plugin content cannot be reviewed: {exc}",
+        }
+
+
+def enable(
+    name: str,
+    *,
+    review_id: str,
+    permissions: Tuple[str, ...],
+    store: Optional[InstalledPluginStore] = None,
+    skills_dir: Optional[Path] = None,
+    refresh_agents: bool = True,
+) -> PluginRecord:
+    store = store or InstalledPluginStore()
+    with _lifecycle(store, 60.0):
+        review = review_installed(name, store=store)
+        if review["integrity"] == "unavailable":
+            raise PluginInstallError("Plugin content cannot be reviewed; enabling is blocked.")
+        if review["integrity"] == "changed":
+            raise PluginInstallError(
+                "Plugin content changed since installation; reinstall and review it."
+            )
+        if review["compatibility"] != "compatible":
+            raise PluginInstallError("Plugin is incompatible with the current CAO contract.")
+        if review_id != review["review_id"]:
+            raise PluginInstallError("Approval does not match the exact current review.")
+        if set(permissions) != set(review["permissions"]):
+            raise PluginInstallError(
+                "Approval must name exactly the requested permissions; no automatic grants."
+            )
+        record = store.get(name)
+        if record is None:
+            raise PluginInstallError("Plugin disappeared during review.")
+        prior = current_projection(store)
+        # Legacy records acquire an integrity baseline only through this explicit approval.
+        current = evidence(store.plugin_root(name), record.source, record.resolved_ref)
+        if current["review_id"] != review_id:
+            raise PluginInstallError(
+                "Plugin changed during approval; review the current content again."
+            )
+        updated = replace(record, trust=current, approval=review_id)
+        store.write_record(updated)
+        rebuild_projection(store, skills_dir=skills_dir, previous=prior)
+        if refresh_agents:
+            _refresh_agent_artifacts()
+        return store.get(name) or updated
+
+
+def disable(
+    name: str,
+    *,
+    store: Optional[InstalledPluginStore] = None,
+    skills_dir: Optional[Path] = None,
+    refresh_agents: bool = True,
+) -> None:
+    store = store or InstalledPluginStore()
+    with _lifecycle(store, 60.0):
+        record = store.get(name)
+        if record is None:
+            raise PluginInstallError(f"Agent plugin '{name}' is not installed.")
+        prior = current_projection(store)
+        store.write_record(replace(record, approval=None))
+        rebuild_projection(store, skills_dir=skills_dir, previous=prior)
+        if refresh_agents:
+            _refresh_agent_artifacts()

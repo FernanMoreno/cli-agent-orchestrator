@@ -21,6 +21,7 @@ from cli_agent_orchestrator.services.profile_store import (
 from cli_agent_orchestrator.services.profile_validator import validate_frontmatter
 from cli_agent_orchestrator.utils.agent_profiles import (
     list_agent_profiles,
+    parse_agent_profile_text,
 )
 
 
@@ -128,6 +129,7 @@ def show_cmd(name_or_path: str):
     NAME_OR_PATH can be a profile name (looked up in the local store)
     or a path to a .md file.
     """
+    profile_text: str | None
     path = _resolve_profile_path(name_or_path)
     if path is not None:
         profile_text = path.read_text(encoding="utf-8")
@@ -183,6 +185,7 @@ def validate_cmd(name_or_path: str):
     - Invalid role values
     - Unrecognized allowedTools vocabulary
     """
+    profile_text: str | None
     path = _resolve_profile_path(name_or_path)
     if path is not None:
         profile_text = path.read_text(encoding="utf-8")
@@ -371,3 +374,47 @@ def find_cmd(query: str, limit: Optional[int], as_json: bool):
         click.echo(f"{r['name']:<30} {r['score']:<8} {tags:<24} {desc}")
 
     click.echo(f"\n{len(results)} profile(s) matched.")
+
+
+@profile.command("lint")
+@click.argument("name_or_path")
+@click.option("--json", "as_json", is_flag=True, help="Output the redacted report as JSON.")
+def lint_cmd(name_or_path: str, as_json: bool):
+    """Report Kiro engine and KAS migration readiness without writing files."""
+    profile_text = _read_profile_text(name_or_path)
+    if profile_text is None:
+        raise click.ClickException(f"Profile '{name_or_path}' not found.")
+
+    try:
+        parsed = frontmatter.loads(profile_text)
+        fallback_name = parsed.metadata.get("name") or Path(name_or_path).stem
+        agent_profile = parse_agent_profile_text(profile_text, str(fallback_name))
+        # ADR-004: go through the profile facade rather than reaching into the
+        # lint module directly. lint_profile is a pure passthrough, so the report
+        # shape and its redaction guarantees are unchanged (BR-U6-9).
+        from cli_agent_orchestrator.services.kiro_profile_service import lint_profile
+
+        result = lint_profile(agent_profile)
+    except Exception as exc:
+        raise click.ClickException(f"Kiro profile lint failed: {exc}") from exc
+
+    if as_json:
+        click.echo(json.dumps(result.model_dump(mode="json"), indent=2))
+        return
+
+    visible = ", ".join(result.kas_visible_tools) or "(none)"
+    click.echo(f"Profile:       {result.profile}")
+    click.echo(f"Engine:        {result.resolved_engine.value}")
+    click.echo(f"Policy source: {result.policy_source}")
+    click.echo(f"V2 artifact:   {result.v2_artifact}")
+    click.echo(f"KAS artifact:  {result.kas_artifact}")
+    click.echo(f"KAS tools:     {visible}")
+    click.echo(
+        "Cedar rules:  "
+        f"{result.cedar.allow_rules} allow, {result.cedar.hard_deny_rules} hard deny"
+    )
+    click.echo(f"Generation:    {'safe' if result.generation_safe else 'blocked'}")
+    if result.unsupported:
+        click.echo(f"Unsupported:   {', '.join(result.unsupported)}")
+    if result.diagnostic:
+        click.echo(f"Diagnostic:    {result.diagnostic}")

@@ -17,7 +17,10 @@ import subprocess
 import threading
 import weakref
 from pathlib import Path
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
+
+if TYPE_CHECKING:
+    from cli_agent_orchestrator.services.work_origin import WorkOrigins
 
 from cli_agent_orchestrator.backends.base import (
     ProcessRestrictionContract,
@@ -203,7 +206,8 @@ def _parse_bwrap_version(stdout: str, returncode: int) -> tuple[int, int, int]:
     match = _BWRAP_VERSION_RE.fullmatch(stdout.strip())
     if returncode != 0 or match is None:
         raise _unsupported("Bubblewrap version output is malformed or unknown")
-    version = tuple(int(part) for part in match.groups())
+    major, minor, patch = match.groups()
+    version = (int(major), int(minor), int(patch))
     if version != BUBBLEWRAP_VERSION:
         version_text = ".".join(str(part) for part in version)
         required = ".".join(str(part) for part in BUBBLEWRAP_VERSION)
@@ -315,11 +319,11 @@ class BubblewrapWorkBackend(TmuxBackend):
         self._bwrap_sha256_digest = bwrap_sha256_digest
         self._supervisor_factory = supervisor_factory
         self._mcp_proxy_factory = mcp_proxy_factory
-        self._work_origins = None
+        self._work_origins: WorkOrigins | None = None
         self._broker_account = (
             os.environ.get("CAO_WORK_BROKER_ACCOUNT") if broker_account is None else broker_account
         )
-        self._mcp_proxy_instances = weakref.WeakSet()
+        self._mcp_proxy_instances: weakref.WeakSet[WorkMcpProxy] = weakref.WeakSet()
         self._mcp_proxy_factory_lock = threading.Lock()
 
     def bind_work_origins(self, origins) -> None:

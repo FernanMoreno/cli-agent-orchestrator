@@ -28,7 +28,7 @@ class KnowledgeAccessDenied(PermissionError):
     """The current principal, grant or scope does not authorize this operation."""
 
 
-def redact_knowledge_content(content):
+def redact_knowledge_content(content: object) -> tuple[str, list[str]]:
     """Redact the complete input; consumers apply byte/character budgets afterwards."""
     if not isinstance(content, str):
         raise ValueError("knowledge content must be text")
@@ -123,7 +123,7 @@ class KnowledgePolicy:
         if (
             not isinstance(principal, Principal)
             or action not in actions
-            or not getattr(principal, "scopes", frozenset()) & actions[action][1]
+            or not principal.scopes & actions[action][1]
             or scope not in {"project", "job"}
         ):
             raise KnowledgeAccessDenied("verified knowledge authority required")
@@ -166,7 +166,9 @@ class LegacyMemoryAuditError(RuntimeError):
         super().__init__(f"legacy memory audit failed; {outcome}; operation_id={operation_id}")
 
 
-_ENCLOSING_LEGACY_AUDIT = ContextVar("enclosing_legacy_database_audit", default=None)
+_ENCLOSING_LEGACY_AUDIT: ContextVar[tuple[WorkRepository, str, str] | None] = ContextVar(
+    "enclosing_legacy_database_audit", default=None
+)
 
 
 def join_legacy_database_audit(principal, db):

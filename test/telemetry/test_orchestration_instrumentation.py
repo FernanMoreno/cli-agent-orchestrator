@@ -61,6 +61,7 @@ terminal_service.provider_manager.get_provider = lambda tid: provider_stub
 terminal_service.inject_memory_context = lambda msg, tid, frozen=None: msg
 terminal_service.update_last_active = lambda tid: None
 terminal_service.status_monitor = MagicMock()
+terminal_service.status_monitor.notify_input_sent.return_value = 1
 terminal_service.get_backend = lambda: MagicMock()
 terminal_service.dispatch_plugin_event = _capture_dispatch
 
@@ -71,7 +72,7 @@ ok = terminal_service.send_input(
     sender_id="supervisor",
     orchestration_type=OrchestrationType.HANDOFF,
 )
-assert ok is True, "send_input returned False"
+assert ok == 1, "send_input did not return its causal turn sequence"
 
 event = captured["event"]
 assert captured["event_type"] == "post_send_message"

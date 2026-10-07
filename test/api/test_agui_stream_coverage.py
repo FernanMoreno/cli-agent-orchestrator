@@ -70,10 +70,9 @@ def test_token_validation_exception_maps_to_401(monkeypatch):
     def _boom(_tok):
         raise ValueError("malformed token")
 
-    monkeypatch.setattr(main, "extract_scopes_from_token", _boom)
     resp = client.get("/agui/v1/stream", params={"access_token": "garbage"})
     assert resp.status_code == 401
-    assert "invalid or expired" in resp.text
+    assert "reusable query credentials" in resp.text
 
 
 def test_token_httpexception_is_reraised(monkeypatch):
@@ -86,8 +85,11 @@ def test_token_httpexception_is_reraised(monkeypatch):
     def _raise_http(_tok):
         raise HTTPException(status_code=403, detail="explicit forbidden")
 
-    monkeypatch.setattr(main, "extract_scopes_from_token", _raise_http)
-    resp = client.get("/agui/v1/stream", params={"access_token": "x"})
+    async def forbidden(*args):
+        _raise_http(None)
+
+    monkeypatch.setattr(main, "get_current_scopes", forbidden)
+    resp = client.get("/agui/v1/stream", headers={"Authorization": "Bearer x"})
     assert resp.status_code == 403
     assert "explicit forbidden" in resp.text
 

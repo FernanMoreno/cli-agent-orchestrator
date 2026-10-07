@@ -23,6 +23,28 @@ For the shim-contract deep-dive (`run_step`/`emit_output`, retry/determinism, th
 `reuse_terminal_id` trap), see
 [docs/workflow-scripts-authoring-guide.md](workflow-scripts-authoring-guide.md).
 
+## Source authoring without execution
+
+`cao workflow create NAME --source FILE` validates Python with the AST parser
+and publishes it in the server-owned workflow directory without executing it.
+Use `--source -` to read stdin. `cao workflow validate --source FILE --name NAME`
+validates draft source through the same HTTP boundary.
+
+Read the exact stored revision with `cao workflow get NAME --source --json`.
+Its `content` preserves source bytes and its `source_hash` identifies the
+revision. Update with `cao workflow update NAME --source FILE
+--expected-source-hash HASH`; a changed revision returns a conflict and requires
+a fresh read. Concurrent creates never replace an existing workflow. Files are
+canonical: an index outage after publication retains the winning file, and
+subsequent index reconciliation rebuilds the derived view.
+
+The corresponding HTTP endpoints are `POST /workflows`,
+`GET /workflows/{name}/source`, `PUT /workflows/{name}`, and
+`POST /workflows/validate` with `{name, content}`. The MCP tools
+`workflow_create`, `workflow_update`, `workflow_get`, and `workflow_validate`
+use these endpoints and retain calling-terminal tool restrictions and local
+HTTP authentication. Authoring does not authorize execution or approve a plan.
+
 ## Quick start
 
 Write a small script to the workflows directory, validate it, and run it.
@@ -75,6 +97,12 @@ Every workflow follows the same path. No step is optional.
      `422`, but which the shim does not check before sending — so a typo fails that step
      mid-run rather than up front). See the authoring guide's recovery-policy section — a
      policy is a *declaration*, never a permission.
+   - **Excessive expression complexity is a blocking syntax error.** A logical
+     statement is limited to 1,024 substantive tokens, including expressions
+     continued across lines. Split an oversized expression into smaller statements;
+     long ordinary scripts, comments and plain string literals remain supported.
+     On Python before 3.12, f-strings longer than 4,096 characters are conservatively
+     refused because their expressions are opaque to the token preflight.
 3. **Run** — with an explicit, pre-announced `--run-id` so it can be cancelled.
    **Workflows are NEVER auto-run by an agent.** The user approves each run.
 4. **Status / cancel / resume** — `cao workflow status <run-id>`,
@@ -423,6 +451,17 @@ before assuming a verb and a tool with similar names do the same thing:
 > plan it just wrote, which is precisely what the approval gate exists to prevent. An agent that meets
 > a refusal should call `workflow_plan_approval` and ask the human to run `cao workflow approve`.
 
+### Coordinating with another local CAO
+
+For independent CAO profiles sharing one local project, the MCP tools
+`list_local_cao_peers`, `assign_local_cao_task`, `get_local_cao_task`, and
+`cancel_local_cao_task` provide project-scoped peer coordination. Pair profiles
+with `cao peer` first, then reuse an assignment's stable operation key when
+recovering an uncertain response. This local path does not change `target_host`
+or the existing remote/fleet assignment routing. See the
+[Local CAO Coordination guide](local-cao-coordination.md) for profile setup,
+worktrees, non-Git write leases, revocation, and recovery.
+
 ## Plan approval (script tier)
 
 **Nothing in this section applies to YAML workflows**, and nothing in it is active by default.
@@ -525,3 +564,15 @@ Stated here because their absence is easy to assume away:
   - [`fanout_example.py`](examples/fanout_example.py) — concurrent fan-out via `ThreadPoolExecutor`.
   - [`loop_raw_http_example.py`](examples/loop_raw_http_example.py) — the same loop with no shim, raw `urllib` against the identity env vars.
 - [`skills/cao-workflow/SKILL.md`](../skills/cao-workflow/SKILL.md) — the agent-facing skill that teaches this lifecycle.
+
+### Whole ordinary assignment retries
+
+Local and cross-node ordinary assignment admission records launch and deferred
+initial delivery together. `operation_key` must stay stable across a lost
+response. A current supervisor receipt can supply a deterministic local key;
+without that receipt, provide an explicit key. Elastic assignment requires an
+explicit key before broker allocation. Admission reports `submitted` while
+initialization/delivery are pending, or `reconcile` when the outcome is unknown.
+Neither state claims completed work. Inspect `GET /assignments/{assignment_id}`
+before requesting another operation. Managed Work remains on approved plans and
+authenticated receipts; an ordinary or shared runtime token cannot replace it.

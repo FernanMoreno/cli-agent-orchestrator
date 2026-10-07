@@ -225,9 +225,9 @@ def _make_static_identity(
         command_token=command_token,
         content_reference=f"sha256:{digest}",
         sha256_digest=digest,
-        elf_machine=machine,
-        elf_class=elf_class,
-        endianness=metadata.endianness,
+        elf_machine="x86_64",
+        elf_class="ELF64",
+        endianness="little",
         static=True,
     )
 

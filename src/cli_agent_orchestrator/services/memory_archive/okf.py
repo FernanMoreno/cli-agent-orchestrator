@@ -219,9 +219,23 @@ class OkfArchiveBackend(MemoryArchiveBackend):
                 f"conflict policy must be one of {sorted(_CONFLICT_POLICIES)}, "
                 f"got {conflict_policy!r}"
             )
-        src_real = Path(resolve_and_validate_path(str(src), description="Import source"))
+        src_real = Path(
+            resolve_and_validate_path(str(src), allow_file=True, description="Import source")
+        )
+        if src_real.is_file():
+            from cli_agent_orchestrator.services.memory_archive.legacy_reader import (
+                as_current_bundle,
+            )
+            from cli_agent_orchestrator.services.memory_archive.tar_reader import extracted_bundle
+
+            with extracted_bundle(src_real) as unpacked, as_current_bundle(unpacked) as converted:
+                report = getattr(type(self).import_bundle, "__wrapped__")(
+                    self, converted, target_scope, conflict_policy, dry_run, terminal_context
+                )
+                assert isinstance(report, ImportReport)
+                return report
         if not src_real.is_dir():
-            raise ValueError(f"Import source must be a directory: {src}")
+            raise ValueError(f"Import source must be a directory or tar.gz archive: {src}")
 
         scope_id = self._svc.resolve_scope_id(target_scope, terminal_context)
         if target_scope == MemoryScope.PROJECT.value and scope_id is None:
@@ -386,6 +400,7 @@ class OkfArchiveBackend(MemoryArchiveBackend):
                         scope_id=scope_id,
                         terminal_context=terminal_context,
                         target="native",
+                        _expected_scope_id=scope_id,
                     )
                 )
             memory = asyncio.run(
@@ -397,6 +412,7 @@ class OkfArchiveBackend(MemoryArchiveBackend):
                     tags=tags,
                     terminal_context=terminal_context,
                     occurred_at=occurred_at,
+                    _expected_scope_id=scope_id,
                 )
             )
         except ValueError as e:

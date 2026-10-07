@@ -12,9 +12,10 @@ import json
 import logging
 from typing import Any, Callable, Optional, cast
 
-from cli_agent_orchestrator.graph.cache import GraphViewCache, make_meta
+from cli_agent_orchestrator.graph.cache import GraphViewCache
 from cli_agent_orchestrator.graph.models import Edge, EdgeType, GraphView, Node
 from cli_agent_orchestrator.graph.providers.base import GraphProvider, register_provider
+from cli_agent_orchestrator.models.memory import MemoryScope
 from cli_agent_orchestrator.services import settings_service, wiki_lint
 from cli_agent_orchestrator.services.knowledge_policy import redact_knowledge_data
 from cli_agent_orchestrator.services.legacy_memory_access import (
@@ -112,35 +113,24 @@ class MemoryGraphProvider(GraphProvider):
 
     @audited_legacy("graph", owner="_svc")
     async def project(self, **filters: Any) -> GraphView:
-        """Return this scope's GraphView, served from cache when fresh.
+        """Await authorized, owner-partitioned work without giving the caller ownership."""
+        return await asyncio.shield(self.project_inflight(**filters))
 
-        The expensive build (``_build`` — which awaits ``wiki_lint.run_lint``)
-        runs at most once per (scope, scope_id) per TTL window; concurrent cold
-        requests for the same key collapse onto a single build (single-flight,
-        see GraphViewCache). ``meta.cached`` / ``meta.as_of`` tell the frontend
-        whether it got a hit and when the underlying data was projected.
-        """
-        scope = str(filters.get("scope", "global"))
-        raw_scope_id = filters.get("scope_id")
-        scope_id: Optional[str] = None if raw_scope_id is None else str(raw_scope_id)
-        lint_enabled = self._lint_enabled()
+    def _projection_request(self, filters: dict[str, Any]):
+        raw_scope = filters.get("scope", MemoryScope.GLOBAL.value)
         try:
-            resolved_binding = self._binding_resolver(scope, scope_id)
-        except VaultConfigUnavailableError as exc:
-            logger.warning("memory graph provider: vault binding unavailable: %s", exc)
-            return GraphView(
-                nodes=[],
-                edges=[],
-                meta={
-                    "provider": "memory",
-                    "scope": scope,
-                    "scope_id": scope_id,
-                    "boundary_cause": "vault_config_unavailable",
-                    "lint_enrichment": "unavailable_vault",
-                    "disabled_enrichments": _LINT_ENRICHMENTS,
-                },
-            )
+            scope = MemoryScope(raw_scope).value
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"unrecognized memory scope: {raw_scope!r}") from exc
+        raw_scope_id = filters.get("scope_id")
+        scope_id = None if raw_scope_id is None else str(raw_scope_id)
+        # Global/federated storage ignores scope_id; project/session/agent retain it.
+        # Preserve canonical binding normalization and include its policy fingerprint.
+        if scope in (MemoryScope.GLOBAL.value, MemoryScope.FEDERATED.value):
+            scope_id = None
+        resolved_binding = self._binding_resolver(scope, scope_id)
         scope_id = resolved_binding.scope_id
+        lint_enabled = self._lint_enabled()
         key = (
             "memory",
             str(self._svc.base_dir.resolve()),
@@ -150,17 +140,52 @@ class MemoryGraphProvider(GraphProvider):
             lint_enabled,
             binding_fingerprint(resolved_binding),
         )
-        view, cached, as_of = await _CACHE.get_or_build(
+        return key, scope, scope_id, lint_enabled, resolved_binding
+
+    @audited_legacy("graph", owner="_svc")
+    def project_inflight(self, **filters: Any) -> asyncio.Future[GraphView]:
+        """Admit a projection after authorization; retries share its owned future."""
+        try:
+            key, scope, scope_id, lint_enabled, resolved_binding = self._projection_request(filters)
+        except VaultConfigUnavailableError as exc:
+            logger.warning("memory graph provider: vault binding unavailable: %s", exc)
+            future = asyncio.get_running_loop().create_future()
+            future.set_result(
+                GraphView(
+                    nodes=[],
+                    edges=[],
+                    meta={
+                        "provider": "memory",
+                        "scope": str(filters.get("scope", "global")),
+                        "scope_id": filters.get("scope_id"),
+                        "boundary_cause": "vault_config_unavailable",
+                        "lint_enrichment": "unavailable_vault",
+                        "disabled_enrichments": _LINT_ENRICHMENTS,
+                    },
+                )
+            )
+            return future
+        return _CACHE.get_or_build_task(
             key,
-            lambda: self._build(scope, scope_id, lint_enabled, resolved_binding),
+            lambda: self._build_authorized(scope, scope_id, lint_enabled, resolved_binding),
         )
-        # Re-wrap with fresh cache provenance without mutating the cached
-        # instance's own meta (the same GraphView object is served to every hit).
-        result = GraphView(
-            nodes=view.nodes,
-            edges=view.edges,
-            meta=make_meta(view.meta, cached=cached, as_of=as_of),
-        )
+
+    @audited_legacy("graph", owner="_svc")
+    def projection_status(self, **filters: Any) -> Optional[dict[str, Any]]:
+        """Expose content-free state for this same authorized owner/binding key."""
+        try:
+            key, *_ = self._projection_request(filters)
+        except VaultConfigUnavailableError:
+            return None
+        return _CACHE.build_status(key)
+
+    @audited_legacy("graph", owner="_svc")
+    async def _build_authorized(self, scope, scope_id, lint_enabled, resolved_binding):
+        # The task retains the resolved service/binding and audits its own whole read,
+        # including completion after the original HTTP request has stopped waiting.
+        result = await self._build(scope, scope_id, lint_enabled, resolved_binding)
+        if scope in (MemoryScope.GLOBAL.value, MemoryScope.FEDERATED.value):
+            result.meta["ignored_filters"] = ["scope_id"]
         return GraphView.model_validate(redact_knowledge_data(result.model_dump(mode="json")))
 
     async def _build(
@@ -175,6 +200,8 @@ class MemoryGraphProvider(GraphProvider):
             "provider": "memory",
             "scope": scope,
             "scope_id": scope_id,
+            "lint_enabled": lint_enabled,
+            "lint_enrichment": "enabled" if lint_enabled else "disabled_by_setting",
         }
         if not lint_enabled:
             meta.update(
@@ -291,6 +318,12 @@ class MemoryGraphProvider(GraphProvider):
                 meta["lint_error"] = type(e).__name__
                 meta["lint_enrichment"] = "failed"
                 meta["disabled_enrichments"] = _LINT_ENRICHMENTS
+
+        returned_errors = sum(issue.issue_type == "lint_error" for issue in issues)
+        if returned_errors:
+            meta["lint_error_count"] = returned_errors
+            meta["lint_enrichment"] = "failed"
+            meta["disabled_enrichments"] = _LINT_ENRICHMENTS
 
         # ORDERING (human review, PR #524): the relationship read MUST come after
         # run_lint. run_lint persists its contradiction findings into this same

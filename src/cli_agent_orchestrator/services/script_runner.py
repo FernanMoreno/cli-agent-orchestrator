@@ -33,9 +33,26 @@ import json
 import logging
 import os
 import sys
+import tempfile
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    Tuple,
+    TypedDict,
+    cast,
+)
+
+if TYPE_CHECKING:
+    from cli_agent_orchestrator.services.work_workflow_plans import WorkWorkflowPlans
+    from cli_agent_orchestrator.security.auth import Principal
 
 from cli_agent_orchestrator.constants import (
     API_BASE_URL,
@@ -135,6 +152,10 @@ class ScriptRunRecord:
     run_capability_required: bool = False
     managed_step_admitters: Dict[str, Callable] = field(default_factory=dict, repr=False)
     work_pending: bool = False
+    scoped_plan_owner: Optional[WorkWorkflowPlans] = field(default=None, repr=False)
+    scoped_principal: Optional[Principal] = field(default=None, repr=False)
+    scoped_private_path: Optional[str] = field(default=None, repr=False)
+    continuation_epoch: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
@@ -400,9 +421,21 @@ async def _reconcile_orphans(run_id: str) -> None:
 # ---------------------------------------------------------------------------
 # BR-31 in-memory terminal recorder — wired into the server-side run-step path
 # ---------------------------------------------------------------------------
+class _ScriptAttemptRecorder(Protocol):
+    record_contract: Callable[[str, str, dict], None]
+    guard_delivery: Callable[[], None]
+    authorize_reexecution: Callable[[Any], None]
+
+    def __call__(self, terminal_id: str, call_fingerprint: str) -> None: ...
+
+
+class _SubprocessDescriptorOptions(TypedDict, total=False):
+    pass_fds: Tuple[int, ...]
+
+
 def make_step_terminal_recorder(
     env_vars: Optional[Dict[str, str]],
-) -> Optional[Callable[[str, str], None]]:
+) -> Optional[_ScriptAttemptRecorder]:
     """Build the ``on_step_terminal_ready`` callback for a script-tier run-step call.
 
     Returns ``None`` (no-op) unless the call carries both ``CAO_WORKFLOW_RUN_ID``
@@ -528,10 +561,11 @@ def make_step_terminal_recorder(
 
     # Preserve legacy callable shape without changing API/YAML callers. The
     # substrate explicitly opts into this stronger hook when it is present.
-    _record.record_contract = _record_contract
-    _record.guard_delivery = _guard_delivery
-    _record.authorize_reexecution = _authorize_reexecution
-    return _record
+    recorder = cast(_ScriptAttemptRecorder, _record)
+    recorder.record_contract = _record_contract
+    recorder.guard_delivery = _guard_delivery
+    recorder.authorize_reexecution = _authorize_reexecution
+    return recorder
 
 
 # ---------------------------------------------------------------------------
@@ -994,8 +1028,8 @@ def _materialize_snapshot(run_id: str, source: str) -> str:
     so a resumed run executes the same source even if the author edits the file.
     The temp file lives under ``WORKFLOW_SCRIPT_SCRATCH_DIR`` (0o700, created if
     absent) with mode 0o600 so a co-tenant cannot read or swap the source between
-    materialize and exec. The filename is derived from the engine-validated
-    ``run_id`` (no author-controllable path segment — the scratch path is an
+    materialize and exec. The filename has a unique generated suffix after the
+    engine-validated ``run_id`` (no author-controllable path segment — the scratch path is an
     engine-GENERATED category, distinct from the author-supplied-path validator
     Mandate). The caller deletes it in a ``finally`` after reap.
     """
@@ -1006,19 +1040,25 @@ def _materialize_snapshot(run_id: str, source: str) -> str:
     except OSError as exc:
         # Non-fatal: the dir exists; log if we could not tighten its mode.
         logger.warning("script scratch dir '%s' chmod 0o700 failed: %s", scratch, exc)
-    path = scratch / f"resume-{run_id}.py"
-    # Open with O_CREAT|O_EXCL-free write but an explicit restrictive mode: create
-    # owner-only, truncating any stale file from a prior aborted resume.
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    # A shared scratch root may host the same run ID from another repository
+    # or process. O_EXCL creation gives each drive its own immutable snapshot;
+    # one owner's cleanup must never unlink or truncate another owner's file.
+    fd, path = tempfile.mkstemp(prefix=f"resume-{run_id}-", suffix=".py", dir=scratch)
     try:
-        fh = os.fdopen(fd, "w", encoding="utf-8")
-    except OSError:
-        # os.fdopen failed to wrap the fd, so it never took ownership — close the
-        # raw fd ourselves to avoid a descriptor leak, then re-raise.
-        os.close(fd)
+        try:
+            fh = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            # The wrapper never took ownership; preserve the original failure.
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+        with fh:
+            fh.write(source)
+    except BaseException:
+        _delete_temp_file(path)
         raise
-    with fh:
-        fh.write(source)
     # Re-assert 0o600 in case an inherited umask widened O_CREAT's mode.
     try:
         os.chmod(path, 0o600)
@@ -1192,17 +1232,62 @@ async def _drive_process(
     *,
     run_credential: Optional[str] = None,
 ) -> WorkflowRunResult:
+    driver = getattr(record, "continuation_driver", None)
+    epoch = getattr(record, "continuation_epoch", None)
+    try:
+        return await _drive_process_impl(record, script_path, env, run_credential=run_credential)
+    finally:
+        process = getattr(record, "process", None)
+        if driver is not None and process is not None:
+            if process.returncode is None:
+                await _terminate(process, WORKFLOW_SCRIPT_TERM_GRACE)
+            await asyncio.to_thread(driver.record_process_exit, record.run_id, epoch, process)
+
+
+async def _drive_process_impl(
+    record: ScriptRunRecord,
+    script_path: str,
+    env: Dict[str, str],
+    *,
+    run_credential: Optional[str] = None,
+) -> WorkflowRunResult:
     """Spawn, drain both pipes concurrently, reap under the bound, interpret exit.
 
     THE single execution path for both a fresh run (A1) and a resume (A2) — the
     only difference is the env (``CAO_WORKFLOW_RESUME``) and the script path
     (author file vs materialized snapshot). Never ``shell=True`` (C-2).
     """
+    from cli_agent_orchestrator.services.work_workflow_plans import WorkWorkflowPlans
+
+    try:
+        exact_inputs = await asyncio.to_thread(
+            WorkWorkflowPlans.guard_drive, record, source_path=script_path
+        )
+    except Exception:
+        # The run is already committed. A final authority refusal must settle it
+        # before propagating to the transport, without reaching subprocess effects.
+        await _finalize(
+            record,
+            state=RunState.FAILED,
+            kind="plan_authority_refused",
+            error="The frozen plan authority is no longer available.",
+        )
+        raise
+    if exact_inputs is not None:
+        env = build_env(
+            record.run_id,
+            record.generation,
+            exact_inputs,
+            resume=env.get("CAO_WORKFLOW_RESUME") == "1",
+        )
     credential_read_fd: Optional[int] = None
     credential_write_fd: Optional[int] = None
     try:
         spawn_env = env
         pass_fds: Tuple[int, ...] = ()
+        driver = getattr(record, "continuation_driver", None)
+        if driver is not None:
+            await asyncio.to_thread(driver.begin_process, record.run_id, record.continuation_epoch)
         if run_credential is not None:
             if os.name != "posix":
                 raise ValueError("managed workflow credentials require inherited file descriptors")
@@ -1217,25 +1302,45 @@ async def _drive_process(
                 raise ValueError("invalid managed workflow run credential")
             credential_bytes = run_credential.encode("ascii")
             credential_read_fd, credential_write_fd = os.pipe()
-            remaining = memoryview(credential_bytes)
+            remaining = (
+                memoryview(credential_bytes)
+                if getattr(record, "continuation_driver", None) is None
+                else memoryview(b"")
+            )
             while remaining:
                 written = os.write(credential_write_fd, remaining)
                 if written <= 0:
                     raise OSError("failed to write managed workflow run credential")
                 remaining = remaining[written:]
-            os.close(credential_write_fd)
-            credential_write_fd = None
+            if getattr(record, "continuation_driver", None) is None:
+                os.close(credential_write_fd)
+                credential_write_fd = None
             spawn_env = dict(env)
             spawn_env["CAO_WORKFLOW_AUTH_FD"] = str(credential_read_fd)
             pass_fds = (credential_read_fd,)
+        descriptor_options: _SubprocessDescriptorOptions = (
+            {"pass_fds": pass_fds} if pass_fds else {}
+        )
         record.process = await asyncio.create_subprocess_exec(
             sys.executable,
             script_path,
             env=spawn_env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            **({"pass_fds": pass_fds} if pass_fds else {}),
+            **descriptor_options,
         )
+        driver = getattr(record, "continuation_driver", None)
+        if driver is not None:
+            await asyncio.to_thread(
+                driver.attach_process, record.run_id, record.continuation_epoch, record.process.pid
+            )
+            # The trusted template waits on this FD before even reading inputs.
+            # No run capability reaches an unpersisted/unowned process.
+            if credential_write_fd is None:
+                raise ValueError("continuation credential barrier unavailable")
+            os.write(credential_write_fd, credential_bytes)
+            os.close(credential_write_fd)
+            credential_write_fd = None
     except (
         Exception
     ) as exc:  # noqa: BLE001 — spawn failure should not raise past the runner boundary
@@ -1532,6 +1637,10 @@ async def resume_script_run(
     *,
     run_credential_factory: Optional[Callable[[str, str], str]] = None,
     managed_step_admitters: Optional[Mapping[str, Callable]] = None,
+    scoped_plan_owner=None,
+    scoped_principal=None,
+    continuation_driver=None,
+    continuation_epoch=None,
 ) -> WorkflowRunResult:
     """Resume a crashed/failed/cancelled script run from its journal (A2, S2).
 
@@ -1587,6 +1696,33 @@ async def resume_script_run(
     row = await asyncio.to_thread(workflow_journal.get_run, run_id)
     if row is None:
         raise KeyError(f"unknown run_id '{run_id}'")
+    from cli_agent_orchestrator.services.work_workflow_plans import WorkWorkflowPlans
+
+    is_scoped = await asyncio.to_thread(
+        WorkWorkflowPlans.requires_scoped_validation, run_id, getattr(row, "manifest_json", None)
+    )
+    if is_scoped:
+        if type(scoped_plan_owner) is not WorkWorkflowPlans or scoped_principal is None:
+            raise ResumeNotAllowedError("scoped resume requires its authoritative plan owner")
+        exact_inputs = await asyncio.to_thread(
+            scoped_plan_owner.validate_resume, scoped_principal, run_id
+        )
+        if continuation_driver is None:
+            with scoped_plan_owner.repository.read_snapshot() as driver_connection:
+                if (
+                    driver_connection.execute(
+                        "SELECT 1 FROM sqlite_master WHERE name='workflow_driver'"
+                    ).fetchone()
+                    and driver_connection.execute(
+                        "SELECT 1 FROM workflow_driver WHERE run_id=?", (run_id,)
+                    ).fetchone()
+                ):
+                    raise ResumeNotAllowedError("enabled continuation requires its durable driver")
+        if exact_inputs is None:
+            raise ResumeNotAllowedError("scoped resume private attachment is unavailable")
+        from dataclasses import replace
+
+        row = replace(row, inputs_json=json.dumps(exact_inputs))
 
     # --- Gate 2: liveness (b4c1) -> 409. The shared _active_drives set is the
     # single liveness truth; _is_resumable_for_tier deliberately does NOT check it.
@@ -1710,11 +1846,32 @@ async def resume_script_run(
             managed_step_admitters=dict(managed_step_admitters or {}),
         )
 
+        if scoped_plan_owner is not None:
+            record.scoped_plan_owner = scoped_plan_owner
+            record.scoped_principal = scoped_principal
+
+        if continuation_driver is not None:
+            continuation_driver.assert_current(run_id, continuation_epoch)
+            continuation_driver.attach_record(record, continuation_epoch)
+        elif WorkWorkflowPlans.requires_scoped_validation(run_id, row.manifest_json):
+            with scoped_plan_owner.repository.read_snapshot() as driver_connection:
+                if (
+                    driver_connection.execute(
+                        "SELECT 1 FROM sqlite_master WHERE name='workflow_driver'"
+                    ).fetchone()
+                    and driver_connection.execute(
+                        "SELECT 1 FROM workflow_driver WHERE run_id=?", (run_id,)
+                    ).fetchone()
+                ):
+                    raise ResumeNotAllowedError("enabled continuation requires its durable driver")
+
         # --- Execution: bump + PERSIST generation BEFORE spawn (INV-6, load-bearing) ---
         record.generation = _bump(row.generation)
         # NOT best-effort: an unpersisted bump would let an orphan's old-generation
         # calls through (U3's update_run_generation raises on failure by design).
-        await asyncio.to_thread(update_run_generation, run_id, record.generation)
+        await asyncio.to_thread(
+            update_run_generation, run_id, record.generation, expected_generation=row.generation
+        )
         run_credential = None
         if run_credential_factory is not None:
             try:

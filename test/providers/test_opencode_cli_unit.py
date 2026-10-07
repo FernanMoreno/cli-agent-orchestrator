@@ -68,6 +68,22 @@ class TestRegexPatterns:
         # No duration suffix → not a full completion marker
         assert not re.search(COMPLETION_MARKER_PATTERN, "▣  Build · Big Pickle")
 
+    def test_completion_marker_pattern_matches_agent_name_with_spaces(self):
+        # #806: OpenCode prints the agent's display name, which may contain spaces.
+        assert re.search(
+            COMPLETION_MARKER_PATTERN,
+            "▣  Sisyphus - Ultraworker · GLM-4-Plus (OpenAI-compatible) · 45.0s",
+        )
+        assert re.search(COMPLETION_MARKER_PATTERN, "▣  Code Reviewer · Big Pickle · 1m 8s")
+
+    def test_completion_marker_pattern_stays_on_one_line(self):
+        # A stray ▣ on an earlier line must not start a match that runs on to the
+        # next line's separator, or the marker's start moves up into the response.
+        text = "     ▣ first item\n     ▣  Build · Big Pickle · 3.1s"
+        matches = list(re.finditer(COMPLETION_MARKER_PATTERN, text))
+        assert len(matches) == 1
+        assert "\n" not in matches[0].group(0)
+
     def test_processing_footer_pattern_matches_esc_interrupt(self):
         assert re.search(PROCESSING_FOOTER_PATTERN, "⬝⬝⬝⬝  esc interrupt   ctrl+p commands")
 
@@ -247,6 +263,20 @@ class TestGetStatusFromScreen:
                 [
                     "Hello from OpenCode",
                     "▣  Build · Big Pickle · 7.2s",
+                    "tab agents  ctrl+p commands  • OpenCode",
+                ]
+            )
+            == TerminalStatus.COMPLETED
+        )
+
+    def test_completion_marker_with_spaced_agent_name_returns_completed(self):
+        provider = make_provider()
+
+        assert (
+            provider.get_status_from_screen(
+                [
+                    "Hello from OpenCode",
+                    "▣  Sisyphus - Ultraworker · GLM-4-Plus (OpenAI-compatible) · 45.0s",
                     "tab agents  ctrl+p commands  • OpenCode",
                 ]
             )
@@ -493,9 +523,20 @@ class TestExtractLastMessage:
 
 class TestInitialize:
     @pytest.fixture(autouse=True)
-    def installed_v1(self):
+    def installed_v1(self, tmp_path, monkeypatch):
         # This class exercises v1 chrome and commands without reading the
         # operator's installed version, config, or credentials.
+        from cli_agent_orchestrator.providers import opencode_cli
+
+        agents = tmp_path / "agents"
+        agents.mkdir()
+        (agents / "developer.md").write_text("---\ndescription: Developer\n---\nDevelop.\n")
+        monkeypatch.setattr(opencode_cli, "OPENCODE_AGENTS_DIR", agents)
+        monkeypatch.setattr(
+            opencode_cli,
+            "resolve_opencode_runtime",
+            lambda: ("/opt/bin/opencode", {"PATH": "/opt/bin:/usr/bin:/bin"}),
+        )
         with patch(
             "cli_agent_orchestrator.providers.opencode_cli.detect_opencode_major", return_value=1
         ):
@@ -739,3 +780,31 @@ async def test_native_idle_cannot_replace_initial_opencode_viewport(backend, mon
     backend.return_value.get_history.side_effect = ["shell prompt", "tab agents  ctrl+p commands"]
     assert await make_provider()._wait_for_initial_ready(timeout=2.0) is True
     assert backend.return_value.get_history.call_count == 2
+
+
+@pytest.mark.parametrize("screen", [False, True])
+def test_v2_country_refusal_is_a_provider_error(screen):
+    provider = make_provider()
+    provider._cli_major = 2
+    rows = [
+        "▪ oc mini v2.0.18 · ~",
+        "› Return this exact marker on its own line",
+        "This model is not available in your country",
+        "integration_opencode_cli · Fledge Alpha Free · Default / OpenCode · ctrl+p menu",
+    ]
+    status = (
+        provider.get_status_from_screen(rows) if screen else provider.get_status("\n".join(rows))
+    )
+    assert status == TerminalStatus.ERROR
+
+
+def test_v2_country_refusal_in_completed_response_does_not_override_completion():
+    provider = make_provider()
+    provider._cli_major = 2
+    rows = [
+        "This model is not available in your country",
+        "This quoted refusal is an example, not the current provider result.",
+        "developer · Kimi K3 · 2s",
+        "developer · Kimi K3 · OpenCode Go · ctrl+p menu",
+    ]
+    assert provider.get_status_from_screen(rows) == TerminalStatus.COMPLETED

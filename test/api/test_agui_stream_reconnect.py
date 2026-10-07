@@ -65,7 +65,7 @@ def test_last_event_id_replays_missed(monkeypatch):
     class _Log:
         def history(self, since=None, **kwargs):
             calls["history"] += 1
-            return []
+            return [_missed_event("cursor-42"), missed]
 
         def after_id(self, event_id, **kwargs):
             calls["after_id"].append(event_id)
@@ -80,10 +80,10 @@ def test_last_event_id_replays_missed(monkeypatch):
         assert resp.status_code == 200
         body = "".join(resp.iter_text())
 
-    # The after-id lookup was invoked with the header value, ``?since=`` history
-    # replay was NOT used, and the missed record was replayed exactly once.
-    assert calls["after_id"] == ["cursor-42"]
-    assert calls["history"] == 0
+    # One atomic retained-history snapshot validates/selects the suffix;
+    # the permissive after_id fallback is never used.
+    assert calls["after_id"] == []
+    assert calls["history"] == 1
     assert body.count("id: evt-missed") == 1
 
 
@@ -146,3 +146,53 @@ def test_no_cursor_does_not_replay(monkeypatch):
 
     assert calls["after_id"] == 0
     assert calls["history"] == 0
+
+
+def test_reconnect_uses_new_single_use_ticket_and_preserves_confirmed_cursor(monkeypatch):
+    missed = _missed_event()
+
+    class Log:
+        def history(self):
+            return [_missed_event("confirmed"), missed]
+
+        def after_id(self, cursor):
+            assert cursor == "confirmed"
+            return [missed]
+
+    monkeypatch.setattr("cli_agent_orchestrator.services.sse_bus.get_bus", lambda: _FakeBus([]))
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.event_log_service.get_event_log", lambda: Log()
+    )
+    for _ in range(2):
+        response = client.post("/agui/v1/stream/ticket")
+        assert response.status_code == 200
+        ticket = response.json()["ticket"]
+        stream = client.get(
+            "/agui/v1/stream", params={"ticket": ticket}, headers={"Last-Event-ID": "confirmed"}
+        )
+        assert stream.status_code == 200
+        assert stream.text.count("id: evt-missed") == 1
+        assert client.get("/agui/v1/stream", params={"ticket": ticket}).status_code == 401
+
+
+def test_explicit_cursor_replays_with_new_ticket_and_expired_cursor_is_visible(monkeypatch):
+    from cli_agent_orchestrator.services.event_log_service import EventLog
+
+    log = EventLog()
+    confirmed = log.append("launch", "one", "session", {})
+    missed = log.append("delegate", "two", "session", {})
+    monkeypatch.setattr("cli_agent_orchestrator.services.sse_bus.get_bus", lambda: _FakeBus([]))
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.event_log_service.get_event_log", lambda: log
+    )
+    issue = client.post("/agui/v1/stream/ticket", params={"cursor": confirmed["id"]})
+    assert issue.status_code == 200
+    response = client.get(
+        "/agui/v1/stream", params={"ticket": issue.json()["ticket"], "cursor": confirmed["id"]}
+    )
+    assert response.status_code == 200
+    assert f"id: {missed['id']}" in response.text
+    assert f"id: {confirmed['id']}" not in response.text
+    expired = client.post("/agui/v1/stream/ticket", params={"cursor": "unknown"})
+    assert expired.status_code == 409
+    assert expired.json()["detail"]["code"] == "event_cursor_expired"

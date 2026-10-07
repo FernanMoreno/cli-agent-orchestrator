@@ -1,0 +1,97 @@
+{
+  "identities": [
+    {
+      "instance_id": "bd0da7c5-f1df-4e20-9879-78c3b78c3002",
+      "process_generation": "34c59938-6cc3-4a35-957f-4b3248959677",
+      "pid": 934676,
+      "process_started_at": 1791333782.96,
+      "display_name": "local-acceptance-0",
+      "loopback_host": "127.0.0.1",
+      "loopback_port": 48069,
+      "public_key": "3SUWaOGqLgzzjvut25tHiXQr8zdIiF_bNgIqfG4ybc0"
+    },
+    {
+      "instance_id": "5c577177-f614-40c0-941d-a46f9045c145",
+      "process_generation": "38ba436b-13b3-4f01-afde-ad21e5220c00",
+      "pid": 934677,
+      "process_started_at": 1791333782.98,
+      "display_name": "local-acceptance-1",
+      "loopback_host": "127.0.0.1",
+      "loopback_port": 48209,
+      "public_key": "WQKGVMYIneqhhykWT-NpHP8S-24LRcwKrGCCbt_ICoI"
+    }
+  ],
+  "receipts": [
+    {
+      "task_id": "0666e227-4699-426b-980f-baef35c4c1a1",
+      "source_instance_id": "bd0da7c5-f1df-4e20-9879-78c3b78c3002",
+      "target_instance_id": "5c577177-f614-40c0-941d-a46f9045c145",
+      "requester_terminal_id": "deadbeef",
+      "project_id": "97280c194bdfc689e4b3b905b7e0e3955625fe66edfb053b039ff5d7f4bd5996",
+      "operation_key": "acceptance-0",
+      "assignment_id": "assignment_e8d869940c192e42200d5696882086eecd79d7bb9dfe2478a4c1760a6dbdde69",
+      "terminal_id": "5a1abd0b",
+      "state": "succeeded",
+      "result": {
+        "output": "hello",
+        "state": "succeeded",
+        "terminal_id": "5a1abd0b",
+        "terminal_status": "completed",
+        "worktree_path": null
+      },
+      "created_at": "2026-10-07T00:43:16.143502",
+      "updated_at": "2026-10-07T00:43:23.389785"
+    },
+    {
+      "task_id": "12ff14b1-2ee3-49b5-8c3f-c77555a0ff23",
+      "source_instance_id": "bd0da7c5-f1df-4e20-9879-78c3b78c3002",
+      "target_instance_id": "5c577177-f614-40c0-941d-a46f9045c145",
+      "requester_terminal_id": "deadbeef",
+      "project_id": "97280c194bdfc689e4b3b905b7e0e3955625fe66edfb053b039ff5d7f4bd5996",
+      "operation_key": "acceptance-1",
+      "assignment_id": "assignment_3c0ddf0ea5228b6710c5b7e6288aeb8064f675f1583a9c0a356175fe1473ec5f",
+      "terminal_id": "ef89d8b3",
+      "state": "failed",
+      "result": {
+        "output": "[NO RESPONSE - agent completed without producing a text response (8 lines in buffer)]\n\n\u001b[1m\u001b[32mfelni@WIN-QH1OQL1EDT5\u001b[0m:\u001b[1m\u001b[34m~/tmp-cao015-us1/pytest-of-felni/pytest-15/test_two_real_local_profiles_t0/project\u001b[0m$\n\u001b[1m\u001b[32mfelni@WIN-QH1OQL1EDT5\u001b[0m:\u001b[1m\u001b[34m~/tmp-cao015-us1/pytest-of-felni/pytest-15/test_two_real_local_profiles_t0/project\u001b[0m$ mock_cli --delay-ms 50\nMockCli ready.\n\u276f __mock_error__\nERROR: mock failure injected\n\u276f\n\u276f",
+        "state": "failed",
+        "terminal_id": "ef89d8b3",
+        "terminal_status": "error",
+        "worktree_path": null
+      },
+      "created_at": "2026-10-07T00:43:23.470810",
+      "updated_at": "2026-10-07T00:43:38.366928"
+    },
+    {
+      "task_id": "306f2899-52f6-4a38-b519-bb05c4b478f6",
+      "source_instance_id": "bd0da7c5-f1df-4e20-9879-78c3b78c3002",
+      "target_instance_id": "5c577177-f614-40c0-941d-a46f9045c145",
+      "requester_terminal_id": "deadbeef",
+      "project_id": "97280c194bdfc689e4b3b905b7e0e3955625fe66edfb053b039ff5d7f4bd5996",
+      "operation_key": "acceptance-2",
+      "assignment_id": "assignment_da48056669681ac5729f2424f9c1474b5097a28c4b23eb6d89579324fcfce163",
+      "terminal_id": "8312c12b",
+      "state": "cancelled",
+      "result": {
+        "state": "cancelled",
+        "terminal_id": "8312c12b",
+        "worker_stopped": true
+      },
+      "created_at": "2026-10-07T00:43:38.457020",
+      "updated_at": "2026-10-07T00:43:45.959537"
+    }
+  ],
+  "session_states": [
+    "empty",
+    "available",
+    "unavailable"
+  ],
+  "cancellation_lease_states": [
+    "reconcile",
+    "released"
+  ],
+  "revoked_submission_http_status": 403,
+  "offline_task_http_status": 503,
+  "project_file_sha256_before": "bb7006071d1c49b95099fbf94b365c58feaf1c3b1d5e3628c736e341c94ae47c",
+  "project_file_sha256_after": "bb7006071d1c49b95099fbf94b365c58feaf1c3b1d5e3628c736e341c94ae47c"
+}

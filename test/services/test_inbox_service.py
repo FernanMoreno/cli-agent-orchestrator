@@ -25,6 +25,16 @@ def _make_message(id=1, receiver_id="term-1", message="hello", status=MessageSta
 
 
 class TestDeliverPending:
+    @pytest.fixture(autouse=True)
+    def provider_fixture(self, monkeypatch):
+        provider = MagicMock()
+        provider.has_pending_native_swarm = False
+        provider.accepts_input_while_processing = False
+        monkeypatch.setattr(
+            "cli_agent_orchestrator.services.inbox_service.provider_manager.get_provider",
+            lambda _: provider,
+        )
+
     """Tests for InboxService.deliver_pending()."""
 
     @patch("cli_agent_orchestrator.services.inbox_service.update_message_status")

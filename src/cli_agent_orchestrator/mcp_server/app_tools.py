@@ -16,7 +16,8 @@ Tools implemented here:
 
 **HTTP-only boundary.** Every read of Backplane state goes through
 the FastAPI surface over ``API_BASE_URL`` (``requests``) or through process-local
-read-only services (``event_log_service``, ``ui_state_service``). This module — and
+read-only presentation services (``ui_state_service``). Fleet history comes
+from the API producer, never a separate MCP-process ring. This module — and
 all of ``mcp_server/`` — must never import ``clients.tmux`` or ``clients.database``;
 the guard test enforces it.
 
@@ -31,7 +32,9 @@ enforcement point.
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, TypeGuard
+from urllib.parse import urlencode
 
 import requests
 
@@ -53,7 +56,6 @@ from cli_agent_orchestrator.security.auth import (
     local_auth_misconfig_error,
 )
 from cli_agent_orchestrator.services.config_service import ConfigService
-from cli_agent_orchestrator.services.event_log_service import get_event_log
 from cli_agent_orchestrator.services.event_primitives import normalize_kind
 from cli_agent_orchestrator.services.ui_state_service import (
     build_agent_detail_snapshot,
@@ -78,7 +80,7 @@ __all__ = [
 
 # --- command-kind taxonomy for the choke point (mirrors SubmitCommandKind in types.ts) ---
 STANDARD_KINDS = frozenset({"send_message", "assign", "create_session"})
-LIFECYCLE_KINDS = frozenset({"interrupt", "pause", "resume"})
+LIFECYCLE_KINDS = frozenset({"interrupt", "pause", "resume", "verify_turn", "cancel_turn"})
 DESTRUCTIVE_KINDS = frozenset({"shutdown_session"})
 
 # Server-side backstop for oversized task payloads. The
@@ -138,6 +140,8 @@ def _extract_error_detail(response: "requests.Response", fallback: str) -> str:
     except ValueError:
         return fallback
     detail = payload.get("detail") if isinstance(payload, dict) else None
+    if isinstance(detail, dict):
+        detail = detail.get("message")
     return detail if isinstance(detail, str) and detail else fallback
 
 
@@ -219,23 +223,39 @@ def _render_agent_view_impl(terminal_id: str) -> Dict[str, Any]:
 
     terminal = _get_json(f"/terminals/{terminal_id}")
     output_tail = ""
+    output_error = None
     try:
         output = _get_json(f"/terminals/{terminal_id}/output", mode="last")
         if isinstance(output, dict):
             output_tail = output.get("output", "") or ""
-    except Exception:  # pragma: no cover - output is best-effort context
+    except Exception as exc:
         logger.debug("Could not fetch output tail for terminal %s", terminal_id, exc_info=True)
-    return build_agent_detail_snapshot(
+        response = getattr(exc, "response", None)
+        code = getattr(response, "status_code", None)
+        output_error = {
+            "kind": (
+                "internal_error" if isinstance(code, int) and code >= 500 else "output_unavailable"
+            ),
+            "message": "Output could not be captured; inspect the current turn",
+            "http_status": code if isinstance(code, int) else None,
+        }
+    snapshot = build_agent_detail_snapshot(
         terminal=terminal,
         scopes=get_scopes_for_local_token(),
         output_tail=output_tail,
     )
+    if output_error is not None:
+        snapshot["output_error"] = output_error
+    return snapshot
 
 
 def _cao_fetch_history_impl(limit: int = 500, kinds: Optional[List[str]] = None) -> Dict[str, Any]:
     """Replay the ring buffer, normalized to the six primitives, newest-last."""
 
-    raw = get_event_log().history(limit=limit, kinds=kinds)
+    snapshot = _get_json(
+        "/events/history", limit=limit, **({"kinds": ",".join(kinds)} if kinds else {})
+    )
+    raw = snapshot["events"]
     events: List[Dict[str, Any]] = []
     for event in raw:
         detail = event.get("detail", {}) or {}
@@ -246,18 +266,39 @@ def _cao_fetch_history_impl(limit: int = 500, kinds: Optional[List[str]] = None)
             events.append({**event, "kind": kind})
         else:
             events.append(event)
-    return {"events": events}
+    return {"events": events, "cursor": snapshot.get("cursor")}
 
 
-def _subscribe_events_impl() -> Dict[str, Any]:
+def _subscribe_events_impl(last_event_id: Optional[str] = None) -> Dict[str, Any]:
     """Return the SSE endpoint descriptor the iframe connects to for live events.
 
     The live stream is delivered over the FastAPI ``/events`` SSE route (not the
     tool channel); the iframe backfills gaps via ``cao_fetch_history``.
     """
 
+    if last_event_id:
+        snapshot = _get_json("/events/history", limit=500)
+        if not any(event.get("id") == last_event_id for event in snapshot["events"]):
+            return {
+                "resync_required": True,
+                "error": "event_cursor_expired",
+                "cursor": last_event_id,
+            }
+    response = requests.post(
+        f"{API_BASE_URL.rstrip('/')}/events/ticket",
+        headers=_auth_headers() or None,
+        timeout=_mcp_timeout(),
+        allow_redirects=False,
+    )
+    response.raise_for_status()
+    params = {"ticket": response.json()["ticket"]}
+    if last_event_id:
+        params["cursor"] = last_event_id
+    url = f"{API_BASE_URL.rstrip('/')}/events?{urlencode(params)}"
     return {
-        "sse_url": "/events",
+        "url": url,
+        "sse_url": url,
+        "cursor": last_event_id,
         "history_tool": "cao_fetch_history",
         "ring_capacity": 500,
     }
@@ -369,6 +410,24 @@ def _require(payload: Dict[str, Any], *keys: str) -> Optional[str]:
     return None
 
 
+def _is_turn_projection(value: Any) -> TypeGuard[dict[str, Any]]:
+    return (
+        isinstance(value, dict)
+        and value.get("state")
+        in {"none", "pending", "verifying", "reconcile", "verified", "cancelling", "cancelled"}
+        and isinstance(value.get("terminal_id"), str)
+        and (
+            value.get("generation") is None
+            or isinstance(value.get("generation"), str)
+            and re.fullmatch(r"[0-9a-f]{32}", value["generation"]) is not None
+        )
+        and isinstance(value.get("allowed_actions"), list)
+        and all(action in {"verify", "cancel"} for action in value["allowed_actions"])
+        and type(value.get("attempts")) is int
+        and value["attempts"] >= 0
+    )
+
+
 def _route_command(kind: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """Route an authorized command to its real Backplane mutation endpoint.
 
@@ -391,6 +450,33 @@ def _route_command(kind: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """
 
     try:
+        if kind in {"verify_turn", "cancel_turn"}:
+            terminal_id, generation = payload.get("terminal_id"), payload.get("generation")
+            if (
+                not isinstance(terminal_id, str)
+                or not re.fullmatch(r"[0-9a-f]{8}", terminal_id)
+                or not isinstance(generation, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", generation)
+            ):
+                return {
+                    "success": False,
+                    "kind": kind,
+                    "error": "valid terminal_id and generation required",
+                }
+            action = "verify" if kind == "verify_turn" else "cancel"
+            result = _post_json(
+                f"/terminals/{terminal_id}/turn/{action}", {"generation": generation}
+            )
+            if not _is_turn_projection(result) or result["terminal_id"] != terminal_id:
+                return {
+                    "success": False,
+                    "kind": kind,
+                    "error": "Invalid turn recovery response; inspect the current turn",
+                }
+            accepted = result.get("generation") == generation and result.get("state") == (
+                "verified" if action == "verify" else "cancelled"
+            )
+            return {"success": accepted, "kind": kind, "turn": result}
         if kind == "create_session":
             missing = _require(payload, "agent_profile")
             if missing:
@@ -479,6 +565,23 @@ def _route_command(kind: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     except requests.HTTPError as exc:  # pragma: no cover - exercised via mocked errors
         detail = str(exc)
         if exc.response is not None:
+            try:
+                body = exc.response.json()
+                turn = body.get("detail") if isinstance(body, dict) else None
+            except ValueError:
+                turn = None
+            if (
+                kind in {"verify_turn", "cancel_turn"}
+                and _is_turn_projection(turn)
+                and turn["terminal_id"] == payload.get("terminal_id")
+            ):
+                return {
+                    "success": False,
+                    "kind": kind,
+                    "turn": turn,
+                    "http_status": exc.response.status_code,
+                    "error": "Turn recovery was not accepted; inspect its current generation",
+                }
             detail = _extract_error_detail(exc.response, detail)
         logger.warning("submit_command routing failed for kind=%s: %s", kind, detail)
         return {"success": False, "kind": kind, "error": detail}
@@ -528,6 +631,9 @@ def register_app_tools(mcp: Any) -> bool:
             visibility=visibility,
             resource_uri=resource_uri,
         )
+        if visibility == ["app"]:
+            # Native FastMCP app lookup preserves app-only visibility and auth.
+            meta["fastmcp"] = {"app": "cao"}
         try:
             tool_decorator(name=name, meta=meta)(fn)
             return True
@@ -559,9 +665,9 @@ def register_app_tools(mcp: Any) -> bool:
         """Replay recent fleet events (six-primitive vocabulary, newest-last)."""
         return _cao_fetch_history_impl(limit=limit, kinds=kinds)
 
-    async def subscribe_events() -> Dict[str, Any]:
+    async def subscribe_events(last_event_id: Optional[str] = None) -> Dict[str, Any]:
         """Return the SSE endpoint descriptor for live events."""
-        return _subscribe_events_impl()
+        return _subscribe_events_impl(last_event_id=last_event_id)
 
     async def render_graph_view(
         provider: str, scope: Optional[str] = None, scope_id: Optional[str] = None

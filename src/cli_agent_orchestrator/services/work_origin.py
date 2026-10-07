@@ -1,5 +1,7 @@
 """Internal durable origin authority; no transport or native child is wired here."""
 
+from __future__ import annotations
+
 import hashlib
 import hmac
 import json
@@ -8,7 +10,7 @@ import secrets
 import sqlite3
 import time
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, cast
 from uuid import uuid4
 
 from pydantic import field_validator
@@ -19,8 +21,10 @@ from cli_agent_orchestrator.models.work_origin import (
     FrozenOriginModel,
     Identity,
     ManagedLineageIntent,
+    OriginAction,
     OriginAuthorization,
     OriginAuthorizationRef,
+    OriginKind,
     OriginSubjectRef,
     Positive,
     WorkAttemptRef,
@@ -35,6 +39,11 @@ from cli_agent_orchestrator.services.work_authority import (
 )
 from cli_agent_orchestrator.services.work_contract import ContractConflict, WorkContracts
 from cli_agent_orchestrator.services.work_delivery import WorkDeliveries
+
+if TYPE_CHECKING:
+    from cli_agent_orchestrator.services.work_admission import WorkAdmission
+    from cli_agent_orchestrator.services.work_service import WorkService
+    from cli_agent_orchestrator.services.work_workflow import WorkWorkflowOrigins
 
 
 class OriginDenied(PermissionError):
@@ -159,13 +168,13 @@ class WorkOriginAuthority:
         return value
 
     @classmethod
-    def _kind(cls, value: str) -> str:
+    def _kind(cls, value: str) -> OriginKind:
         if not isinstance(value, str) or value not in cls._KINDS:
             raise OriginDenied("origin kind is not supported")
-        return value
+        return cast(OriginKind, value)
 
     @classmethod
-    def _actions(cls, values) -> tuple[str, ...]:
+    def _actions(cls, values) -> tuple[OriginAction, ...]:
         if not isinstance(values, (set, frozenset, list, tuple)):
             raise OriginDenied("origin actions must be an explicit collection")
         actions = tuple(values)
@@ -175,7 +184,7 @@ class WorkOriginAuthority:
             or any(not isinstance(action, str) or action not in cls._ACTIONS for action in actions)
         ):
             raise OriginDenied("origin actions are invalid or contradictory")
-        return tuple(sorted(actions))
+        return cast(tuple[OriginAction, ...], tuple(sorted(actions)))
 
     @classmethod
     def _action(cls, value: str) -> str:
@@ -299,7 +308,9 @@ class WorkOriginAuthority:
                 )
             except sqlite3.IntegrityError as error:
                 raise OriginConflict("origin subject snapshot conflicts") from error
-        return OriginSubjectRef(subject_id=verified_subject.id, kind=kind, revision=revision)
+        return OriginSubjectRef(
+            subject_id=verified_subject.id, kind=cast(OriginKind, kind), revision=revision
+        )
 
     def authorize(
         self,
@@ -429,7 +440,7 @@ class WorkOriginAuthority:
             except sqlite3.IntegrityError as error:
                 raise OriginConflict("origin revocation snapshot conflicts") from error
         return OriginAuthorizationRef(
-            subject_id=subject.id, origin_kind=origin_kind, revision=revision
+            subject_id=subject.id, origin_kind=cast(OriginKind, origin_kind), revision=revision
         )
 
     def resolve(
@@ -496,8 +507,9 @@ class WorkOrigins:
         self.contracts = WorkContracts(repository)
         self._runtime_identity = object()
         self._handoff_secret = secrets.token_bytes(32)
-        self._admission = None
-        self._result_service = None
+        self._admission: WorkAdmission | None = None
+        self._result_service: WorkService | None = None
+        self._workflow_origins: WorkWorkflowOrigins | None = None
 
     def _bind_admission(self, admission) -> None:
         """Pair private origin tools with their one runtime admission owner."""
@@ -510,6 +522,18 @@ class WorkOrigins:
         ):
             raise OriginDenied("managed origin endpoint belongs to another Work runtime")
         self._admission = admission
+
+    def _bind_workflow_origins(self, origins) -> None:
+        """Retain the exact plan-owning workflow resolver across credential paths."""
+        from cli_agent_orchestrator.services.work_workflow import WorkWorkflowOrigins
+
+        if (
+            not isinstance(origins, WorkWorkflowOrigins)
+            or origins.repository is not self.repository
+            or (self._workflow_origins is not None and self._workflow_origins is not origins)
+        ):
+            raise OriginDenied("workflow resolver belongs to another Work runtime")
+        self._workflow_origins = origins
 
     def _bind_result_service(self, service) -> None:
         """Bind the artifact-owning result service for this private MCP endpoint."""
@@ -681,7 +705,7 @@ class WorkOrigins:
 
         if type(credential) is not bytes or len(credential) != 32:
             raise OriginDenied("attempt credential is invalid")
-        credentials = WorkAttemptCredentials(self.repository)
+        credentials = WorkAttemptCredentials(self.repository, origins=self)
         digest = hashlib.sha256(credential).hexdigest()
         try:
             with self.repository.read_snapshot() as connection:
@@ -761,14 +785,14 @@ class WorkOrigins:
                     raise OriginDenied("workflow result requires its separate receiver credential")
                 if set(arguments) != {"schema_version", "status", "output"}:
                     raise OriginDenied("workflow result arguments are invalid")
-                result = WorkflowStepResultV1.from_payload(arguments)
+                step_result = WorkflowStepResultV1.from_payload(arguments)
                 service = self._result_service
                 if service is None:
                     raise OriginDenied("managed workflow result owner is unavailable")
                 work = service.submit_workflow_step_result(
                     attempt_credential=credential,
                     receiver_credential=receiver_credential,
-                    result=result,
+                    result=step_result,
                 )
                 attempt = work["attempts"][-1]
                 result_summary = {
@@ -1229,15 +1253,15 @@ class WorkOrigins:
             WorkAttemptCredentials,
         )
 
-        credentials = WorkAttemptCredentials(self.repository)
+        credentials = WorkAttemptCredentials(self.repository, origins=self)
         try:
             with self.repository.transaction() as connection:
                 self.repository._verify(connection)
                 executor = credentials.authenticate_in_transaction(
-                    connection, attempt_credential, allow_finished=True
+                    connection, attempt_credential, allow_finished=True  # gitleaks:allow
                 )
                 receiver = credentials.authenticate_receiver_in_transaction(
-                    connection, receiver_credential, allow_finished=True
+                    connection, receiver_credential, allow_finished=True  # gitleaks:allow
                 )
                 if (
                     executor.attempt_id,
@@ -1377,7 +1401,7 @@ class WorkOrigins:
             raise OriginDenied("workflow receiver credential does not match its durable binding")
         self._require_workflow_receiver_action(connection, binding, action="task_received")
         if attempt["state"] in {"acknowledged", "running", "finished"}:
-            receipt = self.repository._workflow_step_task_received_receipt(
+            stored_receipt = self.repository._workflow_step_task_received_receipt(
                 connection, attempt_ref.attempt_id, attempt_ref.generation
             )
             acceptance = connection.execute(
@@ -1394,9 +1418,13 @@ class WorkOrigins:
                 delivery_hash=binding.delivery_hash,
             )
             if (
-                receipt is None
+                stored_receipt is None
                 or acceptance is None
-                or (receipt["binding_id"], receipt["delivery_id"], receipt["delivery_hash"])
+                or (
+                    stored_receipt["binding_id"],
+                    stored_receipt["delivery_id"],
+                    stored_receipt["delivery_hash"],
+                )
                 != (binding.binding_id, binding.delivery_id, binding.delivery_hash)
                 or acceptance["binding_id"] != binding.binding_id
                 or acceptance["acceptance_sha256"] != expected_hash
@@ -1672,9 +1700,9 @@ class WorkOrigins:
         """Read only the durable workflow binding for this exact Work attempt."""
         from cli_agent_orchestrator.services.work_workflow import WorkWorkflowOrigins
 
-        return WorkWorkflowOrigins(self.repository).read_binding_for_attempt(
-            attempt_id, generation, work_item_id, connection=connection
-        )
+        return (
+            self._workflow_origins or WorkWorkflowOrigins(self.repository)
+        ).read_binding_for_attempt(attempt_id, generation, work_item_id, connection=connection)
 
     def _require_workflow_receiver_action(self, connection, binding, *, action: str):
         """Revalidate one frozen receiver action against current subject/grant state."""
@@ -1751,7 +1779,7 @@ class WorkOrigins:
 
             try:
                 credential = WorkAttemptCredentials(
-                    self.repository
+                    self.repository, origins=self
                 ).authenticate_digest_in_transaction(connection, context.credential_sha256)
             except WorkAttemptCredentialRejected as error:
                 raise OriginDenied("attempt credential authority is no longer live") from error

@@ -48,7 +48,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from cli_agent_orchestrator.api.knowledge_routes import (
     legacy_graph_memory_operator,
@@ -99,8 +99,13 @@ from cli_agent_orchestrator.constants import (
     is_ws_origin_allowed,
 )
 from cli_agent_orchestrator.ext_apps import mount_widget_static
+from cli_agent_orchestrator.graph.cache import (
+    GRAPH_BUILD_MAX_S,
+    GraphBuildDeadlineError,
+    GraphBuildQueueFullError,
+)
 from cli_agent_orchestrator.graph.models import GraphView
-from cli_agent_orchestrator.graph.providers import GraphProvider, get_provider
+from cli_agent_orchestrator.graph.providers import GraphProvider, get_provider, list_providers
 
 # Import the sinks package for its import-time @register_sink side effects
 # ("okf", "obsidian", "graphml"); get_sink resolves by name from the registry.
@@ -118,7 +123,7 @@ from cli_agent_orchestrator.models.memory import (
 from cli_agent_orchestrator.models.terminal import Terminal, TerminalId, TerminalLimitError
 from cli_agent_orchestrator.models.workflow import RecoveryPolicy
 from cli_agent_orchestrator.plugins import PluginRegistry
-from cli_agent_orchestrator.providers.base import OutputExtractionError
+from cli_agent_orchestrator.providers.base import OutputExtractionError, TurnResultUnavailableError
 from cli_agent_orchestrator.providers.catalog import registered_provider_descriptors
 from cli_agent_orchestrator.providers.kiro_capabilities import (
     KiroCapabilityError,
@@ -200,6 +205,7 @@ from cli_agent_orchestrator.services.workflow_journal import (
 from cli_agent_orchestrator.services.worktree_service import WorktreeError
 from cli_agent_orchestrator.telemetry import init_telemetry, shutdown_telemetry
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile, resolve_provider
+from cli_agent_orchestrator.utils.forwarded_env import ForwardedEnvError, validate_forwarded_env
 from cli_agent_orchestrator.utils.logging import install_access_log_redaction, setup_logging
 from cli_agent_orchestrator.utils.skills import (
     SkillNameError,
@@ -410,6 +416,16 @@ class CreateSessionBody(CreateTerminalBody):
     group: Optional[List[str]] = None
     metadata: Optional[Dict] = None
 
+    @field_validator("env_vars")
+    @classmethod
+    def validate_env_vars(cls, value: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+        if value is None:
+            return value
+        try:
+            return validate_forwarded_env(value)
+        except ForwardedEnvError as exc:
+            raise ValueError(str(exc)) from None
+
     @field_validator("group")
     @classmethod
     def validate_group(cls, v: Optional[List[str]]) -> Optional[List[str]]:
@@ -523,6 +539,7 @@ class RunStepRequest(BaseModel):
 
     provider: str = Field(description="Provider type (e.g. 'kiro_cli', 'claude_code')")
     agent: str = Field(description="Agent profile name")
+    target_key: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$")
     prompt: str = Field(description="Prompt to send (caller applies any prompt shaping first)")
     session_name: Optional[str] = Field(
         default=None,
@@ -737,7 +754,14 @@ class RunStepResponse(BaseModel):
 class WorkflowValidateRequest(BaseModel):
     """Request body for ``POST /workflows/validate`` (Bolt 2, N2)."""
 
-    path: str = Field(description="Filesystem path to the workflow spec YAML file")
+    path: Optional[str] = None
+    name: Optional[str] = None
+    content: Optional[str] = Field(default=None, strict=True)
+
+
+class WorkflowCreateRequest(BaseModel):
+    name: str = Field(strict=True)
+    content: str = Field(strict=True)
 
 
 class WorkflowUpdateRequest(BaseModel):
@@ -772,6 +796,21 @@ class WorkflowRunRequest(BaseModel):
         default=None,
         description="Optional run id (matches WORKFLOW_NAME_RE); auto-generated if omitted",
     )
+
+    prepared_id: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    expected_plan_id: Optional[str] = Field(default=None, pattern=r"^plan-v2:[0-9a-f]{64}$")
+
+
+class WorkflowPrepareRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name_or_path: str
+    inputs: Dict = Field(default_factory=dict)
+    target_mappings: Dict
+    binding_selections: Dict
+    scope_source: Optional[str] = None
+    ttl_seconds: int = Field(default=3600, strict=True, ge=1, le=86400)
+    limits: Optional[Dict] = None
+    retry_policy: Optional[Dict] = None
 
 
 class ResumeRunRequest(BaseModel):
@@ -1430,12 +1469,23 @@ def _compose_managed_workflow_runtime(app: FastAPI, repository, gateway):
         admission = runtime._admission
         if runtime.repository is not repository or admission.repository is not repository:
             raise ValueError("managed workflow runtime must share the gateway repository")
-        workflow_origins = WorkWorkflowOrigins(repository)
+        from cli_agent_orchestrator.services.work_workflow_plans import WorkWorkflowPlans
+
+        plans = WorkWorkflowPlans(repository)
+        plans.initialize()
+        workflow_origins = WorkWorkflowOrigins(repository, plans=plans)
+        plans.origins = workflow_origins
         workflow_origins._bind_admission(admission)
         if admission.workflow_origins not in (None, workflow_origins):
             raise ValueError("managed workflow origin belongs to another Work admission")
         admission.workflow_origins = workflow_origins
         runtime.workflow_origins = workflow_origins
+        runtime.origins._bind_workflow_origins(workflow_origins)
+        if admission.origins not in (None, runtime.origins):
+            raise ValueError("managed receipt origin belongs to another Work admission")
+        admission.origins = runtime.origins
+        runtime.origins._bind_admission(admission)
+        admission.attempt_credentials.bind_origins(runtime.origins)
 
         result_artifacts = ImmutableResultStore(
             repository.path.with_name(repository.path.name + ".result-content")
@@ -1444,6 +1494,7 @@ def _compose_managed_workflow_runtime(app: FastAPI, repository, gateway):
             repository,
             origins=runtime.origins,
             artifacts=result_artifacts,
+            workflow_origins=workflow_origins,
         )
         projector = WorkflowStepProjector(repository, workflow_origins, result_service)
     except Exception:
@@ -1460,13 +1511,23 @@ async def _initialize_managed_workflow_runtime(app: FastAPI, repository, gateway
     """Compose and run durable result projection before serving requests."""
     projector = _compose_managed_workflow_runtime(app, repository, gateway)
     await asyncio.to_thread(projector.project_pending_at_startup)
+    from cli_agent_orchestrator.services.work_coordinator import WorkCoordinator
+    from cli_agent_orchestrator.services.workflow_continuation_driver import (
+        WorkflowContinuationDriver,
+    )
+
+    driver = WorkflowContinuationDriver(app.state.work_workflow_origins.plans, projector)
+    app.state.workflow_continuation_driver = driver
+    app.state.workflow_coordinator = WorkCoordinator(app.state.work_workflow_origins.plans, driver)
     return projector
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
+    _start_graph_builds(app)
     from cli_agent_orchestrator.api.browser_auth_routes import configure_browser_auth
+
     configure_browser_auth(app)
     from cli_agent_orchestrator.services.work_launch_mode import managed_launch_required
 
@@ -1503,7 +1564,9 @@ async def lifespan(app: FastAPI):
             exc_info=True,
         )
     registry = PluginRegistry()
+    local_peer_registered = False
     startup_tasks: list[asyncio.Task] = []
+    deferred_init_recovery_task: Optional[asyncio.Task] = None
     herdr_service_registered = False
     work_dispatcher_task: Optional[asyncio.Task] = None
     owned_work_runtime: Dict[str, Any] = {}
@@ -1516,6 +1579,7 @@ async def lifespan(app: FastAPI):
     async def shutdown_lifespan_resources(*, best_effort: bool) -> None:
         # A stopped lifespan must not leave capability/result owners attached to
         # a store that a later lifespan or test has replaced.
+        await asyncio.to_thread(fifo_manager.stop_all_readers)
         for name, owner in owned_work_runtime.items():
             if getattr(app.state, name, None) is owner:
                 delattr(app.state, name)
@@ -1559,6 +1623,11 @@ async def lifespan(app: FastAPI):
         await shutdown_lifespan_resources(best_effort=True)
 
     try:
+        # Resolve previous-process launch ownership before ghost cleanup starts.
+        if not await terminal_service.recover_interrupted_deferred_init_external_owners():
+            deferred_init_recovery_task = start_lifespan_task(
+                terminal_service.retry_interrupted_deferred_init_external_owners()
+            )
         await registry.load()
         app.state.plugin_registry = registry
 
@@ -1584,6 +1653,14 @@ async def lifespan(app: FastAPI):
         log_writer_task = start_lifespan_task(log_writer.run())
         inbox_service_task = start_lifespan_task(inbox_service.run(registry))
         logger.info("Event bus consumers started (StatusMonitor, LogWriter, InboxService)")
+        from cli_agent_orchestrator.services.late_turn_observer import run as observe_late_turns
+
+        late_turn_observer_task = start_lifespan_task(observe_late_turns())
+        from cli_agent_orchestrator.services.terminal_observation_recovery import (
+            run as restore_native_observation,
+        )
+
+        observation_recovery_task = start_lifespan_task(restore_native_observation())
 
         # Start ApprovalBridge when AG-UI surface is enabled
         approval_bridge_task: Optional[asyncio.Task] = None
@@ -1695,7 +1772,64 @@ async def lifespan(app: FastAPI):
                 logger.warning("Startup cleanup failed", exc_info=True)
         raise
 
-    yield
+    from cli_agent_orchestrator.services.local_peer_identity import LocalPeerUnavailableError
+    from cli_agent_orchestrator.services.local_peer_registry import (
+        ProfileAlreadyRunningError,
+        register_instance,
+        unregister_instance,
+    )
+
+    try:
+        await asyncio.to_thread(register_instance)
+        local_peer_registered = True
+    except LocalPeerUnavailableError as error:
+        logger.info("Local CAO peer discovery is disabled: %s", error)
+    except ProfileAlreadyRunningError:
+        raise
+    except Exception:
+        # Peer discovery is optional; a damaged per-user registry must not stop
+        # ordinary single-instance CAO use.
+        logger.warning("Could not publish local CAO peer identity", exc_info=True)
+
+    try:
+        from cli_agent_orchestrator.services.local_peer_service import (
+            reconcile_local_peer_tasks_at_startup,
+        )
+
+        await asyncio.to_thread(reconcile_local_peer_tasks_at_startup)
+    except Exception:
+        logger.warning("Could not reconcile local CAO peer tasks at startup", exc_info=True)
+
+    continuation_driver = getattr(app.state, "workflow_continuation_driver", None)
+    continuation_task = (
+        asyncio.create_task(continuation_driver.serve()) if continuation_driver else None
+    )
+    try:
+        yield
+    finally:
+        if local_peer_registered:
+            try:
+                await asyncio.to_thread(unregister_instance)
+            except Exception:
+                logger.warning("Could not remove local CAO peer identity", exc_info=True)
+        if continuation_driver is not None:
+            await continuation_driver.shutdown()
+        if continuation_task is not None:
+            continuation_task.cancel()
+            await asyncio.gather(continuation_task, return_exceptions=True)
+        await _shutdown_graph_builds(app)
+        from cli_agent_orchestrator.runtime_channel.server import (
+            shutdown as shutdown_runtime_channel,
+        )
+
+        await shutdown_runtime_channel()
+        observation_recovery_task.cancel()
+        await asyncio.gather(observation_recovery_task, return_exceptions=True)
+        late_turn_observer_task.cancel()
+        await asyncio.gather(late_turn_observer_task, return_exceptions=True)
+        if deferred_init_recovery_task is not None:
+            deferred_init_recovery_task.cancel()
+            await asyncio.gather(deferred_init_recovery_task, return_exceptions=True)
 
     # Stop herdr inbox service on shutdown
     if herdr_inbox_task is not None:
@@ -1794,9 +1928,36 @@ app = FastAPI(
     lifespan=lifespan,
 )
 from cli_agent_orchestrator.api.browser_auth_routes import router as browser_auth_router
+
 app.include_router(browser_auth_router)
+from cli_agent_orchestrator.api.local_coordination_routes import router as local_coordination_router
+
+app.include_router(local_coordination_router)
 app.include_router(work_router)
 app.include_router(knowledge_router)
+from cli_agent_orchestrator.runtime_channel.server import router as runtime_router
+
+app.include_router(runtime_router)
+from cli_agent_orchestrator.runtime_channel.registry import RemoteRuntimeError
+
+
+def remote_error_detail(exc):
+    uncertain = exc.status_code == 504
+    return {
+        "code": (
+            "remote_outcome_unknown"
+            if uncertain
+            else "remote_unavailable" if exc.status_code == 503 else "remote_command_failed"
+        ),
+        "message": str(exc),
+        "action": "reconcile" if uncertain else "inspect",
+        "delivery_may_have_occurred": uncertain,
+    }
+
+
+@app.exception_handler(RemoteRuntimeError)
+async def remote_runtime_error_handler(request, exc):
+    return JSONResponse(status_code=exc.status_code, content={"detail": remote_error_detail(exc)})
 
 
 _WORK_LAUNCH_UNAVAILABLE_DETAIL = {
@@ -1895,6 +2056,7 @@ async def get_work_launch_principal(
     """Adapt only this work ingress's identity failure to its durable error envelope."""
     try:
         from cli_agent_orchestrator.security.auth import browser_principal
+
         browser = await asyncio.to_thread(browser_principal, request, authorization)
         if browser is not None:
             return browser
@@ -1976,7 +2138,7 @@ def create_work_launch(
                 "required_action": "authenticate",
             },
         )
-    if not getattr(principal, "scopes", frozenset()) & {SCOPE_WRITE, SCOPE_ADMIN}:
+    if not principal.scopes & {SCOPE_WRITE, SCOPE_ADMIN}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
@@ -2010,7 +2172,7 @@ def create_work_launch(
             raise _work_launch_internal_error()
         raise HTTPException(
             status_code=_WORK_LAUNCH_ERROR_STATUS.get(
-                detail["code"], status.HTTP_503_SERVICE_UNAVAILABLE
+                str(detail["code"]), status.HTTP_503_SERVICE_UNAVAILABLE
             ),
             detail=detail,
         )
@@ -2095,7 +2257,7 @@ class WorkLaunchBodyLimitMiddleware:
             if not replayed:
                 replayed = True
                 return {"type": "http.request", "body": body, "more_body": False}
-            return await receive()
+            return dict(await receive())
 
         await self.app(scope, replay_receive, send)
 
@@ -2145,6 +2307,7 @@ class OriginCheckMiddleware:
 # docstring; the guard must sit INSIDE TrustedHostMiddleware's Host validation
 # (add_middleware stacks last-added outermost). The body limit is innermost.
 from cli_agent_orchestrator.api.browser_auth_routes import BrowserSessionLifetimeMiddleware
+
 app.add_middleware(BrowserSessionLifetimeMiddleware)
 app.add_middleware(WorkLaunchBodyLimitMiddleware)
 app.add_middleware(OriginCheckMiddleware)
@@ -2220,7 +2383,7 @@ async def oauth_protected_resource_metadata():
 
 
 @app.get("/health")
-async def health_check():
+def health_check():
     import shutil
 
     from cli_agent_orchestrator.backends.herdr_backend import HerdrBackend
@@ -2304,31 +2467,212 @@ def _require_agui_enabled() -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AG-UI surface disabled")
 
 
-@app.get("/events")
-async def events_stream(
-    _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
+def _transport_subject(request: Request | WebSocket, *, require_identity: bool = False) -> str:
+    from cli_agent_orchestrator.security.auth import browser_principal
+
+    authorization = request.headers.get("authorization")
+    browser = browser_principal(request, authorization)
+    if browser is not None:
+        return browser.id
+    if is_auth_enabled():
+        token = _extract_bearer(authorization)
+        if not token:
+            raise HTTPException(401, "missing bearer token", headers={"WWW-Authenticate": "Bearer"})
+        if not require_identity:
+            return "bearer-" + hashlib.sha256(token.encode()).hexdigest()
+        try:
+            return principal_from_token(token).id
+        except Exception as exc:
+            raise HTTPException(401, "invalid transport identity") from exc
+    return "local-operator"
+
+
+def _transport_validator(request: Request | WebSocket, required, *, require_identity: bool = False):
+    subject = _transport_subject(request, require_identity=require_identity)
+
+    async def validate():
+        scopes = await get_current_scopes(request.headers.get("authorization"), request)
+        if _transport_subject(request, require_identity=require_identity) != subject:
+            raise HTTPException(401, "transport identity changed")
+        if not any(scope in scopes for scope in required):
+            raise HTTPException(403, "insufficient transport scope")
+        return scopes
+
+    return subject, validate
+
+
+async def _stream_authorization(request: Request | WebSocket, resource: str, required):
+    from cli_agent_orchestrator.services.event_stream_ticket import store
+
+    if any(key in request.query_params for key in ("access_token", "token")):
+        raise HTTPException(401, "reusable query credentials are not accepted")
+    if "ticket" in request.query_params:
+        try:
+            record = store.consume(request.query_params["ticket"], resource)
+        except ValueError as exc:
+            raise HTTPException(401, "invalid transport ticket") from exc
+        validate = record.validate
+    else:
+        _, validate = _transport_validator(request, required)
+    await validate()
+    return validate
+
+
+async def _authorized_live_events(bus, sub, validate):
+    """Check idle connections too without cancelling the pending queue read."""
+    iterator = bus.drain(sub).__aiter__()
+    pending = None
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.create_task(iterator.__anext__())
+            ready, _ = await asyncio.wait({pending}, timeout=1.0)
+            await validate()
+            if not ready:
+                yield {"__heartbeat__": True}
+                continue
+            try:
+                event = pending.result()
+            except StopAsyncIteration:
+                return
+            pending = None
+            yield event
+    except HTTPException:
+        return
+    finally:
+        if pending is not None:
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+        await iterator.aclose()
+
+
+async def _issue_transport_ticket(
+    request: Request, resource: str, required, *, cursor: Optional[str] = None
 ):
-    """Stream live, normalized fleet events to the iframe as Server-Sent Events.
+    from cli_agent_orchestrator.services.event_stream_ticket import store
 
-    Events come from the in-process ``SseBus`` (fed by the ``EventLogPublisher``
-    plugin). The bus is drop-on-slow with a bounded per-subscriber queue, so one
-    stalled iframe never applies back-pressure to the orchestration core; gaps are
-    backfilled by the client via ``/events/history`` / ``cao_fetch_history``.
+    origin = request.headers.get("origin")
+    expected = f"{request.url.scheme}://{request.url.netloc}"
+    trusted_origins = {value for value in CORS_ORIGINS if value != "*"}
+    if origin is not None and origin != expected and origin not in trusted_origins:
+        raise HTTPException(403, "ticket Origin not allowed")
+    subject, validate = _transport_validator(request, required, require_identity=True)
+    await validate()
+    if cursor:
+        _require_retained_event_cursor(cursor, allow_derived=resource == "/agui/v1/stream")
+    try:
+        ticket = store.issue(subject, resource, validate)
+    except ValueError as exc:
+        raise HTTPException(503, "transport ticket capacity exhausted") from exc
+    from fastapi.responses import JSONResponse
 
-    Default-off: returns 404 unless ``CAO_MCP_APPS_ENABLED`` is set, so the fleet
-    event timeline (terminal ids, session names, routing/topology metadata) is
-    never exposed when the surface is disabled. When auth is enabled, any of
-    ``cao:read`` / ``cao:write`` / ``cao:admin`` is required (read is the floor).
-    """
+    return JSONResponse({"ticket": ticket, "expires_in": 30}, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/events/ticket")
+async def events_ticket(request: Request):
     _require_mcp_apps_enabled()
+    return await _issue_transport_ticket(request, "/events", (SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN))
 
+
+def _retained_event_replay(log, cursor: str, *, allow_derived: bool = False):
+    # history copies the bounded ring under its lock. Validate and select from
+    # ONE snapshot so eviction cannot occur between those two decisions.
+    records = log.history()
+    parent, _, suffix = cursor.rpartition(".")
+    for index, event in enumerate(records):
+        if event.get("id") == cursor:
+            return records[index + 1 :]
+        if allow_derived and suffix.isdigit() and event.get("id") == parent:
+            # The cursor names an intermediate frame; replay its full record.
+            return records[index:]
+    raise HTTPException(
+        409,
+        detail={
+            "code": "event_cursor_expired",
+            "message": "Reload retained history before reconnecting.",
+        },
+    )
+
+
+def _require_retained_event_cursor(cursor: Optional[str], *, allow_derived: bool = False):
+    if cursor:
+        from cli_agent_orchestrator.services.event_log_service import get_event_log
+
+        _retained_event_replay(get_event_log(), cursor, allow_derived=allow_derived)
+
+
+def _cursor_expired_frame():
+    return 'event: cursor_expired\ndata: {"code":"event_cursor_expired","resync_required":true}\n\n'
+
+
+@app.post("/agui/v1/stream/ticket")
+async def agui_ticket(request: Request, cursor: Optional[str] = None):
+    _require_agui_enabled()
+    return await _issue_transport_ticket(
+        request, "/agui/v1/stream", (SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN), cursor=cursor
+    )
+
+
+@app.post("/terminals/{terminal_id}/ws/ticket")
+async def terminal_ticket(request: Request, terminal_id: str):
+    return await _issue_transport_ticket(
+        request, f"/terminals/{terminal_id}/ws", (SCOPE_WRITE, SCOPE_ADMIN)
+    )
+
+
+@app.get("/events")
+async def events_stream(request: Request, cursor: Optional[str] = None):
+    """Subscribe before replay; every frame carries the shared event-log cursor."""
+    _require_mcp_apps_enabled()
+    validate = await _stream_authorization(
+        request, "/events", (SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)
+    )
     from fastapi.responses import StreamingResponse
 
+    from cli_agent_orchestrator.services.event_log_service import get_event_log
     from cli_agent_orchestrator.services.sse_bus import get_bus
 
+    cursor = cursor or request.headers.get("last-event-id")
+    if cursor and not any(event["id"] == cursor for event in get_event_log().history()):
+        raise HTTPException(
+            409,
+            detail={
+                "code": "event_cursor_expired",
+                "message": "Reload retained history before reconnecting.",
+            },
+        )
+
     async def event_generator():
-        async for event in get_bus().subscribe():
-            yield f"data: {json.dumps(event)}\n\n"
+        bus = get_bus()
+        sub = bus.register(overflow_close=True)
+        seen = set()
+        try:
+            try:
+                replay = (
+                    _retained_event_replay(get_event_log(), cursor)
+                    if cursor
+                    else get_event_log().history()
+                )
+            except HTTPException:
+                yield _cursor_expired_frame()
+                return
+            for event in replay:
+                await validate()
+                seen.add(event["id"])
+                yield f"id: {event['id']}\ndata: {json.dumps(event)}\n\n"
+            async for event in _authorized_live_events(bus, sub, validate):
+                await validate()
+                if event.get("__heartbeat__"):
+                    yield ": keep-alive\n\n"
+                    continue
+                if event.get("id") in seen:
+                    continue
+                yield f"id: {event['id']}\ndata: {json.dumps(event)}\n\n"
+        except HTTPException:
+            return
+        finally:
+            bus.unregister(sub)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -2370,25 +2714,21 @@ async def events_history(
                 ),
             )
     events = get_event_log().history(limit=limit, since=since, kinds=kinds_filter)
-    return {"events": events}
+    return {"events": events, "cursor": events[-1]["id"] if events else None}
 
 
 @app.get("/agui/v1/stream")
 async def agui_stream(
     request: Request,
+    cursor: Optional[str] = Query(
+        default=None, description="Confirmed event ID for fresh-ticket reconnects."
+    ),
     since: Optional[str] = Query(
         default=None,
         description=(
             "ISO-8601 lower bound. When set, buffered events after this "
             "timestamp are replayed (as AG-UI frames) before the live stream; "
             "clients dedupe by event id."
-        ),
-    ),
-    access_token: Optional[str] = Query(
-        default=None,
-        description=(
-            "JWT for auth-enabled mode. Native EventSource cannot set an "
-            "Authorization header, so the token travels as this query parameter."
         ),
     ),
     last_event_id: Optional[str] = Header(
@@ -2417,39 +2757,18 @@ async def agui_stream(
 
     Default-off: returns 404 unless the AG-UI surface is enabled via
     ``CAO_AGUI_ENABLED`` (or the MCP Apps surface is on). When auth is enabled,
-    a ``cao:read``-bearing JWT must be supplied via ``?access_token=`` (native
-    EventSource cannot send Authorization headers).
+    a current read-capable header or browser session is required; native
+    EventSource callers obtain a fresh single-use ticket before each attach.
     """
     _require_agui_enabled()
 
-    # Auth: query-parameter token (EventSource can't set headers). Default-off
-    # (no AUTH0_DOMAIN / CAO_AUTH_JWKS_URI) grants the full scope set.
-    if is_auth_enabled():
-        if "authorization" in request.headers or access_token is None:
-            scopes = await get_current_scopes(request.headers.get("authorization"), request)
-        else:
-            scopes = None
-        try:
-            if scopes is None:
-                scopes = extract_scopes_from_token(access_token)
-        except HTTPException:
-            raise
-        except Exception:
-            # PyJWTError subclasses (malformed/expired/bad signature) or a JWKS
-            # fetch failure. Fails closed either way; map to a clean 401 instead
-            # of an opaque 500 so auth telemetry stays trustworthy.
-            logger.info("agui_stream: token validation failed", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="invalid or expired access_token",
-            )
-        if not any(s in scopes for s in (SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="insufficient scope (cao:read required)",
-            )
-    else:
-        scopes = [SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN]
+    validate = await _stream_authorization(
+        request, "/agui/v1/stream", (SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)
+    )
+    scopes = await validate()
+    if cursor and not since:
+        _require_retained_event_cursor(cursor, allow_derived=True)
+        last_event_id = cursor
 
     # Validate ?since= as ISO-8601 before streaming starts (L1 Cleanup B).
     # A malformed value must produce HTTP 400 immediately rather than being
@@ -2468,7 +2787,6 @@ async def agui_stream(
 
     from fastapi.responses import StreamingResponse
 
-    from cli_agent_orchestrator.clients.database import list_terminals_by_session
     from cli_agent_orchestrator.services import session_service
     from cli_agent_orchestrator.services.agui.lifecycle_tracker import ToolCallLifecycleTracker
     from cli_agent_orchestrator.services.agui_stream import (
@@ -2477,6 +2795,7 @@ async def agui_stream(
         to_agui_event,
     )
     from cli_agent_orchestrator.services.event_log_service import get_event_log
+    from cli_agent_orchestrator.services.session_service import list_current_session_terminals
     from cli_agent_orchestrator.services.sse_bus import get_bus
     from cli_agent_orchestrator.services.ui_state_service import build_dashboard_snapshot
 
@@ -2491,7 +2810,7 @@ async def agui_stream(
         terminals: List[Dict] = []
         for sess in sessions:
             try:
-                terminals.extend(list_terminals_by_session(sess["id"]))
+                terminals.extend(list_current_session_terminals(sess["id"], backend_exists=True))
             except Exception:
                 logger.debug("agui_stream: terminal listing failed for %s", sess.get("id"))
         return build_dashboard_snapshot(sessions, terminals, list(scopes))
@@ -2515,9 +2834,9 @@ async def agui_stream(
         So we give the intermediate frames unique derived ids (``<rid>.<i>``)
         and keep the canonical record id on the *last* frame. A normal
         end-of-record reconnect therefore still sends a real event-log id and
-        resumes precisely via ``after_id``; a mid-record drop reconnects with a
-        derived id that ``after_id`` won't find, which safely replays every
-        fresh record (the client dedupes) rather than silently skipping frames.
+        resumes after the canonical record in one retained-history snapshot.
+        A mid-record drop replays its parent record and subsequent records;
+        the client dedupes frame ids. An evicted parent signals explicit resync.
         Single-frame records are unchanged -- they keep the bare record id.
         """
 
@@ -2549,11 +2868,12 @@ async def agui_stream(
         tracker = ToolCallLifecycleTracker()
         try:
             replayed_ids: set = set()
+            await validate()
 
             # Optional replay. Precedence: an explicit ``?since=`` timestamp wins;
             # otherwise a native-EventSource ``Last-Event-ID`` reconnect replays
-            # the records buffered after that id. Either way, re-emit the
-            # buffered history as AG-UI frames and remember the ids so the live
+            # the records buffered after that id using a strict retained snapshot.
+            # Either way, re-emit history as AG-UI frames and remember the ids so the live
             # drain skips the overlap. Failure-isolated: a log hiccup logs and
             # falls through to the live stream rather than 500-ing.
             try:
@@ -2561,15 +2881,22 @@ async def agui_stream(
                 if since:
                     replay_records = get_event_log().history(since=since)
                 elif last_event_id:
-                    replay_records = get_event_log().after_id(last_event_id)
+                    replay_records = _retained_event_replay(
+                        get_event_log(), last_event_id, allow_derived=True
+                    )
                 if replay_records is not None:
                     for record in replay_records:
+                        await validate()
                         rid = record.get("id")
                         if rid is not None:
                             replayed_ids.add(rid)
                         rtype, rdata = to_agui_event(record)
                         for frame in _sse_frames(rid, list(tracker.feed(record, (rtype, rdata)))):
                             yield frame
+            except HTTPException as exc:
+                if exc.status_code == 409:
+                    yield _cursor_expired_frame()
+                return
             except Exception:
                 logger.warning("agui_stream: history replay failed", exc_info=True)
 
@@ -2578,9 +2905,12 @@ async def agui_stream(
             # RFC-6902 STATE_DELTA patches after each fleet event.
             prev_snapshot: Optional[Dict] = None
             try:
+                await validate()
                 prev_snapshot = _fleet_snapshot()
                 agui_type, data = state_snapshot_frame(prev_snapshot)
                 yield _sse(None, agui_type, data)
+            except HTTPException:
+                return
             except Exception:
                 logger.warning("agui_stream: initial STATE_SNAPSHOT failed", exc_info=True)
 
@@ -2589,7 +2919,10 @@ async def agui_stream(
             # the stream cleanly in tests. On overflow the drain closes so the
             # client reconnects (F2); cancellation on client disconnect
             # propagates through the ``finally`` that unregisters the subscriber.
-            async for event in bus.drain(sub):
+            async for event in _authorized_live_events(bus, sub, validate):
+                if event.get("__heartbeat__"):
+                    yield ": keep-alive\n\n"
+                    continue
                 rid = event.get("id")
                 # Skip the replay/live overlap so a reconnecting client that
                 # passed ``?since=`` never sees an event twice.
@@ -2869,15 +3202,15 @@ async def agui_run(
 
     # Build the snapshot function
     def _fleet_snapshot() -> Dict:
-        from cli_agent_orchestrator.clients.database import list_terminals_by_session
         from cli_agent_orchestrator.services import session_service
+        from cli_agent_orchestrator.services.session_service import list_current_session_terminals
         from cli_agent_orchestrator.services.ui_state_service import build_dashboard_snapshot
 
         sessions = session_service.list_sessions()
         terminals: List[Dict] = []
         for sess in sessions:
             try:
-                terminals.extend(list_terminals_by_session(sess["id"]))
+                terminals.extend(list_current_session_terminals(sess["id"], backend_exists=True))
             except Exception:
                 pass
         return build_dashboard_snapshot(sessions, terminals, list(_scopes))
@@ -3684,7 +4017,10 @@ async def list_agent_plugins(
     running work. The read floor rather than write/admin, because read-only
     callers — the web panel, a status script — are exactly who this is for.
     """
-    from cli_agent_orchestrator.agent_plugins.installer import affected_sessions_by_plugin
+    from cli_agent_orchestrator.agent_plugins.installer import (
+        affected_sessions_by_plugin,
+        review_installed,
+    )
     from cli_agent_orchestrator.agent_plugins.store import InstalledPluginStore
 
     store = InstalledPluginStore()
@@ -3704,6 +4040,7 @@ async def list_agent_plugins(
     plugins = []
     for record in store.list_installed():
         entry = record.to_dict()
+        entry["review"] = review_installed(record.name, store=store)
         entry["affected_sessions"] = [
             session.to_dict() for session in affected_by_plugin.get(record.name, [])
         ]
@@ -4107,6 +4444,10 @@ async def delete_session(
         validate_tmux_name(session_name, "session_name")
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    from cli_agent_orchestrator.constants import SESSION_PREFIX
+
+    if not session_name.startswith(SESSION_PREFIX):
+        session_name = f"{SESSION_PREFIX}{session_name}"
     try:
         # Off the event loop: teardown is fully synchronous (tmux kills, FIFO
         # cleanup, DB writes) and has wedged the whole server — /health
@@ -4298,7 +4639,14 @@ async def create_terminal_in_session(
         # Both subclass ValueError, so they must precede the generic arm below —
         # a rejected engine is a bad request, not a missing resource. Matches
         # POST /sessions, which already returns 400 for the identical failure.
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                {"code": e.code, "profile_field": e.profile_field, "message": str(e)}
+                if isinstance(e, KiroPhase0KASError) and e.code != "kas-unavailable"
+                else str(e)
+            ),
+        )
     except TerminalLimitError as e:
         # Node is at its tracked-terminal cap (CAO_MAX_TERMINALS) — a capacity
         # rejection, not a bad request or a missing session: the caller should
@@ -4339,9 +4687,9 @@ async def list_terminals_in_session(session_name: str) -> List[Dict]:
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     try:
-        from cli_agent_orchestrator.clients.database import list_terminals_by_session
+        from cli_agent_orchestrator.services.session_service import list_current_session_terminals
 
-        return list_terminals_by_session(session_name)
+        return list_current_session_terminals(session_name)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -4594,10 +4942,14 @@ async def get_terminal_memory_context(
 async def get_terminal_working_directory(terminal_id: TerminalId) -> WorkingDirectoryResponse:
     """Get the current working directory of a terminal's pane."""
     try:
-        working_directory = terminal_service.get_working_directory(terminal_id)
+        working_directory = await asyncio.to_thread(
+            terminal_service.get_working_directory, terminal_id
+        )
         return WorkingDirectoryResponse(working_directory=working_directory)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except RemoteRuntimeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=remote_error_detail(exc)) from exc
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -4620,7 +4972,7 @@ async def send_terminal_input(
         # off the event loop so a slow tmux call can't freeze every other
         # request — including /health and concurrent assign/handoff. Same
         # hazard class as issue #382 (only fixed for DELETE /sessions there).
-        success = await asyncio.to_thread(
+        turn_sequence = await asyncio.to_thread(
             terminal_service.send_input,
             terminal_id,
             message,
@@ -4628,7 +4980,7 @@ async def send_terminal_input(
             sender_id=sender_id,
             orchestration_type=orchestration_type,
         )
-        return {"success": success}
+        return {"success": bool(turn_sequence), "turn_sequence": turn_sequence}
     except WorkOwnedTerminalError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
     except WorkOwnershipStoreUnavailableError as e:
@@ -4651,6 +5003,8 @@ async def send_terminal_input(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except RemoteRuntimeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=remote_error_detail(exc)) from exc
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -4688,11 +5042,66 @@ async def send_terminal_key(
         ) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except RemoteRuntimeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=remote_error_detail(exc)) from exc
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to send key: {str(e)}",
         )
+
+
+@app.get("/terminals/{terminal_id}/turn")
+async def inspect_terminal_turn(
+    terminal_id: TerminalId,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
+) -> Dict:
+    from cli_agent_orchestrator.services.turn_recovery_service import get_turn
+
+    try:
+        return await asyncio.to_thread(get_turn, terminal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RemoteRuntimeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=remote_error_detail(exc)) from exc
+
+
+@app.post("/terminals/{terminal_id}/turn/{action}")
+async def recover_terminal_turn(
+    terminal_id: TerminalId,
+    action: Literal["verify", "cancel"],
+    generation: str = Query(pattern=r"^[0-9a-f]{32}$"),
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
+) -> Dict:
+    from cli_agent_orchestrator.services.turn_recovery_service import (
+        TurnRecoveryConflict,
+        cancel_turn,
+        get_turn,
+        verify_turn,
+    )
+
+    try:
+        if action == "verify":
+            return await asyncio.to_thread(verify_turn, terminal_id, generation)
+        return await cancel_turn(terminal_id, generation)
+    except WorkOwnedTerminalError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except WorkOwnershipStoreUnavailableError as exc:
+        raise HTTPException(
+            status_code=503, detail="Unable to verify durable Work terminal ownership"
+        ) from exc
+    except TurnRecoveryConflict as exc:
+        turn = await asyncio.to_thread(get_turn, terminal_id)
+        raise HTTPException(status_code=409, detail=turn) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RemoteRuntimeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=remote_error_detail(exc)) from exc
+    except Exception as exc:
+        logger.exception("Terminal turn recovery failed for %s", terminal_id)
+        raise HTTPException(
+            status_code=500, detail="Terminal turn recovery failed; inspect the current turn"
+        ) from exc
 
 
 @app.get("/terminals/{terminal_id}/output", response_model=TerminalOutputResponse)
@@ -4707,6 +5116,12 @@ async def get_terminal_output(
         # transcript can't stall the whole server.
         output = await asyncio.to_thread(terminal_service.get_output, terminal_id, mode)
         return TerminalOutputResponse(output=output, mode=mode)
+    except TurnResultUnavailableError as e:
+        from cli_agent_orchestrator.services.turn_recovery_service import get_turn
+
+        turn = await asyncio.to_thread(get_turn, terminal_id)
+        code = 409 if turn["state"] in {"reconcile", "cancelling", "cancelled"} else 202
+        raise HTTPException(status_code=code, detail=turn) from e
     except OutputExtractionError as e:
         # Ordered before the ValueError arm it subclasses, same as run_step: the
         # terminal and the route both resolved -- only the response marker was
@@ -4716,6 +5131,8 @@ async def get_terminal_output(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except RemoteRuntimeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=remote_error_detail(exc)) from exc
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -4759,6 +5176,8 @@ async def get_terminal_output_range(
     except ValueError as e:
         # Malformed id / negative offset — a caller error, not a missing log.
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except RemoteRuntimeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=remote_error_detail(exc)) from exc
     except Exception as e:
         # A genuine file I/O failure surfaced by read_output_range (BR-4): report
         # it rather than masking a real fault as empty output.
@@ -4787,6 +5206,8 @@ async def exit_terminal(
         ) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except RemoteRuntimeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=remote_error_detail(exc)) from exc
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -4918,7 +5339,7 @@ async def _managed_run_credential_factory(
         )
 
     def issue(run_id: str, run_generation: str) -> str:
-        return issuer(
+        credential = issuer(
             principal,
             run_id=run_id,
             workflow_id=workflow_id,
@@ -4927,6 +5348,9 @@ async def _managed_run_credential_factory(
             spec_hash=spec_hash,
             ttl_seconds=3600,
         )
+        if not isinstance(credential, str):
+            raise TypeError("run capability issuer returned an invalid credential")
+        return credential
 
     return issue
 
@@ -4980,9 +5404,41 @@ async def _optional_run_step_principal(
     request: Request, authorization: Optional[str] = Header(default=None)
 ) -> Optional[Principal]:
     """Resolve request identity only when this legacy route authenticates callers."""
+    if request.headers.get("X-CAO-Workflow-Run-Credential") is not None:
+        return None  # Sealed capability dependency and managed handler own this identity.
     if not is_auth_enabled():
         return None
     return await get_current_principal(request, authorization)
+
+
+async def _run_step_scopes(
+    request: Request, body: RunStepRequest, authorization: Optional[str] = Header(default=None)
+):
+    token = request.headers.get("X-CAO-Workflow-Run-Credential")
+    if token is not None:
+        env = body.env_vars or {}
+        origins = getattr(request.app.state, "work_workflow_origins", None)
+        try:
+            if origins is None:
+                raise ValueError("workflow capability service unavailable")
+            run_id = env["CAO_WORKFLOW_RUN_ID"]
+            generation = int(env["CAO_WORKFLOW_GENERATION"])
+            if str(generation) != env["CAO_WORKFLOW_GENERATION"] or generation <= 0:
+                raise ValueError("generation invalid")
+            principal = await asyncio.to_thread(
+                origins.authenticate_run_capability, run_id, generation, token
+            )
+            if SCOPE_WRITE not in principal.scopes:
+                raise PermissionError("capability scope unavailable")
+        except Exception:
+            raise HTTPException(401, detail="workflow run capability is invalid") from None
+        return [SCOPE_WRITE]
+    from cli_agent_orchestrator.security.auth import get_current_scopes
+
+    scopes = await get_current_scopes(authorization, request)
+    if not set(scopes).intersection({SCOPE_WRITE, SCOPE_ADMIN}):
+        raise HTTPException(403, detail="write scope required")
+    return scopes
 
 
 async def _managed_script_response(
@@ -5097,6 +5553,23 @@ async def _managed_script_response(
             detail="managed workflow snapshot is corrupt",
         ) from error
     spec_hash = hashlib.sha256(frozen_source.encode("utf-8")).hexdigest()
+    plan_owner = getattr(origins, "plans", None)
+    scoped_admitter = None
+    if plan_owner is not None:
+        try:
+            scoped_admitter = await asyncio.to_thread(
+                plan_owner.authorize_step,
+                capability_principal,
+                run_id,
+                step_id,
+                body.target_key,
+                body.model_dump(),
+            )
+        except ValueError as error:
+            raise HTTPException(
+                status_code=getattr(error, "status_code", 403),
+                detail={"kind": getattr(error, "kind", "scope_refused"), "retryable": False},
+            ) from None
     resolver = getattr(origins, "resolve_step_admitter", None)
     if not callable(resolver):
         raise HTTPException(
@@ -5104,7 +5577,7 @@ async def _managed_script_response(
             detail="managed workflow runtime is unavailable",
         )
     try:
-        managed_admitter = await asyncio.to_thread(
+        managed_admitter = scoped_admitter or await asyncio.to_thread(
             resolver, capability_principal, row.workflow_name, spec_hash, step_id
         )
     except PermissionError as error:
@@ -5148,7 +5621,7 @@ async def _managed_script_response(
         )
     )
 
-    def _typed_projection_response(projected, projected_step):
+    def _typed_projection_response(projected, projected_step) -> RunStepResponse:
         from cli_agent_orchestrator.models.work_origin import WorkflowStepResultV1
 
         if (
@@ -5196,7 +5669,7 @@ async def _managed_script_response(
     recover = source_step is not None and source_step.state == "work_pending"
     retry_authorization = None
     result_service = getattr(request.app.state, "work_workflow_result_service", None)
-    if recover and source_step.attempts > 1:
+    if source_step is not None and recover and source_step.attempts > 1:
         read_binding = getattr(origins, "read_step_binding", None)
         resolve_retry = getattr(origins, "resolve_step_retry_authorization", None)
         if not callable(read_binding) or not callable(resolve_retry) or result_service is None:
@@ -5311,6 +5784,8 @@ async def _managed_script_response(
                     "kind": "work_pending",
                 },
             ) from error
+        if not callable(projection_reader):
+            raise HTTPException(503, detail="managed projection reader is unavailable")
         projected = await asyncio.to_thread(projection_reader, run_id, step_id)
         if projected is not None:
             projected_step = await asyncio.to_thread(workflow_journal.get_step, run_id, step_id)
@@ -5391,7 +5866,7 @@ async def run_step(
     request: Request,
     background_tasks: BackgroundTasks,
     body: RunStepRequest,
-    _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
+    _scopes: List[str] = Depends(_run_step_scopes),
     principal: Optional[Principal] = Depends(_optional_run_step_principal),
     workflow_run_credential: Annotated[
         Optional[str], Header(alias="X-CAO-Workflow-Run-Credential")
@@ -5835,6 +6310,8 @@ async def run_step(
             code = status.HTTP_409_CONFLICT
         elif e.kind == "error":
             code = status.HTTP_502_BAD_GATEWAY
+        elif e.kind == "output_extraction_failed":
+            code = status.HTTP_500_INTERNAL_SERVER_ERROR
         else:
             code = status.HTTP_504_GATEWAY_TIMEOUT
         if e.kind not in {"quota_wait", "reconcile", "contract_rejected"}:
@@ -5862,7 +6339,7 @@ async def run_step(
         # StepExecutionError carrying the terminal reconciliation handle. This
         # narrow arm remains for failures before a terminal exists.
         _settle_step(None, str(e), error_kind="timeout")
-        detail = {"message": str(e), "kind": "timeout", "terminal_id": None}
+        detail: Dict[str, Any] = {"message": str(e), "kind": "timeout", "terminal_id": None}
         if isinstance(e, TerminalInputBlockedError):
             detail.update(
                 {
@@ -5880,7 +6357,14 @@ async def run_step(
         # a bad request, not an unknown terminal.
         _settle_step(None, str(e))
         await _record_job_state(job_id, "error", error_message=str(e))
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                {"code": e.code, "profile_field": e.profile_field, "message": str(e)}
+                if isinstance(e, KiroPhase0KASError) and e.code != "kas-unavailable"
+                else str(e)
+            ),
+        )
     except OutputExtractionError as e:
         # Also ordered before the ValueError arm it subclasses. The terminal and
         # the route both resolved and the step ran -- only the response marker
@@ -5943,6 +6427,22 @@ async def validate_workflow_endpoint(
 
     from cli_agent_orchestrator.services import workflow_spec_service
 
+    if body.content is not None:
+        if body.path is not None or body.name is None:
+            raise HTTPException(status_code=400, detail="provide path OR name+content")
+        try:
+            spec = await asyncio.to_thread(
+                workflow_spec_service.validate_workflow_source, body.name, body.content
+            )
+        except ValueError as exc:
+            return {"status": "fail", "errors": [str(exc)], "findings": []}
+        return {
+            "status": "pass",
+            "errors": [],
+            "findings": [finding.model_dump() for finding in spec.findings],
+        }
+    if body.path is None or body.name is not None:
+        raise HTTPException(status_code=400, detail="provide path OR name+content")
     ext = _os.path.splitext(body.path)[1].lower()
     if ext in (".yaml", ".yml"):
         try:
@@ -6089,6 +6589,24 @@ async def get_workflow_endpoint(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     return spec.model_dump()
+
+
+@app.post("/workflows", status_code=201)
+async def create_workflow_endpoint(
+    request: WorkflowCreateRequest,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
+) -> Dict:
+    from cli_agent_orchestrator.models.workflow import TierCollisionError
+    from cli_agent_orchestrator.services import workflow_spec_service
+
+    try:
+        return await asyncio.to_thread(
+            workflow_spec_service.create_workflow, request.name, request.content
+        )
+    except (FileExistsError, TierCollisionError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/workflows/{name}/source")
@@ -6404,6 +6922,11 @@ async def _run_in_background(
         # this only fires if the exception escaped before the engine settled the row.
         _failed_backstop("drive raised")
 
+    finally:
+        private_path = getattr(record, "scoped_private_path", None)
+        if private_path is not None:
+            await asyncio.to_thread(script_runner._delete_temp_file, private_path)
+
 
 class PlanApprovalRequest(BaseModel):
     """Body of the approve-a-plan request (issue #583 Bolt 2, unit ``approval-operation``).
@@ -6560,6 +7083,10 @@ async def start_workflow_run_endpoint(
     ``run_script_workflow``; a lint failure maps to 422 with a findings body
     (BR-10), via the shared ``render_findings`` helper.
     """
+    if body.prepared_id is not None:
+        return await _start_scoped_workflow(body, request, principal, submit=False)
+    if body.expected_plan_id is not None:
+        raise HTTPException(status_code=422, detail="expected_plan_id requires prepared_id")
     import uuid
 
     from cli_agent_orchestrator.models.workflow import (
@@ -6590,6 +7117,17 @@ async def start_workflow_run_endpoint(
     run_id = body.run_id or f"run-{uuid.uuid4().hex[:16]}"
 
     if isinstance(spec, ScriptSpec):
+        from cli_agent_orchestrator.services.settings_service import is_workflow_approval_required
+
+        if is_workflow_approval_required():
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "kind": "prepared_plan_required",
+                    "retryable": False,
+                    "message": "Prepare the declared scope, review and approve its exact plan, then run with prepared_id and expected_plan_id.",
+                },
+            )
         # Unit A (ADR-6 / blocker #2): validate + cap the inputs BEFORE any
         # journal row or registry entry is created — no orphan RUNNING row can
         # result from bad/oversized input (BR-A3). The RESOLVED map (defaults
@@ -6717,6 +7255,10 @@ async def submit_workflow_run_endpoint(
        registry helper, NOT a bare ``asyncio.create_task`` (see BG-1 at step 7).
     8. Return 202 ``{run_id, state:"running", links}``.
     """
+    if body.prepared_id is not None:
+        return await _start_scoped_workflow(body, request, principal, submit=True)
+    if body.expected_plan_id is not None:
+        raise HTTPException(status_code=422, detail="expected_plan_id requires prepared_id")
     import sqlite3
     import uuid
 
@@ -6799,6 +7341,17 @@ async def submit_workflow_run_endpoint(
     # any insert so a rejected run leaves NO durable row and NO 202; (5) the awaited
     # HARD durable insert; (6) the in-process record C2 will drive.
     if isinstance(spec, ScriptSpec):
+        from cli_agent_orchestrator.services.settings_service import is_workflow_approval_required
+
+        if is_workflow_approval_required():
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "kind": "prepared_plan_required",
+                    "retryable": False,
+                    "message": "Prepare the declared scope, review and approve its exact plan, then run with prepared_id and expected_plan_id.",
+                },
+            )
         # Step 4 — script lint gate (OR-2): a lint fail -> 422 with a findings body,
         # in the handler's validation phase (never deferred into the background
         # task, where a 202 + RUNNING row would already exist).
@@ -7882,6 +8435,10 @@ async def delete_workflow_run_endpoint(
 
     try:
         await asyncio.to_thread(workflow_journal.delete_run, run_id)
+    except workflow_journal.WorkflowRunAuthorityReferencedError:
+        raise HTTPException(
+            status_code=409, detail={"kind": "workflow_run_authority_retained", "retryable": False}
+        ) from None
     except (
         Exception
     ) as e:  # noqa: BLE001 — surface a genuine DB failure; unknown id never lands here (BR-3)
@@ -8103,6 +8660,8 @@ async def get_workflow_run_result_endpoint(
 @app.post("/workflows/runs/{run_id}/cancel")
 async def cancel_workflow_run_endpoint(
     run_id: str,
+    request: Request = cast(Request, None),
+    principal: Principal = Depends(get_current_principal),
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
 ) -> Dict:
     """Cooperatively cancel a running workflow (FR-5.4, U5 A5).
@@ -8127,6 +8686,23 @@ async def cancel_workflow_run_endpoint(
     """
     from cli_agent_orchestrator.models.workflow_runtime import RunState
     from cli_agent_orchestrator.services import script_runner, workflow_journal, workflow_service
+
+    if request is not None:
+        from cli_agent_orchestrator.api.work_coordinator_routes import coordinator_for_request
+
+        service = getattr(request.app.state, "workflow_coordinator", None)
+        if service is not None:
+            with service.repository.read_snapshot() as connection:
+                controlled = connection.execute(
+                    "SELECT 1 FROM workflow_driver WHERE run_id=?", (run_id,)
+                ).fetchone()
+            if controlled:
+                try:
+                    return dict(await coordinator_for_request(request).stop(principal, run_id))
+                except (ValueError, PermissionError, LookupError) as error:
+                    from cli_agent_orchestrator.api.work_coordinator_routes import refused
+
+                    refused(error)
 
     record = workflow_service.run_registry.get(run_id)
     if record is None:
@@ -8215,6 +8791,22 @@ async def resume_workflow_run_endpoint(
     every non-completed step to ``PENDING`` and re-runs it — so a ``skip`` there
     would re-execute the very step the operator asked to skip, silently.
     """
+    service = getattr(request.app.state, "workflow_coordinator", None)
+    if service is not None:
+        with service.repository.read_snapshot() as connection:
+            controlled = connection.execute(
+                "SELECT 1 FROM workflow_driver WHERE run_id=?", (run_id,)
+            ).fetchone()
+        if controlled:
+            from cli_agent_orchestrator.api.work_coordinator_routes import refused
+
+            if body is not None and body.decisions:
+                raise HTTPException(409, detail={"kind": "coordinator_decisions_refused"})
+            try:
+                return dict(await service.resume(principal, run_id))
+            except (ValueError, PermissionError, LookupError) as error:
+                refused(error)
+
     from cli_agent_orchestrator.services import script_runner, workflow_journal, workflow_service
 
     decisions = body.decisions if body is not None else None
@@ -8223,6 +8815,22 @@ async def resume_workflow_run_endpoint(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown run '{run_id}'")
 
+    from cli_agent_orchestrator.services.execution_manifest import verify_v2_public
+
+    scoped_resume = {}
+    if verify_v2_public(row.manifest_json):
+        owner = _workflow_plan_owner(request)
+        try:
+            await asyncio.to_thread(owner.validate_resume, principal, run_id)
+        except (ValueError, PermissionError) as error:
+            raise HTTPException(
+                status_code=getattr(error, "status_code", 403),
+                detail={
+                    "kind": getattr(error, "kind", "scoped_resume_refused"),
+                    "retryable": False,
+                },
+            ) from None
+        scoped_resume = {"scoped_plan_owner": owner, "scoped_principal": principal}
     pending_work_steps = await _project_pending_work_before_resume(request, run_id)
     # Projection may have changed only step state; reload the durable run so
     # later tier/spec decisions still use the journal's current snapshot.
@@ -8303,6 +8911,7 @@ async def resume_workflow_run_endpoint(
             if decisions:
                 result = await script_runner.resume_script_run(
                     run_id,
+                    **scoped_resume,
                     decisions=decisions,
                     **(
                         {"run_credential_factory": run_credential_factory}
@@ -8315,6 +8924,7 @@ async def resume_workflow_run_endpoint(
                 # regress on a code path it never enters.
                 result = await script_runner.resume_script_run(
                     run_id,
+                    **scoped_resume,
                     **(
                         {"run_credential_factory": run_credential_factory}
                         if run_credential_factory is not None
@@ -8381,10 +8991,11 @@ async def resume_workflow_run_endpoint(
         if managed_step_admitters:
             result = await workflow_service.resume_from_last_completed(
                 run_id,
+                **scoped_resume,
                 managed_step_admitters=managed_step_admitters,
             )
         else:
-            result = await workflow_service.resume_from_last_completed(run_id)
+            result = await workflow_service.resume_from_last_completed(run_id, **scoped_resume)
     except KeyError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown run '{run_id}'")
     except workflow_service.ResumeNotAllowedError as e:
@@ -8454,7 +9065,7 @@ async def retry_managed_workflow_step_endpoint(
             and step_row.attempts == body.workflow_step_attempt + 1
             and step_row.error_kind is None
         )
-        if not (failed_expected_attempt or retry_already_claimed):
+        if step_row is None or not (failed_expected_attempt or retry_already_claimed):
             raise HTTPException(
                 status_code=409, detail="workflow step is not this failed Work attempt"
             )
@@ -8606,6 +9217,8 @@ async def retry_managed_workflow_step_endpoint(
             next_attempt = step_row.attempts
         else:
             try:
+                if not isinstance(step_row.call_fingerprint, str):
+                    raise ValueError("managed workflow step fingerprint is absent")
                 next_attempt = await asyncio.to_thread(
                     workflow_journal.begin_managed_work_step,
                     run_id,
@@ -8758,6 +9371,35 @@ async def replay_workflow_step_endpoint(
 # which raise KeyError for an unregistered name (mapped to 404 here).
 
 
+GRAPH_PROJECTION_RETRY_AFTER_S = 5
+_GRAPH_BUILD_STATUS_KEYS = frozenset({"build_state", "build_elapsed_s", "build_started_at"})
+
+
+def _start_graph_builds(application: FastAPI) -> None:
+    """Reopen projection admission only after the previous owners drained."""
+    registry: set[asyncio.Future[GraphView]] = getattr(
+        application.state, "graph_build_tasks", set()
+    )
+    if any(not task.done() for task in registry):
+        raise RuntimeError("graph builders have not drained")
+    application.state.graph_build_tasks = set()
+    application.state.graph_build_stopping = False
+
+
+async def _shutdown_graph_builds(application: FastAPI) -> None:
+    """Cancel and drain locally tracked projection coroutines on shutdown."""
+    application.state.graph_build_stopping = True
+    registry: set[asyncio.Future[GraphView]] = getattr(
+        application.state, "graph_build_tasks", set()
+    )
+    tasks = tuple(registry)
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    registry.clear()
+
+
 async def _project_graph_with_timeout(
     inst: GraphProvider,
     filters: Dict[str, Any],
@@ -8765,10 +9407,42 @@ async def _project_graph_with_timeout(
     provider: str,
     timeout_s: float = GRAPH_PROJECTION_TIMEOUT_S,
 ) -> GraphView:
-    try:
-        return await asyncio.wait_for(inst.project(**filters), timeout=timeout_s)
-    except asyncio.TimeoutError:
+    if getattr(app.state, "graph_build_stopping", False):
         raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "kind": "graph_shutting_down",
+                "message": "graph service is shutting down",
+                "retryable": False,
+            },
+        )
+
+    def _status() -> Dict[str, Any]:
+        projection_status = getattr(inst, "projection_status", None)
+        if not callable(projection_status):
+            return {}
+        raw_status = projection_status(**filters) or {}
+        dropped_keys = sorted(str(key) for key in raw_status if key not in _GRAPH_BUILD_STATUS_KEYS)
+        if dropped_keys:
+            logger.warning(
+                "graph projection status dropped unsupported keys for provider=%r keys=%r",
+                provider,
+                dropped_keys,
+            )
+        return {key: value for key, value in raw_status.items() if key in _GRAPH_BUILD_STATUS_KEYS}
+
+    def _timeout(build_status: Dict[str, Any]) -> HTTPException:
+        # Admission exceptions are provider-supplied too; protect this contract
+        # at the last merge boundary, not only for projection_status hooks.
+        build_status = {
+            key: value for key, value in build_status.items() if key in _GRAPH_BUILD_STATUS_KEYS
+        }
+        retry_after_s = (
+            int(GRAPH_BUILD_MAX_S)
+            if build_status.get("build_state") == "failed_deadline"
+            else GRAPH_PROJECTION_RETRY_AFTER_S
+        )
+        return HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail={
                 "message": f"graph projection timed out after {timeout_s:g} seconds",
@@ -8776,8 +9450,72 @@ async def _project_graph_with_timeout(
                 "timeout_s": timeout_s,
                 "provider": provider,
                 "metadata": {"graph_projection_timeout": True},
+                "retryable": True,
+                "retry_after_s": retry_after_s,
+                **build_status,
             },
+            headers={"Retry-After": str(retry_after_s)},
         )
+
+    project_inflight = getattr(inst, "project_inflight", None)
+    cache_owned = callable(project_inflight)
+    try:
+        if callable(project_inflight):
+            inflight = project_inflight(**filters)
+        else:
+            inflight = asyncio.ensure_future(inst.project(**filters))
+    except GraphBuildQueueFullError as exc:
+        # Keep the frozen KiroCrew seam: both a timed-out build and rejected
+        # admission require the same retry-after-5 behavior. The additive
+        # build_state distinguishes them without minting a new kind or 503
+        # that existing clients do not handle.
+        logger.warning(
+            "graph projection rejected because build queue is full for provider=%r filters=%r",
+            provider,
+            filters,
+        )
+        raise _timeout(exc.build_status)
+
+    task_registry = getattr(app.state, "graph_build_tasks", None)
+    if task_registry is None:
+        task_registry = app.state.graph_build_tasks = set()
+    if not inflight.done() and inflight not in task_registry:
+        task_registry.add(inflight)
+
+        def _projection_done(future: asyncio.Future[GraphView]) -> None:
+            task_registry.discard(future)
+            try:
+                exc = future.exception()
+            except asyncio.CancelledError:
+                return
+            if exc is not None:
+                logger.error(
+                    "detached graph projection failed for provider=%r filters=%r: %r",
+                    provider,
+                    filters,
+                    exc,
+                    exc_info=(type(exc), exc, exc.__traceback__),
+                )
+
+        inflight.add_done_callback(_projection_done)
+
+    try:
+        awaitable = asyncio.shield(inflight) if cache_owned else inflight
+        return await asyncio.wait_for(awaitable, timeout=timeout_s)
+    except GraphBuildDeadlineError:
+        build_status = _status()
+        build_status["build_state"] = "failed_deadline"
+        raise _timeout(build_status)
+    except asyncio.TimeoutError:
+        raise _timeout(_status())
+
+
+@app.get("/graph/providers")
+async def list_graph_providers_endpoint(
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
+) -> Dict[str, List[str]]:
+    """Return the names currently registered in the graph provider registry."""
+    return {"providers": list_providers()}
 
 
 @app.get("/graph/{provider}", dependencies=[Depends(legacy_graph_memory_operator)])
@@ -8874,8 +9612,8 @@ async def export_graph_endpoint(
     # Credential gate (ADR-5): scan the serialized view; on a hit, reject
     # before the sink writes anything. secret_gate returns the pattern NAME,
     # never the matched bytes, so the detail is safe to surface.
-    serialized = json.dumps(view.to_dict())
-    hit = secret_gate.scan_for_secrets(serialized)
+    # Scan parsed material so invisible Unicode cannot evade credential checks.
+    hit = secret_gate.scan_json_for_secrets(view.to_dict())
     if hit is not None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -8994,6 +9732,8 @@ async def delete_terminal(
         ) from e
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except RemoteRuntimeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=remote_error_detail(exc)) from exc
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -9130,8 +9870,8 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
 
     Token scheme: browsers cannot set request headers on a WebSocket
     handshake, so the token is accepted from either ``Authorization: Bearer
-    <token>`` (native clients) or a ``?token=<token>`` query parameter (the
-    bundled web viewer). The token is verified exactly like the HTTP layer —
+    <token>`` (native clients), a browser session, or a scoped ``?ticket=``
+    issued by the authenticated ticket route. Credentials are checked like the HTTP layer —
     RS256 signature, issuer, audience and expiry via the JWKS cache — and a
     missing/invalid token or one lacking ``cao:write`` (or ``cao:admin``)
     closes the handshake with code 4401 before accept. This closes the bypass
@@ -9187,25 +9927,36 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
 
     # When the HTTP auth layer is enabled, the WS handshake must also prove
     # identity: browsers cannot set request headers on a WebSocket handshake,
-    # so the token is accepted from the Authorization header or a ``?token=``
-    # query parameter. The token is verified with the same JWKS/issuer/
+    # so browsers use a session or a short-lived single-use ticket.
+    # Native clients may send the Authorization header. The token is verified with the same JWKS/issuer/
     # audience/expiry logic as the HTTP layer and must grant ``SCOPE_WRITE``
     # or ``SCOPE_ADMIN``. ``SCOPE_READ`` is enough to watch HTTP output, not
     # to type into the PTY. Default-off (auth disabled): no token is required
     # and behavior is byte-for-byte unchanged.
     browser_control = False
-    if is_auth_enabled():
+    transport_validate = None
+    if "token" in websocket.query_params:
+        await websocket.close(code=4401, reason="Reusable query credentials are not accepted")
+        return
+    if "ticket" in websocket.query_params:
+        try:
+            transport_validate = await _stream_authorization(
+                websocket, f"/terminals/{terminal_id}/ws", (SCOPE_WRITE, SCOPE_ADMIN)
+            )
+        except HTTPException:
+            await websocket.close(code=4401, reason="Unauthorized")
+            return
+    if is_auth_enabled() and transport_validate is None:
         raw_authorization = websocket.headers.get("authorization")
         explicit_credential = raw_authorization is not None or "token" in websocket.query_params
         token = _extract_bearer(raw_authorization)
-        if raw_authorization is None:
-            token = websocket.query_params.get("token")
         if explicit_credential and not token:
             await websocket.close(code=4401, reason="Unauthorized")
             return
         browser_scopes = None
         if not explicit_credential:
             from cli_agent_orchestrator.security.auth import browser_principal
+
             try:
                 principal = await asyncio.to_thread(browser_principal, websocket)
                 if principal is not None:
@@ -9222,7 +9973,11 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
             await websocket.close(code=4401, reason="Unauthorized")
             return
         try:
-            scopes = browser_scopes if browser_scopes is not None else extract_scopes_from_token(token)
+            scopes = (
+                browser_scopes
+                if browser_scopes is not None
+                else extract_scopes_from_token(cast(str, token))
+            )
         except Exception:
             logger.warning(
                 "Rejected WebSocket attach for terminal %r: auth enabled, invalid bearer token",
@@ -9240,11 +9995,32 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
             await websocket.close(code=4401, reason="Unauthorized")
             return
 
+    if transport_validate is None and (is_auth_enabled() or browser_control):
+
+        async def validate_native_websocket():
+            current = await get_current_scopes(websocket.headers.get("authorization"), websocket)
+            if not any(scope in current for scope in (SCOPE_WRITE, SCOPE_ADMIN)):
+                raise HTTPException(403, "insufficient terminal scope")
+            return current
+
+        transport_validate = validate_native_websocket
     await websocket.accept()
 
     metadata = get_terminal_metadata(terminal_id)
     if not metadata:
         await websocket.close(code=4004, reason="Terminal not found")
+        return
+
+    from cli_agent_orchestrator.services import remote_terminal_service as remote
+
+    try:
+        remote_row = await asyncio.to_thread(remote.placement, terminal_id)
+    except Exception:
+        await websocket.close(code=1011, reason="Placement identity unavailable")
+        return
+    if remote_row is not None:
+        # The ordinary command channel does not grant a native local PTY.
+        await websocket.close(code=4409, reason="Remote runtime PTY attachment is unavailable")
         return
 
     # Defence-in-depth: re-validate the names from the DB before they
@@ -9329,10 +10105,21 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
                         data += output_queue.get_nowait()
                     except asyncio.QueueEmpty:
                         break
+                if transport_validate is not None:
+                    await transport_validate()
                 await websocket.send_bytes(data)
             except asyncio.TimeoutError:
+                if transport_validate is not None:
+                    try:
+                        await transport_validate()
+                    except HTTPException:
+                        await websocket.close(code=4401, reason="Authorization expired")
+                        break
                 if proc.poll() is not None:
                     break
+            except HTTPException:
+                await websocket.close(code=4401, reason="Authorization expired")
+                break
             except (Exception, asyncio.CancelledError):
                 break
 
@@ -9341,6 +10128,8 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
         try:
             while not done.is_set():
                 msg = await websocket.receive_text()
+                if transport_validate is not None:
+                    await transport_validate()
                 payload = json.loads(msg)
                 if payload.get("type") == "input":
                     raw = payload["data"].encode()
@@ -9366,6 +10155,8 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
                         os.kill(proc.pid, signal.SIGWINCH)
                     except OSError:
                         pass
+        except HTTPException:
+            await websocket.close(code=4401, reason="Authorization expired")
         except WebSocketDisconnect:
             pass
         except (Exception, asyncio.CancelledError):
@@ -9373,12 +10164,16 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
         finally:
             done.set()
 
+    tasks = [asyncio.create_task(_forward_output()), asyncio.create_task(_forward_input())]
     try:
-        await asyncio.gather(_forward_output(), _forward_input())
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     except (Exception, asyncio.CancelledError):
         pass
     finally:
         done.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         try:
             loop.remove_reader(master_fd)
         except Exception:
@@ -10358,18 +11153,6 @@ async def list_outcomes_endpoint(
     return {"outcomes": outcomes, "count": len(outcomes)}
 
 
-# Static file serving for built web UI.
-# Anchored to the package via importlib.resources so it works for both
-# editable installs (uv sync) and wheel installs (uv tool install, pip install).
-from importlib.resources import files as _pkg_files
-
-WEB_DIST = Path(str(_pkg_files("cli_agent_orchestrator") / "web_ui"))
-if (WEB_DIST / "index.html").exists():
-    from starlette.staticfiles import StaticFiles
-
-    app.mount("/", StaticFiles(directory=str(WEB_DIST), html=True), name="web")
-
-
 def main():
     """Entry point for cao-server command."""
     import argparse
@@ -10440,6 +11223,421 @@ def main():
         proxy_headers=True,
         forwarded_allow_ips=forwarded_ips,
     )
+
+
+def _workflow_plan_owner(request):
+    owner = getattr(getattr(request.app.state, "work_workflow_origins", None), "plans", None)
+    if owner is None:
+        raise HTTPException(
+            status_code=503, detail={"kind": "scoped_runtime_unavailable", "retryable": False}
+        )
+    return owner
+
+
+@app.post("/workflows/plans:prepare", status_code=201)
+async def prepare_workflow_plan_endpoint(
+    body: WorkflowPrepareRequest,
+    request: Request,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
+    principal: Principal = Depends(get_current_principal),
+) -> Dict:
+    owner = _workflow_plan_owner(request)
+    try:
+        return await asyncio.to_thread(
+            owner.prepare,
+            principal,
+            body.name_or_path,
+            body.inputs,
+            body.target_mappings,
+            body.binding_selections,
+            scope_source=body.scope_source,
+            ttl_seconds=body.ttl_seconds,
+            limits=body.limits,
+            retry_policy=body.retry_policy,
+        )
+    except (KeyError, FileNotFoundError):
+        raise HTTPException(
+            status_code=404, detail={"kind": "workflow_source_missing", "retryable": False}
+        ) from None
+    except ValueError as error:
+        raise HTTPException(
+            status_code=getattr(error, "status_code", 422),
+            detail={
+                "kind": getattr(error, "kind", getattr(error, "code", "plan_invalid")),
+                "retryable": False,
+            },
+        ) from None
+    except PermissionError:
+        raise HTTPException(
+            status_code=403, detail={"kind": "plan_authority_refused", "retryable": False}
+        ) from None
+
+
+@app.get("/workflows/plans/{prepared_id}")
+async def review_workflow_plan_endpoint(
+    prepared_id: str,
+    request: Request,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
+    principal: Principal = Depends(get_current_principal),
+) -> Dict:
+    try:
+        return await asyncio.to_thread(_workflow_plan_owner(request).review, principal, prepared_id)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=getattr(error, "status_code", 409),
+            detail={"kind": getattr(error, "kind", "plan_unavailable"), "retryable": False},
+        ) from None
+
+
+async def _start_scoped_workflow(body, request, principal, *, submit) -> Dict[str, Any]:
+    import sqlite3
+    import uuid
+
+    from cli_agent_orchestrator.models.workflow import RunState, ScriptSpec
+    from cli_agent_orchestrator.services import script_runner, workflow_service
+
+    owner = _workflow_plan_owner(request)
+    if body.expected_plan_id is None:
+        raise HTTPException(
+            status_code=422, detail={"kind": "expected_plan_id_required", "retryable": False}
+        )
+    run_id = body.run_id or ("run_" + uuid.uuid4().hex)
+    try:
+        prepared = await asyncio.to_thread(
+            owner.start,
+            principal,
+            body.prepared_id,
+            run_id,
+            body.expected_plan_id,
+            requested_name=body.name_or_path,
+            requested_inputs=body.inputs,
+        )
+    except sqlite3.IntegrityError:
+        raise HTTPException(
+            status_code=409, detail={"kind": "run_id_exists", "retryable": False}
+        ) from None
+    except (ValueError, PermissionError) as error:
+        raise HTTPException(
+            status_code=getattr(error, "status_code", 403),
+            detail={"kind": getattr(error, "kind", "plan_authority_refused"), "retryable": False},
+        ) from None
+    spec, inputs = prepared.spec, prepared.inputs
+    record: script_runner.ScriptRunRecord | workflow_service.RunRecord
+    if isinstance(spec, ScriptSpec):
+        try:
+            private_path = await asyncio.to_thread(
+                script_runner._materialize_snapshot, run_id, spec.source
+            )
+            from cli_agent_orchestrator.services.private_plan_snapshot import (
+                _verify_read_permissions,
+            )
+
+            await asyncio.to_thread(
+                _verify_read_permissions, __import__("pathlib").Path(private_path)
+            )
+        except (OSError, RuntimeError):
+            from cli_agent_orchestrator.services import workflow_journal
+
+            await asyncio.to_thread(
+                workflow_journal.update_run_state, run_id, "failed", workflow_service._now()
+            )
+            raise HTTPException(
+                status_code=503, detail={"kind": "private_source_unavailable", "retryable": False}
+            ) from None
+        spec = spec.model_copy(update={"path": private_path})
+        record = script_runner.ScriptRunRecord(
+            run_id=run_id,
+            workflow_name=spec.name,
+            state=RunState.RUNNING,
+            cancelled=False,
+            current_step_id=None,
+            step_states={},
+            process=None,
+            generation="1",
+            started_at=prepared.started_at,
+            finished_at=None,
+            tier="script",
+            run_capability_required=True,
+        )
+        tier = "script"
+    else:
+        callbacks = await asyncio.to_thread(owner.step_admitters, principal, run_id, spec)
+        record = workflow_service.RunRecord(
+            run_id=run_id,
+            workflow_name=spec.name,
+            spec=spec,
+            inputs=inputs,
+            state=RunState.RUNNING,
+            current_step_id=None,
+            cancelled=False,
+            step_states={
+                step.id: workflow_service.StepRunState(step_id=step.id) for step in spec.steps
+            },
+            started_at=prepared.started_at,
+            managed_step_admitters=callbacks,
+        )
+        tier = "yaml"
+    record.scoped_plan_owner = owner
+    record.scoped_principal = principal
+    if isinstance(record, script_runner.ScriptRunRecord):
+        record.scoped_private_path = private_path
+    workflow_service.run_registry[run_id] = record
+    if submit:
+        _schedule_background_drive(
+            record, spec, run_id, tier, inputs, run_credential=prepared.run_credential
+        )
+        return {
+            "run_id": run_id,
+            "state": "running",
+            "tier": tier,
+            "plan_id": body.expected_plan_id,
+            "links": _run_links(run_id),
+        }
+    try:
+        if isinstance(record, script_runner.ScriptRunRecord):
+            env = script_runner.build_env(run_id, "1", inputs, resume=False)
+            try:
+                result = await script_runner.run_script_workflow_prepared(
+                    record, spec.path, env, run_credential=prepared.run_credential
+                )
+            finally:
+                await asyncio.to_thread(script_runner._delete_temp_file, private_path)
+        else:
+            result = await workflow_service.start_run_prepared(record)
+    except (ValueError, PermissionError, LookupError) as error:
+        raise HTTPException(
+            status_code=getattr(error, "status_code", 403),
+            detail={"kind": getattr(error, "kind", "plan_authority_refused"), "retryable": False},
+        ) from None
+    except (RuntimeError, OSError):
+        raise HTTPException(
+            status_code=503, detail={"kind": "private_plan_unavailable", "retryable": False}
+        ) from None
+    return result.model_dump()
+
+
+class WorkflowProvisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    step_id: str = Field(min_length=1, max_length=512)
+    expected_revision: int = Field(strict=True, ge=0)
+    expected_source_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    job_id: str
+    grant_id: str
+    grant_revision: int = Field(strict=True, ge=1)
+    subject_ref: Dict
+    authorization_ref: Dict
+    receiver_subject_ref: Dict
+    receiver_authorization_ref: Dict
+    contract: Dict
+    delivery: Dict
+    output_schema: Optional[Dict] = None
+    adapter_version: int = Field(default=1, strict=True, ge=1, le=2)
+    lease_seconds: int = Field(default=300, strict=True, ge=1, le=3600)
+    subject_token: Optional[SecretStr] = None
+
+
+@app.get("/workflows/{name}/provisions")
+async def discover_workflow_provisions_endpoint(
+    name: str,
+    request: Request,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
+    principal: Principal = Depends(get_current_principal),
+) -> Dict:
+    try:
+        return await asyncio.to_thread(
+            _workflow_plan_owner(request).available_seeds, principal, name
+        )
+    except (KeyError, FileNotFoundError):
+        raise HTTPException(
+            status_code=404, detail={"kind": "workflow_source_missing", "retryable": False}
+        ) from None
+    except (ValueError, PermissionError):
+        raise HTTPException(
+            status_code=403, detail={"kind": "plan_discovery_denied", "retryable": False}
+        ) from None
+
+
+@app.post("/workflows/{name}/provisions", status_code=201)
+async def provision_workflow_seed_endpoint(
+    name: str,
+    body: WorkflowProvisionRequest,
+    request: Request,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
+    principal: Principal = Depends(get_current_principal),
+) -> Dict:
+    values = body.model_dump(exclude={"subject_token"})
+    token = body.subject_token.get_secret_value() if body.subject_token is not None else None
+    try:
+        return await asyncio.to_thread(
+            _workflow_plan_owner(request).provision_seed,
+            principal,
+            name,
+            values,
+            subject_token=token,
+        )
+    except (KeyError, FileNotFoundError):
+        raise HTTPException(
+            status_code=404, detail={"kind": "workflow_source_missing", "retryable": False}
+        ) from None
+    except (ValueError, PermissionError) as error:
+        raise HTTPException(
+            status_code=getattr(error, "status_code", 403),
+            detail={
+                "kind": getattr(error, "kind", "workflow_provision_denied"),
+                "retryable": False,
+            },
+        ) from None
+
+
+@app.delete("/workflows/plans/{prepared_id}", status_code=204)
+async def delete_prepared_workflow_plan_endpoint(
+    prepared_id: str,
+    request: Request,
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
+    principal: Principal = Depends(get_current_principal),
+) -> Response:
+    try:
+        await asyncio.to_thread(
+            _workflow_plan_owner(request).delete_prepared, principal, prepared_id
+        )
+    except (ValueError, PermissionError) as error:
+        raise HTTPException(
+            status_code=getattr(error, "status_code", 403),
+            detail={"kind": getattr(error, "kind", "plan_authority_refused"), "retryable": False},
+        ) from None
+    return Response(status_code=204)
+
+
+from cli_agent_orchestrator.services.assignment_service import AssignmentConflict, AssignmentRequest
+
+
+@app.post("/terminals/{terminal_id}/assignments", status_code=202)
+async def submit_ordinary_assignment(
+    request: Request,
+    terminal_id: TerminalId,
+    body: AssignmentRequest,
+    principal: Optional[Principal] = Depends(_optional_run_step_principal),
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
+):
+    from cli_agent_orchestrator.services.assignment_service import assign
+
+    try:
+        return await assign(
+            terminal_id,
+            body,
+            owner=principal.id if principal else "local",
+            registry=get_plugin_registry(request),
+        )
+    except AssignmentConflict as error:
+        raise HTTPException(
+            status_code=409, detail={"kind": "assignment_conflict", "retryable": False}
+        ) from error
+    except WorkOwnedTerminalError as error:
+        raise HTTPException(
+            status_code=409, detail={"kind": "work_owned_terminal", "retryable": False}
+        ) from error
+    except WorkOwnershipStoreUnavailableError as error:
+        raise HTTPException(
+            status_code=503, detail={"kind": "work_ownership_unavailable", "retryable": True}
+        ) from error
+    except (ValueError, FileNotFoundError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+from cli_agent_orchestrator.services.assignment_service import FreshAssignmentRequest
+
+
+@app.post("/assignments", status_code=202)
+async def submit_fresh_ordinary_assignment(
+    request: Request,
+    body: FreshAssignmentRequest,
+    principal: Optional[Principal] = Depends(_optional_run_step_principal),
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
+):
+    from cli_agent_orchestrator.services.assignment_service import assign_fresh
+
+    try:
+        return await assign_fresh(
+            body,
+            owner=principal.id if principal else "local",
+            registry=get_plugin_registry(request),
+        )
+    except AssignmentConflict as error:
+        raise HTTPException(
+            status_code=409, detail={"kind": "assignment_conflict", "retryable": False}
+        ) from error
+    except PermissionError as error:
+        raise HTTPException(
+            status_code=409, detail={"kind": "managed_work_required", "retryable": False}
+        ) from error
+    except (ValueError, FileNotFoundError) as error:
+        raise HTTPException(
+            status_code=400, detail="Assignment profile or configuration invalid"
+        ) from error
+
+
+@app.get("/assignments/{assignment_id}")
+async def inspect_ordinary_assignment(
+    assignment_id: str,
+    principal: Optional[Principal] = Depends(_optional_run_step_principal),
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)),
+):
+    from cli_agent_orchestrator.services.assignment_service import inspect_assignment
+
+    try:
+        return await asyncio.to_thread(
+            inspect_assignment, assignment_id, owner=principal.id if principal else "local"
+        )
+    except AssignmentConflict as error:
+        raise HTTPException(status_code=404, detail="assignment not found") from error
+
+
+from cli_agent_orchestrator.services.elastic_assignment_service import ElasticAssignmentRequest
+
+
+@app.post("/terminals/{terminal_id}/elastic-assignments", status_code=202)
+async def submit_elastic_assignment(
+    terminal_id: TerminalId,
+    body: ElasticAssignmentRequest,
+    principal: Optional[Principal] = Depends(_optional_run_step_principal),
+    _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
+):
+    from cli_agent_orchestrator.services.elastic_assignment_service import assign
+
+    try:
+        return await assign(terminal_id, body, owner=principal.id if principal else "local")
+    except (AssignmentConflict, WorkOwnedTerminalError, PermissionError) as error:
+        raise HTTPException(
+            409, detail={"kind": "assignment_refused", "retryable": False}
+        ) from error
+    except WorkOwnershipStoreUnavailableError as error:
+        raise HTTPException(
+            503, detail={"kind": "work_ownership_unavailable", "retryable": True}
+        ) from error
+    except (ValueError, FileNotFoundError) as error:
+        raise HTTPException(
+            400, detail="Elastic assignment configuration or profile invalid"
+        ) from error
+
+
+from cli_agent_orchestrator.api.beads_routes import router as beads_router
+
+app.include_router(beads_router)
+
+# Static file serving for built web UI.
+# Anchored to the package via importlib.resources so it works for both
+# editable installs (uv sync) and wheel installs (uv tool install, pip install).
+from importlib.resources import files as _pkg_files
+
+from cli_agent_orchestrator.api.work_coordinator_routes import router as work_coordinator_router
+
+app.include_router(work_coordinator_router)
+
+WEB_DIST = Path(str(_pkg_files("cli_agent_orchestrator") / "web_ui"))
+if (WEB_DIST / "index.html").exists():
+    from starlette.staticfiles import StaticFiles
+
+    app.mount("/", StaticFiles(directory=str(WEB_DIST), html=True), name="web")
 
 
 if __name__ == "__main__":

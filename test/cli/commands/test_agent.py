@@ -442,3 +442,17 @@ class TestHandoffMachineModeGating:
 
         assert result.exit_code == 0
         assert "Waiting for" not in result.output
+
+
+@patch("cli_agent_orchestrator.cli.commands.agent._verify_impl")
+def test_verify_command_preserves_pending_diagnosis(mock_impl, runner):
+    mock_impl.return_value = {
+        "success": False,
+        "state": "pending",
+        "generation": "a" * 32,
+        "allowed_actions": ["verify", "cancel"],
+    }
+    result = runner.invoke(agent, ["verify", "term", "--json"])
+    assert result.exit_code == 1
+    assert json.loads(result.output)["state"] == "pending"
+    mock_impl.assert_called_once_with("term")

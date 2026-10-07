@@ -41,7 +41,15 @@ class TestSnapshotOnDelete:
         mock_tmux.get_pane_working_directory.return_value = "/home/user/project"
         mock_db_delete.return_value = True
 
-        delete_terminal("abc12345")
+        def confirm_stop(*_args):
+            assert (tmp_path / "abc12345.scrollback").is_file()
+            assert (tmp_path / "abc12345.snapshot.json").is_file()
+            return True
+
+        mock_tmux.kill_window.side_effect = confirm_stop
+        assert delete_terminal("abc12345") is True
+        mock_tmux.kill_window.assert_called_once_with("cao-test", "dev-abc1")
+        mock_db_delete.assert_called_once_with("abc12345")
 
         mock_tmux.get_history.assert_called_once_with(
             "cao-test", "dev-abc1", strip_escapes=True, full_history=True
@@ -76,12 +84,14 @@ class TestSnapshotOnDelete:
             "allowed_tools": None,
         }
         mock_tmux.get_history.side_effect = RuntimeError("tmux error")
+        mock_tmux.kill_window.return_value = True
         mock_db_delete.return_value = True
 
         # Should not raise
         result = delete_terminal("abc12345")
         assert result is True
         mock_tmux.kill_window.assert_called_once()
+        mock_db_delete.assert_called_once_with("abc12345")
 
 
 # ---------------------------------------------------------------------------

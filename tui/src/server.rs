@@ -271,6 +271,38 @@ fn route(id: CommandId) -> Option<Route> {
         // HIDE: no route exists (`cao info` reads local session context, `cao init` bootstraps
         // the DB, `cao mcp-server` is a foreground server, `cao shutdown` can kill the TUI's own
         // tmux session, `cao tui` must not offer itself, `cao update` may replace the binary).
+        CommandId::AgentVerify => None,
+        CommandId::ProfileLint => None,
+        CommandId::TasksBulkCreate => None,
+        CommandId::TasksCapabilities => None,
+        CommandId::TasksComments => None,
+        CommandId::TasksContext => None,
+        CommandId::TasksDecompose => None,
+        CommandId::TasksEpic => None,
+        CommandId::TasksList => None,
+        CommandId::TasksMutate => None,
+        CommandId::TasksOperation => None,
+        CommandId::TasksReady => None,
+        CommandId::TasksShow => None,
+        CommandId::WorkflowCreate => None,
+        CommandId::WorkflowPlan => None,
+        CommandId::WorkflowProvision => None,
+        CommandId::WorkflowReviewPlan => None,
+        CommandId::WorkflowSeeds => None,
+        CommandId::WorkflowUpdate => None,
+        CommandId::RalphComplete => None,
+        CommandId::RalphFeedback => None,
+        CommandId::RalphPrepare => None,
+        CommandId::RalphResume => None,
+        CommandId::RalphStart => None,
+        CommandId::RalphStatus => None,
+        CommandId::RalphStop => None,
+        CommandId::RalphTemplate => None,
+        CommandId::TasksAssignment => None,
+        CommandId::TasksCloseVerified => None,
+        CommandId::TasksPrepare => None,
+        CommandId::TasksStart => None,
+        CommandId::TasksUnassign => None,
         CommandId::Info => None,
         CommandId::Init => None,
         CommandId::McpServer => None,
@@ -594,9 +626,9 @@ fn route(id: CommandId) -> Option<Route> {
             templated(Method::Get, "/terminals/{terminal_id}", &["terminal_id"])
         }
 
-        // ── `cao plugin *` — HIDE, all four ───────────────────────────────────────────────
+        // ── `cao peer *` and `cao plugin *` — HIDE ───────────────────────────────────────────────
         // Routeless on purpose, not for want of endpoints: `/plugins` exists (and now carries a
-        // read-scope gate). `catalog.rs` classifies all four as `Policy::Hidden`, which is what
+        // read-scope gate). `catalog.rs` classifies these commands as `Policy::Hidden`, which is what
         // requirements.md 16.5 requires while the verb is unresolved (M1): a HANDOFF row is
         // offered in navigation and drives the terminal, so it would ship the surface just as
         // much as IN-APP, and only HIDE is "not offered at all" (FR-4.3).
@@ -605,9 +637,18 @@ fn route(id: CommandId) -> Option<Route> {
         // `remove` requires a warn-then-confirm exchange that a captured one-shot request cannot
         // carry, and `add` runs untrusted content whose warning belongs on real stdio. Wiring a
         // route here would satisfy the table while defeating the confirmation.
+        CommandId::PeerAccept => None,
+        CommandId::PeerList => None,
+        CommandId::PeerPair => None,
+        CommandId::PeerReconcile => None,
+        CommandId::PeerRevoke => None,
+        CommandId::PeerStatus => None,
         CommandId::PluginAdd => None,
+        CommandId::PluginDisable => None,
+        CommandId::PluginEnable => None,
         CommandId::PluginList => None,
         CommandId::PluginRemove => None,
+        CommandId::PluginReview => None,
         CommandId::PluginValidate => None,
 
         // ── `cao skills *` — HANDOFF, all three (OQ-6) ───────────────────────────────────
@@ -1405,6 +1446,38 @@ impl ServerClient {
     fn authenticated(&self, request: minreq::Request) -> Result<minreq::Request, TuiError> {
         match self.bearer.as_deref() {
             Some(token) => {
+                // Authenticate only a configured numeric loopback authority. No DNS aliases,
+                // userinfo, path, query, or fragment can influence the credential destination.
+                let authority = self
+                    .base_url
+                    .strip_prefix("http://")
+                    .or_else(|| self.base_url.strip_prefix("https://"));
+                let trusted = authority
+                    .and_then(|value| {
+                        let value = value.strip_suffix('/').unwrap_or(value);
+                        if value.contains(['/', '?', '#', '@']) {
+                            return None;
+                        }
+                        let (host, port) = if let Some(value) = value.strip_prefix('[') {
+                            let (host, port) = value.split_once("]:")?;
+                            (host, port)
+                        } else {
+                            let (host, port) = value.rsplit_once(':')?;
+                            if host.contains(':') {
+                                return None;
+                            }
+                            (host, port)
+                        };
+                        let port = port.parse::<u16>().ok()?;
+                        let address = host.parse::<std::net::IpAddr>().ok()?;
+                        Some(port != 0 && address.is_loopback())
+                    })
+                    .unwrap_or(false);
+                if !trusted {
+                    return Err(TuiError::Validation(
+                        "local bearer requires a numeric loopback destination".to_string(),
+                    ));
+                }
                 if token
                     .bytes()
                     .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
@@ -1857,6 +1930,25 @@ mod tests {
             allowed_tools: Some("fs_read,fs_write".to_string()),
             env_vars: Some(env_vars),
             initial_message: Some("review the diff".to_string()),
+        }
+    }
+
+    #[test]
+    fn local_bearer_rejects_untrusted_destinations_before_transport() {
+        for destination in [
+            "http://remote.example:8123",
+            "http://localhost.evil:8123",
+            "http://127.1:8123",
+            "http://localhost@remote.example:8123",
+            concat!("http://127.0", ".0.1:8123/extra"),
+            concat!("http://127.0", ".0.1:8123?x=1"),
+        ] {
+            let mut client = ServerClient::with_base_url(destination);
+            client.bearer = Some("test.signed.token".to_string());
+            assert!(
+                matches!(client.health(), Err(TuiError::Validation(_))),
+                "must reject {destination} before transport"
+            );
         }
     }
 
@@ -2838,11 +2930,46 @@ mod tests {
         }
     }
 
+    #[test]
+    fn unreviewed_peer_and_plugin_commands_stay_hidden_and_routeless() {
+        for (parent, leaf, id) in [
+            ("peer", "accept", CommandId::PeerAccept),
+            ("peer", "list", CommandId::PeerList),
+            ("peer", "pair", CommandId::PeerPair),
+            ("peer", "reconcile", CommandId::PeerReconcile),
+            ("peer", "revoke", CommandId::PeerRevoke),
+            ("peer", "status", CommandId::PeerStatus),
+            ("plugin", "disable", CommandId::PluginDisable),
+            ("plugin", "enable", CommandId::PluginEnable),
+            ("plugin", "review", CommandId::PluginReview),
+        ] {
+            assert!(
+                DISPLAY_ORDER.contains(&id),
+                "cao {parent} {leaf} must have a catalog row"
+            );
+            assert_eq!(
+                policy(id),
+                Policy::Hidden,
+                "cao {parent} {leaf} is unreviewed"
+            );
+            assert!(
+                route(id).is_none(),
+                "cao {parent} {leaf} must not have an HTTP route"
+            );
+            assert!(
+                !crate::catalog::commands()
+                    .iter()
+                    .any(|command| command.id == id),
+                "cao {parent} {leaf} must not appear in navigation"
+            );
+        }
+    }
+
     // ── The route table (BR-18, FR-3.1, OQ-6) ────────────────────────────────────────────
 
     /// **23 routes for the 24 IN-APP commands, and `profile find` is the one without.**
     ///
-    /// The distribution is settled ground truth — 24 IN-APP / 18 HANDOFF / 49 HIDE = 91 — and
+    /// The distribution is settled ground truth — 24 IN-APP / 18 HANDOFF / 99 HIDE = 141 — and
     /// every number below is a **hard-coded literal**. Deriving any of them from `route()` or
     /// from the catalog would compare production against itself, which is the vacuous shape this
     /// project has hit repeatedly.
@@ -2906,7 +3033,7 @@ mod tests {
             .count();
         assert_eq!(
             in_app, 24,
-            "the settled distribution is 24 IN-APP / 18 HANDOFF / 49 HIDE = 91; if this moved, \
+            "the settled distribution is 24 IN-APP / 18 HANDOFF / 99 HIDE = 141; if this moved, \
              the 23-route figure above needs re-deriving rather than adjusting"
         );
     }

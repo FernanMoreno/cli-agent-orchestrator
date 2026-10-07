@@ -29,8 +29,25 @@ _GOOD_SCRIPT = "def main():\n    pass\n"
 _BAD_SCRIPT = "def main(:\n"  # syntax error -> lint fail
 
 
+@pytest.fixture(autouse=True)
+def legacy_tier_mode(monkeypatch):
+    """Route dispatch tests opt into legacy mode; prepared-scope tests remain separate."""
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.settings_service.is_workflow_approval_required",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.approval_gate.is_workflow_approval_required", lambda: False
+    )
+
+
 @pytest.fixture
 def isolated_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    # Exercise the explicitly supported legacy mode; scoped approval has its own gates.
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.settings_service.is_workflow_approval_required",
+        lambda: False,
+    )
     db_path = tmp_path / "wf.db"
     monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
     _migrate_workflow_index()

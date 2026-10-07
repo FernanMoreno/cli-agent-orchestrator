@@ -75,7 +75,9 @@ PROMPT_HELPER_CONTINUATION_PATTERN = r"^(?:shortcuts|for shortcuts)$"
 # Copilot v1.0.31+ renders a status bar below the ❯ prompt:
 # " autopilot · / commands    Claude Sonnet 4.6 · (0%)"
 # This must be treated as a footer line so idle detection works correctly.
-COPILOT_STATUS_BAR_PATTERN = r"^\s*(?:autopilot|plan|interactive)\s*[·•]"
+COPILOT_STATUS_BAR_PATTERN = (
+    r"^\s*(?:←\s*open sidebar\s*[·•]\s*)?(?:autopilot|plan|interactive)\s*[·•]"
+)
 # Copilot v1.0.31+ cwd breadcrumb: " ~/path [⎇ branch*%]"
 # Older versions appended " model (0x)" which was caught by \(\d+x\); the
 # token/model info moved to the status bar in v1.0.31, leaving only the path.
@@ -86,6 +88,10 @@ PROCESSING_LINE_PATTERN = r"^(?:[●◐◑◒◓◉◎∙]\s*)?.*\besc to cancel
 
 class CopilotCliProvider(BaseProvider):
     """Provider for GitHub Copilot CLI."""
+
+    # Cursor-addressed Ink redraws are not a transcript. Use the monitor's
+    # rate-limited, two-observation current-pane recovery after output settles.
+    supports_visible_pane_stale_probe = True
 
     def __init__(
         self,
@@ -140,10 +146,16 @@ class CopilotCliProvider(BaseProvider):
                     check=False,
                     capture_output=True,
                     text=True,
+                    timeout=10,
                 )
+                if result.returncode != 0:
+                    detail = (result.stderr or result.stdout or "no diagnostic output").strip()
+                    raise RuntimeError(
+                        f"Copilot executable probe failed (exit {result.returncode}): {detail}"
+                    )
                 self._copilot_help_text_cache = result.stdout or ""
-            except (OSError, subprocess.SubprocessError):
-                self._copilot_help_text_cache = ""
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise RuntimeError(f"Copilot executable probe failed: {exc}") from exc
         return flag in self._copilot_help_text_cache
 
     async def _wait_for_shell_ready(
@@ -525,6 +537,11 @@ class CopilotCliProvider(BaseProvider):
         native = self._resolve_native_status(output)
         if native is not None:
             return native
+
+        if re.search(r"\x1b\[[0-9;]*[HfABCD]", output or ""):
+            # Removing escapes leaves erased dialogs/loading text in the raw
+            # FIFO stream. It cannot prove readiness or a current question.
+            return TerminalStatus.PROCESSING
 
         # For TUI apps, the raw FIFO buffer may contain only ANSI escapes.
         # Fall back to tmux capture-pane when the buffer has no visible text.

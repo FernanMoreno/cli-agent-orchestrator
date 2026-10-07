@@ -2,15 +2,17 @@
 
 On MCP server startup (via the ``on_mcp_server`` hook) this plugin registers the
 MCP App tools (``render_dashboard`` / ``render_agent_view`` / ``cao_fetch_history``
-/ ``subscribe_events`` / ``submit_command``), the ``ui://cao/*`` resources, the
-topology widget (``cao://widget/topology``), and advertises the SEP-2133 UI
-capability on the ``initialize`` handshake.
+/ ``subscribe_events`` / ``render_graph_view`` / ``submit_command``), the
+``ui://cao/*`` resources, the topology widget (``cao://widget/topology``), and
+advertises the SEP-2133 UI capability on the ``initialize`` handshake.
 
-Everything is **default-off** via ``CAO_MCP_APPS_ENABLED`` and best-effort, so
-the default posture is byte-for-byte unchanged when the flag is unset. Durable
-event observation (the ring buffer that backs ``cao_fetch_history``) is handled
-by the companion ``event_log_publisher`` plugin; this plugin owns the
-MCP-server-facing registration.
+Everything is **default-off** via ``CAO_MCP_APPS_ENABLED``, so the default
+posture is byte-for-byte unchanged when the flag is unset. Additive surface
+registration is best-effort; an explicitly requested app-surface-only
+restriction is fail-closed. Durable event observation (the ring buffer that
+backs ``cao_fetch_history``) is handled by the companion
+``event_log_publisher`` plugin; this plugin owns the MCP-server-facing
+registration.
 
 Authoritative spec (source of truth for the surface this plugin registers):
 MCP Apps (SEP-1865, Status: Stable 2026-01-26).
@@ -25,7 +27,7 @@ MCP Apps (SEP-1865, Status: Stable 2026-01-26).
 import logging
 from typing import Any
 
-from cli_agent_orchestrator.plugins.base import CaoPlugin
+from cli_agent_orchestrator.plugins.base import CaoPlugin, McpServerStartupError
 from cli_agent_orchestrator.services.config_service import ConfigService
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,12 @@ def _surface_enabled() -> bool:
     (``CAO_MCP_APPS_ENABLED`` env var or ``settings.json``)."""
 
     return bool(ConfigService.get("apps.enabled", default=False))
+
+
+def _app_surface_only() -> bool:
+    """Return whether non-app MCP tools should be hidden."""
+
+    return bool(ConfigService.get("apps.only", default=False))
 
 
 class McpAppsPlugin(CaoPlugin):
@@ -74,3 +82,37 @@ class McpAppsPlugin(CaoPlugin):
         register_app_tools(mcp)
         register_widget(mcp)
         advertise_capability(mcp)
+
+        if _app_surface_only():
+            if not _surface_enabled():
+                logger.warning(
+                    "CAO_MCP_APPS_ONLY is set but CAO_MCP_APPS_ENABLED is false; "
+                    "not installing app-surface-only middleware because it would "
+                    "hide every MCP tool."
+                )
+                return
+
+            try:
+                from cli_agent_orchestrator.mcp_server.app_surface_only import (
+                    APP_SURFACE_TOOL_NAMES,
+                    AppSurfaceOnlyMiddleware,
+                )
+
+                mcp.add_middleware(AppSurfaceOnlyMiddleware())
+                # Registration runs before logging is configured; WARNING is the
+                # visibility floor for this security-posture assertion. Keep the
+                # canary visible if future namespacing silently empties tools/list.
+                logger.warning(
+                    "App-surface-only mode active; %d tool names allowlisted; "
+                    "every other tool is hidden and rejected",
+                    len(APP_SURFACE_TOOL_NAMES),
+                )
+            except Exception as exc:
+                logger.critical(
+                    "The app-surface-only restriction could not be applied; "
+                    "the MCP server must not start with an unrestricted tool surface",
+                    exc_info=True,
+                )
+                raise McpServerStartupError(
+                    "app-surface-only restriction could not be applied"
+                ) from exc

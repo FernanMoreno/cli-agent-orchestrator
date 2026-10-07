@@ -35,51 +35,80 @@ def cleanup_old_data():
             f"Starting cleanup of data older than {RETENTION_DAYS} days (before {cutoff_date})"
         )
 
-        # Clean up old terminals (stop FIFO readers and clear state first)
+        # Clean up old terminals. Deferred-init external-owner/failure rows are
+        # lifecycle tombstones: age alone must never erase failure truth before
+        # the external owner acknowledges it. Ordinary stale rows keep the
+        # historical FIFO/status/Grok cleanup posture, but row deletion now
+        # flows through terminal_service.delete_terminal_row so lifecycle
+        # sidecars are removed atomically with the registry record instead of
+        # being orphaned by a bulk SQL DELETE.
         with SessionLocal() as db:
-            old_terminals = (
+            old_terminals = list(
                 db.query(TerminalModel).filter(TerminalModel.last_active < cutoff_date).all()
             )
-            retained_terminal_ids: set[str] = set()
-            for terminal in old_terminals:
-                fifo_manager.stop_reader(terminal.id)
-                status_monitor.clear_terminal(terminal.id)
-                # Any provider with private runtime state may explicitly defer
-                # cleanup.  Its database row is the retry handle, so retention
-                # housekeeping must not bulk-delete it underneath that state.
-                if provider_manager.cleanup_provider(terminal.id) is False:
-                    retained_terminal_ids.add(terminal.id)
+
+        from cli_agent_orchestrator.services import terminal_service
+
+        deleted_terminals = 0
+        for terminal in old_terminals:
+            terminal_id = str(terminal.id)
+            from cli_agent_orchestrator.services import remote_terminal_service as remote
+
+            if remote.placement(terminal_id):
+                try:
+                    if remote.delete_remote(terminal_id):
+                        deleted_terminals += 1
+                except Exception:
                     logger.warning(
-                        "Retaining stale terminal %s while provider cleanup is deferred",
-                        terminal.id,
+                        "Retaining stale remote terminal %s until exact teardown is proven",
+                        terminal_id,
                     )
-            # Delete only the identities that were actually eligible in the
-            # first pass.  Retained provider runtimes keep both their terminal
-            # record and any active receipt; every deleted terminal erases its
-            # private receipt in the SAME transaction so a later id reuse can
-            # never inherit stale lifecycle evidence.
-            terminal_ids_to_delete = [
-                terminal.id
-                for terminal in old_terminals
-                if terminal.id not in retained_terminal_ids
-            ]
-            if terminal_ids_to_delete:
-                deleted_terminals = (
-                    db.query(TerminalModel)
-                    .filter(TerminalModel.id.in_(terminal_ids_to_delete))
-                    .delete(synchronize_session=False)
+                continue
+            try:
+                if terminal_service.should_retain_deferred_failure_tombstone(terminal_id):
+                    logger.info(
+                        "Retaining old deferred-init terminal %s until external-owner cleanup",
+                        terminal_id,
+                    )
+                    continue
+            except Exception as exc:  # noqa: BLE001 — uncertain ownership fails closed
+                logger.warning(
+                    "Could not establish deferred-init ownership for stale terminal %s; "
+                    "retaining it: %s",
+                    terminal_id,
+                    exc,
                 )
-                # Keep deletion ordered with ``begin_terminal_turn_receipt``:
-                # remove the parent first, then its private lifecycle rows in
-                # this same transaction.  The receipt claim holds a write lock
-                # on the parent, so a concurrent teardown either wins before
-                # a receipt exists or deletes the receipt after its claim.
-                _record_native_child_cleanup_rows(db, terminal_ids_to_delete)
-                _delete_terminal_turn_receipt_rows(db, terminal_ids_to_delete)
-            else:
-                deleted_terminals = 0
-            db.commit()
-            logger.info(f"Deleted {deleted_terminals} old terminals from database")
+                continue
+
+            try:
+                from cli_agent_orchestrator import constants
+                from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
+
+                with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id):
+                    terminal_service.ensure_terminal_is_not_work_owned(terminal_id)
+                    metadata = terminal_service.get_terminal_metadata(terminal_id)
+                    if metadata and metadata.get("engine") == "kas":
+                        if not terminal_service.dismantle_terminal_runtime(terminal_id, metadata):
+                            continue
+                        if terminal_service.delete_terminal_row(
+                            terminal_id, metadata, registry=None
+                        ):
+                            deleted_terminals += 1
+                        continue
+                    fifo_manager.stop_reader(terminal_id)
+                    status_monitor.clear_terminal(terminal_id)
+                    if provider_manager.cleanup_provider(terminal_id) is False:
+                        logger.warning(
+                            "Retaining stale terminal %s while cleanup is deferred", terminal_id
+                        )
+                        continue
+                    metadata = terminal_service.get_terminal_metadata(terminal_id)
+                    if terminal_service.delete_terminal_row(terminal_id, metadata, registry=None):
+                        deleted_terminals += 1
+            except Exception as exc:  # noqa: BLE001 — uncertain ownership retains runtime
+                logger.warning("Failed to delete stale terminal %s: %s", terminal_id, exc)
+
+        logger.info(f"Deleted {deleted_terminals} old terminals from database")
 
         # Clean up old inbox messages
         with SessionLocal() as db:

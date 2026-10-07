@@ -291,9 +291,13 @@ class PluginRecord:
     explained by a ``SKIPPED`` finding (the collision case)."""
 
     findings: Tuple[Finding, ...] = ()
+    trust: Optional[Dict[str, Any]] = None
+    approval: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "trust": self.trust,
+            "approval": self.approval,
             "name": self.name,
             "version": self.version,
             "source": self.source.to_dict(),
@@ -318,6 +322,8 @@ class PluginRecord:
         except (TypeError, ValueError):
             installed_at = datetime.fromtimestamp(0, tz=timezone.utc)
         return cls(
+            trust=data.get("trust"),
+            approval=data.get("approval"),
             name=str(data["name"]),
             version=data.get("version"),
             source=PluginSource.from_dict(data.get("source", {})),

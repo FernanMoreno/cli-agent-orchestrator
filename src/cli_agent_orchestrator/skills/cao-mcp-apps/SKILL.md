@@ -32,7 +32,7 @@ uv run cao-mcp-server    # registers tools/resources via the mcp_apps plugin
 ```
 
 It is packaged as the built-in `mcp_apps` plugin (`cao.plugins` entry-point). The
-plugin's `on_mcp_server` hook registers the `ui://cao/*` resources, the five app
+plugin's `on_mcp_server` hook registers the `ui://cao/*` resources, the six app
 tools, the topology widget, and advertises the `io.modelcontextprotocol/ui`
 capability — best-effort and default-off, so nothing changes when the flag is unset.
 
@@ -41,6 +41,8 @@ capability — best-effort and default-off, so nothing changes when the flag is 
 - `ui://cao/dashboard` — fleet overview + the mutation entry point.
 - `ui://cao/agent` — one terminal's status, output tail, inbox, sub-agents.
 - `ui://cao/event-stream` — live governance ticker (app-only).
+- `ui://cao/graph` — polled Sigma.js view of provider graph nodes and edges,
+  highlighting hubs, orphans, and contradictions.
 - `cao://widget/topology` + `/widgets/topology/` — build-free live event view.
 
 All mutations flow through `submit_command(kind, payload)` — kinds:
@@ -120,9 +122,9 @@ cd cao_mcp_apps && npm run build:all && npm run demo
 
 This runs `scripts/record-demo.mjs` which:
 1. Boots the E2E harness server (serves built bundles in a real MCP-host iframe)
-2. Drives Chromium through: dashboard → agent detail → unified → event-stream
+2. Drives Chromium through: dashboard → agent detail → event-stream
 3. Records video (`docs/media/mcp-apps-demo.webm`)
-4. Captures screenshots (`docs/media/mcp-apps-{dashboard,agent,unified,event-stream}.png`)
+4. Captures screenshots (`docs/media/mcp-apps-{dashboard,agent,event-stream}.png`)
 5. Generates an optimized GIF (`docs/media/mcp-apps-demo.gif`) when ffmpeg is available
 
 The GIF is referenced in `README.md` and `docs/mcp-apps.md` — always regenerate after

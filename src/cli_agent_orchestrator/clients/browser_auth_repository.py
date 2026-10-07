@@ -2,7 +2,7 @@
 
 import os
 import sqlite3
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from functools import lru_cache
 from pathlib import Path
 
@@ -47,7 +47,7 @@ def _schema_snapshot(db):
 
 @lru_cache(maxsize=1)
 def _supported_schema():
-    with sqlite3.connect(":memory:") as reference:
+    with closing(sqlite3.connect(":memory:")) as reference, reference:
         reference.executescript(_SCHEMA)
         return _schema_snapshot(reference)
 
@@ -96,11 +96,15 @@ class BrowserAuthRepository:
 
     def _connect(self):
         db = sqlite3.connect(self.path, timeout=self.busy_timeout_ms / 1000, isolation_level=None)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA journal_mode=WAL")
-        db.execute("PRAGMA foreign_keys=ON")
-        db.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
+            return db
+        except BaseException:
+            db.close()
+            raise
 
     @staticmethod
     def _validate_schema(db):

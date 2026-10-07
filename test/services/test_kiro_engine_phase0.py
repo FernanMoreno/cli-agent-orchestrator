@@ -104,7 +104,7 @@ async def test_kas_probes_then_rejects_before_backend_or_persistence_allocation(
         patch(f"{_MODULE}.fifo_manager") as fifo,
         patch(f"{_MODULE}.provider_manager") as providers,
     ):
-        with pytest.raises(KiroPhase0KASError, match="Cedar"):
+        with pytest.raises(KiroPhase0KASError, match="disabled"):
             await create_terminal(
                 provider="kiro_cli",
                 agent_profile="kas-profile",
@@ -442,7 +442,7 @@ def test_send_input_rejects_persisted_kas_before_provider_or_pane_access():
         patch(f"{_MODULE}.provider_manager") as providers,
         patch(f"{_MODULE}.get_backend") as backend,
     ):
-        with pytest.raises(KiroPhase0KASError, match="Cedar"):
+        with pytest.raises(KiroPhase0KASError, match="disabled"):
             from cli_agent_orchestrator.services.terminal_service import send_input
 
             send_input("persisted-kas", "must not be delivered")
@@ -466,7 +466,7 @@ async def test_agent_step_reuse_rejects_persisted_kas_before_pane_write():
         patch(f"{_MODULE}.provider_manager") as providers,
         patch(f"{_MODULE}.get_backend") as backend,
     ):
-        with pytest.raises(KiroPhase0KASError, match="Cedar"):
+        with pytest.raises(KiroPhase0KASError, match="disabled"):
             await run_agent_step(
                 provider="kiro_cli",
                 agent="developer",

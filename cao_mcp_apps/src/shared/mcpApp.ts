@@ -34,6 +34,8 @@ const PROTOCOL_VERSION = "2026-01-26";
 export interface McpAppOptions {
   /** Window to post messages to (defaults to window.parent). */
   target?: Window;
+  /** Trusted embedding host origin, supplied by bootstrap when referrer is unavailable. */
+  expectedHostOrigin?: string;
   /** Override the global object for tests (defaults to window). */
   scope?: Window;
 }
@@ -58,13 +60,25 @@ export class McpApp {
    * actions (per SEP-1865 HostCapabilities).
    */
   hostCapabilities: Record<string, unknown> = {};
-  /** The expected host origin once known; messages from elsewhere are ignored. */
+  /** Trusted embedding origin fixed before the first request. */
   private hostOrigin: string | null = null;
 
   constructor(options: McpAppOptions = {}) {
     // In an iframe the host is the parent; tests can inject a stub.
     this.scope = options.scope ?? (globalThis as unknown as Window);
     this.target = options.target ?? this.scope.parent ?? this.scope;
+    const embeddingOrigin =
+      options.expectedHostOrigin ??
+      this.scope.location?.ancestorOrigins?.[0] ??
+      this.scope.document?.referrer;
+    if (embeddingOrigin) {
+      try {
+        const origin = new URL(embeddingOrigin).origin;
+        if (origin !== "null") this.hostOrigin = origin;
+      } catch {
+        /* An invalid embedding origin leaves the bridge closed. */
+      }
+    }
   }
 
   // ---- handler registration (call BEFORE connect) ------------------------
@@ -111,6 +125,8 @@ export class McpApp {
    */
   async connect(appCapabilities: Record<string, unknown> = {}): Promise<void> {
     if (this.connected) return;
+    if (!this.hostOrigin)
+      throw new Error("Trusted MCP host origin unavailable");
     this.listener = (event: MessageEvent) => this.handleMessage(event);
     this.scope.addEventListener("message", this.listener);
     this.connected = true;
@@ -165,7 +181,16 @@ export class McpApp {
     name: string,
     args: Record<string, unknown> = {},
   ): Promise<any> {
-    const result = await this.request("tools/call", { name, arguments: args });
+    const appOnlyTools = new Set([
+      "cao_fetch_history",
+      "subscribe_events",
+      "submit_command",
+    ]);
+    const wireName = appOnlyTools.has(name) ? `cao___${name}` : name;
+    const result = await this.request("tools/call", {
+      name: wireName,
+      arguments: args,
+    });
     // Unwrap structuredContent when present (UI-optimized payload), else content.
     if (result && typeof result === "object" && "structuredContent" in result) {
       return (result as any).structuredContent;
@@ -191,6 +216,18 @@ export class McpApp {
       kinds,
     });
     return (result?.events ?? []) as CaoEvent[];
+  }
+
+  /** History and cursor are one atomic snapshot of the backend event buffer. */
+  async fetchHistorySnapshot(
+    limit = 500,
+  ): Promise<{ events: CaoEvent[]; cursor: string | null }> {
+    const result = await this.callServerTool("cao_fetch_history", { limit });
+    const events = (result?.events ?? []) as CaoEvent[];
+    return {
+      events,
+      cursor: result?.cursor ?? events[events.length - 1]?.id ?? null,
+    };
   }
 
   /**
@@ -302,14 +339,15 @@ export class McpApp {
   }
 
   private post(message: unknown): void {
-    // Target origin "*" is acceptable for the sandbox proxy transport; inbound
-    // messages are origin-checked in handleMessage once the host origin is known.
-    this.target.postMessage(message, "*");
+    if (!this.hostOrigin)
+      throw new Error("Trusted MCP host origin unavailable");
+    this.target.postMessage(message, this.hostOrigin);
   }
 
   private handleMessage(event: MessageEvent): void {
-    // Untrusted-origin guard: once we learn the host origin from the
-    // first correlated reply, ignore anything from a different origin.
+    // Check the trusted embedding identity before processing ANY correlated reply.
+    if (event.source !== this.target || event.origin !== this.hostOrigin)
+      return;
     const data: any = event.data;
     if (!data || data.jsonrpc !== "2.0") return;
 
@@ -318,9 +356,6 @@ export class McpApp {
       data.id !== null &&
       this.pending.has(data.id)
     ) {
-      // Pin the host origin on the first reply we accept.
-      if (this.hostOrigin === null && event.origin)
-        this.hostOrigin = event.origin;
       const pending = this.pending.get(data.id)!;
       this.pending.delete(data.id);
       if (data.error)
@@ -331,13 +366,6 @@ export class McpApp {
 
     // Notification (no id, or id we don't recognize): dispatch by method.
     if (typeof data.method === "string") {
-      if (
-        this.hostOrigin !== null &&
-        event.origin &&
-        event.origin !== this.hostOrigin
-      ) {
-        return; // drop notifications from an unexpected origin
-      }
       const handlers = this.notificationHandlers.get(data.method);
       if (handlers) {
         for (const handler of handlers) handler(data.params);

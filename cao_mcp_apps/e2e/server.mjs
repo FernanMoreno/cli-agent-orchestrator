@@ -72,6 +72,11 @@ async function handle(req, res) {
     sendFile(res, resolve(BUNDLES_DIR, name), "text/html; charset=utf-8");
     return;
   }
+  if (path === "/event-subscribers") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ count: sseClients.size }));
+    return;
+  }
   if (path === "/events") {
     res.writeHead(200, {
       "content-type": "text/event-stream",

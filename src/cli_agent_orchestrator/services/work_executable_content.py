@@ -2,6 +2,7 @@
 
 import time
 
+from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_contract import EffectiveWorkContractV2, ExecutableIdentity
 from cli_agent_orchestrator.services.step_output_store import ArtifactRef, ImmutableResultStore
 from cli_agent_orchestrator.services.work_contract import ContractConflict, WorkContracts
@@ -14,9 +15,9 @@ _MAX_EXECUTABLE_BYTES = 8 * 1024 * 1024
 class WorkExecutableContent:
     """Server-owned content namespace; callers can resolve only a bound command."""
 
-    def __init__(self, repository):
+    def __init__(self, repository: WorkRepository) -> None:
         self.repository = repository
-        self.content = ImmutableResultStore(
+        self.content: ImmutableResultStore = ImmutableResultStore(
             repository.executable_content_root, max_bytes=_MAX_EXECUTABLE_BYTES
         )
 

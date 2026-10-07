@@ -164,6 +164,7 @@ def test_projector_reads_exact_durable_binding_and_projects_accepted_result(tmp_
             "run_generation": 4,
             "step_id": "build",
             "workflow_step_attempt": 2,
+            "historical": True,
         }
     ]
     assert service.reads == [binding]

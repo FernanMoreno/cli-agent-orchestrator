@@ -163,6 +163,24 @@ class WorkProvisioning:
         return principal
 
     @staticmethod
+    def _inspection_principal(principal):
+        """Authenticate inspection without granting provisioning authority."""
+        from cli_agent_orchestrator.security.auth import (
+            SCOPE_ADMIN,
+            SCOPE_READ,
+            SCOPE_WRITE,
+            is_verified_principal,
+        )
+
+        if not is_verified_principal(principal) or not principal.scopes & {
+            SCOPE_READ,
+            SCOPE_WRITE,
+            SCOPE_ADMIN,
+        }:
+            raise ProvisionDenied("verified principal lacks inspection authority")
+        return principal
+
+    @staticmethod
     def _registered(connection, principal):
         if not isinstance(principal, Principal):
             raise ProvisionDenied("verified principal required")
@@ -194,13 +212,19 @@ class WorkProvisioning:
         contract,
         issuer_id=None,
         operation_kind="launch",
+        _inspection=False,
     ):
         """Validate one exact durable configuration without inferring absent settings."""
         self.repository._verify(connection)
         if admin is not None:
             self._principal(admin, admin=True)
             self._registered(connection, admin)
-        self._principal(subject)
+        if _inspection:
+            if admin is not None:
+                raise ProvisionDenied("inspection cannot provision authority")
+            self._inspection_principal(subject)
+        else:
+            self._principal(subject)
         self._registered(connection, subject)
         _identity(job_id, "job id")
         _identity(grant_id, "grant id")
@@ -772,12 +796,18 @@ class WorkProvisioning:
         connection=None,
         expected_ref=None,
         expected_fingerprint=None,
+        _inspection=False,
     ):
         """Return one currently authorized exact-source provision or None if absent."""
         workflow_id = _identity(workflow_id, "workflow identity")
         step_id = _identity(step_id, "workflow step identity")
         _digest(spec_hash, "workflow spec hash")
-        self._principal(principal)
+        if type(_inspection) is not bool:
+            raise ProvisionDenied("invalid inspection mode")
+        if _inspection:
+            self._inspection_principal(principal)
+        else:
+            self._principal(principal)
         if connection is not None and not connection.in_transaction:
             raise ProvisionDenied("workflow provision resolution requires a stable transaction")
         snapshot = (
@@ -848,6 +878,7 @@ class WorkProvisioning:
                     contract=contract,
                     issuer_id=row["issuer_id"],
                     operation_kind="agent_step",
+                    _inspection=_inspection,
                 )
                 workflow_subject_ref, workflow_authorization_ref, _ = self._origin_revision(
                     connection,
@@ -1037,3 +1068,138 @@ class WorkProvisioning:
         """Reconstruct one current provision; foreign and absent selectors disclose nothing."""
         with self.repository.read_snapshot() as connection:
             return self._resolve_launch(connection, authenticated_principal, selector)
+
+    def derive_plan_step(
+        self,
+        connection,
+        principal,
+        seed,
+        *,
+        workflow_alias,
+        step_id,
+        source_hash,
+        run_id,
+        expected_plan_id,
+        prompt,
+    ):
+        """Clone an exact authorized seed into an isolated plan-owned selector.
+
+        Caller must already hold its plan admission transaction. No new grant,
+        snapshot, receiver, contract or delivery is accepted from the caller.
+        """
+        if not connection.in_transaction:
+            raise ProvisionDenied("plan provisioning requires caller transaction")
+        import hashlib
+
+        proof = connection.execute(
+            "SELECT r.principal_id,r.plan_id,p.source_hash FROM workflow_scoped_run r "
+            "JOIN workflow_prepared_plan p ON p.prepared_id=r.prepared_id WHERE r.run_id=?",
+            (run_id,),
+        ).fetchone()
+        if (
+            proof is None
+            or (proof["principal_id"], proof["plan_id"], proof["source_hash"])
+            != (principal.id, expected_plan_id, source_hash)
+            or workflow_alias
+            != ("plan_" + hashlib.sha256((run_id + expected_plan_id).encode()).hexdigest()[:40])
+        ):
+            raise ProvisionDenied("scoped provisioning requires durable exact run ownership")
+        current = self.resolve_workflow_step(
+            principal,
+            workflow_id=seed.ref.workflow_id,
+            step_id=seed.ref.step_id,
+            spec_hash=source_hash,
+            connection=connection,
+            expected_ref=seed.ref,
+            expected_fingerprint=seed.provision_fingerprint,
+        )
+        if current != seed:
+            raise ProvisionDenied("plan seed changed")
+        _identity(workflow_alias, "scoped workflow identity")
+        _identity(step_id, "scoped step identity")
+        if not isinstance(prompt, str) or not prompt or len(prompt.encode("utf-8")) > 32768:
+            raise ProvisionDenied("scoped delivery exceeds approved payload bounds")
+        payload = json.loads(seed.delivery_template.payload_json)
+        payload["message"] = prompt
+        requested_delivery = seed.delivery_template.model_copy(
+            update={"payload_json": _canonical(payload)}
+        )
+        delivery, delivery_json, delivery_hash = _workflow_delivery(
+            requested_delivery, adapter_version=seed.adapter_version
+        )
+        prior = self.resolve_workflow_step(
+            principal,
+            workflow_id=workflow_alias,
+            step_id=step_id,
+            spec_hash=source_hash,
+            connection=connection,
+        )
+        if prior is not None:
+            if (
+                prior.contract_hash,
+                prior.delivery_template_hash,
+                prior.grant_id,
+                prior.grant_revision,
+                prior.snapshot_hash,
+            ) != (
+                seed.contract_hash,
+                delivery_hash,
+                seed.grant_id,
+                seed.grant_revision,
+                seed.snapshot_hash,
+            ):
+                raise ProvisionConflict("scoped step is bound to another seed")
+            return prior
+        # Derived rows retain all issuer and receiver authority evidence. Existing
+        # schema FK, immutable triggers and source uniqueness continue to apply.
+        from uuid import uuid4
+
+        ref = seed.ref.model_copy(
+            update={
+                "id": uuid4().hex,
+                "workflow_id": workflow_alias,
+                "step_id": step_id,
+                "revision": 1,
+            }
+        )
+        derived = seed.model_copy(
+            update={
+                "ref": ref,
+                "delivery_template": delivery,
+                "delivery_template_hash": delivery_hash,
+            }
+        )
+        derived = derived.model_copy(update={"provision_fingerprint": derived.fingerprint()})
+        row = dict(
+            connection.execute(
+                "SELECT * FROM work_workflow_step_provisions WHERE id=?", (seed.ref.id,)
+            ).fetchone()
+        )
+        row.update(
+            workflow_id=workflow_alias,
+            step_id=step_id,
+            revision=1,
+            id=ref.id,
+            provision_fingerprint=derived.provision_fingerprint,
+            delivery_json=delivery_json,
+            delivery_template_hash=delivery_hash,
+            created_at=time.time(),
+        )
+        columns = tuple(row)
+        connection.execute(
+            "INSERT INTO work_workflow_step_provisions ("
+            + ",".join(columns)
+            + ") VALUES ("
+            + ",".join("?" for _ in columns)
+            + ")",
+            tuple(row[key] for key in columns),
+        )
+        return self.resolve_workflow_step(
+            principal,
+            workflow_id=workflow_alias,
+            step_id=step_id,
+            spec_hash=source_hash,
+            connection=connection,
+            expected_ref=ref,
+            expected_fingerprint=derived.provision_fingerprint,
+        )

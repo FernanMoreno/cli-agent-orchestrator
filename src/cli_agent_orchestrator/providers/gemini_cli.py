@@ -296,7 +296,8 @@ class GeminiCliProvider(BaseProvider):
             raise ProviderError("Gemini system settings must be a JSON object")
         # JSON round-trip makes a detached JSON-compatible deep copy and rejects
         # accidental non-serializable test doubles at the boundary.
-        return json.loads(json.dumps(loaded))
+        detached: dict[str, Any] = json.loads(json.dumps(loaded))
+        return detached
 
     @staticmethod
     def _validate_system_policy(settings: dict[str, Any]) -> None:
@@ -862,15 +863,7 @@ class GeminiCliProvider(BaseProvider):
                 "sending another task"
             )
         receipt = f"{_TURN_RECEIPT_PREFIX}{secrets.token_hex(_TURN_RECEIPT_BYTES)}"
-        prepared = (
-            f"{message.rstrip()}\n\n"
-            "CAO completion receipt requirement: this delivery contract takes precedence "
-            "over any incompatible output-format instruction in the task. After you have "
-            "fully completed the task and written a concise final result, write one final line containing "
-            f"exactly this receipt: {receipt}\n"
-            "Do not quote or emit that receipt before the task is complete, and do not "
-            "perform further tool calls after it."
-        )
+        prepared = self._format_turn_receipt_input(message, receipt)
         self._pending_turn_receipt = receipt
         self._pending_turn_receipt_sha256 = hashlib.sha256(receipt.encode("utf-8")).hexdigest()
         # Keep generation distinct from the receipt hash so the database can

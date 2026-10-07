@@ -16,6 +16,7 @@ import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from test.fixtures import browser_docker_harness as fixture
 
 import pytest
 from fastapi.testclient import TestClient
@@ -29,7 +30,6 @@ from cli_agent_orchestrator.services.step_output_store import ArtifactRef, Immut
 from cli_agent_orchestrator.services.work_launch_gateway import build_durable_launch_gateway
 from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
 from cli_agent_orchestrator.services.work_service import WorkService
-from test.fixtures import browser_docker_harness as fixture
 
 
 @pytest.mark.integration

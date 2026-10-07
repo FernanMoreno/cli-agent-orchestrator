@@ -4,15 +4,16 @@ Issue #312 established the module and its first four rules; issue #583's
 ``recovery-decision-intake`` added the three recovery-policy rules catalogued
 below; issue #753 adds literal step-id validation.
 
-A pure, dependency-free function of the source text: one ``ast.parse`` plus
-exactly one ``ast.walk`` — no filesystem, no network, no state, and **no
+A pure, dependency-free function of the source text: a bounded token preflight,
+at most one ``ast.parse`` plus exactly one ``ast.walk`` for a parsed tree — no filesystem, no network, no state, and **no
 import and no execution of the target** (FR-2.1, the M2 no-execution
 guarantee). Path safety is the caller's job; ``display_path`` is used only
 for message rendering. ``lint_script`` never raises on bad input — a syntax
 error is a finding, not an exception (U1-BR-6).
 
 Rule catalogue — eight rules:
-- ``syntax`` (ERROR) — ``ast.parse`` failed; anchored at ``e.lineno`` or 1.
+- ``syntax`` (ERROR) — token complexity exceeds the parser safety budget or
+  ``ast.parse`` failed; anchored at ``e.lineno`` or 1.
 - ``disallowed-import`` (ERROR) — static or literal-string dynamic import
   whose first dotted segment is in ``SCRIPT_LINT_DISALLOWED_IMPORT_PREFIXES``
   (scripts reach CAO over HTTP only; the ``cao_workflow`` shim is the
@@ -78,8 +79,10 @@ The recovery rules have two blind spots, and they point in OPPOSITE directions:
 from __future__ import annotations
 
 import ast
+import io
 import logging
 import re
+import tokenize
 from typing import List, Literal, Sequence
 
 from cli_agent_orchestrator.constants import (
@@ -91,17 +94,72 @@ from cli_agent_orchestrator.models.workflow import LintFinding, ScriptValidation
 
 logger = logging.getLogger(__name__)
 _NAME_RE = re.compile(WORKFLOW_NAME_RE)
+# Bound parser recursion by statement complexity, not total source bytes.
+# CPython 3.10 can segfault on enormous attribute/operator chains instead of
+# raising RecursionError. Ordinary scripts and plain literals remain unbounded.
+_MAX_STATEMENT_TOKENS = 1_024
+_MAX_OPAQUE_FSTRING_CHARACTERS = 4_096
+
+
+def _check_parser_budget(source: str, display_path: str) -> None:
+    """Reject excessive logical statements before entering CPython's parser."""
+    count = 0
+    bracket_depth = 0
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type == tokenize.NEWLINE or (
+                token.type == tokenize.OP and token.string == ";" and bracket_depth == 0
+            ):
+                count = 0
+                continue
+            if token.type in (
+                tokenize.COMMENT,
+                tokenize.NL,
+                tokenize.INDENT,
+                tokenize.DEDENT,
+                tokenize.ENDMARKER,
+            ):
+                continue
+            # Before 3.12, f-string expressions are hidden inside one STRING
+            # token. Bound that opaque text conservatively; ordinary string
+            # literals, including multiline literals, do not consume this cap.
+            if token.type == tokenize.STRING:
+                prefix = token.string[
+                    : min(
+                        (token.string.find(quote) for quote in ('"', "'") if quote in token.string),
+                        default=0,
+                    )
+                ].lower()
+                if "f" in prefix and len(token.string) > _MAX_OPAQUE_FSTRING_CHARACTERS:
+                    raise SyntaxError(
+                        "f-string is too complex to parse safely",
+                        (display_path, token.start[0], token.start[1] + 1, ""),
+                    )
+            count += 1
+            if count > _MAX_STATEMENT_TOKENS:
+                raise SyntaxError(
+                    "statement is too complex to parse safely",
+                    (display_path, token.start[0], token.start[1] + 1, ""),
+                )
+            if token.type == tokenize.OP:
+                if token.string in ("(", "[", "{"):
+                    bracket_depth += 1
+                elif token.string in (")", "]", "}"):
+                    bracket_depth = max(0, bracket_depth - 1)
+    except tokenize.TokenError as error:
+        message, (line, column) = error.args
+        raise SyntaxError(message, (display_path, line, column + 1, "")) from error
 
 
 def lint_script(source: str, display_path: str) -> ScriptValidationResult:
     """Lint a workflow script's source text. Total: never raises on input content.
 
-    The only operation that can raise on input content is ``ast.parse``; it is
-    wrapped once with exactly three narrow arms (no broad except — totality by
-    construction, proven by the hypothesis property test).
+    Token preflight and ``ast.parse`` share the existing narrow syntax/value/
+    recursion handlers. Excessive statements never enter the native parser.
     """
     findings: List[LintFinding] = []
     try:
+        _check_parser_budget(source, display_path)
         tree = ast.parse(source, filename=display_path)
     except SyntaxError as e:
         # Unparsable tree cannot be walked — the syntax finding is the sole

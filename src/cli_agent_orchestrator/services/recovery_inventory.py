@@ -23,9 +23,22 @@ from cli_agent_orchestrator.clients.work_repository import (
     _stored_recovery_context,
 )
 
-WORK_SQLITE_PROFILE_VERSION = 31
+WORK_SQLITE_PROFILE_VERSION = 39
 _WORK_SCHEMA_VERSION = 39
-_PROFILE_SCHEMA_VERSIONS = {28: 30, 29: 38, 30: 39, 31: 39}
+_PROFILE_SCHEMA_VERSIONS = {
+    28: 30,
+    29: 38,
+    30: 39,
+    31: 39,
+    32: 39,
+    33: 39,
+    34: 39,
+    35: 39,
+    36: 39,
+    37: 39,
+    38: 39,
+    39: 39,
+}
 _INCOMPATIBLE = "recovery inventory incompatible"
 
 _V25_TABLES = (
@@ -1913,12 +1926,443 @@ _V31_NATIVE_COLUMNS = {
 }
 _V31_TABLES = tuple(sorted(set(_V30_TABLES) | set(_V31_NATIVE_COLUMNS)))
 
-_PROFILE_TABLES = {28: _V25_TABLES, 29: _V29_TABLES, 30: _V30_TABLES, 31: _V31_TABLES}
+# v32 adds provider/lifecycle state; historical catalogs remain frozen.
+_V32_NATIVE_COLUMNS = {
+    **_V31_NATIVE_COLUMNS,
+    "session_incarnations": ("session_name", "incarnation_id"),
+    "terminal_turn_recovery": (
+        "terminal_id",
+        "generation",
+        "state",
+        "attempts",
+        "completion_detected_at",
+        "reason",
+        "result_text",
+        "created_at",
+        "updated_at",
+    ),
+    "terminals": (
+        *_LEGACY_TABLE_COLUMNS["terminals"],
+        "provider_variant",
+        "deferred_init_failure",
+        "deferred_init_external_owner",
+        "deferred_init_runtime_reclaimed",
+        "session_incarnation_id",
+    ),
+}
+_V32_TABLES = tuple(sorted(set(_V31_TABLES) | {"session_incarnations", "terminal_turn_recovery"}))
+
+# v33 freezes private prepared-plan attachments and KAS policy proof. The
+# historical v32 catalog is unchanged and never accepts these new objects.
+_V33_NATIVE_COLUMNS = {
+    **_V32_NATIVE_COLUMNS,
+    "terminals": (*_V32_NATIVE_COLUMNS["terminals"], "kiro_policy_digest"),
+    "workflow_plan_snapshot": ("plan_id", "component_set_version"),
+    "workflow_plan_snapshot_component": ("plan_id", "component_name", "content_digest", "content"),
+    "workflow_run_plan_snapshot": ("run_id", "plan_id"),
+    "workflow_prepared_plan": (
+        "prepared_id",
+        "plan_id",
+        "workflow_name",
+        "tier",
+        "source_hash",
+        "principal_id",
+        "created_at",
+        "expires_at",
+        "public_manifest_json",
+    ),
+    "workflow_scoped_run": ("run_id", "prepared_id", "principal_id", "plan_id"),
+    "workflow_plan_step_alias": (
+        "run_id",
+        "step_id",
+        "target_key",
+        "agent_profile",
+        "workflow_alias",
+        "seed_id",
+        "seed_revision",
+        "provision_id",
+    ),
+}
+_V33_TABLES = tuple(
+    sorted(set(_V32_TABLES) | (set(_V33_NATIVE_COLUMNS) - set(_V32_NATIVE_COLUMNS)))
+)
+_V33_FOREIGN_KEYS = tuple(
+    sorted(
+        (
+            *_V30_FOREIGN_KEYS,
+            ForeignKeyReference(
+                "workflow_plan_snapshot_component",
+                ("plan_id",),
+                "workflow_plan_snapshot",
+                ("plan_id",),
+                "NO ACTION",
+                "CASCADE",
+                "NONE",
+            ),
+            ForeignKeyReference(
+                "workflow_run_plan_snapshot",
+                ("run_id",),
+                "workflow_run",
+                ("run_id",),
+                "NO ACTION",
+                "CASCADE",
+                "NONE",
+            ),
+            ForeignKeyReference(
+                "workflow_run_plan_snapshot",
+                ("plan_id",),
+                "workflow_plan_snapshot",
+                ("plan_id",),
+                "NO ACTION",
+                "RESTRICT",
+                "NONE",
+            ),
+            _known_v29_fk(
+                "workflow_prepared_plan", ("plan_id",), "workflow_plan_snapshot", ("plan_id",)
+            ),
+            ForeignKeyReference(
+                "workflow_scoped_run",
+                ("run_id",),
+                "workflow_run",
+                ("run_id",),
+                "NO ACTION",
+                "CASCADE",
+                "NONE",
+            ),
+            _known_v29_fk(
+                "workflow_scoped_run", ("prepared_id",), "workflow_prepared_plan", ("prepared_id",)
+            ),
+            ForeignKeyReference(
+                "workflow_plan_step_alias",
+                ("run_id",),
+                "workflow_run",
+                ("run_id",),
+                "NO ACTION",
+                "CASCADE",
+                "NONE",
+            ),
+        )
+    )
+)
+
+_V34_NATIVE_COLUMNS = {
+    **_V33_NATIVE_COLUMNS,
+    "terminal_late_observations": ("terminal_id", "generation", "attempts", "next_due", "deadline"),
+}
+_V34_TABLES = tuple(sorted((*_V33_TABLES, "terminal_late_observations")))
+
+_V35_NATIVE_COLUMNS = {
+    **_V34_NATIVE_COLUMNS,
+    "assignment_intents": (
+        "assignment_id",
+        "owner",
+        "parent_terminal_id",
+        "parent_incarnation_id",
+        "generation",
+        "operation_key",
+        "request_hash",
+        "state",
+        "result_json",
+        "created_at",
+    ),
+}
+_V35_TABLES = tuple(sorted((*_V34_TABLES, "assignment_intents")))
+
+# v36 adds ordinary Beads and remote effect journals. They are observations,
+# never portable Work grants; earlier profile catalogs remain frozen.
+_V36_NATIVE_COLUMNS = {
+    **_V35_NATIVE_COLUMNS,
+    "beads_operations": (
+        "operation_id",
+        "owner",
+        "workspace_id",
+        "workspace_identity",
+        "action",
+        "request_hash",
+        "state",
+        "result_json",
+        "created_at",
+    ),
+    "remote_runtime_instances": ("runtime_id", "incarnation_id", "connection_epoch"),
+    "remote_operations": (
+        "op_id",
+        "runtime_id",
+        "incarnation_id",
+        "terminal_id",
+        "generation",
+        "connection_epoch",
+        "deadline",
+        "command_type",
+        "request_hash",
+        "request_json",
+        "state",
+        "result_json",
+    ),
+    "remote_terminal_placements": (
+        "terminal_id",
+        "runtime_id",
+        "incarnation_id",
+        "launch_op_id",
+        "session_incarnation_id",
+        "identity_json",
+        "projection_json",
+        "revision",
+    ),
+    "remote_observation_revisions": ("terminal_id", "incarnation_id", "revision"),
+    "remote_operation_cancellations": ("op_id", "requested_at"),
+}
+_V36_TABLES = tuple(sorted(set(_V35_TABLES) | set(_V36_NATIVE_COLUMNS)))
+
+# v37 adds opt-in private memory identity continuity; marker claims are not grants.
+_V37_NATIVE_COLUMNS = {
+    **_V36_NATIVE_COLUMNS,
+    "project_markers": ("project_id", "nonce", "realpath", "device", "inode"),
+}
+_V37_TABLES = tuple(sorted((*_V36_TABLES, "project_markers")))
+
+# v38 adds durable continuation and external task correlations around Work.
+_V38_NATIVE_COLUMNS = {
+    **_V37_NATIVE_COLUMNS,
+    "beads_work_bindings": (
+        "binding_id",
+        "owner",
+        "workspace_id",
+        "task_id",
+        "workspace_identity",
+        "material_hash",
+        "material_json",
+        "prepared_id",
+        "plan_id",
+        "run_id",
+        "coordinator_id",
+        "operation_key",
+        "request_hash",
+        "state",
+        "revision",
+        "created_at",
+    ),
+    "workflow_continuation_outbox": (
+        "id",
+        "binding_id",
+        "run_id",
+        "run_generation",
+        "step_id",
+        "step_attempt",
+        "accepted_result_id",
+        "content_hash",
+        "state",
+        "revision",
+        "claim_epoch",
+        "created_at",
+    ),
+    "workflow_coordinator": (
+        "id",
+        "run_id",
+        "owner_principal_id",
+        "mode",
+        "prepared_id",
+        "plan_id",
+        "frozen_policy_hash",
+        "policy_json",
+        "state",
+        "revision",
+        "current_iteration",
+        "min_iterations",
+        "max_iterations",
+        "deadline",
+        "correction_budget",
+        "last_progress_hash",
+        "no_progress_count",
+        "escalation_reason",
+        "external_binding_ref",
+    ),
+    "workflow_coordinator_events": (
+        "coordinator_id",
+        "sequence",
+        "request_id",
+        "kind",
+        "iteration",
+        "binding_id",
+        "accepted_result_id",
+        "content_hash",
+        "public_evidence_json",
+        "private_artifact_ref",
+    ),
+    "workflow_driver": (
+        "run_id",
+        "owner_principal_id",
+        "owner_instance",
+        "epoch",
+        "revision",
+        "run_generation",
+        "lease_expires_at",
+        "heartbeat_at",
+        "state",
+        "source_hash",
+        "plan_id",
+        "process_identity_json",
+        "stop_evidence_ref",
+        "pause_reason",
+    ),
+}
+_V38_TABLES = tuple(sorted(set(_V37_TABLES) | set(_V38_NATIVE_COLUMNS)))
+_V38_FOREIGN_KEYS = tuple(
+    sorted(
+        (
+            *_V33_FOREIGN_KEYS,
+            _known_v29_fk(
+                "beads_work_bindings", ("coordinator_id",), "workflow_coordinator", ("id",)
+            ),
+            _known_v29_fk("beads_work_bindings", ("run_id",), "workflow_run", ("run_id",)),
+            _known_v29_fk(
+                "beads_work_bindings", ("plan_id",), "workflow_plan_snapshot", ("plan_id",)
+            ),
+            _known_v29_fk(
+                "beads_work_bindings", ("prepared_id",), "workflow_prepared_plan", ("prepared_id",)
+            ),
+            _known_v29_fk("beads_work_bindings", ("owner",), "work_principals", ("id",)),
+            _known_v29_fk(
+                "workflow_continuation_outbox", ("accepted_result_id",), "work_results", ("id",)
+            ),
+            _known_v29_fk("workflow_continuation_outbox", ("run_id",), "workflow_run", ("run_id",)),
+            _known_v29_fk(
+                "workflow_continuation_outbox",
+                ("binding_id",),
+                "work_workflow_step_projections",
+                ("binding_id",),
+            ),
+            _known_v29_fk(
+                "workflow_coordinator", ("plan_id",), "workflow_plan_snapshot", ("plan_id",)
+            ),
+            _known_v29_fk(
+                "workflow_coordinator", ("prepared_id",), "workflow_prepared_plan", ("prepared_id",)
+            ),
+            _known_v29_fk(
+                "workflow_coordinator", ("owner_principal_id",), "work_principals", ("id",)
+            ),
+            _known_v29_fk("workflow_coordinator", ("run_id",), "workflow_run", ("run_id",)),
+            _known_v29_fk(
+                "workflow_coordinator_events", ("accepted_result_id",), "work_results", ("id",)
+            ),
+            _known_v29_fk(
+                "workflow_coordinator_events",
+                ("binding_id",),
+                "work_workflow_step_bindings",
+                ("binding_id",),
+            ),
+            _known_v29_fk(
+                "workflow_coordinator_events", ("coordinator_id",), "workflow_coordinator", ("id",)
+            ),
+            _known_v29_fk("workflow_driver", ("plan_id",), "workflow_plan_snapshot", ("plan_id",)),
+            _known_v29_fk("workflow_driver", ("owner_principal_id",), "work_principals", ("id",)),
+            _known_v29_fk("workflow_driver", ("run_id",), "workflow_run", ("run_id",)),
+        )
+    )
+)
+
+# v39 classifies local peer state without making any of its authority portable.
+# This recovery catalog revision does not change the Work migration identity.
+_V39_NATIVE_COLUMNS = {
+    **_V38_NATIVE_COLUMNS,
+    "local_peer_grants": (
+        "grant_id",
+        "peer_instance_id",
+        "project_id",
+        "peer_display_name",
+        "peer_public_key",
+        "scopes_json",
+        "created_at",
+        "revoked_at",
+    ),
+    "local_peer_pairing_challenges": (
+        "challenge_id",
+        "role",
+        "code_hash",
+        "initiator_instance_id",
+        "initiator_process_generation",
+        "initiator_display_name",
+        "initiator_public_key",
+        "initiator_loopback_port",
+        "candidate_instance_id",
+        "candidate_process_generation",
+        "candidate_display_name",
+        "candidate_public_key",
+        "project_id",
+        "canonical_root",
+        "git_common_dir",
+        "requested_scopes_json",
+        "expires_at",
+        "consumed_at",
+        "created_at",
+    ),
+    "local_peer_projects": (
+        "project_id",
+        "canonical_root",
+        "git_common_dir",
+        "created_at",
+    ),
+    "local_peer_request_nonces": (
+        "peer_instance_id",
+        "nonce",
+        "expires_at",
+    ),
+    "local_peer_tasks": (
+        "task_id",
+        "source_instance_id",
+        "target_instance_id",
+        "requester_terminal_id",
+        "requester_principal_id",
+        "project_id",
+        "operation_key",
+        "request_hash",
+        "assignment_id",
+        "terminal_id",
+        "use_worktree",
+        "state",
+        "result_json",
+        "created_at",
+        "updated_at",
+    ),
+}
+_V39_TABLES = tuple(sorted(set(_V38_TABLES) | set(_V39_NATIVE_COLUMNS)))
+_V39_FOREIGN_KEYS = _V38_FOREIGN_KEYS
+_V39_NATIVE_EXECUTABLE_OBJECTS = frozenset(
+    (
+        ("trigger", "beads_binding_identity_immutable"),
+        ("trigger", "workflow_outbox_identity_immutable"),
+        ("trigger", "coordinator_events_no_update"),
+        ("trigger", "coordinator_events_no_delete"),
+    )
+)
+
+
+_PROFILE_TABLES = {
+    28: _V25_TABLES,
+    29: _V29_TABLES,
+    30: _V30_TABLES,
+    31: _V31_TABLES,
+    32: _V32_TABLES,
+    33: _V33_TABLES,
+    34: _V34_TABLES,
+    35: _V35_TABLES,
+    36: _V36_TABLES,
+    37: _V37_TABLES,
+    38: _V38_TABLES,
+    39: _V39_TABLES,
+}
 _PROFILE_FOREIGN_KEYS = {
     28: _V28_FOREIGN_KEYS,
     29: _V29_FOREIGN_KEYS,
     30: _V30_FOREIGN_KEYS,
     31: _V30_FOREIGN_KEYS,
+    32: _V30_FOREIGN_KEYS,
+    33: _V33_FOREIGN_KEYS,
+    34: _V33_FOREIGN_KEYS,
+    35: _V33_FOREIGN_KEYS,
+    36: _V33_FOREIGN_KEYS,
+    37: _V33_FOREIGN_KEYS,
+    38: _V38_FOREIGN_KEYS,
+    39: _V39_FOREIGN_KEYS,
 }
 
 
@@ -2284,11 +2728,45 @@ def _validate_reference_catalog(
 
 
 def _validate_legacy_tables(connection: sqlite3.Connection, profile_version: int) -> None:
-    catalog = _V31_NATIVE_COLUMNS if profile_version == 31 else _LEGACY_TABLE_COLUMNS
+    catalog = {
+        31: _V31_NATIVE_COLUMNS,
+        32: _V32_NATIVE_COLUMNS,
+        33: _V33_NATIVE_COLUMNS,
+        34: _V34_NATIVE_COLUMNS,
+        35: _V35_NATIVE_COLUMNS,
+        36: _V36_NATIVE_COLUMNS,
+        37: _V37_NATIVE_COLUMNS,
+        38: _V38_NATIVE_COLUMNS,
+        39: _V39_NATIVE_COLUMNS,
+    }.get(profile_version, _LEGACY_TABLE_COLUMNS)
     for table, expected_columns in catalog.items():
         columns = tuple(row[1] for row in connection.execute(f'PRAGMA table_info("{table}")'))
-        if columns != expected_columns:
+        # ALTER TABLE appends lifecycle columns after legacy last_active;
+        # fresh declarative creation uses model order. Both have the same closed catalog.
+        if profile_version >= 32 and table == "terminals":
+            valid = len(columns) == len(expected_columns) and set(columns) == set(expected_columns)
+        else:
+            valid = columns == expected_columns
+        if not valid:
             raise RecoveryInventoryError(_INCOMPATIBLE)
+
+
+def _validate_current_executable_objects(connection: sqlite3.Connection) -> None:
+    """Close native triggers/views before any portable copy can execute their SQL.
+
+    Work-prefixed objects are already checked against the exact migration DDL.
+    The four declared native triggers' SQL is checked by continuation/beads
+    verification; native views have no declared consumer or supported catalog.
+    """
+    actual = {
+        tuple(row)
+        for row in connection.execute(
+            "SELECT type,name FROM sqlite_master WHERE type IN ('trigger','view') "
+            "AND substr(name,1,5)!='work_'"
+        )
+    }
+    if actual != _V39_NATIVE_EXECUTABLE_OBJECTS:
+        raise RecoveryInventoryError(_INCOMPATIBLE)
 
 
 def _inspect_work_profile(
@@ -2323,8 +2801,18 @@ def _inspect_work_profile(
         if tables != tables_expected:
             raise RecoveryInventoryError(_INCOMPATIBLE)
         _validate_legacy_tables(connection, profile_version)
+        if profile_version >= 38:
+            from cli_agent_orchestrator.clients.beads_work_schema import verify as verify_beads
+            from cli_agent_orchestrator.clients.work_continuation_schema import (
+                verify as verify_continuation,
+            )
+
+            verify_continuation(connection)
+            verify_beads(connection)
+        if profile_version >= 39:
+            _validate_current_executable_objects(connection)
         references = _REFERENCE_FAMILIES
-        if profile_version == 31:
+        if profile_version >= 31:
             references = tuple(
                 sorted(
                     (
@@ -2350,6 +2838,92 @@ def _inspect_work_profile(
                     )
                 )
             )
+        if profile_version >= 32:
+            references = tuple(
+                sorted(
+                    (
+                        *references,
+                        ReferenceFamily(
+                            "legacy_live_terminal",
+                            "observational",
+                            "session_incarnations",
+                            ("session_name", "incarnation_id"),
+                        ),
+                        ReferenceFamily(
+                            "legacy_live_terminal",
+                            "observational",
+                            "terminal_turn_recovery",
+                            ("terminal_id", "generation"),
+                        ),
+                        ReferenceFamily(
+                            "terminal_recovery_payload",
+                            "sqlite_content",
+                            "terminal_turn_recovery",
+                            ("reason", "result_text"),
+                        ),
+                        ReferenceFamily(
+                            "terminal_lifecycle_failure",
+                            "sqlite_content",
+                            "terminals",
+                            ("deferred_init_failure",),
+                        ),
+                    )
+                )
+            )
+
+        if profile_version >= 33:
+            references = tuple(
+                sorted(
+                    (
+                        *references,
+                        ReferenceFamily(
+                            "workflow_private_plan_material",
+                            "sqlite_content",
+                            "workflow_plan_snapshot_component",
+                            ("content",),
+                        ),
+                        ReferenceFamily(
+                            "workflow_public_plan_review",
+                            "sqlite_content",
+                            "workflow_prepared_plan",
+                            ("public_manifest_json",),
+                        ),
+                        ReferenceFamily(
+                            "kiro_policy_proof",
+                            "observational",
+                            "terminals",
+                            ("kiro_policy_digest",),
+                        ),
+                    )
+                )
+            )
+
+        if profile_version >= 39:
+            # A restored Work copy must never revive grants, pairing/replay fences,
+            # task dispatch identities or approved physical project roots.
+            references = tuple(
+                sorted(
+                    (
+                        *references,
+                        *(
+                            ReferenceFamily(
+                                "local_peer_authority",
+                                "requires_future_profile",
+                                table,
+                                _V39_NATIVE_COLUMNS[table],
+                            )
+                            for table in (
+                                "local_peer_grants",
+                                "local_peer_pairing_challenges",
+                                "local_peer_projects",
+                                "local_peer_request_nonces",
+                                "local_peer_tasks",
+                            )
+                        ),
+                    )
+                )
+            )
+
         _validate_reference_catalog(connection, tables, references)
         foreign_keys = _foreign_keys(connection, tables)
         if foreign_keys != foreign_keys_expected:

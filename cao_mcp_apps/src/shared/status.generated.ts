@@ -41,6 +41,11 @@ export const STATUS: Record<string, StatusSemantics> = {
     semanticRole: "warning",
     pulse: false,
   },
+  reconcile: {
+    label: "Reconciliation required",
+    semanticRole: "warning",
+    pulse: false,
+  },
   error: {
     label: "Error",
     semanticRole: "danger",

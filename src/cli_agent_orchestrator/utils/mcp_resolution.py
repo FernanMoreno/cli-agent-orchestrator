@@ -23,6 +23,7 @@ server, or an explicit absolute path) passes through unchanged.
 """
 
 import logging
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -33,9 +34,56 @@ logger = logging.getLogger(__name__)
 # The bundled orchestration MCP server's console-script name.
 CAO_MCP_SERVER_COMMAND = "cao-mcp-server"
 
+# Names only in Codex argv; values belong in the child environment/private config.
+CAO_MCP_ENV_NAMES = (
+    "CAO_API_HOST",
+    "CAO_API_PORT",
+    "CAO_HOME_DIR",
+    "AUTH0_DOMAIN",
+    "AUTH0_AUDIENCE",
+    "CAO_AUTH_JWKS_URI",
+    "CAO_AUTH_ISSUER",
+    "CAO_AUTH_AUDIENCE",
+    "CAO_AUTH_LOCAL_TOKEN",
+    "CAO_AUTH_LOCAL_TOKEN_FILE",
+)
+
+
+def cao_mcp_environment(name: str, config: dict) -> dict:
+    """Forward instance context only to CAO's MCP; keep explicit overrides."""
+    environment = dict(config.get("env", {}) or {})
+    if is_cao_mcp_server(name, config):
+        if "CAO_AUTH_LOCAL_TOKEN" in environment:
+            environment.setdefault("CAO_AUTH_LOCAL_TOKEN_FILE", "")
+        for key in CAO_MCP_ENV_NAMES:
+            if key in os.environ:
+                environment.setdefault(key, os.environ[key])
+    return environment
+
+
 # Module entrypoint equivalent of the console script — runnable by the
 # interpreter directly, with no dependency on a script being on PATH.
 CAO_MCP_SERVER_MODULE = "cli_agent_orchestrator.mcp_server.server"
+
+
+def is_cao_mcp_server(server_name: str, config: dict) -> bool:
+    """Identify CAO's MCP across profile and native command representations."""
+    if server_name == CAO_MCP_SERVER_COMMAND:
+        return True
+    command = config.get("command", [])
+    command_parts = [command] if isinstance(command, str) else command
+    args = config.get("args", []) or []
+    candidates = [*command_parts, *args] if isinstance(command_parts, (list, tuple)) else args
+    return any(
+        isinstance(candidate, str)
+        and (
+            candidate == CAO_MCP_SERVER_MODULE
+            or Path(candidate).name.lower()
+            in {CAO_MCP_SERVER_COMMAND, CAO_MCP_SERVER_COMMAND + ".exe"}
+        )
+        for candidate in candidates
+    )
+
 
 # Console-script filename to look for next to the interpreter. On Windows the
 # script is installed as a .exe wrapper.

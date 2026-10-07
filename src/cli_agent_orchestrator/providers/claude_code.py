@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import shlex
 import stat
 import threading
@@ -23,7 +24,16 @@ from cli_agent_orchestrator.models.terminal import TerminalInputBlockedError, Te
 from cli_agent_orchestrator.providers.base import BaseProvider
 from cli_agent_orchestrator.services.settings_service import get_server_settings
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
-from cli_agent_orchestrator.utils.mcp_resolution import resolve_mcp_server_config
+from cli_agent_orchestrator.utils.mcp_readiness import (
+    READY_FILE_ENV,
+    READY_TOKEN_ENV,
+    has_ready_signal,
+)
+from cli_agent_orchestrator.utils.mcp_resolution import (
+    cao_mcp_environment,
+    is_cao_mcp_server,
+    resolve_mcp_server_config,
+)
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 from cli_agent_orchestrator.utils.text import strip_terminal_escapes
 
@@ -337,6 +347,8 @@ class ClaudeCodeProvider(BaseProvider):
         """Initialize provider state."""
         super().__init__(terminal_id, session_name, window_name, allowed_tools, skill_prompt)
         self._initialized = False
+        self._cao_mcp_ready_path: Optional[Path] = None
+        self._cao_mcp_ready_token: Optional[str] = None
         self._agent_profile = agent_profile
         # When set, the launched claude process resumes this Claude Code
         # session id (--resume <sid>) instead of starting a fresh
@@ -470,6 +482,10 @@ class ClaudeCodeProvider(BaseProvider):
         if profile is _UNSET:
             profile = self._load_profile()
 
+        cao_mcp_present = False
+        self._cao_mcp_ready_path = None
+        self._cao_mcp_ready_token = None
+
         # Determine permission mode for the base command.
         # Priority: explicit permissionMode > yolo/root detection > default yolo.
         #
@@ -575,7 +591,24 @@ class ClaudeCodeProvider(BaseProvider):
                     # PATH-independent invocation.
                     mcp_config[server_name] = resolve_mcp_server_config(mcp_config[server_name])
 
-                    env = mcp_config[server_name].get("env", {})
+                    if is_cao_mcp_server(server_name, mcp_config[server_name]):
+                        mcp_config[server_name]["alwaysLoad"] = True
+                        cao_mcp_present = True
+
+                    env = cao_mcp_environment(server_name, mcp_config[server_name])
+                    if is_cao_mcp_server(server_name, mcp_config[server_name]):
+                        if self._cao_mcp_ready_path is None:
+                            tmp_dir = CAO_HOME_DIR / "tmp"
+                            tmp_dir.mkdir(parents=True, exist_ok=True)
+                            self._cao_mcp_ready_token = secrets.token_hex(16)
+                            self._cao_mcp_ready_path = tmp_dir / (
+                                f"{self.terminal_id}.{self._cao_mcp_ready_token}.mcp-ready.json"
+                            )
+                        env[READY_FILE_ENV] = self._translate_path(
+                            str(self._cao_mcp_ready_path), profile
+                        )
+                        env[READY_TOKEN_ENV] = self._cao_mcp_ready_token
+                    mcp_config[server_name]["env"] = env
                     if "CAO_TERMINAL_ID" not in env:
                         env["CAO_TERMINAL_ID"] = self.terminal_id
                         mcp_config[server_name]["env"] = env
@@ -611,6 +644,14 @@ class ClaudeCodeProvider(BaseProvider):
         # Use shlex.join() for proper shell escaping of all arguments
         # This correctly handles multiline strings, quotes, and special characters
         claude_cmd = shlex.join(command_parts)
+        if cao_mcp_present:
+            timeout_ms = self.get_init_timeout(profile) * 1000
+            # Keep operator overrides in the pane's effective environment.
+            # Both the per-server connection and tool snapshot need a budget.
+            claude_cmd = (
+                f"MCP_TIMEOUT=${{MCP_TIMEOUT:-{timeout_ms}}} "
+                f"MCP_CONNECT_TIMEOUT_MS=${{MCP_CONNECT_TIMEOUT_MS:-{timeout_ms}}} " + claude_cmd
+            )
 
         # When cao-server runs inside a Claude Code session, CLAUDE* env vars
         # leak into spawned tmux panes (via the tmux server's global env).
@@ -1064,6 +1105,7 @@ class ClaudeCodeProvider(BaseProvider):
         # so the profile is not read from disk twice.
         profile = self._load_profile()
         init_timeout = self.get_init_timeout(profile)
+        init_deadline = time.monotonic() + init_timeout
 
         # Wait for shell prompt to appear in the tmux window
         if not await wait_for_shell(self.terminal_id, timeout=init_timeout):
@@ -1142,8 +1184,25 @@ class ClaudeCodeProvider(BaseProvider):
         # proceeds anyway rather than failing init).
         await self.wait_until_input_ready()
 
+        await self._wait_for_cao_mcp_ready(timeout=max(0.0, init_deadline - time.monotonic()))
         self._initialized = True
         return True
+
+    async def _wait_for_cao_mcp_ready(self, timeout: float) -> None:
+        if self._cao_mcp_ready_path is None or self._cao_mcp_ready_token is None:
+            return
+        deadline = time.monotonic() + timeout
+        while True:
+            if await asyncio.to_thread(
+                has_ready_signal, self._cao_mcp_ready_path, self._cao_mcp_ready_token
+            ):
+                return
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    "Claude CAO MCP tool discovery did not complete before the initialization "
+                    "deadline; no task was delivered. Inspect MCP startup and available memory."
+                )
+            await asyncio.sleep(min(0.1, max(0, deadline - time.monotonic())))
 
     async def wait_until_input_ready(self, timeout: float = 5.0) -> bool:
         """Settle-check readiness gate for the Ink input box.
@@ -1466,13 +1525,38 @@ class ClaudeCodeProvider(BaseProvider):
                     current_count = len(list(re.finditer(r"[⏺●]\s+", clean)))
                     if current_count == self._snapshot_response_count:
                         return TerminalStatus.PROCESSING
-            return TerminalStatus.COMPLETED
+            return self._receipt_completion_status(output)
 
         # IDLE: shell prompt visible but no response yet (e.g. just initialized).
         if last_idle:
             return TerminalStatus.IDLE
 
         return TerminalStatus.UNKNOWN
+
+    def _receipt_completion_status(self, output: str) -> TerminalStatus:
+        """Admit only current final evidence to the bounded receipt verifier."""
+        if self.pending_turn_receipt_state() is None:
+            return TerminalStatus.COMPLETED
+        output = self._without_optional_feedback_panel(output)
+        try:
+            result = self.extract_last_message_from_script(output)
+        except ValueError:
+            result = ""
+        if self._result_has_active_receipt(result):
+            return TerminalStatus.COMPLETED
+        # A native final summary without its receipt still needs reconciliation.
+        # A tool cell/commentary or an old finished frame cannot start it.
+        users = list(re.finditer(r"(?m)^[ \t]*❯[ \t\xa0]+(?=\S)", output))
+        current = output[users[-1].start() :] if users else ""
+        responses = list(EXTRACTION_RESPONSE_PATTERN.finditer(current))
+        if responses:
+            contract = current[: responses[0].start()]
+            tokens = re.findall(r"CAO-TURN-RECEIPT-[0-9a-f]{32}", contract)
+            if any(self._result_has_active_receipt(token) for token in tokens) and re.search(
+                COMPLETION_SUMMARY_PATTERN, current[responses[-1].end() :]
+            ):
+                return TerminalStatus.COMPLETED
+        return TerminalStatus.PROCESSING
 
     # Opt in to pyte rendered-screen detection (gated by CAO_PYTE_STATUS). The
     # detector below is tuned for a COMPOSITED viewport, not the raw stream.
@@ -1572,7 +1656,7 @@ class ClaudeCodeProvider(BaseProvider):
             if re.search(
                 GET_STATUS_COMPLETION_PATTERN, joined
             ) or EXTRACTION_RESPONSE_PATTERN.search(joined):
-                return TerminalStatus.COMPLETED
+                return self._receipt_completion_status(joined)
             return TerminalStatus.IDLE
 
         return TerminalStatus.UNKNOWN
@@ -1640,8 +1724,35 @@ class ClaudeCodeProvider(BaseProvider):
     # etc. must NOT trigger the stop condition.
     _SOL_IDLE_RE = re.compile(r"^\s*(?:\x1b\[[0-9;]*m)*[>❯](?:\x1b\[[0-9;]*m)*[\s\xa0]")
 
+    @staticmethod
+    def _without_optional_feedback_panel(script_output: str) -> str:
+        """Remove native post-turn feedback while preserving assistant questions."""
+        # Claude's optional post-turn survey uses the same bullet as a reply.
+        # Remove only its exact panel after a native finished summary and before
+        # the composer rail; a genuine assistant question remains response text.
+        clean = strip_terminal_escapes(script_output)
+        panels = list(
+            re.finditer(
+                r"(?m)^[ \t]*●[ \t]+How is Claude doing this session\? \(optional\)\n"
+                r"[ \t]*1:[ \t]+Bad[ \t]+2:[ \t]+Fine[ \t]+3:[ \t]+Good"
+                r"[ \t]+0:[ \t]+Dismiss[ \t]*(?=\n(?:[ \t]*\n)*[ \t]*─{20,})",
+                clean,
+            )
+        )
+        for panel in reversed(panels):
+            summaries = list(re.finditer(COMPLETION_SUMMARY_PATTERN, clean[: panel.start()]))
+            if summaries:
+                after_summary = clean[summaries[-1].end() : panel.start()]
+                if not EXTRACTION_RESPONSE_PATTERN.search(after_summary) and not re.search(
+                    r"(?m)^[ \t]*❯", after_summary
+                ):
+                    clean = clean[: panel.start()] + clean[panel.end() :]
+                    script_output = clean
+        return script_output
+
     def extract_last_message_from_script(self, script_output: str) -> str:
         """Extract Claude's final response message using the ⏺/● response marker."""
+        script_output = self._without_optional_feedback_panel(script_output)
         # Find all matches of the response pattern (legacy ⏺ or newest-TUI ●).
         matches = list(re.finditer(EXTRACTION_RESPONSE_PATTERN, script_output))
 
@@ -1706,6 +1817,13 @@ class ClaudeCodeProvider(BaseProvider):
     def cleanup(self) -> None:
         """Clean up Claude Code provider."""
         self._initialized = False
+        if self._cao_mcp_ready_path is not None:
+            try:
+                self._cao_mcp_ready_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        self._cao_mcp_ready_path = None
+        self._cao_mcp_ready_token = None
         # Remove temp files created during initialization
         tmp_dir = CAO_HOME_DIR / "tmp"
         for suffix in (".prompt", ".mcp.json"):

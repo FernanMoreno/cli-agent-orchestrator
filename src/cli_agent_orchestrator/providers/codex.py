@@ -14,14 +14,21 @@ from cli_agent_orchestrator.agent_plugins.mcp_mapping import CODEX_BARE_KEY
 from cli_agent_orchestrator.backends.registry import get_backend
 from cli_agent_orchestrator.constants import CAO_HOME_DIR
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.providers.base import BaseProvider
+from cli_agent_orchestrator.providers.base import _TURN_RECEIPT_PATTERN, BaseProvider
 from cli_agent_orchestrator.services.settings_service import get_server_settings
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
-from cli_agent_orchestrator.utils.mcp_resolution import resolve_mcp_server_config
+from cli_agent_orchestrator.utils.mcp_resolution import (
+    CAO_MCP_ENV_NAMES,
+)
+from cli_agent_orchestrator.utils.mcp_resolution import is_cao_mcp_server as _is_cao_mcp_server
+from cli_agent_orchestrator.utils.mcp_resolution import (
+    resolve_mcp_server_config,
+)
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 from cli_agent_orchestrator.utils.text import strip_terminal_escapes
 
 logger = logging.getLogger(__name__)
+
 
 # Regex patterns for Codex output analysis
 ANSI_CODE_PATTERN = r"\x1b\[[0-9;]*m"
@@ -1160,98 +1167,102 @@ class CodexProvider(BaseProvider):
         # deliberately unquoted by shlex, after the shlex.join() of everything else at the very
         # end of this method. See the long comment at its assignment site for why.
         developer_instructions_fragment: Optional[str] = None
+        cao_bearer_override: Optional[str] = None
 
+        system_prompt = (
+            profile.system_prompt
+            if profile is not None and profile.system_prompt is not None
+            else ""
+        )
         if profile is not None:
-            system_prompt = profile.system_prompt if profile.system_prompt is not None else ""
             system_prompt = self._apply_skill_prompt(system_prompt)
 
-            # Prepend security constraints for soft enforcement (Codex has no
-            # native tool restriction mechanism). Only applied when tool
-            # restrictions are active (not unrestricted "*").
-            if self._allowed_tools and "*" not in self._allowed_tools:
-                from cli_agent_orchestrator.constants import SECURITY_PROMPT
+        # Prepend security constraints for soft enforcement (Codex has no
+        # native tool restriction mechanism). Only applied when tool
+        # restrictions are active (not unrestricted "*").
+        if self._allowed_tools is not None and "*" not in self._allowed_tools:
+            from cli_agent_orchestrator.constants import SECURITY_PROMPT
+            from cli_agent_orchestrator.utils.tool_mapping import tool_constraint_instruction
 
-                tools_list = ", ".join(self._allowed_tools)
-                tool_constraint = f"\nYou only have access to these tools: {tools_list}\n"
-                system_prompt = SECURITY_PROMPT + tool_constraint + system_prompt
+            tool_constraint = f"\n{tool_constraint_instruction(self._allowed_tools)}\n"
+            system_prompt = SECURITY_PROMPT + tool_constraint + system_prompt
 
-            if system_prompt:
-                # Codex accepts developer_instructions via -c config override.
-                # This is injected as a developer role message before AGENTS.md content.
-                # Escape backslashes, double quotes, and newlines for TOML basic string.
-                # Newlines must become literal \n to prevent tmux send_keys from
-                # splitting the command across multiple lines.
-                #
-                # The escaped value is written to a CAO-owned temp file and referenced via a
-                # shell command substitution ($(cat <file>)) instead of being inlined directly,
-                # so the LAUNCH LINE ITSELF (what actually gets typed/pasted into the tmux pane)
-                # stays short regardless of how long the instructions text is. A real profile
-                # combining a security preamble, the caller's own system prompt, and the full
-                # skill-list prompt (see _apply_skill_prompt) commonly produces several KB of
-                # escaped text -- observed live at 8+KB. At launch time the pane is still a bare
-                # shell (codex has not started yet), which correctly does not get bracketed-paste
-                # framing (see clients/tmux.py's BRACKETED_PASTE_INCOMPATIBLE_SHELLS) since a bare
-                # shell does not understand those escape sequences. But WITHOUT that framing, a
-                # single pasted/typed line longer than the tty's canonical-mode line-length limit
-                # (MAX_CANON, 4096 bytes on Linux) is silently truncated/dropped by the kernel's
-                # tty line discipline before the shell ever sees a complete, valid command --
-                # this manifests as the shell hanging at an unclosed-quote continuation prompt
-                # forever (confirmed live: zero codex process ever spawned under the pane's shell,
-                # even after an explicit trailing Enter), until CAO's own init-timeout eventually
-                # fires with a generic "Codex initialization timed out" that gives no hint of the
-                # real cause. $(cat <file>) is expanded internally by the shell BEFORE exec'ing
-                # codex -- that internal expansion is not subject to the tty's per-line INPUT
-                # limit at all, only the typed/pasted command line is. Wrapped in double quotes
-                # (not left bare, not single-quoted) so the substitution still happens (command
-                # substitution is disabled inside single quotes) while word-splitting/globbing of
-                # the substituted content is suppressed (it is not inside single quotes either).
-                # The file's own content is `_toml_scalar`'s output verbatim, already including
-                # its own surrounding TOML double-quotes -- appended as a raw, deliberately
-                # UNquoted-by-shlex fragment after the main shlex.join() below (shlex.join would
-                # otherwise single-quote the whole "developer_instructions=$(cat ...)" fragment as
-                # one opaque token, disabling the substitution it depends on).
-                #
-                # Same underlying instructions/skills length problem does not affect Claude Code
-                # or Kimi CLI providers -- both already write the system prompt to a temp file and
-                # pass a short file-path flag instead of inlining it (see claude_code.py's
-                # --append-system-prompt-file, kimi_cli.py's system_prompt_path: YAML field).
-                # Codex has no direct equivalent of that "arbitrary absolute path" flag (its only
-                # file-loading mechanism, --profile, resolves names relative to $CODEX_HOME, which
-                # this provider has no reliable way to resolve per-account from here) -- this
-                # command-substitution approach reaches the same practical outcome (a short launch
-                # line) without needing that.
-                #
-                # Deliberate, documented shell-scope trade-off (not an oversight): $(...) command
-                # substitution is POSIX and works identically on every shell CAO's own
-                # BRACKETED_PASTE_INCOMPATIBLE_SHELLS (constants.py) already tracks as a shell
-                # class *except* csh/tcsh, which use `cmd` backticks instead and do not recognize
-                # `$(` as substitution syntax at all -- launching codex from a pane whose bare
-                # shell is csh/tcsh would break outright with this fragment malformed/rejected by
-                # the shell, not merely degrade. bash/zsh/dash/sh/ksh/mksh/ash/fish are all fine.
-                # No code here detects or special-cases the pane's shell before writing this
-                # fragment (unlike BRACKETED_PASTE_INCOMPATIBLE_SHELLS' own runtime
-                # #{pane_current_command} probe) -- csh/tcsh support, if ever needed, is scoped
-                # out of this fix rather than silently assumed to already work.
-                #
-                # Not covering here (disclosed, not silently assumed away): the other -c overrides
-                # below (per-MCP-server config, codexConfig) are NOT routed through this same
-                # mechanism and remain inlined directly -- they are typically far smaller than
-                # developer_instructions, but a profile configuring many MCP servers could in
-                # theory still accumulate enough inline -c overrides to hit the same limit. Left
-                # as a known, scoped-out follow-up rather than expanding this fix's surface.
-                developer_instructions_file = self._developer_instructions_file_path()
-                developer_instructions_file.parent.mkdir(parents=True, exist_ok=True)
-                # Open with mode 0o600 baked into the O_CREAT call itself (rather than
-                # write_text() followed by a separate chmod()) so the file is never
-                # briefly world/group-readable between creation and permission-tightening --
-                # the permissions are correct from the very first byte written.
-                fd = os.open(
-                    developer_instructions_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
-                )
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(_toml_scalar(system_prompt))
-                developer_instructions_fragment = f'-c "developer_instructions=$(cat {shlex.quote(str(developer_instructions_file))})"'
+        if system_prompt:
+            # Codex accepts developer_instructions via -c config override.
+            # This is injected as a developer role message before AGENTS.md content.
+            # Escape backslashes, double quotes, and newlines for TOML basic string.
+            # Newlines must become literal \n to prevent tmux send_keys from
+            # splitting the command across multiple lines.
+            #
+            # The escaped value is written to a CAO-owned temp file and referenced via a
+            # shell command substitution ($(cat <file>)) instead of being inlined directly,
+            # so the LAUNCH LINE ITSELF (what actually gets typed/pasted into the tmux pane)
+            # stays short regardless of how long the instructions text is. A real profile
+            # combining a security preamble, the caller's own system prompt, and the full
+            # skill-list prompt (see _apply_skill_prompt) commonly produces several KB of
+            # escaped text -- observed live at 8+KB. At launch time the pane is still a bare
+            # shell (codex has not started yet), which correctly does not get bracketed-paste
+            # framing (see clients/tmux.py's BRACKETED_PASTE_INCOMPATIBLE_SHELLS) since a bare
+            # shell does not understand those escape sequences. But WITHOUT that framing, a
+            # single pasted/typed line longer than the tty's canonical-mode line-length limit
+            # (MAX_CANON, 4096 bytes on Linux) is silently truncated/dropped by the kernel's
+            # tty line discipline before the shell ever sees a complete, valid command --
+            # this manifests as the shell hanging at an unclosed-quote continuation prompt
+            # forever (confirmed live: zero codex process ever spawned under the pane's shell,
+            # even after an explicit trailing Enter), until CAO's own init-timeout eventually
+            # fires with a generic "Codex initialization timed out" that gives no hint of the
+            # real cause. $(cat <file>) is expanded internally by the shell BEFORE exec'ing
+            # codex -- that internal expansion is not subject to the tty's per-line INPUT
+            # limit at all, only the typed/pasted command line is. Wrapped in double quotes
+            # (not left bare, not single-quoted) so the substitution still happens (command
+            # substitution is disabled inside single quotes) while word-splitting/globbing of
+            # the substituted content is suppressed (it is not inside single quotes either).
+            # The file's own content is `_toml_scalar`'s output verbatim, already including
+            # its own surrounding TOML double-quotes -- appended as a raw, deliberately
+            # UNquoted-by-shlex fragment after the main shlex.join() below (shlex.join would
+            # otherwise single-quote the whole "developer_instructions=$(cat ...)" fragment as
+            # one opaque token, disabling the substitution it depends on).
+            #
+            # Same underlying instructions/skills length problem does not affect Claude Code
+            # or Kimi CLI providers -- both already write the system prompt to a temp file and
+            # pass a short file-path flag instead of inlining it (see claude_code.py's
+            # --append-system-prompt-file, kimi_cli.py's system_prompt_path: YAML field).
+            # Codex has no direct equivalent of that "arbitrary absolute path" flag (its only
+            # file-loading mechanism, --profile, resolves names relative to $CODEX_HOME, which
+            # this provider has no reliable way to resolve per-account from here) -- this
+            # command-substitution approach reaches the same practical outcome (a short launch
+            # line) without needing that.
+            #
+            # Deliberate, documented shell-scope trade-off (not an oversight): $(...) command
+            # substitution is POSIX and works identically on every shell CAO's own
+            # BRACKETED_PASTE_INCOMPATIBLE_SHELLS (constants.py) already tracks as a shell
+            # class *except* csh/tcsh, which use `cmd` backticks instead and do not recognize
+            # `$(` as substitution syntax at all -- launching codex from a pane whose bare
+            # shell is csh/tcsh would break outright with this fragment malformed/rejected by
+            # the shell, not merely degrade. bash/zsh/dash/sh/ksh/mksh/ash/fish are all fine.
+            # No code here detects or special-cases the pane's shell before writing this
+            # fragment (unlike BRACKETED_PASTE_INCOMPATIBLE_SHELLS' own runtime
+            # #{pane_current_command} probe) -- csh/tcsh support, if ever needed, is scoped
+            # out of this fix rather than silently assumed to already work.
+            #
+            # Not covering here (disclosed, not silently assumed away): the other -c overrides
+            # below (per-MCP-server config, codexConfig) are NOT routed through this same
+            # mechanism and remain inlined directly -- they are typically far smaller than
+            # developer_instructions, but a profile configuring many MCP servers could in
+            # theory still accumulate enough inline -c overrides to hit the same limit. Left
+            # as a known, scoped-out follow-up rather than expanding this fix's surface.
+            developer_instructions_file = self._developer_instructions_file_path()
+            developer_instructions_file.parent.mkdir(parents=True, exist_ok=True)
+            # Open with mode 0o600 baked into the O_CREAT call itself (rather than
+            # write_text() followed by a separate chmod()) so the file is never
+            # briefly world/group-readable between creation and permission-tightening --
+            # the permissions are correct from the very first byte written.
+            fd = os.open(developer_instructions_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(_toml_scalar(system_prompt))
+            developer_instructions_fragment = f'-c "developer_instructions=$(cat {shlex.quote(str(developer_instructions_file))})"'
 
+        if profile is not None:
             # Add MCP servers via -c config overrides (per-session, no global config changes).
             # Each server field is set via dotted path: mcp_servers.<name>.<field>=<value>
             if profile.mcpServers:
@@ -1286,6 +1297,15 @@ class CodexProvider(BaseProvider):
                     if isinstance(cfg.get("cwd"), str) and cfg["cwd"]:
                         command_parts.extend(["-c", f"{prefix}.cwd={_toml_scalar(cfg['cwd'])}"])
                     if "env" in cfg and cfg["env"]:
+                        environment = dict(cfg["env"])
+                        if (
+                            _is_cao_mcp_server(server_name, cfg)
+                            and "CAO_AUTH_LOCAL_TOKEN" in environment
+                        ):
+                            cao_bearer_override = str(environment.pop("CAO_AUTH_LOCAL_TOKEN"))
+                            # An explicit static credential overrides the inherited
+                            # renewable source; an explicit file keeps its priority.
+                            environment.setdefault("CAO_AUTH_LOCAL_TOKEN_FILE", "")
                         # ONE inline table with QUOTED keys, not one override per key.
                         #
                         # The env map lives on the VALUE side of `-c key=value`, which
@@ -1300,16 +1320,23 @@ class CodexProvider(BaseProvider):
                         # key safely too. Also drops the per-server override count.
                         pairs = ", ".join(
                             f"{_toml_scalar(str(env_key))} = {_toml_scalar(str(env_val))}"
-                            for env_key, env_val in cfg["env"].items()
+                            for env_key, env_val in environment.items()
                         )
                         command_parts.extend(["-c", f"{prefix}.env={{ {pairs} }}"])
-                    # Forward CAO_TERMINAL_ID so MCP servers (e.g. cao-mcp-server)
-                    # can identify the current session for handoff/assign operations.
+                    # Forward the terminal identity to MCP subprocesses. CAO's
+                    # own server also needs the instance address: Codex inherits
+                    # only explicitly listed environment names, and its API
+                    # client otherwise falls back to the default port instead
+                    # of this terminal's CAO instance.
                     # Codex does not forward env vars to MCP subprocesses by default;
                     # env_vars lists names to inherit from the parent shell environment.
                     env_vars = cfg.get("env_vars", [])
-                    if "CAO_TERMINAL_ID" not in env_vars:
-                        env_vars = list(env_vars) + ["CAO_TERMINAL_ID"]
+                    forward_names = ["CAO_TERMINAL_ID"]
+                    if _is_cao_mcp_server(server_name, cfg):
+                        forward_names.extend(CAO_MCP_ENV_NAMES)
+                    for env_name in forward_names:
+                        if env_name not in env_vars:
+                            env_vars = list(env_vars) + [env_name]
                     env_vars_toml = "[" + ", ".join(_toml_scalar(v) for v in env_vars) + "]"
                     command_parts.extend(["-c", f"{prefix}.env_vars={env_vars_toml}"])
                     # Set a generous tool timeout for MCP calls like handoff, which
@@ -1327,11 +1354,32 @@ class CodexProvider(BaseProvider):
             # etc. — without editing the global ~/.codex/config.toml or
             # maintaining named profile files. Keys may be dotted config paths
             # (e.g. "features.fast_mode"); values are serialized to TOML
-            # scalars. Emitted last so they take precedence over CAO's own
-            # overrides and the profile/config defaults on key conflicts.
+            # scalars. Emitted after the generated MCP fields so profile
+            # overrides take precedence unless CAO needs a final safety fence.
             if profile.codexConfig:
                 for key, value in profile.codexConfig.items():
                     command_parts.extend(["-c", _toml_override(key, value)])
+
+            # Codex omits optional MCP servers that are still starting when it
+            # builds the first turn's tool catalog. CAO's callback tools must
+            # be present before a worker receives work, so make only CAO's own
+            # MCP required and give its startup enough time for a cold launch.
+            for server_name, server_config in (profile.mcpServers or {}).items():
+                cfg = (
+                    dict(server_config)
+                    if isinstance(server_config, dict)
+                    else server_config.model_dump(exclude_none=True)
+                )
+                if _is_cao_mcp_server(server_name, cfg):
+                    prefix = f"mcp_servers.{server_name}"
+                    command_parts.extend(
+                        [
+                            "-c",
+                            f"{prefix}.required=true",
+                            "-c",
+                            f"{prefix}.startup_timeout_sec=60.0",
+                        ]
+                    )
 
         # Suppress the startup update dialog at the source. Placed last so it
         # wins even if a profile sets check_for_update_on_startup=true.
@@ -1340,6 +1388,12 @@ class CodexProvider(BaseProvider):
         command = shlex.join(command_parts)
         if developer_instructions_fragment is not None:
             command = f"{command} {developer_instructions_fragment}"
+        if cao_bearer_override is not None:
+            from cli_agent_orchestrator.utils.atomic_file import locked_atomic_write
+
+            credential = CAO_HOME_DIR / "tmp" / f"{self.terminal_id}.mcp-bearer"
+            locked_atomic_write(credential, cao_bearer_override, mode=0o600)
+            command = f"CAO_AUTH_LOCAL_TOKEN=$(cat -- {shlex.quote(str(credential))}) {command}"
         return command
 
     async def _handle_trust_prompt(self, timeout: float = 20.0) -> None:
@@ -1701,6 +1755,40 @@ class CodexProvider(BaseProvider):
             if re.search(TUI_PROGRESS_PATTERN, tail_output, re.MULTILINE):
                 return TerminalStatus.PROCESSING
 
+            if self.pending_turn_receipt_state() is not None:
+                # Commentary and a temporarily absent spinner share the idle
+                # composer with a final reply. Do not spend the receipt's
+                # bounded verification budget on these intermediate redraws.
+                response_region = (
+                    clean_output[last_user.start() : cutoff_pos]
+                    if last_user
+                    else clean_output[:cutoff_pos]
+                )
+                if _find_response_marker(response_region) is None:
+                    return TerminalStatus.PROCESSING
+                try:
+                    result = self.extract_last_message_from_script(clean_output)
+                except ValueError:
+                    return TerminalStatus.PROCESSING
+                if self._result_has_active_receipt(result):
+                    return TerminalStatus.COMPLETED
+                # A genuine final reply without its receipt must still enter
+                # reconciliation. Bind the native finished marker to the
+                # current echoed contract so retained old answers cannot do so.
+                current = clean_output[last_user.start() : cutoff_pos] if last_user else ""
+                marker = _find_assistant_marker(current)
+                if marker is not None:
+                    contract = current[: marker.start()]
+                    tokens = re.findall(r"CAO-TURN-RECEIPT-[0-9a-f]{32}", contract)
+                    bound = any(self._result_has_active_receipt(token) for token in tokens)
+                    finished = re.search(
+                        r"(?m)^[^\w\n]*Worked for\s+(?:\d+[hms]\s*)+",
+                        current[marker.start() :],
+                    )
+                    if bound and finished:
+                        return TerminalStatus.COMPLETED
+                return TerminalStatus.PROCESSING
+
             # Consider COMPLETED only if we see an assistant marker (skipping
             # MCP tool-call markers) after the last user message. Without the
             # tool-call filter, "• Called <server>.<tool>(...)" emitted before
@@ -1939,12 +2027,15 @@ class CodexProvider(BaseProvider):
         input or output.
         """
         before_dialog = _transcript_before_active_rate_limit_dialog(transcript)
-        receipt = self._pending_turn_receipt
-        if not before_dialog or receipt is None:
+        if not before_dialog or self.pending_turn_receipt_state() is None:
             return None
 
         clean_output = strip_terminal_escapes(before_dialog)
-        receipt_matches = list(re.finditer(rf"(?m)^{re.escape(receipt)}$", clean_output))
+        receipt_matches = [
+            match
+            for match in _TURN_RECEIPT_PATTERN.finditer(clean_output)
+            if self._result_has_active_receipt(match.group(0))
+        ]
         if not receipt_matches:
             return None
         receipt_match = receipt_matches[-1]
@@ -2018,5 +2109,6 @@ class CodexProvider(BaseProvider):
         # with _build_codex_command) so the write site and the cleanup site can't drift apart.
         try:
             self._developer_instructions_file_path().unlink(missing_ok=True)
+            (CAO_HOME_DIR / "tmp" / f"{self.terminal_id}.mcp-bearer").unlink(missing_ok=True)
         except OSError:
             pass

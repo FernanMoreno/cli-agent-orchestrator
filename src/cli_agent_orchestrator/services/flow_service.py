@@ -18,7 +18,7 @@ from cli_agent_orchestrator.backends.registry import get_backend
 from cli_agent_orchestrator.clients.database import create_flow as db_create_flow
 from cli_agent_orchestrator.clients.database import delete_flow as db_delete_flow
 from cli_agent_orchestrator.clients.database import (
-    delete_terminals_by_session,
+    delete_terminals_by_ids,
 )
 from cli_agent_orchestrator.clients.database import get_flow as db_get_flow
 from cli_agent_orchestrator.clients.database import get_flows_to_run as db_get_flows_to_run
@@ -38,12 +38,14 @@ from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services.fifo_reader import fifo_manager
 from cli_agent_orchestrator.services.session_lock import session_lifecycle_lock
+from cli_agent_orchestrator.services.session_service import list_current_session_terminals
 from cli_agent_orchestrator.services.status_monitor import status_monitor
 from cli_agent_orchestrator.services.terminal_service import (
     WorkOwnedTerminalError,
     WorkOwnershipStoreUnavailableError,
     create_terminal,
     send_input,
+    should_retain_deferred_failure_tombstone,
 )
 from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 from cli_agent_orchestrator.utils.template import render_template
@@ -270,9 +272,11 @@ def _recycle_flow_session(name: str, session_name: str) -> bool:
         # session can appear between enumeration and the destructive effects.
         # Reopen the store after the script. An empty row list cannot authorize
         # a kill when the Work database disappeared or was replaced meanwhile.
-        terminals = _verified_flow_terminal_rows(session_name, terminal_locks)
+        _verified_flow_terminal_rows(session_name, terminal_locks)
+        backend_exists = get_backend().session_exists(session_name)
+        terminals = list_current_session_terminals(session_name, backend_exists=backend_exists)
 
-        if get_backend().session_exists(session_name):
+        if backend_exists:
             conductor = terminals[0] if terminals else None
             if conductor and _is_terminal_busy(conductor["id"]):
                 logger.info("Flow %s: session %s is busy, skipping", name, session_name)
@@ -299,8 +303,13 @@ def _recycle_flow_session(name: str, session_name: str) -> bool:
                     name,
                 )
                 return False
-            delete_terminals_by_session(session_name)
+            delete_terminals_by_ids([str(t["id"]) for t in terminals])
         elif terminals:
+            terminals = [
+                t
+                for t in terminals
+                if not should_retain_deferred_failure_tombstone(str(t["id"]), t)
+            ]
             cleanup_complete = True
             for terminal in terminals:
                 if provider_manager.cleanup_provider(terminal["id"]) is False:
@@ -308,7 +317,7 @@ def _recycle_flow_session(name: str, session_name: str) -> bool:
             if not cleanup_complete:
                 logger.warning("Flow %s has retained terminal cleanup; deferring next run", name)
                 return False
-            delete_terminals_by_session(session_name)
+            delete_terminals_by_ids([str(t["id"]) for t in terminals])
         return True
 
 
@@ -380,8 +389,9 @@ async def execute_flow(name: str) -> bool:
         rendered_prompt = render_template(prompt_template, output_dict)
 
         # Launch session
-        terminals = list_terminals_by_session(session_name)
-        if get_backend().session_exists(session_name):
+        backend_exists = get_backend().session_exists(session_name)
+        terminals = list_current_session_terminals(session_name, backend_exists=backend_exists)
+        if backend_exists:
             # Only check the first (conductor) terminal for busy status.
             # Worker terminals spawned by the conductor may have stale status
             # after /exit and should not block flow recycling.
@@ -399,9 +409,10 @@ async def execute_flow(name: str) -> bool:
             # Off the loop: get_status() can fork a tmux capture-pane for a
             # PROCESSING terminal (status_monitor.py's stale-PROCESSING
             # fallback), and execute_flow runs on the shared event loop.
-            if conductor and await asyncio.to_thread(_is_terminal_busy, conductor["id"]):
-                logger.info(f"Flow {name}: session {session_name} is busy, skipping")
-                return False
+            if conductor:
+                if await asyncio.to_thread(_is_terminal_busy, conductor["id"]):
+                    logger.info(f"Flow {name}: session {session_name} is busy, skipping")
+                    return False
         if not await asyncio.to_thread(_recycle_flow_session, name, session_name):
             return False
         terminal = await create_terminal(

@@ -117,7 +117,7 @@ def test_service_is_loopback_with_restart_and_existing_credentials(deployment):
     module, root = deployment
     unit = module.service_unit(root)
     assert "Restart=on-failure" in unit
-    assert "RuntimeMaxSec=12h" in unit
+    assert "RuntimeMaxSec" not in unit
     assert "personal_deployment.py" in unit
     assert "HOME=" not in unit
     env = module.environment(root)
@@ -315,3 +315,87 @@ def test_backup_serializes_with_local_account_updates(deployment, tmp_path):
     with module._lock(root, name="account.lock"):
         with pytest.raises(RuntimeError, match="account operation"):
             module.backup(root, tmp_path / "account-update-backup")
+
+
+def test_local_token_publication_is_private_and_keeps_identity(deployment):
+    module, root = deployment
+    expires = module.publish_local_token(root, lifetime=60)
+    path = root / "mcp-bearer.jwt"
+    assert path.stat().st_mode & 0o777 == 0o600
+    key = jwt.PyJWK.from_dict(module.jwks(root)["keys"][0]).key
+    config = json.loads((root / "deployment.json").read_text())
+    claims = jwt.decode(
+        path.read_text(),
+        key,
+        algorithms=["RS256"],
+        issuer=config["issuer"],
+        audience=config["audience"],
+    )
+    assert expires == claims["exp"]
+    assert claims["sub"] == config["subject"]
+    assert claims["scope"] == " ".join(config["scopes"])
+    assert claims["exp"] - claims["iat"] == 60
+    assert module.environment(root)["CAO_AUTH_LOCAL_TOKEN_FILE"] == str(path)
+
+
+def test_local_token_publication_failure_preserves_previous_file(deployment, monkeypatch):
+    module, root = deployment
+    module.publish_local_token(root)
+    path = root / "mcp-bearer.jwt"
+    before = path.read_bytes()
+    monkeypatch.setattr(
+        module.os, "replace", lambda *_: (_ for _ in ()).throw(OSError("publication failed"))
+    )
+    with pytest.raises(OSError):
+        module.publish_local_token(root)
+    assert path.read_bytes() == before
+    assert not list(root.glob("mcp-bearer.jwt.*.tmp"))
+
+
+def test_renewal_loop_updates_credential_without_restarting_any_process(deployment, monkeypatch):
+    module, root = deployment
+    calls = []
+    monkeypatch.setattr(
+        module, "publish_local_token", lambda root, **kwargs: calls.append(kwargs) or 1000
+    )
+
+    class Stop:
+        def is_set(self):
+            return False
+
+        def wait(self, seconds):
+            assert 0 < seconds <= 30
+            return True
+
+    module.rotate_local_tokens(root, Stop(), expires_at=0, lifetime=60, clock=lambda: 100)
+    assert calls == [{"lifetime": 60}]
+
+
+def test_renewal_loop_retries_failure_without_leaking_token(deployment, monkeypatch, capsys):
+    module, root = deployment
+    calls = []
+
+    def fail(*args, **kwargs):
+        calls.append(True)
+        raise OSError("secret-token-must-not-appear")
+
+    monkeypatch.setattr(module, "publish_local_token", fail)
+
+    class Stop:
+        def is_set(self):
+            return False
+
+        def wait(self, seconds):
+            assert seconds == 5
+            return True
+
+    module.rotate_local_tokens(root, Stop(), expires_at=0, lifetime=60, clock=lambda: 100)
+    assert calls == [True]
+    assert "secret-token-must-not-appear" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("ttl", [0, 59, 86401, True, "60"])
+def test_local_token_ttl_rejects_invalid_values(deployment, ttl):
+    module, root = deployment
+    with pytest.raises(ValueError):
+        module.publish_local_token(root, lifetime=ttl)

@@ -47,3 +47,17 @@ def work_backend_scope(backend):
         yield
     finally:
         _dispatch_backend.reset(token)
+
+
+@contextmanager
+def ordinary_remote_backend_scope(backend):
+    """Closed bridge-only fence; never admits an arbitrary proxy as Work authority."""
+    from cli_agent_orchestrator.runtime_channel.backend import OrdinaryRemoteEffectFence
+
+    if type(backend) is not OrdinaryRemoteEffectFence:
+        raise TypeError("ordinary remote effect fence required")
+    token = _dispatch_backend.set(backend)
+    try:
+        yield
+    finally:
+        _dispatch_backend.reset(token)

@@ -246,8 +246,8 @@ def test_both_start_arms_reach_the_same_verdict_on_the_same_inputs():
 
 
 @pytest.mark.parametrize("endpoint", ["/workflows/runs", "/workflows/runs:submit"])
-def test_store_fault_refuses_start_before_writing_a_run(endpoint, monkeypatch):
-    """Both start endpoints must report a store fault without creating a run."""
+def test_unprepared_start_refuses_before_store_access_or_writing_a_run(endpoint, monkeypatch):
+    """Both legacy arms require prepared scope before approval store access."""
     import sqlite3
 
     from fastapi.testclient import TestClient
@@ -265,14 +265,17 @@ def test_store_fault_refuses_start_before_writing_a_run(endpoint, monkeypatch):
     monkeypatch.setattr(workflow_spec_service, "get_workflow", lambda name: spec)
     monkeypatch.setattr(manifest_freeze, "build_manifest_json", lambda **kwargs: _manifest())
 
+    store_calls = []
+
     def unreadable_store():
+        store_calls.append(True)
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(approval_store, "_connect", unreadable_store)
     response = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)).post(
         endpoint, json={"name_or_path": "store-fault", "run_id": "refused-start"}
     )
-    assert response.status_code == 503, response.text
-    assert PLAN_ID in response.json()["detail"]
-    assert "has not been approved" not in response.json()["detail"]
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["kind"] == "prepared_plan_required"
+    assert store_calls == []
     assert workflow_journal.get_run("refused-start") is None

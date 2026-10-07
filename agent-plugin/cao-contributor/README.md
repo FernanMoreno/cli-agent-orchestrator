@@ -31,6 +31,7 @@ Version `2.5.0`, synced from CAO's package metadata.
 
 - `cao-provider`
 - `cao-plugin`
+- `cao-contributing`
 
 See [docs/agent-plugins.md](../../docs/agent-plugins.md) for the prerequisites
 and the localhost-only posture.

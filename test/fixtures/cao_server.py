@@ -247,6 +247,7 @@ def _subprocess_env(
     env.update(
         {
             "HOME": str(home_dir),
+            "CAO_HOME_DIR": str(home_dir / ".aws" / "cli-agent-orchestrator"),
             "CAO_API_HOST": "127.0.0.1",
             "CAO_API_PORT": str(port),
             "CAO_A2A_DISABLED": "true",

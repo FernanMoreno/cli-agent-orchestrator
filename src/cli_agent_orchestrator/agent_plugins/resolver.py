@@ -90,10 +90,10 @@ def resolve(source: PluginSource, dest: Path) -> ResolvedSource:
 
     if source.kind == "git":
         staged_root, resolved_ref = _resolve_git(source, dest)
+        root = _apply_subdir(staged_root, source.subdir)
     else:
         staged_root, resolved_ref = _resolve_path(source, dest)
-
-    root = _apply_subdir(staged_root, source.subdir)
+        root = staged_root
     return ResolvedSource(root=root, staging=dest, resolved_ref=resolved_ref)
 
 
@@ -116,9 +116,13 @@ def _resolve_path(source: PluginSource, dest: Path) -> tuple[Path, None]:
     if not origin.is_dir():
         raise ResolverError(f"Plugin source path is not a directory: {source.location}")
 
-    staged = dest / _STAGE_DIRNAME
+    # Select and validate a local monorepo package before copying. Unrelated
+    # checkout contents (credentials, virtualenvs, build trees) are not plugin material.
+    selected = _apply_subdir(origin, source.subdir)
+    staged = dest / _STAGE_DIRNAME / selected.relative_to(origin)
+    staged.parent.mkdir(parents=True, exist_ok=True)
     try:
-        shutil.copytree(origin, staged, symlinks=True)
+        shutil.copytree(selected, staged, symlinks=True)
     except OSError as exc:
         raise ResolverError(f"Could not copy plugin source {source.location}: {exc}") from exc
     return staged, None
@@ -184,6 +188,16 @@ def _resolve_git(source: PluginSource, dest: Path) -> tuple[Path, Optional[str]]
         # A clone that produced a tree but no resolvable HEAD is odd but not
         # fatal to installing: record no ref rather than refusing the plugin.
         logger.warning("Could not resolve cloned commit for %s: %s", location, exc)
+
+    # A full SHA is a content pin, even if a remote branch happens to have the
+    # same name. Never publish a successful branch clone under a different SHA,
+    # or accept an unresolved HEAD as evidence for an exact requested commit.
+    if source.ref and _FULL_COMMIT_RE.match(source.ref):
+        if resolved_ref is None or resolved_ref.lower() != source.ref.lower():
+            raise ResolverError(
+                f"Pinned commit {source.ref} resolved to {resolved_ref or 'unavailable'}; "
+                "the source is refused."
+            )
 
     # Read the commit BEFORE this point — the metadata it comes from is about to
     # be deleted.

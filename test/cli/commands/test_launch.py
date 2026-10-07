@@ -11,6 +11,22 @@ from cli_agent_orchestrator.cli.commands.launch import _parse_env_pairs, launch
 # ── Backend auto-detection (issue #308) ──────────────────────────────
 
 
+def test_normal_launch_attaches_local_bearer_only_in_header():
+    with (
+        patch(
+            "cli_agent_orchestrator.cli.commands.launch.get_local_bearer",
+            return_value="private-launch-token",
+        ),
+        patch("cli_agent_orchestrator.cli.commands.launch.requests.post") as post,
+    ):
+        post.return_value.json.return_value = {"session_name": "test", "id": "id", "name": "worker"}
+        result = CliRunner().invoke(launch, ["--agents", "test-agent", "--yolo", "--headless"])
+        assert result.exit_code == 0, result.output
+        assert post.call_args.kwargs["headers"] == {"Authorization": "Bearer private-launch-token"}
+        assert "private-launch-token" not in str(post.call_args.kwargs["params"])
+        assert "private-launch-token" not in result.output
+
+
 def test_launch_syncs_backend_from_server_before_attach():
     """Non-headless launch calls sync_backend_from_server() before get_backend().
 
@@ -1586,7 +1602,7 @@ def test_launch_without_queue_work_keeps_legacy_sessions_endpoint():
 
     assert result.exit_code == 0
     assert mock_post.call_args.args[0].endswith("/sessions")
-    mock_bearer.assert_not_called()
+    mock_bearer.assert_called_once()
 
 
 def test_launch_help_describes_queued_work_as_admission_only():

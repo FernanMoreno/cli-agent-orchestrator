@@ -390,6 +390,7 @@ class TestPostTurnReceiptProbe:
             "a" * 32,
             "b" * 64,
             hashlib.sha256("finished\nCAO_TURN_RECEIPT_x".encode("utf-8")).hexdigest(),
+            result_text="finished\nCAO_TURN_RECEIPT_x",
         )
         provider.mark_turn_receipt_result_verified.assert_called_once()
         mock_publish.assert_called_once_with("receipt-terminal", TerminalStatus.WAITING_USER_ANSWER)

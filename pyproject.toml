@@ -34,17 +34,19 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
+    "tomlkit>=0.13.3,<1.0.0",
+    "wcwidth>=0.2.13",
     "fastapi>=0.104.0",
     # Upper bound: ext_apps/sep2133.advertise_capability monkey-patches a FastMCP
     # internal (create_initialization_options); cap the major to avoid silent
     # breakage on a new major release. Tested against 3.x.
-    "fastmcp>=2.14.0,<4.0.0",
+    "fastmcp>=3.2.0,<4.0.0",
     "mcp>=1.23.0",
     "pydantic>=2.10.6",
     "apscheduler>=3.10.4",
     "sqlalchemy>=2.0.0",
     "uvicorn[standard]>=0.24.0",
-    "websockets>=12.0",
+    "websockets>=14.0",
     # Upper bound: libtmux 0.53.1 rewrote `neo.parse_output` to zip a fixed
     # 125-name format list against each row's values with `strict=True`, so any
     # row short of 125 values (a pane/session vanishing mid-listing, or a
@@ -105,6 +107,8 @@ dependencies = [
     # not just a dev dependency — or every `cao` command would fail to import.
     "tomli>=2.0.0; python_version < '3.11'",
     "psutil>=7.0.0",
+    # PEP 440 compatibility checks in local plugin trust reuse the resolved parser.
+    "packaging>=23.2",
 ]
 
 [project.optional-dependencies]
@@ -126,6 +130,7 @@ otel = [
 [project.scripts]
 "cao" = "cli_agent_orchestrator.cli.main:cli"
 "cao-server" = "cli_agent_orchestrator.api.main:main"
+"cao-bridge" = "cli_agent_orchestrator.runtime_channel.bridge:main"
 "cao-mcp-server" = "cli_agent_orchestrator.mcp_server.server:main"
 "cao-ops-mcp-server" = "cli_agent_orchestrator.ops_mcp_server.server:main"
 

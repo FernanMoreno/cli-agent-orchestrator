@@ -159,7 +159,7 @@ def test_scheme_of_reports_three_states():
 
 def test_scheme_of_never_raises():
     for value in (None, "", "plan-v1:", "garbage", "\x00", "plan-v2:abc", "a" * 10_000):
-        assert scheme_of(value) in {"plan-v1", "unknown", "absent"}
+        assert scheme_of(value) in {"plan-v1", "plan-v2", "unknown", "absent"}
 
 
 def test_absent_is_distinguishable_from_unknown():

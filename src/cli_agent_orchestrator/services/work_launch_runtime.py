@@ -19,7 +19,10 @@ from cli_agent_orchestrator.clients.work_repository import (
     WorkConflict,
     WorkRepository,
 )
-from cli_agent_orchestrator.models.work_contract import EffectiveWorkContractV2
+from cli_agent_orchestrator.models.work_contract import (
+    EffectiveWorkContract,
+    EffectiveWorkContractV2,
+)
 from cli_agent_orchestrator.models.work_delivery import WorkDeliveryEnvelope
 from cli_agent_orchestrator.models.work_origin import ProvisionedLaunch
 from cli_agent_orchestrator.security.auth import Principal
@@ -121,7 +124,7 @@ class ResolvedLaunch:
     job_id: str
     grant_id: str
     grant_revision: int
-    contract: object
+    contract: EffectiveWorkContract | EffectiveWorkContractV2
     request_hash: str
     idempotency_key: str
     envelope: WorkDeliveryEnvelope

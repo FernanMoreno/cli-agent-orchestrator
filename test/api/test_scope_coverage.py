@@ -15,12 +15,15 @@ nothing) is covered by the existing endpoint suites, which exercise these routes
 with no auth configured.
 """
 
+import ast
+import inspect
+import textwrap
+
 import pytest
 
 from cli_agent_orchestrator.api import browser_auth_routes, work_routes
 from cli_agent_orchestrator.api.knowledge_routes import authority as knowledge_authority
 from cli_agent_orchestrator.api.main import app, get_work_launch_principal
-from cli_agent_orchestrator.api import work_routes
 from cli_agent_orchestrator.security import auth
 
 # Mutating HTTP methods that must be scope-gated when present on a route.
@@ -50,6 +53,179 @@ def _has_scope_dependency(route) -> bool:
         if call is not None and "require_any_scope" in getattr(call, "__qualname__", ""):
             return True
         stack.extend(getattr(dep, "dependencies", []))
+    return False
+
+
+def _direct_guard_calls(endpoint, name):
+    """Read executed top-level guards, excluding nested or conditional markers."""
+    function = ast.parse(textwrap.dedent(inspect.getsource(endpoint))).body[0]
+    for statement in function.body:
+        if not isinstance(statement, (ast.Expr, ast.Assign, ast.AnnAssign, ast.Return)):
+            continue
+        value = statement.value
+        if isinstance(value, ast.Await):
+            value = value.value
+        if (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id == name
+            and value.args
+            and isinstance(value.args[0], ast.Name)
+            and value.args[0].id == "request"
+        ):
+            yield value
+
+
+def _has_manual_transport_authority(route) -> bool:
+    """Recognize exact live transport handlers and their resource/scope guards.
+
+    These handlers validate identity/scopes manually so single-use tickets can
+    authorize a stream without reusable query credentials. Denial tests below
+    execute every route; this audit also checks the actual guarded resource and
+    required scopes rather than accepting an endpoint name or marker alone.
+    """
+    from cli_agent_orchestrator.api import main
+
+    handlers = {
+        ("POST", "/events/ticket"): (
+            main.events_ticket,
+            "_issue_transport_ticket",
+            '"/events"',
+            ("SCOPE_READ", "SCOPE_WRITE", "SCOPE_ADMIN"),
+        ),
+        ("POST", "/agui/v1/stream/ticket"): (
+            main.agui_ticket,
+            "_issue_transport_ticket",
+            '"/agui/v1/stream"',
+            ("SCOPE_READ", "SCOPE_WRITE", "SCOPE_ADMIN"),
+        ),
+        ("POST", "/terminals/{terminal_id}/ws/ticket"): (
+            main.terminal_ticket,
+            "_issue_transport_ticket",
+            'f"/terminals/{terminal_id}/ws"',
+            ("SCOPE_WRITE", "SCOPE_ADMIN"),
+        ),
+        ("GET", "/events"): (
+            main.events_stream,
+            "_stream_authorization",
+            '"/events"',
+            ("SCOPE_READ", "SCOPE_WRITE", "SCOPE_ADMIN"),
+        ),
+        ("GET", "/agui/v1/stream"): (
+            main.agui_stream,
+            "_stream_authorization",
+            '"/agui/v1/stream"',
+            ("SCOPE_READ", "SCOPE_WRITE", "SCOPE_ADMIN"),
+        ),
+    }
+    methods = getattr(route, "methods", None) or set()
+    if len(methods) != 1:
+        return False
+    expected = handlers.get((next(iter(methods)), getattr(route, "path", None)))
+    if expected is None or getattr(route, "endpoint", None) is not expected[0]:
+        return False
+    endpoint, guard, resource, scopes = expected
+    for call in _direct_guard_calls(endpoint, guard):
+        if len(call.args) != 3 or not isinstance(call.args[2], ast.Tuple):
+            continue
+        if ast.dump(call.args[1]) != ast.dump(ast.parse(resource, mode="eval").body):
+            continue
+        if (
+            all(isinstance(item, ast.Name) for item in call.args[2].elts)
+            and tuple(item.id for item in call.args[2].elts) == scopes
+        ):
+            return True
+    return False
+
+
+def _has_local_peer_authority(route) -> bool:
+    """Exact loopback bootstrap and signed project/action peer boundaries.
+
+    Local discovery and pairing deliberately bootstrap independently of the
+    operator JWT. Resource operations require signed, pinned peer grants. Their
+    distinct negative contracts are executed below and in test_local_peer_auth.
+    """
+    from cli_agent_orchestrator.api import local_coordination_routes as local
+
+    handlers = {
+        ("GET", "/local-coordination/identity"): (local.local_peer_identity, None),
+        ("GET", "/local-coordination/instances"): (local.list_local_peer_instances, None),
+        ("GET", "/local-coordination/projects/verify"): (local.verify_local_project, None),
+        ("POST", "/local-coordination/pairings"): (local.receive_pairing_invitation, None),
+        ("POST", "/local-coordination/pairings/{challenge_id}/accept"): (
+            local.accept_pairing_invitation,
+            None,
+        ),
+        ("POST", "/local-coordination/tasks"): (local.submit_local_peer_task, "task:submit"),
+        ("GET", "/local-coordination/tasks/{task_id}"): (
+            local.inspect_local_peer_task,
+            "task:status",
+        ),
+        ("POST", "/local-coordination/tasks/{task_id}/cancel"): (
+            local.cancel_local_peer_task,
+            "task:cancel",
+        ),
+        ("DELETE", "/local-coordination/peers/{peer_id}"): (local.revoke_local_peer, "peer:revoke"),
+        ("GET", "/local-coordination/sessions"): (
+            local.list_local_project_sessions,
+            "session:read",
+        ),
+    }
+    methods = getattr(route, "methods", None) or set()
+    if len(methods) != 1:
+        return False
+    expected = handlers.get((next(iter(methods)), getattr(route, "path", None)))
+    if expected is None or getattr(route, "endpoint", None) is not expected[0]:
+        return False
+    endpoint, scope = expected
+    if scope is None:
+        return any(_direct_guard_calls(endpoint, "_require_loopback"))
+    for call in _direct_guard_calls(endpoint, "_active_peer_headers"):
+        keywords = {item.arg: item.value for item in call.keywords}
+        required = keywords.get("required_scope")
+        if (
+            isinstance(required, ast.Constant)
+            and required.value == scope
+            and "project_id" in keywords
+        ):
+            return True
+    return False
+
+
+def _has_verified_workflow_capability_authority(route) -> bool:
+    """Recognize only the exact composed sealed-capability boundaries.
+
+    Actual signed scoped Work/start/replay/invalid-capability behavior is checked
+    by integration_008_coordinator; these routes are not blanket exemptions.
+    """
+    import inspect
+
+    from cli_agent_orchestrator.api import main, work_coordinator_routes
+
+    if getattr(route, "methods", None) != {"POST"}:
+        return False
+    if (
+        getattr(route, "path", None) == "/terminals/run-step"
+        and getattr(route, "endpoint", None) is main.run_step
+    ):
+        stack = list(getattr(route.dependant, "dependencies", []))
+        while stack:
+            dependency = stack.pop()
+            if getattr(dependency, "call", None) is main._run_step_scopes:
+                return True
+            stack.extend(getattr(dependency, "dependencies", []))
+        return False
+    if (
+        getattr(route, "path", None) == "/ralph/runs/{run_id}/context"
+        and getattr(route, "endpoint", None) is work_coordinator_routes.context
+    ):
+        source = inspect.getsource(work_coordinator_routes.context)
+        compact = "".join(source.split())
+        return (
+            "X-CAO-Workflow-Run-Credential" in source
+            and "authenticate_run_capability,run_id,body.generation,token" in compact
+            and "service.context,principal" in compact
+        )
     return False
 
 
@@ -84,9 +260,7 @@ def _has_browser_auth_authority(route) -> bool:
     methods = getattr(route, "methods", None) or set()
     if len(methods) != 1:
         return False
-    expected = handlers.get(
-        (next(iter(methods)), getattr(route, "path", None))
-    )
+    expected = handlers.get((next(iter(methods)), getattr(route, "path", None)))
     return expected is not None and expected is getattr(route, "endpoint", None)
 
 
@@ -140,6 +314,9 @@ def test_every_mutating_route_is_scope_or_verified_work_authority_gated():
             or _has_knowledge_authority(route)
             or _has_browser_auth_authority(route)
             or _has_verified_work_launch_authority(route)
+            or _has_verified_workflow_capability_authority(route)
+            or _has_manual_transport_authority(route)
+            or _has_local_peer_authority(route)
         ):
             missing.append(f"{sorted(mutating)} {route.path}")
     assert not missing, (
@@ -184,8 +361,6 @@ _OPEN_READS = {
     "/agents/profiles/templates",
     "/agents/profiles/templates/{category}/{name}/schema",
     "/agents/providers",
-    # AG-UI event stream; carries its own auth story.
-    "/agui/v1/stream",
     # Settings reads.
     "/settings/memory",
     "/settings/skill-dirs",
@@ -242,6 +417,8 @@ def test_every_disclosure_bearing_get_route_is_gated_or_explicitly_open():
             or _has_knowledge_authority(route)
             or _has_browser_auth_authority(route)
             or _has_verified_work_read_authority(route)
+            or _has_manual_transport_authority(route)
+            or _has_local_peer_authority(route)
         )
         and route.path not in _OPEN_READS
     ]
@@ -681,3 +858,290 @@ def test_owned_reads_require_verified_identity_and_are_never_open():
         if path.startswith("/v1/knowledge/"):
             assert path not in _OPEN_READS
             assert _has_knowledge_authority(route)
+
+
+@pytest.mark.parametrize(
+    "method,path,body",
+    [
+        ("GET", "/local-coordination/identity", None),
+        ("GET", "/local-coordination/instances", None),
+        (
+            "GET",
+            "/local-coordination/projects/verify?project_path=/tmp&expected_project_id=" + "a" * 64,
+            None,
+        ),
+        (
+            "POST",
+            "/local-coordination/pairings",
+            {
+                "challenge_id": "a" * 36,
+                "code": "c" * 32,
+                "expires_at": 1,
+                "initiator_instance_id": "i" * 36,
+                "initiator_process_generation": "g" * 36,
+                "initiator_display_name": "initiator",
+                "initiator_public_key": "k" * 44,
+                "initiator_loopback_port": 9889,
+                "candidate_instance_id": "d" * 36,
+                "candidate_process_generation": "e" * 36,
+                "candidate_display_name": "candidate",
+                "candidate_public_key": "l" * 44,
+                "project_id": "a" * 64,
+                "canonical_root": "/tmp",
+                "requested_scopes": ["task:submit"],
+            },
+        ),
+        (
+            "POST",
+            "/local-coordination/pairings/challenge/accept",
+            {
+                "code": "c" * 32,
+                "candidate_instance_id": "d" * 36,
+                "candidate_process_generation": "e" * 36,
+                "candidate_display_name": "candidate",
+                "candidate_public_key": "l" * 44,
+                "project_id": "a" * 64,
+            },
+        ),
+    ],
+)
+def test_local_discovery_and_pairing_reject_non_loopback(method, path, body):
+    """Bootstrap discovery is local authority, never an open network disclosure."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from cli_agent_orchestrator.api import local_coordination_routes
+
+    application = FastAPI()
+    application.include_router(local_coordination_routes.router)
+    with TestClient(
+        application, base_url="http://127.0.0.1:9889", client=("192.0.2.1", 50000)
+    ) as local_client:
+        response = local_client.request(method, path, json=body)
+    assert response.status_code == 403
+    assert response.json()["detail"]["kind"] == "not_local"
+
+
+@pytest.mark.parametrize(
+    "method,path,body",
+    [
+        (
+            "POST",
+            "/tasks",
+            {
+                "task_id": "t" * 36,
+                "source_instance_id": "i" * 36,
+                "source_process_generation": "g" * 36,
+                "requester_terminal_id": "abcdef01",
+                "project_id": "a" * 64,
+                "operation_key": "operation",
+                "request_hash": "b" * 64,
+                "agent_profile": "profile",
+                "message": "task",
+                "use_worktree": True,
+            },
+        ),
+        ("GET", "/tasks/task?project_id=" + "a" * 64 + "&requester_terminal_id=abcdef01", None),
+        (
+            "POST",
+            "/tasks/task/cancel?project_id=" + "a" * 64 + "&requester_terminal_id=abcdef01",
+            None,
+        ),
+        ("DELETE", "/peers/peer?project_id=" + "a" * 64, None),
+        ("GET", "/sessions?project_id=" + "a" * 64, None),
+    ],
+)
+def test_local_peer_operations_reject_unsigned_loopback_request(monkeypatch, method, path, body):
+    """Being on loopback does not replace signed peer grants for resource operations."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from cli_agent_orchestrator.api import local_coordination_routes
+
+    monkeypatch.setattr(local_coordination_routes, "get_instance", lambda _: None)
+    application = FastAPI()
+    application.include_router(local_coordination_routes.router)
+    with TestClient(
+        application, base_url="http://127.0.0.1:9889", client=("127.0.0.1", 50000)
+    ) as local_client:
+        response = local_client.request(method, "/local-coordination" + path, json=body)
+    assert response.status_code == 403
+    expected = "scope_denied" if method == "DELETE" else "not_local"
+    assert response.json()["detail"]["kind"] == expected
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("POST", "/events/ticket"),
+        ("POST", "/agui/v1/stream/ticket"),
+        ("POST", "/terminals/abcdef01/ws/ticket"),
+        ("GET", "/events"),
+        ("GET", "/agui/v1/stream"),
+    ],
+)
+def test_manual_transport_guards_reject_unscoped_identity(client, monkeypatch, method, path):
+    """The live manual scope boundary runs before ticket issuance or stream disclosure."""
+    from cli_agent_orchestrator.api import main
+
+    monkeypatch.setattr(main, "_require_mcp_apps_enabled", lambda: None)
+    monkeypatch.setattr(main, "_require_agui_enabled", lambda: None)
+    monkeypatch.setattr(main, "is_auth_enabled", lambda: True)
+    monkeypatch.setattr(
+        main,
+        "principal_from_token",
+        lambda _: auth._verified_principal("urn:test", "unscoped", [], "jwt"),
+    )
+
+    async def no_scopes(*args):
+        return []
+
+    monkeypatch.setattr(main, "get_current_scopes", no_scopes)
+    response = client.request(method, path, headers={"Authorization": "Bearer unscoped"})
+    assert response.status_code == 403
+    assert response.json()["detail"] == "insufficient transport scope"
+
+
+@pytest.mark.parametrize(
+    "path,recognize,before,after",
+    [
+        (
+            "/events/ticket",
+            _has_manual_transport_authority,
+            "_issue_transport_ticket",
+            "_unguarded_marker",
+        ),
+        (
+            "/terminals/{terminal_id}/ws/ticket",
+            _has_manual_transport_authority,
+            "SCOPE_WRITE, SCOPE_ADMIN",
+            "SCOPE_READ, SCOPE_ADMIN",
+        ),
+        (
+            "/local-coordination/identity",
+            _has_local_peer_authority,
+            "_require_loopback",
+            "_unguarded_marker",
+        ),
+        ("/local-coordination/tasks", _has_local_peer_authority, "task:submit", "task:status"),
+    ],
+)
+def test_manual_authority_audit_rejects_missing_or_wrong_guard(
+    monkeypatch, path, recognize, before, after
+):
+    """Recognition follows the actual guard and exact scope, not a path exemption."""
+    route = next(route for route in app.routes if getattr(route, "path", None) == path)
+    assert recognize(route)
+    original = inspect.getsource
+    source = original(route.endpoint)
+    assert before in source
+    monkeypatch.setattr(
+        inspect,
+        "getsource",
+        lambda endpoint: (
+            source.replace(before, after) if endpoint is route.endpoint else original(endpoint)
+        ),
+    )
+    assert not recognize(route)
+
+
+def test_manual_authority_routes_are_never_open_read_exemptions():
+    for route in _api_get_routes():
+        if _has_manual_transport_authority(route) or _has_local_peer_authority(route):
+            assert route.path not in _OPEN_READS
+
+
+def test_registered_local_peer_with_pinned_grant_rejects_invalid_signature(monkeypatch, tmp_path):
+    """Matching registry identity and action grants cannot bypass signature verification."""
+    import base64
+    import hashlib
+    import json
+    import os
+    import time
+    from uuid import uuid4
+
+    import psutil
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from cli_agent_orchestrator.api import local_coordination_routes
+    from cli_agent_orchestrator.clients import database
+    from cli_agent_orchestrator.services import local_peer_registry
+    from cli_agent_orchestrator.services.local_peer_identity import (
+        LocalProcessIdentity,
+        _signature_material,
+        public_key_text,
+    )
+
+    directory = tmp_path / "local-peers"
+    monkeypatch.setattr(local_peer_registry, "LOCAL_PEER_DIR", directory)
+    monkeypatch.setattr(
+        local_peer_registry, "LOCAL_PEER_REGISTRY_FILE", directory / "registry.sqlite3"
+    )
+    identity = LocalProcessIdentity(
+        instance_id=str(uuid4()),
+        process_generation=str(uuid4()),
+        pid=os.getpid(),
+        process_started_at=float(psutil.Process().create_time()),
+        display_name="scope audit peer",
+        loopback_host="127.0.0.1",
+        loopback_port=19889,
+        public_key=public_key_text(Ed25519PrivateKey.generate()),
+    )
+    local_peer_registry.register_instance(identity)
+    registered = local_peer_registry.get_instance(identity.instance_id)
+    assert registered is not None
+    assert registered.process_generation == identity.process_generation
+    project_id = "a" * 64
+    with database.SessionLocal() as session:
+        session.add(
+            database.LocalPeerGrantModel(
+                grant_id=str(uuid4()),
+                peer_instance_id=identity.instance_id,
+                project_id=project_id,
+                peer_display_name=identity.display_name,
+                peer_public_key=identity.public_key,
+                scopes_json=json.dumps(["session:read"]),
+            )
+        )
+        session.commit()
+    timestamp = str(int(time.time()))
+    nonce = uuid4().hex
+    body_sha256 = hashlib.sha256(b"").hexdigest()
+    # A normal pinned key and a different signer exercise signature rejection,
+    # independently of the separate weak-public-key admission regressions.
+    invalid_signature = Ed25519PrivateKey.generate().sign(
+        _signature_material(
+            "GET",
+            "/local-coordination/sessions",
+            "project_id=" + project_id,
+            project_id,
+            identity.instance_id,
+            identity.process_generation,
+            timestamp,
+            nonce,
+            body_sha256,
+        )
+    )
+    application = FastAPI()
+    application.include_router(local_coordination_routes.router)
+    with TestClient(
+        application, base_url="http://127.0.0.1:9889", client=("127.0.0.1", 50000)
+    ) as local_client:
+        response = local_client.get(
+            "/local-coordination/sessions",
+            params={"project_id": project_id},
+            headers={
+                "X-CAO-Peer-Instance": identity.instance_id,
+                "X-CAO-Peer-Generation": identity.process_generation,
+                "X-CAO-Peer-Signature": base64.urlsafe_b64encode(invalid_signature)
+                .decode()
+                .rstrip("="),
+                "X-CAO-Peer-Timestamp": timestamp,
+                "X-CAO-Peer-Nonce": nonce,
+                "X-CAO-Peer-Body-SHA256": body_sha256,
+            },
+        )
+    assert response.status_code == 403
+    assert response.json()["detail"]["kind"] == "scope_denied"

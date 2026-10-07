@@ -6,8 +6,10 @@ exclusively through the FastAPI surface over HTTP (never through
 enforced by ``test/test_http_only_boundary.py``.
 """
 
+import ipaddress
 import logging
 from typing import Any, Dict, Optional
+from urllib.parse import urlsplit
 
 import requests
 
@@ -58,6 +60,62 @@ def post_body_json(path: str, body: Dict[str, Any], *, timeout: Optional[float] 
         headers=_auth_headers() or None,
         timeout=_mcp_timeout() if timeout is None else timeout,
     )
+    response.raise_for_status()
+    try:
+        return response.json()
+    except ValueError:  # pragma: no cover - some mutations return empty bodies
+        return {}
+
+
+def _local_api_url(path: str) -> str:
+    """Build a direct IPv4 loopback URL for local CAO-only operations."""
+    base = urlsplit(API_BASE_URL)
+    hostname = base.hostname
+    try:
+        address = ipaddress.ip_address(hostname) if hostname else None
+    except ValueError:
+        address = None
+    local_hostname = hostname is not None and hostname.lower() in {"localhost", "0.0.0.0"}
+    local_address = hostname == "127.0.0.1"
+    try:
+        port = base.port
+    except ValueError:
+        port = None
+    if base.scheme != "http" or not (local_hostname or local_address) or port is None:
+        raise ValueError("local CAO peer tools require a loopback API endpoint")
+    if not path.startswith("/") or path.startswith("//"):
+        raise ValueError("local CAO API paths must be absolute paths")
+    return f"http://127.0.0.1:{port}{path}"
+
+
+def local_get_json(path: str, *, timeout: Optional[float] = None, **params: Any) -> Any:
+    """GET a local-only CAO endpoint without environment proxy routing."""
+    with requests.Session() as client:
+        client.trust_env = False
+        response = client.request(
+            "GET",
+            _local_api_url(path),
+            params={k: v for k, v in params.items() if v is not None} or None,
+            headers=_auth_headers() or None,
+            timeout=_mcp_timeout() if timeout is None else timeout,
+        )
+    response.raise_for_status()
+    return response.json()
+
+
+def local_post_body_json(
+    path: str, body: Dict[str, Any], *, timeout: Optional[float] = None
+) -> Any:
+    """POST to a local-only CAO endpoint without environment proxy routing."""
+    with requests.Session() as client:
+        client.trust_env = False
+        response = client.request(
+            "POST",
+            _local_api_url(path),
+            json=body,
+            headers=_auth_headers() or None,
+            timeout=_mcp_timeout() if timeout is None else timeout,
+        )
     response.raise_for_status()
     try:
         return response.json()

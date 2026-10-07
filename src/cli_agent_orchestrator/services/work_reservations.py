@@ -1,6 +1,7 @@
 """Cooperative write reservations with durable ownership and explicit stopped-writer release."""
 
 import math
+import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -109,7 +110,7 @@ class WorkReservations:
                 canonical.add(path)
             if not canonical:
                 raise ReservationConflict("at least one path is required")
-            resources = []
+            resources: list[tuple[str, int | None, int | None]] = []
             for path in sorted(canonical):
                 try:
                     info = path.stat()
@@ -142,7 +143,7 @@ class WorkReservations:
         generation,
         expected_attempt_revision,
         active,
-    ):
+    ) -> WriterIdentity:
         _positive(generation)
         _positive(expected_attempt_revision)
         row = connection.execute(
@@ -185,7 +186,7 @@ class WorkReservations:
         )
 
     @staticmethod
-    def _load(connection, reservation_id):
+    def _load(connection: sqlite3.Connection, reservation_id: str) -> ReservationSet:
         row = connection.execute(
             "SELECT * FROM work_reservation_sets WHERE id=?", (reservation_id,)
         ).fetchone()
@@ -221,7 +222,7 @@ class WorkReservations:
         expected_revision,
         expected_attempt_revision,
         active,
-    ):
+    ) -> tuple[ReservationSet, WriterIdentity]:
         _positive(expected_revision)
         value = self._load(connection, reservation_id)
         if (

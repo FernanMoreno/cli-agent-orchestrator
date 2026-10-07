@@ -1,0 +1,571 @@
+"""Model-based randomized check of StatusMonitor's turn protocol (#735, PR #812).
+
+Point tests only cover the orders someone thought of; review rounds of PR #812 kept
+finding interleavings nobody had (a stale read landing after a dispatch, a special
+key closing past an open send, a failed send finishing an accepted one). This drives
+the REAL StatusMonitor through its real read paths with random, seeded event orders
+against a fake agent that holds the ground truth, and checks two rules after every
+step:
+
+  EARLY  no successfully delivered message is reported done before an answer that
+         covers it exists. Input sent while the agent is busy is folded into the
+         running turn (claude_code and kiro-cli really do this), so that turn's answer
+         covers it. A close after TURN_START_BACKSTOP_S is the documented liveness
+         valve, not an early close.
+  SLOW   once the agent has answered everything and the reads have run, every
+         delivered message is closed BEFORE the backstop. Exempt: native polling (a
+         turn too fast for any poll to see working is its documented cost), and input
+         sent to a busy agent whose answer landed before any work frame after its
+         dispatch was read (it closes at the backstop). The model's agent FOLDS such
+         input, as claude_code and kiro-cli do; an agent that queues it is out of
+         scope — docs/api.md says why a busy send is refused.
+  STUCK  once the agent is idle and the backstop has passed, polling closes every turn.
+
+Each provider shape runs twice: with no event loop (every read inline) and with a
+fake loop whose timers fire on demand, so the real burst/quiescence scheduling, the
+rising edge and the mid-burst probe run as they do live.
+
+A send runs in send_input's own steps: open the turn, clear the buffer, type, mark
+it delivered. Other events land between them (round 10: haofeif found output read
+between the first two closing the turn). An earlier model made a send one step and
+so could not see that.
+
+Raw output is modelled as tokens ("|W3" work sign for turn 3, "|D3" its answer, "|I0"
+an idle prompt, "|P" a half-received repaint), which the fake raw detector reads the
+way kiro's and grok's do. A "delayed read" runs other events inside the detector call,
+so a verdict is applied after the world moved on.
+
+The "-rec" kinds swap the fake detector for the REAL provider, fed real frames: kiro's
+live work-sign forms per version, its completed and idle screens, and the recorded
+kiro-cli 2.24.1 resize repaint; grok's busy and finished frames from its own test
+builders, with a question and answer per turn (its replay rule compares content), and
+its idle screen. So a model shortcut cannot pass for real behaviour. claude_code has
+no recorded byte stream to feed its pyte screen, so it stays on the fake screen.
+"""
+
+import asyncio
+import random
+import types
+from unittest.mock import patch
+
+import pytest
+
+from cli_agent_orchestrator.models.terminal import TerminalStatus as S
+from cli_agent_orchestrator.services import status_monitor as smod
+from cli_agent_orchestrator.services.status_monitor import StatusMonitor
+
+TID = "t1"
+KINDS = ("kiro", "grok", "claude", "native", "kiro-rec", "grok-rec")
+_RAW = {"W": S.PROCESSING, "P": S.PROCESSING, "U": S.UNKNOWN, "D": S.COMPLETED, "I": S.IDLE}
+_SCREEN = {"work": S.PROCESSING, "done": S.COMPLETED, "idle": S.IDLE}
+
+
+class _Handle:
+    def __init__(self, cb, args):
+        self.cb, self.args, self.cancelled = cb, args, False
+
+    def cancel(self):
+        self.cancelled = True
+
+
+class _Task:
+    def add_done_callback(self, fn):
+        fn(self)
+
+
+class _FakeLoop:
+    """Just enough of an event loop: timers fire when the schedule says so, tasks run
+    to completion at once (on a private real loop, for asyncio.to_thread)."""
+
+    def __init__(self):
+        self.timers = []
+
+    def call_soon_threadsafe(self, fn, *args):
+        fn(*args)
+
+    def call_later(self, _delay, cb, *args):
+        handle = _Handle(cb, args)
+        self.timers.append(handle)
+        return handle
+
+    def create_task(self, coro):
+        runner = asyncio.new_event_loop()
+        try:
+            runner.run_until_complete(coro)
+        finally:
+            runner.close()
+        return _Task()
+
+    def fire(self):
+        due, self.timers = [h for h in self.timers if not h.cancelled], []
+        for handle in due:
+            handle.cb(*handle.args)
+        return bool(due)
+
+
+class _Clock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+class _Agent:
+    def __init__(self):
+        self.working = None  # set of turns the current work covers
+        self.pending = []  # delivered, not yet picked up
+        self.answered = set()
+        self.screen = ("idle", 0)
+        self.animate = False  # a working TUI redraws its spinner after new input
+        self.work_since = 0.0
+
+
+class _Provider:
+    """kiro: raw + work sign; grok: raw, no sign; claude: retained screen, assumes
+    PROCESSING on dispatch, mid-burst probe; native: herdr-style agent-state query."""
+
+    def __init__(self, kind, agent):
+        self.kind, self.agent = kind, agent
+        self.supports_screen_detection = kind == "claude"
+        self.supports_midburst_processing_probe = kind == "claude"
+        self.assume_processing_on_dispatch = kind == "claude"
+        self.observe_execution_output = None
+        self.read_hook = None
+        self.last_answer = None  # grok: the last answer read, kept across a clear
+        self.answer_before_clear = None
+
+    def get_status(self, buffer):
+        hook, self.read_hook = self.read_hook, None
+        if self.kind == "native":
+            busy = self.agent.working or self.agent.pending
+            verdict = S.PROCESSING if busy else S.COMPLETED
+            if hook:
+                hook()  # the query saw the state before the delay
+            return verdict
+        if hook:
+            hook()
+        toks = [t for t in buffer.split("|") if t]
+        if not toks:
+            return S.UNKNOWN
+        if self.kind == "grok" and toks[-1][0] == "D":
+            # #841: an answer byte-identical to the one on screen before the clear
+            # may be a redraw of it, so it stays PROCESSING.
+            if toks[-1] == self.answer_before_clear:
+                return S.PROCESSING
+            self.last_answer = toks[-1]
+        return _RAW.get(toks[-1][0], S.UNKNOWN)
+
+    def shows_turn_work(self, buffer):
+        return ("|W" in buffer) if self.kind == "kiro" else None
+
+    def notify_status_buffer_reset(self, epoch):
+        self.answer_before_clear = self.last_answer
+
+    def mark_input_received(self):
+        pass
+
+    def probe_processing_from_screen(self, lines):
+        return bool(lines) and lines[0] == "WORK"
+
+
+def _recorded(kind, agent):
+    """The real provider for a "-rec" kind, and its frames: frame(screen) for a draw,
+    repaint(screen) for a resize redraw of what is on screen."""
+    from test.providers.test_grok_cli_unit import _completed_turn, make_provider
+    from test.providers.test_kiro_cli_unit import FIXTURES_DIR
+    from test.providers.test_kiro_cli_unit import TestKiroCliProviderStatusDetection as K
+
+    from cli_agent_orchestrator.providers.kiro_cli import KiroCliProvider
+
+    def fixture(name):
+        return (FIXTURES_DIR / name).read_bytes().decode("utf-8", "replace")
+
+    if kind == "kiro-rec":
+        prov = KiroCliProvider(TID, "s", "w", "developer")
+        prov._initialized = True
+        signs = [K.LIVE_WORK_SIGNS[k] for k in sorted(K.LIVE_WORK_SIGNS)]
+        done, idle = fixture("kiro_cli_completed_output.txt"), fixture("kiro_cli_idle_output.txt")
+        resize = fixture("kiro_cli_2_24_resize_repaint_after_send.bin")
+
+        def frame(screen):
+            state, n = screen
+            return {"work": "\r\n" + signs[n % len(signs)] + "\r\n", "done": done}.get(state, idle)
+
+        def repaint(screen):
+            return resize if screen[0] == "done" else frame(screen)
+
+    else:
+        prov = make_provider(terminal_id=TID)
+        idle = fixture("grok_cli_idle.raw.ansi.txt")
+
+        def frame(screen):
+            state, n = screen
+            if state == "work":
+                return f"     ❯ Run task {n}.\nWaiting for response…\nEsc:cancel\n"
+            if state == "done":
+                return _completed_turn(f"Run task {n}.", f"ANSWER_{n}_OK", raw=True)
+            return idle
+
+        repaint = frame
+    real_get_status = prov.get_status
+
+    def get_status(buffer):
+        hook, prov.read_hook = prov.read_hook, None
+        if hook:
+            hook()
+        return real_get_status(buffer)
+
+    prov.read_hook = None
+    prov.get_status = get_status
+    return prov, frame, repaint
+
+
+def _run(kind, rng, trace, loop_mode=False, sequential=False):
+    clock, agent = _Clock(), _Agent()
+    recorded = kind.endswith("-rec")
+    base = kind.split("-")[0]
+    if recorded:
+        prov, rec_frame, rec_repaint = _recorded(kind, agent)
+    else:
+        prov = _Provider(kind, agent)
+    # Real grok counts each message send_input announces to it (before typing). A
+    # failed send, one answer covering several messages, or a send made while an
+    # earlier turn was still open leaves it counting messages it never saw answered,
+    # and it then holds PROCESSING by itself (shown on the provider alone; the same on
+    # main). Set when any of these happened.
+    grok_miscounts = [False]
+    sm = StatusMonitor()
+    loop = _FakeLoop() if loop_mode else None
+    if loop is not None:
+        sm._loop = loop
+    delivered, delivered_at, folded = [], {}, set()
+    backend = types.SimpleNamespace(
+        supports_event_inbox=lambda: kind == "native",
+        get_native_status=lambda *_a, **_k: None,  # tmux has no native status
+        get_pane_current_command=lambda *_a, **_k: "kiro-cli",  # the agent is running
+    )
+
+    def token(frame):
+        return {"work": "W", "done": "D", "idle": "I"}[frame[0]] + str(frame[1])
+
+    def feed(data):
+        # Real output arrives in pieces; split it where the schedule says.
+        cuts = sorted(rng.sample(range(1, len(data)), min(rng.randint(0, 2), len(data) - 1)))
+        for a, b in zip([0, *cuts], [*cuts, len(data)]):
+            sm._process_chunk(TID, data[a:b])
+
+    def draw(frame):
+        agent.screen = frame
+        if recorded:
+            feed(rec_frame(frame))
+        elif kind in ("kiro", "grok", "claude"):
+            # claude's chunks take the real pipeline too: raw buffer + pyte feed +
+            # screen scheduling, exactly as live output does
+            sm._process_chunk(TID, "|" + token(frame))
+
+    in_send = [False]
+
+    def gap(name, events):
+        # send_input runs in steps, and the terminal does not wait for it: reads,
+        # repaints and the agent's work on EARLIER input can land between any two
+        # of them (round 10). No other send can, as send_input holds the
+        # terminal's dispatch lock.
+        for _ in range(rng.choice([0, 0, 1, 2])):
+            trace.append(f"  [{name}]")
+            rng.choice(events)()
+
+    def send(fail=False):
+        if in_send[0]:
+            return
+        if sequential and (fail or sm.turn_state(TID)[1] < max(delivered, default=0)):
+            return  # as `cao session send`: one message at a time, each finished
+        in_send[0] = True
+        try:
+            # grok is told only of real messages, not of init or special keys.
+            grok_miscounts[0] = grok_miscounts[0] or sm.turn_state(TID)[1] < max(
+                delivered, default=0
+            )
+            turn = sm.notify_input_sent(
+                TID, assume_processing=prov.assume_processing_on_dispatch, real_send=True
+            )
+            trace.append(f"send(turn={turn}) opened")
+            anything = [repaint, quiesce, poll, work_frame, finish, tick, delayed]
+            gap("before its buffer clear", anything)
+            sm.clear_rolling_buffer(TID, prov, turn=turn)
+            prov.mark_input_received()  # send_input marks the provider before typing
+            if recorded:
+                prov.record_dispatched_message(f"Run task {turn}.")
+            gap("before its keys land", anything)
+            if fail:
+                grok_miscounts[0] = True
+                sm.abort_turn(TID, turn)
+                trace.append(f"send(turn={turn}) FAILED")
+                return
+            delivered.append(turn)
+            delivered_at[turn] = clock.t
+            if agent.working is not None:
+                agent.working.add(turn)
+                agent.animate = True
+                agent.work_since = clock.t  # folded input takes as long as any turn
+                folded.add(turn)
+            else:
+                agent.pending.append(turn)
+            trace.append(f"send(turn={turn}) keys landed")
+            # send_keys returns and notify_input_delivered runs at once: only a
+            # read already under way can land here, not more of the agent's work.
+            gap("before notify_input_delivered", [repaint, quiesce, poll])
+            sm.notify_input_delivered(TID)
+        finally:
+            in_send[0] = False
+
+    def special():
+        if in_send[0]:
+            return
+        trace.append(f"special_key(turn={sm.notify_input_sent(TID)})")
+
+    def pickup():
+        if agent.working is None and agent.pending:
+            agent.working, agent.pending = set(agent.pending), []
+            agent.work_since = clock.t
+            trace.append(f"agent_picks_up({sorted(agent.working)})")
+            draw(("work", max(agent.working)))
+
+    def work_frame():
+        if agent.working is not None:
+            trace.append("agent_work_frame")
+            draw(("work", max(agent.working)))
+
+    def finish():
+        if agent.working is not None:
+            if agent.animate:  # it keeps animating while it works on the new input
+                agent.animate = False
+                draw(("work", max(agent.working)))
+            while clock.t - agent.work_since < 1.5:
+                # A real turn keeps animating its spinner for seconds (live: at least
+                # ~2s before the answer, a frame every ~0.1s). Model frames every 0.5s
+                # rather than an answer drawn within a single frame.
+                clock.t += 0.5
+                draw(("work", max(agent.working)))
+            done, agent.working = agent.working, None
+            grok_miscounts[0] = grok_miscounts[0] or len(done) > 1
+            agent.answered |= done
+            trace.append(f"agent_answers({sorted(done)})")
+            draw(("done", max(done)))
+
+    def repaint():
+        trace.append(f"repaint({agent.screen})")
+        if recorded:
+            feed(rec_repaint(agent.screen))
+        elif kind == "kiro":
+            sm._process_chunk(TID, "|P")  # half-received: no prompt yet, no sign
+            if agent.screen[0] != "work":
+                sm._process_chunk(TID, "|" + token(agent.screen))
+        elif kind == "grok":
+            # Half-received. grok reads busy only from its busy markers, which a
+            # redraw of an idle or finished screen does not draw (kiro reads busy
+            # from any frame without its prompt).
+            sm._process_chunk(TID, "|U")
+            sm._process_chunk(TID, "|" + token(agent.screen))
+        elif kind == "claude":
+            sm._process_chunk(TID, "|" + token(agent.screen))
+
+    def quiesce():
+        trace.append("quiescence")
+        if loop is not None:
+            loop.fire()
+        elif base in ("kiro", "grok"):
+            sm._on_raw_quiescent(TID)
+        elif kind == "claude":
+            sm._on_screen_quiescent(TID, prov)
+
+    def poll():
+        trace.append("poll")
+        sm.get_status(TID)
+
+    def probe():
+        # With a loop the real scheduling runs the probe; forcing _bursting here
+        # without the quiescence timer a real burst always arms would model a
+        # burst that never ends.
+        if kind == "claude" and loop is None:
+            trace.append("midburst_probe")
+            with sm._lock:
+                sm._bursting[TID] = True
+            sm._midburst_processing_probe(TID, prov)
+
+    def tick():
+        clock.t += rng.choice([0.3, 1.0, 5.0])
+        if agent.working is not None:
+            draw(("work", max(agent.working)))  # a working TUI keeps redrawing
+
+    def delayed():
+        inner = [
+            rng.choice([pickup, work_frame, finish, tick, send, special, lambda: send(True)])
+            for _ in range(rng.randint(1, 3))
+        ]
+
+        def hook():
+            trace.append("  [read begins; meanwhile:]")
+            for e in inner:
+                e()
+            trace.append("  [read returns]")
+
+        if kind == "claude":
+            frame = agent.screen
+
+            def detect(_tid, _p):
+                sm._detect_screen = lambda _t, _q: _SCREEN[agent.screen[0]]
+                hook()
+                return _SCREEN[frame[0]]  # the frame this read rendered
+
+            sm._detect_screen = detect
+            if loop is not None and loop.timers and rng.random() < 0.7:
+                loop.fire()
+            else:
+                rng.choice(
+                    [lambda: sm._on_screen_quiescent(TID, prov), lambda: sm.get_status(TID)]
+                )()
+            sm._detect_screen = lambda _t, _q: _SCREEN[agent.screen[0]]
+        else:
+            prov.read_hook = hook
+            if kind == "native":
+                sm.get_status(TID)
+            elif loop is not None and loop.timers and rng.random() < 0.7:
+                loop.fire()
+            else:
+                rng.choice([lambda: sm._on_raw_quiescent(TID), lambda: sm.get_status(TID)])()
+            prov.read_hook = None
+
+    events = [
+        pickup,
+        work_frame,
+        finish,
+        repaint,
+        quiesce,
+        poll,
+        probe,
+        tick,
+        delayed,
+        send,
+        special,
+        lambda: send(True),
+    ]
+    weights = [3, 3, 3, 2, 3, 3, 1, 3, 2, 2, 1, 1]
+
+    def held_by_grok():
+        """grok holding PROCESSING by its own state: SLOW and STUCK do not apply (EARLY,
+        a wrong answer, always does). For real grok they are checked only for sends
+        made with every earlier turn closed, as `cao session send` makes them."""
+        if kind == "grok":
+            # #841: an answer identical to the one before a clear may be a redraw.
+            # After a send failed past its clear nothing new releases it.
+            return prov.answer_before_clear == token(agent.screen)
+        return kind == "grok-rec" and grok_miscounts[0]
+
+    def early(where):
+        done = sm.turn_state(TID)[1]
+        for t in delivered:
+            if t <= done and t not in agent.answered:
+                if clock.t - delivered_at[t] >= smod.TURN_START_BACKSTOP_S:
+                    continue
+                return f"EARLY after {where}: turn {t} done (turn_done={done}), not answered"
+        return None
+
+    with (
+        patch.object(smod, "provider_manager") as pm,
+        patch("cli_agent_orchestrator.backends.registry.get_backend", return_value=backend),
+        patch("cli_agent_orchestrator.providers.kiro_cli.get_backend", return_value=backend),
+        patch("cli_agent_orchestrator.providers.grok_cli.get_backend", return_value=backend),
+        patch.object(smod.time, "monotonic", clock),
+        patch.object(smod, "get_server_settings", return_value={"state_buffer_max": 100000}),
+    ):
+        pm.get_provider.return_value = prov
+        sm._detect_screen = lambda _t, _q: _SCREEN[agent.screen[0]]
+        sm._screen_lines = lambda _t: (["WORK" if agent.screen[0] == "work" else "READY"], None)
+        sm._last_status[TID] = S.IDLE
+        for _ in range(rng.randint(0, 2)):  # provider init keystrokes
+            special()
+        # One message at a time needs longer schedules to send several.
+        for _ in range(rng.randint(40, 120) if sequential else rng.randint(8, 40)):
+            rng.choices(events, weights=weights)[0]()
+            tick()
+            err = early(trace[-1] if trace else "start")
+            if err:
+                return err
+        for _ in range(3):
+            pickup()
+            finish()
+        for _ in range(3):
+            quiesce()
+            poll()
+        err = early("drain")
+        if err:
+            return err
+        # Input sent to a busy agent is exempt: it closes when work is drawn after
+        # its dispatch (the model's agent folds it, as claude_code and kiro-cli do),
+        # and at the backstop when the answer lands before any such frame is read.
+        prompt = [t for t in delivered if t not in folded]
+        if (
+            kind != "native"
+            and prompt
+            and not held_by_grok()
+            and sm.turn_state(TID)[1] < max(prompt)
+        ):
+            return (
+                f"SLOW: everything answered, but turn_state={sm.turn_state(TID)} "
+                f"leaves turn {max(prompt)} for the backstop"
+            )
+        clock.t += smod.TURN_START_BACKSTOP_S + 5
+        for _ in range(3):
+            poll()
+            quiesce()
+            repaint()
+            poll()
+        turn, done = sm.turn_state(TID)
+        if done < turn and not held_by_grok():
+            return f"STUCK: agent idle and backstop passed, turn_state={(turn, done)}"
+        return early("final")
+
+
+@pytest.mark.parametrize("loop_mode", [False, True], ids=["inline", "loop"])
+@pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("seed", [735, 812])
+def test_turn_protocol_rules_hold_under_random_interleavings(kind, seed, loop_mode):
+    rng = random.Random(seed)
+    # The real detectors are slower; fewer schedules keep this file near a minute.
+    for i in range(200 if kind.endswith("-rec") else 600):
+        trace = []
+        err = _run(kind, random.Random(rng.random()), trace, loop_mode)
+        assert err is None, f"schedule {i} ({kind}, seed {seed}): {err}\n  " + "\n  ".join(
+            trace[-30:]
+        )
+
+
+@pytest.mark.parametrize("loop_mode", [False, True], ids=["inline", "loop"])
+@pytest.mark.parametrize("kind", ["kiro-rec", "grok-rec"])
+@pytest.mark.parametrize("seed", [735, 812])
+def test_real_providers_stay_live_for_one_message_at_a_time(kind, seed, loop_mode):
+    """The random schedules above are mostly busy sends, after which real grok holds
+    PROCESSING by its own count (see held_by_grok), so its SLOW and STUCK rules
+    rarely run there. Sending one message at a time, as `cao session send` does,
+    every rule runs on every schedule."""
+    rng = random.Random(seed)
+    for i in range(150):
+        trace = []
+        err = _run(kind, random.Random(rng.random()), trace, loop_mode, sequential=True)
+        assert err is None, f"schedule {i} ({kind}, seed {seed}): {err}\n  " + "\n  ".join(
+            trace[-30:]
+        )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_local_protocol_from_remote_database(monkeypatch):
+    """Synthetic local frames have no runtime-channel placement.
+
+    The paired bridge/inbox tests exercise remote routing against real SQLite.
+    This local protocol model must not consult an unrelated operator database
+    thousands of times for its invented IDs or inherit its remote placements.
+    """
+    from cli_agent_orchestrator.services import remote_terminal_service
+
+    monkeypatch.setattr(remote_terminal_service, "placement", lambda _terminal_id: None)

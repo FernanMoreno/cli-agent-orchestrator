@@ -1,6 +1,7 @@
 """Disposable JWT issuer and HEAD-compatible Docker launch provision fixture."""
 
 from __future__ import annotations
+
 import base64
 import hashlib
 import json
@@ -9,8 +10,10 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
+
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_contract import (
     ContractPermissions,

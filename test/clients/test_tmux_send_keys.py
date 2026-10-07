@@ -5,17 +5,18 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from cli_agent_orchestrator.clients.tmux import TmuxClient
+from cli_agent_orchestrator.clients.tmux_transport import COMMAND_TIMEOUT_SECONDS
 
 
 @pytest.fixture
 def client():
-    with patch("cli_agent_orchestrator.clients.tmux.libtmux"):
+    with patch("cli_agent_orchestrator.clients.tmux.BoundedTmuxServer"):
         return TmuxClient()
 
 
 @pytest.fixture
 def mock_subprocess():
-    with patch("cli_agent_orchestrator.clients.tmux.subprocess") as mock:
+    with patch("cli_agent_orchestrator.clients.tmux_transport.subprocess") as mock:
         mock.run.return_value = None
         yield mock
 
@@ -33,6 +34,11 @@ def reset_version_cache():
     TmuxClient._paste_buffer_sanitizes = None
     yield
     TmuxClient._paste_buffer_sanitizes = None
+
+
+def tmux_call(*args, **kwargs):
+    """Assert the command and payload at the bounded subprocess boundary."""
+    return call(*args, timeout=COMMAND_TIMEOUT_SECONDS, **kwargs)
 
 
 def payload_calls(mock_subprocess):
@@ -74,25 +80,26 @@ class TestSendKeys:
         calls = payload_calls(mock_subprocess)
 
         # load-buffer with unique name and message as stdin
-        assert calls[0] == call(
+        assert calls[0] == tmux_call(
             ["tmux", "load-buffer", "-b", "cao_abcd1234", "-"],
             input=b"hello",
             check=True,
         )
         # paste-buffer with -p (bracketed paste)
-        assert calls[1] == call(
+        assert calls[1] == tmux_call(
             ["tmux", "paste-buffer", "-p", "-b", "cao_abcd1234", "-t", "sess:win"],
             check=True,
         )
         # send Enter
-        assert calls[2] == call(
+        assert calls[2] == tmux_call(
             ["tmux", "send-keys", "-t", "sess:win", "Enter"],
             check=True,
         )
         # delete-buffer (best-effort)
-        assert calls[3] == call(
+        assert calls[3] == tmux_call(
             ["tmux", "delete-buffer", "-b", "cao_abcd1234"],
             check=False,
+            capture_output=True,
         )
 
     def test_multiline_message(self, client, mock_subprocess, mock_uuid):
@@ -101,7 +108,7 @@ class TestSendKeys:
         client.send_keys("sess", "win", msg)
 
         load_call = payload_calls(mock_subprocess)[0]
-        assert load_call == call(
+        assert load_call == tmux_call(
             ["tmux", "load-buffer", "-b", "cao_abcd1234", "-"],
             input=msg.encode(),
             check=True,
@@ -137,9 +144,10 @@ class TestSendKeys:
 
         # delete-buffer still called in finally block
         last_call = mock_subprocess.run.call_args_list[-1]
-        assert last_call == call(
+        assert last_call == tmux_call(
             ["tmux", "delete-buffer", "-b", "cao_abcd1234"],
             check=False,
+            capture_output=True,
         )
 
     def test_unique_buffer_per_call(self, client, mock_subprocess):
@@ -167,11 +175,11 @@ class TestSendKeys:
         assert mock_subprocess.run.call_count == 8
         calls = payload_calls(mock_subprocess)
         # Both Enters
-        assert calls[2] == call(
+        assert calls[2] == tmux_call(
             ["tmux", "send-keys", "-t", "sess:win", "Enter"],
             check=True,
         )
-        assert calls[3] == call(
+        assert calls[3] == tmux_call(
             ["tmux", "send-keys", "-t", "sess:win", "Enter"],
             check=True,
         )
@@ -232,7 +240,7 @@ class TestSendKeysNoHandCraftedMarkersOnModernTmux:
         client.send_keys("sess", "win", msg, force_bracketed_paste=True)
 
         load_call = payload_calls(mock_subprocess)[0]
-        assert load_call == call(
+        assert load_call == tmux_call(
             ["tmux", "load-buffer", "-b", "cao_abcd1234", "-"],
             input=msg.encode(),
             check=True,
@@ -266,12 +274,12 @@ class TestSendKeysLegacyWrapOnOldTmux:
         client.send_keys("sess", "win", msg, force_bracketed_paste=True)
 
         calls = payload_calls(mock_subprocess)
-        assert calls[0] == call(
+        assert calls[0] == tmux_call(
             ["tmux", "load-buffer", "-b", "cao_abcd1234", "-"],
             input=b"\x1b[200~" + msg.encode() + b"\x1b[201~",
             check=True,
         )
-        assert calls[1] == call(
+        assert calls[1] == tmux_call(
             ["tmux", "paste-buffer", "-r", "-b", "cao_abcd1234", "-t", "sess:win"],
             check=True,
         )
@@ -282,7 +290,7 @@ class TestSendKeysLegacyWrapOnOldTmux:
 
         calls = payload_calls(mock_subprocess)
         assert calls[0][1]["input"] == b"ls -la"
-        assert calls[1] == call(
+        assert calls[1] == tmux_call(
             ["tmux", "paste-buffer", "-p", "-b", "cao_abcd1234", "-t", "sess:win"],
             check=True,
         )
@@ -306,7 +314,7 @@ class TestSendKeysForcedBracketedPasteShellDetection:
             client.send_keys("sess", "win", "claude --continue", force_bracketed_paste=True)
 
         paste_call = payload_calls(mock_subprocess)[1]
-        assert paste_call == call(
+        assert paste_call == tmux_call(
             ["tmux", "paste-buffer", "-r", "-b", "cao_abcd1234", "-t", "sess:win"],
             check=True,
         )
@@ -328,7 +336,7 @@ class TestSendKeysForcedBracketedPasteShellDetection:
         load_call = payload_calls(mock_subprocess)[0]
         assert load_call[1]["input"] == b"claude --continue"
         paste_call = payload_calls(mock_subprocess)[1]
-        assert paste_call == call(
+        assert paste_call == tmux_call(
             ["tmux", "paste-buffer", "-b", "cao_abcd1234", "-t", "sess:win"],
             check=True,
         )
@@ -360,7 +368,7 @@ class TestSendKeysForcedBracketedPasteShellDetection:
 
         mock_get.assert_not_called()
         paste_call = payload_calls(mock_subprocess)[1]
-        assert paste_call == call(
+        assert paste_call == tmux_call(
             ["tmux", "paste-buffer", "-p", "-b", "cao_abcd1234", "-t", "sess:win"],
             check=True,
         )
@@ -384,7 +392,7 @@ class TestSendKeysShellDetectionCrossedWithTmuxVersion:
         load_call = payload_calls(mock_subprocess)[0]
         assert load_call[1]["input"] == b"claude --continue"
         paste_call = payload_calls(mock_subprocess)[1]
-        assert paste_call == call(
+        assert paste_call == tmux_call(
             ["tmux", "paste-buffer", "-b", "cao_abcd1234", "-t", "sess:win"],
             check=True,
         )
@@ -403,7 +411,7 @@ class TestSendKeysShellDetectionCrossedWithTmuxVersion:
         assert load_call[1]["input"] == b"claude --continue"
         assert b"\x1b" not in load_call[1]["input"]
         paste_call = payload_calls(mock_subprocess)[1]
-        assert paste_call == call(
+        assert paste_call == tmux_call(
             ["tmux", "paste-buffer", "-p", "-b", "cao_abcd1234", "-t", "sess:win"],
             check=True,
         )
@@ -431,7 +439,11 @@ class TestTmuxSanitizationDetection:
 
         assert TmuxClient._tmux_sanitizes_paste_buffers() is expected
         mock_subprocess.run.assert_called_once_with(
-            ["tmux", "-V"], capture_output=True, text=True, check=True
+            ["tmux", "-V"],
+            timeout=COMMAND_TIMEOUT_SECONDS,
+            capture_output=True,
+            text=True,
+            check=True,
         )
 
     def test_probe_failure_assumes_sanitizing(self, mock_subprocess):

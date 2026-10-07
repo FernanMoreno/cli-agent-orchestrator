@@ -226,10 +226,10 @@ class WorkAdmission:
         self.contracts = WorkContracts(repository)
         self.provisioning = WorkProvisioning(repository)
         self.deliveries = WorkDeliveries(repository, delivery_adapters)
-        self.attempt_credentials = WorkAttemptCredentials(repository)
+        self.attempt_credentials = WorkAttemptCredentials(repository, origins=origins)
         self.scheduler = WorkScheduler(repository)
         self.reservations = WorkReservations(repository)
-        self._pending_abandonments = set()
+        self._pending_abandonments: set[asyncio.Task[None]] = set()
         if origins is not None:
             origins._bind_admission(self)
         if workflow_origins is not None:
@@ -1414,7 +1414,7 @@ class WorkAdmission:
             actor_id=binding.principal_id,
         )
 
-    async def _abandon_preparation(self, worker):
+    async def _abandon_preparation(self, worker) -> None:
         # Cancelling to_thread does not stop its transaction. Observe its outcome
         # without ever invoking the adapter, including after repeated cancellation.
         try:
@@ -1441,7 +1441,7 @@ class WorkAdmission:
         """
         return await self._dispatch_async(send)
 
-    async def dispatch_registered_next(self):
+    async def dispatch_registered_next(self) -> dict | None:
         """Recover delivery exclusively from its immutable order and server registry."""
 
         async def deliver(binding, port):
@@ -1464,7 +1464,8 @@ class WorkAdmission:
                 adapter, payload = self.deliveries._restore(connection, binding)
             return await adapter.send(binding, payload, snapshot, port)
 
-        return await self._dispatch_async(deliver, registered_only=True)
+        result: dict | None = await self._dispatch_async(deliver, registered_only=True)
+        return result
 
     async def _dispatch_async(self, send, *, registered_only=False):
         if not callable(send):

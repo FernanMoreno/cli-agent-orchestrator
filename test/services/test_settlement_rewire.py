@@ -937,7 +937,6 @@ def test_a_yaml_tier_record_reaches_neither_callback():
         spec=WorkflowSpec.model_validate(
             {
                 "name": "wf",
-                "version": "1",
                 "mode": "sequential",
                 "steps": [
                     {"id": "s1", "provider": "kiro_cli", "agent": "developer", "prompt": "do it"}

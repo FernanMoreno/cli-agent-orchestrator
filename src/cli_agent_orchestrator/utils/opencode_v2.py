@@ -35,6 +35,33 @@ def _rules(permissions):
     return rules
 
 
+def _normalize_mcp_actions(rules, server_names):
+    """Translate V1 MCP tool selectors to OpenCode v2's normalized names.
+
+    V1 grants stored by CAO use selectors such as ``cao-mcp-server*``. V2
+    identifies an MCP tool as ``<server>_<tool>`` and replaces unsupported
+    characters in both names with underscores, so that grant must become
+    ``cao_mcp_server_*`` to apply to the tools OpenCode actually exposes.
+    """
+    normalized = []
+    ordered_names = sorted(server_names, key=len, reverse=True)
+    for rule in rules:
+        action = rule["action"]
+        for server_name in ordered_names:
+            normalized_server = re.sub(r"[^A-Za-z0-9_]", "_", server_name)
+            if action == server_name + "*":
+                action = normalized_server + "_*"
+                break
+            prefix = server_name + "_"
+            if action.startswith(prefix):
+                tool_pattern = action[len(prefix) :]
+                tool_pattern = re.sub(r"[^A-Za-z0-9_*?]", "_", tool_pattern)
+                action = normalized_server + "_" + tool_pattern
+                break
+        normalized.append({**rule, "action": action})
+    return normalized
+
+
 def _private_write(path, data):
     if path.is_symlink():
         raise ValueError("private OpenCode config cannot be a symbolic link")
@@ -88,7 +115,9 @@ def write_v2_configuration(
     native_mcp = source_config.get("mcp", {})
     if "servers" in native_mcp:
         config["mcp"] = copy.deepcopy(native_mcp)
+        mcp_servers = native_mcp.get("servers", {})
     else:
+        mcp_servers = native_mcp
         for name, server in native_mcp.items():
             server = copy.deepcopy(server)
             # V1 exposed native MCP tools; preserve that surface and the
@@ -100,6 +129,7 @@ def write_v2_configuration(
             if not enabled:
                 server["disabled"] = True
             config["mcp"]["servers"][name] = server
+    mcp_server_names = set(mcp_servers) if isinstance(mcp_servers, dict) else set()
     for path in source_agents.glob("*.md"):
         agent = frontmatter.loads(path.read_text(encoding="utf-8"))
         options = source_config.get("agent", {}).get(path.stem, {})
@@ -108,6 +138,7 @@ def write_v2_configuration(
         # Apply it after base agent permissions and before explicit grants.
         rules.extend(_rules(source_config.get("tools")))
         rules.extend(_rules(options.get("tools")))
+        rules = _normalize_mcp_actions(rules, mcp_server_names)
         config["agents"][path.stem] = {
             "description": agent.metadata.get("description", path.stem),
             "mode": agent.metadata.get("mode", "all"),

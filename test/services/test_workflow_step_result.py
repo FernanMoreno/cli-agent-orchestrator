@@ -484,7 +484,14 @@ def _workflow_work_state_fixture(
 
     from cli_agent_orchestrator.services import work_workflow
 
-    def read_binding(_origins, attempt_id, generation, work_item_id, *, connection=None):
+    def read_binding(
+        _origins, attempt_id, generation, work_item_id, *, connection=None, historical=False
+    ):
+        # This fixture stands in only for immutable binding lookup. State reads
+        # must request historical proof, without reopening live grant authority,
+        # and retain the reader's exact existing SQLite transaction.
+        assert historical is True
+        assert connection is not None and connection.in_transaction
         if (attempt_id, generation, work_item_id) == (
             binding.work_attempt_id,
             binding.work_generation,

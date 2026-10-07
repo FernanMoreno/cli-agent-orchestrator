@@ -470,9 +470,13 @@ class WorkContracts:
 
     def _revalidate_order(self, connection, attempt_id, *, generation):
         """No Principal reconstruction and no authority for a different operation."""
-        return self._revalidate_binding(
+        binding = self._revalidate_binding(
             connection, attempt_id, generation=generation, attempt_loader=self._attempt
         )
+        from cli_agent_orchestrator.services.work_workflow_plans import WorkWorkflowPlans
+
+        WorkWorkflowPlans(self.repository).revalidate_attempt(connection, attempt_id, generation)
+        return binding
 
     def _revalidate_continuation(self, connection, attempt_id, *, generation):
         """Validate a read-only continuity description, including an accepted terminal result.

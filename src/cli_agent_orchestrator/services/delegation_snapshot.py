@@ -145,7 +145,7 @@ class DelegationSnapshots:
         for _ in refs:
             self.policy(connection, principal, "read", scope, scope_id)
 
-    def _load(self, connection, principal, row):
+    def _load(self, connection, principal, row) -> Snapshot:
         if row is None:
             raise SnapshotUnavailable("required snapshot missing")
         self._authorize(connection, principal, row["job_id"], row["scope"], row["scope_id"])

@@ -5,12 +5,11 @@ FR-8's enforcement half. ``approval_store`` can say whether a ``plan_id`` is app
 that can actually STOP a run, and both freeze call sites already carry the written promise that
 something will — "writes NULL and fails CLOSED at the approval gate".
 
-ENFORCEMENT IS OPT-IN AND DEFAULTS OFF, WHICH IS A SECURITY DECISION RATHER THAN A CONCESSION.
-``manifest_freeze.build_manifest_json`` is total: it returns ``None`` on any failure, which writes a
-NULL manifest, which refuses here. Each of those is individually right. Composed under an always-on
-gate they mean a TRANSIENT freeze failure refuses a run with nothing wrong with it. Fail-closed is
-the right posture for a control someone deliberately switched on and the wrong one to impose on every
-user of a feature that has no in-product way to grant approval until Bolt 3.
+ENFORCEMENT DEFAULTS TO REQUIRED. An exact operator settings boolean false preserves
+legacy compatibility; the environment may enable enforcement but cannot disable it.
+Prepared plans provide the private source/input/material review and approval path.
+A missing frozen identifier is an unavailable identity (503), not an approvable
+absence (403). Neither condition permits execution.
 
 THE GATE REPORTS; IT DOES NOT FORM AN OPINION ABOUT WHETHER AN APPROVAL EXISTS.
 ``approval_store`` is the sole authority. The gate consults it through ONE call —
@@ -109,6 +108,13 @@ def plan_id_from_manifest(manifest_json: Optional[str]) -> Optional[str]:
         return None
     if not isinstance(document, dict):
         return None
+    if "approved" in document:
+        from cli_agent_orchestrator.services.execution_manifest import verify_v2_public
+
+        if not verify_v2_public(document):
+            return None
+        plan_id = document["approved"]["plan_id"]
+        return plan_id if isinstance(plan_id, str) else None
     plan_id = document.get("plan_id")
     return plan_id if isinstance(plan_id, str) and plan_id else None
 
@@ -128,7 +134,7 @@ def ensure_plan_approved(*, tier: str, manifest_json: Optional[str]) -> None:
     if tier != SCRIPT_TIER:
         return
     if not is_workflow_approval_required():
-        # The default. The approval store is not called on the disabled path.
+        # Explicit compatibility posture: do not call the store when disabled.
         return
 
     plan_id = plan_id_from_manifest(manifest_json)
@@ -140,7 +146,7 @@ def ensure_plan_approved(*, tier: str, manifest_json: Optional[str]) -> None:
             "workflow approval gate: refusing a script run with no readable plan_id in its "
             "frozen manifest (approval is required by settings)"
         )
-        raise PlanApprovalRequiredError(
+        raise PlanApprovalUnavailableError(
             "This script-tier run has no readable plan identifier in its frozen execution "
             "manifest, so it cannot be matched against an approval. Approval is required by "
             "workflow.require_approval."

@@ -13,6 +13,82 @@ from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.copilot_cli import CopilotCliProvider
 
 
+@pytest.mark.parametrize(
+    ("body", "footer", "expected"),
+    [
+        (
+            "",
+            "← open sidebar · Autopilot · Allow All · / commands · tab next tab",
+            TerminalStatus.IDLE,
+        ),
+        (
+            "❯ task\n● Current answer\n",
+            "← open sidebar · Autopilot · Allow All · / commands · tab next tab",
+            TerminalStatus.COMPLETED,
+        ),
+        (
+            "❯ task\n● Working (esc to cancel)\n",
+            "← open sidebar · Autopilot · Allow All · / commands · tab next tab",
+            TerminalStatus.PROCESSING,
+        ),
+        (
+            "",
+            "◎ Loading: 1 agent, 14 skills — still waiting on mcp: cao-mcp-server; ide",
+            TerminalStatus.PROCESSING,
+        ),
+        ("", "unexpected content below composer", TerminalStatus.PROCESSING),
+    ],
+)
+def test_native_sidebar_footer_preserves_readiness_boundaries(body, footer, expected):
+    provider = CopilotCliProvider("test1234", "test-session", "window-0")
+    output = body + "────────────────────\n❯\n────────────────────\n " + footer + "\n"
+    assert provider.get_status(output) == expected
+
+
+def test_native_sidebar_footer_is_removed_from_response():
+    provider = CopilotCliProvider("test1234", "test-session", "window-0")
+    output = "❯ task\n● Current answer\n────────────────────\n❯\n────────────────────\n ← open sidebar · Autopilot · Allow All · / commands · tab next tab\n"
+    assert provider.extract_last_message_from_script(output) == "● Current answer"
+
+
+def test_erased_permission_dialog_is_not_current_waiting_evidence():
+    provider = CopilotCliProvider("test1234", "test-session", "window-0")
+    question = "Confirm folder trust\n[y/n]\n"
+    redraw = question + "\x1b[2J\x1b[H❯\x1b[2B← open sidebar · Autopilot · Allow All"
+    assert provider.get_status(question) == TerminalStatus.WAITING_USER_ANSWER
+    assert provider.get_status(redraw) == TerminalStatus.PROCESSING
+
+
+def test_native_startup_repaint_requires_two_current_pane_observations(monkeypatch):
+    from pathlib import Path
+
+    from cli_agent_orchestrator.services import status_monitor as monitor_module
+
+    provider = CopilotCliProvider("test1234", "test-session", "window-0")
+    raw = (Path(__file__).parent / "fixtures/copilot-1.0.91-startup-repaint.txt").read_text()
+    # Removing escapes cannot resolve cursor-addressed redraws. The genuine
+    # settled stream still contains loading and old permission-dialog text.
+    assert provider.get_status(raw) == TerminalStatus.PROCESSING
+    monkeypatch.setattr(monitor_module.provider_manager, "get_provider", lambda _: provider)
+    pane = (Path(__file__).parent / "fixtures/copilot-1.0.91-startup-pane.txt").read_text()
+    assert provider.get_status(pane) == TerminalStatus.IDLE
+    from unittest.mock import MagicMock
+
+    backend = MagicMock()
+    backend.get_history.return_value = pane
+    backend.get_native_status.return_value = None
+    monkeypatch.setattr("cli_agent_orchestrator.backends.registry.get_backend", lambda: backend)
+    monitor = monitor_module.StatusMonitor()
+    try:
+        assert monitor._fresh_capture_pane_status("test1234", 0) is None
+        monitor._last_stale_capture_check["test1234"] = None
+        assert monitor._fresh_capture_pane_status("test1234", 0) == TerminalStatus.IDLE
+        assert backend.get_history.call_count == 2
+        assert backend.get_history.call_args.kwargs["visible_only"] is True
+    finally:
+        monitor.clear_terminal("test1234")
+
+
 class TestCopilotCliProviderCommand:
     @patch("cli_agent_orchestrator.providers.copilot_cli.CopilotCliProvider._supports_flag")
     @patch(
@@ -218,6 +294,13 @@ class TestCopilotCliProviderModelFlag:
 
 
 class TestCopilotCliProviderInitialization:
+    @pytest.fixture(autouse=True)
+    def executable_capabilities(self):
+        # Initialization unit tests simulate the native transport. Keep the
+        # capability probe equally controlled instead of invoking host PATH.
+        with patch.object(CopilotCliProvider, "_supports_flag", return_value=True):
+            yield
+
     @pytest.mark.asyncio
     @patch("cli_agent_orchestrator.providers.copilot_cli.wait_for_shell")
     async def test_initialize_shell_timeout(self, mock_wait_shell):
@@ -648,3 +731,21 @@ class TestCopilotCliServerSettings:
             await provider.initialize()
 
         mock_wait_shell.assert_called_once_with("test1234", timeout=45)
+
+
+def test_failed_executable_probe_reports_native_launch_error():
+    """An executable shim existing on PATH is not proof it can run in WSL."""
+    import subprocess
+
+    provider = CopilotCliProvider("probe", "session", "worker")
+    with patch(
+        "cli_agent_orchestrator.providers.copilot_cli.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            ["copilot", "--help"],
+            127,
+            stdout="",
+            stderr="exec: /c/Users/example/copilot.bat: not found",
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="Copilot executable.*not found"):
+            provider._supports_flag("--autopilot")

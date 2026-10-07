@@ -190,6 +190,7 @@ class TestEveryGrantSiteUsesTheHelper:
     #: Modules that resolve an allowlist and therefore must use the helper.
     GRANT_SITES = (
         "services/install_service.py",
+        "services/launch_material.py",
         "services/terminal_service.py",
         "mcp_server/server.py",
         "utils/orchestration.py",
@@ -660,3 +661,208 @@ class TestTheHelperCannotBeDefeatedByOrdering:
 
         assert set(delivered.owners) == set(delivered.server_names)
         assert set(delivered.servers) == set(delivered.server_names)
+
+
+def test_us5_review_install_and_exact_approval_do_not_grant_tools(
+    tmp_path, store, skills_dir, monkeypatch
+):
+    from cli_agent_orchestrator.agent_plugins.installer import (
+        PluginInstallError,
+        enable,
+        review_installed,
+    )
+    from cli_agent_orchestrator.agent_plugins.mcp_delivery import collect_plugin_mcp_servers
+
+    from .conftest import build_plugin
+
+    root = build_plugin(tmp_path / "candidate", "candidate", skills=["example"], with_mcp=True)
+    outcome = install_plugin(
+        PluginSource(kind="path", location=str(root)),
+        store=store,
+        skills_dir=skills_dir,
+        refresh_agents=False,
+    )
+    assert outcome.installed
+    assert outcome.record.approval is None
+    assert not (skills_dir / "example").exists()
+    assert not collect_plugin_mcp_servers(store=store).servers
+    review = review_installed("candidate", store=store)
+    assert review["producer_status"] == "unverified"
+    assert review["integrity"] == "matched"
+    with pytest.raises(PluginInstallError, match="permissions"):
+        enable(
+            "candidate",
+            review_id=review["review_id"],
+            permissions=(),
+            store=store,
+            skills_dir=skills_dir,
+            refresh_agents=False,
+        )
+    enable(
+        "candidate",
+        review_id=review["review_id"],
+        permissions=review["permissions"],
+        store=store,
+        skills_dir=skills_dir,
+        refresh_agents=False,
+    )
+    assert (skills_dir / "example").exists()
+    delivered = collect_plugin_mcp_servers(store=store)
+    profile = _Profile(dict(delivered.servers), allowed=["fs_read"], role="reviewer")
+    assert resolve_allowed_tools(
+        profile.allowedTools, profile.role, grantable_server_names(profile, delivered=delivered)
+    ) == ["fs_read"]
+    monkeypatch.setattr("cli_agent_orchestrator.utils.skills.SKILLS_DIR", skills_dir)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.agent_plugins.store.AGENT_PLUGINS_DIR", store.plugins_dir
+    )
+    from cli_agent_orchestrator.utils.skills import build_skill_catalog, load_skill_content
+
+    assert "example" in build_skill_catalog()
+    skill_file = store.plugin_root("candidate") / "skills/example/SKILL.md"
+    skill_file.write_text(skill_file.read_text() + "\nchanged valid instructions\n")
+    assert "example" not in build_skill_catalog()
+    with pytest.raises(ValueError, match="approved"):
+        load_skill_content("example")
+    assert review_installed("candidate", store=store)["integrity"] == "changed"
+    from cli_agent_orchestrator.agent_plugins.projection import rebuild_projection
+
+    rebuild_projection(store, skills_dir=skills_dir)
+    assert not (skills_dir / "example").exists()
+    assert not collect_plugin_mcp_servers(store=store).servers
+    with pytest.raises(PluginInstallError, match="changed"):
+        enable(
+            "candidate",
+            review_id=review["review_id"],
+            permissions=review["permissions"],
+            store=store,
+            skills_dir=skills_dir,
+            refresh_agents=False,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native_provider", ["kiro_cli", "opencode_cli"])
+@pytest.mark.parametrize("revocation_succeeds", [True, False])
+async def test_us5_fresh_native_launch_cannot_scan_changed_plugin(
+    native_provider, revocation_succeeds, tmp_path, store, skills_dir, monkeypatch
+):
+    import glob
+    from contextlib import ExitStack
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from cli_agent_orchestrator.agent_plugins.installer import enable, review_installed
+    from cli_agent_orchestrator.models.agent_profile import AgentProfile
+    from cli_agent_orchestrator.services.terminal_service import create_terminal
+    from cli_agent_orchestrator.utils.opencode_config import ensure_skills_symlink
+
+    from .conftest import build_plugin, write_skill
+
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.agent_plugins.store.AGENT_PLUGINS_DIR", store.plugins_dir
+    )
+    monkeypatch.setattr("cli_agent_orchestrator.agent_plugins.projection.SKILLS_DIR", skills_dir)
+    monkeypatch.setattr("cli_agent_orchestrator.utils.skills.SKILLS_DIR", skills_dir)
+    monkeypatch.setattr("cli_agent_orchestrator.utils.opencode_config.SKILLS_DIR", skills_dir)
+    native_config = tmp_path / "opencode"
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.utils.opencode_config.OPENCODE_CONFIG_DIR", native_config
+    )
+    root = build_plugin(tmp_path / "candidate", "candidate", skills=["example"])
+    install_plugin(
+        PluginSource(kind="path", location=str(root)),
+        store=store,
+        skills_dir=skills_dir,
+        refresh_agents=False,
+    )
+    review = review_installed("candidate", store=store)
+    enable(
+        "candidate",
+        review_id=review["review_id"],
+        permissions=review["permissions"],
+        store=store,
+        skills_dir=skills_dir,
+        refresh_agents=False,
+    )
+    write_skill(skills_dir / "user-skill", "user-skill", "Owned by user")
+    ensure_skills_symlink()
+    skill_file = store.plugin_root("candidate") / "skills/example/SKILL.md"
+    skill_file.write_text(skill_file.read_text() + "\nchanged native instructions\n")
+    scanned = []
+
+    async def initialize():
+        native_root = skills_dir if native_provider == "kiro_cli" else native_config / "skills"
+        scanned.extend(glob.glob(str(native_root / "*" / "SKILL.md")))
+        assert not any("/example/" in name for name in scanned)
+        assert any("/user-skill/" in name for name in scanned)
+        return True
+
+    seam = "cli_agent_orchestrator.services.terminal_service."
+    names = [
+        "status_monitor",
+        "fifo_manager",
+        "FIFO_DIR",
+        "provider_manager",
+        "delete_terminals_by_session",
+        "db_create_terminal",
+        "generate_window_name",
+        "generate_session_name",
+        "generate_terminal_id",
+        "load_agent_profile",
+    ]
+    with ExitStack() as stack:
+        mocks = {name: stack.enter_context(patch(seam + name)) for name in names}
+        backend = stack.enter_context(patch("cli_agent_orchestrator.backends.registry._backend"))
+        backend.session_exists.return_value = False
+        mocks["generate_terminal_id"].return_value = "test1234"
+        mocks["generate_session_name"].return_value = "cao-session"
+        mocks["generate_window_name"].return_value = "developer-abcd"
+        mocks["load_agent_profile"].return_value = AgentProfile(
+            name="developer", description="Developer"
+        )
+        launched = AsyncMock()
+        launched.initialize.side_effect = initialize
+        mocks["provider_manager"].create_provider.return_value = launched
+        mocks["FIFO_DIR"].__truediv__ = MagicMock(return_value="fake.fifo")
+        if not revocation_succeeds:
+            from cli_agent_orchestrator.agent_plugins.store import PluginStoreError
+
+            monkeypatch.setattr(
+                "cli_agent_orchestrator.agent_plugins.projection._remove_quiet", lambda path: False
+            )
+            with pytest.raises(PluginStoreError, match="native provider launch is blocked"):
+                await create_terminal(
+                    provider=native_provider, agent_profile="developer", new_session=True
+                )
+            launched.initialize.assert_not_awaited()
+            assert not scanned
+        else:
+            import asyncio
+            import threading
+
+            from cli_agent_orchestrator.agent_plugins import projection
+
+            entered = threading.Event()
+            release = threading.Event()
+            real_reconcile = projection.reconcile_native_skill_projection
+
+            def contended_reconcile():
+                entered.set()
+                if not release.wait(timeout=2.0):
+                    raise RuntimeError("native reconciliation blocked the event loop")
+                real_reconcile()
+
+            monkeypatch.setattr(
+                projection, "reconcile_native_skill_projection", contended_reconcile
+            )
+            task = asyncio.create_task(
+                create_terminal(
+                    provider=native_provider, agent_profile="developer", new_session=True
+                )
+            )
+            assert await asyncio.to_thread(entered.wait, 3.0)
+            release.set()
+            terminal = await task
+            assert terminal.id == "test1234"
+            launched.initialize.assert_awaited_once()
+            assert scanned

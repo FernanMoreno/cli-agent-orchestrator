@@ -39,6 +39,8 @@ concurrency:
 
 jobs:
   native-provider-matrix:
+    if: github.repository == 'awslabs/cli-agent-orchestrator' && github.ref == 'refs/heads/main'
+    environment: real-provider-e2e
     name: Dynamic provider lifecycle matrix (${{ inputs.pairs }})
     runs-on: [self-hosted, linux, cao-real-e2e]
     # A full N×N live matrix serializes its provider cells; it may legitimately
@@ -60,17 +62,15 @@ jobs:
       # Imports on a cold self-hosted runner or a mounted WSL worktree can
       # exceed the ordinary 30-second test budget before any CLI starts.
       CAO_TEST_SERVER_HEALTH_TIMEOUT: "60"
-      # A runner may override this with a read-only credential home. When
-      # omitted the test uses the runner user's HOME and symlinks only the one
-      # selected provider credential record into CAO's disposable test HOME.
+      # Required protected, dedicated authentication home; runner HOME is forbidden.
       CAO_REAL_PROVIDER_E2E_AUTH_HOME: ${{ vars.CAO_REAL_PROVIDER_E2E_AUTH_HOME }}
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -88,6 +88,11 @@ jobs:
           import os
           import sys
 
+          from pathlib import Path
+          auth_home = os.environ.get("CAO_REAL_PROVIDER_E2E_AUTH_HOME", "")
+          home = Path(auth_home)
+          if not auth_home or not home.is_absolute() or not home.is_dir() or home.resolve() == Path(os.environ["HOME"]).resolve():
+              sys.exit("An explicit isolated CAO_REAL_PROVIDER_E2E_AUTH_HOME outside runner HOME is required")
           raw = os.environ.get("CAO_REAL_PROVIDER_E2E_PROVIDERS", "")
           if len(raw.encode("utf-8")) > 65_536:
               sys.exit("CAO_REAL_PROVIDER_E2E_PROVIDERS exceeds the 64 KiB dispatch limit")
@@ -117,21 +122,32 @@ jobs:
           command -v python3
 
       - name: Install dependencies
-        run: uv sync --all-extras --dev
+        run: uv sync --locked --all-extras --dev
+
+      - name: Create disposable provider workspace
+        run: echo "CAO_PROVIDER_TMP=$(mktemp -d "$RUNNER_TEMP/cao-real-provider.XXXXXX")" >> "$GITHUB_ENV"
 
       - name: Run selected real-provider matrix cells
         env:
           CAO_REAL_PROVIDER_E2E_QUOTA_OBSERVATION_SECONDS: ${{ inputs.quota_observation_seconds }}
         run: |
-          uv run pytest -o addopts= -m "e2e and live_provider" \
+          trap 'rm -rf -- "$CAO_PROVIDER_TMP"' EXIT INT TERM
+          uv run pytest --basetemp="$CAO_PROVIDER_TMP/pytest" -o addopts= -m "e2e and live_provider" \
             test/e2e/test_real_provider_matrix.py -vv \
             --junitxml=real-provider-matrix.junit.xml
 
       - name: Upload sanitized matrix JUnit evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cao-real-provider-matrix-junit-${{ github.run_id }}
           path: real-provider-matrix.junit.xml
           if-no-files-found: error
           retention-days: 7
+
+      - name: Remove disposable provider workspace
+        if: always()
+        run: |
+          if [ -n "${CAO_PROVIDER_TMP:-}" ]; then
+            rm -rf -- "$CAO_PROVIDER_TMP"
+          fi

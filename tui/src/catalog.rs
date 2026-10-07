@@ -1,6 +1,6 @@
 //! The static run-policy table: what the TUI offers, and how (issue #321).
 //!
-//! One row per leaf command of the CAO Click tree — **100 of them** — each classified `InApp`,
+//! One row per leaf command of the CAO Click tree — **141 of them** — each classified `InApp`,
 //! `Handoff`, or `Hidden`. Three infallible lookups read that table and nothing else.
 //!
 //! # No I/O, and that is the security property (SR-1)
@@ -64,7 +64,7 @@ use std::vec::Vec;
 
 /// The number of leaf commands in the CAO Click tree.
 ///
-/// **100 as of this merged branch.** Successive changes brought relationship, workflow, approval,
+/// **141 as of this merged branch.** Successive changes brought relationship, workflow, approval,
 /// agent-orchestration, vault-maintenance, fleet, and worker leaves that this table did not know
 /// about. They were caught by `test/test_command_catalog_matches_click.py` rather than by review,
 /// several only in CI,
@@ -116,7 +116,7 @@ use std::vec::Vec;
 /// must not offer itself — giving **33 IN-APP / 5 HANDOFF / 23 HIDE = 61**. Recorded here
 /// because a reader comparing the design's 60 against this 61 would otherwise suspect drift.
 /// (#321)
-const COMMAND_COUNT: usize = 100;
+const COMMAND_COUNT: usize = 141;
 
 /// What the TUI does with a command.
 ///
@@ -213,10 +213,42 @@ pub struct Command {
 ///
 /// `pub(crate)` since Bolt 3: `server-client`'s route-table tests walk it to assert that every
 /// IN-APP command has a route and that no HANDOFF or HIDE command does. Deriving that set any
-/// other way would mean re-listing 100 commands in a second place, which is a worse trade than
+/// other way would mean re-listing 141 commands in a second place, which is a worse trade than
 /// widening the visibility of a compile-time constant. Still crate-private — no consumer outside
 /// this crate exists, and the table is not a public API. (#321)
 pub(crate) const DISPLAY_ORDER: [CommandId; COMMAND_COUNT] = [
+    CommandId::RalphComplete,
+    CommandId::RalphFeedback,
+    CommandId::RalphPrepare,
+    CommandId::RalphResume,
+    CommandId::RalphStart,
+    CommandId::RalphStatus,
+    CommandId::RalphStop,
+    CommandId::RalphTemplate,
+    CommandId::TasksAssignment,
+    CommandId::TasksCloseVerified,
+    CommandId::TasksPrepare,
+    CommandId::TasksStart,
+    CommandId::TasksUnassign,
+    CommandId::AgentVerify,
+    CommandId::ProfileLint,
+    CommandId::TasksBulkCreate,
+    CommandId::TasksCapabilities,
+    CommandId::TasksComments,
+    CommandId::TasksContext,
+    CommandId::TasksDecompose,
+    CommandId::TasksEpic,
+    CommandId::TasksList,
+    CommandId::TasksMutate,
+    CommandId::TasksOperation,
+    CommandId::TasksReady,
+    CommandId::TasksShow,
+    CommandId::WorkflowCreate,
+    CommandId::WorkflowPlan,
+    CommandId::WorkflowProvision,
+    CommandId::WorkflowReviewPlan,
+    CommandId::WorkflowSeeds,
+    CommandId::WorkflowUpdate,
     CommandId::Info,
     CommandId::Init,
     CommandId::Install,
@@ -270,9 +302,18 @@ pub(crate) const DISPLAY_ORDER: [CommandId; COMMAND_COUNT] = [
     CommandId::MemoryVaultReconcile,
     CommandId::MemoryVaultScan,
     CommandId::MemoryVaultStatus,
+    CommandId::PeerAccept,
+    CommandId::PeerList,
+    CommandId::PeerPair,
+    CommandId::PeerReconcile,
+    CommandId::PeerRevoke,
+    CommandId::PeerStatus,
     CommandId::PluginAdd,
+    CommandId::PluginDisable,
+    CommandId::PluginEnable,
     CommandId::PluginList,
     CommandId::PluginRemove,
+    CommandId::PluginReview,
     CommandId::PluginValidate,
     CommandId::ProfileCreate,
     CommandId::ProfileFind,
@@ -319,7 +360,7 @@ pub(crate) const DISPLAY_ORDER: [CommandId; COMMAND_COUNT] = [
     CommandId::WorkflowValidate,
 ];
 
-/// One variant per leaf command — **all 100**, the same figure [`COMMAND_COUNT`] pins.
+/// One variant per leaf command — **all 141**, the same figure [`COMMAND_COUNT`] pins.
 ///
 /// Why an enum rather than a `String` key is the subject of this module's own docs: it is what
 /// makes an unclassified command a **compile error** instead of a runtime `None` (FR-4.2).
@@ -329,6 +370,72 @@ pub(crate) const DISPLAY_ORDER: [CommandId; COMMAND_COUNT] = [
 /// the crate is built. (#321)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CommandId {
+    /// `cao ralph complete`
+    RalphComplete,
+    /// `cao ralph feedback`
+    RalphFeedback,
+    /// `cao ralph prepare`
+    RalphPrepare,
+    /// `cao ralph resume`
+    RalphResume,
+    /// `cao ralph start`
+    RalphStart,
+    /// `cao ralph status`
+    RalphStatus,
+    /// `cao ralph stop`
+    RalphStop,
+    /// `cao ralph template`
+    RalphTemplate,
+    /// `cao tasks assignment`
+    TasksAssignment,
+    /// `cao tasks close-verified`
+    TasksCloseVerified,
+    /// `cao tasks prepare`
+    TasksPrepare,
+    /// `cao tasks start`
+    TasksStart,
+    /// `cao tasks unassign`
+    TasksUnassign,
+
+    /// `cao agent verify`
+    AgentVerify,
+    /// `cao profile lint`
+    ProfileLint,
+    /// `cao tasks bulk-create`
+    TasksBulkCreate,
+    /// `cao tasks capabilities`
+    TasksCapabilities,
+    /// `cao tasks comments`
+    TasksComments,
+    /// `cao tasks context`
+    TasksContext,
+    /// `cao tasks decompose`
+    TasksDecompose,
+    /// `cao tasks epic`
+    TasksEpic,
+    /// `cao tasks list`
+    TasksList,
+    /// `cao tasks mutate`
+    TasksMutate,
+    /// `cao tasks operation`
+    TasksOperation,
+    /// `cao tasks ready`
+    TasksReady,
+    /// `cao tasks show`
+    TasksShow,
+    /// `cao workflow create`
+    WorkflowCreate,
+    /// `cao workflow plan`
+    WorkflowPlan,
+    /// `cao workflow provision`
+    WorkflowProvision,
+    /// `cao workflow review-plan`
+    WorkflowReviewPlan,
+    /// `cao workflow seeds`
+    WorkflowSeeds,
+    /// `cao workflow update`
+    WorkflowUpdate,
+
     // Top-level leaves.
     /// `cao info`
     Info,
@@ -449,13 +556,32 @@ pub enum CommandId {
     /// `cao memory vault status`
     MemoryVaultStatus,
 
-    // `cao plugin *` — Agent Plugins 1.0.0, NOT the event-plugin system in plugins/
+    // `cao peer *` — unreviewed local peer coordination remains hidden.
+    /// `cao peer accept`
+    PeerAccept,
+    /// `cao peer list`
+    PeerList,
+    /// `cao peer pair`
+    PeerPair,
+    /// `cao peer reconcile`
+    PeerReconcile,
+    /// `cao peer revoke`
+    PeerRevoke,
+    /// `cao peer status`
+    PeerStatus,
+    // `cao plugin *` — Agent Plugins, NOT the event-plugin system in plugins/
     /// `cao plugin add`
     PluginAdd,
+    /// `cao plugin disable`
+    PluginDisable,
+    /// `cao plugin enable`
+    PluginEnable,
     /// `cao plugin list`
     PluginList,
     /// `cao plugin remove`
     PluginRemove,
+    /// `cao plugin review`
+    PluginReview,
     /// `cao plugin validate`
     PluginValidate,
 
@@ -573,6 +699,360 @@ pub enum CommandId {
 /// comment — see the module docs for why that is a comment and not a field. (#321)
 fn entry(id: CommandId) -> Command {
     match id {
+        CommandId::RalphComplete => Command {
+            id: CommandId::RalphComplete,
+            parent: Some("ralph"),
+            leaf_name: "complete",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::RalphFeedback => Command {
+            id: CommandId::RalphFeedback,
+            parent: Some("ralph"),
+            leaf_name: "feedback",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::RalphPrepare => Command {
+            id: CommandId::RalphPrepare,
+            parent: Some("ralph"),
+            leaf_name: "prepare",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::RalphResume => Command {
+            id: CommandId::RalphResume,
+            parent: Some("ralph"),
+            leaf_name: "resume",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::RalphStart => Command {
+            id: CommandId::RalphStart,
+            parent: Some("ralph"),
+            leaf_name: "start",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::RalphStatus => Command {
+            id: CommandId::RalphStatus,
+            parent: Some("ralph"),
+            leaf_name: "status",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::RalphStop => Command {
+            id: CommandId::RalphStop,
+            parent: Some("ralph"),
+            leaf_name: "stop",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::RalphTemplate => Command {
+            id: CommandId::RalphTemplate,
+            parent: Some("ralph"),
+            leaf_name: "template",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::TasksAssignment => Command {
+            id: CommandId::TasksAssignment,
+            parent: Some("tasks"),
+            leaf_name: "assignment",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::TasksCloseVerified => Command {
+            id: CommandId::TasksCloseVerified,
+            parent: Some("tasks"),
+            leaf_name: "close-verified",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::TasksPrepare => Command {
+            id: CommandId::TasksPrepare,
+            parent: Some("tasks"),
+            leaf_name: "prepare",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::TasksStart => Command {
+            id: CommandId::TasksStart,
+            parent: Some("tasks"),
+            leaf_name: "start",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::TasksUnassign => Command {
+            id: CommandId::TasksUnassign,
+            parent: Some("tasks"),
+            leaf_name: "unassign",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+
+        CommandId::AgentVerify => Command {
+            id: CommandId::AgentVerify,
+            parent: Some("agent"),
+            leaf_name: "verify",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::ProfileLint => Command {
+            id: CommandId::ProfileLint,
+            parent: Some("profile"),
+            leaf_name: "lint",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::TasksBulkCreate => Command {
+            id: CommandId::TasksBulkCreate,
+            parent: Some("tasks"),
+            leaf_name: "bulk-create",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::TasksCapabilities => Command {
+            id: CommandId::TasksCapabilities,
+            parent: Some("tasks"),
+            leaf_name: "capabilities",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::TasksComments => Command {
+            id: CommandId::TasksComments,
+            parent: Some("tasks"),
+            leaf_name: "comments",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::TasksContext => Command {
+            id: CommandId::TasksContext,
+            parent: Some("tasks"),
+            leaf_name: "context",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::TasksDecompose => Command {
+            id: CommandId::TasksDecompose,
+            parent: Some("tasks"),
+            leaf_name: "decompose",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::TasksEpic => Command {
+            id: CommandId::TasksEpic,
+            parent: Some("tasks"),
+            leaf_name: "epic",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::TasksList => Command {
+            id: CommandId::TasksList,
+            parent: Some("tasks"),
+            leaf_name: "list",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::TasksMutate => Command {
+            id: CommandId::TasksMutate,
+            parent: Some("tasks"),
+            leaf_name: "mutate",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::TasksOperation => Command {
+            id: CommandId::TasksOperation,
+            parent: Some("tasks"),
+            leaf_name: "operation",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::TasksReady => Command {
+            id: CommandId::TasksReady,
+            parent: Some("tasks"),
+            leaf_name: "ready",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::TasksShow => Command {
+            id: CommandId::TasksShow,
+            parent: Some("tasks"),
+            leaf_name: "show",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::WorkflowCreate => Command {
+            id: CommandId::WorkflowCreate,
+            parent: Some("workflow"),
+            leaf_name: "create",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::WorkflowPlan => Command {
+            id: CommandId::WorkflowPlan,
+            parent: Some("workflow"),
+            leaf_name: "plan",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::WorkflowProvision => Command {
+            id: CommandId::WorkflowProvision,
+            parent: Some("workflow"),
+            leaf_name: "provision",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::WorkflowReviewPlan => Command {
+            id: CommandId::WorkflowReviewPlan,
+            parent: Some("workflow"),
+            leaf_name: "review-plan",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::WorkflowSeeds => Command {
+            id: CommandId::WorkflowSeeds,
+            parent: Some("workflow"),
+            leaf_name: "seeds",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+        CommandId::WorkflowUpdate => Command {
+            id: CommandId::WorkflowUpdate,
+            parent: Some("workflow"),
+            leaf_name: "update",
+            summary: "Use the CLI or web plan/task controls for this operation.",
+            policy: Policy::Hidden,
+            params: &[],
+            handoff_reason: None,
+            // HIDE: requires reviewed bounded input/authority or CLI file semantics;
+            // current TUI one-shot form cannot carry this contract safely.
+        },
+
 
         CommandId::Info => Command {
             id: CommandId::Info,
@@ -1199,6 +1679,61 @@ fn entry(id: CommandId) -> Command {
             handoff_reason: None,
         },
 
+        // Unreviewed local peer commands stay hidden until their TUI policy is approved.
+        CommandId::PeerAccept => Command {
+            id: CommandId::PeerAccept,
+            parent: Some("peer"),
+            leaf_name: "accept",
+            summary: "Review and accept a one-use pairing invitation from another CAO.",
+            policy: Policy::Hidden,
+            params: &[Param { name: "challenge_id", required: true, kind: ParamKind::Text }],
+            handoff_reason: None,
+        },
+        CommandId::PeerList => Command {
+            id: CommandId::PeerList,
+            parent: Some("peer"),
+            leaf_name: "list",
+            summary: "List active local CAO instances and project-scoped grants.",
+            policy: Policy::Hidden,
+            params: &[Param { name: "--project", required: false, kind: ParamKind::Text }, Param { name: "--json", required: false, kind: ParamKind::Flag }],
+            handoff_reason: None,
+        },
+        CommandId::PeerPair => Command {
+            id: CommandId::PeerPair,
+            parent: Some("peer"),
+            leaf_name: "pair",
+            summary: "Create a one-use pairing code for another active local CAO profile.",
+            policy: Policy::Hidden,
+            params: &[Param { name: "instance_id", required: true, kind: ParamKind::Text }, Param { name: "--project", required: true, kind: ParamKind::Text }],
+            handoff_reason: None,
+        },
+        CommandId::PeerReconcile => Command {
+            id: CommandId::PeerReconcile,
+            parent: Some("peer"),
+            leaf_name: "reconcile",
+            summary: "Release a retained project lease after the operator checks the worker stopped.",
+            policy: Policy::Hidden,
+            params: &[Param { name: "task_id", required: true, kind: ParamKind::Text }],
+            handoff_reason: None,
+        },
+        CommandId::PeerRevoke => Command {
+            id: CommandId::PeerRevoke,
+            parent: Some("peer"),
+            leaf_name: "revoke",
+            summary: "Revoke a peer capability for one local project.",
+            policy: Policy::Hidden,
+            params: &[Param { name: "instance_id", required: true, kind: ParamKind::Text }, Param { name: "--project", required: true, kind: ParamKind::Text }],
+            handoff_reason: None,
+        },
+        CommandId::PeerStatus => Command {
+            id: CommandId::PeerStatus,
+            parent: Some("peer"),
+            leaf_name: "status",
+            summary: "Read or reconcile a coordinated local peer task.",
+            policy: Policy::Hidden,
+            params: &[Param { name: "task_id", required: true, kind: ParamKind::Text }, Param { name: "--json", required: false, kind: ParamKind::Flag }],
+            handoff_reason: None,
+        },
         // ── `cao plugin *` — Agent Plugins 1.0.0 ──────────────────────────────────────────
         // HIDE for the whole group, deliberately. The verb itself is unresolved maintainer
         // decision M1, and requirements.md 16.5 forbids shipping this surface to end users
@@ -1223,6 +1758,24 @@ fn entry(id: CommandId) -> Command {
             params: &[Param { name: "source", required: true, kind: ParamKind::Text }, Param { name: "--ref", required: false, kind: ParamKind::Text }, Param { name: "--subdir", required: false, kind: ParamKind::Text }, Param { name: "--force", required: false, kind: ParamKind::Flag }, Param { name: "--dry-run", required: false, kind: ParamKind::Flag }, Param { name: "--json", required: false, kind: ParamKind::Flag }],
             handoff_reason: None,
         },
+        CommandId::PluginDisable => Command {
+            id: CommandId::PluginDisable,
+            parent: Some("plugin"),
+            leaf_name: "disable",
+            summary: "Revoke local content approval and rebuild agent projections.",
+            policy: Policy::Hidden,
+            params: &[Param { name: "name", required: true, kind: ParamKind::Text }],
+            handoff_reason: None,
+        },
+        CommandId::PluginEnable => Command {
+            id: CommandId::PluginEnable,
+            parent: Some("plugin"),
+            leaf_name: "enable",
+            summary: "Approve current content locally; tool allowlists still require explicit grants.",
+            policy: Policy::Hidden,
+            params: &[Param { name: "name", required: true, kind: ParamKind::Text }, Param { name: "--approve", required: true, kind: ParamKind::Text }, Param { name: "--permission", required: false, kind: ParamKind::Text }],
+            handoff_reason: None,
+        },
         CommandId::PluginList => Command {
             id: CommandId::PluginList,
             parent: Some("plugin"),
@@ -1239,6 +1792,15 @@ fn entry(id: CommandId) -> Command {
             summary: "Remove an installed agent plugin.",
             policy: Policy::Hidden,
             params: &[Param { name: "name", required: true, kind: ParamKind::Text }, Param { name: "--purge-data", required: false, kind: ParamKind::Flag }, Param { name: "--yes", required: false, kind: ParamKind::Flag }],
+            handoff_reason: None,
+        },
+        CommandId::PluginReview => Command {
+            id: CommandId::PluginReview,
+            parent: Some("plugin"),
+            leaf_name: "review",
+            summary: "Review installed package evidence without granting authority.",
+            policy: Policy::Hidden,
+            params: &[Param { name: "name", required: true, kind: ParamKind::Text }, Param { name: "--json", required: false, kind: ParamKind::Flag }],
             handoff_reason: None,
         },
         CommandId::PluginValidate => Command {
@@ -1809,7 +2371,7 @@ mod tests {
     ///
     /// Returns `(in_app, handoff, hidden)`. The counts are *derived*; every number they are
     /// compared against is a hard-coded literal in the test body. That direction matters — see
-    /// [`the_policy_distribution_is_twentyfour_eighteen_fiftyeight`].
+    /// [`the_policy_distribution_is_twentyfour_eighteen_ninetynine`].
     fn distribution() -> (usize, usize, usize) {
         let mut counts = (0, 0, 0);
         for id in DISPLAY_ORDER {
@@ -1822,7 +2384,7 @@ mod tests {
         counts
     }
 
-    /// Test 1 — **the policy distribution is 24 IN-APP / 18 HANDOFF / 58 HIDE, totalling 100.**
+    /// Test 1 — **the policy distribution is 24 IN-APP / 18 HANDOFF / 99 HIDE, totalling 141.**
     ///
     /// Every number here is a **hard-coded literal**, and that is the entire design of the test.
     /// Deriving any of them from the table — `assert_eq!(in_app, TABLE.iter().filter(..).count())`
@@ -1831,7 +2393,7 @@ mod tests {
     /// would look like if it had it.
     ///
     /// **Four assertions rather than one summed check**, also deliberately: a single
-    /// `in_app + handoff + hidden == 100` stays green when a command moves from IN-APP to HIDE,
+    /// `in_app + handoff + hidden == 141` stays green when a command moves from IN-APP to HIDE,
     /// because the total is conserved. Reclassification is exactly the change most likely to
     /// happen by accident, so each policy is pinned separately and the failure names *which* one
     /// moved.
@@ -1886,27 +2448,27 @@ mod tests {
     /// not IN-APP, because `remove` needs a warn-then-confirm exchange that a captured
     /// one-shot request cannot carry. On top of the 91 above that gives **24/18/58 = 100**.
     #[test]
-    fn the_policy_distribution_is_twentyfour_eighteen_fiftyeight() {
+    fn the_policy_distribution_is_twentyfour_eighteen_ninetynine() {
         let (in_app, handoff, hidden) = distribution();
 
         assert_eq!(in_app, 24, "expected 24 IN-APP commands, found {in_app}");
         assert_eq!(handoff, 18, "expected 18 HANDOFF commands, found {handoff}");
-        assert_eq!(hidden, 58, "expected 58 HIDE commands, found {hidden}");
+        assert_eq!(hidden, 99, "expected 99 HIDE commands, found {hidden}");
         assert_eq!(
             in_app + handoff + hidden,
-            100,
-            "the three policy counts must account for all 100 leaf commands of the Click tree"
+            141,
+            "the three policy counts must account for all 141 leaf commands of the Click tree"
         );
 
-        // The three counts summing to 100 does not prove 91 *distinct* commands were counted: a
+        // The three counts summing to 141 does not prove 141 *distinct* commands were counted: a
         // duplicated entry in DISPLAY_ORDER would inflate one policy while a real command went
         // uncounted, and the arithmetic above would still close. DISPLAY_ORDER is generated, so
         // this is a live hazard rather than a theoretical one.
         let distinct: BTreeSet<CommandId> = DISPLAY_ORDER.iter().copied().collect();
         assert_eq!(
             distinct.len(),
-            100,
-            "DISPLAY_ORDER must list 100 DISTINCT commands; a duplicate would let one command go \
+            141,
+            "DISPLAY_ORDER must list 141 DISTINCT commands; a duplicate would let one command go \
              uncounted while the totals still summed correctly"
         );
     }
@@ -1926,9 +2488,9 @@ mod tests {
     /// production. "The compiler has my back" is exactly where a contributor stops checking, so
     /// the uncovered case needs a test rather than a caveat in a doc comment.
     ///
-    /// Neither existing guard catches it. [`the_policy_distribution_is_twentyfour_eighteen_fiftyeight`]
+    /// Neither existing guard catches it. [`the_policy_distribution_is_twentyfour_eighteen_ninetynine`]
     /// counts what `DISPLAY_ORDER` *contains*, so a variant missing from it is simply never
-    /// counted; and its `distinct.len() == 100` assertion detects a **duplicate**, which is the
+    /// counted; and its `distinct.len() == 141` assertion detects a **duplicate**, which is the
     /// opposite direction. [`COMMAND_COUNT`] pins the array's *length*, never its membership.
     ///
     /// # Why an exhaustive match and NOT a discriminant trick
@@ -1973,6 +2535,40 @@ mod tests {
             #[allow(clippy::needless_match)]
             fn identity(id: CommandId) -> CommandId {
                 match id {
+                    CommandId::RalphComplete => CommandId::RalphComplete,
+                    CommandId::RalphFeedback => CommandId::RalphFeedback,
+                    CommandId::RalphPrepare => CommandId::RalphPrepare,
+                    CommandId::RalphResume => CommandId::RalphResume,
+                    CommandId::RalphStart => CommandId::RalphStart,
+                    CommandId::RalphStatus => CommandId::RalphStatus,
+                    CommandId::RalphStop => CommandId::RalphStop,
+                    CommandId::RalphTemplate => CommandId::RalphTemplate,
+                    CommandId::TasksAssignment => CommandId::TasksAssignment,
+                    CommandId::TasksCloseVerified => CommandId::TasksCloseVerified,
+                    CommandId::TasksPrepare => CommandId::TasksPrepare,
+                    CommandId::TasksStart => CommandId::TasksStart,
+                    CommandId::TasksUnassign => CommandId::TasksUnassign,
+
+                    CommandId::AgentVerify => CommandId::AgentVerify,
+                    CommandId::ProfileLint => CommandId::ProfileLint,
+                    CommandId::TasksBulkCreate => CommandId::TasksBulkCreate,
+                    CommandId::TasksCapabilities => CommandId::TasksCapabilities,
+                    CommandId::TasksComments => CommandId::TasksComments,
+                    CommandId::TasksContext => CommandId::TasksContext,
+                    CommandId::TasksDecompose => CommandId::TasksDecompose,
+                    CommandId::TasksEpic => CommandId::TasksEpic,
+                    CommandId::TasksList => CommandId::TasksList,
+                    CommandId::TasksMutate => CommandId::TasksMutate,
+                    CommandId::TasksOperation => CommandId::TasksOperation,
+                    CommandId::TasksReady => CommandId::TasksReady,
+                    CommandId::TasksShow => CommandId::TasksShow,
+                    CommandId::WorkflowCreate => CommandId::WorkflowCreate,
+                    CommandId::WorkflowPlan => CommandId::WorkflowPlan,
+                    CommandId::WorkflowProvision => CommandId::WorkflowProvision,
+                    CommandId::WorkflowReviewPlan => CommandId::WorkflowReviewPlan,
+                    CommandId::WorkflowSeeds => CommandId::WorkflowSeeds,
+                    CommandId::WorkflowUpdate => CommandId::WorkflowUpdate,
+
                     CommandId::Info => CommandId::Info,
                     CommandId::Init => CommandId::Init,
                     CommandId::Install => CommandId::Install,
@@ -2026,9 +2622,18 @@ mod tests {
                     CommandId::MemoryVaultReconcile => CommandId::MemoryVaultReconcile,
                     CommandId::MemoryVaultScan => CommandId::MemoryVaultScan,
                     CommandId::MemoryVaultStatus => CommandId::MemoryVaultStatus,
+                    CommandId::PeerAccept => CommandId::PeerAccept,
+                    CommandId::PeerList => CommandId::PeerList,
+                    CommandId::PeerPair => CommandId::PeerPair,
+                    CommandId::PeerReconcile => CommandId::PeerReconcile,
+                    CommandId::PeerRevoke => CommandId::PeerRevoke,
+                    CommandId::PeerStatus => CommandId::PeerStatus,
                     CommandId::PluginAdd => CommandId::PluginAdd,
+                    CommandId::PluginDisable => CommandId::PluginDisable,
+                    CommandId::PluginEnable => CommandId::PluginEnable,
                     CommandId::PluginList => CommandId::PluginList,
                     CommandId::PluginRemove => CommandId::PluginRemove,
+                    CommandId::PluginReview => CommandId::PluginReview,
                     CommandId::PluginValidate => CommandId::PluginValidate,
                     CommandId::ProfileCreate => CommandId::ProfileCreate,
                     CommandId::ProfileFind => CommandId::ProfileFind,
@@ -2078,6 +2683,38 @@ mod tests {
 
             // Every variant, each passed through the exhaustive map above.
             [
+                CommandId::RalphComplete,
+                CommandId::RalphFeedback,
+                CommandId::RalphPrepare,
+                CommandId::RalphResume,
+                CommandId::RalphStart,
+                CommandId::RalphStatus,
+                CommandId::RalphStop,
+                CommandId::RalphTemplate,
+                CommandId::TasksAssignment,
+                CommandId::TasksCloseVerified,
+                CommandId::TasksPrepare,
+                CommandId::TasksStart,
+                CommandId::TasksUnassign,
+                CommandId::AgentVerify,
+                CommandId::ProfileLint,
+                CommandId::TasksBulkCreate,
+                CommandId::TasksCapabilities,
+                CommandId::TasksComments,
+                CommandId::TasksContext,
+                CommandId::TasksDecompose,
+                CommandId::TasksEpic,
+                CommandId::TasksList,
+                CommandId::TasksMutate,
+                CommandId::TasksOperation,
+                CommandId::TasksReady,
+                CommandId::TasksShow,
+                CommandId::WorkflowCreate,
+                CommandId::WorkflowPlan,
+                CommandId::WorkflowProvision,
+                CommandId::WorkflowReviewPlan,
+                CommandId::WorkflowSeeds,
+                CommandId::WorkflowUpdate,
                 CommandId::Info,
                 CommandId::Init,
                 CommandId::Install,
@@ -2131,9 +2768,18 @@ mod tests {
                 CommandId::MemoryVaultReconcile,
                 CommandId::MemoryVaultScan,
                 CommandId::MemoryVaultStatus,
+                CommandId::PeerAccept,
+                CommandId::PeerList,
+                CommandId::PeerPair,
+                CommandId::PeerReconcile,
+                CommandId::PeerRevoke,
+                CommandId::PeerStatus,
                 CommandId::PluginAdd,
+                CommandId::PluginDisable,
+                CommandId::PluginEnable,
                 CommandId::PluginList,
                 CommandId::PluginRemove,
+                CommandId::PluginReview,
                 CommandId::PluginValidate,
                 CommandId::ProfileCreate,
                 CommandId::ProfileFind,

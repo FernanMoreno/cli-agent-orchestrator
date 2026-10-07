@@ -1,0 +1,6 @@
+▪ oc mini v2.0.18 · /project
+› Reply FAILURE_PROBE only
+Upstream request failed: Model is unavailable.
+demo-frontend · cao-nonexistent · 554ms
+┃
+demo-frontend · cao-nonexistent · OpenCode Go · ctrl+p menu

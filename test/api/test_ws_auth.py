@@ -177,9 +177,8 @@ async def test_ws_auth_enabled_valid_bearer_header_attaches(monkeypatch, jwt_fac
 
 
 @pytest.mark.asyncio
-async def test_ws_auth_enabled_valid_token_query_param_attaches(monkeypatch, jwt_factory):
-    """Auth on + valid ``?token=`` query param (browser clients cannot set
-    headers on a WebSocket handshake) → proceeds past the gate."""
+async def test_ws_auth_enabled_reusable_token_query_param_rejected(monkeypatch, jwt_factory):
+    """Reusable credentials in browser URLs are rejected even when valid."""
     from cli_agent_orchestrator.api.main import terminal_ws
 
     _enable_auth(monkeypatch, jwt_factory)
@@ -187,8 +186,8 @@ async def test_ws_auth_enabled_valid_token_query_param_attaches(monkeypatch, jwt
     with _admitted_patches():
         await terminal_ws(ws, "abcd1234")
 
-    ws.accept.assert_awaited_once()
-    assert ws.close.call_args.kwargs.get("code") == 4004
+    ws.accept.assert_not_awaited()
+    assert ws.close.call_args.kwargs.get("code") == 4401
 
 
 @pytest.mark.asyncio
@@ -266,3 +265,30 @@ async def test_ws_auth_origin_check_still_precedes_auth(monkeypatch, jwt_factory
 
     ws.accept.assert_not_called()
     assert ws.close.call_args.kwargs.get("code") == 4403
+
+
+@pytest.mark.asyncio
+async def test_ws_ticket_is_single_use_and_resource_bound():
+    from cli_agent_orchestrator.api.main import terminal_ws
+    from cli_agent_orchestrator.services.event_stream_ticket import store
+
+    async def authorized():
+        return ["cao:write"]
+
+    ticket = store.issue("operator", "/terminals/abcd1234/ws", authorized)
+    ws = _make_ws(query_params={"ticket": ticket})
+    with _admitted_patches():
+        await terminal_ws(ws, "abcd1234")
+    ws.accept.assert_awaited_once()
+    reuse = _make_ws(query_params={"ticket": ticket})
+    with _admitted_patches():
+        await terminal_ws(reuse, "abcd1234")
+    reuse.accept.assert_not_awaited()
+    assert reuse.close.call_args.kwargs["code"] == 4401
+    wrong = _make_ws(
+        query_params={"ticket": store.issue("operator", "/terminals/other/ws", authorized)}
+    )
+    with _admitted_patches():
+        await terminal_ws(wrong, "abcd1234")
+    wrong.accept.assert_not_awaited()
+    assert wrong.close.call_args.kwargs["code"] == 4401

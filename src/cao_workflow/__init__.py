@@ -117,11 +117,16 @@ def _execute_step(
             "need to reuse a terminal without the identity fence."
         )
 
+    user_env = opts.pop("env_vars", {})
+    if not isinstance(user_env, dict):
+        raise ShimError(f"env_vars passed to {surface}() must be a mapping")
     body: dict[str, Any] = {
+        **opts,
         "provider": provider,
         "agent": agent,
         "prompt": prompt,
         "env_vars": {
+            **user_env,
             "CAO_WORKFLOW_RUN_ID": run_id,
             "CAO_WORKFLOW_GENERATION": generation,
             "CAO_WORKFLOW_STEP_ID": key,
@@ -131,7 +136,6 @@ def _execute_step(
         body["timeout"] = timeout
     if recovery is not None:
         body["recovery"] = recovery
-    body.update(opts)
 
     try:
         response = _post(f"{base_url}{_RUN_STEP_PATH}", body, timeout=timeout)

@@ -14,7 +14,7 @@ install.
 
 - Opens `new EventSource('<base>/agui/v1/stream')` (base URL is editable in the
   header; default `http://localhost:9889`). An optional **Access token** field
-  attaches `?access_token=` for auth-enabled servers (held in memory only).
+  exchanges a bearer header for a single-use stream ticket; the bearer stays in memory.
 - Listens for the named AG-UI events: `STATE_SNAPSHOT`, `STATE_DELTA`,
   `GENERATIVE_UI`, `RUN_STARTED`, `RUN_FINISHED`, `STEP_STARTED`,
   `STEP_FINISHED`, `TOOL_CALL_START`, `TOOL_CALL_END`, `TEXT_MESSAGE_CONTENT`,
@@ -67,14 +67,13 @@ page from `cao-server` itself) need no CORS config.
 
 Native `EventSource` cannot set an `Authorization` header, so when CAO has auth
 enabled the stream takes the token as a query parameter:
-`<base>/agui/v1/stream?access_token=<JWT>` (a `cao:read` JWT). The viewer has a
-first-class **Access token** field in the header — paste a token there and click
-**Connect**; the viewer builds the stream URL with `?access_token=` for you. You
-can also hand the viewer a token by URL (`…/index.html?access_token=<JWT>`): it
-is copied into the in-memory field and scrubbed from the address bar. The token
-is held **in memory only** — never written to `localStorage`/`sessionStorage`,
-never logged, and redacted from the on-screen status. Prefer a **short-TTL**
-token since it appears in the request URL; see the guidance in
+`<base>/agui/v1/stream` with current read permission. Paste a bearer in the
+**Access token** field and click **Connect**. The viewer sends it only in the
+header of `POST /agui/v1/stream/ticket`, then uses the returned 30-second,
+single-use ticket for `EventSource`. Every reconnection obtains a new ticket
+and preserves the last confirmed cursor. Tokens are held **in memory only**,
+never placed in URLs, storage or logs. URL-based token seeding is unsupported.
+The viewer origin must be explicitly trusted by the server; see
 [docs/agui.md](../../../docs/agui.md). Leave the field blank for the default
 no-auth local path.
 

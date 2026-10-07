@@ -103,3 +103,29 @@ cd static && node --test test/*.test.js
 
 These live under `panel/` with their own `pyproject.toml`, so the main repo's test run
 does not pick them up; run them from here.
+
+### Dashboard and node credentials
+
+The panel image now builds the main CAO dashboard. A checkout without that build
+still serves the original panel. The dashboard detects `/api/fleet`; only an
+HTTP 404 selects standalone mode. Authentication failures and registry outages
+remain visible and never reroute writes to the origin server. Changing nodes
+clears selected sessions and workflow runs, cancels their streams, and discards
+responses from the previous selection, including when nodes reuse identifiers.
+An in-flight authoring save holds the existing navigation lock.
+
+Register node credentials separately from `CAO_PANEL_TOKEN`. A node entry may
+set `token_env` to an environment variable name or `token_file` to a file
+readable by the panel service. Select one source; a missing credential refuses
+the request. These credentials stay in the panel process. The proxy drops the
+browser's authorization and cookies and supplies the selected node credential
+for HTTP, events and terminal WebSockets. Node bearer scopes still decide which
+operations the panel can perform. The panel grants its authenticated users the
+capabilities of those configured node credentials.
+
+The proxy forwards supported CAO namespaces, preserves upstream status and
+structured diagnostics, and caps request bodies at 2 MiB. It does not expose
+internal memory RPCs or node authentication endpoints. Kubernetes ConfigMap
+refreshes retain the last successful registry and expose read errors and age in
+`/api/fleet`. ServiceAccount credentials require verified HTTPS. No cluster,
+worker or deployment is started by installing this example.

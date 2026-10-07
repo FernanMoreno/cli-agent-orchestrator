@@ -41,6 +41,8 @@ See [CODEBASE.md](CODEBASE.md) for the runtime architecture and package layout.
 
 For a persistent authenticated instance on this computer, see
 [personal localhost deployment](docs/personal-deployment.md).
+For an automatic installation with the backend, frontend and login in one Docker
+image, run `./install.sh`; see [Docker installation](docs/docker-installation.md).
 
 ## Prerequisites
 

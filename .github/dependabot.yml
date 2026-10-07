@@ -1,0 +1,62 @@
+# Keeps the commit-SHA pins in .github/workflows current. Every `uses:` is pinned
+# to a full SHA with the tag as a trailing comment (see CI pinning, #820);
+# Dependabot reads that comment to know which release line to follow and opens a
+# PR that moves the SHA. Without this file the pins would never move.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/examples/fleet/panel"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/examples/plugins/cao-discord"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "cargo"
+    directory: "/tui"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/cao_mcp_apps"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/docusaurus"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/examples/fleet/panel/static"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/examples/ag-ui/ag-ui-stock-client-live"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/examples/ag-ui/ag-ui-eventsource-viewer/tools"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/examples/ag-ui/ag-ui-construct-demos/tools"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/examples/agent-plugins/agent-plugins-dogfood/tools"
+    schedule:
+      interval: "weekly"

@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import threading
 import time
+from contextlib import closing
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
@@ -476,8 +477,60 @@ def historical_v28_connection(tmp_path, monkeypatch):
         connection.close()
 
 
+def _drop_prepared_plan_schema(connection):
+    # Frozen historical fixtures exclude current local peer authority tables.
+    for table in (
+        "local_peer_grants",
+        "local_peer_pairing_challenges",
+        "local_peer_projects",
+        "local_peer_request_nonces",
+        "local_peer_tasks",
+    ):
+        assert connection.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0] == 0
+        connection.execute(f'DROP TABLE "{table}"')
+    for table in (
+        "beads_work_bindings",
+        "workflow_coordinator_events",
+        "workflow_continuation_outbox",
+        "workflow_driver",
+        "workflow_coordinator",
+        "project_markers",
+        "beads_operations",
+        "remote_runtime_instances",
+        "remote_operations",
+        "remote_terminal_placements",
+        "remote_observation_revisions",
+        "remote_operation_cancellations",
+    ):
+        connection.execute(f'DROP TABLE "{table}"')
+    connection.execute("DROP TABLE assignment_intents")
+    connection.execute("DROP TABLE terminal_late_observations")
+    for table in (
+        "workflow_plan_step_alias",
+        "workflow_scoped_run",
+        "workflow_prepared_plan",
+        "workflow_run_plan_snapshot",
+        "workflow_plan_snapshot_component",
+        "workflow_plan_snapshot",
+    ):
+        assert connection.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0] == 0
+        connection.execute(f'DROP TABLE "{table}"')
+
+
 def _historical_native_schema(connection):
     """Freeze pre-upstream native DDL; never relabel current tables historical."""
+    _drop_prepared_plan_schema(connection)
+    assert connection.execute("SELECT count(*) FROM session_incarnations").fetchone()[0] == 0
+    connection.execute("DROP TABLE session_incarnations")
+    connection.execute("DROP TABLE terminal_turn_recovery")
+    assert connection.execute("SELECT count(*) FROM terminals").fetchone()[0] == 0
+    connection.execute("DROP TABLE terminals")
+    connection.execute("""CREATE TABLE terminals (
+        id VARCHAR NOT NULL PRIMARY KEY, tmux_session VARCHAR NOT NULL,
+        tmux_window VARCHAR NOT NULL, provider VARCHAR NOT NULL, agent_profile VARCHAR,
+        working_directory VARCHAR, allowed_tools VARCHAR, shell_command VARCHAR,
+        caller_id VARCHAR, engine VARCHAR, "group" TEXT, metadata TEXT, last_active DATETIME
+    )""")
     for table in (
         "handoff_results",
         "vault_exclusion",
@@ -537,20 +590,47 @@ def test_historical_v29_store_has_an_explicit_closed_inventory(historical_v29_co
     assert _database_state(historical_v29_connection) == before
 
 
-def test_real_init_db_store_has_an_explicit_closed_v31_inventory(initialized_cao_connection):
+def test_real_init_db_store_has_an_explicit_closed_v33_inventory(initialized_cao_connection):
     """The current schema-v39 profile includes only its reviewed workflow tables/FKs."""
     before = _database_state(initialized_cao_connection)
     module = importlib.import_module("cli_agent_orchestrator.services.recovery_inventory")
 
     inventory = module.inspect_work_store(initialized_cao_connection)
 
-    assert inventory.profile_version == 31
-    assert module._PROFILE_SCHEMA_VERSIONS[31] == 39
+    assert inventory.profile_version == module.WORK_SQLITE_PROFILE_VERSION
+    assert module._PROFILE_SCHEMA_VERSIONS[33] == 39
     assert inventory.tables == tuple(
         sorted(
             (
                 *EXPECTED_V30_TABLES,
                 "handoff_results",
+                "workflow_plan_snapshot",
+                "workflow_plan_snapshot_component",
+                "workflow_run_plan_snapshot",
+                "workflow_prepared_plan",
+                "workflow_scoped_run",
+                "workflow_plan_step_alias",
+                "session_incarnations",
+                "terminal_turn_recovery",
+                "terminal_late_observations",
+                "assignment_intents",
+                "beads_work_bindings",
+                "workflow_coordinator_events",
+                "workflow_continuation_outbox",
+                "workflow_driver",
+                "workflow_coordinator",
+                "project_markers",
+                "beads_operations",
+                "local_peer_grants",
+                "local_peer_pairing_challenges",
+                "local_peer_projects",
+                "local_peer_request_nonces",
+                "local_peer_tasks",
+                "remote_runtime_instances",
+                "remote_operations",
+                "remote_terminal_placements",
+                "remote_observation_revisions",
+                "remote_operation_cancellations",
                 "vault_exclusion",
                 "vault_finding",
                 "vault_migration_receipt",
@@ -570,7 +650,7 @@ def test_real_init_db_store_has_an_explicit_closed_v31_inventory(initialized_cao
         "work_workflow_step_task_received_receipts",
         "work_workflow_step_retry_authorizations",
     }.issubset(inventory.tables)
-    assert inventory.foreign_keys == module._V30_FOREIGN_KEYS
+    assert inventory.foreign_keys == module._V39_FOREIGN_KEYS
     assert _database_state(initialized_cao_connection) == before
 
 
@@ -1028,7 +1108,7 @@ def test_capture_and_restore_keep_exact_executable_bytes_in_bundle_only(
     )
 
     manifest = json.loads((receipt.bundle_path / "manifest.json").read_bytes())
-    assert manifest["profile_version"] == 31
+    assert manifest["profile_version"] == module.WORK_SQLITE_PROFILE_VERSION
     assert (receipt.bundle_path / "objects" / digest).read_bytes() == content
     assert [
         (item["role"], item["identifier"], item["digest"], item["size"])
@@ -1256,14 +1336,14 @@ def test_capture_verifies_a_real_v29_store_and_publishes_only_declared_objects(
         == json.dumps(manifest, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
     )
     assert str(source) not in manifest_bytes.decode()
-    assert manifest["profile_version"] == 31
+    assert manifest["profile_version"] == module.WORK_SQLITE_PROFILE_VERSION
     sqlite_roles = {
         role
         for object_ in manifest["objects"]
         for role in object_["roles"]
         if role.startswith("sqlite-v")
     }
-    assert sqlite_roles == {"sqlite-v31"}
+    assert sqlite_roles == {f"sqlite-v{module.WORK_SQLITE_PROFILE_VERSION}"}
     assert {entry["digest"] for entry in manifest["objects"]} >= {result.content_hash}
     assert all(
         entry["path"] == f"objects/{entry['digest']}"
@@ -1276,7 +1356,9 @@ def test_capture_verifies_a_real_v29_store_and_publishes_only_declared_objects(
     ).read_bytes() == b"offline recovery result bytes"
     assert orphan.content_hash not in {entry["digest"] for entry in manifest["objects"]}
     sqlite_object = next(
-        object_ for object_ in manifest["objects"] if "sqlite-v31" in object_["roles"]
+        object_
+        for object_ in manifest["objects"]
+        if f"sqlite-v{module.WORK_SQLITE_PROFILE_VERSION}" in object_["roles"]
     )
     sqlite_object["roles"] = ["sqlite-v25"]
     inconsistent_manifest = json.dumps(
@@ -1330,7 +1412,7 @@ def test_capture_of_a_real_work_store_requires_v29_cut_evidence_before_publicati
 
     manifest = json.loads((receipt.bundle_path / "manifest.json").read_bytes())
     assert manifest["format"] == "recovery-bundle-v2"
-    assert manifest["profile_version"] == 31
+    assert manifest["profile_version"] == module.WORK_SQLITE_PROFILE_VERSION
     assert set(manifest["cut_evidence"]) == {
         "capture_id",
         "coverage",
@@ -1746,7 +1828,7 @@ def test_v2_capture_records_phase_observations_and_inventory_before_returning_re
     assert set(evidence["phases"]) == {"before", "after", "promote"}
     for phase in evidence["phases"].values():
         assert phase["writer_count"] == 0
-        assert phase["inventory"]["profile_version"] == 31
+        assert phase["inventory"]["profile_version"] == module.WORK_SQLITE_PROFILE_VERSION
         assert phase["lease"]["store_identity"] != str(source.resolve())
         assert phase["lease"]["store_identity"] == evidence["store_identity"]
 
@@ -1834,9 +1916,11 @@ def test_historic_v1_is_verify_only_and_malformed_or_mixed_v2_fails_closed(
     historic["format"] = "recovery-bundle-v1"
     historic["profile_version"] = 24
     historic["objects"] = [dict(item) for item in manifest["objects"]]
-    next(item for item in historic["objects"] if "sqlite-v31" in item["roles"])["roles"] = [
-        "sqlite-v24"
-    ]
+    next(
+        item
+        for item in historic["objects"]
+        if f"sqlite-v{module.WORK_SQLITE_PROFILE_VERSION}" in item["roles"]
+    )["roles"] = ["sqlite-v24"]
     historic_bytes = json.dumps(historic, separators=(",", ":"), sort_keys=True).encode()
     (destination / "manifest.json").write_bytes(historic_bytes)
     historic_receipt = module.RecoveryBundleReceipt(
@@ -1912,7 +1996,7 @@ def test_capture_rejects_credential_material_without_echo_or_publication(
 ):
     """Would fail if opaque SQLite text bypassed the existing credential policy."""
     source = _database_path(initialized_cao_connection)
-    secret = "api_key=0123456789abcdef"
+    secret = "api_key=0123456789abcdef"  # gitleaks:allow
     initialized_cao_connection.execute(
         "INSERT INTO flows VALUES (?,?,?,?,?,?,?,?,?)",
         ("credential-flow", "relative-flow.yaml", "", "safe", "safe", secret, None, None, False),
@@ -1937,7 +2021,7 @@ def test_capture_rejects_secret_in_a_real_referenced_result_without_publication(
 ):
     """Would fail if content-addressing admitted credentials into published objects."""
     source = _database_path(initialized_cao_connection)
-    secret = "api_key=0123456789abcdef"
+    secret = "api_key=0123456789abcdef"  # gitleaks:allow
     _result, _orphan, artifact_root = _publish_registered_result(
         initialized_cao_connection,
         tmp_path / "secret-result-store",
@@ -2175,6 +2259,8 @@ def test_capture_compacts_deleted_sqlite_secret_before_hashing(
 ):
     """Would fail if the published SQLite object retained deleted credential bytes."""
     source = _database_path(initialized_cao_connection)
+    # Retain deleted cells deliberately, including on SECURE_DELETE SQLite builds.
+    initialized_cao_connection.execute("PRAGMA secure_delete=OFF")
     secret = "api_key=" + "a" * 100_000
     deleted_bytes = ("api_key=" + "a" * 1_000).encode("utf-8")
     initialized_cao_connection.execute(
@@ -2205,7 +2291,10 @@ def test_capture_compacts_deleted_sqlite_secret_before_hashing(
     database_object = _captured_sqlite_object(destination)
     if deleted_bytes in database_object.read_bytes():
         pytest.fail("published SQLite object retained deleted credential bytes")
-    with sqlite3.connect(database_object.as_uri() + "?mode=ro", uri=True) as captured:
+    with (
+        closing(sqlite3.connect(database_object.as_uri() + "?mode=ro", uri=True)) as captured,
+        captured,
+    ):
         assert (
             inventory_module.inspect_portable_work_store(
                 captured,
@@ -2769,3 +2858,112 @@ def test_historical_v30_bundle_remains_verify_only_after_upstream_profile(
     with pytest.raises(module.RecoveryBundleError, match="recovery bundle rejected"):
         module.restore_recovery_bundle(receipt, destination)
     assert not destination.exists()
+
+
+def test_lifecycle_incarnation_and_private_failure_survive_offline_restore(
+    initialized_cao_connection, tmp_path
+):
+    module = _recovery_bundle_module()
+    initialized_cao_connection.execute(
+        "INSERT INTO session_incarnations(session_name,incarnation_id) VALUES (?,?)",
+        ("cao-lifecycle", "incarnation-008"),
+    )
+    initialized_cao_connection.execute(
+        "INSERT INTO terminals(id,tmux_session,tmux_window,provider,provider_variant,"
+        "deferred_init_failure,deferred_init_external_owner,deferred_init_runtime_reclaimed,"
+        "session_incarnation_id) VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            "008-lifetime",
+            "cao-lifecycle",
+            "worker",
+            "kimi_cli",
+            "code",
+            '{"kind":"interrupted_init"}',
+            1,
+            0,
+            "incarnation-008",
+        ),
+    )
+    initialized_cao_connection.commit()
+    source = _database_path(initialized_cao_connection)
+    receipt = _capture_with_work_authority(
+        module, module.RecoveryCaptureSource(database_path=source), tmp_path / "lifecycle-bundle"
+    )
+    manifest = json.loads((receipt.bundle_path / "manifest.json").read_bytes())
+    assert manifest["profile_version"] == module.WORK_SQLITE_PROFILE_VERSION
+    assert module.verify_recovery_bundle(receipt) == receipt
+    restored = tmp_path / "lifecycle-restored.sqlite3"
+    module.restore_recovery_bundle(receipt, restored)
+    with sqlite3.connect(restored) as connection:
+        assert connection.execute("SELECT * FROM session_incarnations").fetchall() == [
+            ("cao-lifecycle", "incarnation-008")
+        ]
+        row = connection.execute(
+            "SELECT provider_variant,deferred_init_failure,deferred_init_external_owner,deferred_init_runtime_reclaimed,session_incarnation_id FROM terminals WHERE id='008-lifetime'"
+        ).fetchone()
+        assert row == ("code", '{"kind":"interrupted_init"}', 1, 0, "incarnation-008")
+
+
+def test_historical_v31_bundle_keeps_its_frozen_catalog(
+    initialized_cao_connection, monkeypatch, tmp_path
+):
+    """The C04 catalog is additive: a real v31 bundle remains verifiable only."""
+    inventory = importlib.import_module("cli_agent_orchestrator.services.recovery_inventory")
+    module = _recovery_bundle_module()
+    conn = initialized_cao_connection
+    _drop_prepared_plan_schema(conn)
+    conn.execute("DROP TABLE session_incarnations")
+    conn.execute("DROP TABLE terminal_turn_recovery")
+    conn.execute("DROP TABLE terminals")
+    columns = inventory._V31_NATIVE_COLUMNS["terminals"]
+    conn.execute("CREATE TABLE terminals (" + ",".join('"' + c + '" TEXT' for c in columns) + ")")
+    conn.commit()
+    assert (
+        inventory.inspect_work_store(conn, profile_version=31).tables
+        == inventory._PROFILE_TABLES[31]
+    )
+    source = _database_path(conn)
+    with monkeypatch.context() as historical:
+        historical.setattr(module, "WORK_SQLITE_PROFILE_VERSION", 31)
+        historical.setattr(
+            module,
+            "inspect_work_store",
+            lambda c: inventory.inspect_work_store(c, profile_version=31),
+        )
+        historical.setattr(
+            module,
+            "verified_inbox_store_identity",
+            lambda c: inventory.verified_inbox_store_identity(c, profile_version=31),
+        )
+        historical.setattr(
+            module,
+            "inspect_portable_work_store",
+            lambda c, *, expected_source_identity: inventory.inspect_portable_work_store(
+                c, expected_source_identity=expected_source_identity, profile_version=31
+            ),
+        )
+        receipt = _capture_with_work_authority(
+            module, module.RecoveryCaptureSource(database_path=source), tmp_path / "historical-v31"
+        )
+    assert module.verify_recovery_bundle(receipt) == receipt
+    destination = tmp_path / "v31-restore.sqlite3"
+    with pytest.raises(module.RecoveryBundleError, match="recovery bundle rejected"):
+        module.restore_recovery_bundle(receipt, destination)
+    assert not destination.exists()
+
+
+def test_frozen_v32_catalog_does_not_accept_new_private_plan_tables(initialized_cao_connection):
+    inventory = importlib.import_module("cli_agent_orchestrator.services.recovery_inventory")
+    with pytest.raises(inventory.RecoveryInventoryError):
+        inventory.inspect_work_store(initialized_cao_connection, profile_version=32)
+    _drop_prepared_plan_schema(initialized_cao_connection)
+    initialized_cao_connection.execute("DROP TABLE terminals")
+    columns = inventory._V32_NATIVE_COLUMNS["terminals"]
+    initialized_cao_connection.execute(
+        "CREATE TABLE terminals (" + ",".join('"' + c + '" TEXT' for c in columns) + ")"
+    )
+    initialized_cao_connection.commit()
+    assert (
+        inventory.inspect_work_store(initialized_cao_connection, profile_version=32).profile_version
+        == 32
+    )

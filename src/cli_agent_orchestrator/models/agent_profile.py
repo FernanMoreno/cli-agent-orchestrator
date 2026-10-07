@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from cli_agent_orchestrator.models.kiro_engine import KiroEngine
 
@@ -71,6 +71,8 @@ class AgentProfile(BaseModel):
     tools: Optional[List[str]] = Field(default=None)
     toolAliases: Optional[Dict[str, str]] = None
     allowedTools: Optional[List[str]] = None
+    # KAS denies are applied after explicit/role grants.
+    deniedTools: Optional[List[str]] = None
     toolsSettings: Optional[Dict[str, Any]] = None
     resources: Optional[List[str]] = None
     hooks: Optional[Dict[str, Any]] = None
@@ -102,6 +104,12 @@ class AgentProfile(BaseModel):
     # the Hermes provider launches the default `hermes` command.
     hermesProfile: Optional[str] = Field(default=None, min_length=1)
 
+    # Kimi Code-only. Omission inherits the operator's swarm default; false
+    # opts out. The provider requires a verified bounded Kimi executable before
+    # enabling swarm and never expands the profile's native tool allowlist.
+    kimiSwarm: Optional[bool] = Field(default=None, strict=True)
+    kimiSwarmMaxConcurrency: Optional[int] = Field(default=None, ge=1, le=10, strict=True)
+
     # Claude Code-only. Per-agent Claude Code knobs mapped to CLI flags at
     # launch: {"effort": "<low|medium|high|xhigh>"} -> `--effort <level>` and
     # {"fallback_model": "<model>"} -> `--fallback-model <model>`. Lets a
@@ -117,3 +125,9 @@ class AgentProfile(BaseModel):
     # disabled because those workers are outside CAO's profile, callback, and
     # terminal-accounting boundaries.
     grokNativeWorkflows: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def validate_denied_tools_engine(self) -> "AgentProfile":
+        if self.deniedTools and self.engine != KiroEngine.KAS:
+            raise ValueError("non-empty deniedTools requires engine 'kas'")
+        return self

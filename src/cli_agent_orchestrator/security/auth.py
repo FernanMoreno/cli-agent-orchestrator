@@ -34,13 +34,18 @@ import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, cast
 
 import jwt
 from fastapi import Depends, Header, HTTPException, Request, status
 from jwt import PyJWKClient, PyJWKClientError
+from starlette.requests import HTTPConnection
+
+if TYPE_CHECKING:
+    from cli_agent_orchestrator.services.browser_auth import BrowserAuthService
 
 from cli_agent_orchestrator.constants import API_BASE_URL
+from cli_agent_orchestrator.security.local_token import read_local_token_file
 
 logger = logging.getLogger(__name__)
 
@@ -317,7 +322,7 @@ def get_scopes_for_local_token() -> List[str]:
     if not is_auth_enabled():
         return list(FULL_SCOPE_SET)
 
-    token = os.getenv("CAO_AUTH_LOCAL_TOKEN", "").strip()
+    token = get_local_bearer()
     if not token:
         return list(FULL_SCOPE_SET)
     try:
@@ -343,6 +348,9 @@ def get_local_bearer() -> Optional[str]:
     scopes the surface needs) so callers can attach
     ``Authorization: Bearer <token>``.
 
+    An explicit ``CAO_AUTH_LOCAL_TOKEN_FILE`` is re-read on every call. An invalid
+    file fails closed, without falling back to the environment token.
+
     Default-off: returns ``None`` when auth is disabled so no header is attached
     and the no-auth posture is byte-for-byte unchanged. When auth is enabled but
     no local token is configured it also returns ``None`` — the caller is
@@ -353,6 +361,9 @@ def get_local_bearer() -> Optional[str]:
 
     if not is_auth_enabled():
         return None
+    filename = os.getenv("CAO_AUTH_LOCAL_TOKEN_FILE", "").strip()
+    if filename:
+        return read_local_token_file(filename)
     return os.getenv("CAO_AUTH_LOCAL_TOKEN", "").strip() or None
 
 
@@ -370,7 +381,7 @@ def local_auth_misconfig_error() -> Optional[str]:
     if get_local_bearer():
         return None
     return (
-        "auth enabled but CAO_AUTH_LOCAL_TOKEN is not set: the MCP Apps surface "
+        "auth enabled but CAO_AUTH_LOCAL_TOKEN is missing or CAO_AUTH_LOCAL_TOKEN_FILE is unavailable: the MCP Apps surface "
         "cannot authorize its internal call to the CAO API. Provision a machine "
         "token (with the scopes the surface needs) and set CAO_AUTH_LOCAL_TOKEN."
     )
@@ -392,7 +403,7 @@ def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
 
 async def get_current_scopes(
     authorization: Optional[str] = Header(default=None),
-    request: Request = None,
+    request: Request = cast(Request, None),
 ) -> List[str]:
     """FastAPI dependency returning the caller's granted scope set.
 
@@ -442,7 +453,7 @@ def require_any_scope(*required: str) -> Callable[..., Any]:
     """
 
     async def _dep(
-        scopes: List[str] = Depends(get_current_scopes), request: Request = None
+        scopes: List[str] = Depends(get_current_scopes), request: Request = cast(Request, None)
     ) -> List[str]:
         browser_enabled = request is not None and getattr(
             request.app.state, "browser_auth_config", {}
@@ -490,7 +501,7 @@ def is_verified_principal(value: object) -> bool:
     )
 
 
-def _verified_principal(issuer: str, subject: str, scopes: List[str], kind: str) -> Principal:
+def _verified_principal(issuer: object, subject: object, scopes: List[str], kind: str) -> Principal:
     if not isinstance(issuer, str) or not issuer.strip() or len(issuer) > 2048:
         raise jwt.InvalidTokenError("missing or invalid issuer")
     if not isinstance(subject, str) or not subject.strip() or len(subject) > 512:
@@ -558,7 +569,9 @@ async def get_current_principal(
         ) from exc
 
 
-def browser_session_context(request, *, secret_required=True):
+def browser_session_context(
+    request: HTTPConnection, *, secret_required: bool = True
+) -> "tuple[BrowserAuthService, str, Optional[str]]":
     """Validate the HTTP/browser boundary without importing persistence or API owners."""
     config = getattr(request.app.state, "browser_auth_config", {})
     service = getattr(request.app.state, "browser_auth", None)
@@ -589,7 +602,7 @@ def browser_session_context(request, *, secret_required=True):
         )
     request_origin = request.headers.get("origin")
     websocket = request.scope.get("type") == "websocket"
-    changing = not websocket and request.method not in ("GET", "HEAD", "OPTIONS")
+    changing = not websocket and request.scope.get("method") not in ("GET", "HEAD", "OPTIONS")
     if websocket or changing:
         allowed = request_origin == origin
         if changing:
@@ -621,10 +634,12 @@ def browser_session_context(request, *, secret_required=True):
             detail={"code": "session_required", "message": "Session required."},
             headers={"Cache-Control": "no-store"},
         )
-    return service, name, secret
+    return cast("BrowserAuthService", service), name, secret
 
 
-def browser_principal(request, authorization=None, *, touch=False):
+def browser_principal(
+    request: Optional[HTTPConnection], authorization: Optional[str] = None, *, touch: bool = False
+) -> Optional[Principal]:
     """Resolve only the server-injected session port and preserve the operator's sealed identity."""
     if request is None:
         return None

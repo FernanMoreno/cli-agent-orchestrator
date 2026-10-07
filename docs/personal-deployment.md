@@ -1,5 +1,12 @@
 # Personal localhost deployment
 
+The recommended integrated deployment is now [the automatic Docker installation](docker-installation.md):
+`./install.sh` packages the frontend, backend and login in one application container.
+Its installer migrates the state described below and disables the previous service
+only after successful health checks. Use `./install.sh status`, `start` and `stop`
+for the Docker deployment.
+
+The following commands describe the previous host deployment, retained for rollback.
 CAO runs on this computer as a persistent user service. Interactive providers
 run on the Linux host using the existing subscriptions. Docker Work runs explicit
 static/process contracts; its isolated worker has no network or workspace mount.

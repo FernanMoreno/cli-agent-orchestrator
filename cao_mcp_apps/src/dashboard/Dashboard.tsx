@@ -79,23 +79,26 @@ export function Dashboard({
       if (snap && Array.isArray(snap.terminals)) applyDelta(snap);
     });
 
-    void app.connect().then(() => {
-      // Surface the host-delegated Web UI link only when the host can open links.
-      setCanOpenWebUi(app.canOpenLinks());
-      stop = app.startPolling(
-        "render_dashboard",
-        POLL_INTERVAL_MS,
-        (snap) => {
-          if (snap && Array.isArray(snap.terminals)) {
-            setUnreachable(false);
-            applyDelta(snap as DashboardSnapshot);
-          }
-        },
-        {},
-        // A failed poll surfaces the retry control.
-        () => setUnreachable(true),
-      );
-    });
+    void app
+      .connect()
+      .then(() => {
+        // Surface the host-delegated Web UI link only when the host can open links.
+        setCanOpenWebUi(app.canOpenLinks());
+        stop = app.startPolling(
+          "render_dashboard",
+          POLL_INTERVAL_MS,
+          (snap) => {
+            if (snap && Array.isArray(snap.terminals)) {
+              setUnreachable(false);
+              applyDelta(snap as DashboardSnapshot);
+            }
+          },
+          {},
+          // A failed poll surfaces the retry control.
+          () => setUnreachable(true),
+        );
+      })
+      .catch(() => setUnreachable(true));
 
     return () => {
       if (stop) stop();

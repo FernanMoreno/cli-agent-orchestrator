@@ -32,7 +32,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 import jsonschema  # type: ignore[import-untyped]  # no bundled stubs; meta-schema API is stable
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from cli_agent_orchestrator.constants import (
     WORKFLOW_MAX_INPUTS,
@@ -172,6 +172,8 @@ class InputDecl(BaseModel):
     here so the model carries the contract.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["string", "int", "bool", "path"]
     required: bool = False
     default: Optional[Union[str, int, bool]] = None
@@ -184,9 +186,12 @@ class WorkflowStep(BaseModel):
     Bolt 1 but never execute; the engine (N5/N8) animates them later.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     provider: str
     agent: str
+    target_key: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$")
     prompt: str
     engine: Optional[KiroEngine] = None
     output_schema: Optional[Dict[str, Any]] = None
@@ -221,6 +226,8 @@ class WorkflowSpec(BaseModel):
     model validator) which aggregates ALL structural violations into one
     ``ValueError`` (BR-7). Reserved-ness is NOT a grammar error (BR-3).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str
     description: str = ""
@@ -634,7 +641,9 @@ def _extract_validation_message(exc: Exception) -> str:
             for err in errors_fn():
                 msg = err.get("msg", "")
                 # Pydantic prefixes value errors with "Value error, "
-                msgs.append(msg.replace("Value error, ", "", 1))
+                msg = msg.replace("Value error, ", "", 1)
+                location = ".".join(str(part) for part in err.get("loc", ()))
+                msgs.append(f"{location}: {msg}" if location else msg)
             if msgs:
                 return "; ".join(msgs)
         except Exception:  # noqa: BLE001 — defensive: fall back to str(exc) on any odd shape

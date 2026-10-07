@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from typing import NoReturn
 
 from cli_agent_orchestrator.services.secret_gate import scan_for_secrets
 from cli_agent_orchestrator.services.step_output_store import ArtifactRef, ImmutableResultStore
@@ -55,7 +56,7 @@ _PAYLOAD_FIELDS = frozenset(
 )
 
 
-def _reject() -> None:
+def _reject() -> NoReturn:
     raise ContinuationRejected("continuation export rejected")
 
 
@@ -338,7 +339,7 @@ class WorkContinuations:
         ).fetchall()
         if len(rows) > _MAX_ARTIFACTS:
             _reject()
-        lengths = {}
+        lengths: dict[str, int] = {}
         artifacts = []
         seen = set()
         for row in rows:
@@ -437,7 +438,7 @@ class WorkContinuations:
         if type(artifacts) is not list or len(artifacts) > _MAX_ARTIFACTS:
             _reject()
         triples = []
-        lengths = {}
+        lengths: dict[str, int] = {}
         for artifact in artifacts:
             if type(artifact) is not dict or set(artifact) != {
                 "content_hash",

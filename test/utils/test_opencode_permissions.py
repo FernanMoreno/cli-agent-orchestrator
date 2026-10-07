@@ -27,16 +27,16 @@ class TestAllToolsUnrestricted:
 
 
 class TestBuiltinShorthand:
-    """'@builtin' expands to the four standard CAO categories."""
+    """'@builtin' selects chrome without granting shell or filesystem effects."""
 
-    def test_builtin_allows_fs_and_bash(self):
+    def test_builtin_does_not_grant_fs_or_bash(self):
         result = cao_tools_to_opencode_permission(["@builtin"])
-        assert result["bash"] == "allow"
-        assert result["read"] == "allow"
-        assert result["edit"] == "allow"
-        assert result["write"] == "allow"
-        assert result["glob"] == "allow"
-        assert result["grep"] == "allow"
+        assert result["bash"] == "deny"
+        assert result["read"] == "deny"
+        assert result["edit"] == "deny"
+        assert result["write"] == "deny"
+        assert result["glob"] == "deny"
+        assert result["grep"] == "deny"
 
     def test_builtin_hardcoded_denies(self):
         result = cao_tools_to_opencode_permission(["@builtin"])

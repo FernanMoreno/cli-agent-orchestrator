@@ -18,8 +18,9 @@ from cli_agent_orchestrator.services import terminal_service as ts
 
 
 @pytest.fixture(autouse=True)
-def _reset_receipt_verifier_state():
+def _reset_receipt_verifier_state(monkeypatch):
     """Keep bounded background-verifier evidence isolated per contract test."""
+    monkeypatch.setattr(ts.threading, "Timer", MagicMock())
     with ts._receipt_verification_lock:
         ts._receipt_verification_inflight.clear()
         ts._receipt_verification_state.clear()
@@ -64,7 +65,7 @@ def _dispatch_with_status(status: TerminalStatus, *, attach_turn_receipt: bool):
         patch.object(ts, "provider_manager") as manager,
         patch.object(ts.status_monitor, "get_status", return_value=status),
         patch.object(ts, "inject_memory_context", return_value="materialized task"),
-        patch.object(ts.status_monitor, "notify_input_sent"),
+        patch.object(ts.status_monitor, "notify_input_sent", return_value=1),
         patch.object(ts.status_monitor, "clear_rolling_buffer"),
         patch.object(ts, "get_backend", return_value=backend),
         patch.object(ts, "begin_terminal_turn_receipt", return_value={}),
@@ -76,7 +77,7 @@ def _dispatch_with_status(status: TerminalStatus, *, attach_turn_receipt: bool):
             ts.send_input(
                 "receipt-terminal", "caller task", attach_turn_receipt=attach_turn_receipt
             )
-            is True
+            == 1
         )
 
     return provider, backend
@@ -127,7 +128,7 @@ def test_restored_private_receipt_blocks_new_task_before_any_tui_or_provider_sid
         patch.object(ts, "inject_memory_context") as inject,
         patch.object(ts, "begin_terminal_turn_receipt") as begin,
         patch.object(ts, "get_backend", return_value=backend),
-        patch.object(ts.status_monitor, "notify_input_sent") as notify,
+        patch.object(ts.status_monitor, "notify_input_sent", return_value=1) as notify,
         patch.object(ts.status_monitor, "clear_rolling_buffer") as clear,
     ):
         manager.get_provider.return_value = provider
@@ -193,13 +194,13 @@ def test_receipt_claim_is_persisted_before_paste_and_marked_sent_afterward():
         patch.object(ts, "inject_memory_context", return_value="materialized task"),
         patch.object(ts, "begin_terminal_turn_receipt", side_effect=begin) as claim,
         patch.object(ts, "mark_terminal_turn_receipt_sent", side_effect=mark) as sent,
-        patch.object(ts.status_monitor, "notify_input_sent"),
+        patch.object(ts.status_monitor, "notify_input_sent", return_value=1),
         patch.object(ts.status_monitor, "clear_rolling_buffer"),
         patch.object(ts, "get_backend", return_value=backend),
         patch.object(ts, "update_last_active"),
     ):
         manager.get_provider.return_value = provider
-        assert ts.send_input("receipt-terminal", "caller task") is True
+        assert ts.send_input("receipt-terminal", "caller task") == 1
 
     receipt_state = provider.pending_turn_receipt_state.return_value
     claim.assert_called_once_with(
@@ -228,7 +229,7 @@ def test_receipt_task_send_error_after_paste_requires_reconciliation_not_retry()
         patch.object(ts.status_monitor, "get_status", return_value=TerminalStatus.IDLE),
         patch.object(ts, "inject_memory_context", return_value="materialized task"),
         patch.object(ts, "begin_terminal_turn_receipt", return_value={"phase": "prepared"}),
-        patch.object(ts.status_monitor, "notify_input_sent"),
+        patch.object(ts.status_monitor, "notify_input_sent", return_value=1),
         patch.object(ts.status_monitor, "clear_rolling_buffer"),
         patch.object(ts, "get_backend", return_value=backend),
         patch.object(ts, "mark_terminal_turn_receipt_sent") as mark_sent,
@@ -260,7 +261,7 @@ def test_nonreceipt_task_send_error_after_paste_requires_reconciliation_not_retr
         patch.object(ts, "provider_manager") as manager,
         patch.object(ts.status_monitor, "get_status", return_value=TerminalStatus.IDLE),
         patch.object(ts, "inject_memory_context", return_value="materialized task"),
-        patch.object(ts.status_monitor, "notify_input_sent"),
+        patch.object(ts.status_monitor, "notify_input_sent", return_value=1),
         patch.object(ts.status_monitor, "clear_rolling_buffer"),
         patch.object(ts, "get_backend", return_value=backend),
     ):
@@ -296,6 +297,7 @@ def test_verified_gemini_result_persists_only_a_digest_then_releases_the_task_sl
         receipt_state["generation"],
         receipt_state["receipt_sha256"],
         hashlib.sha256(result.encode("utf-8")).hexdigest(),
+        result_text=result,
     )
     provider.mark_turn_receipt_result_verified.assert_called_once_with()
     publish.assert_called_once_with("receipt-terminal", TerminalStatus.COMPLETED)
@@ -326,7 +328,7 @@ def test_background_receipt_verifier_relies_on_atomic_receipt_settlement():
     ):
         assert ts.schedule_receipt_result_verification("receipt-terminal", provider) is True
 
-    output.assert_called_once_with("receipt-terminal", ts.OutputMode.FULL)
+    output.assert_called_once_with("receipt-terminal", ts.OutputMode.LAST)
     transition.assert_not_called()
 
 
@@ -396,6 +398,7 @@ def test_full_output_settles_a_completed_receipt_before_returning_the_transcript
         receipt_state["generation"],
         receipt_state["receipt_sha256"],
         hashlib.sha256(b"review complete").hexdigest(),
+        result_text="review complete",
     )
     provider.mark_turn_receipt_result_verified.assert_called_once_with()
 
@@ -435,6 +438,7 @@ def test_full_output_recovers_a_truncated_query_from_history_before_settling_rec
         receipt_state["generation"],
         receipt_state["receipt_sha256"],
         hashlib.sha256(b"recovered review result").hexdigest(),
+        result_text="recovered review result",
     )
     provider.mark_turn_receipt_result_verified.assert_called_once_with()
 
@@ -474,6 +478,7 @@ def test_full_output_verifies_a_restored_gemini_receipt_from_complete_history():
         generation,
         receipt_sha256,
         hashlib.sha256(b"recovered final result").hexdigest(),
+        result_text="recovered final result",
     )
     assert provider.pending_turn_receipt_state() is None
 
@@ -551,3 +556,55 @@ def test_visible_composer_enter_transport_error_requires_reconciliation():
     assert exc_info.value.action == "reconcile"
     assert exc_info.value.delivery_may_have_occurred is True
     send.assert_not_called()
+
+
+@pytest.mark.parametrize("provider_name", ["claude_code", "codex", "opencode_cli", "gemini_cli"])
+@pytest.mark.parametrize("transport_error", [False, True])
+def test_receipt_verification_waits_for_dispatch_boundary_and_releases_after_error(
+    transport_error, provider_name
+):
+    """A stale ready frame during paste/CAS must not spend the new turn's budget."""
+    from cli_agent_orchestrator.providers.catalog import registered_provider_descriptors
+
+    descriptor = next(d for d in registered_provider_descriptors() if d.name == provider_name)
+    provider = descriptor.adapter_class("receipt-terminal", "session", "window")
+    backend = MagicMock()
+    backend.get_history.return_value = ""
+    metadata = {"provider": provider_name, "tmux_session": "session", "tmux_window": "window"}
+    with (
+        patch.object(ts, "get_terminal_metadata", return_value=metadata),
+        patch.object(ts, "provider_manager") as manager,
+        patch.object(ts.status_monitor, "get_status", return_value=TerminalStatus.IDLE),
+        patch.object(ts, "inject_memory_context", return_value="materialized task"),
+        patch.object(ts, "begin_terminal_turn_receipt", return_value={}),
+        patch.object(ts, "mark_terminal_turn_receipt_sent") as sent,
+        patch.object(ts.status_monitor, "notify_input_sent", return_value=1),
+        patch.object(ts.status_monitor, "clear_rolling_buffer"),
+        patch.object(ts, "get_backend", return_value=backend),
+        patch("cli_agent_orchestrator.providers.claude_code.get_backend", return_value=backend),
+        patch.object(ts, "update_last_active"),
+        patch.object(ts, "mark_terminal_turn_verification_started", return_value=None) as started,
+        patch.object(ts.threading, "Thread") as thread,
+    ):
+        manager.get_provider.return_value = provider
+
+        def stale_frame(*args, **kwargs):
+            assert ts.schedule_receipt_result_verification("receipt-terminal", provider)
+            started.assert_not_called()
+            thread.assert_not_called()
+            ts.threading.Timer.assert_not_called()
+            if transport_error:
+                raise OSError("transport acknowledgment lost")
+            return True
+
+        backend.send_keys.side_effect = stale_frame
+        sent.side_effect = stale_frame
+        if transport_error:
+            with pytest.raises(TerminalInputBlockedError):
+                ts.send_input("receipt-terminal", "caller task")
+        else:
+            ts.send_input("receipt-terminal", "caller task")
+        # Genuine evidence after either transport outcome remains observable.
+        assert ts.schedule_receipt_result_verification("receipt-terminal", provider)
+        started.assert_called_once()
+        thread.assert_called_once()

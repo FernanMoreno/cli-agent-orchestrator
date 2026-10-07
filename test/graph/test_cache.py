@@ -315,6 +315,7 @@ class TestGraphViewCache:
         cache = GraphViewCache(ttl_s=300.0)
         key = ("memory", "global", None, True, "builder")
         started = asyncio.Event()
+        release = asyncio.Event()
         second_referenced = asyncio.Event()
         original_lock_for = cache._lock_for
         lock_for_calls = 0
@@ -329,8 +330,8 @@ class TestGraphViewCache:
 
         async def cancelled_builder():
             started.set()
-            await asyncio.Event().wait()
-            raise AssertionError("unreachable")
+            await release.wait()
+            return _view("original")
 
         monkeypatch.setattr(cache, "_lock_for", observed_lock_for)
         active = asyncio.create_task(cache.get_or_build(key, cancelled_builder))
@@ -341,9 +342,10 @@ class TestGraphViewCache:
         active.cancel()
         with pytest.raises(asyncio.CancelledError):
             await active
+        release.set()
         view, cached, _ = await waiter
 
-        assert ([node.id for node in view.nodes], cached) == (["recovered"], False)
+        assert ([node.id for node in view.nodes], cached) == (["original"], False)
         assert key not in cache._lock_users
         assert key in cache._locks
 

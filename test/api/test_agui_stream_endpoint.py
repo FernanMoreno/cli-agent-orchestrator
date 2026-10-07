@@ -53,8 +53,12 @@ def test_stream_requires_token_when_auth_enabled(auth_enabled_env):
 
 def test_stream_rejects_insufficient_scope(monkeypatch):
     monkeypatch.setattr(main, "is_auth_enabled", lambda: True)
-    monkeypatch.setattr(main, "extract_scopes_from_token", lambda tok: ["some:other"])
-    resp = client.get("/agui/v1/stream", params={"access_token": "x"})
+
+    async def scopes(*args):
+        return ["some:other"]
+
+    monkeypatch.setattr(main, "get_current_scopes", scopes)
+    resp = client.get("/agui/v1/stream", headers={"Authorization": "Bearer x"})
     assert resp.status_code == 403
 
 
@@ -158,7 +162,7 @@ def test_stream_fleet_snapshot_with_terminals_emits_delta(monkeypatch):
 
     calls = {"n": 0}
 
-    def _terms(session_id):
+    def _terms(session_id, *, backend_exists=None):
         # Return an extra terminal on the second snapshot so the fleet state
         # moves and a STATE_DELTA is emitted after the live event.
         calls["n"] += 1
@@ -183,7 +187,9 @@ def test_stream_fleet_snapshot_with_terminals_emits_delta(monkeypatch):
             )
         return terms
 
-    monkeypatch.setattr("cli_agent_orchestrator.clients.database.list_terminals_by_session", _terms)
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.session_service.list_current_session_terminals", _terms
+    )
 
     live_event = {
         "id": "ev-1",

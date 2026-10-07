@@ -159,6 +159,25 @@ pub struct Terminal {
     /// omitted key is tolerated as well as an explicit `null`. (#321)
     #[serde(default)]
     pub status: Option<TerminalStatus>,
+    /// Public receipt/recovery projection, separate from live visual status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<TurnRecovery>,
+    /// Live causal counters; neither proves durable receipt verification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_sequence: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_completed: Option<u64>,
+}
+
+/// Public recovery information. Nonce and receipt hashes stay server-side.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnRecovery {
+    pub terminal_id: String,
+    pub generation: Option<String>,
+    pub state: String,
+    pub reason: Option<String>,
+    pub attempts: u32,
+    pub allowed_actions: Vec<String>,
 }
 
 /// The v1 durable work projection returned by `GET /work-items/{work_item_id}`.
@@ -222,9 +241,9 @@ fn unknown_process_state() -> String {
     "unknown".to_string()
 }
 
-/// The server's six terminal states, mirrored verbatim from `models/terminal.py:13-21`.
+/// The server's terminal states, mirrored verbatim from `models/terminal.py:13-21`.
 ///
-/// All six are mirrored rather than collapsed at the wire boundary (BR-7): collapsing
+/// All known states are mirrored rather than collapsed at the wire boundary (BR-7): collapsing
 /// during deserialisation would discard information before anyone decided what it means.
 /// The collapse to [`Readiness`] happens in `skeleton-handoff-proof`'s `await_ready`.
 ///
@@ -241,7 +260,7 @@ fn unknown_process_state() -> String {
 ///
 /// One consequence worth naming: `from = "String"` means `rename_all` governs
 /// *serialisation* while the `From` impl governs *deserialisation*, so the wire strings are
-/// written twice. Test 4 round-trips all six variants in both directions, which is what
+/// written twice. Tests round-trip the variants in both directions, which is what
 /// keeps the two halves honest. (#321)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", from = "String")]
@@ -256,6 +275,10 @@ pub enum TerminalStatus {
     Completed,
     /// Launched fine and is blocked on a question for the operator.
     WaitingUserAnswer,
+    /// Launch is blocked on provider quota.
+    WaitingQuota,
+    /// Current delivery requires reconciliation.
+    Reconcile,
     /// The one genuine failure state.
     Error,
 }
@@ -276,6 +299,8 @@ impl From<String> for TerminalStatus {
             "processing" => Self::Processing,
             "completed" => Self::Completed,
             "waiting_user_answer" => Self::WaitingUserAnswer,
+            "waiting_quota" => Self::WaitingQuota,
+            "reconcile" => Self::Reconcile,
             "error" => Self::Error,
             _ => Self::Unknown,
         }
@@ -296,7 +321,7 @@ impl From<String> for TerminalStatus {
 ///
 /// No `Serialize`/`Deserialize`: this is an internal verdict computed from a response, not
 /// a wire shape. Deriving serde on it would imply the server speaks it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Readiness {
     /// The agent launched successfully; hand off.
     Ready,
@@ -304,6 +329,8 @@ pub enum Readiness {
     Unknown,
     /// Genuine failure, carrying the status that produced it.
     Failed(TerminalStatus),
+    /// Existing terminal needs inspection; no new delivery is implied.
+    Blocked(String),
 }
 
 /// The `POST /sessions` launch request.
@@ -745,5 +772,28 @@ mod tests {
             Readiness::Failed(TerminalStatus::Error),
             "Unknown is not a failure (ADR-04)"
         );
+    }
+}
+
+#[cfg(test)]
+mod integration_008_turn_contract {
+    use super::*;
+
+    #[test]
+    fn blocked_statuses_preserve_wire_vocabulary() {
+        for wire in ["waiting_quota", "reconcile"] {
+            let status: TerminalStatus = serde_json::from_value(serde_json::json!(wire)).unwrap();
+            assert_eq!(
+                serde_json::to_value(status).unwrap(),
+                serde_json::json!(wire)
+            );
+        }
+    }
+
+    #[test]
+    fn receipt_projection_survives_terminal_decode() {
+        let turn = serde_json::json!({"terminal_id":"abcd1234", "generation":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "state":"reconcile", "reason":"receipt_missing", "attempts":3, "allowed_actions":["verify", "cancel"]});
+        let terminal: Terminal = serde_json::from_value(serde_json::json!({"id":"abcd1234", "name":"agent", "session_name":"cao-demo", "status":"completed", "turn":turn})).unwrap();
+        assert_eq!(serde_json::to_value(terminal).unwrap()["turn"], turn);
     }
 }

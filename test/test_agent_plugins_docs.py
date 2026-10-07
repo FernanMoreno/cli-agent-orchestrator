@@ -61,17 +61,17 @@ class TestUntrustedContentWarning:
     def test_warning_is_in_the_first_screenful(self) -> None:
         assert "untrusted code and content" in _head(AGENT_PLUGINS_DOC)
 
-    def test_warning_does_not_imply_a_trust_model_cao_lacks(self) -> None:
-        """CAO implements no signing or provenance verification, so say so.
+    def test_warning_distinguishes_local_approval_from_publisher_verification(self) -> None:
+        """Exact content approval does not attest the publisher or sandbox execution.
 
-        The failure this prevents is a warning that reads as "we checked and it
-        looks fine" — an operator who has been told CAO validates a plugin can
-        reasonably infer it also verifies where it came from. It does not.
+        FR-016 adds local content/origin/permission review. Keep its disabled
+        default and distinguish that review from verified publisher identity.
         """
-        head = _head(AGENT_PLUGINS_DOC)
+        head = " ".join(line.lstrip("> ").strip() for line in _head(AGENT_PLUGINS_DOC).splitlines())
 
-        assert "no signing" in head
-        assert "no provenance" in head
+        assert "keeps it disabled until exact local content approval" in head
+        assert "content, origin and requested permissions" in head
+        assert "does not verify publisher identity or sandbox the plugin" in head
 
     def test_the_warning_says_what_the_risk_concretely_is(self) -> None:
         """Naming the mechanism is what makes the warning actionable.
@@ -104,9 +104,28 @@ class TestPrerequisitesAndPosture:
         The cross-check, not the string match, is the point: if the default host
         or port ever changes, this fails rather than leaving the doc quietly wrong.
         """
-        from cli_agent_orchestrator.constants import SERVER_HOST, SERVER_PORT
+        import json
+        import os
+        import subprocess
+        import sys
 
-        assert f"{SERVER_HOST}:{SERVER_PORT}" in _text(AGENT_PLUGINS_DOC)
+        env = os.environ.copy()
+        env.pop("CAO_API_HOST", None)
+        env.pop("CAO_API_PORT", None)
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import json; from cli_agent_orchestrator.constants import SERVER_HOST, SERVER_PORT; print(json.dumps([SERVER_HOST, SERVER_PORT]))",
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        host, port = json.loads(probe.stdout)
+        assert f"{host}:{port}" in _text(AGENT_PLUGINS_DOC)
 
     def test_states_the_localhost_only_posture(self) -> None:
         """Requirement 22.7."""

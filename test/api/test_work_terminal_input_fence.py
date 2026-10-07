@@ -60,10 +60,10 @@ def _insert_work_attempt(repository, *, job_id, terminal_id, attempt_id="attempt
         )
 
 
-def _insert_terminal(terminal_id):
+def _insert_terminal(terminal_id, session_name="missing-tmux-session"):
     database.create_terminal(
         terminal_id=terminal_id,
-        tmux_session="missing-tmux-session",
+        tmux_session=session_name,
         tmux_window="missing-tmux-window",
         provider="mock_cli",
     )
@@ -273,7 +273,7 @@ def test_session_delete_rejects_uncertain_work_terminal_before_snapshot_or_kill(
     from cli_agent_orchestrator.services import session_service
 
     terminal_id = "abcd1234"
-    _insert_terminal(terminal_id)
+    _insert_terminal(terminal_id, constants.SESSION_PREFIX + "missing-tmux-session")
     if ownership == "owned":
         _insert_work_attempt(
             isolated_api_database.repository, job_id="job-1", terminal_id=terminal_id
@@ -295,7 +295,7 @@ def test_session_delete_rejects_uncertain_work_terminal_before_snapshot_or_kill(
     response = client.delete("/sessions/missing-tmux-session")
     assert response.status_code == expected_status
     with pytest.raises(expected_error):
-        session_service.delete_session("missing-tmux-session")
+        session_service.delete_session(constants.SESSION_PREFIX + "missing-tmux-session")
     assert snapshot_calls == []
     assert database.get_terminal_metadata(terminal_id) is not None
 
@@ -512,7 +512,7 @@ async def test_flow_recycle_reverifies_work_store_after_script_even_without_rows
     )
     monkeypatch.setattr(
         flow_service,
-        "delete_terminals_by_session",
+        "delete_terminals_by_ids",
         lambda _name: effects.append("delete_rows"),
     )
 
@@ -613,6 +613,9 @@ async def test_flow_recycle_enumeration_failure_stops_before_runtime_effects(
     monkeypatch.setattr(flow_service, "db_get_flow", lambda _name: flow)
     monkeypatch.setattr(flow_service, "list_terminals_by_session", list_rows)
     monkeypatch.setattr(
+        flow_service, "list_current_session_terminals", lambda name, **kwargs: list_rows(name)
+    )
+    monkeypatch.setattr(
         flow_service,
         "db_update_flow_run_times",
         lambda *_a, **_k: effects.append("last_run"),
@@ -631,7 +634,7 @@ async def test_flow_recycle_enumeration_failure_stops_before_runtime_effects(
     )
     monkeypatch.setattr(
         flow_service,
-        "delete_terminals_by_session",
+        "delete_terminals_by_ids",
         lambda _name: effects.append("delete_rows"),
     )
 
@@ -769,7 +772,7 @@ def test_ordinary_send_holds_terminal_dispatch_lock_from_guard_through_transport
 
     try:
         if effect == "input":
-            assert terminal_service.send_input(terminal_id, "ordinary input") is True
+            assert terminal_service.send_input(terminal_id, "ordinary input") is None
         else:
             assert terminal_service.send_special_key(terminal_id, "C-c") is True
     finally:
@@ -795,7 +798,7 @@ def test_ordinary_send_releases_terminal_dispatch_lock_before_plugin_callback(
 
     def observe_plugin_dispatch(*_args):
         callback_calls.append(True)
-        assert terminal_service.send_input(terminal_id, "nested input") is True
+        assert terminal_service.send_input(terminal_id, "nested input") is None
 
     monkeypatch.setattr(terminal_service, "dispatch_plugin_event", observe_plugin_dispatch)
     monkeypatch.setattr(terminal_service.provider_manager, "get_provider", lambda *_args: None)
@@ -816,7 +819,7 @@ def test_ordinary_send_releases_terminal_dispatch_lock_before_plugin_callback(
             sender_id="operator",
             orchestration_type=OrchestrationType.SEND_MESSAGE,
         )
-        is True
+        is None
     )
 
     assert callback_calls == [True]

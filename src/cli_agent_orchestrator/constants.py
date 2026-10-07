@@ -381,6 +381,15 @@ OPENCODE_CONFIG_FILE = OPENCODE_CONFIG_DIR / "opencode.json"  # OpenCode MCP + t
 DATABASE_FILE = DB_DIR / "cli-agent-orchestrator.db"
 DATABASE_URL = f"sqlite:///{DATABASE_FILE}"
 
+# Shared, per-user directory for discovering independent CAO profiles. This is
+# intentionally independent of CAO_HOME_DIR so profiles running under the same
+# local user can coordinate without sharing their private databases.
+LOCAL_PEER_DIR = Path.home() / ".aws" / "cli-agent-orchestrator" / "local-peers"
+LOCAL_PEER_REGISTRY_FILE = LOCAL_PEER_DIR / "registry.sqlite3"
+LOCAL_PEER_INSTANCE_ID_FILE = CAO_HOME_DIR / "local-peer-id"
+LOCAL_PEER_PRIVATE_KEY_FILE = CAO_HOME_DIR / "local-peer-signing-key"
+LOCAL_PEER_DISPLAY_NAME = os.environ.get("CAO_INSTANCE_NAME", "").strip() or CAO_HOME_DIR.name
+
 # =============================================================================
 # Server Configuration
 # =============================================================================
@@ -786,6 +795,7 @@ ROLE_TOOL_DEFAULTS = {
     "supervisor": ["@cao-mcp-server", "fs_read", "fs_list"],
     "reviewer": ["@builtin", "fs_read", "fs_list", "@cao-mcp-server"],
     "developer": ["@builtin", "fs_*", "execute_bash", "web_fetch", "@cao-mcp-server"],
+    "workflow_scout": ["@builtin", "fs_read", "execute_bash", "@cao-mcp-server"],
 }
 
 # Issue #432 design discussion (tedswinyar + klabulan, 2026-07-17/18): sibling
@@ -1069,3 +1079,6 @@ WORKFLOW_SCRIPT_SCRATCH_DIR = CAO_HOME_DIR / "workflow-script-scratch"  # 0o700 
 TERMINAL_METADATA_MAX_BYTES = 16 * 1024  # encoded (json.dumps) size cap
 TERMINAL_GROUP_MAX_ELEMENTS = 16
 TERMINAL_GROUP_ELEMENT_MAX_LEN = 128
+
+# Experimental KAS launches require explicit opt-in plus policy admission.
+ENABLE_KAS_LAUNCH = os.getenv("CAO_ENABLE_KAS_LAUNCH", "false").lower() in {"1", "true", "yes"}

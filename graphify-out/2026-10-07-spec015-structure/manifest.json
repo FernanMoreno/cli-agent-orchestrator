@@ -1,0 +1,116 @@
+{
+  "scope": "Focused deterministic AST extraction; supplements existing full graph, no semantic claims",
+  "files": [
+    {
+      "path": "cao_mcp_apps/src/event-stream/EventStreamView.tsx",
+      "sha256": "f19498eb9fbcfe9c4e7a7e8a6157ccdba334cd43ad22a65362d004d43820394c"
+    },
+    {
+      "path": "cao_mcp_apps/src/shared/mcpApp.ts",
+      "sha256": "51aef1c4e6d1aa54fa2f5b4347e127cb8f0d2440413a98abd923d847a0139ee2"
+    },
+    {
+      "path": "scripts/build_release_manifest.py",
+      "sha256": "151da815a2da5a4b441188b03864ee02690da89daca42af7ad63dc1e314b1a6e"
+    },
+    {
+      "path": "src/cao_workflow/__init__.py",
+      "sha256": "57b8354d8432aecb62695a76363b3bbb6328fc519590a2ed4f154d6b91938ad1"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/agent_plugins/installer.py",
+      "sha256": "46badb8c3a0fe131132c31fc2cf1052db1accb93a08f3398cec79cd8f912b1dc"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/agent_plugins/mcp_delivery.py",
+      "sha256": "bc8123c3023cdbdcad8d1e215adf1d3a2a987f597adf3f450837ca4d50eb1f69"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/agent_plugins/models.py",
+      "sha256": "757d4478ce50c6cf7d29de74c927ddf9733849afda738caeae74077974ef845d"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/agent_plugins/projection.py",
+      "sha256": "d8d7046fb3b472b70891daecdf0abee455cefed679b37e76a129bcead7531a94"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/agent_plugins/resolver.py",
+      "sha256": "3726dd96aa22ee78e12dedc2acea556c4097c9aa63545068ce7934a3170b42d1"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/api/browser_auth_routes.py",
+      "sha256": "8a94cd86c729dfce79cc2ae3f6c4ea62fdf60190ef1e45141d55b4cbd724b2c4"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/api/local_coordination_routes.py",
+      "sha256": "75671dea080f261d3dd13e77ee49bd68cbcc730a2ceb56809402a01a50a6668d"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/api/main.py",
+      "sha256": "ba5b89aa65fff034f3e3c0c528a6e0bdd9d850060c8aaca0b77475318d5a149c"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/mcp_server/app_tools.py",
+      "sha256": "3b4cc1e5a5a3da89cebe4c039d81cd845c03f050c44bf4962ce0fae30d842037"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/models/workflow.py",
+      "sha256": "0f58314f85a0cd2bd7e6b9d163c6e3ebf25819dcdb05b4efbf57bd8ae240c94c"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/event_stream_ticket.py",
+      "sha256": "a6310001d58d6b34b233bce7d8a996ef1539fdf0201bfc6297ae9e3ecbcbe456"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/local_peer_auth.py",
+      "sha256": "5a5b42468590be0cb8872af9e62196dab937d3b8ae3d60499ddba5c9067376c2"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/local_peer_registry.py",
+      "sha256": "21ccd1beb12bec03f2b915bfb260592648a9f762fbe4b335826b00504af39ac5"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/local_peer_service.py",
+      "sha256": "3b9535ae395e6cc7a816fc7fab293c689a6c76f105634c4a5de52593dd8e571c"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/terminal_observation_recovery.py",
+      "sha256": "3d6f5299f796f838bdb31217a91ec91fd50cc03fe8b74661fa2972997fb421cd"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/terminal_service.py",
+      "sha256": "ea99b2fed94db2515acf1c70250135e95c33805937292436148b69cafc13d421"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/workflow_continuation_driver.py",
+      "sha256": "4afc6d4823dc5615c4fe65e985addefddb521a234355fe4447246695997c0ba4"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/utils/orchestration.py",
+      "sha256": "124d6ace45c14cb87dbd2c03a4cb18055e28f36dbad1901b80940bbd211bc278"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/utils/skills.py",
+      "sha256": "380af0aa2a5109f3fe9a16343b738fc072253bd9db59a831b9647851a6bbee96"
+    },
+    {
+      "path": "tui/src/server.rs",
+      "sha256": "b60c7c52c76106b2e6c33da987ddde4de8c3dd1d8316dd573331832b349a5de0"
+    },
+    {
+      "path": "web/src/api.ts",
+      "sha256": "1fbdb3ce6d8062b52c312dd7cd5552fa4da5122be8e4caa2a12500f24f23ecd6"
+    },
+    {
+      "path": "web/src/auth.ts",
+      "sha256": "72eba040076a6949c3dad23b18c0e4941808168cc47f5c92597edcb2adf0c03b"
+    }
+  ],
+  "failed_sources": [],
+  "nodes": 1652,
+  "edges": 3711,
+  "input_tokens": 0,
+  "output_tokens": 0,
+  "freshness": "Hashes unchanged before and after final extraction",
+  "files_format": "path-sha256-records-v1"
+}

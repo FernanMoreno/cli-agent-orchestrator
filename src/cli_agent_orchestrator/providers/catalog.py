@@ -108,7 +108,7 @@ class ProviderDescriptor:
             )
         if transport is not None:
             source, flag, precedence = transport
-            override_ignored = False
+            override_ignored: bool | None = False
             if precedence[0] == "profile.model":
                 override_ignored = bool(profile.model) if profile is not None else None
             result.update(

@@ -17,8 +17,10 @@ import stat
 import tempfile
 import uuid
 from collections import Counter
+from contextlib import closing
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import TypedDict, TypeGuard, cast
 
 from cli_agent_orchestrator.clients.work_inbox_schema import ManagedInboxStoreIdentity
 from cli_agent_orchestrator.clients.work_recovery_schema import RECOVERY_STATE_BLOCKED_RESTORE
@@ -45,7 +47,7 @@ _FORMAT_V2 = "recovery-bundle-v2"
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _LEGACY_WORK_SQLITE_PROFILE_VERSION = 24
 _SUPPORTED_BUNDLE_PROFILE_VERSIONS = frozenset((_LEGACY_WORK_SQLITE_PROFILE_VERSION, 25))
-_SUPPORTED_V2_PROFILE_VERSIONS = frozenset((28, 29, 30, WORK_SQLITE_PROFILE_VERSION))
+_SUPPORTED_V2_PROFILE_VERSIONS = frozenset((28, 29, 30, 31, 38, WORK_SQLITE_PROFILE_VERSION))
 _MAX_EXECUTABLE_CONTENT_BYTES = 8 * 1024 * 1024
 
 
@@ -129,11 +131,11 @@ class _ExternalObject:
     identifier: str
 
 
-def _is_digest(value: object) -> bool:
+def _is_digest(value: object) -> TypeGuard[str]:
     return isinstance(value, str) and _DIGEST.fullmatch(value) is not None
 
 
-def _is_lease_id(value: object) -> bool:
+def _is_lease_id(value: object) -> TypeGuard[str]:
     return (
         isinstance(value, str) and len(value) == 32 and all(c in "0123456789abcdef" for c in value)
     )
@@ -668,7 +670,10 @@ def _file_digest(path: Path) -> tuple[str, int]:
 def _compact_staging_database(copied_database: Path, stage: Path) -> Path:
     """Remove free SQLite pages in private staging before inspection and publication."""
     compacted_database = stage / ".sqlite-compact"
-    with sqlite3.connect(copied_database) as connection:
+    with (
+        closing(sqlite3.connect(copied_database)) as _owned_connection,
+        _owned_connection as connection,
+    ):
         connection.execute("VACUUM INTO ?", (str(compacted_database),))
     os.chmod(compacted_database, 0o600)
     return compacted_database
@@ -705,7 +710,52 @@ def _write_manifest(
     return hashlib.sha256(encoded).hexdigest(), len(encoded)
 
 
-def _read_manifest(path: Path, receipt: RecoveryBundleReceipt) -> dict[str, object]:
+class _BundleObject(TypedDict):
+    digest: str
+    path: str
+    roles: list[str]
+    size: int
+
+
+class _BundleReference(TypedDict):
+    digest: str
+    identifier: str
+    path: str
+    role: str
+    size: int
+    version: object
+
+
+class _RecoveryManifest(TypedDict, total=False):
+    format: str
+    profile_version: int
+    objects: list[_BundleObject]
+    references: list[_BundleReference]
+    cut_evidence: dict[str, object]
+
+
+def _is_bundle_object(value: object) -> TypeGuard[_BundleObject]:
+    return (
+        isinstance(value, dict)
+        and set(value) == {"digest", "path", "roles", "size"}
+        and isinstance(value["digest"], str)
+        and isinstance(value["path"], str)
+        and type(value["size"]) is int
+        and isinstance(value["roles"], list)
+        and all(isinstance(role, str) for role in value["roles"])
+    )
+
+
+def _is_bundle_reference(value: object) -> TypeGuard[_BundleReference]:
+    return (
+        isinstance(value, dict)
+        and set(value) == {"digest", "identifier", "path", "role", "size", "version"}
+        and all(isinstance(value[field], str) for field in ("digest", "identifier", "path", "role"))
+        and type(value["size"]) is int
+    )
+
+
+def _read_manifest(path: Path, receipt: RecoveryBundleReceipt) -> _RecoveryManifest:
     digest, size = _file_digest(path)
     if (digest, size) != (receipt.manifest_digest, receipt.manifest_size):
         raise _reject()
@@ -782,7 +832,12 @@ def _read_manifest(path: Path, receipt: RecoveryBundleReceipt) -> dict[str, obje
         raise _reject()
     if not isinstance(manifest["references"], list):
         raise _reject()
-    return manifest
+    # Decode the nested shape before the verifier checks its semantic constraints.
+    if not all(_is_bundle_object(item) for item in objects) or not all(
+        _is_bundle_reference(item) for item in manifest["references"]
+    ):
+        raise _reject()
+    return cast(_RecoveryManifest, manifest)
 
 
 def _verify_v2_phase_evidence(
@@ -804,6 +859,7 @@ def _verify_v2_phase_evidence(
         "revision": evidence["revision"],
     }
     phases = evidence["phases"]
+    assert isinstance(phases, dict)  # _read_manifest validated the phase mapping.
     observations: list[dict[str, object]] = []
     for name in ("before", "after", "promote"):
         phase = phases[name]
@@ -832,7 +888,7 @@ def _verify_v2_phase_evidence(
         observations.append(inventory)
     if observations[0] != observations[1] or observations[1] != observations[2]:
         raise _reject()
-    with _open_readonly_database(sqlite_path) as copied:
+    with closing(_open_readonly_database(sqlite_path)) as _owned_copied, _owned_copied as copied:
         if (
             _inventory_evidence(inspect_offline_work_store(copied, profile_version=profile_version))
             != observations[1]
@@ -851,9 +907,12 @@ def _verify_v2_publication(receipt: RecoveryBundleReceipt, evidence: dict[str, o
         raise _reject()
     try:
         source = receipt.source_database.resolve()
-        with sqlite3.connect(
-            source.as_uri() + "?mode=ro", uri=True, isolation_level=None
-        ) as connection:
+        with (
+            closing(
+                sqlite3.connect(source.as_uri() + "?mode=ro", uri=True, isolation_level=None)
+            ) as _owned_connection,
+            _owned_connection as connection,
+        ):
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA query_only=ON")
             row = connection.execute(
@@ -953,7 +1012,12 @@ def _verify_recovery_bundle(
             digest for digest, roles in object_roles.items() if sqlite_role in roles
         )
         if manifest["format"] == _FORMAT:
-            with _open_readonly_database(entries["objects"] / sqlite_digest) as historical:
+            with (
+                closing(
+                    _open_readonly_database(entries["objects"] / sqlite_digest)
+                ) as _owned_historical,
+                _owned_historical as historical,
+            ):
                 if (
                     historical.execute(
                         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_offline_cuts'"
@@ -993,7 +1057,7 @@ def _verify_recovery_bundle(
                 or _file_digest(entries["objects"] / digest) != (digest, size)
             ):
                 raise _reject()
-            previous_reference = current_reference
+            previous_reference = (role, identifier, digest)
         if manifest["format"] == _FORMAT_V2:
             _verify_v2_phase_evidence(
                 manifest["cut_evidence"],
@@ -1013,7 +1077,7 @@ def verify_recovery_bundle(receipt: RecoveryBundleReceipt) -> RecoveryBundleRece
     return _verify_recovery_bundle(receipt, require_publication=True)
 
 
-def _restore_manifest(receipt: RecoveryBundleReceipt) -> tuple[dict[str, object], Path, str, int]:
+def _restore_manifest(receipt: RecoveryBundleReceipt) -> tuple[_RecoveryManifest, Path, str, int]:
     """Return only the currently supported, receipt-verified SQLite bundle object."""
     _verify_recovery_bundle(receipt, require_publication=True)
     manifest = _read_manifest(receipt.bundle_path / "manifest.json", receipt)
@@ -1029,12 +1093,16 @@ def _restore_manifest(receipt: RecoveryBundleReceipt) -> tuple[dict[str, object]
     sqlite_object = sqlite_objects[0]
     if sqlite_object["roles"] != [sqlite_role]:
         raise _reject()
-    return (
-        manifest,
-        receipt.bundle_path / sqlite_object["path"],
+    # The receipt verifier already checked every object field before restoration.
+    object_path, object_digest, object_size = (
+        sqlite_object["path"],
         sqlite_object["digest"],
         sqlite_object["size"],
     )
+    assert isinstance(object_path, str)
+    assert isinstance(object_digest, str)
+    assert isinstance(object_size, int)
+    return manifest, receipt.bundle_path / object_path, object_digest, object_size
 
 
 def _restore_destination(
@@ -1077,7 +1145,7 @@ def _restore_destination(
 
 
 def _restore_reference_closure(
-    connection: sqlite3.Connection, manifest: dict[str, object], inventory: WorkStoreInventory
+    connection: sqlite3.Connection, manifest: _RecoveryManifest, inventory: WorkStoreInventory
 ) -> None:
     """Prove that every portable external object is named by the copied SQLite rows."""
     _scan_exportable_database(connection, inventory)
@@ -1121,16 +1189,16 @@ def _restore_reference_closure(
             expected[entry] += 1
 
     for identifier, stored_path in connection.execute("SELECT id,file_path FROM memory_metadata"):
-        entry = ("memory-content", identifier)
+        memory_entry = ("memory-content", identifier)
         if (
             not isinstance(identifier, str)
             or not identifier
             or not isinstance(stored_path, str)
             or not stored_path
-            or expected_memory[entry]
+            or expected_memory[memory_entry]
         ):
             raise _reject()
-        expected_memory[entry] += 1
+        expected_memory[memory_entry] += 1
 
     actual: Counter[tuple[str, str, str, int]] = Counter()
     actual_memory: Counter[tuple[str, str]] = Counter()
@@ -1166,15 +1234,19 @@ def _restore_reference_closure(
     sqlite_role = f"sqlite-v{WORK_SQLITE_PROFILE_VERSION}"
     for object_ in manifest["objects"]:
         digest = object_["digest"]
-        for role in object_["roles"]:
+        roles = object_["roles"]
+        for role in roles:
             if role != sqlite_role and (digest, role) not in used_object_roles:
                 raise _reject()
 
 
 def _inspect_restore_sqlite(
-    sqlite_path: Path, source_identity: ManagedInboxStoreIdentity, manifest: dict[str, object]
+    sqlite_path: Path, source_identity: ManagedInboxStoreIdentity, manifest: _RecoveryManifest
 ) -> None:
-    with _open_readonly_database(sqlite_path) as connection:
+    with (
+        closing(_open_readonly_database(sqlite_path)) as _owned_connection,
+        _owned_connection as connection,
+    ):
         inventory = inspect_offline_work_store(connection)
         portable_inventory = inspect_portable_work_store(
             connection, expected_source_identity=source_identity
@@ -1260,6 +1332,7 @@ def restore_recovery_bundle(receipt: RecoveryBundleReceipt, destination: Path) -
     published = False
     try:
         manifest, sqlite_path, sqlite_digest, sqlite_size = _restore_manifest(receipt)
+        assert receipt.source_database is not None  # The v2 publication verifier required it.
         _source_inventory, source_identity = _verified_source_inventory(receipt.source_database)
         destination = _restore_destination(receipt, destination, sqlite_path)
         _inspect_restore_sqlite(sqlite_path, source_identity, manifest)
@@ -1305,9 +1378,7 @@ class OfflineRecoveryCapture:
         self._authority = authority
         self._lease = lease
 
-    def _verify_cut(
-        self, *, database: Path, profile_version: int, phase: str
-    ) -> OfflineCutLease | None:
+    def _verify_cut(self, *, database: Path, profile_version: int, phase: str) -> OfflineCutLease:
         if profile_version != WORK_SQLITE_PROFILE_VERSION or phase not in {
             "before",
             "after",
@@ -1352,15 +1423,24 @@ class OfflineRecoveryCapture:
             objects = stage / "objects"
             objects.mkdir(mode=0o700)
             copied_database = stage / ".sqlite-copy"
-            with _open_readonly_database(database) as source_connection:
-                with sqlite3.connect(copied_database) as copy_connection:
+            with (
+                closing(_open_readonly_database(database)) as _owned_source_connection,
+                _owned_source_connection as source_connection,
+            ):
+                with (
+                    closing(sqlite3.connect(copied_database)) as _owned_copy_connection,
+                    _owned_copy_connection as copy_connection,
+                ):
                     source_connection.backup(copy_connection)
             os.chmod(copied_database, 0o600)
             compacted_database = _compact_staging_database(copied_database, stage)
             copied_database.unlink()
             copied_database = compacted_database
 
-            with _open_readonly_database(copied_database) as copied_connection:
+            with (
+                closing(_open_readonly_database(copied_database)) as _owned_copied_connection,
+                _owned_copied_connection as copied_connection,
+            ):
                 copied_inventory = inspect_portable_work_store(
                     copied_connection, expected_source_identity=source_identity
                 )
@@ -1380,6 +1460,7 @@ class OfflineRecoveryCapture:
                 if object_.role == "memory-content":
                     digest, size = _copy_memory_file_as_object(root, object_.relative_path, objects)
                 elif object_.role == "executable-content":
+                    assert object_.digest is not None and object_.size is not None
                     digest, size, root_identity, leaf_identity = _copy_executable_file_as_object(
                         root, object_.digest, object_.size, objects
                     )
@@ -1457,6 +1538,7 @@ class OfflineRecoveryCapture:
                 checked_lease: OfflineCutLease, promote_observation: dict
             ) -> dict[str, object]:
                 nonlocal stage
+                assert stage is not None  # Staging was established before publication.
                 evidence = {
                     "version": 2,
                     "capture_id": capture_id,

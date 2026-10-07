@@ -1,6 +1,6 @@
 """``ui://cao/*`` MCP App resources, ``_meta.ui`` annotations, and registration.
 
-The three views are shipped as **single-file HTML** artifacts built by the
+The four views are shipped as **single-file HTML** artifacts built by the
 ``cao_mcp_apps`` frontend (``vite-plugin-singlefile``) into ``apps_static/``.
 ``register_apps`` mounts each artifact as an MCP resource under its ``ui://cao/*``
 URI so an MCP App host can load it into a sandboxed iframe.
@@ -13,8 +13,11 @@ Resolution of ``apps_static/`` tries, in order:
 
 1. the ``apps.static_dir`` override (``CAO_MCP_APPS_STATIC_DIR`` env var, or
    ``settings.json``), read via ``ConfigService``,
-2. the packaged location ``<package>/apps_static`` (wheel installs), then
-3. the source-tree location ``<repo-root>/apps_static`` (editable/dev installs).
+2. the primary packaged location ``<package>/ext_apps/apps_static`` emitted by
+   ``npm run build:all``,
+3. the alternate packaged location ``<package>/apps_static`` (wheel installs),
+   then
+4. the source-tree location ``<repo-root>/apps_static`` (editable/dev installs).
 
 This module imports nothing from ``clients.*`` — it stays on the HTTP-only side of
 the boundary and only reads static files from disk.
@@ -22,6 +25,7 @@ the boundary and only reads static files from disk.
 
 import logging
 from pathlib import Path
+from stat import S_ISREG
 from typing import Any, Dict, List, Optional
 
 from cli_agent_orchestrator.services.config_service import ConfigService
@@ -83,7 +87,8 @@ def apps_static_dir() -> Optional[Path]:
     """Return the first existing ``apps_static`` directory, or ``None``.
 
     Tries the ``apps.static_dir`` override (``CAO_MCP_APPS_STATIC_DIR`` env var
-    or ``settings.json``), the packaged location, then the source-tree location.
+    or ``settings.json``), ``<package>/ext_apps/apps_static``,
+    ``<package>/apps_static``, then ``<repo-root>/apps_static``.
     """
 
     override = ConfigService.get("apps.static_dir", default=None)
@@ -165,47 +170,85 @@ def ui_meta(
     return {"ui": ui}
 
 
-def _read_resource_html(filename: str) -> Optional[str]:
-    """Read a single-file artifact from ``apps_static/`` if present."""
+def _artifact_has_content(path: Path) -> bool:
+    """Return whether *path* is a non-empty regular file."""
 
-    static_dir = apps_static_dir()
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _read_resource_html(filename: str, base_dir: Optional[Path] = None) -> Optional[str]:
+    """Read a non-empty single-file artifact from ``apps_static/`` if present."""
+
+    static_dir = base_dir if base_dir is not None else apps_static_dir()
     if static_dir is None:
+        logger.warning("MCP App static directory unavailable while reading artifact: %s", filename)
         return None
     path = static_dir / filename
-    if not path.is_file():
+    try:
+        artifact_stat = path.stat()
+    except FileNotFoundError:
+        logger.warning("MCP App artifact absent: %s", path)
         return None
-    return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        logger.warning("MCP App artifact stat failed: %s (%s)", path, type(exc).__name__)
+        return None
+    if not S_ISREG(artifact_stat.st_mode):
+        logger.warning("MCP App artifact is not a regular file: %s", path)
+        return None
+    if artifact_stat.st_size == 0:
+        logger.warning("MCP App artifact empty: %s", path)
+        return None
+    try:
+        html = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.warning("MCP App artifact unreadable: %s (%s)", path, type(exc).__name__)
+        return None
+    return html or None
 
 
-def get_resource_body(uri: str) -> str:
+def get_resource_body(uri: str, base_dir: Optional[Path] = None) -> str:
     """Return the HTML body for a registered ``ui://cao/*`` resource.
 
-    Resolves the artifact via :func:`apps_static_dir` (env override → packaged
-    location → source tree). Raises ``KeyError`` for an unknown URI and
-    ``FileNotFoundError`` when the artifact is absent (e.g. the frontend has not
-    been built in a dev tree). Production wheels always ship the artifacts via the
-    hatch ``artifacts`` rule in ``pyproject.toml``.
+    When ``base_dir`` is provided, resolves only from that directory so registered
+    handlers and direct reads can share the handler's startup snapshot. Without
+    it, intentionally resolves via :func:`apps_static_dir` on each call for
+    stateless callers that are not attached to a server registration. Raises
+    ``KeyError`` for an unknown URI and ``FileNotFoundError`` when the artifact is
+    absent, empty, or unreadable (permission errors and non-UTF-8 bytes included).
+    Production wheels always ship the artifacts via the hatch ``artifacts`` rule
+    in ``pyproject.toml``.
     """
 
     filename = _RESOURCE_FILES.get(uri)
     if filename is None:
         raise KeyError(f"Unknown MCP Apps resource: {uri}")
-    static_dir = apps_static_dir()
-    if static_dir is None:
-        raise FileNotFoundError("apps_static/ not found (frontend not built)")
-    path = static_dir / filename
-    return path.read_text(encoding="utf-8")
+    html = _read_resource_html(filename, base_dir)
+    if html is None:
+        raise FileNotFoundError(
+            f"MCP App artifact unavailable (missing, empty, or unreadable): {filename}"
+        )
+    return html
 
 
 def register_apps(mcp: Any) -> bool:
-    """Register the three ``ui://cao/*`` resources on the FastMCP server.
+    """Register the four ``ui://cao/*`` resources on the FastMCP server.
 
     Best-effort and side-effect free when disabled:
 
-    * returns ``False`` (logging at info level) when ``CAO_MCP_APPS_ENABLED`` is
-      unset, when the running FastMCP has no ``resource`` decorator, or when the
-      ``apps_static/`` build output is missing;
-    * otherwise registers one resource per built artifact and returns ``True``.
+    * disabled registration is logged at info and returns ``False``;
+    * a missing FastMCP ``resource`` decorator or ``apps_static/`` directory is
+      logged at warning and returns ``False``;
+    * per-URI decorator failures are logged with ``logger.exception``;
+    * the summary is logged at warning when any expected artifact is absent and
+      at info when all artifacts are present. It describes startup state in the
+      resolved directory, not steady state. Registered handlers retain that
+      directory and read it per request, warning when an artifact is then missing,
+      empty, or unreadable; unbound :func:`get_resource_body` calls remain
+      intentionally stateless and resolve the current configured directory per
+      call.
     """
 
     if not _is_enabled():
@@ -216,34 +259,43 @@ def register_apps(mcp: Any) -> bool:
 
     resource_decorator = getattr(mcp, "resource", None)
     if not callable(resource_decorator):
-        logger.info(
+        logger.warning(
             "FastMCP build has no @mcp.resource decorator; skipping MCP App resource registration"
         )
         return False
 
     static_dir = apps_static_dir()
     if static_dir is None:
-        logger.info(
+        logger.warning(
             "apps_static/ not found (frontend not built); skipping MCP App resource registration"
         )
         return False
 
+    artifacts_present = sum(
+        1 for filename in _RESOURCE_FILES.values() if _artifact_has_content(static_dir / filename)
+    )
     registered = 0
     for uri, filename in _RESOURCE_FILES.items():
 
-        def _make_handler(fname: str, resource_uri: str):
+        def _make_handler(fname: str, resource_uri: str, base_dir: Path):
             def _handler() -> str:
-                html = _read_resource_html(fname)
-                if html is None:
-                    logger.warning("MCP App artifact missing at request time: %s", fname)
+                try:
+                    return get_resource_body(resource_uri, base_dir)
+                # FileNotFoundError is the load-bearing contract that maps direct
+                # resource lookup failure to the request-time placeholder.
+                except FileNotFoundError:
+                    logger.warning(
+                        "MCP App artifact unavailable at request time: %s "
+                        "(missing, empty, or unreadable)",
+                        fname,
+                    )
                     return f"<!doctype html><title>{resource_uri}</title><p>view not built</p>"
-                return html
 
             return _handler
 
         try:
             decorated = resource_decorator(uri, mime_type=RESOURCE_MIME_TYPE)(
-                _make_handler(filename, uri)
+                _make_handler(filename, uri, static_dir)
             )
             # Reference the decorated handler so linters do not flag it unused;
             # FastMCP retains its own registration regardless.
@@ -252,7 +304,12 @@ def register_apps(mcp: Any) -> bool:
         except Exception:  # pragma: no cover - defensive: never crash startup
             logger.exception("Failed to register MCP App resource %s", uri)
 
-    logger.info(
-        "Registered %d/%d MCP App resources from %s", registered, len(_RESOURCE_FILES), static_dir
+    log_registration = logger.warning if artifacts_present < len(_RESOURCE_FILES) else logger.info
+    log_registration(
+        "MCP App resources: registered %d handlers; %d/%d artifacts present under %s",
+        registered,
+        artifacts_present,
+        len(_RESOURCE_FILES),
+        static_dir,
     )
     return registered > 0

@@ -24,19 +24,149 @@ async def test_v2_initialization_builds_config_for_selected_model(tmp_path, monk
 
     monkeypatch.setattr(opencode_cli, "CAO_HOME_DIR", tmp_path)
     monkeypatch.setattr(opencode_cli, "OPENCODE_AGENTS_DIR", tmp_path / "agents")
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "agents/reviewer.md").write_text("---\ndescription: Reviewer\n---\nReview.\n")
+    monkeypatch.setattr(
+        opencode_cli,
+        "resolve_opencode_runtime",
+        lambda: ("/opt/bin/opencode", {"PATH": "/opt/bin:/usr/bin:/bin"}),
+    )
     monkeypatch.setattr(opencode_config, "read_config", lambda: {})
     monkeypatch.setattr(opencode_cli, "wait_for_shell", AsyncMock(return_value=True))
-    monkeypatch.setattr(opencode_cli, "detect_opencode_major", lambda: 2)
+    monkeypatch.setattr(opencode_cli, "detect_opencode_major", lambda runtime: 2)
     backend = MagicMock()
     monkeypatch.setattr(opencode_cli, "get_backend", lambda: backend)
     instance = OpenCodeCliProvider(
         "test1234", "test", "window", "reviewer", model="opencode-go/longcat-2.5-preview-free"
     )
     monkeypatch.setattr(instance, "_wait_for_initial_ready", AsyncMock(return_value=True))
+    wait_for_mcp = AsyncMock(return_value=False)
+    monkeypatch.setattr(instance, "_wait_for_v2_cao_mcp_ready", wait_for_mcp)
     assert await instance.initialize() is True
     config = json.loads((instance._v2_config_dir / "opencode.json").read_text())
     assert "longcat-2.5-preview-free" in config["providers"]["opencode-go"]["models"]
     assert "mini --standalone" in backend.send_keys.call_args.args[2]
+    wait_for_mcp.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_v2_initialization_isolates_data_and_preserves_auth_for_mcp_readiness(
+    tmp_path, monkeypatch
+):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from cli_agent_orchestrator.providers import opencode_cli
+    from cli_agent_orchestrator.utils import opencode_config
+
+    monkeypatch.setattr(opencode_cli, "CAO_HOME_DIR", tmp_path / "cao")
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (agents / "reviewer.md").write_text("---\ndescription: Reviewer\n---\nReview.\n")
+    monkeypatch.setattr(opencode_cli, "OPENCODE_AGENTS_DIR", agents)
+    monkeypatch.setattr(
+        opencode_cli,
+        "resolve_opencode_runtime",
+        lambda: ("/opt/bin/opencode", {"PATH": "/opt/bin:/usr/bin:/bin"}),
+    )
+    auth = tmp_path / "source-data/opencode/auth.json"
+    auth.parent.mkdir(parents=True)
+    auth.write_text('{"opencode-go":{"type":"oauth","refresh":"local"}}')
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "source-data"))
+    monkeypatch.setattr(
+        opencode_config,
+        "read_config",
+        lambda: {
+            "mcp": {
+                "servers": {
+                    "cao-mcp-server": {
+                        "type": "local",
+                        "command": ["cao-mcp-server"],
+                    }
+                }
+            }
+        },
+    )
+    monkeypatch.setattr(opencode_cli, "wait_for_shell", AsyncMock(return_value=True))
+    monkeypatch.setattr(opencode_cli, "detect_opencode_major", lambda runtime: 2)
+    backend = MagicMock()
+    monkeypatch.setattr(opencode_cli, "get_backend", lambda: backend)
+    instance = OpenCodeCliProvider("test1234", "test", "window", "reviewer")
+    monkeypatch.setattr(instance, "_wait_for_initial_ready", AsyncMock(return_value=True))
+    wait_for_mcp = AsyncMock(return_value=True)
+    monkeypatch.setattr(instance, "_wait_for_v2_cao_mcp_ready", wait_for_mcp)
+
+    assert await instance.initialize() is True
+
+    data_home = instance._v2_data_home
+    auth_link = data_home / "opencode/auth.json"
+    assert auth_link.is_symlink()
+    assert auth_link.resolve() == auth.resolve()
+    assert data_home.stat().st_mode & 0o777 == 0o700
+    assert "XDG_DATA_HOME=" + str(data_home) in backend.send_keys.call_args.args[2]
+    assert "--log-level info --print-logs" in backend.send_keys.call_args.args[2]
+    assert "2> " + str(data_home / "mcp-startup.log") in backend.send_keys.call_args.args[2]
+    assert (data_home / "mcp-startup.log").stat().st_mode & 0o777 == 0o600
+    wait_for_mcp.assert_awaited_once()
+    assert wait_for_mcp.await_args.kwargs["timeout"] > 0
+    owned_dir = instance._owned_v2_config_dir
+    instance.cleanup()
+    assert owned_dir is not None and not owned_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_v2_mcp_readiness_waits_for_its_private_connection_log(tmp_path):
+    import asyncio
+
+    instance = provider()
+    instance._v2_data_home = tmp_path / "data"
+    instance._v2_cao_mcp_server_name = "cao-mcp-server"
+    log = instance._v2_data_home / "mcp-startup.log"
+    log.parent.mkdir(parents=True)
+    log.write_text("INFO starting mini\n")
+
+    pending = asyncio.create_task(instance._wait_for_v2_cao_mcp_ready(timeout=1.0))
+    await asyncio.sleep(0.02)
+    log.write_text(
+        'timestamp=2026-10-05T12:00:00Z level=INFO message="mcp connected" '
+        "server=cao-mcp-server tools=72 role=server\n"
+    )
+
+    assert await pending is True
+
+
+@pytest.mark.asyncio
+async def test_v2_mcp_readiness_times_out_without_a_connection(tmp_path):
+    instance = provider()
+    instance._v2_data_home = tmp_path / "data"
+    instance._v2_cao_mcp_server_name = "cao-mcp-server"
+
+    assert await instance._wait_for_v2_cao_mcp_ready(timeout=0.01) is False
+
+
+@pytest.mark.asyncio
+async def test_v2_mcp_readiness_does_not_accept_another_server(tmp_path):
+    instance = provider()
+    instance._v2_data_home = tmp_path / "data"
+    instance._v2_cao_mcp_server_name = "cao-mcp-server"
+    log = instance._v2_data_home / "mcp-startup.log"
+    log.parent.mkdir(parents=True)
+    log.write_text('level=INFO message="mcp connected" server=cao-mcp-server-other tools=72\n')
+
+    assert await instance._wait_for_v2_cao_mcp_ready(timeout=0.01) is False
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"mcp": {"cao-mcp-server": {"command": ["cao-mcp-server"], "enabled": False}}},
+        {"mcp": {"servers": {"cao-mcp-server": {"command": ["cao-mcp-server"], "disabled": True}}}},
+        {"mcp": {"custom-cao": {"command": ["cao-mcp-server"], "enabled": False}}},
+    ],
+)
+def test_disabled_cao_mcp_is_not_awaited(config):
+    from cli_agent_orchestrator.providers.opencode_cli import _find_cao_mcp_server_name
+
+    assert _find_cao_mcp_server_name(config) is None
 
 
 def test_v2_launch_uses_private_mini_server():
@@ -78,8 +208,15 @@ def test_v2_model_error_wins_over_idle_footer(screen):
     assert status == TerminalStatus.ERROR
 
 
-def test_version_probe_supports_both_release_output_formats():
+def test_version_probe_supports_both_release_output_formats(monkeypatch):
+    from cli_agent_orchestrator.providers import opencode_cli
     from cli_agent_orchestrator.providers.opencode_cli import detect_opencode_major
+
+    monkeypatch.setattr(
+        opencode_cli,
+        "resolve_opencode_runtime",
+        lambda: ("/opt/bin/opencode", {"PATH": "/opt/bin:/usr/bin:/bin"}),
+    )
 
     with patch("subprocess.check_output", return_value="opencode v2.0.18\n"):
         assert detect_opencode_major() == 2
@@ -159,6 +296,41 @@ def test_v2_config_translates_agent_tools_and_mcp_without_losing_denials(tmp_pat
     assert (destination / "opencode.json").stat().st_mode & 0o077 == 0
 
 
+def test_v2_config_normalizes_v1_mcp_grants_to_v2_tool_names(tmp_path):
+    import json
+
+    from cli_agent_orchestrator.utils.opencode_v2 import write_v2_configuration
+
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (agents / "reviewer.md").write_text("---\ndescription: Reviewer\n---\nReview.\n")
+    destination = tmp_path / "v2"
+    write_v2_configuration(
+        destination,
+        source_agents=agents,
+        source_config={
+            "mcp": {
+                "cao-mcp-server": {
+                    "type": "local",
+                    "command": ["cao-mcp-server"],
+                    "enabled": True,
+                }
+            },
+            "agent": {"reviewer": {"tools": {"cao-mcp-server*": True}}},
+        },
+        session_id="test1234",
+    )
+
+    config = json.loads((destination / "opencode.json").read_text())
+    assert {
+        "action": "cao_mcp_server_*",
+        "resource": "*",
+        "effect": "allow",
+    } in config["agents"][
+        "reviewer"
+    ]["permissions"]
+
+
 def test_v2_explicit_go_model_and_existing_login_stay_private(tmp_path):
     import json
     import shlex
@@ -184,3 +356,33 @@ def test_v2_explicit_go_model_and_existing_login_stay_private(tmp_path):
         credential
     ) + "\n"
     assert (destination / "provider.env").stat().st_mode & 0o077 == 0
+
+
+@pytest.mark.parametrize("screen", [False, True])
+def test_real_go_upstream_model_unavailable_is_error(screen):
+    from pathlib import Path
+
+    frame = (Path(__file__).parent / "fixtures/opencode-v2-unavailable-model-real.txt").read_text()
+    instance = provider()
+    status = (
+        instance.get_status_from_screen(frame.splitlines())
+        if screen
+        else instance.get_status(frame)
+    )
+    assert status == TerminalStatus.ERROR
+
+
+@pytest.mark.parametrize("screen", [False, True])
+def test_quoted_go_model_unavailable_does_not_override_completed_answer(screen):
+    frame = (
+        "Upstream request failed: Model is unavailable.\n"
+        "This is a documented example; the actual request succeeded.\n"
+        "reviewer · Kimi K3 · 2s\n┃\nreviewer · Kimi K3 · OpenCode Go · ctrl+p menu"
+    )
+    instance = provider()
+    status = (
+        instance.get_status_from_screen(frame.splitlines())
+        if screen
+        else instance.get_status(frame)
+    )
+    assert status == TerminalStatus.COMPLETED

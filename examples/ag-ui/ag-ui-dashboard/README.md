@@ -69,8 +69,9 @@ the 8 KB bound, and the refusal behavior.
 
 Default-off local runs need no tokens. When CAO has Auth0 enabled, pass
 `CAO_TOKEN` (a `cao:write` JWT) to `showcase.sh` (it authenticates the POSTs
-and the stream tail); a browser `EventSource` client passes a `cao:read` JWT
-via `?access_token=<JWT>` — see the short-TTL guidance in
+and the stream tail using headers); a browser `EventSource` client exchanges
+its bearer header for a 30-second, single-use stream ticket and obtains a new
+ticket on reconnection while preserving its cursor — see
 [docs/agui.md](../../../docs/agui.md).
 
 ## Files

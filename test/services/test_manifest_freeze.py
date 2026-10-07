@@ -229,7 +229,7 @@ def test_real_over_budget_baseline_cannot_reuse_an_approved_plan(
     manifest = manifest_freeze.build_manifest_json(source_hash="abc123", inputs={"k": "v"})
     assert manifest is None
     assert "unavailable repository baseline" in caplog.text
-    with pytest.raises(approval_gate.PlanApprovalRequiredError) as error:
+    with pytest.raises(approval_gate.PlanApprovalUnavailableError) as error:
         approval_gate.ensure_plan_approved(tier="script", manifest_json=manifest)
     assert error.value.plan_id is None
 
@@ -278,7 +278,7 @@ def test_an_unavailable_snapshot_reaches_the_gate_without_a_plan_id(monkeypatch)
     unavailable_manifest = manifest_freeze.build_manifest_json(
         source_hash="abc123", inputs={"k": "v"}
     )
-    with pytest.raises(approval_gate.PlanApprovalRequiredError) as excinfo:
+    with pytest.raises(approval_gate.PlanApprovalUnavailableError) as excinfo:
         approval_gate.ensure_plan_approved(tier="script", manifest_json=unavailable_manifest)
 
     assert excinfo.value.plan_id is None

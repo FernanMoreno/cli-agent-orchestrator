@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -1058,7 +1059,7 @@ def test_begin_managed_work_step_rejects_another_authorization_on_pending_replay
     assert step.attempts == 3
 
 
-def test_begin_managed_work_step_compares_retry_authorization_to_durable_record():
+def test_begin_managed_work_step_compares_retry_authorization_to_durable_record(monkeypatch):
     run_id = "managed-retry-mismatched-record"
     _insert_failed_managed_run(run_id)
     authorization = _retry_authorization(run_id)
@@ -1069,6 +1070,18 @@ def test_begin_managed_work_step_compares_retry_authorization_to_durable_record(
         update={"authorization_fingerprint": other_authorization.computed_fingerprint()}
     )
     dependencies = _retry_dependencies(authorization, authorization_from_reader=other_authorization)
+    transaction_state_before_close = {}
+    original_closing = workflow_journal.closing
+
+    @contextmanager
+    def observe_close(connection):
+        with original_closing(connection):
+            try:
+                yield connection
+            finally:
+                transaction_state_before_close[connection] = connection.in_transaction
+
+    monkeypatch.setattr(workflow_journal, "closing", observe_close)
 
     with pytest.raises(ValueError, match="differs from its durable record"):
         _begin_authorized_retry(run_id, authorization, dependencies)
@@ -1076,7 +1089,10 @@ def test_begin_managed_work_step_compares_retry_authorization_to_durable_record(
     step = workflow_journal.get_step(run_id, "build")
     assert step.state == "failed"
     assert step.attempts == 2
-    assert dependencies[1].authorization_reads[0][1]["connection"].in_transaction is False
+    connection = dependencies[1].authorization_reads[0][1]["connection"]
+    assert transaction_state_before_close[connection] is False
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("SELECT 1")
 
 
 def test_begin_managed_work_step_rejects_retry_when_current_work_attempt_is_not_failed():

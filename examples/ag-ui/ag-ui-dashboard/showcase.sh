@@ -23,13 +23,11 @@ BASE="${CAO_AGUI_BASE:-http://localhost:9889}"
 STREAM="${BASE}/agui/v1/stream"
 EMIT="${BASE}/agui/v1/emit_ui"
 
-# Optional bearer for auth-enabled servers. EventSource-style stream auth uses
-# ?access_token= (browsers can't set headers); the POST uses the header.
+# Native curl supports bearer headers for both the stream and the POSTs.
 AUTH_ARGS=()
 STREAM_URL="${STREAM}"
 if [ -n "${CAO_TOKEN:-}" ]; then
     AUTH_ARGS=(-H "Authorization: Bearer ${CAO_TOKEN}")
-    STREAM_URL="${STREAM}?access_token=${CAO_TOKEN}"
 fi
 
 command -v curl >/dev/null 2>&1 || {
@@ -52,7 +50,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Tail the SSE stream in the background for the duration of the showcase.
-curl -N -fsS "${STREAM_URL}" >"${FRAMES}" 2>/dev/null &
+curl -N -fsS "${STREAM_URL}" "${AUTH_ARGS[@]}" >"${FRAMES}" 2>/dev/null &
 TAIL_PID=$!
 sleep 1 # let the STATE_SNAPSHOT + subscription establish
 

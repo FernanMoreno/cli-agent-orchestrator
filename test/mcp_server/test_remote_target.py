@@ -17,7 +17,9 @@ from cli_agent_orchestrator.constants import API_BASE_URL
 from cli_agent_orchestrator.mcp_server.server import delete_terminal
 from cli_agent_orchestrator.utils.orchestration import (
     REMOTE_CONNECT_TIMEOUT,
-    _assign_impl,
+)
+from cli_agent_orchestrator.utils.orchestration import _assign_impl as _actual_assign_impl
+from cli_agent_orchestrator.utils.orchestration import (
     _handoff_impl,
     _mcp_timeout,
     _resolve_remote_provider,
@@ -32,6 +34,11 @@ from cli_agent_orchestrator.utils.orchestration import (
 # wrapper is still server-local, and it delegates to the moved
 # `_delete_terminal_impl`, so patching this module covers it too.
 _SRV = "cli_agent_orchestrator.utils.orchestration"
+
+
+def _assign_impl(*args, **kwargs):
+    kwargs.setdefault("operation_key", "remote-test-stable-key")
+    return _actual_assign_impl(*args, **kwargs)
 
 
 def _response(status_code=200, json_body=None):
@@ -121,7 +128,13 @@ class TestAssignRemote:
     @patch(f"{_SRV}.requests")
     def test_posts_deferred_session_to_remote_node(self, mock_requests):
         mock_requests.post.return_value = _response(
-            201, {"id": "beef0001", "session_name": "cao-remote"}
+            202,
+            {
+                "assignment_id": "assign-1",
+                "success": True,
+                "terminal_id": "beef0001",
+                "session_name": "cao-remote",
+            },
         )
         with patch.dict(os.environ, self._ENV, clear=False):
             result = _assign_impl(
@@ -140,27 +153,31 @@ class TestAssignRemote:
         )
 
         args, kwargs = mock_requests.post.call_args
-        assert args[0] == "http://cao-worker-0.cao-workers:9889/sessions"
+        assert args[0] == "http://cao-worker-0.cao-workers:9889/assignments"
         # Remote calls bound the connect leg separately (S2).
         assert kwargs["timeout"] == (REMOTE_CONNECT_TIMEOUT, _mcp_timeout())
         # Provider deliberately omitted: the remote node resolves it from its
         # own installed profile store.
-        assert kwargs["params"] == {"agent_profile": "developer"}
+        assert kwargs["json"]["agent_profile"] == "developer"
+        assert "provider" not in kwargs["json"]
+        assert kwargs["json"]["operation_key"] == "remote-test-stable-key"
         body = kwargs["json"]
         # Task text plus the injected callback instructions suffix.
-        assert body["initial_message"].startswith("Analyze the logs")
-        assert "a1b2c3d4" in body["initial_message"]
-        assert body["initial_message_orchestration_type"] == "assign"
-        # Callback env: advertised URL (trailing slash stripped) + supervisor id.
-        assert body["env_vars"] == {
-            "CAO_CALLBACK_URL": "http://cao-supervisor:9889",
-            "CAO_CALLBACK_TERMINAL_ID": "a1b2c3d4",
-        }
+        assert body["message"].startswith("Analyze the logs")
+        assert "a1b2c3d4" in body["message"]
+        assert body["callback_url"] == "http://cao-supervisor:9889"
+        assert body["callback_terminal_id"] == "a1b2c3d4"
 
     @patch(f"{_SRV}.requests")
     def test_elastic_callback_url_overrides_the_full_control_api(self, mock_requests):
         mock_requests.post.return_value = _response(
-            201, {"id": "beef0001", "session_name": "cao-worker-deadbeef"}
+            202,
+            {
+                "assignment_id": "assign-1",
+                "success": True,
+                "terminal_id": "beef0001",
+                "session_name": "cao-worker-deadbeef",
+            },
         )
         with patch.dict(os.environ, self._ENV, clear=False):
             result = _assign_impl(
@@ -172,18 +189,25 @@ class TestAssignRemote:
             )
 
         assert result["success"] is True
-        assert mock_requests.post.call_args.kwargs["params"]["session_name"] == (
+        assert mock_requests.post.call_args.kwargs["json"]["session_name"] == (
             "cao-worker-deadbeef"
         )
-        assert mock_requests.post.call_args.kwargs["json"]["env_vars"] == {
-            "CAO_CALLBACK_URL": "http://cao-worker-broker:9890",
-            "CAO_CALLBACK_TERMINAL_ID": "a1b2c3d4",
-        }
+        assert (
+            mock_requests.post.call_args.kwargs["json"]["callback_url"]
+            == "http://cao-worker-broker:9890"
+        )
+        assert mock_requests.post.call_args.kwargs["json"]["callback_terminal_id"] == "a1b2c3d4"
 
     @patch(f"{_SRV}.requests")
     def test_elastic_assignment_rejects_a_different_remote_session(self, mock_requests):
         mock_requests.post.return_value = _response(
-            201, {"id": "beef0001", "session_name": "cao-unexpected"}
+            202,
+            {
+                "assignment_id": "assign-1",
+                "success": True,
+                "terminal_id": "beef0001",
+                "session_name": "cao-unexpected",
+            },
         )
         with patch.dict(os.environ, self._ENV, clear=False):
             result = _assign_impl(
@@ -196,8 +220,10 @@ class TestAssignRemote:
 
         assert result["success"] is False
         assert result["terminal_id"] == "beef0001"
-        assert "cao-worker-deadbeef" in result["message"]
-        assert "cao-unexpected" in result["message"]
+        assert result["state"] == "reconcile"
+        assert result["assignment_id"] == "assign-1"
+        assert result["operation_key"] == "remote-test-stable-key"
+        assert mock_requests.post.call_count == 1
 
     @patch(f"{_SRV}.requests")
     def test_fails_fast_without_advertised_url(self, mock_requests):
@@ -218,13 +244,17 @@ class TestAssignRemote:
         assert "use_worktree" in result["message"]
         mock_requests.post.assert_not_called()
 
-    @patch(f"{_SRV}._get_cleanup_nudge", return_value="")
-    @patch(f"{_SRV}._create_terminal", return_value=("cafe0001", "mock_cli"))
-    def test_omitted_target_host_keeps_local_path(self, mock_create, _nudge):
+    @patch(f"{_SRV}.requests")
+    def test_omitted_target_host_keeps_local_path(self, transport):
+        transport.get.return_value = _response(200, {"generation": 7})
+        transport.post.return_value = _response(
+            202, {"assignment_id": "local-assign", "success": True, "terminal_id": "cafe0001"}
+        )
         with patch.dict(os.environ, {"CAO_TERMINAL_ID": "a1b2c3d4"}, clear=False):
             result = _assign_impl("developer", "Task")
         assert result["success"] is True
-        mock_create.assert_called_once()
+        transport.post.assert_called_once()
+        assert transport.post.call_args.args[0] == f"{API_BASE_URL}/terminals/a1b2c3d4/assignments"
 
 
 class TestHandoffRemote:
@@ -382,7 +412,7 @@ class TestAssignRemoteErrorSurface:
             result = _assign_impl("developer", "Task", target_host="cao-worker-0")
         assert result["success"] is False
         assert "Terminal limit reached" in result["message"]
-        assert "cao-worker-0" in result["message"]
+        assert result["target_host"] == "cao-worker-0"
         assert result["terminal_id"] is None
 
 

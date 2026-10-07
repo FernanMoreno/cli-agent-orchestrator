@@ -5,7 +5,7 @@ import logging
 import os
 import re
 import time
-from typing import Annotated, Any, Dict, List, Optional, Tuple, Union
+from typing import Annotated, Any, Dict, List, Optional, Tuple, TypedDict, Union, cast
 
 import requests
 from fastmcp import FastMCP
@@ -51,15 +51,27 @@ from cli_agent_orchestrator.utils.orchestration import (
     _delete_terminal_impl,
     _extract_error_detail,
     _handoff_impl,
+    _inspect_turn_impl,
     _join_native_child_impl,
     _list_native_children_impl,
     _mcp_timeout,
     _resolve_target_base_url,
     _send_message_impl,
+    _turn_action_impl,
 )
 from cli_agent_orchestrator.utils.workflow_events import parse_sse_frames
 
+
+class _AssignmentOptions(TypedDict, total=False):
+    operation_key: str
+
+
 logger = logging.getLogger(__name__)
+
+# Native terminal IDs are eight hexadecimal characters. An all-digit ID
+# can be emitted as a JSON integer by a model; accept only the lossless
+# eight-digit case. Short integers cannot recover missing leading zeroes.
+NumericTerminalId = Annotated[int, Field(strict=True, ge=10_000_000, le=99_999_999)]
 
 
 # Environment variable to enable/disable working_directory parameter
@@ -116,7 +128,9 @@ def _send_user_prompt_answer(terminal_id: str, answer: str) -> Dict[str, Any]:
 
     try:
         status_response = requests.get(
-            f"{API_BASE_URL}/terminals/{terminal_id}", timeout=_mcp_timeout()
+            f"{API_BASE_URL}/terminals/{terminal_id}",
+            timeout=_mcp_timeout(),
+            headers=_auth_headers(),
         )
         status_response.raise_for_status()
         terminal = status_response.json()
@@ -144,6 +158,7 @@ def _send_user_prompt_answer(terminal_id: str, answer: str) -> Dict[str, Any]:
                 "sender_id": os.environ.get("CAO_TERMINAL_ID", "supervisor"),
             },
             timeout=_mcp_timeout(),
+            headers=_auth_headers(),
         )
         response.raise_for_status()
         return {
@@ -172,6 +187,7 @@ def _try_send_hermes_prompt_answer(terminal_id: str, answer: str) -> Optional[Di
         f"{API_BASE_URL}/terminals/{terminal_id}/output",
         params={"mode": "full"},
         timeout=_mcp_timeout(),
+        headers=_auth_headers(),
     )
     output_response.raise_for_status()
     output = output_response.json().get("output", "")
@@ -217,6 +233,7 @@ def _send_terminal_key(terminal_id: str, key: str) -> None:
         f"{API_BASE_URL}/terminals/{terminal_id}/key",
         params={"key": key},
         timeout=_mcp_timeout(),
+        headers=_auth_headers(),
     )
     response.raise_for_status()
 
@@ -229,6 +246,7 @@ def _send_terminal_input(terminal_id: str, message: str) -> None:
             "sender_id": os.environ.get("CAO_TERMINAL_ID", "supervisor"),
         },
         timeout=_mcp_timeout(),
+        headers=_auth_headers(),
     )
     response.raise_for_status()
 
@@ -236,7 +254,9 @@ def _send_terminal_input(terminal_id: str, message: str) -> None:
 def _load_skill_impl(name: str) -> Union[str, Dict[str, Any]]:
     """Fetch a skill body from cao-server and return content or a structured error."""
     try:
-        response = requests.get(f"{API_BASE_URL}/skills/{name}", timeout=_mcp_timeout())
+        response = requests.get(
+            f"{API_BASE_URL}/skills/{name}", timeout=_mcp_timeout(), headers=_auth_headers()
+        )
         response.raise_for_status()
         return response.json()["content"]
     except requests.HTTPError as exc:
@@ -593,11 +613,18 @@ if ENABLE_WORKING_DIRECTORY:
             ),
         ),
         target_host: Optional[str] = Field(default=None, description=_target_host_field_desc),
+        operation_key: Optional[str] = Field(
+            default=None, description="Stable whole-assignment key; reuse after response loss."
+        ),
     ) -> Dict[str, Any]:
         denied = _tool_denied_reason("assign")
         if denied:
             return {"success": False, "error": denied}
-        return _assign_impl(
+        options: _AssignmentOptions = {}
+        if operation_key is not None:
+            options["operation_key"] = operation_key
+        return await asyncio.to_thread(
+            _assign_impl,
             agent_profile,
             message,
             working_directory,
@@ -605,6 +632,7 @@ if ENABLE_WORKING_DIRECTORY:
             model=model,
             use_worktree=use_worktree,
             target_host=target_host,
+            **options,
         )
 
 else:
@@ -631,11 +659,18 @@ else:
             ),
         ),
         target_host: Optional[str] = Field(default=None, description=_target_host_field_desc),
+        operation_key: Optional[str] = Field(
+            default=None, description="Stable whole-assignment key; reuse after response loss."
+        ),
     ) -> Dict[str, Any]:
         denied = _tool_denied_reason("assign")
         if denied:
             return {"success": False, "error": denied}
-        return _assign_impl(
+        options: _AssignmentOptions = {}
+        if operation_key is not None:
+            options["operation_key"] = operation_key
+        return await asyncio.to_thread(
+            _assign_impl,
             agent_profile,
             message,
             None,
@@ -643,7 +678,136 @@ else:
             model=model,
             use_worktree=use_worktree,
             target_host=target_host,
+            **options,
         )
+
+
+def _local_peer_caller_context() -> tuple[str | None, str | None, str | None]:
+    denied = _tool_denied_reason("assign", local_only=True)
+    if denied:
+        return None, None, denied
+    try:
+        terminal_id = _current_terminal_id()
+    except ValueError as error:
+        return None, None, str(error)
+    if not terminal_id:
+        return None, None, "local CAO peer tools require a calling CAO terminal"
+    try:
+        context = _get_terminal_context_from_env(local_only=True)
+    except requests.RequestException:
+        return None, None, "could not resolve the calling terminal through cao-server"
+    if not context or not context.get("cwd"):
+        return None, None, "calling terminal has no project working directory"
+    return terminal_id, str(context["cwd"]), None
+
+
+def _local_peer_http_error(error: Exception) -> Dict[str, Any]:
+    if isinstance(error, requests.HTTPError) and error.response is not None:
+        status_code = error.response.status_code
+        return {
+            "success": False,
+            "error": _extract_error_detail(error.response, "local CAO peer request failed"),
+            "retryable": status_code >= 500,
+        }
+    return {"success": False, "error": "local CAO peer service is unavailable", "retryable": True}
+
+
+@mcp.tool()
+async def list_local_cao_peers() -> Dict[str, Any]:
+    """List CAO instances already authorized for this terminal's local project.
+
+    This lists project-scoped CAO permissions; it does not expose the profiles'
+    filesystem or OS permissions. A person pairs instances with ``cao peer``.
+    """
+    terminal_id, project_path, context_error = _local_peer_caller_context()
+    if context_error:
+        return {"success": False, "error": context_error}
+    try:
+        peers = await asyncio.to_thread(
+            mcp_utils.local_get_json,
+            "/local-coordination/agent/peers",
+            requester_terminal_id=terminal_id,
+            project_path=project_path,
+        )
+        return {"success": True, "peers": peers}
+    except (requests.RequestException, ValueError) as error:
+        return _local_peer_http_error(error)
+
+
+@mcp.tool()
+async def assign_local_cao_task(
+    peer_instance_id: str = Field(description="Authorized local CAO instance ID."),
+    operation_key: str = Field(
+        description="Stable idempotency key; reuse it to reconcile after a lost response."
+    ),
+    agent_profile: str = Field(description="Agent profile installed on the destination CAO."),
+    message: str = Field(description="Task instructions for the destination agent."),
+    relative_working_directory: Optional[str] = Field(
+        default=None,
+        description=(
+            "Directory relative to the shared project root. Omit to use this terminal's "
+            "current directory."
+        ),
+    ),
+) -> Dict[str, Any]:
+    """Assign one idempotent task to a paired CAO profile on this computer."""
+    terminal_id, project_path, context_error = _local_peer_caller_context()
+    if context_error:
+        return {"success": False, "error": context_error}
+    body = {
+        "requester_terminal_id": terminal_id,
+        "peer_instance_id": peer_instance_id,
+        "project_path": project_path,
+        "operation_key": operation_key,
+        "agent_profile": agent_profile,
+        "message": message,
+        "relative_working_directory": relative_working_directory,
+    }
+    try:
+        receipt = await asyncio.to_thread(
+            mcp_utils.local_post_body_json, "/local-coordination/agent/tasks", body
+        )
+        return {"success": True, **receipt}
+    except (requests.RequestException, ValueError) as error:
+        return _local_peer_http_error(error)
+
+
+@mcp.tool()
+async def get_local_cao_task(
+    task_id: str = Field(description="Task ID returned by assign_local_cao_task."),
+) -> Dict[str, Any]:
+    """Read or reconcile a local peer task created by the calling terminal."""
+    terminal_id, _, context_error = _local_peer_caller_context()
+    if context_error:
+        return {"success": False, "error": context_error}
+    try:
+        receipt = await asyncio.to_thread(
+            mcp_utils.local_get_json,
+            f"/local-coordination/agent/tasks/{task_id}",
+            requester_terminal_id=terminal_id,
+        )
+        return {"success": True, **receipt}
+    except (requests.RequestException, ValueError) as error:
+        return _local_peer_http_error(error)
+
+
+@mcp.tool()
+async def cancel_local_cao_task(
+    task_id: str = Field(description="Task ID returned by assign_local_cao_task."),
+) -> Dict[str, Any]:
+    """Ask the destination CAO to stop a task owned by the calling terminal."""
+    terminal_id, _, context_error = _local_peer_caller_context()
+    if context_error:
+        return {"success": False, "error": context_error}
+    try:
+        receipt = await asyncio.to_thread(
+            mcp_utils.local_post_body_json,
+            f"/local-coordination/agent/tasks/{task_id}/cancel",
+            {"requester_terminal_id": terminal_id},
+        )
+        return {"success": True, **receipt}
+    except (requests.RequestException, ValueError) as error:
+        return _local_peer_http_error(error)
 
 
 @mcp.tool()
@@ -729,6 +893,9 @@ async def assign_elastic(
     ),
     engine: Optional[str] = Field(default=None, description="Optional Kiro engine override"),
     model: Optional[str] = Field(default=None, description=_model_field_desc),
+    operation_key: Optional[str] = Field(
+        default=None, description="Stable whole placement key; required before provisioning"
+    ),
 ) -> Dict[str, Any]:
     """Provision one elastic worker and assign one task to it.
 
@@ -744,90 +911,50 @@ async def assign_elastic(
     arrived, and records which happened. Query ``GET /workers`` on the broker
     when a delegation reports success and produces no artifact.
     """
-    try:
-        callback_terminal_id = _current_terminal_id()
-        if not callback_terminal_id:
-            raise ValueError("assign_elastic must run from inside a CAO terminal")
-        broker_url, broker_token = _elastic_broker_config()
-        # `provider` is omitted rather than defaulted here on purpose. A default
-        # baked into this signature silently overrides the broker's, so a fleet
-        # whose image ships one provider would still be asked for another - and
-        # the failure names a CLI the caller never mentioned. The provider a
-        # worker can actually run is a property of the deployment, so the
-        # deployment decides it.
-        #
-        # The isinstance check is not defensive noise. Called through FastMCP,
-        # `provider` arrives resolved to a string or None; called directly - as
-        # the tests do - the unfilled default is the `FieldInfo` object itself,
-        # which a plain truthiness test would happily place into the request body.
-        payload: Dict[str, Any] = {
-            "agent_profile": agent_profile,
-            "callback_terminal_id": callback_terminal_id,
-        }
-        if isinstance(provider, str) and provider.strip():
-            payload["provider"] = provider.strip()
-        # `requests` is blocking, and this coroutine runs on the MCP server's
-        # event loop. Called once that costs nothing; called five times in one
-        # LLM turn - the fan-out this tool exists for - the awaits could not
-        # interleave, so five placements ran strictly one after another. Measured
-        # from the broker's access log: the five POSTs never overlapped, 16-17s
-        # apart, 76s from first to last, and a failed worker's DELETE landed
-        # before the next POST was even sent.
-        #
-        # to_thread moves the block off the loop so the gather actually gathers.
-        # It changes nothing for a single delegation - that call was never the
-        # latency, the worker's boot was - and the broker was always ready for it:
-        # `create_worker` is a sync `def`, so Starlette already runs it in its own
-        # threadpool worker.
-        response = await asyncio.to_thread(
-            lambda: requests.post(
-                f"{broker_url}/workers",
-                headers={"X-CAO-Broker-Token": broker_token},
-                json=payload,
-                timeout=(REMOTE_CONNECT_TIMEOUT, 360),
-            )
-        )
-        response.raise_for_status()
-        lease = response.json()
-        worker_id = str(lease["worker_id"])
-        worker_message = (
-            message + "\n\n[Elastic worker lifecycle: make every tool call you "
-            "need BEFORE you write any prose. Text that settles before your first "
-            "tool call is read as the end of your turn, and this terminal is then "
-            "killed with the task unfinished. When the task is fully complete, "
-            "call complete_assignment with your final result. Do not use "
-            "send_message for the final result; complete_assignment acknowledges "
-            "delivery before terminating this disposable worker.]"
-        )
-        # Also off the loop: _assign_impl waits for the new worker to answer and
-        # then posts the task to it, both blocking. This is the longer of the two
-        # blocks, so threading only the broker call above would have left the
-        # serialisation almost entirely in place.
-        result = await asyncio.to_thread(
-            _assign_impl,
-            agent_profile,
-            worker_message,
-            str(lease["working_directory"]),
-            engine=engine,
-            model=model,
-            target_host=str(lease["target_host"]),
-            ready_wait_seconds=_elastic_ready_wait(),
-            callback_url=os.environ.get(ELASTIC_CALLBACK_URL_ENV) or None,
-            remote_session_name=str(lease["session_name"]),
-        )
-        result["worker_id"] = worker_id
-        result["elastic"] = True
-        if not result.get("success"):
-            result["worker_released"] = await asyncio.to_thread(
-                _release_elastic_worker, broker_url, broker_token, worker_id
-            )
-        return result
-    except Exception as exc:
+    denied = await asyncio.to_thread(_tool_denied_reason, "assign_elastic")
+    if denied:
+        return {"success": False, "terminal_id": None, "elastic": True, "message": denied}
+    terminal_id = _current_terminal_id()
+    if not terminal_id:
+        return {"success": False, "error_kind": "caller_required", "elastic": True}
+    if not isinstance(operation_key, str) or not operation_key:
         return {
             "success": False,
-            "terminal_id": None,
+            "error_kind": "assignment_operation_key_required",
             "elastic": True,
-            "message": f"Elastic assignment failed: {exc}",
+            "message": "Elastic assignment requires a stable operation_key before provisioning.",
+        }
+    body = {"operation_key": operation_key, "agent_profile": agent_profile, "message": message}
+    for key, value in (("provider", provider), ("engine", engine), ("model", model)):
+        if isinstance(value, str):
+            body[key] = value
+    try:
+        response = await asyncio.to_thread(
+            requests.post,
+            API_BASE_URL + f"/terminals/{terminal_id}/elastic-assignments",
+            json=body,
+            headers=_auth_headers(),
+            timeout=(REMOTE_CONNECT_TIMEOUT, 660),
+        )
+        value = response.json()
+        if response.status_code in (400, 401, 403, 409, 422, 429):
+            return {
+                "success": False,
+                "state": "refused",
+                "elastic": True,
+                "detail": value.get("detail"),
+            }
+        if not response.ok or not isinstance(value, dict) or not value.get("assignment_id"):
+            raise ValueError("assignment response unavailable")
+        return value
+    except (requests.RequestException, ValueError):
+        return {
+            "success": False,
+            "state": "reconcile",
+            "elastic": True,
+            "operation_key": operation_key,
+            "error_kind": "assignment_reconcile_required",
+            "message": "Inspect or retry the same key; do not provision another worker.",
         }
 
 
@@ -835,7 +962,7 @@ async def assign_elastic(
 @mcp.tool()
 async def send_message(
     message: str = Field(description="Message content to send"),
-    receiver_id: Optional[str] = Field(
+    receiver_id: Optional[Union[str, NumericTerminalId]] = Field(
         default=None,
         description=(
             "Target terminal ID. Omit to reply to the terminal that created "
@@ -859,7 +986,10 @@ async def send_message(
     Returns:
         Dict with success status and message details
     """
-    return _send_message_impl(receiver_id, message)
+    canonical_receiver = (
+        str(receiver_id) if type(receiver_id) is int else cast(Optional[str], receiver_id)
+    )
+    return _send_message_impl(canonical_receiver, message)
 
 
 @mcp.tool()
@@ -941,6 +1071,7 @@ async def emit_ui(
             "terminal_id": terminal_id,
         },
         timeout=_mcp_timeout(),
+        headers=_auth_headers(),
     )
     if response.status_code == 400:
         raise ValueError(_extract_error_detail(response, "invalid UI intent"))
@@ -1155,7 +1286,9 @@ def _require_discovery_marker(own_terminal_id: str, action: str) -> Optional[Dic
     """
     try:
         response = requests.get(
-            f"{API_BASE_URL}/terminals/{own_terminal_id}", timeout=_mcp_timeout()
+            f"{API_BASE_URL}/terminals/{own_terminal_id}",
+            timeout=_mcp_timeout(),
+            headers=_auth_headers(),
         )
         response.raise_for_status()
         allowed_tools = response.json().get("allowed_tools")
@@ -1205,6 +1338,7 @@ def _list_siblings_impl(depth: Optional[int], cross_session: bool = False) -> Di
             f"{API_BASE_URL}/terminals/{own_terminal_id}/siblings",
             params=params,
             timeout=_mcp_timeout(),
+            headers=_auth_headers(),
         )
         response.raise_for_status()
         return {"success": True, "siblings": response.json()}
@@ -1229,6 +1363,7 @@ def _update_metadata_impl(metadata: Dict[str, Any]) -> Dict[str, Any]:
         response = requests.patch(
             f"{API_BASE_URL}/terminals/{own_terminal_id}/metadata",
             json={"metadata": metadata},
+            headers=_auth_headers(),
             timeout=_mcp_timeout(),
         )
         response.raise_for_status()
@@ -1373,7 +1508,7 @@ def find_profiles(
 # =============================================================================
 
 
-def _get_terminal_context_from_env() -> Optional[Dict[str, Any]]:
+def _get_terminal_context_from_env(*, local_only: bool = False) -> Optional[Dict[str, Any]]:
     """Build terminal context dict from the calling terminal's CAO_TERMINAL_ID."""
     try:
         terminal_id = _current_terminal_id()
@@ -1396,7 +1531,8 @@ def _get_terminal_context_from_env() -> Optional[Dict[str, Any]]:
         # context" — reporting a down server as a missing identity is the same
         # class of misdirection as reporting an unreadable config as "disabled".
         try:
-            meta = mcp_utils.get_json(f"/terminals/{terminal_id}", timeout=_mcp_timeout())
+            get_json = mcp_utils.local_get_json if local_only else mcp_utils.get_json
+            meta = get_json(f"/terminals/{terminal_id}", timeout=_mcp_timeout())
         except requests.HTTPError as e:
             if getattr(e.response, "status_code", None) == 404:
                 return None
@@ -1412,13 +1548,19 @@ def _get_terminal_context_from_env() -> Optional[Dict[str, Any]]:
         # reasoning as above — best-effort, so a failure degrades project scope
         # rather than failing the call.
         try:
-            wd_resp = requests.get(
-                f"{API_BASE_URL}/terminals/{terminal_id}/working-directory",
-                headers=mcp_utils._auth_headers() or None,
-                timeout=_mcp_timeout(),
-            )
-            if wd_resp.status_code == 200:
-                ctx["cwd"] = wd_resp.json().get("working_directory")
+            if local_only:
+                wd_data = mcp_utils.local_get_json(
+                    f"/terminals/{terminal_id}/working-directory", timeout=_mcp_timeout()
+                )
+                ctx["cwd"] = wd_data.get("working_directory")
+            else:
+                wd_resp = requests.get(
+                    f"{API_BASE_URL}/terminals/{terminal_id}/working-directory",
+                    headers=mcp_utils._auth_headers() or None,
+                    timeout=_mcp_timeout(),
+                )
+                if wd_resp.status_code == 200:
+                    ctx["cwd"] = wd_resp.json().get("working_directory")
         except Exception:
             pass
         return ctx
@@ -1481,7 +1623,7 @@ def _caller_effective_allowed_tools(context: Dict[str, Any]) -> Optional[List[st
     return resolve_allowed_tools(profile.allowedTools, profile.role, mcp_server_names)
 
 
-def _tool_denied_reason(tool_name: str) -> Optional[str]:
+def _tool_denied_reason(tool_name: str, *, local_only: bool = False) -> Optional[str]:
     """Reason the calling terminal's allowlist bars ``tool_name``, or None to allow.
 
     ``assign`` and ``handoff`` spawn a terminal under a caller-chosen
@@ -1515,7 +1657,11 @@ def _tool_denied_reason(tool_name: str) -> Optional[str]:
         return None
 
     try:
-        context = _get_terminal_context_from_env()
+        context = (
+            _get_terminal_context_from_env(local_only=True)
+            if local_only
+            else _get_terminal_context_from_env()
+        )
     except Exception as e:  # noqa: BLE001  (an unknown result must not dispatch)
         logger.warning(f"authorization lookup failed for '{tool_name}': {e}")
         return f"cannot authorize '{tool_name}': the calling terminal could not be resolved ({e})"
@@ -1538,7 +1684,9 @@ def _tool_denied_reason(tool_name: str) -> Optional[str]:
     if allowed is None:
         return f"cannot authorize '{tool_name}': the caller's allowed tools could not be resolved"
 
-    if "*" in allowed or CAO_MCP_SERVER_SELECTOR in allowed:
+    from cli_agent_orchestrator.utils.tool_mapping import granted_mcp_servers
+
+    if granted_mcp_servers(allowed, [CAO_MCP_SERVER_SELECTOR[1:]]):
         return None
 
     return (
@@ -1678,19 +1826,16 @@ async def memory_recall(
 
     try:
         terminal_context = _get_terminal_context_from_env()
-        kwargs = {
-            "query": query,
-            "scope": scope,
-            "memory_type": memory_type,
-            "limit": limit,
-            "terminal_context": terminal_context,
-            "search_mode": search_mode,
-            "sort_by": sort_by,
-            "include_related": (
-                bool(include_related) if isinstance(include_related, bool) else False
-            ),
-        }
-        memories = await recall_memory(**kwargs)
+        memories = await recall_memory(
+            query=query,
+            scope=scope,
+            memory_type=memory_type,
+            limit=limit,
+            terminal_context=terminal_context,
+            search_mode=search_mode,
+            sort_by=sort_by,
+            include_related=bool(include_related) if isinstance(include_related, bool) else False,
+        )
         # Curated recall is inserted verbatim into another terminal's context.
         # Keep its vault/native scope set aligned with the deterministic builder:
         # agent-scoped memories are explicit-recall-only in this release.
@@ -2101,6 +2246,7 @@ async def workflow_return(
             f"{API_BASE_URL}/workflows/runs/{run_id}/steps/{step_id}/output",
             json=payload,
             timeout=_mcp_timeout(),
+            headers=_auth_headers(),
         )
     except requests.RequestException as e:
         return ReturnAck(
@@ -2138,6 +2284,8 @@ async def workflow_run(
             )
         ),
     ] = None,
+    prepared_id: Optional[str] = None,
+    expected_plan_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run a workflow to completion and return the aggregated result (issue #312, N5).
 
@@ -2170,6 +2318,10 @@ async def workflow_run(
     # sentinel, which is not a str) — FR-1.2.
     if isinstance(run_id, str):
         payload["run_id"] = run_id
+    if (prepared_id is None) != (expected_plan_id is None):
+        return {"ok": False, "kind": "prepared_plan_identity_incomplete", "retryable": False}
+    if prepared_id is not None:
+        payload.update(prepared_id=prepared_id, expected_plan_id=expected_plan_id)
     try:
         # The server awaits the WHOLE run inline (Q1=A), so this blocks for the full
         # run duration — use the worst-case-covering run timeout, NOT the short
@@ -2178,6 +2330,7 @@ async def workflow_run(
             f"{API_BASE_URL}/workflows/runs",
             json=payload,
             timeout=WORKFLOW_RUN_REQUEST_TIMEOUT,
+            headers=_auth_headers(),
         )
     except requests.RequestException as e:
         return {"ok": False, "error": f"could not reach cao-server: {e}"}
@@ -2265,6 +2418,7 @@ async def workflow_resume(
             f"{API_BASE_URL}/workflows/runs/{run_id}/resume",
             json={"decisions": dict(supplied)} if supplied else None,
             timeout=WORKFLOW_RUN_REQUEST_TIMEOUT,
+            headers=_auth_headers(),
         )
     except requests.RequestException as e:
         return {"ok": False, "error": f"could not reach cao-server: {e}"}
@@ -2297,6 +2451,7 @@ async def workflow_cancel(
         response = requests.post(
             f"{API_BASE_URL}/workflows/runs/{run_id}/cancel",
             timeout=_mcp_timeout(),
+            headers=_auth_headers(),
         )
     except requests.RequestException as e:
         return {"ok": False, "error": f"could not reach cao-server: {e}"}
@@ -2362,6 +2517,7 @@ async def workflow_start(
             f"{API_BASE_URL}/workflows/runs:submit",
             json=payload,
             timeout=_mcp_timeout(),
+            headers=_auth_headers(),
         )
     except requests.RequestException as e:
         return {"ok": False, "error": f"could not reach cao-server: {e}"}
@@ -2415,6 +2571,7 @@ async def workflow_plan_approval(
         response = requests.get(
             f"{API_BASE_URL}/workflows/runs/{run_id}/plan",
             timeout=_mcp_timeout(),
+            headers=_auth_headers(),
         )
     except requests.RequestException as e:
         return {"ok": False, "error": f"could not reach cao-server: {e}"}
@@ -2451,6 +2608,7 @@ async def workflow_status(
         response = requests.get(
             f"{API_BASE_URL}/workflows/runs/{run_id}",
             timeout=_mcp_timeout(),
+            headers=_auth_headers(),
         )
     except requests.RequestException as e:
         return {"ok": False, "error": f"could not reach cao-server: {e}"}
@@ -2926,6 +3084,7 @@ async def workflow_result(
         response = requests.get(
             f"{API_BASE_URL}/workflows/runs/{run_id}/result",
             timeout=_mcp_timeout(),
+            headers=_auth_headers(),
         )
     except requests.RequestException as e:
         return {"ok": False, "error": f"could not reach cao-server: {e}"}
@@ -2959,6 +3118,7 @@ async def workflow_list(
             f"{API_BASE_URL}/workflows/runs",
             params=params,
             timeout=_mcp_timeout(),
+            headers=_auth_headers(),
         )
     except requests.RequestException as e:
         return {"ok": False, "error": f"could not reach cao-server: {e}"}
@@ -2996,6 +3156,7 @@ async def workflow_wait(
             response = requests.get(
                 f"{API_BASE_URL}/workflows/runs/{run_id}",
                 timeout=_mcp_timeout(),
+                headers=_auth_headers(),
             )
         except requests.RequestException as e:
             return {"ok": False, "error": f"could not reach cao-server: {e}"}
@@ -3022,6 +3183,7 @@ async def workflow_wait(
         result_response = requests.get(
             f"{API_BASE_URL}/workflows/runs/{run_id}/result",
             timeout=_mcp_timeout(),
+            headers=_auth_headers(),
         )
     except requests.RequestException as e:
         return {"ok": False, "error": f"could not reach cao-server: {e}"}
@@ -3060,7 +3222,11 @@ def _classify_events_404(run_id: str, detail: str) -> tuple:
     than asserting a server capability it could not verify.
     """
     try:
-        probe = requests.get(f"{API_BASE_URL}/workflows/runs/{run_id}", timeout=_mcp_timeout())
+        probe = requests.get(
+            f"{API_BASE_URL}/workflows/runs/{run_id}",
+            timeout=_mcp_timeout(),
+            headers=_auth_headers(),
+        )
     except requests.RequestException:
         return detail, False
     if probe.status_code == 200:
@@ -3137,7 +3303,7 @@ async def workflow_events(
     params: Dict[str, Any] = {}
     if isinstance(after_seq, int):
         params["after_seq"] = after_seq
-    headers = {"Accept": "text/event-stream"}
+    headers = {**_auth_headers(), "Accept": "text/event-stream"}
 
     events: List[Dict[str, Any]] = []
     gaps: List[Dict[str, Any]] = []
@@ -3261,6 +3427,33 @@ async def workflow_events(
     }
 
 
+@mcp.tool()
+async def inspect_terminal_turn(terminal_id: str) -> Dict[str, Any]:
+    """Inspect turn diagnosis and allowed actions without exposing receipt secrets."""
+    denied = _tool_denied_reason("inspect_terminal_turn")
+    if denied:
+        return {"success": False, "error": denied}
+    return await asyncio.to_thread(_inspect_turn_impl, terminal_id)
+
+
+@mcp.tool()
+async def verify_terminal_turn(terminal_id: str, generation: str) -> Dict[str, Any]:
+    """Recover the inspected durable turn without resending its task."""
+    denied = _tool_denied_reason("verify_terminal_turn")
+    if denied:
+        return {"success": False, "error": denied}
+    return await asyncio.to_thread(_turn_action_impl, terminal_id, generation, "verify")
+
+
+@mcp.tool()
+async def cancel_terminal_turn(terminal_id: str, generation: str) -> Dict[str, Any]:
+    """Recover the inspected durable turn without resending its task."""
+    denied = _tool_denied_reason("cancel_terminal_turn")
+    if denied:
+        return {"success": False, "error": denied}
+    return await asyncio.to_thread(_turn_action_impl, terminal_id, generation, "cancel")
+
+
 # The MCP Apps surface — tools (render_dashboard / render_agent_view /
 # cao_fetch_history / subscribe_events / submit_command), the ui://cao/* resources,
 # the topology widget (cao://widget/topology + /widgets/topology/), and the SEP-2133
@@ -3275,7 +3468,461 @@ register_mcp_server_surfaces(mcp)
 
 def main():
     """Main entry point for the MCP server."""
+    from pathlib import Path
+
+    from cli_agent_orchestrator.mcp_server.startup_readiness import StartupReadinessMiddleware
+    from cli_agent_orchestrator.utils.mcp_readiness import READY_FILE_ENV, READY_TOKEN_ENV
+
+    ready_file = os.environ.get(READY_FILE_ENV)
+    ready_token = os.environ.get(READY_TOKEN_ENV)
+    if ready_file and ready_token:
+        mcp.add_middleware(StartupReadinessMiddleware(Path(ready_file), ready_token))
     mcp.run()
+
+
+async def _workflow_authoring_http(
+    method: str, path: str, body=None, *, tool_name: str
+) -> Dict[str, Any]:
+    """Keep transport off the event loop and preserve structured API refusal."""
+    denied = await asyncio.to_thread(_tool_denied_reason, tool_name)
+    if denied:
+        return {"ok": False, "kind": "tool_denied", "message": denied, "retryable": False}
+    try:
+        response = await asyncio.to_thread(
+            requests.request,
+            method,
+            API_BASE_URL + path,
+            json=body,
+            headers=_auth_headers(),
+            timeout=_mcp_timeout(),
+        )
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        return {"ok": False, "kind": "authoring_transport_unavailable", "retryable": True}
+    if not isinstance(payload, dict):
+        return {"ok": False, "kind": "authoring_response_invalid", "retryable": False}
+    if not response.ok:
+        return {
+            "ok": False,
+            "status_code": response.status_code,
+            "detail": payload.get("detail", payload),
+        }
+    return {"ok": True, **payload}
+
+
+@mcp.tool()
+async def workflow_create(name: str, content: str) -> Dict[str, Any]:
+    """Create Python workflow source without execution; no caller-controlled directory."""
+    return await _workflow_authoring_http(
+        "POST", "/workflows", {"name": name, "content": content}, tool_name="workflow_create"
+    )
+
+
+@mcp.tool()
+async def workflow_update(name: str, content: str, expected_source_hash: str) -> Dict[str, Any]:
+    """Update a previously read exact source revision; conflicts require review."""
+    from urllib.parse import quote
+
+    return await _workflow_authoring_http(
+        "PUT",
+        "/workflows/" + quote(name, safe=""),
+        {"content": content, "expected_source_hash": expected_source_hash},
+        tool_name="workflow_update",
+    )
+
+
+@mcp.tool()
+async def workflow_get(name: str) -> Dict[str, Any]:
+    """Get exact source and revision; preserves workflow_list's existing run semantics."""
+    from urllib.parse import quote
+
+    return await _workflow_authoring_http(
+        "GET", "/workflows/" + quote(name, safe="") + "/source", tool_name="workflow_get"
+    )
+
+
+@mcp.tool()
+async def workflow_validate(name: str, content: str) -> Dict[str, Any]:
+    """Validate source without executing it."""
+    return await _workflow_authoring_http(
+        "POST",
+        "/workflows/validate",
+        {"name": name, "content": content},
+        tool_name="workflow_validate",
+    )
+
+
+@mcp.tool()
+async def workflow_prepare(
+    name_or_path: str,
+    target_mappings: Dict[str, Any],
+    binding_selections: Dict[str, Any],
+    inputs: Optional[Dict[str, Any]] = None,
+    scope_source: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Freeze a private exact plan and return safe digests for human review."""
+    body = {
+        "name_or_path": name_or_path,
+        "target_mappings": target_mappings,
+        "binding_selections": binding_selections,
+        "inputs": inputs or {},
+    }
+    if scope_source is not None:
+        body["scope_source"] = scope_source
+    return await _workflow_authoring_http(
+        "POST", "/workflows/plans:prepare", body, tool_name="workflow_prepare"
+    )
+
+
+@mcp.tool()
+async def workflow_review(prepared_id: str) -> Dict[str, Any]:
+    """Read safe prepared approval metadata. This tool cannot grant approval."""
+    from urllib.parse import quote
+
+    return await _workflow_authoring_http(
+        "GET", "/workflows/plans/" + quote(prepared_id, safe=""), tool_name="workflow_review"
+    )
+
+
+@mcp.tool()
+async def workflow_seeds(name: str) -> Dict[str, Any]:
+    """Discover caller-owned authorized binding selectors; cannot create authority."""
+    from urllib.parse import quote
+
+    return await _workflow_authoring_http(
+        "GET", "/workflows/" + quote(name, safe="") + "/provisions", tool_name="workflow_seeds"
+    )
+
+
+# Beads remains an HTTP metadata/approved-plan facade, never an execution engine.
+def _beads_segment(value: str) -> str:
+    from urllib.parse import quote
+
+    return quote(value, safe="")
+
+
+async def _beads_http(method, path, body=None, *, tool_name):
+    denied = await asyncio.to_thread(_tool_denied_reason, tool_name)
+    if denied:
+        return {"ok": False, "kind": "tool_denied", "retryable": False, "message": denied}
+    mutating = isinstance(body, dict) and isinstance(body.get("operation_key"), str)
+    uncertain = (
+        {
+            "ok": False,
+            "kind": "beads_write_uncertain",
+            "retryable": False,
+            "state": "reconcile",
+            "operation_key": body["operation_key"],
+        }
+        if mutating
+        else None
+    )
+    try:
+        response = await asyncio.to_thread(
+            requests.request,
+            method,
+            API_BASE_URL + "/beads" + path,
+            json=body,
+            headers=_auth_headers(),
+            timeout=_mcp_timeout(),
+        )
+        value = response.json()
+        if not isinstance(value, dict):
+            raise ValueError("invalid task response")
+    except (requests.RequestException, ValueError):
+        if uncertain is not None:
+            return uncertain
+        return {
+            "ok": False,
+            "kind": "beads_transport_unavailable",
+            "retryable": method == "GET",
+            "state": "unavailable" if method == "GET" else "reconcile",
+        }
+    if not response.ok:
+        if uncertain is not None and response.status_code not in (400, 401, 403, 409, 422, 429):
+            return {**uncertain, "status_code": response.status_code}
+        return {
+            "ok": False,
+            "status_code": response.status_code,
+            "detail": value.get("detail"),
+            "state": "refused",
+        }
+    return {"ok": True, **value}
+
+
+@mcp.tool()
+async def beads_capabilities() -> Dict[str, Any]:
+    """Discover optional registered task workspaces without creating or launching anything."""
+    return await _beads_http("GET", "/capabilities", tool_name="beads_capabilities")
+
+
+@mcp.tool()
+async def list_beads(
+    workspace_id: str, status: Optional[str] = None, priority: Optional[int] = None
+) -> Dict[str, Any]:
+    """Read task metadata; external status is separate from verified Work completion."""
+    from urllib.parse import urlencode
+
+    query = urlencode(
+        {
+            key: value
+            for key, value in {"status": status, "priority": priority}.items()
+            if value is not None
+        }
+    )
+    return await _beads_http(
+        "GET",
+        "/workspaces/" + _beads_segment(workspace_id) + "/tasks" + ("?" + query if query else ""),
+        tool_name="list_beads",
+    )
+
+
+@mcp.tool()
+async def get_bead(workspace_id: str, task_id: str) -> Dict[str, Any]:
+    """Read a task and the exact material hash required for mutations."""
+    return await _beads_http(
+        "GET",
+        "/workspaces/" + _beads_segment(workspace_id) + "/tasks/" + _beads_segment(task_id),
+        tool_name="get_bead",
+    )
+
+
+@mcp.tool()
+async def get_ready_beads(workspace_id: str, epic_id: Optional[str] = None) -> Dict[str, Any]:
+    """Read externally ready tasks; readiness does not authorize execution."""
+    path = "/workspaces/" + _beads_segment(workspace_id) + "/ready"
+    if epic_id:
+        path += "?epic_id=" + _beads_segment(epic_id)
+    return await _beads_http("GET", path, tool_name="get_ready_beads")
+
+
+@mcp.tool()
+async def mutate_bead(
+    workspace_id: str,
+    operation_key: str,
+    action: str,
+    values: Dict[str, Any],
+    task_id: Optional[str] = None,
+    expected_hash: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Submit CRUD/comments/notes/labels/dependency metadata with stable key and material CAS.
+
+    Unknown writes must be inspected with the same operation identity, never repeated under a new key.
+    """
+    return await _beads_http(
+        "POST",
+        "/workspaces/" + _beads_segment(workspace_id) + "/mutations",
+        {
+            "operation_key": operation_key,
+            "action": action,
+            "values": values,
+            "task_id": task_id,
+            "expected_hash": expected_hash,
+        },
+        tool_name="mutate_bead",
+    )
+
+
+@mcp.tool()
+async def get_epic_status(workspace_id: str, epic_id: str) -> Dict[str, Any]:
+    """Read explicit epic children/readiness and separate external closure statistics."""
+    return await _beads_http(
+        "GET",
+        "/workspaces/" + _beads_segment(workspace_id) + "/epics/" + _beads_segment(epic_id),
+        tool_name="get_epic_status",
+    )
+
+
+@mcp.tool()
+async def decompose_beads(text: str) -> Dict[str, Any]:
+    """Preview bounded multiline tasks without launching a model or writing metadata."""
+    return await _beads_http(
+        "POST", "/decompose-preview", {"text": text}, tool_name="decompose_beads"
+    )
+
+
+@mcp.tool()
+async def create_epic(
+    workspace_id: str,
+    operation_key: str,
+    tasks: List[Dict[str, Any]],
+    draft_hash: str,
+    epic: Dict[str, Any],
+    sequential: bool = False,
+) -> Dict[str, Any]:
+    """Create an explicit epic and children through resumable metadata receipts."""
+    return await _beads_http(
+        "POST",
+        "/workspaces/" + _beads_segment(workspace_id) + "/bulk-create",
+        {
+            "operation_key": operation_key,
+            "tasks": tasks,
+            "draft_hash": draft_hash,
+            "epic": epic,
+            "sequential": sequential,
+        },
+        tool_name="create_epic",
+    )
+
+
+@mcp.tool()
+async def inspect_beads_operation(operation_id: str, reconcile: bool = False) -> Dict[str, Any]:
+    """Inspect an owned durable mutation; reconciliation observes without replaying bd."""
+    return await _beads_http(
+        "POST" if reconcile else "GET",
+        "/operations/" + _beads_segment(operation_id) + ("/reconcile" if reconcile else ""),
+        tool_name="inspect_beads_operation",
+    )
+
+
+# Ralph wrappers use the same authenticated API; no approval/grant creation.
+async def _ralph_api(tool, method, path, body=None):
+    from cli_agent_orchestrator.constants import MCP_REQUEST_TIMEOUT
+
+    denied = await asyncio.to_thread(_tool_denied_reason, tool)
+    if denied:
+        return {"success": False, "message": denied}
+    try:
+        response = await asyncio.to_thread(
+            requests.request,
+            method,
+            API_BASE_URL + "/ralph" + path,
+            json=body,
+            headers=_auth_headers(),
+            timeout=MCP_REQUEST_TIMEOUT,
+        )
+        value = response.json()
+        if not response.ok:
+            return {"success": False, "detail": value.get("detail"), "retryable": False}
+        return value
+    except (requests.RequestException, ValueError):
+        return {"success": False, "error_kind": "coordinator_unavailable", "retryable": True}
+
+
+@mcp.tool()
+async def ralph_start(prepared_id: str, expected_plan_id: str, run_id: str) -> Dict[str, Any]:
+    """Start an already reviewed and admin-approved bounded plan."""
+    return await _ralph_api(
+        "ralph_start",
+        "POST",
+        "/runs",
+        {"prepared_id": prepared_id, "expected_plan_id": expected_plan_id, "run_id": run_id},
+    )
+
+
+@mcp.tool()
+async def ralph_status(identity: str) -> Dict[str, Any]:
+    """Read accepted checkpoints, bounds and authority/reconciliation pauses."""
+    from urllib.parse import quote
+
+    return await _ralph_api("ralph_status", "GET", "/runs/" + quote(identity, safe=""))
+
+
+@mcp.tool()
+async def ralph_feedback(identity: str, request_id: str, text: str) -> Dict[str, Any]:
+    """Queue bounded feedback for a future iteration, never an uncertain turn."""
+    from urllib.parse import quote
+
+    return await _ralph_api(
+        "ralph_feedback",
+        "POST",
+        "/runs/" + quote(identity, safe="") + "/feedback",
+        {"request_id": request_id, "text": text},
+    )
+
+
+@mcp.tool()
+async def ralph_stop(identity: str) -> Dict[str, Any]:
+    """Fence continuation; report stopped only after actual cessation proof."""
+    from urllib.parse import quote
+
+    return await _ralph_api("ralph_stop", "POST", "/runs/" + quote(identity, safe="") + "/stop", {})
+
+
+@mcp.tool()
+async def ralph_complete(identity: str) -> Dict[str, Any]:
+    """Revalidate accepted artifact and live criteria; no completion promise."""
+    from urllib.parse import quote
+
+    return await _ralph_api(
+        "ralph_complete", "POST", "/runs/" + quote(identity, safe="") + "/complete", {}
+    )
+
+
+@mcp.tool()
+async def prepare_bead_assignment(
+    workspace_id: str,
+    task_id: str,
+    operation_key: str,
+    expected_hash: str,
+    workflow_name: str,
+    criteria: list[dict],
+    binding_selections: dict,
+    max_iterations: int = 8,
+) -> Dict[str, Any]:
+    """Prepare a bounded task plan with existing authority; administrator approval is separate."""
+    return await _beads_http(
+        "POST",
+        "/workspaces/"
+        + _beads_segment(workspace_id)
+        + "/tasks/"
+        + _beads_segment(task_id)
+        + "/plans:prepare",
+        dict(
+            operation_key=operation_key,
+            expected_hash=expected_hash,
+            workflow_name=workflow_name,
+            criteria=criteria,
+            binding_selections=binding_selections,
+            max_iterations=max_iterations,
+        ),
+        tool_name="prepare_bead_assignment",
+    )
+
+
+@mcp.tool()
+async def inspect_bead_assignment(binding_id: str) -> Dict[str, Any]:
+    """Read owner-bound Work progress and verified task completion."""
+    return await _beads_http(
+        "GET", "/assignments/" + _beads_segment(binding_id), tool_name="inspect_bead_assignment"
+    )
+
+
+@mcp.tool()
+async def start_bead_assignment(
+    binding_id: str, expected_plan_id: str, run_id: str
+) -> Dict[str, Any]:
+    """Start an approved exact plan; retain run_id on uncertain responses."""
+    return await _beads_http(
+        "POST",
+        "/assignments/" + _beads_segment(binding_id) + "/start",
+        dict(expected_plan_id=expected_plan_id, run_id=run_id),
+        tool_name="start_bead_assignment",
+    )
+
+
+@mcp.tool()
+async def unassign_bead(binding_id: str) -> Dict[str, Any]:
+    """Fence future effects and request actual termination; unknown cleanup retains ownership."""
+    return await _beads_http(
+        "POST",
+        "/assignments/" + _beads_segment(binding_id) + "/unassign",
+        {},
+        tool_name="unassign_bead",
+    )
+
+
+@mcp.tool()
+async def close_verified_bead(
+    binding_id: str, operation_key: str, expected_hash: str
+) -> Dict[str, Any]:
+    """Close external metadata only after fresh accepted-artifact completion validation."""
+    return await _beads_http(
+        "POST",
+        "/assignments/" + _beads_segment(binding_id) + "/close-task",
+        dict(operation_key=operation_key, expected_hash=expected_hash),
+        tool_name="close_verified_bead",
+    )
 
 
 if __name__ == "__main__":

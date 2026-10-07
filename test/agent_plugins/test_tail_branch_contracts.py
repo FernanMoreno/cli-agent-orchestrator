@@ -126,10 +126,11 @@ class TestCommitPinnedCloneClearsStaging:
         from cli_agent_orchestrator.agent_plugins import resolver as rmod
 
         def fake_run(args, *, what, cwd=None, **k):
-            if cwd is not None and args[:1] in (["checkout"], ["fetch"]):
-                build_plugin(Path(cwd), "demo", skills=["alpha"])
-                (Path(cwd) / ".git").write_text("gitdir: /elsewhere/.git\n", encoding="utf-8")
-            return ""
+            if args[:1] == ["clone"]:
+                staged = Path(args[-1])
+                build_plugin(staged, "demo", skills=["alpha"])
+                (staged / ".git").write_text("gitdir: /elsewhere/.git\n", encoding="utf-8")
+            return "b" * 40 if args[:1] == ["rev-parse"] else ""
 
         monkeypatch.setattr(rmod, "_run_git", fake_run)
         resolved = rmod.resolve(

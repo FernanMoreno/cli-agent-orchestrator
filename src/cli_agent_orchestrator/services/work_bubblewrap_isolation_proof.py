@@ -7,6 +7,7 @@ import select
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.services.work_bubblewrap_runtime_snapshot import RuntimeSnapshot
@@ -65,7 +66,7 @@ class WorkBubblewrapRuntimeIsolationProof:
                 or identity.get("monitor_start_time_ticks") != self.monitor_start_time_ticks
                 or identity.get("init_pid") != self.init_pid
                 or identity.get("init_start_time_ticks") != self.init_start_time_ticks
-                or tuple(identity.get("pid_namespace", ())) != self.pid_namespace_identity
+                or identity.get("pid_namespace") != list(self.pid_namespace_identity)
                 or _process_start_time_ticks(self.monitor_pid) != self.monitor_start_time_ticks
                 or _process_start_time_ticks(self.init_pid) != self.init_start_time_ticks
                 or _namespace_identity(self.init_pid, "pid") != self.pid_namespace_identity
@@ -130,6 +131,7 @@ def _issue_runtime_isolation_proof(
         or type(init_start_time_ticks) is not int
         or init_start_time_ticks <= 0
         or type(pid_namespace) not in {list, tuple}
+        or not isinstance(pid_namespace, (list, tuple))
         or len(pid_namespace) != 2
         or any(type(part) is not int or part <= 0 for part in pid_namespace)
         or type(identity_digest) is not str
@@ -137,7 +139,7 @@ def _issue_runtime_isolation_proof(
         or process_identity.get("init_parent_pid") != monitor_pid
     ):
         raise WorkBubblewrapIsolationExpired("Bubblewrap process identity is invalid")
-    pid_namespace_identity = (pid_namespace[0], pid_namespace[1])
+    pid_namespace_identity = (cast(int, pid_namespace[0]), cast(int, pid_namespace[1]))
     _require_live_pidfd(monitor_pidfd, monitor_pid)
     _require_live_pidfd(init_pidfd, init_pid)
     if (

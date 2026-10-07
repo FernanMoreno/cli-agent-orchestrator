@@ -1,0 +1,587 @@
+{
+  "recorded_at_utc": "2026-10-07T09:19:11.604964+00:00",
+  "providers": {
+    "codex": {
+      "cli_version": "0.160.1",
+      "model": "gpt-6.1-sol"
+    },
+    "claude_code": {
+      "cli_version": "2.1.292",
+      "model": "sonnet"
+    },
+    "opencode_cli": {
+      "cli_version": "2.0.18",
+      "model": "opencode-go/longcat-2.5-preview-free"
+    }
+  },
+  "runs": [
+    {
+      "report": "self-matrix.xml",
+      "cases": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duration_seconds": 290.892
+    },
+    {
+      "report": "matrix.xml",
+      "cases": 6,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0,
+      "duration_seconds": 791.697
+    },
+    {
+      "report": "retry.xml",
+      "cases": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duration_seconds": 208.88600000000002,
+      "exit_code": 0,
+      "credential_copies_removed": true
+    }
+  ],
+  "source_sha256": {
+    "test/e2e/test_real_provider_matrix.py": "47a76959791cf8cb191a4de7a8be3c99910b5f62ebf67baeb76fc0b8ad70475b",
+    "test/fixtures/cao_server.py": "d47eab4e0bb97d84b1f89c39ea836bd38f52f1d41d89cce30f315518b6330d9a",
+    "src/cli_agent_orchestrator/providers/codex.py": "0ddb1c271c194555b778f0de522bbc70dbf48385250cfcfb3ae634392d39a913",
+    "src/cli_agent_orchestrator/providers/claude_code.py": "7c343fd7771c59eba225e4827142303b8bbcde57c9bf731a9fc05fc940447889",
+    "src/cli_agent_orchestrator/providers/opencode_cli.py": "acdccd08213b7ca8c069c3bd676d1c67f99cdf476f54320cd27bb693d78548f4"
+  },
+  "credential_copies_removed": true,
+  "cells": [
+    {
+      "cell": "codex->codex",
+      "child_model": "gpt-6.1-sol",
+      "child_provider": "codex",
+      "cleanup": {
+        "quota_terminal": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "session": {
+          "status": "validated"
+        }
+      },
+      "parent_model": "gpt-6.1-sol",
+      "parent_provider": "codex",
+      "quota_observation": {
+        "elapsed_seconds": null,
+        "limit_seconds": null,
+        "started_at_utc": null
+      },
+      "scenarios": {
+        "quota_continuation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "quota_wait_reconciliation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "sibling_cancellation_cleanup": {
+          "status": "validated"
+        },
+        "sibling_message_delivery": {
+          "status": "validated"
+        },
+        "successful_provider_turn": {
+          "status": "validated"
+        },
+        "timeout_reconciliation": {
+          "status": "validated"
+        }
+      },
+      "schema_version": 1,
+      "status": "validated",
+      "duration_seconds": 99.987
+    },
+    {
+      "cell": "claude_code->claude_code",
+      "child_model": "sonnet",
+      "child_provider": "claude_code",
+      "cleanup": {
+        "quota_terminal": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "session": {
+          "status": "validated"
+        }
+      },
+      "parent_model": "sonnet",
+      "parent_provider": "claude_code",
+      "quota_observation": {
+        "elapsed_seconds": null,
+        "limit_seconds": null,
+        "started_at_utc": null
+      },
+      "scenarios": {
+        "quota_continuation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "quota_wait_reconciliation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "sibling_cancellation_cleanup": {
+          "status": "validated"
+        },
+        "sibling_message_delivery": {
+          "status": "validated"
+        },
+        "successful_provider_turn": {
+          "status": "validated"
+        },
+        "timeout_reconciliation": {
+          "status": "validated"
+        }
+      },
+      "schema_version": 1,
+      "status": "validated",
+      "duration_seconds": 114.404
+    },
+    {
+      "cell": "opencode_cli->opencode_cli",
+      "child_model": "opencode-go/longcat-2.5-preview-free",
+      "child_provider": "opencode_cli",
+      "cleanup": {
+        "quota_terminal": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "session": {
+          "status": "validated"
+        }
+      },
+      "parent_model": "opencode-go/longcat-2.5-preview-free",
+      "parent_provider": "opencode_cli",
+      "quota_observation": {
+        "elapsed_seconds": null,
+        "limit_seconds": null,
+        "started_at_utc": null
+      },
+      "scenarios": {
+        "quota_continuation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "quota_wait_reconciliation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "sibling_cancellation_cleanup": {
+          "status": "validated"
+        },
+        "sibling_message_delivery": {
+          "status": "validated"
+        },
+        "successful_provider_turn": {
+          "status": "validated"
+        },
+        "timeout_reconciliation": {
+          "status": "validated"
+        }
+      },
+      "schema_version": 1,
+      "status": "validated",
+      "duration_seconds": 76.501
+    },
+    {
+      "cell": "codex->claude_code",
+      "child_model": "sonnet",
+      "child_provider": "claude_code",
+      "cleanup": {
+        "quota_terminal": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "session": {
+          "status": "validated"
+        }
+      },
+      "parent_model": "gpt-6.1-sol",
+      "parent_provider": "codex",
+      "quota_observation": {
+        "elapsed_seconds": null,
+        "limit_seconds": null,
+        "started_at_utc": null
+      },
+      "scenarios": {
+        "quota_continuation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "quota_wait_reconciliation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "sibling_cancellation_cleanup": {
+          "status": "validated"
+        },
+        "sibling_message_delivery": {
+          "status": "validated"
+        },
+        "successful_provider_turn": {
+          "status": "validated"
+        },
+        "timeout_reconciliation": {
+          "status": "validated"
+        }
+      },
+      "schema_version": 1,
+      "status": "validated",
+      "duration_seconds": 120.855
+    },
+    {
+      "cell": "codex->opencode_cli",
+      "child_model": "opencode-go/longcat-2.5-preview-free",
+      "child_provider": "opencode_cli",
+      "cleanup": {
+        "quota_terminal": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "session": {
+          "status": "validated"
+        }
+      },
+      "parent_model": "gpt-6.1-sol",
+      "parent_provider": "codex",
+      "quota_observation": {
+        "elapsed_seconds": null,
+        "limit_seconds": null,
+        "started_at_utc": null
+      },
+      "scenarios": {
+        "quota_continuation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "quota_wait_reconciliation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "sibling_cancellation_cleanup": {
+          "status": "validated"
+        },
+        "sibling_message_delivery": {
+          "status": "validated"
+        },
+        "successful_provider_turn": {
+          "status": "validated"
+        },
+        "timeout_reconciliation": {
+          "status": "validated"
+        }
+      },
+      "schema_version": 1,
+      "status": "validated",
+      "duration_seconds": 79.153
+    },
+    {
+      "cell": "claude_code->codex",
+      "child_model": "gpt-6.1-sol",
+      "child_provider": "codex",
+      "cleanup": {
+        "quota_terminal": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "session": {
+          "status": "validated"
+        }
+      },
+      "parent_model": "sonnet",
+      "parent_provider": "claude_code",
+      "quota_observation": {
+        "elapsed_seconds": null,
+        "limit_seconds": null,
+        "started_at_utc": null
+      },
+      "scenarios": {
+        "quota_continuation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "quota_wait_reconciliation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "sibling_cancellation_cleanup": {
+          "status": "validated"
+        },
+        "sibling_message_delivery": {
+          "status": "validated"
+        },
+        "successful_provider_turn": {
+          "status": "validated"
+        },
+        "timeout_reconciliation": {
+          "status": "validated"
+        }
+      },
+      "schema_version": 1,
+      "status": "validated",
+      "duration_seconds": 82.973
+    },
+    {
+      "cell": "claude_code->opencode_cli",
+      "child_model": "opencode-go/longcat-2.5-preview-free",
+      "child_provider": "opencode_cli",
+      "cleanup": {
+        "quota_terminal": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "session": {
+          "status": "validated"
+        }
+      },
+      "parent_model": "sonnet",
+      "parent_provider": "claude_code",
+      "quota_observation": {
+        "elapsed_seconds": null,
+        "limit_seconds": null,
+        "started_at_utc": null
+      },
+      "scenarios": {
+        "quota_continuation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "quota_wait_reconciliation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "sibling_cancellation_cleanup": {
+          "status": "validated"
+        },
+        "sibling_message_delivery": {
+          "status": "validated"
+        },
+        "successful_provider_turn": {
+          "status": "validated"
+        },
+        "timeout_reconciliation": {
+          "status": "validated"
+        }
+      },
+      "schema_version": 1,
+      "status": "validated",
+      "duration_seconds": 89.636
+    },
+    {
+      "cell": "opencode_cli->codex",
+      "child_model": "gpt-6.1-sol",
+      "child_provider": "codex",
+      "cleanup": {
+        "quota_terminal": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "session": {
+          "status": "validated"
+        }
+      },
+      "parent_model": "opencode-go/longcat-2.5-preview-free",
+      "parent_provider": "opencode_cli",
+      "quota_observation": {
+        "elapsed_seconds": null,
+        "limit_seconds": null,
+        "started_at_utc": null
+      },
+      "scenarios": {
+        "quota_continuation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "quota_wait_reconciliation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "sibling_cancellation_cleanup": {
+          "status": "validated"
+        },
+        "sibling_message_delivery": {
+          "status": "validated"
+        },
+        "successful_provider_turn": {
+          "status": "validated"
+        },
+        "timeout_reconciliation": {
+          "status": "validated"
+        }
+      },
+      "schema_version": 1,
+      "status": "validated",
+      "duration_seconds": 80.345
+    },
+    {
+      "cell": "opencode_cli->claude_code",
+      "child_model": "sonnet",
+      "child_provider": "claude_code",
+      "cleanup": {
+        "quota_terminal": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "session": {
+          "status": "validated"
+        }
+      },
+      "parent_model": "opencode-go/longcat-2.5-preview-free",
+      "parent_provider": "opencode_cli",
+      "quota_observation": {
+        "elapsed_seconds": null,
+        "limit_seconds": null,
+        "started_at_utc": null
+      },
+      "scenarios": {
+        "quota_continuation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "quota_wait_reconciliation": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "sibling_cancellation_cleanup": {
+          "status": "validated"
+        },
+        "sibling_message_delivery": {
+          "status": "validated"
+        },
+        "successful_provider_turn": {
+          "status": "validated"
+        },
+        "timeout_reconciliation": {
+          "status": "validated"
+        }
+      },
+      "schema_version": 1,
+      "status": "validated",
+      "duration_seconds": 88.031
+    }
+  ],
+  "previous_failed_cells": [
+    {
+      "cell": "codex->claude_code",
+      "child_model": "sonnet",
+      "child_provider": "claude_code",
+      "cleanup": {
+        "quota_terminal": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "session": {
+          "status": "validated"
+        }
+      },
+      "parent_model": "gpt-6.1-sol",
+      "parent_provider": "codex",
+      "quota_observation": {
+        "elapsed_seconds": null,
+        "limit_seconds": null,
+        "started_at_utc": null
+      },
+      "reason": "assertion_failed",
+      "scenarios": {
+        "quota_continuation": {
+          "status": "not_observed"
+        },
+        "quota_wait_reconciliation": {
+          "status": "not_observed"
+        },
+        "sibling_cancellation_cleanup": {
+          "status": "not_observed"
+        },
+        "sibling_message_delivery": {
+          "status": "not_observed"
+        },
+        "successful_provider_turn": {
+          "reason": "assertion_failed",
+          "status": "failed"
+        },
+        "timeout_reconciliation": {
+          "status": "not_observed"
+        }
+      },
+      "schema_version": 1,
+      "status": "failed",
+      "duration_seconds": 238.261,
+      "observed_http_status": 504
+    },
+    {
+      "cell": "opencode_cli->claude_code",
+      "child_model": "sonnet",
+      "child_provider": "claude_code",
+      "cleanup": {
+        "quota_terminal": {
+          "reason": "not_applicable",
+          "status": "skipped"
+        },
+        "session": {
+          "status": "validated"
+        }
+      },
+      "parent_model": "opencode-go/longcat-2.5-preview-free",
+      "parent_provider": "opencode_cli",
+      "quota_observation": {
+        "elapsed_seconds": null,
+        "limit_seconds": null,
+        "started_at_utc": null
+      },
+      "reason": "assertion_failed",
+      "scenarios": {
+        "quota_continuation": {
+          "status": "not_observed"
+        },
+        "quota_wait_reconciliation": {
+          "status": "not_observed"
+        },
+        "sibling_cancellation_cleanup": {
+          "status": "not_observed"
+        },
+        "sibling_message_delivery": {
+          "status": "not_observed"
+        },
+        "successful_provider_turn": {
+          "reason": "assertion_failed",
+          "status": "failed"
+        },
+        "timeout_reconciliation": {
+          "status": "not_observed"
+        }
+      },
+      "schema_version": 1,
+      "status": "failed",
+      "duration_seconds": 221.329,
+      "observed_http_status": 504
+    }
+  ],
+  "historical_authentication_diagnostics": {
+    "observed_auth_error_phrases": [
+      "Not logged in",
+      "Please run /login"
+    ],
+    "operator_access_token_expired_at_utc": "2026-10-07T06:45:29.776000+00:00",
+    "expiry_checked_at_utc": "2026-10-07T07:06:50.504604+00:00"
+  },
+  "historical_receipt_diagnostics": {
+    "cell": "opencode_cli->claude_code",
+    "observed_provider": "claude_code",
+    "observed_state": "reconcile",
+    "observed_error_kind": "receipt_result_unverifiable"
+  },
+  "initial_recorded_at_utc": "2026-10-07T07:15:45.378450+00:00",
+  "current_summary": {
+    "unique_cells": 9,
+    "validated": 9,
+    "failed": 0,
+    "reused_previous_validated_cells": 7,
+    "retried_validated_cells": 2
+  }
+}

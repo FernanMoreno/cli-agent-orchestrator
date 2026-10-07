@@ -1,0 +1,400 @@
+
+Welcome to Ubuntu 26.04 LTS (GNU/Linux 6.18.33.2-microsoft-standard-WSL2 x86_64)
+
+ * Documentation:  https://docs.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Sat Oct  3 02:13:15 CEST 2026
+
+  System load:  1.95                Processes:             51
+  Usage of /:   5.1% of 1006.85GB   Users logged in:       0
+  Memory usage: 15%                 IPv4 address for eth1: 192.168.1.136
+  Swap usage:   0%
+
+ * Canonical Workshop gives developers fast, composable, reproducible, and
+   secure developer environments that are perfect for agentic workflows.
+
+   https://ubuntu.com/workshop
+
+This message is shown once a day. To disable it please create the
+/CAO_TEST/cao-home/.hushlogin file.
+[?2004huser@host:/demo$ 
+[?2004l[?2004huser@host:/demo$ [7mcopilot --allow-all --agent copilot-check --config-dir /CAO_TEST/cao-home/.copilot --a[27m[7md[27m[7md-dir /demo --additional-mcp-config '{"mcpServers": {"cao-mcp-server": {"command": "/mnt/c/users/ferna/onedrive/escritorio/caos/.venv/bin/cao-mcp[27m[7m-[27m[7mserver", "args": [], "disabled": false, "env": {"CAO_TERMINAL_ID": "1e8cf707"}}}}' --autopilot[27mMM[C[C[C[C[C[C[C[Ccopilot --allow-all --agent copilot-check --config-dir /CAO_TEST/cao-home/.copilot --add-dir /demo --additional-mcp-config '{"mcpServers": {"cao-mcp-server": {"command": "/mnt/c/users/ferna/onedrive/escritorio/caos/.venv/bin/cao-mcp-server", "args": [], "disabled": false, "env": {"CAO_TERMINAL_ID": "1e8cf707"}}}}' --autopilot
+[?2004lWarning: --config-dir is deprecated. Use the COPILOT_HOME environment variable instead.
+[>4;2m[?u[?1049h[?2004h[?1004h[?1003h[?1006h[?25l[?12$p[?1007$p[H[2J[?25l[22;0t]0;GitHub Copilot[H[2J [1m[Current][m  Sessions  [2m Issues [m [2m Pull requests [m  Gists[?12l[>q
+
+  ╭─╮╭─╮
+  ╰─╯╰─╯  Copilot v1.0.91 uses AI.
+  █ ▘▝ █  Check for mistakes.
+   ▔▔▔▔[28B╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ [1mConfirm folder trust[197C[m│
+│ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│ ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ /demo[134C│ │
+│ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│[218C│
+│ Copilot can read files in this folder and, with your permission, edit them or run code and shell commands. It will remember your permissions for the rest of this session.[47C│
+│[218C│
+│ Do you trust the files in this folder?[179C│
+│[218C│
+│ ❯ 1. Yes[209C│
+│   2. Yes, and remember this folder for future sessions[163C│
+│   3. No (Esc)[204C│
+│[218C│
+│ [1m↑/↓[m to navigate · [1menter[m to select · [1mesc[m to cancel[168C│
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[?7l╯[?7h[8;2H● Selected custom agent: copilot-check
+
+ ● Tip: /app
+   └ Prefer a visual workspace? Try out the GitHub Copilot desktop app
+[5C ]8;id=md-9tyo0l;https://github.com/features/ai/github-apphttps://github.com/features/ai/github-app]8;;[22B[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+ /demo[46;201HSession: 0 AIC used 
+[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[m❯[K
+[2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[m ● Loading: 1 agent                                                                                                                                                                                    copilot-check · Auto[?7l [?7h[48;3H[?25h[?25l[5;5H╴╶ [50;2H◉ [2A[?25h[?25l[5;5H   [50;2H◎ [2A[?25h[?25l[5;5H╴╶ [48;3H[?25h[?25l
+
+ ○ [2A[?25h[?25l[5;5H▘▝ [48;3H[?25h[?25l
+
+ ●[50;20H, 14 skills[48;3H[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l[5;5H╴╶ [50;2H● [2A[?25h[?25l[5;5H   [50;2H◉ [2A[?25h[?25l[5;5H╴╶ [48;3H[?25h[?25l
+
+ ◎ [2A[?25h[?25l[5;5H▘▝ [48;3H[?25h[?25l
+
+ ○ [2A[?25h[?25l[5;5H╴╶ [48;3H[?25h[?25l
+
+ ◎ [2A[?25h[?25l[5;5H   [48;3H[?25h[?25l[5;5H╴╶ [50;2H◉ [2A[?25h[?25l[5;5H▘▝ [50;2H● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l[50;32H— still waiting on mcp: github-mcp-server, cao-mcp-server; ide[48;3H[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l[34A! MCP server 'cao-mcp-server' is taking longer than expected to connect.[50;2H○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ● [2A[?25h[?25l
+
+ ◉ [2A[?25h[?25l[50;31H, 1 MCP server — still waiting on mcp: github-mcp-server; ide  [48;3H[?25h[?25l
+
+ ● [2A[?25h[?25l[32A● MCP server 'cao-mcp-server' connected.[48;3H[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ●[50;65Hide                        [48;3H[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ○ [2A[?25h[?25l
+
+ ◎ [2A[?25h[?25l
+
+ ●[50;33H2[50;45Hs — still waiting on ide[48;3H[?25h[?25l
+
+ ◉ [2A[?25h[?25l
+
+ [1m←[m open sidebar · Autopilot · Allow All · [1m/[m commands · [1mtab[m next tab [48;3H[?25h[?25l[30A● MCP Servers reloaded: 2 servers connected[48;3H[?25h

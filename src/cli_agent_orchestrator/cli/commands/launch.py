@@ -17,8 +17,17 @@ from cli_agent_orchestrator.constants import (
 )
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.security.auth import get_local_bearer
+from cli_agent_orchestrator.services.install_service import kiro_install_predates_native_enforcement
 from cli_agent_orchestrator.services.settings_service import get_server_settings
 from cli_agent_orchestrator.services.work_launch_mode import managed_launch_required
+from cli_agent_orchestrator.utils.enforcement import (
+    NATIVE,
+    describe_enforcement,
+    enforcement_for,
+    is_install_time,
+    is_restricted,
+    native_providers,
+)
 from cli_agent_orchestrator.utils.forwarded_env import (
     ForwardedEnvError,
     validate_forwarded_env,
@@ -209,7 +218,7 @@ def _parse_env_pairs(pairs):
 @click.option(
     "--auto-approve",
     is_flag=True,
-    help="Skip confirmation prompt (restrictions still enforced).",
+    help="Skip the confirmation prompt. Does not change the tool policy; whether that policy is enforced depends on the provider (see the Enforcement line).",
 )
 @click.option(
     "--yolo",
@@ -441,6 +450,14 @@ def launch(
                         "  Note: kiro_cli's --trust-all-tools consent dialog will be "
                         "auto-answered at startup.\n"
                     )
+                    click.echo(
+                        click.style(
+                            "  Note: --yolo does not widen kiro_cli's tool set.\n"
+                            "  Availability is the installed agent's tools list, set at cao install time.\n"
+                            "  To get unrestricted access, set 'allowedTools: [\"*\"]' and re-run 'cao install'.\n",
+                            fg="yellow",
+                        )
+                    )
                 elif provider == "opencode_cli":
                     # opencode's TUI has no runtime skip-permissions flag
                     # (tracked upstream in sst/opencode#8463). Permissions are
@@ -459,13 +476,42 @@ def launch(
                 tool_summary = format_tool_summary(resolved_allowed_tools)
                 blocked = get_disallowed_tools(provider, resolved_allowed_tools)
                 blocked_summary = ", ".join(blocked) if blocked else "(none)"
+                level = enforcement_for(provider)
+                if is_install_time(provider):
+                    blocked_summary = (
+                        "(set at install time from the installed agent's policy; "
+                        "not shown here, and --allowed-tools does not change it)"
+                    )
+                    if provider == "kiro_cli" and kiro_install_predates_native_enforcement(
+                        agents, resolved_allowed_tools
+                    ):
+                        click.echo(
+                            click.style(
+                                f"\n  WARNING: the installed Kiro agent '{agents}' has tools: [\"*\"]; "
+                                "the requested restriction is NOT applied. Re-run:\n"
+                                f"    cao install {agents} --provider kiro_cli\n",
+                                fg="yellow",
+                            )
+                        )
+                elif level != NATIVE and is_restricted(resolved_allowed_tools) and not blocked:
+                    blocked_summary = "(not translated for this provider)"
 
                 click.echo(
                     f"\nAgent '{agents}' launching on {provider}:\n"
                     f"  Allowed:  {tool_summary}\n"
                     f"  Blocked:  {blocked_summary}\n"
+                    f"  Enforcement: {describe_enforcement(provider, resolved_allowed_tools)}\n"
                     f"  Directory: {display_dir}\n"
                 )
+                if level != NATIVE and is_restricted(resolved_allowed_tools):
+                    click.echo(
+                        click.style(
+                            "  WARNING: this provider does not enforce the Blocked list. "
+                            "The agent can use any tool.\n"
+                            f"  For enforced restrictions use one of: {', '.join(native_providers())}.\n",
+                            fg="yellow",
+                        )
+                    )
                 if no_role_set:
                     click.echo(
                         "  Note: No role or allowedTools set — defaulting to 'developer'.\n"
@@ -505,6 +551,9 @@ def launch(
         # See issue #248.
         request_timeout = get_server_settings()["mcp_request_timeout"]
         post_kwargs: dict = {"params": params, "timeout": request_timeout}
+        local_bearer = get_local_bearer()
+        if local_bearer:
+            post_kwargs["headers"] = {"Authorization": f"Bearer {local_bearer}"}
         if forwarded_env:
             post_kwargs["json"] = {"env_vars": forwarded_env}
 

@@ -248,6 +248,23 @@ class TestRunStepEndpoint:
         assert detail["kind"] == "error"
         assert detail["terminal_id"] == "abc12345"
 
+    def test_delivered_extraction_failure_is_internal_and_never_retryable(self, client):
+        with patch(
+            "cli_agent_orchestrator.api.main.run_agent_step",
+            new_callable=AsyncMock,
+            side_effect=StepExecutionError(
+                "delivered turn result could not be extracted",
+                kind="output_extraction_failed",
+                terminal_id="abc12345",
+                delivery_may_have_occurred=True,
+                action="reconcile",
+            ),
+        ):
+            response = client.post(TERMINALS_RUN_STEP_ROUTE, json=_body())
+        assert response.status_code == 500
+        assert response.json()["detail"]["kind"] == "output_extraction_failed"
+        assert response.json()["detail"]["retryable"] is False
+
     def test_reconcile_maps_to_409_with_the_live_terminal_handle(self, client):
         """A blocked live child must be inspectable, not misreported as a timeout."""
         with patch(

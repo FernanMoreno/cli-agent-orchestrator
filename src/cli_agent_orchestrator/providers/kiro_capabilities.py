@@ -100,21 +100,8 @@ class KiroCapabilityError(ValueError):
         self.version = version
 
 
-class KiroPhase0KASError(ValueError):
-    """Raised after KAS capability probing, before runtime allocation."""
-
-    def __init__(self, profile_has_v2_policy: bool) -> None:
-        profile_note = (
-            " The selected profile contains v2 allowedTools/toolsSettings that "
-            "cannot be translated to Cedar in Phase 0."
-            if profile_has_v2_policy
-            else ""
-        )
-        super().__init__(
-            "Kiro engine 'kas' is not available in Phase 0: KAS profiles and Cedar "
-            "policy translation are not implemented. Retry with engine 'v2'." + profile_note
-        )
-        self.engine = KiroEngine.KAS
+# Compatibility import: old consumers catch the canonical structured refusal.
+from cli_agent_orchestrator.models.kiro_launch import KiroLaunchRefusedError as KiroPhase0KASError
 
 
 @dataclass(frozen=True)

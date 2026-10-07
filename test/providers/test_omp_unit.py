@@ -310,10 +310,14 @@ def test_command_prefers_explicit_model_and_writes_private_append_prompt(tmp_pat
         "--approval-mode",
     }.intersection(parts)
 
+    from cli_agent_orchestrator.utils.tool_mapping import tool_constraint_instruction
+
     context_path = Path(parts[parts.index("--append-system-prompt") + 1])
     assert context_path.read_text(encoding="utf-8") == (
         SECURITY_PROMPT
-        + "\nYou only have access to these tools: fs_read, @cao-mcp-server\n"
+        + "\n"
+        + tool_constraint_instruction(["fs_read", "@cao-mcp-server"])
+        + "\n"
         + "Profile role\n\n## Available Skills\n- test-skill"
     )
     assert stat.S_IMODE(context_path.stat().st_mode) == 0o600

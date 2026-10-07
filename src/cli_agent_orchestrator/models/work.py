@@ -134,7 +134,6 @@ class WorkAttempt(VersionedModel):
         return values
 
     @computed_field
-    @property
     def delivery_phase(self) -> AttemptState:
         """Expose delivery phase without introducing a second state authority."""
         return self.state

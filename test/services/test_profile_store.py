@@ -376,10 +376,10 @@ def test_delete_profile_cannot_unlink_while_a_replace_holds_the_lock(
     release = threading.Event()
     real_publish = atomic_file._atomic_publish
 
-    def paused_publish(t: Path, content: str, encoding: str) -> None:
+    def paused_publish(t: Path, content: str, encoding: str, *, mode: int | None = None) -> None:
         publish_entered.set()
         release.wait(timeout=10)
-        return real_publish(t, content, encoding)
+        return real_publish(t, content, encoding, mode=mode)
 
     monkeypatch.setattr(atomic_file, "_atomic_publish", paused_publish)
 

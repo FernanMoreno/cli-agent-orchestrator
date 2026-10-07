@@ -251,12 +251,21 @@ class TestPluginRegistryLoad:
                 lifecycle.append("cleanup-finished")
 
         registry = PluginRegistry()
+        cancellation_messages: list[str] = []
+
+        async def load_and_record_cancellation() -> None:
+            try:
+                await registry.load()
+            except asyncio.CancelledError as error:
+                # Python 3.10 drops this message at the Task-to-awaiter boundary.
+                cancellation_messages.append(str(error))
+                raise
 
         with patch(
             "importlib.metadata.entry_points",
             return_value=[make_entry_point("blocking-setup", BlockingSetupPlugin)],
         ):
-            load_task = asyncio.create_task(registry.load())
+            load_task = asyncio.create_task(load_and_record_cancellation())
             await setup_started.wait()
             load_task.cancel("setup cancellation")
             await cleanup_started.wait()
@@ -266,9 +275,11 @@ class TestPluginRegistryLoad:
             load_task.cancel("second cleanup cancellation")
             release_cleanup.set()
 
-            with pytest.raises(asyncio.CancelledError, match="setup cancellation"):
+            with pytest.raises(asyncio.CancelledError):
                 await load_task
 
+        assert load_task.cancelled()
+        assert cancellation_messages == ["setup cancellation"]
         assert lifecycle == ["setup-started", "cleanup-started", "cleanup-finished"]
         assert registry._plugins == []
         assert registry._dispatch == {}
@@ -674,7 +685,17 @@ class TestPluginRegistryTeardown:
         ):
             await registry.load()
 
-        teardown_task = asyncio.create_task(registry.teardown())
+        cancellation_messages: list[str] = []
+
+        async def teardown_and_record_cancellation() -> None:
+            try:
+                await registry.teardown()
+            except asyncio.CancelledError as error:
+                # Inspect the registry's message before Python 3.10 discards it.
+                cancellation_messages.append(str(error))
+                raise
+
+        teardown_task = asyncio.create_task(teardown_and_record_cancellation())
         create_task = asyncio.create_task
 
         def record_child_task(coroutine: Any, *, name: str | None = None) -> asyncio.Task[Any]:
@@ -702,8 +723,10 @@ class TestPluginRegistryTeardown:
                 side_effect=shield_with_caller_cancellation,
             ),
         ):
-            with pytest.raises(asyncio.CancelledError, match="cancel after child creation"):
+            with pytest.raises(asyncio.CancelledError):
                 await teardown_task
 
+        assert teardown_task.cancelled()
+        assert cancellation_messages == ["cancel after child creation"]
         assert torn_down == ["first-started", "first-finished", "later"]
         assert child_tasks and all(task.done() for task in child_tasks)

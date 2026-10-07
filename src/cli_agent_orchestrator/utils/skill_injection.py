@@ -6,7 +6,7 @@ does not need prompt-based catalog baking or refresh-on-skill-change.
 
 import logging
 from pathlib import Path
-from typing import Iterator, List, Optional
+from typing import Iterator, List, Optional, cast
 
 import frontmatter
 
@@ -81,7 +81,7 @@ def refresh_agent_md_prompt(md_path: Path, profile: AgentProfile) -> bool:
         base = system_prompt or (profile.prompt.strip() if profile.prompt else "")
         new_body = compose_agent_prompt(profile, base_prompt=base)
         post.content = (new_body or "").rstrip()
-        return frontmatter.dumps(post)
+        return cast(str, frontmatter.dumps(post))
 
     locked_atomic_rewrite(md_path, compute_new_content)
     return True

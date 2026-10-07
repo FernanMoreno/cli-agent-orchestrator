@@ -213,6 +213,10 @@ CAO's default backend is [tmux](tmux.md). [herdr](https://herdr.dev/) is an expe
 
 - `backend`: `"tmux"` (default) or `"herdr"` [EXPERIMENTAL].
 - `herdr_session`: the herdr session name to connect to (default `"cao"`).
+- `spawn_mode`: `"window"` (default) or `"pane"` for newly spawned terminals.
+- `pane_window`: shared window name (default `"cao-agents"`).
+- `pane_layout`: `"tiled"` (default), `"even-vertical"`, `"even-horizontal"`, or `"none"`.
+
 
 Select a backend for a single run without touching `settings.json`:
 
@@ -221,6 +225,102 @@ cao-server --terminal herdr
 ```
 
 `--terminal` (CLI flag) beats `CAO_TERMINAL_BACKEND` (env var) beats `terminal.backend` (file) beats the `"tmux"` default — the standard precedence chain. See [herdr.md](herdr.md) for herdr-specific setup, viewing/attaching, and troubleshooting.
+
+#### Watching a fleet in one window
+
+By default each terminal gets a tmux window of its own, so watching several
+agents means cycling through windows and a drifting agent is easy to miss.
+`spawn_mode: "pane"` puts every terminal into one window as a pane instead, so
+the whole fleet is visible at once and an agent can be interrupted where it
+sits. Panes are re-tiled after each spawn, so the window stays readable as the
+fleet grows.
+
+```json
+{
+  "terminal": {
+    "spawn_mode": "pane",
+    "pane_window": "cao-agents",
+    "pane_layout": "tiled"
+  }
+}
+```
+
+#### Choosing a layout
+
+`pane_layout` names the arrangement, not the split. There is no separate
+split-direction setting because `select-layout` overrides the direction a pane
+was split in: split sideways, lay out `even-vertical`, and the panes are stacked
+regardless. The split still follows the layout's axis, because tmux refuses a
+split for want of room along the axis being *split* rather than the one the
+layout settles on.
+
+| `pane_layout` | Arrangement | Use when |
+|---|---|---|
+| `tiled` (default) | grid, re-balanced each spawn | watching a fleet — it holds the most panes |
+| `even-vertical` | full-width rows | output is wide; reading long lines matters more than agent count |
+| `even-horizontal` | full-height columns | following a few agents' scrollback side by side |
+| `none` | tmux's own behaviour — each split halves the last pane | you arrange the window yourself |
+
+The layout also decides how many agents fit before the window is full, and the
+one that does not fit becomes a window of its own with a warning. `tiled` holds
+by far the most, because it grows in both directions; `even-vertical` and
+`even-horizontal` are bounded by the rows or columns a pane needs along one
+axis; `none` is the lowest of all, since each split halves the pane it came from.
+
+That ceiling is lower than it looks on a small terminal and it is not a fixed
+number -- it moves with the window size, the tmux version, and anything in
+`tmux.conf` that costs a row, such as the status line or pane borders. Measure
+it for a given setup rather than trusting a figure:
+
+```bash
+# -L keeps this off the server your own sessions live on; the name is unique to
+# this run, nothing past the && happens unless this run created the session, and
+# the cleanup names that session rather than tearing the server down.
+s="cao-cap-$$"
+tmux -L cao-cap new-session -d -s "$s" -x 80 -y 24 && {
+  while tmux -L cao-cap split-window -v -t "$s" 2>/dev/null; do
+    tmux -L cao-cap select-layout -t "$s" even-vertical >/dev/null
+  done
+  tmux -L cao-cap list-panes -t "$s" | wc -l
+  tmux -L cao-cap kill-session -t "$s"
+}
+```
+
+`tiled` is the default because a fleet is what pane mode is for; the others trade
+capacity for a shape that suits fewer agents.
+
+A terminal that shares a window cannot be identified by that window's name, so
+each pane carries its terminal name in the `@cao_terminal` pane option and
+every lookup resolves through it. Set that option only at pane scope — pane
+options inherit from window options, and a value set globally would make every
+pane answer to the same name.
+
+That name is also what the window shows. The first pane terminal turns on
+`pane-border-status` for `pane_window` and formats the border with the mark, so
+every pane is captioned with the terminal running in it. The caption reads the
+mark rather than the pane title because a program in the pane can set its own
+title: an agent whose TUI does that turns a title-based caption into whatever
+the agent wants, while the mark is out of its reach.
+
+Both options are set on `pane_window` alone, and only when that window carries
+no `pane-border-status` of its own -- so a window you arranged yourself keeps
+its borders, `pane-border-status off` stays off, and a window CAO opened before
+this existed is captioned on the next spawn into it rather than never. A pane
+you split by hand carries no mark and is captioned with its index. The captions
+cost one row per pane, which counts against the capacity above.
+
+`pane_window` does not have to exist: the first pane-mode terminal in a session
+creates it and takes its first pane, and the ones after it split that window.
+
+A window only holds so many panes before tmux refuses for want of space. That
+terminal is created as a window of its own instead, and a warning says so — the
+spawn is not failed. Other failures, such as a name already taken or a refused
+working directory, are reported rather than worked around.
+
+The name is a label, not an authenticated identity: anything that can reach the
+tmux socket can set the same mark. Agents are not isolated from each other here,
+so this is in line with the rest of the backend rather than a new exposure.
+
 
 ### MCP Apps (`apps`)
 
@@ -286,7 +386,11 @@ Every `CAO_*` variable below maps to a `settings.json` key. An explicit caller o
 |---|---|---|
 | `CAO_TERMINAL_BACKEND` | `terminal.backend` | str |
 | `CAO_HERDR_SESSION` | `terminal.herdr_session` | str |
+| `CAO_TERMINAL_SPAWN_MODE` | `terminal.spawn_mode` | str |
+| `CAO_TERMINAL_PANE_WINDOW` | `terminal.pane_window` | str |
+| `CAO_TERMINAL_PANE_LAYOUT` | `terminal.pane_layout` | str |
 | `CAO_MCP_APPS_ENABLED` | `apps.enabled` | bool |
+| `CAO_MCP_APPS_ONLY` | `apps.only` | bool |
 | `CAO_MCP_APPS_STATIC_DIR` | `apps.static_dir` | str |
 | `CAO_LOG_LEVEL` | `logging.level` | str |
 | `CAO_MEMORY_ENABLED` | `memory.enabled` | bool |
@@ -447,3 +551,36 @@ The default limits in seconds are `access_seconds=3600`,
 Edit the private `limits` object to change them; do not store passwords there.
 Use the local account commands described in [Personal deployment](personal-deployment.md)
 for creation, password recovery, mode disablement, backup and restore.
+
+### Non-Git project memory continuity
+
+`CAO_MEMORY_PROJECT_MARKER=true` (or the boolean `memory.project_marker` setting)
+opts a non-Git directory into private `.cao/project_id` identity continuity.
+Explicit project IDs and normalized Git remotes retain precedence. The private
+SQLite registry recognizes directory renames; a surviving copied directory gets a
+separate identity. Unknown, corrupt or replaced markers fall back to the existing
+path identity without adopting their contents. This feature defaults off to
+preserve existing path-based memory bindings during an upgrade. Enabling it records
+the previous path identity as an alias. Markers identify memory history and never
+provide Work grants, physical target identity or approved snapshot authority.
+
+### Optional external tasks
+
+Beads defaults off. Set `CAO_ENABLE_BEADS=true` and
+`CAO_BEADS_WORKSPACES_FILE` to an operator-owned JSON list of opaque workspace IDs
+and existing absolute roots, for example
+`[{"id":"repo","root":"/srv/work/repo","dialect":"modern"}]`.
+Each root must already contain a real `.beads` directory. CAO never initializes
+Beads on startup. Install the desired `bd` separately; `CAO_BEADS_BINARY` can name
+an operator-selected executable. Use `modern` for a CLI without `--no-daemon`, or
+`legacy` for the original supported invocation. `cao tasks capabilities` reports
+availability without launching workers.
+
+`cao tasks` and the Tasks panel read task queues, comments and explicit epics.
+Metadata writes require a stable operation key; changes to an existing task also
+require its current material hash. External closure is separate from verified
+Work completion. An uncertain write retains its receipt: inspect/reconcile it,
+or retry exactly the same operation rather than inventing another key. Bulk
+creation records each child and dependency separately and stops at an uncertain
+write. Task execution and coordinator approval use the existing Work authority
+boundary; metadata readiness itself supplies no execution permission.

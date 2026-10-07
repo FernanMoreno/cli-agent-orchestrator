@@ -145,14 +145,14 @@ class TestGetHistoryParseFailure:
         """A transient parse failure retries and the probe still returns content."""
         self._wire(tmux, lambda session: parse_failure(times=1, then=session))
 
-        assert tmux.get_history("ses", "win") == "line one\nline two"
+        assert tmux.get_history("cao-ses", "win") == "line one\nline two"
         assert tmux.server.sessions.get.call_count == 2
 
     def test_persistent_parse_failure_raises_lookup_error(self, tmux):
         tmux.server.sessions.get.side_effect = parse_failure(times=2)
 
         with pytest.raises(TmuxLookupError):
-            tmux.get_history("ses", "win")
+            tmux.get_history("cao-ses", "win")
 
     def test_parse_failure_in_pane_listing_raises_lookup_error(self, tmux):
         """`window.panes` is a listing too — not just `sessions`/`windows`."""
@@ -163,7 +163,7 @@ class TestGetHistoryParseFailure:
         tmux.server.sessions.get.return_value = session
 
         with pytest.raises(TmuxLookupError):
-            tmux.get_history("ses", "win")
+            tmux.get_history("cao-ses", "win")
 
 
 # ── criterion 3: gone vs. could-not-look are distinguishable ─────────
@@ -175,8 +175,8 @@ class TestGenuineAbsenceVersusParseFailure:
     def test_missing_session_raises_plain_value_error(self, tmux):
         tmux.server.sessions.get.return_value = None
 
-        with pytest.raises(ValueError, match="Session 'ses' not found") as excinfo:
-            tmux.get_history("ses", "win")
+        with pytest.raises(ValueError, match="Session 'cao-ses' not found") as excinfo:
+            tmux.get_history("cao-ses", "win")
         assert not isinstance(excinfo.value, TmuxLookupError)
 
     def test_missing_window_raises_plain_value_error(self, tmux):
@@ -185,14 +185,14 @@ class TestGenuineAbsenceVersusParseFailure:
         tmux.server.sessions.get.return_value = session
 
         with pytest.raises(ValueError, match="Window 'win' not found") as excinfo:
-            tmux.get_history("ses", "win")
+            tmux.get_history("cao-ses", "win")
         assert not isinstance(excinfo.value, TmuxLookupError)
 
     def test_parse_failure_raises_lookup_error_not_value_error(self, tmux):
         tmux.server.sessions.get.side_effect = parse_failure(times=2)
 
         with pytest.raises(TmuxLookupError) as excinfo:
-            tmux.get_history("ses", "win")
+            tmux.get_history("cao-ses", "win")
         assert not isinstance(excinfo.value, ValueError)
 
 
@@ -204,45 +204,45 @@ class TestSessionExistsParseFailure:
         session = MagicMock()
         tmux.server.sessions.get.side_effect = parse_failure(times=1, then=session)
 
-        with patch("cli_agent_orchestrator.clients.tmux.subprocess") as mock_subprocess:
-            assert tmux.session_exists("ses") is True
+        with patch("cli_agent_orchestrator.clients.tmux_transport.subprocess") as mock_subprocess:
+            assert tmux.session_exists("cao-ses") is True
         mock_subprocess.run.assert_not_called()
 
     def test_falls_back_to_has_session_for_a_live_session(self, tmux):
         """The bug's worst answer: reporting a LIVE session as gone."""
         tmux.server.sessions.get.side_effect = parse_failure(times=2)
 
-        with patch("cli_agent_orchestrator.clients.tmux.subprocess") as mock_subprocess:
+        with patch("cli_agent_orchestrator.clients.tmux_transport.subprocess") as mock_subprocess:
             mock_subprocess.run.return_value = MagicMock(returncode=0, stderr="")
-            assert tmux.session_exists("ses") is True
+            assert tmux.session_exists("cao-ses") is True
 
         assert mock_subprocess.run.call_args[0][0] == [
             "tmux",
             "has-session",
             "-t",
-            "=ses",
+            "=cao-ses",
         ]
 
     def test_falls_back_to_has_session_for_a_dead_session(self, tmux):
         tmux.server.sessions.get.side_effect = parse_failure(times=2)
 
-        with patch("cli_agent_orchestrator.clients.tmux.subprocess") as mock_subprocess:
+        with patch("cli_agent_orchestrator.clients.tmux_transport.subprocess") as mock_subprocess:
             mock_subprocess.run.return_value = MagicMock(returncode=1, stderr="can't find session")
-            assert tmux.session_exists("ses") is False
+            assert tmux.session_exists("cao-ses") is False
 
     def test_raises_when_neither_path_can_answer(self, tmux):
         tmux.server.sessions.get.side_effect = parse_failure(times=2)
 
-        with patch("cli_agent_orchestrator.clients.tmux.subprocess") as mock_subprocess:
+        with patch("cli_agent_orchestrator.clients.tmux_transport.subprocess") as mock_subprocess:
             mock_subprocess.run.side_effect = OSError("no tmux binary")
             with pytest.raises(TmuxLookupError):
-                tmux.session_exists("ses")
+                tmux.session_exists("cao-ses")
 
     def test_unrelated_failure_still_returns_false(self, tmux):
         """Pre-existing behavior for non-parse errors is unchanged."""
         tmux.server.sessions.get.side_effect = RuntimeError("boom")
 
-        assert tmux.session_exists("ses") is False
+        assert tmux.session_exists("cao-ses") is False
 
 
 # ── criterion 4: no half-state left behind by a failed launch ────────
@@ -258,16 +258,16 @@ class TestCreateSessionHalfState:
         """
         tmux.server.new_session.side_effect = ValueError(ZIP_ERROR)
 
-        with patch("cli_agent_orchestrator.clients.tmux.subprocess") as mock_subprocess:
+        with patch("cli_agent_orchestrator.clients.tmux_transport.subprocess") as mock_subprocess:
             mock_subprocess.run.return_value = MagicMock(returncode=0, stderr="")
             with pytest.raises(TmuxLookupError):
-                tmux.create_session("ses", "win", "tid1", str(tmp_path))
+                tmux.create_session("cao-ses", "win", "tid1", str(tmp_path))
 
         assert mock_subprocess.run.call_args[0][0] == [
             "tmux",
             "kill-session",
             "-t",
-            "=ses",
+            "=cao-ses",
         ]
 
     def test_parse_failure_reading_the_new_window_removes_the_session(self, tmux, tmp_path):
@@ -275,16 +275,16 @@ class TestCreateSessionHalfState:
         type(session).windows = property(lambda self: (_ for _ in ()).throw(ValueError(ZIP_ERROR)))
         tmux.server.new_session.return_value = session
 
-        with patch("cli_agent_orchestrator.clients.tmux.subprocess") as mock_subprocess:
+        with patch("cli_agent_orchestrator.clients.tmux_transport.subprocess") as mock_subprocess:
             mock_subprocess.run.return_value = MagicMock(returncode=0, stderr="")
             with pytest.raises(TmuxLookupError):
-                tmux.create_session("ses", "win", "tid1", str(tmp_path))
+                tmux.create_session("cao-ses", "win", "tid1", str(tmp_path))
 
         assert mock_subprocess.run.call_args[0][0] == [
             "tmux",
             "kill-session",
             "-t",
-            "=ses",
+            "=cao-ses",
         ]
 
     def test_transient_parse_failure_reading_the_new_window_still_succeeds(self, tmux, tmp_path):
@@ -296,8 +296,8 @@ class TestCreateSessionHalfState:
         session.windows = windows
         tmux.server.new_session.return_value = session
 
-        with patch("cli_agent_orchestrator.clients.tmux.subprocess") as mock_subprocess:
-            assert tmux.create_session("ses", "win", "tid1", str(tmp_path)) == "win"
+        with patch("cli_agent_orchestrator.clients.tmux_transport.subprocess") as mock_subprocess:
+            assert tmux.create_session("cao-ses", "win", "tid1", str(tmp_path)) == "win"
         mock_subprocess.run.assert_not_called()
 
     def test_other_post_creation_failure_rolls_the_session_back(self, tmux, tmp_path):
@@ -309,7 +309,7 @@ class TestCreateSessionHalfState:
         tmux.server.new_session.return_value = session
 
         with pytest.raises(ValueError, match="Window name is None"):
-            tmux.create_session("ses", "win", "tid1", str(tmp_path))
+            tmux.create_session("cao-ses", "win", "tid1", str(tmp_path))
 
         session.kill.assert_called_once()
 
@@ -321,19 +321,19 @@ class TestKillParseFailure:
     def test_kill_session_falls_back_to_the_cli(self, tmux):
         tmux.server.sessions.get.side_effect = parse_failure(times=2)
         # The CLI kill exiting 0 is not on its own a True: the verification poll
-        # still has to see the session gone. Exit 0 with "ses" absent from the
+        # still has to see the session gone. Exit 0 with "cao-ses" absent from the
         # name list is that authoritative "gone" (#498).
         tmux.server.cmd.return_value = list_sessions_result()
 
-        with patch("cli_agent_orchestrator.clients.tmux.subprocess") as mock_subprocess:
+        with patch("cli_agent_orchestrator.clients.tmux_transport.subprocess") as mock_subprocess:
             mock_subprocess.run.return_value = MagicMock(returncode=0, stderr="")
-            assert tmux.kill_session("ses") is True
+            assert tmux.kill_session("cao-ses") is True
 
         assert mock_subprocess.run.call_args[0][0] == [
             "tmux",
             "kill-session",
             "-t",
-            "=ses",
+            "=cao-ses",
         ]
 
     def test_cli_fallback_still_has_to_confirm_the_session_is_gone(self, tmux, monkeypatch):
@@ -345,20 +345,20 @@ class TestKillParseFailure:
         intact instead of dropping rows for a live session (#498).
         """
         tmux.server.sessions.get.side_effect = parse_failure(times=2)
-        tmux.server.cmd.return_value = list_sessions_result("ses")
+        tmux.server.cmd.return_value = list_sessions_result("cao-ses")
         monkeypatch.setattr(tmux, "_KILL_SESSION_VERIFY_TIMEOUT_SECONDS", 0)
 
-        with patch("cli_agent_orchestrator.clients.tmux.subprocess") as mock_subprocess:
+        with patch("cli_agent_orchestrator.clients.tmux_transport.subprocess") as mock_subprocess:
             mock_subprocess.run.return_value = MagicMock(returncode=0, stderr="")
-            assert tmux.kill_session("ses") is False
+            assert tmux.kill_session("cao-ses") is False
 
         mock_subprocess.run.assert_called_once()
 
     def test_kill_session_reports_absence_without_calling_the_cli(self, tmux):
         tmux.server.sessions.get.return_value = None
 
-        with patch("cli_agent_orchestrator.clients.tmux.subprocess") as mock_subprocess:
-            assert tmux.kill_session("ses") is False
+        with patch("cli_agent_orchestrator.clients.tmux_transport.subprocess") as mock_subprocess:
+            assert tmux.kill_session("cao-ses") is False
         mock_subprocess.run.assert_not_called()
 
     def test_kill_window_falls_back_to_the_cli(self, tmux):
@@ -366,29 +366,29 @@ class TestKillParseFailure:
         session.windows.get.side_effect = parse_failure(times=2)
         tmux.server.sessions.get.return_value = session
 
-        with patch("cli_agent_orchestrator.clients.tmux.subprocess") as mock_subprocess:
+        with patch("cli_agent_orchestrator.clients.tmux_transport.subprocess") as mock_subprocess:
             mock_subprocess.run.return_value = MagicMock(returncode=0, stderr="")
-            assert tmux.kill_window("ses", "win") is True
+            assert tmux.kill_window("cao-ses", "win") is True
 
         assert mock_subprocess.run.call_args[0][0] == [
             "tmux",
             "kill-window",
             "-t",
-            "=ses:win",
+            "=cao-ses:win",
         ]
 
     def test_cli_fallback_reports_failure_rather_than_success(self, tmux):
         tmux.server.sessions.get.side_effect = parse_failure(times=2)
 
-        with patch("cli_agent_orchestrator.clients.tmux.subprocess") as mock_subprocess:
+        with patch("cli_agent_orchestrator.clients.tmux_transport.subprocess") as mock_subprocess:
             mock_subprocess.run.return_value = MagicMock(returncode=1, stderr="server not found")
-            assert tmux.kill_session("ses") is False
+            assert tmux.kill_session("cao-ses") is False
 
     def test_cli_fallback_rejects_an_invalid_name(self, tmux):
         tmux.server.sessions.get.side_effect = parse_failure(times=2)
 
-        with patch("cli_agent_orchestrator.clients.tmux.subprocess") as mock_subprocess:
-            assert tmux.kill_session("bad:name") is False
+        with patch("cli_agent_orchestrator.clients.tmux_transport.subprocess") as mock_subprocess:
+            assert tmux.kill_session("cao-bad:name") is False
         mock_subprocess.run.assert_not_called()
 
 
@@ -406,7 +406,7 @@ class TestListingsDoNotDegradeToEmpty:
 
     def test_list_sessions_retry_recovers(self, tmux):
         session = MagicMock()
-        session.name = "ses"
+        session.name = "cao-ses"
         session.attached_sessions = []
         calls = {"n": 0}
 
@@ -418,7 +418,7 @@ class TestListingsDoNotDegradeToEmpty:
 
         type(tmux.server).sessions = property(sessions)
 
-        assert tmux.list_sessions() == [{"id": "ses", "name": "ses", "status": "detached"}]
+        assert tmux.list_sessions() == [{"id": "cao-ses", "name": "cao-ses", "status": "detached"}]
 
     def test_get_session_windows_raises_instead_of_returning_empty(self, tmux):
         session = MagicMock()
@@ -426,9 +426,9 @@ class TestListingsDoNotDegradeToEmpty:
         tmux.server.sessions.get.return_value = session
 
         with pytest.raises(TmuxLookupError):
-            tmux.get_session_windows("ses")
+            tmux.get_session_windows("cao-ses")
 
     def test_get_session_windows_returns_empty_for_a_missing_session(self, tmux):
         tmux.server.sessions.get.return_value = None
 
-        assert tmux.get_session_windows("ses") == []
+        assert tmux.get_session_windows("cao-ses") == []

@@ -1179,7 +1179,7 @@ class TestCompatibility:
         assert data["last_message"] == "fresh answer"
         assert data["status"] == "completed"
 
-    def test_the_scope_dependency_is_unchanged(self):
+    def test_the_scope_dependency_preserves_write_or_verified_run_authority(self):
         """SR-1: this unit adds fields to an already-guarded route. It must not
         weaken or duplicate the authorisation path."""
         from cli_agent_orchestrator.api.main import run_step
@@ -1187,7 +1187,17 @@ class TestCompatibility:
         signature = inspect.signature(run_step)
         assert "_scopes" in signature.parameters
         source = inspect.getsource(run_step)
-        assert "Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN))" in source
+        assert "Depends(_run_step_scopes)" in source
+        from cli_agent_orchestrator.api.main import _run_step_scopes
+
+        guarded = inspect.getsource(_run_step_scopes)
+        compact = "".join(guarded.split())
+        assert "origins.authenticate_run_capability" in guarded
+        assert "generation<=0" in compact and "str(generation)" in compact
+        assert "SCOPE_WRITE not in principal.scopes" in guarded
+        assert "get_current_scopes(authorization,request)" in compact
+        assert "intersection({SCOPE_WRITE,SCOPE_ADMIN})" in compact
+        assert "HTTPException(401" in compact and "HTTPException(403" in compact
 
 
 # ---------------------------------------------------------------------------

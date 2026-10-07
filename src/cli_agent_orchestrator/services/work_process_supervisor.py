@@ -33,7 +33,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Mapping, Sequence, TypeGuard, cast
 
 
 class WorkProcessState(str, Enum):
@@ -216,8 +216,13 @@ class WorkProcessIdentity:
         except (KeyError, TypeError) as exc:
             raise ValueError("process identity contains malformed fields") from exc
 
-        integer_fields = (version, monitor_pid, monitor_start, init_pid, init_start, init_parent)
-        if any(type(field) is not int for field in integer_fields):
+        if (
+            type(monitor_pid) is not int
+            or type(monitor_start) is not int
+            or type(init_pid) is not int
+            or type(init_start) is not int
+            or type(init_parent) is not int
+        ):
             raise ValueError("process identity numeric fields must be integers")
         if (
             not isinstance(boot_id, str)
@@ -270,12 +275,20 @@ class WorkProcessIdentity:
             pid_namespace=namespaces[0],
             net_namespace=namespaces[1],
             ipc_namespace=namespaces[2],
-            monitor_argv=(tuple(monitor_argv) if version == _WORK_PROCESS_PROTOCOL_VERSION else ()),
+            monitor_argv=(
+                tuple(cast(Sequence[str], monitor_argv))
+                if version == _WORK_PROCESS_PROTOCOL_VERSION
+                else ()
+            ),
             version=version,
             monitor_argv_prefix_sha256=(
-                monitor_argv_prefix_sha256 if version == _WORK_PROCESS_DURABLE_VERSION else None
+                cast(str, monitor_argv_prefix_sha256)
+                if version == _WORK_PROCESS_DURABLE_VERSION
+                else None
             ),
-            identity_sha256=(identity_sha256 if version == _WORK_PROCESS_DURABLE_VERSION else None),
+            identity_sha256=(
+                cast(str, identity_sha256) if version == _WORK_PROCESS_DURABLE_VERSION else None
+            ),
         )
 
     @staticmethod
@@ -289,7 +302,7 @@ class WorkProcessIdentity:
         return value[0], value[1]
 
 
-def _is_sha256_hex(value: object) -> bool:
+def _is_sha256_hex(value: object) -> TypeGuard[str]:
     return (
         isinstance(value, str)
         and len(value) == 64
@@ -621,20 +634,20 @@ class WorkProcessSupervisor:
                 ):
                     self._abort_start(attempt, "process exited while its identity was persisted")
 
-                gate_fd = attempt._gate_fd
-                assert gate_fd is not None
+                live_gate_fd = attempt._gate_fd
+                assert live_gate_fd is not None
                 try:
-                    written = os.write(gate_fd, b"I")
+                    written = os.write(live_gate_fd, b"I")
                 except OSError as exc:
                     self._abort_start(attempt, f"could not request seccomp installation: {exc}")
                 if written != 1:
                     self._abort_start(attempt, "seccomp install request was not accepted")
 
-                ack_fd = attempt._ack_fd
-                assert ack_fd is not None
+                live_ack_fd = attempt._ack_fd
+                assert live_ack_fd is not None
                 deadline = time.monotonic() + self._startup_timeout
                 poller = select.poll()
-                poller.register(ack_fd, select.POLLIN | select.POLLHUP | select.POLLERR)
+                poller.register(live_ack_fd, select.POLLIN | select.POLLHUP | select.POLLERR)
                 while True:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
@@ -664,7 +677,7 @@ class WorkProcessSupervisor:
                             "seccomp installation acknowledgement poll reported no readable event",
                         )
                     try:
-                        acknowledgement = os.read(ack_fd, 1)
+                        acknowledgement = os.read(live_ack_fd, 1)
                     except OSError as exc:
                         self._abort_start(
                             attempt,
@@ -859,7 +872,11 @@ class WorkProcessSupervisor:
                 or init_state in {"Z", "X", "x"}
                 or pidfd_targets != (process.pid, normalized["init_pid"])
                 or namespaces
-                != {name: normalized[f"{name}_namespace"] for name in ("pid", "net", "ipc")}
+                != {
+                    "pid": normalized["pid_namespace"],
+                    "net": normalized["net_namespace"],
+                    "ipc": normalized["ipc_namespace"],
+                }
                 or self._pidfd_is_readable(monitor_pidfd) is not False
                 or self._pidfd_is_readable(init_pidfd) is not False
             ):
@@ -929,8 +946,10 @@ class WorkProcessSupervisor:
         except (OSError, ValueError, KeyError, TypeError):
             observed = None
         expected_fields = {
-            key: normalized[key]
-            for key in (
+            key: value
+            for key, value in normalized.items()
+            if key
+            in (
                 "boot_id",
                 "monitor_pid",
                 "monitor_start_time_ticks",
@@ -1392,6 +1411,8 @@ class WorkProcessSupervisor:
         return gate_fd >= 3 and ack_fd >= 3 and gate_fd != ack_fd and bool(argv[15:])
 
     def _wait_for_namespace_init(self, attempt: WorkProcessAttempt) -> int:
+        monitor = attempt._monitor
+        assert monitor is not None
         deadline = time.monotonic() + self._startup_timeout
         children_path = Path(f"/proc/{attempt.monitor_pid}/task/{attempt.monitor_pid}/children")
         while time.monotonic() < deadline:
@@ -1408,7 +1429,7 @@ class WorkProcessSupervisor:
             if len(candidates) > 1:
                 self._abort_start(attempt, "unshare exposed multiple candidate PID namespace inits")
 
-            exit_code = attempt._monitor.poll()
+            exit_code = monitor.poll()
             if exit_code is not None:
                 self._abort_start(
                     attempt,

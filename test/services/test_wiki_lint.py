@@ -1426,7 +1426,7 @@ class TestLintKnowledgePolicy:
         assert _run(run_lint("project", base_dir=svc.base_dir, db_engine=svc._db_engine)) == []
 
     def test_pair_redacts_before_truncation_and_redacts_result(self, monkeypatch):
-        secret = "AKIA1234567890ABCDEF"
+        secret = "AKIA1234567890ABCDEF"  # gitleaks:allow
         prompts = []
         monkeypatch.setattr(wiki_lint, "CONTRADICTION_ARTICLE_MAX_BYTES", 16)
 
@@ -1440,7 +1440,7 @@ class TestLintKnowledgePolicy:
         assert secret not in issue.description
 
     def test_issue_redacts_complete_description_before_character_cap(self):
-        secret = "AKIA1234567890ABCDEF"
+        secret = "AKIA1234567890ABCDEF"  # gitleaks:allow
         issue = _make_issue(issue_type="lint_error", key="a", description="x" * 190 + secret)
         assert "AKIA" not in issue.description
 

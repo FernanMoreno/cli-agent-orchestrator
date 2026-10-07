@@ -419,10 +419,11 @@ class MiniMaxCodeProvider(BaseProvider):
             )
 
         data_dir, bootstrap = self._prepare_runtime()
-        if self._allowed_tools and "*" not in self._allowed_tools:
-            tools = ", ".join(self._allowed_tools)
+        if self._allowed_tools is not None and "*" not in self._allowed_tools:
+            from cli_agent_orchestrator.utils.tool_mapping import tool_constraint_instruction
+
             bootstrap = (
-                f"{SECURITY_PROMPT}\nYou only have access to these tools: {tools}\n\n"
+                f"{SECURITY_PROMPT}\n{tool_constraint_instruction(self._allowed_tools)}\n\n"
                 f"{bootstrap}"
             )
         bootstrap = (
@@ -623,7 +624,7 @@ class MiniMaxCodeProvider(BaseProvider):
     def exit_cli(self) -> str:
         return "/exit"
 
-    def cleanup(self) -> None:
+    def cleanup(self) -> bool | None:
         data_dir = self._data_dir or self._data_dir_path()
         self._require_managed_data_dir(data_dir)
         if data_dir.exists():
@@ -636,3 +637,4 @@ class MiniMaxCodeProvider(BaseProvider):
         self._last_completion_identity = None
         self._last_completion_buffer_epoch = None
         self._status_buffer_epoch = 0
+        return None

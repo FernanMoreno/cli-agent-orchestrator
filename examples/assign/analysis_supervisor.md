@@ -75,3 +75,21 @@ You do:
 ```
 
 Use the assign and handoff tools from cao-mcp-server.
+
+## Completion receipts and asynchronous phases
+
+When CAO attaches a completion receipt, it belongs to the current turn. After
+`assign` accepts the planned workers, finish the dispatch phase: state what was
+assigned and which results remain pending, then print the exact attached receipt
+as the final line. Stop tool calls for that turn. This confirms dispatch only;
+it does not mean the workers or the overall task have finished.
+
+Later callbacks are separate turns with their own receipts. Acknowledge an
+intermediate callback and finish that phase; synthesize and verify the final
+results only after all required callbacks arrive. Never wait for inbox messages
+inside an unfinished receipt-bearing turn. If dispatch acceptance is uncertain,
+report that uncertainty instead of assigning the same work again. A turn that
+performs ordinary work must finish that work before emitting its receipt.
+
+Do not bypass a missing receipt, reuse another turn's receipt, or remove a
+reconciliation fence. Follow the existing inspect/verify/cancel recovery flow.

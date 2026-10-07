@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import click
 
@@ -27,7 +27,12 @@ from cli_agent_orchestrator.agent_plugins.git_source import git_clone_target
 from cli_agent_orchestrator.agent_plugins.installer import (
     PluginInstallError,
     affected_sessions,
+)
+from cli_agent_orchestrator.agent_plugins.installer import disable as disable_plugin
+from cli_agent_orchestrator.agent_plugins.installer import enable as enable_plugin
+from cli_agent_orchestrator.agent_plugins.installer import (
     install,
+    review_installed,
     uninstall,
 )
 from cli_agent_orchestrator.agent_plugins.models import (
@@ -43,8 +48,7 @@ from cli_agent_orchestrator.agent_plugins.validation import validate_plugin
 UNTRUSTED_CONTENT_WARNING = (
     "Installing an agent plugin runs untrusted code and content from that "
     "source: its skills become instructions injected into your agents' prompts. "
-    "CAO implements no trust model, signing, or provenance verification for "
-    "agent plugins — the Agent Plugins specification defers all three."
+    "Installation is disabled until exact local approval; publisher identity remains unverified."
 )
 
 _SEVERITY_LABEL = {
@@ -195,6 +199,8 @@ def add(
             )
         else:
             click.echo(f"Agent plugin '{name}' was NOT installed", err=True)
+        if outcome.record:
+            _echo_trust(review_installed(outcome.record.name))
         _echo_findings(list(outcome.findings))
 
     # A plugin that could not be loaded is a non-zero outcome: CI and the
@@ -216,11 +222,19 @@ def list_command(as_json: bool) -> None:
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
 
-    # `--json` is a stable machine contract and gains no new key. A human reader,
-    # though, must not be told the store is tidy when the tidy-up did not run:
+    # Keep the record list shape and add a current review to expose stale trust.
+    # A human reader must not be told the store is tidy when tidy-up did not run:
     # the sweep declines rather than queues behind an install (review 4 item 1).
     if as_json:
-        click.echo(json.dumps([record.to_dict() for record in records], indent=2))
+        click.echo(
+            json.dumps(
+                [
+                    {**record.to_dict(), "review": review_installed(record.name, store=store)}
+                    for record in records
+                ],
+                indent=2,
+            )
+        )
         return
 
     if sweep.skipped_busy:
@@ -238,6 +252,7 @@ def list_command(as_json: bool) -> None:
     for record in records:
         skills = ", ".join(record.projected_skill_names) or "-"
         click.echo(f"{record.name:<32} {record.version or '-':<12} {skills}")
+        _echo_trust(review_installed(record.name, store=store))
 
         unprojected = set(record.skill_names) - set(record.projected_skill_names)
         if unprojected:
@@ -302,3 +317,72 @@ def remove(name: str, purge_data: bool, yes: bool) -> None:
     if purge_data:
         click.echo("Its persistent data directory was deleted")
     _echo_findings(list(outcome.projection_findings))
+
+
+def _echo_trust(review: Dict[str, Any]) -> None:
+    producer = review["producer"] or {}
+    click.echo(
+        f"  declared producer: {producer.get('name') or 'unknown'} ({review['producer_status']})"
+    )
+    click.echo(f"  origin: {review['source']['location']}  ref: {review['source']['ref'] or '-'}")
+    click.echo(
+        f"  resolved commit: {review['resolved_ref'] or 'unavailable'}  version: {review['version'] or '-'}"
+    )
+    click.echo(f"  integrity: {review['integrity']}  sha256: {review['content_sha256']}")
+    requirement = (
+        (review["cao_requirement"] or "not declared; schema checked")
+        if review["compatibility"] != "unavailable"
+        else "unavailable"
+    )
+    click.echo(f"  compatibility: {review['compatibility']}  CAO requirement: {requirement}")
+    permissions = (
+        (", ".join(review["permissions"]) or "none declared")
+        if review.get("permissions_available", True)
+        else "unavailable"
+    )
+    click.echo(f"  permissions: {permissions}")
+    click.echo(f"  policy: {review['policy']}  enabled: {review['enabled']}")
+    click.echo(f"  reason: {review['decision_reason']}")
+    click.echo(f"  review id: {review['review_id']}")
+
+
+@agent_plugin.command("review")
+@click.argument("name")
+@click.option("--json", "as_json", is_flag=True)
+def review_command(name: str, as_json: bool) -> None:
+    """Review installed package evidence without granting authority."""
+    try:
+        review = review_installed(name)
+    except PluginInstallError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if as_json:
+        click.echo(json.dumps(review, indent=2))
+    else:
+        _echo_trust(review)
+
+
+@agent_plugin.command("enable")
+@click.argument("name")
+@click.option("--approve", required=True, help="Exact review id from plugin review.")
+@click.option(
+    "--permission", "permissions", multiple=True, help="Approve each exact requested permission."
+)
+def enable_command(name: str, approve: str, permissions: Tuple[str, ...]) -> None:
+    """Approve current content locally; tool allowlists still require explicit grants."""
+    try:
+        _echo_trust(review_installed(name))
+        enable_plugin(name, review_id=approve, permissions=permissions)
+    except PluginInstallError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Agent plugin '{name}' enabled with exact local approval")
+
+
+@agent_plugin.command("disable")
+@click.argument("name")
+def disable_command(name: str) -> None:
+    """Revoke local content approval and rebuild agent projections."""
+    try:
+        disable_plugin(name)
+    except PluginInstallError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Agent plugin '{name}' disabled")

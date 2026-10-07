@@ -372,3 +372,106 @@ class TestParityWithSkillsCommand:
 
         assert "Name" in result.output
         assert "-" * 20 in result.output
+
+
+def test_us5_cli_review_and_exact_approval(cli_env):
+    root = build_plugin(
+        cli_env["tmp_path"] / "candidate",
+        "candidate",
+        skills=["example"],
+        extra_manifest={"author": {"name": "Declared Author"}},
+    )
+    assert run(cli_env, "add", str(root)).exit_code == 0
+    assert not (cli_env["skills_dir"] / "example").exists()
+    review_result = run(cli_env, "review", "candidate", "--json")
+    assert review_result.exit_code == 0, review_result.output
+    review = json.loads(review_result.output)
+    assert review["producer"]["name"] == "Declared Author"
+    assert review["producer_status"] == "unverified"
+    assert review["source"]["location"] == str(root)
+    assert review["compatibility"] == "compatible"
+    assert run(cli_env, "enable", "candidate", "--approve", "wrong").exit_code != 0
+    enabled = run(
+        cli_env,
+        "enable",
+        "candidate",
+        "--approve",
+        review["review_id"],
+        "--permission",
+        "skill:example",
+    )
+    assert enabled.exit_code == 0, enabled.output
+    assert (cli_env["skills_dir"] / "example").exists()
+    assert run(cli_env, "disable", "candidate").exit_code == 0
+    assert not (cli_env["skills_dir"] / "example").exists()
+
+
+def test_us5_cli_missing_approval_permissions_and_incompatibility_are_denied(cli_env):
+    root = build_plugin(cli_env["tmp_path"] / "candidate", "candidate", skills=["example"])
+    assert run(cli_env, "add", str(root)).exit_code == 0
+    review = json.loads(run(cli_env, "review", "candidate", "--json").output)
+    assert review["producer_status"] == "unverified"
+    assert review["enabled"] is False
+    listing = json.loads(run(cli_env, "list", "--json").output)
+    assert listing[0]["review"]["enabled"] is False
+    assert run(cli_env, "enable", "candidate").exit_code != 0
+    missing_permission = run(cli_env, "enable", "candidate", "--approve", review["review_id"])
+    assert missing_permission.exit_code != 0
+    assert "permissions" in missing_permission.output
+    assert not (cli_env["skills_dir"] / "example").exists()
+    manifest_path = root / "plugin.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["extensions"] = {"org.cao.trust": {"cao": "<0"}}
+    manifest_path.write_text(json.dumps(manifest))
+    assert run(cli_env, "add", str(root), "--force").exit_code == 0
+    review = json.loads(run(cli_env, "review", "candidate", "--json").output)
+    denied = run(
+        cli_env,
+        "enable",
+        "candidate",
+        "--approve",
+        review["review_id"],
+        "--permission",
+        "skill:example",
+    )
+    assert denied.exit_code != 0
+    assert "incompatible" in denied.output
+    assert not (cli_env["skills_dir"] / "example").exists()
+
+
+def test_us5_unreadable_package_remains_visible_without_enable_authority(cli_env):
+    root = build_plugin(cli_env["tmp_path"] / "candidate", "candidate", skills=["example"])
+    assert run(cli_env, "add", str(root)).exit_code == 0
+    review = json.loads(run(cli_env, "review", "candidate", "--json").output)
+    manifest = cli_env["store"].plugin_root("candidate") / "plugin.json"
+    previous_mode = manifest.stat().st_mode
+    manifest.chmod(0)
+    try:
+        try:
+            manifest.read_bytes()
+        except PermissionError:
+            pass
+        else:
+            pytest.skip(
+                "This user can read mode-000 files; permission failure cannot be reproduced"
+            )
+        listed = run(cli_env, "list", "--json")
+        assert listed.exit_code == 0, listed.output
+        current = json.loads(listed.output)[0]["review"]
+        assert current["enabled"] is False
+        assert current["integrity"] == "unavailable"
+        assert current["producer_status"] == "unverified"
+        assert current["decision_reason"]
+        denied = run(
+            cli_env,
+            "enable",
+            "candidate",
+            "--approve",
+            review["review_id"],
+            "--permission",
+            "skill:example",
+        )
+        assert denied.exit_code != 0
+        assert not (cli_env["skills_dir"] / "example").exists()
+    finally:
+        manifest.chmod(previous_mode)

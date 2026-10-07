@@ -25,13 +25,12 @@
 
 
 > [!WARNING]
-> **Installing an agent plugin runs untrusted code and content from that
-> source.** A plugin's skills become instructions injected into your agents'
-> system prompts, and its MCP servers become subprocesses on your machine.
-> CAO implements **no trust model, no signing, and no provenance verification**
-> for agent plugins — the specification defers all three to a future revision,
-> and CAO inherits that deferral rather than inventing its own. Install plugins
-> only from sources you would trust with a shell on your machine.
+> **Enabling an agent plugin admits untrusted code and content.** Installation
+> keeps it disabled until exact local content approval. Skills become instructions
+> in an agent's system prompt and MCP servers may run as subprocesses. CAO binds
+> local approval to content, origin and requested permissions; it does not verify
+> publisher identity or sandbox the plugin. See [Local content approval](#local-content-approval).
+
 
 ## What an agent plugin is
 
@@ -98,6 +97,10 @@ cao plugin add https://github.com/owner/repo --ref v1.2.0 --subdir packages/my-p
 # Check a candidate without installing it
 cao plugin validate ./path/to/my-plugin
 cao plugin validate ./path/to/my-plugin --json
+
+# Review installed content and approve its exact requested permission set
+cao plugin review my-plugin
+cao plugin enable my-plugin --approve <review-id> --permission <requested-permission>
 
 # See what is installed, and which skill came from where
 cao plugin list
@@ -186,7 +189,7 @@ bytes wholesale, and the specification requires persistent data survive that.
 
 ## How plugin skills reach your agents
 
-A plugin's skills are **projected** into the global skill store as managed
+An explicitly approved plugin's skills are **projected** into the global skill store as managed
 symlinks:
 
 ```text
@@ -330,7 +333,7 @@ When the merge happens matters, and it is worth knowing as an operator:
 
 - **`cao install <agent>`** picks up whatever plugins are installed at that
   moment.
-- **`cao plugin add` / `cao plugin remove`** re-materialize the provider configs
+- **`cao plugin enable` / `cao plugin disable` / `cao plugin remove`** re-materialize the provider configs
   of agents you have already installed, so a plugin's servers appear on the
   agents you own without reinstalling each one, and are withdrawn when the plugin
   is removed. This is not cosmetic: `mcpServers` is written into each provider's
@@ -375,9 +378,9 @@ CAO-installed agent survives every install, refresh and uninstall. See
 > keeps every server's working directory and `./`-rooted command inside the
 > plugin's own directory, and warns about credential-shaped values — but it does
 > not sandbox the process, and it cannot: an MCP server is meant to do real work.
-> The consent gate is the untrusted-content warning printed at install time, which
-> is why installing is an explicit act and why `cao plugin validate` exists to let
-> you read `mcp.json` before you install it. CAO's own localhost-only posture is
+> The consent gate is exact local approval through `cao plugin review` and
+> `cao plugin enable`; `cao plugin validate` checks package structure without
+> enabling content. CAO's own localhost-only posture is
 > unchanged by this: nothing here opens a port or accepts a remote connection.
 
 **An unusable `mcp.json` disables MCP for that plugin and nothing else** — its
@@ -463,7 +466,7 @@ can drive a CAO session without CAO-specific integration code:
 | Package | Install this if you are… | Skills | Also ships |
 |---|---|---|---|
 | [`cao`](../agent-plugin/cao) | **an operator** driving CAO from another client | `cao-session-management`, `cao-agent-routing`, `cao-supervisor-protocols`, `cao-worker-protocols` | the `cao-ops` MCP server |
-| [`cao-contributor`](../agent-plugin/cao-contributor) | **a contributor** extending CAO itself | `cao-provider`, `cao-plugin` | — |
+| [`cao-contributor`](../agent-plugin/cao-contributor) | **a contributor** extending CAO itself | `cao-provider`, `cao-plugin`, `cao-contributing` | — |
 
 The skill names are the folder names you will see under
 `~/.aws/cli-agent-orchestrator/skills/` after installing, which is what makes a
@@ -537,7 +540,8 @@ failing CI on any drift.
 ## Trying it in a client
 
 Two routes reach a client, and they are worth keeping apart. **Through CAO** —
-`cao plugin add` then `cao install`, which materializes the plugin's skills and
+`cao plugin add`, `cao plugin review`, exact `cao plugin enable` approval, then
+`cao install`, which materializes the plugin's skills and
 MCP servers into whatever provider you install for. **Directly in a foreign
 client** — install the package with that client's own plugin mechanism, which is
 what makes the package portable rather than CAO-specific.
@@ -547,6 +551,9 @@ Everything below starts from a clone:
 ```sh
 cao plugin validate ./agent-plugin/cao     # loadable? skills named? mcp present?
 cao plugin add ./agent-plugin/cao
+cao plugin review cao
+# Approve the review ID and every permission shown before installing an agent.
+cao plugin enable cao --approve <review-id> --permission <requested-permission>
 ```
 
 ### Kiro CLI — native, both routes
@@ -652,11 +659,14 @@ cannot make a green recording. The CI job
 
 ![CAO installing its own cao agent plugin through its own pipeline, asserting each step](media/agent-plugins-dogfood-demo.gif)
 
+The checked-in recording predates the local approval gate. The current runnable
+example includes disabled installation, review and exact local approval.
+
 What each step asserts, and why it is the load-bearing one:
 
 1. **`cao plugin validate`** — the manifest is loadable, its four shipped skills
    are named, and `mcp_present` with the `cao-ops` server.
-2. **`cao plugin add`** — each skill is projected into the skill store as a
+2. **`cao plugin add` followed by exact local approval** — each skill is projected into the skill store as a
    symlink whose target resolves into the plugin store (asserted on the link
    target, not on `ls` output).
 3. **`cao install … --provider kiro_cli`** — the delivery fix, end to end: the
@@ -684,13 +694,15 @@ in [`examples/agent-plugins/agent-plugins-dogfood/`](../examples/agent-plugins/a
 
 ## Security posture, stated plainly
 
-- **No trust model.** Installing a plugin is equivalent to running untrusted
-  code and content from its source. There is no signing and no provenance check.
+- **Local content approval.** Installation is disabled by default. Enabling
+  requires exact local approval of content, origin and requested permissions.
+  Publisher identity remains unverified; CAO provides no signing verifier.
 - **Prompt injection is the main exposure.** Plugin skill content flows into
   agents' system prompts. This is not new — `extra_skill_dirs` already admits
   third-party skill content — but installing a plugin is one command rather than
   a deliberate settings edit. `cao plugin list` shows which plugin contributed
-  each skill, so provenance is always recoverable.
+  each skill, so local source attribution is visible. This does not verify
+  publisher identity.
 - **Paths are contained.** Every path a plugin references is resolved with
   realpath and confined to that plugin's own root. A symlink whose target
   resolves inside the root is allowed; one that escapes is rejected, whatever
@@ -711,3 +723,47 @@ in [`examples/agent-plugins/agent-plugins-dogfood/`](../examples/agent-plugins/a
 - [Skills](skills.md) — the skill system agent plugins deliver into
 - [Event Plugins](plugins.md) — CAO's *other*, unrelated plugin system
 - [Agent Plugins 1.0.0 specification](https://agent-plugins.org/specification)
+
+## Local content approval
+
+`cao plugin add` installs a validated package **disabled**. A commit pin records
+which Git object was resolved; it does not prove who produced it. The manifest
+`author` is a declared producer, and CAO reports publisher identity as
+**unverified** because it has no trusted publisher attestation verifier.
+
+Review the installed package before enabling:
+
+```bash
+cao plugin review my-plugin
+cao plugin review my-plugin --json
+cao plugin enable my-plugin --approve <review-id> --permission skill:my-skill --permission @my-server
+cao plugin disable my-plugin
+```
+
+The review shows declared producer, original source and ref, resolved commit,
+version, SHA-256 content integrity, schema compatibility, requested permissions,
+and the local policy decision. Unreadable packages remain listed with unavailable
+current evidence and cannot be enabled. Each `--permission` must match the review's exact
+requested set. Local approval binds these permissions, source/reference and
+package content to the review ID. It is permission to deliver the package's
+content, **not a verified publisher identity or an agent tool grant**. An agent's
+`allowedTools` must still explicitly authorize its MCP server tools.
+
+The default local policy is `explicit-local-approval`: reviewing, listing and
+installing unverified packages is allowed; enabling requires exact local
+approval. Changed or incompatible packages are denied. Reinstall changed bytes
+and review them again. Replacing a package revokes its earlier approval. Older
+installation records remain readable but start unverified and require a fresh
+review and explicit approval. Disabling removes managed skill projections and
+refreshes provider configurations. Fresh native Kiro/OpenCode launches reconcile
+managed projections and block if stale content cannot be removed. Running providers
+may retain an already loaded snapshot and should be restarted after revocation.
+
+The optional manifest extension `extensions["org.cao.trust"]` accepts `cao` (a
+Python packaging version requirement such as `">=2.5,<3"`) and `permissions`
+(a list of strings). Malformed declarations or an unsatisfied CAO requirement
+block enabling. Without a version requirement, CAO checks the pinned Agent
+Plugins schema and reports the absent version declaration. Skill instructions
+(`skill:<name>`) and mapped MCP servers (`@<name>`) are included in the requested
+set automatically. These declarations describe requested authority; CAO does
+not create grants or sandbox arbitrary skill instructions through them.

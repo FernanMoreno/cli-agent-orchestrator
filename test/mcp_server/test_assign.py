@@ -4,6 +4,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from cli_agent_orchestrator.constants import API_BASE_URL
 from cli_agent_orchestrator.mcp_server.server import _build_assign_description
@@ -58,6 +59,7 @@ class TestCreateTerminalProviderResolution:
             },
             json=None,
             headers=None,
+            allow_redirects=False,
             timeout=_mcp_timeout(),
         )
 
@@ -104,6 +106,7 @@ class TestCreateTerminalProviderResolution:
             },
             json=None,
             headers=None,
+            allow_redirects=False,
             timeout=_mcp_timeout(),
         )
 
@@ -234,6 +237,7 @@ class TestCreateTerminalProviderResolution:
                 "initial_message_orchestration_type": "assign",
             },
             headers=None,
+            allow_redirects=False,
             timeout=_mcp_timeout(),
         )
 
@@ -272,6 +276,7 @@ class TestCreateTerminalProviderResolution:
             },
             json={"initial_message": "Review the current change"},
             headers=None,
+            allow_redirects=False,
             timeout=_mcp_timeout(),
         )
 
@@ -686,173 +691,106 @@ class TestCreateTerminalUseWorktree:
 
 
 class TestAssignSenderIdInjection:
-    """Tests for sender ID injection in _assign_impl.
+    """Callback composition passes through the durable assignment API."""
 
-    _assign_impl now uses the deferred-init path: it composes the callback-
-    instructions suffix on the MCP-server side and passes the full message
-    to ``_create_terminal`` via ``initial_message`` so cao-server can deliver
-    it in the background once the worker's provider finishes initializing.
-    The tool-call itself returns as soon as the tmux window/DB row exist.
-    """
+    @pytest.fixture(autouse=True)
+    def durable_transport(self):
+        with patch("cli_agent_orchestrator.utils.orchestration.requests") as transport:
+            transport.HTTPError = requests.HTTPError
+            transport.get.return_value.json.return_value = {"generation": 7}
+            transport.post.return_value.json.return_value = {
+                "assignment_id": "assignment-1",
+                "terminal_id": "worker-1",
+                "success": True,
+                "state": "admitted",
+                "message": "Worker initializing; message delivery pending.",
+            }
+            self.transport = transport
+            yield
 
-    @patch("cli_agent_orchestrator.utils.orchestration._get_cleanup_nudge", return_value="")
-    @patch("cli_agent_orchestrator.utils.orchestration.ENABLE_SENDER_ID_INJECTION", True)
-    @patch("cli_agent_orchestrator.utils.orchestration._create_terminal")
-    def test_assign_appends_sender_id_when_injection_enabled(self, mock_create, _nudge):
-        """When injection is enabled, assign should pass a message with the
-        sender ID suffix as ``initial_message`` to _create_terminal."""
+    def assign(self, message="Analyze the logs", **kwargs):
         from cli_agent_orchestrator.utils.orchestration import _assign_impl
 
-        mock_create.return_value = ("worker-1", "claude_code")
-
         with patch.dict(os.environ, {"CAO_TERMINAL_ID": "a1b2c3d4"}):
-            result = _assign_impl("developer", "Analyze the logs")
+            return _assign_impl("developer", message, **kwargs)
 
+    @patch("cli_agent_orchestrator.utils.orchestration.ENABLE_SENDER_ID_INJECTION", True)
+    def test_assign_appends_sender_id_when_injection_enabled(self):
+        result = self.assign()
         assert result["success"] is True
-        # _create_terminal is called with defer_init=True and the composed message
-        _, kwargs = mock_create.call_args
-        assert kwargs["defer_init"] is True
-        sent_message = kwargs["initial_message"]
-        assert sent_message.startswith("Analyze the logs")
-        assert "[Assigned by terminal a1b2c3d4" in sent_message
-        assert "send results back to terminal a1b2c3d4 using send_message]" in sent_message
-        # And the orchestration_type is ASSIGN so plugin events see it
-        from cli_agent_orchestrator.models.inbox import OrchestrationType
+        sent = self.transport.post.call_args.kwargs["json"]
+        assert sent["message"].startswith("Analyze the logs")
+        assert "[Assigned by terminal a1b2c3d4" in sent["message"]
+        assert "send results back to terminal a1b2c3d4 using send_message]" in sent["message"]
+        assert sent["generation"] == 7
+        assert sent["operation_key"] == result["operation_key"]
+        assert self.transport.post.call_args.args[0].endswith("/terminals/a1b2c3d4/assignments")
 
-        assert kwargs["initial_message_orchestration_type"] == OrchestrationType.ASSIGN
-
-    @patch("cli_agent_orchestrator.utils.orchestration._get_cleanup_nudge", return_value="")
     @patch("cli_agent_orchestrator.utils.orchestration.ENABLE_SENDER_ID_INJECTION", False)
-    @patch("cli_agent_orchestrator.utils.orchestration._create_terminal")
-    def test_assign_no_suffix_when_injection_disabled(self, mock_create, _nudge):
-        """When injection is disabled, assign should pass the message unchanged."""
+    def test_assign_no_suffix_when_injection_disabled(self):
+        assert self.assign()["success"] is True
+        assert self.transport.post.call_args.kwargs["json"]["message"] == "Analyze the logs"
+
+    @pytest.mark.parametrize("injection", [True, False])
+    def test_assign_missing_terminal_id_errors_before_creating_terminal(self, injection):
         from cli_agent_orchestrator.utils.orchestration import _assign_impl
 
-        mock_create.return_value = ("worker-2", "claude_code")
-
-        with patch.dict(os.environ, {"CAO_TERMINAL_ID": "a1b2c3d4"}):
-            result = _assign_impl("developer", "Analyze the logs")
-
-        assert result["success"] is True
-        _, kwargs = mock_create.call_args
-        assert kwargs["initial_message"] == "Analyze the logs"
-
-    @patch("cli_agent_orchestrator.utils.orchestration.ENABLE_SENDER_ID_INJECTION", True)
-    @patch("cli_agent_orchestrator.utils.orchestration._create_terminal")
-    def test_assign_missing_terminal_id_errors_before_creating_terminal(self, mock_create):
-        """When CAO_TERMINAL_ID is not set, assign must fail fast (issue #284) —
-        never tell a worker to reply to terminal 'unknown', and never leave an
-        orphan worker terminal behind."""
-        from cli_agent_orchestrator.utils.orchestration import _assign_impl
-
-        with patch.dict(os.environ, {}, clear=True):
-            result = _assign_impl("developer", "Build feature X")
-
+        with patch(
+            "cli_agent_orchestrator.utils.orchestration.ENABLE_SENDER_ID_INJECTION", injection
+        ):
+            with patch.dict(os.environ, {}, clear=True):
+                result = _assign_impl("developer", "Build feature X")
         assert result["success"] is False
         assert result["terminal_id"] is None
         assert "CAO_TERMINAL_ID not set" in result["message"]
-        mock_create.assert_not_called()
+        self.transport.get.assert_not_called()
+        self.transport.post.assert_not_called()
 
-    @patch("cli_agent_orchestrator.utils.orchestration.ENABLE_SENDER_ID_INJECTION", False)
-    @patch("cli_agent_orchestrator.utils.orchestration._create_terminal")
-    def test_assign_missing_terminal_id_fails_fast_even_with_injection_off(self, mock_create):
-        """PR #390 must-fix #2: the CAO_TERMINAL_ID fail-fast must be
-        UNCONDITIONAL (not gated on sender-ID injection). With injection off and
-        no terminal id, the deferred path would otherwise take the new-session
-        branch, which can't deliver the task — assign would create a worker,
-        drop the task, and still return success. Guard fires regardless."""
-        from cli_agent_orchestrator.utils.orchestration import _assign_impl
-
-        with patch.dict(os.environ, {}, clear=True):
-            result = _assign_impl("developer", "Build feature X")
-
+    def test_assign_surfaces_terminal_id_when_create_fails(self):
+        self.transport.post.side_effect = requests.ConnectionError("connection refused")
+        result = self.assign()
         assert result["success"] is False
         assert result["terminal_id"] is None
-        assert "CAO_TERMINAL_ID not set" in result["message"]
-        mock_create.assert_not_called()
+        assert result["state"] == "reconcile"
+        assert result["operation_key"]
+        assert self.transport.post.call_count == 1
 
     @patch("cli_agent_orchestrator.utils.orchestration.ENABLE_SENDER_ID_INJECTION", True)
-    @patch("cli_agent_orchestrator.utils.orchestration._create_terminal")
-    def test_assign_surfaces_terminal_id_when_create_fails(self, mock_create):
-        """If _create_terminal fails, the returned dict should carry
-        ``terminal_id=None`` and a failure message."""
-        from cli_agent_orchestrator.utils.orchestration import _assign_impl
-
-        mock_create.side_effect = Exception("connection refused")
-
-        with patch.dict(os.environ, {"CAO_TERMINAL_ID": "a1b2c3d4"}):
-            result = _assign_impl("developer", "Analyze the logs")
-
-        assert result["success"] is False
-        assert result["terminal_id"] is None
-        assert "Assignment failed" in result["message"]
-
-    @patch("cli_agent_orchestrator.utils.orchestration._get_cleanup_nudge", return_value="")
-    @patch("cli_agent_orchestrator.utils.orchestration.ENABLE_SENDER_ID_INJECTION", True)
-    @patch("cli_agent_orchestrator.utils.orchestration._create_terminal")
-    def test_assign_suffix_is_appended_not_prepended(self, mock_create, _nudge):
-        """The sender ID should be a suffix, not a prefix."""
-        from cli_agent_orchestrator.utils.orchestration import _assign_impl
-
-        mock_create.return_value = ("worker-4", "claude_code")
+    def test_assign_suffix_is_appended_not_prepended(self):
         original = "Do the task described in /path/to/task.md"
+        self.assign(original)
+        sent = self.transport.post.call_args.kwargs["json"]["message"]
+        assert sent.startswith(original)
+        assert sent.index("[Assigned by terminal") > len(original)
 
-        with patch.dict(os.environ, {"CAO_TERMINAL_ID": "deadbeef"}):
-            _assign_impl("developer", original)
-
-        _, kwargs = mock_create.call_args
-        sent_message = kwargs["initial_message"]
-        assert sent_message.startswith(original)
-        assert sent_message.index("[Assigned by terminal") > len(original)
-
-    @patch("cli_agent_orchestrator.utils.orchestration._get_cleanup_nudge", return_value="")
-    @patch("cli_agent_orchestrator.utils.orchestration.ENABLE_SENDER_ID_INJECTION", True)
-    @patch("cli_agent_orchestrator.utils.orchestration._create_terminal")
-    def test_assign_returns_fast_success_message(self, mock_create, _nudge):
-        """Regression: assign() should tell the LLM the worker is initializing
-        in the background, not claim the message has been delivered."""
-        from cli_agent_orchestrator.utils.orchestration import _assign_impl
-
-        mock_create.return_value = ("worker-fast", "kiro_cli")
-
-        with patch.dict(os.environ, {"CAO_TERMINAL_ID": "a1b2c3d4"}):
-            result = _assign_impl("developer", "Do work")
-
+    def test_assign_returns_fast_success_message(self):
+        result = self.assign("Do work")
         assert result["success"] is True
-        assert result["terminal_id"] == "worker-fast"
-        # The message must reflect deferred delivery so the LLM does not
-        # falsely conclude the worker has already received the task.
+        assert result["terminal_id"] == "worker-1"
         assert "initializing" in result["message"].lower()
 
-    @patch("cli_agent_orchestrator.utils.orchestration.ENABLE_SENDER_ID_INJECTION", True)
-    @patch("cli_agent_orchestrator.utils.orchestration._create_terminal")
-    def test_assign_forwards_model_to_create_terminal(self, mock_create):
-        from cli_agent_orchestrator.utils.orchestration import _assign_impl
+    def test_assign_forwards_model_to_create_terminal(self):
+        assert self.assign("Do work", model="fable-5")["success"] is True
+        assert self.transport.post.call_args.kwargs["json"]["model"] == "fable-5"
 
-        mock_create.return_value = ("worker-1", "claude_code")
+    def test_assign_omitted_model_passes_none(self):
+        self.assign("Do work")
+        assert self.transport.post.call_args.kwargs["json"]["model"] is None
 
-        with patch.dict(os.environ, {"CAO_TERMINAL_ID": "a1b2c3d4"}):
-            result = _assign_impl("developer", "Do work", model="fable-5")
+    def test_response_loss_reuses_same_authoritative_identity(self):
+        self.transport.post.side_effect = requests.ConnectionError("response lost")
+        first = self.assign()
+        second = self.assign()
+        assert first["operation_key"] == second["operation_key"]
+        assert first["state"] == second["state"] == "reconcile"
 
-        assert result["success"] is True
-        _, kwargs = mock_create.call_args
-        assert kwargs["model"] == "fable-5"
-
-    @patch("cli_agent_orchestrator.utils.orchestration.ENABLE_SENDER_ID_INJECTION", True)
-    @patch("cli_agent_orchestrator.utils.orchestration._create_terminal")
-    def test_assign_omitted_model_passes_none(self, mock_create):
-        """No model given -> _create_terminal's own model=None default kicks
-        in (profile.model, if any, still applies) -- existing callers see
-        zero behavior change."""
-        from cli_agent_orchestrator.utils.orchestration import _assign_impl
-
-        mock_create.return_value = ("worker-1", "claude_code")
-
-        with patch.dict(os.environ, {"CAO_TERMINAL_ID": "a1b2c3d4"}):
-            _assign_impl("developer", "Do work")
-
-        _, kwargs = mock_create.call_args
-        assert kwargs["model"] is None
+    def test_missing_generation_requires_explicit_stable_key(self):
+        self.transport.get.return_value.json.return_value = {"generation": None}
+        result = self.assign()
+        assert result["error_kind"] == "assignment_operation_key_required"
+        self.transport.post.assert_not_called()
+        assert self.assign(operation_key="caller-stable-key")["success"] is True
+        assert self.transport.post.call_args.kwargs["json"]["operation_key"] == "caller-stable-key"
 
 
 class TestBuildAssignDescription:

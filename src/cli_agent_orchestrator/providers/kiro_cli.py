@@ -88,12 +88,39 @@ TUI_SEPARATOR_PATTERN = r"^[─]{20,}$"
 # regex can anchor on the raw ─── characters.
 _NON_SGR_CSI = re.compile(r"\x1b\[[0-9;?]*[^m]")
 
-# TUI Credits line: "▸ Credits: N.NN • Time: Ns" marks response completion
-TUI_CREDITS_PATTERN = r"▸\s*Credits:\s*[\d.]+"
+# TUI Credits line marks response completion. Two shapes so far:
+#   up to 2.2x:  "▸ Credits: 0.20 • Time: 29s"
+#   2.25.0:      "▸ Credits: turn 0.20 • session 0.20 | Time: 29s"
+# The 2.25 form put the word "turn" between "Credits:" and the number, which
+# the old pattern did not accept: every turn on 2.25 then fell through to the
+# separator fallback, and that fails too because the new "Trust All Tools
+# active" band sits between the last two separators with a single line of
+# content. Result was IDLE forever after a finished task (never COMPLETED),
+# reproduced against a live 2.25.0 pane on 2026-09-29. Accept an optional
+# "turn" (and any other single word) before the first number.
+TUI_CREDITS_PATTERN = r"▸\s*Credits:\s*(?:[A-Za-z]+\s+)?[\d.]+"
+
+# 2.25's turn/session form is adopted because that release also moved the
+# assistant text onto a bullet-prefixed line. Unlike the pre-2.25 layout, the
+# reply is not reliably separated from the echoed prompt by a blank line, so
+# extraction uses the credits anchors and the bullet line as the reply start.
+TUI_225_CREDITS_PATTERN = r"▸\s*Credits:\s*turn\s+[\d.]+"
+# The assistant's final reply bullet is truecolor blue; tool rows use green.
+# Keep the raw color marker for extraction, then fall back to a column-zero
+# bullet for uncolored captures (manual fixtures and older terminal records).
+TUI_225_ASSISTANT_BULLET_PATTERN = r"\x1b\[38;2;95;135;215m•"
+TUI_225_COLORED_BULLET_PATTERN = r"\x1b\[38;2;\d+;\d+;\d+m•"
+TUI_225_REPLY_PATTERN = r"^•\s+\S"
 
 # TUI processing indicator: ghost text shown while agent is working.
 # kiro-cli 2.11+ replaced "Kiro is working" with "Thinking..." (with an
 # optional "(esc to cancel)" suffix). Match either variant.
+TUI_LIVE_WORK_PATTERN = re.compile(
+    r"\x1b\[2K(?:\x1b\[[0-9;]*m)*[⠀-⣿ᗢ-ᗧ](?:\x1b\[[0-9;]*m| )*Thinking\.\.\."
+    r"|\x1b\[2K(?:› )?(?P<composer>(?:\x1b\[[0-9;]*m| )*)Kiro is working ·"
+)
+_CURSOR_BLOCK = "\x1b[7m"
+
 TUI_PROCESSING_PATTERN = r"Kiro is working|Thinking\.\.\."
 
 # TUI initialization indicator: shown during startup before chat is ready.
@@ -208,13 +235,18 @@ class KiroCliProvider(BaseProvider):
         # - [developer] 50% >   (prompt with progress indicator)
         # - [developer] λ >     (prompt with lambda symbol)
         # - [developer] 50% λ > (combined progress and lambda)
-        self._idle_prompt_pattern = (
-            rf"\[{re.escape(self._agent_profile)}\]\s*(?:\d+%\s*)?(?:\u03bb\s*)?!?>\s*"
-        )
+        prompt_profile = re.escape(self._agent_profile)
+        if self._engine == KiroEngine.KAS:
+            from cli_agent_orchestrator.services.kiro_profiles import runtime_kas_profile_name
+
+            prompt_profile = (
+                f"(?:{prompt_profile}|{re.escape(runtime_kas_profile_name(self.terminal_id))})"
+            )
+        self._idle_prompt_pattern = rf"\[{prompt_profile}\]\s*(?:\d+%\s*)?(?:\u03bb\s*)?!?>\s*"
         self._permission_prompt_pattern = r"Allow this action\?.*?\[.*?y.*?/.*?n.*?/.*?t.*?\]:"
 
         # New TUI header pattern: "agent_name · model · ◔ N%"
-        self._new_tui_header_pattern = rf"{re.escape(self._agent_profile)}\s+·\s+.*·\s+◔\s*\d+%"
+        self._new_tui_header_pattern = rf"{prompt_profile}\s+·\s+.*·\s+◔\s*\d+%"
 
     @property
     def paste_enter_count(self) -> int:
@@ -257,6 +289,8 @@ class KiroCliProvider(BaseProvider):
         CAO agent profile to be loadable at runtime (kiro-cli has its own
         agent store). A missing or unparseable profile must not block launch.
         """
+        if self._engine == KiroEngine.KAS and hasattr(self, "_kas_profile"):
+            return self._kas_profile.model
         if self._model:
             return self._model
         try:
@@ -288,9 +322,31 @@ class KiroCliProvider(BaseProvider):
 
         if self._engine == KiroEngine.KAS:
             # This defensive guard makes direct provider use fail closed too.
-            # Normal terminal creation has already probed and rejected KAS before
-            # a backend window or provider is allocated.
-            raise KiroPhase0KASError(profile_has_v2_policy=False)
+            # Normal terminal creation has already probed and admitted an exact
+            # private policy before allocating a backend window.
+            from cli_agent_orchestrator.clients.database import get_terminal_metadata
+            from cli_agent_orchestrator.services.kiro_profiles import guard_existing_kas_runtime
+
+            self._kas_profile = guard_existing_kas_runtime(
+                self.terminal_id, get_terminal_metadata(self.terminal_id)
+            )
+            from cli_agent_orchestrator.models.kiro_launch import KiroLaunchRefusedError
+
+            if self._model is not None and self._model != self._kas_profile.model:
+                raise KiroLaunchRefusedError(
+                    code="policy-drift",
+                    profile_field="model",
+                    message="KAS model override differs from the persisted launch grant.",
+                )
+            if (
+                self._allowed_tools is not None
+                and self._allowed_tools != self._kas_profile.allowedTools
+            ):
+                raise KiroLaunchRefusedError(
+                    code="policy-drift",
+                    profile_field="allowedTools",
+                    message="KAS tool override differs from the persisted launch grant.",
+                )
 
         # Step 1: Wait for shell prompt to appear in the tmux window
         # This ensures the terminal is ready before we send commands
@@ -324,15 +380,24 @@ class KiroCliProvider(BaseProvider):
         # allowlist), and there is no human at the terminal in headless
         # orchestration to answer. Without this, a supervisor invoking
         # assign() hangs indefinitely on the approval dialog.
+        launch_profile = self._agent_profile
+        if self._engine == KiroEngine.KAS:
+            from cli_agent_orchestrator.services.kiro_profiles import runtime_kas_profile_name
+
+            launch_profile = runtime_kas_profile_name(self.terminal_id)
         base_args = build_kiro_command(
             self._engine,
-            self._agent_profile,
+            launch_profile,
             model=model,
             yolo=True,
         )
         command = shlex.join(base_args)
         # Arm the StatusMonitor stickiness gate before launching the CLI so
         # the IDLE → PROCESSING → IDLE/COMPLETED transition is honored.
+        if self._engine == KiroEngine.KAS:
+            # Waiting for the shell crossed an async boundary. Re-prove the
+            # exact private policy before the first native launch write.
+            guard_existing_kas_runtime(self.terminal_id, get_terminal_metadata(self.terminal_id))
         status_monitor.notify_input_sent(self.terminal_id)
         get_backend().send_keys(self.session_name, self.window_name, command)
 
@@ -436,6 +501,15 @@ class KiroCliProvider(BaseProvider):
                 "dialog (body + '❯ No, exit') was not verified; not answering"
             )
             return False
+
+        if self._engine == KiroEngine.KAS:
+            from cli_agent_orchestrator.models.kiro_launch import KiroLaunchRefusedError
+
+            raise KiroLaunchRefusedError(
+                code="native-policy-unproven",
+                profile_field="allowedTools",
+                message="KAS displayed a trust-all-tools dialog; its native policy was not established.",
+            )
 
         # Verified consent dialog: cursor on "No, exit", so Down lands on
         # "Yes, I accept" (session-scoped — NOT "Yes, and don't ask again").
@@ -732,7 +806,7 @@ class KiroCliProvider(BaseProvider):
 
         if not green_arrows:
             # Fallback: try TUI extraction (separator + Credits pattern)
-            return self._extract_tui_message(clean_output)
+            return self._extract_tui_message(clean_output, script_output)
 
         if not idle_prompts and not new_tui_idles:
             raise ValueError("Incomplete Kiro CLI response - no final prompt detected")
@@ -768,7 +842,83 @@ class KiroCliProvider(BaseProvider):
 
         return final_answer.strip()
 
-    def _extract_tui_message(self, clean_output: str) -> str:
+    def _extract_tui_225_message(
+        self, lines: list[str], credits_idx: int, raw_output: str | None = None
+    ) -> str | None:
+        """Extract a 2.25 TUI reply using turn anchors instead of paragraphs.
+
+        The pre-2.25 layout reliably places the echoed prompt in the first
+        paragraph inside the response box.  2.25 moved the assistant text to a
+        bullet-prefixed line and can render a one-word reply immediately below
+        the echoed prompt, so paragraph splitting cannot distinguish the two.
+        When the capture retains ANSI colors, the blue assistant bullet is the
+        exact boundary; green tool rows are never candidates. Uncolored live
+        captures fall back to the final column-zero bullet block.
+        """
+        if raw_output is not None:
+            raw_reply = self._extract_tui_225_raw_reply(raw_output)
+            if raw_reply is not None:
+                return raw_reply
+            if re.search(TUI_225_COLORED_BULLET_PATTERN, raw_output):
+                # The capture has colored bullet rows, so a missing blue assistant
+                # bullet means this turn ended in tool chrome, not assistant text.
+                return None
+
+        prev_credits_idx = -1
+        for i in range(credits_idx - 1, -1, -1):
+            if re.search(TUI_CREDITS_PATTERN, lines[i]):
+                prev_credits_idx = i
+                break
+
+        reply_start = None
+        for i in range(credits_idx - 1, prev_credits_idx, -1):
+            if re.search(TUI_225_REPLY_PATTERN, lines[i]):
+                reply_start = i
+                while reply_start - 1 > prev_credits_idx and re.search(
+                    TUI_225_REPLY_PATTERN, lines[reply_start - 1]
+                ):
+                    reply_start -= 1
+                break
+
+        if reply_start is None:
+            return None
+
+        response_lines = lines[reply_start:credits_idx]
+        response_lines[0] = re.sub(r"^•\s+", "", response_lines[0], count=1)
+        final_answer = "\n".join(response_lines).strip()
+        final_answer = re.sub(ESCAPE_SEQUENCE_PATTERN, "", final_answer)
+        final_answer = re.sub(CONTROL_CHAR_PATTERN, "", final_answer)
+        return final_answer.strip()
+
+    def _extract_tui_225_raw_reply(self, raw_output: str) -> str | None:
+        """Return the last blue assistant bullet block in the final 2.25 turn."""
+        credits: list[tuple[int, int]] = []
+        offset = 0
+        for line in raw_output.splitlines(keepends=True):
+            if re.search(TUI_225_CREDITS_PATTERN, strip_terminal_escapes(line)):
+                credits.append((offset, offset + len(line.rstrip("\r\n"))))
+            offset += len(line)
+        if not credits:
+            return None
+
+        turn_start = credits[-2][1] if len(credits) > 1 else 0
+        turn_end = credits[-1][0]
+        assistant_bullets = [
+            match
+            for match in re.finditer(TUI_225_ASSISTANT_BULLET_PATTERN, raw_output)
+            if turn_start <= match.start() < turn_end
+        ]
+        if not assistant_bullets:
+            return None
+
+        response = raw_output[assistant_bullets[-1].start() : turn_end]
+        response = strip_terminal_escapes(response)
+        response = re.sub(r"^\s*•\s+", "", response, count=1)
+        response = re.sub(ESCAPE_SEQUENCE_PATTERN, "", response)
+        response = re.sub(CONTROL_CHAR_PATTERN, "", response)
+        return response.strip()
+
+    def _extract_tui_message(self, clean_output: str, raw_output: str | None = None) -> str:
         """Extract agent response from pure TUI output (no green arrows).
 
         TUI format:
@@ -798,6 +948,13 @@ class KiroCliProvider(BaseProvider):
             if re.search(TUI_CREDITS_PATTERN, lines[i]):
                 credits_idx = i
                 break
+
+        if credits_idx is not None and re.search(TUI_225_CREDITS_PATTERN, lines[credits_idx]):
+            response = self._extract_tui_225_message(lines, credits_idx, raw_output)
+            if response is not None:
+                return response
+            if raw_output is not None and re.search(TUI_225_COLORED_BULLET_PATTERN, raw_output):
+                raise ValueError("No Kiro CLI assistant reply found in colored 2.25 TUI output")
 
         if credits_idx is None:
             # Kiro CLI 2.3.0+ may not emit a Credits line. Fall back to
@@ -939,3 +1096,21 @@ class KiroCliProvider(BaseProvider):
     def cleanup(self) -> None:
         """Clean up Kiro CLI provider."""
         self._initialized = False
+
+    def shows_turn_work(self, buffer: str) -> Optional[bool]:
+        """Whether this post-dispatch raw buffer shows kiro actually working (#735).
+
+        get_status() alone cannot tell: its "no idle prompt visible → PROCESSING"
+        fallback is also true of a half-received REDRAW of the previous answer
+        (a pane resize right after a send repaints it), and the redraw then ends
+        with the idle prompt, which reads as COMPLETED. Only a live work sign —
+        which kiro draws while working and never while repainting an old answer —
+        proves the dispatched turn ran. See TUI_LIVE_WORK_PATTERN for the forms.
+        """
+        if not buffer:
+            return False
+        for match in TUI_LIVE_WORK_PATTERN.finditer(buffer):
+            composer = match.group("composer")
+            if composer is None or _CURSOR_BLOCK in composer:
+                return True
+        return False

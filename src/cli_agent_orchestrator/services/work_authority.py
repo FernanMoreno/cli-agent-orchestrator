@@ -142,7 +142,7 @@ class WorkAuthority:
         if (
             not is_verified_principal(principal)
             or not getattr(principal, "id", None)
-            or not getattr(principal, "scopes", frozenset()) & {SCOPE_WRITE, SCOPE_ADMIN}
+            or not getattr(principal, "scopes", frozenset[str]()) & {SCOPE_WRITE, SCOPE_ADMIN}
             or (admin and SCOPE_ADMIN not in principal.scopes)
         ):
             raise AuthorityDenied("verified principal lacks required authority scope")
@@ -209,28 +209,27 @@ class WorkAuthority:
     ) -> dict:
         if not isinstance(inventory, dict) or set(inventory) != {"fingerprint", "profile_version"}:
             raise AuthorityDenied("offline cut inventory observation is invalid")
+        observed_lease = {
+            key: lease[key]
+            for key in (
+                "id",
+                "store_identity",
+                "operator_principal_id",
+                "owner",
+                "scope",
+                "epoch",
+                "fence",
+                "expires_at",
+                "revision",
+            )
+        }
+        observed_lease["store_identity"] = public_offline_store_identity(lease["store_identity"])
         observation = {
-            "lease": {
-                key: lease[key]
-                for key in (
-                    "id",
-                    "store_identity",
-                    "operator_principal_id",
-                    "owner",
-                    "scope",
-                    "epoch",
-                    "fence",
-                    "expires_at",
-                    "revision",
-                )
-            },
+            "lease": observed_lease,
             "writer_count": 0,
             "inventory": inventory,
             "observed_at": time.time(),
         }
-        observation["lease"]["store_identity"] = public_offline_store_identity(
-            lease["store_identity"]
-        )
         stored = self.repository._observe_offline_cut(
             connection,
             lease,
@@ -240,7 +239,8 @@ class WorkAuthority:
                 observation, sort_keys=True, separators=(",", ":"), allow_nan=False
             ),
         )
-        return json.loads(stored["observation"])
+        parsed: dict = json.loads(stored["observation"])
+        return parsed
 
     def observe_offline_cut(
         self,
@@ -360,7 +360,9 @@ class WorkAuthority:
             enforcement_level=row["enforcement_level"],
         )
 
-    def _chain(self, connection, grant_id, expected_revision, *, live=True):
+    def _chain(
+        self, connection, grant_id, expected_revision, *, live=True
+    ) -> tuple[list[Grant], dict]:
         chain: list[Grant] = []
         seen = set()
         while True:

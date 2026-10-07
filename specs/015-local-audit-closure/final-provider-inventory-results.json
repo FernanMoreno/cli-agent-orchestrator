@@ -1,0 +1,631 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-07",
+  "registered_real_providers": 13,
+  "mock_counted_as_live": false,
+  "providers": [
+    {
+      "provider": "kiro_cli",
+      "binary": "kiro-cli",
+      "version": "2.27.1",
+      "version_exit": 0,
+      "configured_model": null,
+      "status": "blocked",
+      "evidence": "auth_kv empty (0 rows); isolated whoami exit 1, not logged in; no configured exact model"
+    },
+    {
+      "provider": "claude_code",
+      "binary": "claude",
+      "version": "2.1.292",
+      "version_exit": 0,
+      "configured_model": "sonnet",
+      "status": "previously_validated",
+      "evidence": "Real lifecycle matrix has accepted same-provider and all ordered crosses with Codex/OpenCode after renewed login"
+    },
+    {
+      "provider": "codex",
+      "binary": "codex",
+      "version": "0.160.1",
+      "version_exit": 0,
+      "configured_model": "gpt-6.1-sol",
+      "status": "previously_validated",
+      "evidence": "Real lifecycle matrix has accepted same-provider and all ordered crosses with Claude/OpenCode"
+    },
+    {
+      "provider": "hermes",
+      "binary": "hermes",
+      "version": null,
+      "version_exit": 127,
+      "configured_model": "anthropic/claude-opus-4.6",
+      "status": "blocked",
+      "evidence": "Launcher exit 127: absolute Python interpreter from removed temporary directory; configured model.provider=auto, no provider auth states or API-key environment; sole copilot pool entry does not establish executable configured-provider authentication"
+    },
+    {
+      "provider": "kimi_cli",
+      "binary": "kimi",
+      "version": "2.1.1",
+      "version_exit": 0,
+      "configured_model": null,
+      "status": "blocked",
+      "evidence": "No .kimi-code/config.toml or credentials directory; no configured exact model or API-key environment"
+    },
+    {
+      "provider": "copilot_cli",
+      "binary": "copilot",
+      "version": "1.0.91",
+      "version_exit": 0,
+      "configured_model": null,
+      "status": "blocked",
+      "evidence": "Config contains only firstLaunchAt, no reusable copilotTokens; legacy hosts/apps auth records absent; no configured exact model or GitHub token environment"
+    },
+    {
+      "provider": "opencode_cli",
+      "binary": "opencode",
+      "version": "2.0.18",
+      "version_exit": 0,
+      "configured_model": "opencode-go/longcat-2.5-preview-free",
+      "status": "previously_validated",
+      "evidence": "Real lifecycle matrix has accepted same-provider and all ordered crosses with Codex/Claude"
+    },
+    {
+      "provider": "cursor_cli",
+      "binary": "agent",
+      "version": "2026.10.01-e373342",
+      "version_exit": 0,
+      "configured_model": null,
+      "status": "blocked",
+      "evidence": "Isolated agent status exit 0 explicitly reports not logged in; metadata-only CLI config; no configured exact model or API-key environment"
+    },
+    {
+      "provider": "antigravity_cli",
+      "binary": "agy",
+      "version": "1.2.15",
+      "version_exit": 0,
+      "configured_model": null,
+      "status": "blocked",
+      "evidence": "Isolated agy models exit 1 requests sign-in; jetski state contains onboarding/installation/migration metadata; no reviewed exact authenticated model"
+    },
+    {
+      "provider": "gemini_cli",
+      "binary": "gemini",
+      "version": "0.62.0",
+      "version_exit": 0,
+      "configured_model": null,
+      "status": "blocked",
+      "evidence": "No settings.json, OAuth credentials, or google account records in .gemini; no API-key environment or configured exact model"
+    },
+    {
+      "provider": "omp",
+      "binary": "omp",
+      "version": "18.4.12",
+      "version_exit": 0,
+      "configured_model": null,
+      "status": "blocked",
+      "evidence": "Read-only agent.db inspection: auth_credentials=0, settings=0; no API-key environment or configured exact model"
+    },
+    {
+      "provider": "grok_cli",
+      "binary": "grok",
+      "version": "1.0.46",
+      "version_exit": 0,
+      "configured_model": null,
+      "status": "blocked",
+      "evidence": "No .grok/auth.json; config contains cli/marketplace only; no API-key environment or configured exact model"
+    },
+    {
+      "provider": "mcode",
+      "binary": "mcode",
+      "version": "0.6.2",
+      "version_exit": 0,
+      "configured_model": "minimax/MiniMax-M3.1-Flash-Preview",
+      "status": "blocked",
+      "evidence": "Exact defaultModel configured; no local-runtime.auth.json or cli-auth directory; auth directory contains only lock; no API-key environment"
+    }
+  ],
+  "new_authenticated_endpoints": 0,
+  "previously_accepted_ordered_cells": 9,
+  "quota_observation_seconds": 30,
+  "quota_pause": "not_observed",
+  "quota_continuation": "not_observed",
+  "account_login_performed": false,
+  "model_substitution_performed": false,
+  "source_hashes": {
+    "test/e2e/test_real_provider_matrix.py": "47a76959791cf8cb191a4de7a8be3c99910b5f62ebf67baeb76fc0b8ad70475b",
+    "test/fixtures/cao_server.py": "d47eab4e0bb97d84b1f89c39ea836bd38f52f1d41d89cce30f315518b6330d9a",
+    "src/cli_agent_orchestrator/providers/codex.py": "0ddb1c271c194555b778f0de522bbc70dbf48385250cfcfb3ae634392d39a913",
+    "src/cli_agent_orchestrator/providers/claude_code.py": "7c343fd7771c59eba225e4827142303b8bbcde57c9bf731a9fc05fc940447889",
+    "src/cli_agent_orchestrator/providers/opencode_cli.py": "acdccd08213b7ca8c069c3bd676d1c67f99cdf476f54320cd27bb693d78548f4"
+  },
+  "fresh_self_cell_run": {
+    "exit_code": 0,
+    "passed": 3,
+    "failed": 0,
+    "skipped_tests": 0,
+    "duration_seconds": 191.819,
+    "configured_quota_observation_seconds": 30,
+    "quota_pause_observed": false,
+    "quota_continuation_observed": false,
+    "credential_copies_removed": true,
+    "cases": [
+      {
+        "duration_seconds": 64.409,
+        "matrix_evidence": {
+          "cell": "codex->codex",
+          "child_model": "gpt-6.1-sol",
+          "child_provider": "codex",
+          "cleanup": {
+            "quota_terminal": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "session": {
+              "status": "validated"
+            }
+          },
+          "parent_model": "gpt-6.1-sol",
+          "parent_provider": "codex",
+          "quota_observation": {
+            "elapsed_seconds": null,
+            "limit_seconds": null,
+            "started_at_utc": null
+          },
+          "scenarios": {
+            "quota_continuation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "quota_wait_reconciliation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "sibling_cancellation_cleanup": {
+              "status": "validated"
+            },
+            "sibling_message_delivery": {
+              "status": "validated"
+            },
+            "successful_provider_turn": {
+              "status": "validated"
+            },
+            "timeout_reconciliation": {
+              "status": "validated"
+            }
+          },
+          "schema_version": 1,
+          "status": "validated"
+        }
+      },
+      {
+        "duration_seconds": 78.457,
+        "matrix_evidence": {
+          "cell": "claude_code->claude_code",
+          "child_model": "sonnet",
+          "child_provider": "claude_code",
+          "cleanup": {
+            "quota_terminal": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "session": {
+              "status": "validated"
+            }
+          },
+          "parent_model": "sonnet",
+          "parent_provider": "claude_code",
+          "quota_observation": {
+            "elapsed_seconds": null,
+            "limit_seconds": null,
+            "started_at_utc": null
+          },
+          "scenarios": {
+            "quota_continuation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "quota_wait_reconciliation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "sibling_cancellation_cleanup": {
+              "status": "validated"
+            },
+            "sibling_message_delivery": {
+              "status": "validated"
+            },
+            "successful_provider_turn": {
+              "status": "validated"
+            },
+            "timeout_reconciliation": {
+              "status": "validated"
+            }
+          },
+          "schema_version": 1,
+          "status": "validated"
+        }
+      },
+      {
+        "duration_seconds": 48.621,
+        "matrix_evidence": {
+          "cell": "opencode_cli->opencode_cli",
+          "child_model": "opencode-go/longcat-2.5-preview-free",
+          "child_provider": "opencode_cli",
+          "cleanup": {
+            "quota_terminal": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "session": {
+              "status": "validated"
+            }
+          },
+          "parent_model": "opencode-go/longcat-2.5-preview-free",
+          "parent_provider": "opencode_cli",
+          "quota_observation": {
+            "elapsed_seconds": null,
+            "limit_seconds": null,
+            "started_at_utc": null
+          },
+          "scenarios": {
+            "quota_continuation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "quota_wait_reconciliation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "sibling_cancellation_cleanup": {
+              "status": "validated"
+            },
+            "sibling_message_delivery": {
+              "status": "validated"
+            },
+            "successful_provider_turn": {
+              "status": "validated"
+            },
+            "timeout_reconciliation": {
+              "status": "validated"
+            }
+          },
+          "schema_version": 1,
+          "status": "validated"
+        }
+      }
+    ]
+  },
+  "final_after_sqlite_ownership_run": {
+    "exit_code": 0,
+    "passed": 3,
+    "failed": 0,
+    "skipped_tests": 0,
+    "duration_seconds": 186.043,
+    "configured_quota_observation_seconds": 30,
+    "credential_copies_removed": true,
+    "source_manifest_sha256": "fd1d17a9bd9159a2d6f59ce7342a60dd16408f3fb21d322036d75b2a7398a21a",
+    "source_manifest_records": 1335,
+    "source_hashes": {
+      "test/e2e/test_real_provider_matrix.py": "47a76959791cf8cb191a4de7a8be3c99910b5f62ebf67baeb76fc0b8ad70475b",
+      "test/fixtures/cao_server.py": "d47eab4e0bb97d84b1f89c39ea836bd38f52f1d41d89cce30f315518b6330d9a",
+      "src/cli_agent_orchestrator/providers/codex.py": "0ddb1c271c194555b778f0de522bbc70dbf48385250cfcfb3ae634392d39a913",
+      "src/cli_agent_orchestrator/providers/claude_code.py": "7c343fd7771c59eba225e4827142303b8bbcde57c9bf731a9fc05fc940447889",
+      "src/cli_agent_orchestrator/providers/opencode_cli.py": "acdccd08213b7ca8c069c3bd676d1c67f99cdf476f54320cd27bb693d78548f4",
+      "src/cli_agent_orchestrator/clients/database.py": "e215ba61c8ee24936284fbbd10c3c71765503ac4d699574de0cf9074fee02e99",
+      "src/cli_agent_orchestrator/services/workflow_journal.py": "66d1531821af5e646b17d5828b7544fbfb48b47309c9836e7cb10ff1ba38322d",
+      "src/cli_agent_orchestrator/services/workflow_spec_service.py": "47b354518e136770ccb21990a1f552f34015b125991795e9f1af87b6c8b20e35"
+    },
+    "cases": [
+      {
+        "duration_seconds": 55.471,
+        "matrix_evidence": {
+          "cell": "codex->codex",
+          "child_model": "gpt-6.1-sol",
+          "child_provider": "codex",
+          "cleanup": {
+            "quota_terminal": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "session": {
+              "status": "validated"
+            }
+          },
+          "parent_model": "gpt-6.1-sol",
+          "parent_provider": "codex",
+          "quota_observation": {
+            "elapsed_seconds": null,
+            "limit_seconds": null,
+            "started_at_utc": null
+          },
+          "scenarios": {
+            "quota_continuation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "quota_wait_reconciliation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "sibling_cancellation_cleanup": {
+              "status": "validated"
+            },
+            "sibling_message_delivery": {
+              "status": "validated"
+            },
+            "successful_provider_turn": {
+              "status": "validated"
+            },
+            "timeout_reconciliation": {
+              "status": "validated"
+            }
+          },
+          "schema_version": 1,
+          "status": "validated"
+        }
+      },
+      {
+        "duration_seconds": 79.398,
+        "matrix_evidence": {
+          "cell": "claude_code->claude_code",
+          "child_model": "sonnet",
+          "child_provider": "claude_code",
+          "cleanup": {
+            "quota_terminal": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "session": {
+              "status": "validated"
+            }
+          },
+          "parent_model": "sonnet",
+          "parent_provider": "claude_code",
+          "quota_observation": {
+            "elapsed_seconds": null,
+            "limit_seconds": null,
+            "started_at_utc": null
+          },
+          "scenarios": {
+            "quota_continuation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "quota_wait_reconciliation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "sibling_cancellation_cleanup": {
+              "status": "validated"
+            },
+            "sibling_message_delivery": {
+              "status": "validated"
+            },
+            "successful_provider_turn": {
+              "status": "validated"
+            },
+            "timeout_reconciliation": {
+              "status": "validated"
+            }
+          },
+          "schema_version": 1,
+          "status": "validated"
+        }
+      },
+      {
+        "duration_seconds": 51.002,
+        "matrix_evidence": {
+          "cell": "opencode_cli->opencode_cli",
+          "child_model": "opencode-go/longcat-2.5-preview-free",
+          "child_provider": "opencode_cli",
+          "cleanup": {
+            "quota_terminal": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "session": {
+              "status": "validated"
+            }
+          },
+          "parent_model": "opencode-go/longcat-2.5-preview-free",
+          "parent_provider": "opencode_cli",
+          "quota_observation": {
+            "elapsed_seconds": null,
+            "limit_seconds": null,
+            "started_at_utc": null
+          },
+          "scenarios": {
+            "quota_continuation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "quota_wait_reconciliation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "sibling_cancellation_cleanup": {
+              "status": "validated"
+            },
+            "sibling_message_delivery": {
+              "status": "validated"
+            },
+            "successful_provider_turn": {
+              "status": "validated"
+            },
+            "timeout_reconciliation": {
+              "status": "validated"
+            }
+          },
+          "schema_version": 1,
+          "status": "validated"
+        }
+      }
+    ]
+  },
+  "final_after_runtime_cancellation_run": {
+    "exit_code": 0,
+    "passed": 3,
+    "failed": 0,
+    "skipped_tests": 0,
+    "duration_seconds": 211.185,
+    "configured_quota_observation_seconds": 30,
+    "credential_copies_removed": true,
+    "source_manifest_sha256": "a2a9b937a17ac6c8db7dc72c67f5793fa930cf07b989c72ce6cb06685dcf325d",
+    "source_manifest_records": 1358,
+    "source_hashes": {
+      "src/cli_agent_orchestrator/clients/database.py": "e215ba61c8ee24936284fbbd10c3c71765503ac4d699574de0cf9074fee02e99",
+      "src/cli_agent_orchestrator/providers/claude_code.py": "7c343fd7771c59eba225e4827142303b8bbcde57c9bf731a9fc05fc940447889",
+      "src/cli_agent_orchestrator/providers/codex.py": "0ddb1c271c194555b778f0de522bbc70dbf48385250cfcfb3ae634392d39a913",
+      "src/cli_agent_orchestrator/providers/opencode_cli.py": "acdccd08213b7ca8c069c3bd676d1c67f99cdf476f54320cd27bb693d78548f4",
+      "src/cli_agent_orchestrator/services/workflow_journal.py": "66d1531821af5e646b17d5828b7544fbfb48b47309c9836e7cb10ff1ba38322d",
+      "src/cli_agent_orchestrator/services/workflow_spec_service.py": "47b354518e136770ccb21990a1f552f34015b125991795e9f1af87b6c8b20e35",
+      "test/e2e/test_real_provider_matrix.py": "47a76959791cf8cb191a4de7a8be3c99910b5f62ebf67baeb76fc0b8ad70475b",
+      "test/fixtures/cao_server.py": "183e43f3f8fdc2c25a0814ce68da905d8e283d51f498eb566dc02f2d15f62e56",
+      "src/cli_agent_orchestrator/runtime_channel/registry.py": "9306c3b911a7f3fb66b8dbaa88794f6b49605b9c1bdb52614925c187d600826b"
+    },
+    "cases": [
+      {
+        "duration_seconds": 56.873,
+        "matrix_evidence": {
+          "cell": "codex->codex",
+          "child_model": "gpt-6.1-sol",
+          "child_provider": "codex",
+          "cleanup": {
+            "quota_terminal": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "session": {
+              "status": "validated"
+            }
+          },
+          "parent_model": "gpt-6.1-sol",
+          "parent_provider": "codex",
+          "quota_observation": {
+            "elapsed_seconds": null,
+            "limit_seconds": null,
+            "started_at_utc": null
+          },
+          "scenarios": {
+            "quota_continuation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "quota_wait_reconciliation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "sibling_cancellation_cleanup": {
+              "status": "validated"
+            },
+            "sibling_message_delivery": {
+              "status": "validated"
+            },
+            "successful_provider_turn": {
+              "status": "validated"
+            },
+            "timeout_reconciliation": {
+              "status": "validated"
+            }
+          },
+          "schema_version": 1,
+          "status": "validated"
+        }
+      },
+      {
+        "duration_seconds": 77.298,
+        "matrix_evidence": {
+          "cell": "claude_code->claude_code",
+          "child_model": "sonnet",
+          "child_provider": "claude_code",
+          "cleanup": {
+            "quota_terminal": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "session": {
+              "status": "validated"
+            }
+          },
+          "parent_model": "sonnet",
+          "parent_provider": "claude_code",
+          "quota_observation": {
+            "elapsed_seconds": null,
+            "limit_seconds": null,
+            "started_at_utc": null
+          },
+          "scenarios": {
+            "quota_continuation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "quota_wait_reconciliation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "sibling_cancellation_cleanup": {
+              "status": "validated"
+            },
+            "sibling_message_delivery": {
+              "status": "validated"
+            },
+            "successful_provider_turn": {
+              "status": "validated"
+            },
+            "timeout_reconciliation": {
+              "status": "validated"
+            }
+          },
+          "schema_version": 1,
+          "status": "validated"
+        }
+      },
+      {
+        "duration_seconds": 76.86,
+        "matrix_evidence": {
+          "cell": "opencode_cli->opencode_cli",
+          "child_model": "opencode-go/longcat-2.5-preview-free",
+          "child_provider": "opencode_cli",
+          "cleanup": {
+            "quota_terminal": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "session": {
+              "status": "validated"
+            }
+          },
+          "parent_model": "opencode-go/longcat-2.5-preview-free",
+          "parent_provider": "opencode_cli",
+          "quota_observation": {
+            "elapsed_seconds": null,
+            "limit_seconds": null,
+            "started_at_utc": null
+          },
+          "scenarios": {
+            "quota_continuation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "quota_wait_reconciliation": {
+              "reason": "not_applicable",
+              "status": "skipped"
+            },
+            "sibling_cancellation_cleanup": {
+              "status": "validated"
+            },
+            "sibling_message_delivery": {
+              "status": "validated"
+            },
+            "successful_provider_turn": {
+              "status": "validated"
+            },
+            "timeout_reconciliation": {
+              "status": "validated"
+            }
+          },
+          "schema_version": 1,
+          "status": "validated"
+        }
+      }
+    ]
+  }
+}

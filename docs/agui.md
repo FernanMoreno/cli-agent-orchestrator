@@ -71,32 +71,29 @@ uv run cao-server
 
 ## Auth (when CAO has Auth0 enabled)
 
-If CAO runs with `AUTH0_DOMAIN` set, `/agui/v1/stream` requires a `cao:read`
-JWT. Native `EventSource` can't send an `Authorization:` header, so the token
-travels as the `?access_token=<JWT>` query parameter:
+If CAO runs with `AUTH0_DOMAIN` set, `/agui/v1/stream` requires current read
+permission. Native HTTP clients such as curl send the JWT in the
+`Authorization: Bearer ...` header. Browser sessions can use their session
+cookie. A bearer-authenticated browser `EventSource` first requests
+`POST /agui/v1/stream/ticket` with that header, then connects using the returned
+opaque `?ticket=` value. The ticket expires after 30 seconds, works once and
+is limited to that stream and principal. The reusable bearer never enters a URL.
 
-```
-https://dashboard.example.com/?access_token=eyJhbGc...
-```
-
-**Keep these tokens short-lived.** A query-string credential can surface where
-an `Authorization` header never would (browser history, proxy logs, `Referer`
-headers) and stays replayable until `exp`. CAO scrubs `access_token` (and,
-pre-emptively, `ticket`) values from its own access log, but that doesn't cover
-intermediaries — so mint short-TTL tokens (minutes, not hours). A short-lived
-single-use ticket handshake (`POST /agui/v1/ticket` with header auth →
-`?ticket=`) is a follow-up.
+On disconnection, close the old `EventSource`, obtain a new ticket and connect
+with `?cursor=<last confirmed event id>`. Native automatic retries would reuse
+a consumed ticket. Current authorization is checked during the stream too.
+Access logs redact ticket and legacy credential query values; legacy
+`access_token` and `token` queries are rejected by the transport.
 
 ## Connection resilience
 
 A client that drops the connection resumes **without a gap** by one of two
 cursors:
 
-- **`Last-Event-ID` (automatic).** Every event frame carries an `id:` cursor, so
-  a native browser `EventSource` resends the last id it saw as the
-  `Last-Event-ID` request header on its automatic reconnect. The server replays
-  the buffered records **after that id** before the live stream — no client code
-  required.
+- **`Last-Event-ID` or `?cursor=`.** Every event frame carries an `id:` cursor.
+  Header-capable clients supply `Last-Event-ID`; a new browser `EventSource`
+  supplies `?cursor=` with its fresh ticket. The server replays buffered records
+  **after that id** before continuing live.
 - **`?since=<last event timestamp>` (explicit).** A non-`EventSource` client (or
   one resuming across a fresh connection) can pass an ISO-8601 lower bound to
   replay buffered events after that time.
@@ -111,9 +108,12 @@ backoff on the client.
 queue so one slow client can never back-pressure the orchestration core. If that
 queue fills, the AG-UI stream does **not** quietly drop events on an open
 connection — it marks the overflow and **closes the stream**. The browser then
-reconnects automatically and the dropped records are replayed exactly once via
-`Last-Event-ID` (above). The durable record behind the replay is the in-process
-ring buffer (`event_log_service`). (The MCP-Apps `/events` stream keeps its
+obtains a fresh ticket and reconnects with its last cursor to replay retained
+records. Replay uses the bounded in-process ring buffer (`event_log_service`);
+it does not survive a server restart. An expired cursor requires explicit
+resynchronization. If a cursor expires during attachment, the stream emits a
+named `cursor_expired` event with `resync_required: true` and closes. (The
+MCP-Apps `/events` stream keeps its
 legacy drop-on-slow behaviour and backfills via `cao_fetch_history`.)
 
 ## Replay contract (full specification)
@@ -124,8 +124,9 @@ The replay mechanism is deterministic and designed for safe, idempotent reconnec
 
 1. **`?since=<ISO-8601>`** -- explicit timestamp lower bound. Must be a valid
    ISO-8601 string; malformed values produce HTTP 400 before any streaming starts.
-2. **`Last-Event-ID` header** -- native EventSource automatic cursor. Used only
-   when `?since=` is absent.
+2. **`?cursor=` or `Last-Event-ID` header** -- the explicit query cursor takes
+   precedence over the header. Used only when `?since=` is absent; a cursor
+   outside retention returns HTTP 409 and requires a fresh snapshot.
 3. **Neither** -- no replay; only the live stream is emitted.
 
 ### Validation
@@ -433,9 +434,10 @@ receiver, orchestration_type) but never the message text.
 endpoint 404s) and, for a cross-origin browser client, that the origin is allowed
 via `CAO_CORS_ORIGINS` (exact scheme + host + port), then restart CAO.
 
-**401 on connect with auth enabled** — token missing or expired. Get a fresh
-`cao:read` token and pass it via `?access_token=`.
+**401 on connect with auth enabled** — authorization expired, or the ticket
+was expired, consumed or issued for another resource. Renew authorization and
+request a fresh stream ticket; native clients can send the bearer header.
 
-**Events stop after a proxy idle timeout** — reconnect with backoff. A native
-`EventSource` resumes automatically via `Last-Event-ID`; other clients resume
-via `?since=`. No state is lost.
+**Events stop after a proxy idle timeout** — reconnect with backoff, a fresh
+ticket and the last confirmed cursor. Replay is limited to the retained event
+ring; an expired cursor requires reloading current history.

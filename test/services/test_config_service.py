@@ -314,7 +314,7 @@ class TestVersionedResolution:
         assert cfg.memory.learning_enabled is False
         assert cfg.memory.instruction_promotion_enabled is False
         assert cfg.memory.workflow_journal_retention_days == 30
-        assert cfg.workflow.require_approval is False
+        assert cfg.workflow.require_approval is True
         values = ConfigService.list_all()
         assert values["server.max_terminals"] == 2
         assert values["memory.learning_enabled"] is False
@@ -368,3 +368,17 @@ class TestVersionedResolution:
             output, _ = worker.communicate("\n", timeout=10)
             assert output.strip() == "44"
             assert worker.returncode == 0
+
+
+def test_apps_only_env_reaches_typed_configuration(monkeypatch):
+    assert ConfigService.get("apps.only") is False
+    monkeypatch.setenv("CAO_MCP_APPS_ONLY", "true")
+    assert ConfigService.get("apps.only") is True
+    assert ConfigService.get_config().apps.only is True
+
+
+def test_workflow_approval_schema_registry_and_effective_default_are_required():
+    assert cs.WorkflowConfig().require_approval is True
+    assert cs.CAOConfig().workflow.require_approval is True
+    assert ConfigService.registry()["options"]["workflow.require_approval"]["default"] is True
+    assert ConfigService.get_config().workflow.require_approval is True

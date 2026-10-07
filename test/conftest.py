@@ -79,6 +79,7 @@ def mint_test_token(
     audience: str = _AUTH_TEST_AUDIENCE,
     exp_offset: int = 300,
     iat_offset: int = 0,
+    subject: str | None = None,
 ) -> str:
     """Mint an RS256 JWT for tests. Mirrors test/security/test_auth.py."""
     from authlib.jose import JsonWebToken
@@ -93,6 +94,8 @@ def mint_test_token(
         "exp": now + exp_offset,
         "scope": scopes,
     }
+    if subject is not None:
+        claims["sub"] = subject
     token = jwt.encode(header, claims, private_pem)
     return token.decode("utf-8") if isinstance(token, bytes) else token
 

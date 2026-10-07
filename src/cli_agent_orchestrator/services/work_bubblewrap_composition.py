@@ -106,6 +106,7 @@ class WorkBubblewrapCompositionError(RuntimeError):
         self.stdout = stdout
         self.stderr = stderr
         self.cleanup_confirmed = cleanup_confirmed
+        self.snapshot_path: Path | None = None
 
 
 class WorkBubblewrapSetupFailed(WorkBubblewrapCompositionError):
@@ -782,7 +783,7 @@ def _launch_owned_stage(
                         socket.SOCK_STREAM | getattr(socket, "SOCK_CLOEXEC", 0),
                     )
                     control_socket.settimeout(setup_timeout_seconds)
-                    child_stdin = child_control_socket
+                    child_stdin = child_control_socket.fileno()
                 process = subprocess.Popen(
                     argv,
                     executable=accepted_bwrap.proc_path,
@@ -920,6 +921,7 @@ def _launch_owned_stage(
                 bwrap_sha256_digest,
             )
             if process_supervisor is not None:
+                assert monitor_pidfd is not None
                 supervised_attempt = process_supervisor.adopt_bubblewrap_process_tree(
                     process, monitor_pidfd, init_pidfd, process_identity
                 )
@@ -1003,6 +1005,7 @@ def _launch_owned_stage(
                 ) from exc
         else:
             try:
+                assert persist_and_authorize is not None
                 approved = persist_and_authorize(acknowledgement, process_identity)
             except BaseException as exc:
                 stdout, stderr, confirmed = cleanup_process_tree()
@@ -1053,6 +1056,7 @@ def _launch_owned_stage(
             ) from exc
 
         if supervised_attempt is not None:
+            assert process_supervisor is not None
             state = process_supervisor.wait(supervised_attempt, timeout=0)
             if state is not WorkProcessState.TERMINATED:
                 partial_stdout, partial_stderr, confirmed = cleanup_process_tree()
@@ -1249,7 +1253,7 @@ def _create_sealed_bwrap_copy(source_descriptor: int, expected_digest: str) -> i
             "Linux sealable memfd support is required for Bubblewrap execution"
         )
     try:
-        execution_descriptor = memfd_create(
+        execution_descriptor: int = memfd_create(
             "cao-t097-bubblewrap",
             allow_sealing | getattr(os, "MFD_CLOEXEC", 0) | getattr(os, "MFD_EXEC", 0x0010),
         )

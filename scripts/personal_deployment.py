@@ -316,12 +316,38 @@ def mint_token(root: Path, *, lifetime=3600):
     )
 
 
+def publish_local_token(root: Path, *, lifetime=3600):
+    """Atomically publish a renewable operator bearer under the private root."""
+    token = mint_token(root, lifetime=lifetime)
+    path = root / "mcp-bearer.jwt"
+    if path.exists() or path.is_symlink():
+        _private(path)
+    _write(path, token.encode("ascii"))
+    return jwt.decode(token, options={"verify_signature": False})["exp"]
+
+
+def rotate_local_tokens(root: Path, stopping, expires_at: int, *, lifetime=3600, clock=time.time):
+    """Renew before expiry; publication failure neither replays work nor restarts agents."""
+    margin = min(300, lifetime // 2)
+    while not stopping.is_set():
+        if expires_at - clock() <= margin:
+            try:
+                expires_at = publish_local_token(root, lifetime=lifetime)
+            except (OSError, ValueError):
+                print("Local MCP credential renewal failed; retrying publication", file=sys.stderr)
+                if stopping.wait(5):
+                    break
+                continue
+        if stopping.wait(min(30, max(0.2, expires_at - clock() - margin))):
+            break
+
+
 def environment(root: Path):
     root = root.absolute()
     config = _config(root)
     if config.get("browser_login", {}).get("enabled"):
         browser_auth_service(root)
-    return {
+    env = {
         "CAO_BROWSER_LOGIN_ROOT": str(root),
         "CAO_HOME_DIR": str(root / "cao"),
         "CAO_API_HOST": "127.0.0.1",
@@ -336,6 +362,12 @@ def environment(root: Path):
         "CAO_WORK_DOCKER_IMAGE_ID": config["image_id"],
         "CAO_ENABLE_PUBLIC_WORK_INGRESS": "true",
     }
+
+    credential = root / "mcp-bearer.jwt"
+    if credential.exists() or credential.is_symlink():
+        _private(credential)
+        env["CAO_AUTH_LOCAL_TOKEN_FILE"] = str(credential)
+    return env
 
 
 def renew_client(root: Path, *, final_root: Path | None = None):
@@ -495,7 +527,7 @@ def service_unit(root: Path):
         + command
         + "\nEnvironment="
         + word("PATH=" + str(Path(sys.executable).parent) + ":" + os.environ.get("PATH", ""))
-        + "\nRestart=on-failure\nRestartSec=5\nRuntimeMaxSec=12h\nKillMode=control-group\nTimeoutStopSec=30\nUMask=0077\n\n[Install]\nWantedBy=default.target\n"
+        + "\nRestart=on-failure\nRestartSec=5\nKillMode=control-group\nTimeoutStopSec=30\nUMask=0077\n\n[Install]\nWantedBy=default.target\n"
     )
 
 
@@ -541,6 +573,10 @@ def serve(root: Path):
     config = _config(root)
     environment(root)  # Validate browser storage/binding before opening any listener.
     with _lock(root):
+        lifetime = config.get("mcp_token_lifetime_seconds", 3600)
+        expires_at = publish_local_token(root, lifetime=lifetime)
+        renewal_stop = threading.Event()
+        renewal_thread = None
         payload = json.dumps(jwks(root)).encode()
 
         class Handler(BaseHTTPRequestHandler):
@@ -606,10 +642,18 @@ def serve(root: Path):
                 ],
                 env=env,
             )
+            renewal_thread = threading.Thread(
+                target=rotate_local_tokens, args=(root, renewal_stop, expires_at),
+                kwargs={"lifetime": lifetime}, name="cao-local-token-renewal", daemon=True,
+            )
+            renewal_thread.start()
             code = process.wait()
             if code and not stopping:
                 raise RuntimeError(f"personal server exited with code {code}")
         finally:
+            renewal_stop.set()
+            if renewal_thread is not None:
+                renewal_thread.join(timeout=2)
             if process is not None and process.poll() is None:
                 process.terminate()
                 try:

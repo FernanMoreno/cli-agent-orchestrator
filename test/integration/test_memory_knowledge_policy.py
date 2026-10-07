@@ -258,16 +258,24 @@ async def test_graph_cache_hits_still_pass_legacy_policy_and_audit(
     provider = MemoryGraphProvider(memory_service=service, lint_enabled=lambda: False)
     _CACHE.clear()
     try:
-        await provider.project(scope="global")
-        await provider.project(scope="global")
         repository = WorkRepository(isolated_memory_db.url.database)
+        query = "SELECT count(*) FROM work_memory_access_audit WHERE action='graph' AND phase='completed'"
+        first = await provider.project(scope="global")
         with repository.connection() as connection:
-            assert (
-                connection.execute(
-                    "SELECT count(*) FROM work_memory_access_audit WHERE action='graph' AND phase='completed'"
-                ).fetchone()[0]
-                == 2
-            )
+            first_count = connection.execute(query).fetchone()[0]
+        assert first_count == 3  # public read, admission, and owned build
+        with monkeypatch.context() as cached:
+
+            async def unexpected_build(*args, **kwargs):
+                raise AssertionError("cache hit must not rebuild")
+
+            cached.setattr(provider, "_build", unexpected_build)
+            second = await provider.project(scope="global")
+        assert second.nodes == first.nodes
+        assert second.edges == first.edges
+        assert second.meta["cached"] is True
+        with repository.connection() as connection:
+            assert connection.execute(query).fetchone()[0] == first_count + 2
         monkeypatch.setattr(auth, "is_auth_enabled", lambda: True)
         with pytest.raises(PermissionError):
             await provider.project(scope="global")

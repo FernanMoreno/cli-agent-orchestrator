@@ -26,6 +26,7 @@ from cli_agent_orchestrator.models.provider import ProviderType
 from cli_agent_orchestrator.models.terminal import TerminalInputBlockedError, TerminalStatus
 from cli_agent_orchestrator.plugins import PluginRegistry
 from cli_agent_orchestrator.providers.manager import provider_manager
+from cli_agent_orchestrator.runtime_channel.registry import RuntimeUnavailableError
 from cli_agent_orchestrator.services import terminal_service
 from cli_agent_orchestrator.services.event_bus import bus
 from cli_agent_orchestrator.services.status_monitor import status_monitor
@@ -113,6 +114,14 @@ class InboxService:
         if not messages:
             return
 
+        # A later native batch can appear before debounced status revokes a
+        # ready latch. Eager input must not interrupt that batch either.
+        try:
+            provider = provider_manager.get_provider(terminal_id)
+        except Exception:
+            return
+        if getattr(provider, "has_pending_native_swarm", False) is True:
+            return
         status = status_monitor.get_status(terminal_id)
         if status not in (TerminalStatus.IDLE, TerminalStatus.COMPLETED):
             # Not ready on the normal path. Eager delivery (#251) lets providers
@@ -177,6 +186,9 @@ class InboxService:
                     f"Pane not resolvable for terminal {terminal_id}; leaving "
                     f"{len(batch)} message(s) pending for retry: {e}"
                 )
+            except RuntimeUnavailableError:
+                for message in batch:
+                    update_message_status(message.id, MessageStatus.PENDING)
             except TerminalInputBlockedError as e:
                 # A blocked terminal is a live reconciliation condition, not
                 # a failed message.  Receipt-bearing providers intentionally

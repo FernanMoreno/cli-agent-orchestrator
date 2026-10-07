@@ -933,6 +933,17 @@ class TestGetSession:
 
 
 class TestDeleteSession:
+    @pytest.fixture(autouse=True)
+    def incarnation_fixture(self, monkeypatch):
+        monkeypatch.setattr(
+            "cli_agent_orchestrator.services.session_service.get_session_incarnation",
+            lambda _: None,
+        )
+        monkeypatch.setattr(
+            "cli_agent_orchestrator.services.session_service.update_terminals_session_incarnation",
+            lambda *a, **k: True,
+        )
+
     """Tests for delete_session function.
 
     delete_session (#498) runs its whole critical section under the

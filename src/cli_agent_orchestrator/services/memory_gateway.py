@@ -6,7 +6,7 @@ import asyncio
 import math
 import os
 import re
-from typing import Any, Optional
+from typing import Any, Optional, TypeGuard
 from urllib.parse import urlsplit
 
 import requests
@@ -121,7 +121,7 @@ def _knowledge_authority_url() -> str:
     return authority.rstrip("/")
 
 
-def _is_identifier(value: Any) -> bool:
+def _is_identifier(value: object) -> TypeGuard[str]:
     return (
         isinstance(value, str)
         and bool(_IDENTIFIER.fullmatch(value))
@@ -222,7 +222,7 @@ def _response_json(response: requests.Response, message: str) -> Any:
         raise ValueError(message) from None
 
 
-def _is_revision_payload(payload: Any) -> bool:
+def _is_revision_payload(payload: Any) -> TypeGuard[dict[str, object]]:
     if not isinstance(payload, dict) or set(payload) != _REVISION_FIELDS:
         return False
     optional_strings = ("work_item_id", "attempt_id", "source_artifact_id", "content")
@@ -263,7 +263,7 @@ def _is_revision_payload(payload: Any) -> bool:
     )
 
 
-def _is_recovery_page(payload: Any) -> bool:
+def _is_recovery_page(payload: Any) -> TypeGuard[dict[str, object]]:
     return (
         isinstance(payload, dict)
         and set(payload) == _RECOVERY_FIELDS

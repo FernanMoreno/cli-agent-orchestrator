@@ -33,7 +33,7 @@ from .conftest import build_plugin
 
 
 def _source(path: Path) -> PluginSource:
-    return PluginSource(kind="local", location=str(path))
+    return PluginSource(kind="path", location=str(path))
 
 
 def _store(tmp_path: Path) -> InstalledPluginStore:

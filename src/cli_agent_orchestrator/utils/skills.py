@@ -86,6 +86,25 @@ def _skill_search_dirs() -> List[Path]:
     return dirs
 
 
+def _require_plugin_approval(candidate: Path) -> None:
+    """Reject stale managed projections at the runtime catalog/content boundary.
+
+    Structural ownership leaves ordinary user skills alone. Validation calls
+    `_load_skill_folder` directly and therefore never recurses into trust review.
+    """
+    from cli_agent_orchestrator.agent_plugins.projection import projection_owner
+    from cli_agent_orchestrator.agent_plugins.store import InstalledPluginStore
+    from cli_agent_orchestrator.agent_plugins.trust import delivery_allowed
+
+    store = InstalledPluginStore()
+    owner = projection_owner(candidate.name, store, skills_dir=candidate.parent)
+    if owner is None:
+        return
+    record = store.get(owner)
+    if record is None or not delivery_allowed(record, store.plugin_root(owner)):
+        raise ValueError(f"Plugin skill '{candidate.name}' is not approved for current content.")
+
+
 def _resolve_skill(skill_name: str) -> Tuple[SkillMetadata, str]:
     """Load a skill by name from the global store or extra directories.
 
@@ -109,12 +128,14 @@ def _resolve_skill(skill_name: str) -> Tuple[SkillMetadata, str]:
         if not (candidate / "SKILL.md").is_file():
             continue
         try:
+            _require_plugin_approval(candidate)
             return _load_skill_folder(candidate)
         except Exception as exc:
             if first_error is None:
                 first_error = exc
     if first_error is not None:
         raise first_error
+    _require_plugin_approval(SKILLS_DIR / skill_name)
     return _load_skill_folder(SKILLS_DIR / skill_name)
 
 
@@ -154,6 +175,7 @@ def list_skills() -> List[SkillMetadata]:
             if not (item / "SKILL.md").is_file():
                 continue
             try:
+                _require_plugin_approval(item)
                 metadata, _ = _load_skill_folder(item)
                 skills_by_name[item.name] = metadata
             except Exception as exc:

@@ -476,3 +476,24 @@ class TestBolt3AdditiveModelChanges:
         assert RunState.FAILED.value == "failed"
         assert RunState.CANCELLED.value == "cancelled"
         assert {s.value for s in RunState} == {"running", "completed", "failed", "cancelled"}
+
+
+@pytest.mark.parametrize(
+    "path,field", [("root", "typo"), ("step", "promtp"), ("input", "requried")]
+)
+def test_unknown_configuration_field_reports_its_path(path, field):
+    import yaml
+
+    data = _spec_kwargs()
+    if path == "root":
+        data[field] = True
+        expected = field
+    elif path == "step":
+        data["steps"][0][field] = "go"
+        expected = "steps.0." + field
+    else:
+        data["inputs"] = {"task": {"type": "string", field: True}}
+        expected = "inputs.task." + field
+    result = validate_only(yaml.safe_dump(data))
+    assert result.status == "fail"
+    assert expected in "; ".join(result.errors)

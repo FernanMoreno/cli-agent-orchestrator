@@ -16,7 +16,34 @@ async def test_run_step_passes_verified_principal_and_ignores_forged_caller_id(
     tmp_path, monkeypatch
 ):
     """Breaks if the legacy terminal ID is all the authority Work receives."""
-    monkeypatch.setenv("AUTH0_DOMAIN", "issuer.test")
+    import time
+
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    monkeypatch.setenv("CAO_AUTH_JWKS_URI", "https://offline.invalid/jwks")
+    monkeypatch.setenv("CAO_AUTH_ISSUER", "https://issuer.test")
+    monkeypatch.setenv("CAO_AUTH_AUDIENCE", "delegation-test")
+    monkeypatch.delenv("AUTH0_DOMAIN", raising=False)
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    monkeypatch.setattr(
+        auth.get_jwks_cache(),
+        "get_client",
+        lambda _: SimpleNamespace(
+            get_signing_key_from_jwt=lambda _: SimpleNamespace(key=private_key.public_key())
+        ),
+    )
+    token = jwt.encode(
+        {
+            "iss": "https://issuer.test",
+            "sub": "delegation-requester",
+            "aud": "delegation-test",
+            "exp": time.time() + 60,
+            "scope": auth.SCOPE_WRITE,
+        },
+        private_key,
+        algorithm="RS256",
+    )
 
     principal = auth._verified_principal(
         "https://issuer.test", "delegation-requester", [auth.SCOPE_WRITE], "jwt"
@@ -32,30 +59,22 @@ async def test_run_step_passes_verified_principal_and_ignores_forged_caller_id(
     monkeypatch.setattr(api, "run_agent_step", run_step_double)
     monkeypatch.setattr(api, "get_plugin_registry", lambda _request: None)
 
-    async def current_principal(_request, authorization=None):
-        return principal
-
-    monkeypatch.setattr(api, "get_current_principal", current_principal)
-    overrides_before = api.app.dependency_overrides.copy()
-    api.app.dependency_overrides[auth.get_current_principal] = lambda: principal
-    api.app.dependency_overrides[auth.get_current_scopes] = lambda: [auth.SCOPE_WRITE]
-    try:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=api.app), base_url="http://127.0.0.1"
-        ) as client:
-            response = await client.post(
-                "/terminals/run-step",
-                json={
-                    "provider": "mock_cli",
-                    "agent": "worker",
-                    "prompt": "perform delegated work",
-                    "caller_id": "forged-parent-terminal",
-                    "teardown": False,
-                },
-            )
-    finally:
-        api.app.dependency_overrides.clear()
-        api.app.dependency_overrides.update(overrides_before)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=api.app), base_url="http://127.0.0.1"
+    ) as client:
+        body = {
+            "provider": "mock_cli",
+            "agent": "worker",
+            "prompt": "perform delegated work",
+            "caller_id": "forged-parent-terminal",
+            "teardown": False,
+        }
+        refused = await client.post("/terminals/run-step", json=body)
+        assert refused.status_code == 401
+        assert calls == []
+        response = await client.post(
+            "/terminals/run-step", json=body, headers={"Authorization": "Bearer " + token}
+        )
 
     assert response.status_code == 200, response.text
     assert len(calls) == 1

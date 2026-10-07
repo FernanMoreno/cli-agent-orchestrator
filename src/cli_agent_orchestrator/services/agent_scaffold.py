@@ -8,7 +8,7 @@ Ref: https://github.com/awslabs/cli-agent-orchestrator/issues/340
 
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, cast
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from jsonschema import Draft202012Validator
@@ -38,7 +38,7 @@ def list_templates() -> list[dict]:
 
     Returns a list of dicts with keys: name, description, path.
     """
-    templates = []
+    templates: list[dict[str, Any]] = []
     if not _TEMPLATES_ROOT.exists():
         return templates
 
@@ -83,7 +83,7 @@ def get_template_schema(template_name: str) -> Optional[dict]:
     _check_containment(schema_path, _TEMPLATES_ROOT)
     if not schema_path.exists():
         return None
-    return json.loads(schema_path.read_text(encoding="utf-8"))
+    return cast(dict[str, Any], json.loads(schema_path.read_text(encoding="utf-8")))
 
 
 def validate_config(template_name: str, config: dict) -> list[str]:

@@ -31,9 +31,9 @@ So each valid plugin skill is materialized **inside** ``SKILLS_DIR``::
 
     SKILLS_DIR/<skill-name>  ->  AGENT_PLUGINS_DIR/<plugin-name>/skills/<skill-name>
 
-Zero provider changes. Every already-tested delivery path is inherited unmodified,
-and the terminal-launch path gains no new filesystem scan — projected entries
-land in a directory ``build_skill_catalog()`` already scans.
+Providers continue to consume the same skill directory. CAO catalogs recheck
+local approval, and native Kiro/OpenCode launch reconciles that physical directory
+before the provider scans it.
 
 Projection is **derived state**, never a source of truth: it is rebuilt from
 scratch from the installed set on every add/remove/update, and swept for
@@ -509,8 +509,41 @@ def _elect_winners(
     """
     findings: List[Finding] = []
 
+    from cli_agent_orchestrator.agent_plugins.trust import delivery_allowed
+
     claims: Dict[str, List[str]] = {}
     for record in sorted(records, key=lambda r: r.name):
+        root = None
+        try:
+            root = store.plugin_root(record.name)
+            allowed = delivery_allowed(record, root)
+        except (OSError, ValueError):
+            allowed = False
+        if not allowed:
+            findings.append(
+                Finding(
+                    Severity.SKIPPED,
+                    "trust.not_approved",
+                    "CAO local policy",
+                    f"Plugin '{record.name}' lacks current exact approval or has unsafe source evidence.",
+                )
+            )
+            if root is not None:
+                from cli_agent_orchestrator.agent_plugins.containment import resolve_within_root
+
+                for skill_name in record.skill_names:
+                    source = resolve_within_root(root, f"skills/{skill_name}")
+                    if source is None or not source.is_dir():
+                        findings.append(
+                            Finding(
+                                Severity.SKIPPED,
+                                "projection.source_missing",
+                                "CAO policy",
+                                f"Skill '{skill_name}' recorded for plugin '{record.name}' is missing or unsafe; nothing was projected.",
+                                path=skill_name,
+                            )
+                        )
+            continue
         for skill_name in sorted(set(record.skill_names)):
             claims.setdefault(skill_name, []).append(record.name)
 
@@ -1297,3 +1330,39 @@ def sweep_dangling_projections(
     except Exception as exc:  # pragma: no cover - the never-raise backstop
         logger.warning("Dangling-projection sweep failed: %s", exc)
         return DanglingSweep()
+
+
+def reconcile_native_skill_projection(
+    *, store: Optional[InstalledPluginStore] = None, skills_dir: Optional[Path] = None
+) -> None:
+    """Revoke stale managed projections before a native provider scans them.
+
+    Unlike CAO catalog loading, native globs read the physical skill directory.
+    Never continue a fresh launch with a managed unapproved entry left behind.
+    Existing user-owned skills are excluded by structural ownership.
+    """
+    from cli_agent_orchestrator.agent_plugins.trust import delivery_allowed
+
+    store = store or InstalledPluginStore()
+    target = _skills_dir(skills_dir)
+    if not store.plugins_dir.exists():
+        return
+    with store.lifecycle_lock():
+        records = store.list_installed()
+        if not records and not target.exists():
+            return
+        rebuild_projection(store, skills_dir=target)
+        if not target.is_dir():
+            return
+        for item in target.iterdir():
+            owner = projection_owner(item.name, store, skills_dir=target)
+            if owner is None:
+                continue
+            record = store.get(owner)
+            if record is not None and delivery_allowed(record, store.plugin_root(owner)):
+                continue
+            if not _remove_quiet(item) or item.exists() or item.is_symlink():
+                raise PluginStoreError(
+                    f"Plugin skill '{item.name}' is not approved and could not be revoked; "
+                    "native provider launch is blocked."
+                )

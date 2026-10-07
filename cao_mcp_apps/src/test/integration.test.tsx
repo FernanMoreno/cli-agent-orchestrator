@@ -9,6 +9,7 @@
 
 import {
   cleanup,
+  act,
   fireEvent,
   render,
   screen,
@@ -226,9 +227,9 @@ describe("agent view — host-mediated hydration + choke point", () => {
     fireEvent.click(screen.getByTestId("btn-send_message"));
 
     await waitFor(() =>
-      expect(host.toolCalls.some((c) => c.name === "submit_command")).toBe(
-        true,
-      ),
+      expect(
+        host.toolCalls.some((c) => c.name === "cao___submit_command"),
+      ).toBe(true),
     );
     await waitFor(() => expect(host.modelNotes.length).toBeGreaterThan(0));
     app.disconnect();
@@ -305,4 +306,213 @@ describe("re-mount idempotence", () => {
     expect(screen.getByTestId("event-stream").innerHTML).toBe(firstHtml);
     app2.disconnect();
   });
+});
+
+describe("US2 trusted first correlated response", () => {
+  it.each(["origin", "source"])(
+    "ignores forged first %s before accepting the expected host",
+    async (forgery) => {
+      const listeners = new Set<(event: MessageEvent) => void>();
+      let outbound: any;
+      const target = {
+        postMessage: (frame: any) => {
+          outbound = frame;
+        },
+      };
+      const scope = {
+        document: { referrer: "https://trusted.example/frame" },
+        addEventListener: (kind: string, fn: any) => {
+          if (kind === "message") listeners.add(fn);
+        },
+        removeEventListener: (_kind: string, fn: any) => listeners.delete(fn),
+      };
+      const app = new McpApp({
+        scope: scope as unknown as Window,
+        target: target as unknown as Window,
+      });
+      let connected = false;
+      const pending = app.connect().then(() => {
+        connected = true;
+      });
+      const deliver = (origin: string, source: unknown) =>
+        listeners.forEach((fn) =>
+          fn({
+            data: { jsonrpc: "2.0", id: outbound.id, result: {} },
+            origin,
+            source,
+          } as MessageEvent),
+        );
+      deliver(
+        forgery === "origin"
+          ? "https://evil.example"
+          : "https://trusted.example",
+        forgery === "source" ? {} : target,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(connected).toBe(false);
+      deliver("https://trusted.example", target);
+      await pending;
+      expect(connected).toBe(true);
+      app.disconnect();
+    },
+  );
+});
+
+describe("US2 common history/live cursor", () => {
+  it("backfills a history-subscription gap and renews tickets from the confirmed cursor", async () => {
+    const between = { ...SAMPLE_EVENTS[1], id: "between" };
+    const descriptors: Record<string, unknown>[] = [];
+    const sources: Array<{
+      onerror?: () => void;
+      close: ReturnType<typeof vi.fn>;
+      push?: (event: { data: string }) => void;
+    }> = [];
+    const host = buildHost({
+      tools: {
+        cao_fetch_history: () => ({ events: [SAMPLE_EVENTS[0]], cursor: "e1" }),
+        subscribe_events: (args) => {
+          descriptors.push(args);
+          return {
+            url: `/events?ticket=single-${descriptors.length}&cursor=${args.last_event_id}`,
+          };
+        },
+      },
+    });
+    const app = makeApp(host);
+    render(
+      <EventStreamView
+        app={app}
+        eventSourceFactory={() => {
+          const source = {
+            close: vi.fn(),
+            push: undefined as ((event: { data: string }) => void) | undefined,
+            addEventListener: (
+              type: string,
+              listener: (event: { data: string }) => void,
+            ) => {
+              if (type === "message") source.push = listener;
+            },
+          };
+          sources.push(source);
+          return source;
+        }}
+      />,
+    );
+    await waitFor(() => expect(sources.length).toBe(1));
+    expect(descriptors[0]).toEqual({ last_event_id: "e1" });
+    act(() => sources[0].push?.({ data: JSON.stringify(between) }));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("event-row")).toHaveLength(2),
+    );
+    act(() => sources[0].onerror?.());
+    await waitFor(() => expect(sources.length).toBe(2), { timeout: 3000 });
+    expect(sources[0].close).toHaveBeenCalledOnce();
+    expect(descriptors[1]).toEqual({ last_event_id: "between" });
+    act(() => sources[1].push?.({ data: JSON.stringify(between) }));
+    expect(screen.getAllByTestId("event-row")).toHaveLength(2);
+    app.disconnect();
+  });
+});
+
+it("reloads retained history when the backend reports an expired cursor", async () => {
+  let snapshots = 0;
+  const args: Record<string, unknown>[] = [];
+  const host = buildHost({
+    tools: {
+      cao_fetch_history: () =>
+        ++snapshots === 1
+          ? { events: [SAMPLE_EVENTS[0]], cursor: "expired" }
+          : { events: SAMPLE_EVENTS, cursor: "e2" },
+      subscribe_events: (input) => {
+        args.push(input);
+        return args.length === 1
+          ? { resync_required: true, error: "event_cursor_expired" }
+          : { url: "/events?ticket=fresh&cursor=e2" };
+      },
+    },
+  });
+  const app = makeApp(host);
+  const factory = vi.fn(noopEventSource);
+  render(<EventStreamView app={app} eventSourceFactory={factory} />);
+  await waitFor(() => expect(factory).toHaveBeenCalledOnce());
+  expect(args).toEqual([{ last_event_id: "expired" }, { last_event_id: "e2" }]);
+  expect(screen.getAllByTestId("event-row")).toHaveLength(2);
+  app.disconnect();
+});
+
+it.each(["dashboard", "agent"])(
+  "shows a visible %s error when trusted embedding origin is unavailable",
+  async (view) => {
+    const host = buildHost();
+    host.appWindow.document.referrer = "";
+    const app = makeApp(host);
+    if (view === "dashboard") render(<Dashboard app={app} />);
+    else render(<AgentView app={app} terminalId="t1" />);
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(host.initialized).toBe(false);
+    expect(host.toolCalls).toHaveLength(0);
+    app.disconnect();
+  },
+);
+
+it("explicitly closes and resyncs on a named cursor_expired frame before native error", async () => {
+  let snapshots = 0;
+  const argumentsSeen: Record<string, unknown>[] = [];
+  const sources: Array<{
+    onerror?: (() => void) | null;
+    handlers: Record<string, (event: { data: string }) => void>;
+    close: ReturnType<typeof vi.fn>;
+  }> = [];
+  const host = buildHost({
+    tools: {
+      cao_fetch_history: () =>
+        ++snapshots === 1
+          ? { events: [SAMPLE_EVENTS[0]], cursor: "e1" }
+          : { events: SAMPLE_EVENTS, cursor: "e2" },
+      subscribe_events: (args) => {
+        argumentsSeen.push(args);
+        return { url: `/events?ticket=single-${argumentsSeen.length}` };
+      },
+    },
+  });
+  const app = makeApp(host);
+  render(
+    <EventStreamView
+      app={app}
+      eventSourceFactory={() => {
+        const source = {
+          handlers: {} as Record<string, (event: { data: string }) => void>,
+          close: vi.fn(),
+          addEventListener: (
+            type: string,
+            listener: (event: { data: string }) => void,
+          ) => {
+            source.handlers[type] = listener;
+          },
+        };
+        sources.push(source);
+        return source;
+      }}
+    />,
+  );
+  await waitFor(() => expect(sources).toHaveLength(1));
+  expect(sources[0].handlers.cursor_expired).toBeTypeOf("function");
+  act(() => {
+    sources[0].handlers.cursor_expired({
+      data: '{"code":"event_cursor_expired","resync_required":true}',
+    });
+    sources[0].onerror?.(); // The following EOF cannot schedule a second reconnect.
+  });
+  expect(sources[0].close).toHaveBeenCalledOnce();
+  expect(screen.getByRole("status").textContent).toMatch(/expired|retained/i);
+  await waitFor(() => expect(sources).toHaveLength(2), { timeout: 3000 });
+  expect(snapshots).toBe(2);
+  expect(argumentsSeen).toEqual([
+    { last_event_id: "e1" },
+    { last_event_id: "e2" },
+  ]);
+  expect(screen.getAllByTestId("event-row")).toHaveLength(2);
+  app.disconnect();
 });

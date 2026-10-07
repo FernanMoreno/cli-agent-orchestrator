@@ -477,7 +477,7 @@ class TestHappyPath:
                 f"{_MODULE}.terminal_service.get_terminal_metadata",
                 return_value={"id": "reuse99", "provider": "kiro_cli", "engine": "v2"},
             ),
-            pytest.raises(KiroPhase0KASError, match="Phase 0"),
+            pytest.raises(KiroPhase0KASError, match="disabled"),
         ):
             asyncio.run(
                 run_agent_step(
@@ -1510,8 +1510,11 @@ class TestOutputExtractionTeardown:
             status,
             patch(f"{_MODULE}.get_terminal_turn_receipt", return_value=None),
         ):
-            with pytest.raises(ValueError, match="No completion marker found"):
+            with pytest.raises(StepExecutionError, match="could not be extracted") as caught:
                 asyncio.run(run_agent_step("kiro_cli", "dev", "x"))
+            assert caught.value.kind == "output_extraction_failed"
+            assert caught.value.delivery_may_have_occurred
+            assert isinstance(caught.value.__cause__, ValueError)
         m_out.assert_called_once_with("abc12345", OutputMode.LAST)
         # A terminal this call created is reclaimed exactly like the success path.
         m_exit.assert_called_once_with("abc12345")
@@ -1537,8 +1540,11 @@ class TestOutputExtractionTeardown:
                 return_value={"id": "reuse99", "provider": "kiro_cli", "engine": "v2"},
             ),
         ):
-            with pytest.raises(ValueError, match="No completion marker found"):
+            with pytest.raises(StepExecutionError, match="could not be extracted") as caught:
                 asyncio.run(run_agent_step("kiro_cli", "dev", "x", reuse_terminal_id="reuse99"))
+            assert caught.value.kind == "output_extraction_failed"
+            assert caught.value.delivery_may_have_occurred
+            assert isinstance(caught.value.__cause__, ValueError)
         m_out.assert_called_once_with("reuse99", OutputMode.LAST)
         m_delete.assert_not_called()
         m_exit.assert_not_called()
@@ -1564,8 +1570,11 @@ class TestOutputExtractionTeardown:
                 return_value={"provider": "gemini_cli", "phase": "sent"},
             ) as get_receipt,
         ):
-            with pytest.raises(ValueError, match="not yet extractable"):
+            with pytest.raises(StepExecutionError, match="could not be extracted") as caught:
                 asyncio.run(run_agent_step("gemini_cli", "reviewer", "x", teardown=True))
+            assert caught.value.kind == "output_extraction_failed"
+            assert caught.value.delivery_may_have_occurred
+            assert isinstance(caught.value.__cause__, ValueError)
 
         get_receipt.assert_called_once_with("abc12345")
         m_exit.assert_not_called()

@@ -405,7 +405,7 @@ def test_get_provider_rejects_persisted_kas_before_provider_construction():
         ),
         patch("cli_agent_orchestrator.providers.manager.KiroCliProvider") as provider_class,
     ):
-        with pytest.raises(KiroPhase0KASError, match="Cedar"):
+        with pytest.raises(KiroPhase0KASError, match="KAS launch is disabled"):
             manager.get_provider("t1")
 
     provider_class.assert_not_called()
@@ -493,3 +493,38 @@ def test_create_provider_resume_session_id_rejected_for_other_providers():
             agent_profile=None,
             resume_session_id="11d55034-bb41-46ca-8686-59a9dbff16b5",
         )
+
+
+@pytest.mark.parametrize("state", ["cancelled", "cancelling", "verifying"])
+def test_restart_respects_turn_cancellation_and_verifier_deadline(state):
+    manager = ProviderManager()
+    provider = MagicMock()
+    provider.requires_turn_receipt = True
+    receipt = {"generation": "a" * 32, "receipt_sha256": "b" * 64, "phase": "sent"}
+    metadata = {
+        "provider": "claude_code",
+        "tmux_session": "s",
+        "tmux_window": "w",
+        "agent_profile": "developer",
+    }
+    with (
+        patch(
+            "cli_agent_orchestrator.providers.manager.get_terminal_metadata", return_value=metadata
+        ),
+        patch.object(manager, "create_provider", return_value=provider),
+        patch(
+            "cli_agent_orchestrator.providers.manager.get_terminal_turn_receipt",
+            return_value=receipt,
+        ),
+        patch(
+            "cli_agent_orchestrator.providers.manager.get_terminal_turn_recovery",
+            return_value={"state": state},
+        ),
+        patch(
+            "cli_agent_orchestrator.services.terminal_service.schedule_receipt_result_verification"
+        ) as verify,
+    ):
+        assert manager.get_provider("abcd1234") is provider
+    assert provider.restore_turn_receipt_state.call_count == (0 if state == "cancelled" else 1)
+    assert verify.call_count == (1 if state == "verifying" else 0)
+    provider.prepare_input.assert_not_called()

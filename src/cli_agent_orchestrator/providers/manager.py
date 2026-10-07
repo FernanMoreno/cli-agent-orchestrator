@@ -1,11 +1,13 @@
 """Provider manager as module singleton with direct terminal_id → provider mapping."""
 
 import logging
+import threading
 from typing import Dict, List, Optional
 
 from cli_agent_orchestrator.clients.database import (
     get_terminal_metadata,
     get_terminal_turn_receipt,
+    get_terminal_turn_recovery,
     settle_terminal_turn_receipt_result,
 )
 from cli_agent_orchestrator.models.kiro_engine import KiroEngine, resolve_kiro_engine
@@ -20,7 +22,11 @@ from cli_agent_orchestrator.providers.cursor_cli import CursorCliProvider
 from cli_agent_orchestrator.providers.gemini_cli import GeminiCliProvider
 from cli_agent_orchestrator.providers.grok_cli import GrokCliProvider
 from cli_agent_orchestrator.providers.hermes import HermesProvider
-from cli_agent_orchestrator.providers.kimi_cli import KimiCliProvider
+from cli_agent_orchestrator.providers.kimi_cli import (
+    KimiCliProvider,
+    KimiDialect,
+    UnsupportedKimiError,
+)
 from cli_agent_orchestrator.providers.kiro_capabilities import KiroPhase0KASError
 from cli_agent_orchestrator.providers.kiro_cli import KiroCliProvider
 from cli_agent_orchestrator.providers.minimax_code import MiniMaxCodeProvider
@@ -36,6 +42,7 @@ class ProviderManager:
 
     def __init__(self) -> None:
         self._providers: Dict[str, BaseProvider] = {}
+        self._restore_lock = threading.RLock()
 
     def create_provider(
         self,
@@ -49,6 +56,9 @@ class ProviderManager:
         model: Optional[str] = None,
         engine: Optional[KiroEngine] = None,
         resume_session_id: Optional[str] = None,
+        *,
+        publish: bool = True,
+        provider_variant: Optional[str] = None,
     ) -> BaseProvider:
         """Create and store provider instance."""
         try:
@@ -66,7 +76,11 @@ class ProviderManager:
                     raise ValueError("Kiro CLI provider requires agent_profile parameter")
                 resolved_engine = resolve_kiro_engine(persisted=engine)
                 if resolved_engine == KiroEngine.KAS:
-                    raise KiroPhase0KASError(profile_has_v2_policy=False)
+                    from cli_agent_orchestrator.services.kiro_profiles import (
+                        guard_existing_kas_runtime,
+                    )
+
+                    guard_existing_kas_runtime(terminal_id, get_terminal_metadata(terminal_id))
                 provider = KiroCliProvider(
                     terminal_id,
                     tmux_session,
@@ -116,6 +130,8 @@ class ProviderManager:
                     skill_prompt=skill_prompt,
                     model=model,
                 )
+                if provider_variant is not None:
+                    provider.restore_runtime_variant(provider_variant)
             elif provider_type == ProviderType.OPENCODE_CLI.value:
                 provider = OpenCodeCliProvider(
                     terminal_id,
@@ -125,6 +141,8 @@ class ProviderManager:
                     allowed_tools,
                     model=model,
                 )
+                if provider_variant is not None:
+                    provider.restore_runtime_variant(provider_variant)
             elif provider_type == ProviderType.OMP.value:
                 provider = OmpProvider(
                     terminal_id,
@@ -207,7 +225,8 @@ class ProviderManager:
                 raise ValueError(f"Unknown provider type: {provider_type}")
 
             # Store in direct mapping
-            self._providers[terminal_id] = provider
+            if publish:
+                self._providers[terminal_id] = provider
             logger.info(f"Created {provider_type} provider for terminal: {terminal_id}")
             return provider
 
@@ -218,6 +237,16 @@ class ProviderManager:
             raise
 
     def get_provider(self, terminal_id: str) -> Optional[BaseProvider]:
+        from cli_agent_orchestrator.services import remote_terminal_service as remote
+
+        if remote.placement(terminal_id):
+            return None
+        # A receipt restoration is one publication: other readers must never
+        # see a new adapter before its durable input fence has been restored.
+        with self._restore_lock:
+            return self._get_provider_locked(terminal_id)
+
+    def _get_provider_locked(self, terminal_id: str) -> Optional[BaseProvider]:
         """Get provider instance, creating on-demand if not found.
 
         Args:
@@ -236,7 +265,9 @@ class ProviderManager:
                 isinstance(provider, KiroCliProvider)
                 and getattr(provider, "_engine", None) == KiroEngine.KAS
             ):
-                raise KiroPhase0KASError(profile_has_v2_policy=False)
+                from cli_agent_orchestrator.services.kiro_profiles import guard_existing_kas_runtime
+
+                guard_existing_kas_runtime(terminal_id, get_terminal_metadata(terminal_id))
             return provider
 
         # Try to create on-demand from database metadata
@@ -250,7 +281,17 @@ class ProviderManager:
             else None
         )
         if persisted_engine == KiroEngine.KAS:
-            raise KiroPhase0KASError(profile_has_v2_policy=False)
+            from cli_agent_orchestrator.services.kiro_profiles import guard_existing_kas_runtime
+
+            guard_existing_kas_runtime(terminal_id, metadata)
+
+        if metadata["provider"] == ProviderType.KIMI_CLI.value and not metadata.get(
+            "provider_variant"
+        ):
+            raise UnsupportedKimiError(
+                "Cannot reconstruct an existing Kimi terminal after restart: "
+                "its launch dialect was not persisted. Recreate the terminal."
+            )
 
         # Create provider on-demand
         provider = self.create_provider(
@@ -261,14 +302,30 @@ class ProviderManager:
             metadata["agent_profile"],
             allowed_tools=metadata.get("allowed_tools"),
             engine=persisted_engine,
+            publish=False,
+            provider_variant=metadata.get("provider_variant"),
         )
+        if isinstance(provider, OpenCodeCliProvider) and metadata.get("provider_variant") is None:
+            provider.restore_runtime_variant(None)
+        recovery = None
         if getattr(provider, "requires_turn_receipt", False) is True:
             # Receipt state is private database state, intentionally separate
             # from the agent-editable terminal metadata.  A restart has no
             # plaintext nonce or task body to redeliver, so an active record
             # restores as reconcile/block until CAO verifies its result.
             turn_receipt = get_terminal_turn_receipt(terminal_id)
-            if turn_receipt is not None and turn_receipt.get("phase") in {"prepared", "sent"}:
+            if turn_receipt is not None and turn_receipt.get("phase") not in {
+                "prepared",
+                "sent",
+                "result_verified",
+            }:
+                raise ValueError("invalid persisted provider turn receipt phase")
+            recovery = get_terminal_turn_recovery(terminal_id) if turn_receipt is not None else None
+            if (
+                turn_receipt is not None
+                and turn_receipt.get("phase") in {"prepared", "sent"}
+                and not (recovery is not None and recovery["state"] == "cancelled")
+            ):
                 provider.restore_turn_receipt_state(turn_receipt)
             elif (
                 turn_receipt is not None
@@ -303,6 +360,16 @@ class ProviderManager:
             provider.shell_baseline = metadata["shell_command"]
             if hasattr(provider, "_initialized"):
                 provider._initialized = True
+        self._providers[terminal_id] = provider
+        if recovery is not None and recovery["state"] == "verifying":
+            # Resume only the observer for a final response already detected
+            # before restart. The durable timestamp keeps its original deadline;
+            # neither task text nor a new receipt is reconstructed or sent.
+            from cli_agent_orchestrator.services.terminal_service import (
+                schedule_receipt_result_verification,
+            )
+
+            schedule_receipt_result_verification(terminal_id, provider)
         logger.info(f"Created provider on-demand for terminal {terminal_id}")
         return provider
 
@@ -357,6 +424,47 @@ class ProviderManager:
                 logger.info(
                     "Cleaned up restored MiniMax Code provider for terminal: %s", terminal_id
                 )
+            elif metadata and metadata.get("provider") == ProviderType.KIMI_CLI.value:
+                # Kimi Code copies the operator's credentials, MCP configuration
+                # and Kimi state into a deterministic managed home, so a restart
+                # that loses the provider instance would otherwise leak them.
+                #
+                # The removal is deliberately *variant-independent* while the
+                # reconstruction above stays fail-closed on a NULL/unknown
+                # variant. Two concrete lifecycle reasons prove a managed home
+                # can exist for a terminal whose persisted variant is not
+                # ``code``:
+                #
+                # * ``initialize()`` materialises the home, and therefore copies
+                #   the credentials, before it returns; the service persists
+                #   ``provider_variant`` only afterwards, so a crash inside that
+                #   window leaves a credential-bearing home on a NULL-variant row
+                #   (reproduced: cleanup reported success while the copied
+                #   ``auth.json`` remained on disk);
+                # * a terminal re-launched under the other dialect keeps the home
+                #   its earlier CODE launch created.
+                #
+                # Nothing about the *dialect* is inferred here — no provider is
+                # reconstructed for a NULL/unknown row — and the deletion target
+                # is this terminal's own deterministic path inside CAO's managed
+                # root, validated before any recursive delete. ``cleanup()`` is a
+                # no-op returning True when there is no such home, which is the
+                # ordinary legacy case.
+                restored_kimi_provider = KimiCliProvider(
+                    terminal_id,
+                    metadata["tmux_session"],
+                    metadata["tmux_window"],
+                    metadata.get("agent_profile"),
+                )
+                variant = metadata.get("provider_variant")
+                if variant == KimiDialect.CODE.value:
+                    restored_kimi_provider.restore_runtime_variant(variant)
+                if restored_kimi_provider.cleanup() is False:
+                    logger.warning(
+                        "Cleanup deferred for restored Kimi Code provider: %s", terminal_id
+                    )
+                    return False
+                logger.info("Cleaned up restored Kimi provider for terminal: %s", terminal_id)
             elif metadata and metadata.get("provider") == ProviderType.GEMINI_CLI.value:
                 # Gemini keeps only a deterministic, terminal-private settings
                 # overlay.  Restore the minimal adapter so a server restart

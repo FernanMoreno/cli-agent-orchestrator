@@ -79,6 +79,7 @@ def agent_step_context(context, isolated_memory_db, monkeypatch):
         SimpleNamespace(
             get_status=lambda terminal_id: TerminalStatus.IDLE,
             notify_input_sent=lambda *args, **kwargs: None,
+            notify_input_delivered=lambda *args, **kwargs: None,
             clear_rolling_buffer=lambda *args, **kwargs: None,
             clear_terminal=lambda *args, **kwargs: None,
         ),

@@ -154,7 +154,7 @@ async def _validate_reused_terminal(
     terminal_id: str,
     requested_provider: str,
     requested_engine: Optional[KiroEngine | str],
-) -> Optional[str]:
+) -> None:
     """Require reuse constraints to agree with authoritative terminal metadata."""
     metadata = await asyncio.to_thread(terminal_service.get_terminal_metadata, terminal_id)
     if metadata is None:
@@ -177,7 +177,9 @@ async def _validate_reused_terminal(
     if explicit_engine == KiroEngine.KAS:
         # KAS remains unavailable regardless of which engine the terminal
         # persisted; use the same structured Phase 0 guard as terminal creation.
-        raise KiroPhase0KASError(profile_has_v2_policy=False)
+        from cli_agent_orchestrator.services.kiro_profiles import guard_existing_kas_runtime
+
+        guard_existing_kas_runtime(terminal_id, metadata)
 
     persisted_engine = parse_kiro_engine(metadata.get("engine"))
     if persisted_engine is None:
@@ -278,7 +280,7 @@ async def _wait_for_completion(
     prompt_redelivery: bool = True,
     track_native_child: bool = False,
     delivery_guard: Optional[Callable[[], None]] = None,
-) -> None:
+) -> Optional[str]:
     """Wait for a post-input step to settle, polling ``status_monitor`` (issue #409).
 
     Called strictly AFTER the prompt has been sent, so IDLE here can never be the
@@ -410,6 +412,7 @@ async def _wait_for_completion(
                 f"terminal {terminal_id} reached ERROR status",
                 kind="error",
                 terminal_id=terminal_id,
+                delivery_may_have_occurred=True,
             )
         if current == TerminalStatus.WAITING_QUOTA:
             # This is neither a result nor an ordinary user-owned question.
@@ -526,6 +529,7 @@ async def _wait_for_completion(
                     f"terminal {terminal_id} reached ERROR status",
                     kind="error",
                     terminal_id=terminal_id,
+                    delivery_may_have_occurred=True,
                 )
             if deadline_status == TerminalStatus.WAITING_QUOTA:
                 raise StepExecutionError(
@@ -542,6 +546,7 @@ async def _wait_for_completion(
                 f"step on terminal {terminal_id} did not complete within {timeout}s",
                 kind="timeout",
                 terminal_id=terminal_id,
+                delivery_may_have_occurred=True,
             )
 
         # Delivery verification (#562): no pickup evidence within the grace
@@ -1423,6 +1428,7 @@ async def run_agent_step(
         if exc.kind == "contract_rejected":
             # A stale invocation must not mutate the current attempt/receipt.
             raise
+        exc.delivery_may_have_occurred = True
         # A provider ERROR is a definite task failure.  A completion/readiness
         # timeout after delivery is not: the worker may keep running, so retain
         # it and require a parent reconciliation instead of deleting it or
@@ -1470,6 +1476,15 @@ async def run_agent_step(
         retain_for_receipt = await _must_retain_terminal_for_turn_receipt(terminal_id)
         if teardown and created_here and not retain_for_receipt:
             await _best_effort_teardown(terminal_id, registry)
+        if isinstance(exc, Exception):
+            raise StepExecutionError(
+                "delivered turn result could not be extracted",
+                kind="output_extraction_failed",
+                terminal_id=terminal_id,
+                native_child_id=native_child_id,
+                action="reconcile",
+                delivery_may_have_occurred=True,
+            ) from exc
         raise
 
     result = AgentStepResult(

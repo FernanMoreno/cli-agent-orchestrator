@@ -6,6 +6,7 @@ Core services depend only on this ABC, never on a concrete backend directly.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -25,6 +26,51 @@ class TerminalNotFoundError(TerminalBackendError):
     def __init__(self, terminal_id: str, message: Optional[str] = None):
         self.terminal_id = terminal_id
         super().__init__(message or f"Terminal not found: {terminal_id}")
+
+
+class TerminalCleanupOutcome(str, Enum):
+    """What an exact-terminal cleanup actually ESTABLISHED, not merely attempted.
+
+    Deliberately finer than a bool. Runtime teardown has to tell a confirmed
+    removal from a merely-unproven one: collapsing either of the two uncertain
+    outcomes below into success is what lets a lifetime-reclaimed marker be
+    written for a pane that is still alive, or for one the backend could not
+    even look at.
+
+    - ``DELETED``: this call closed the exact object and confirmed it is gone.
+    - ``ABSENT``: positive proof no live object carries this ``terminal_id``.
+    - ``STILL_PRESENT``: the exact object is confirmed still live (the close was
+      not requested, or it did not take effect).
+    - ``UNKNOWN``: identity or the post-close state could not be read. Fail
+      closed; it is never evidence of absence.
+    """
+
+    DELETED = "deleted"
+    ABSENT = "absent"
+    STILL_PRESENT = "still_present"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class TerminalCleanupResult:
+    """Outcome of :meth:`TerminalBackend.cleanup_terminal_exact`.
+
+    ``reclaimed`` is True only for the two outcomes that PROVE the runtime is
+    gone: ``DELETED`` (we closed it and confirmed) and ``ABSENT`` (it provably
+    was not there). ``STILL_PRESENT`` and ``UNKNOWN`` both mean the caller must
+    keep the runtime retryable rather than record it as reclaimed.
+    """
+
+    outcome: TerminalCleanupOutcome
+    detail: str = ""
+
+    @property
+    def reclaimed(self) -> bool:
+        """Whether this result proves the exact terminal's runtime is gone."""
+        return self.outcome in (
+            TerminalCleanupOutcome.DELETED,
+            TerminalCleanupOutcome.ABSENT,
+        )
 
 
 @dataclass(frozen=True)
@@ -296,6 +342,12 @@ class TerminalBackend(ABC):
     def kill_window(self, session_name: str, window_name: str) -> bool:
         """Kill a specific window within a session.
 
+        Retained for the ordinary, live-terminal teardown path and for
+        compatibility. It addresses its target by session/window NAME, so it
+        must never be used for a retained tombstone: session and window names
+        are reusable, and a replacement reusing the name would be destroyed.
+        Use :meth:`cleanup_terminal_exact` whenever ownership is in doubt.
+
         Args:
             session_name: Session containing the window
             window_name: Window to kill
@@ -306,6 +358,14 @@ class TerminalBackend(ABC):
         ...
 
     # --- Input ---
+
+    def reset_window(self, session_name: str, window_name: str, *, terminal_id: str) -> None:
+        """Stop the old pane and replace it with a fresh shell, preserving identity.
+
+        An unsupported or ambiguous reset must raise; a cooperative interrupt
+        does not meet this contract and cannot release an uncertain turn.
+        """
+        raise TerminalBackendError("backend does not support a confirmed pane reset")
 
     @abstractmethod
     def send_keys(
@@ -509,3 +569,55 @@ class TerminalBackend(ABC):
         Returns None if unsupported — caller falls back to pane content parsing.
         """
         return None
+
+    def terminal_observation_target_matches(
+        self, terminal_id: str, session_name: str, window_name: str
+    ) -> bool:
+        """Prove that the named output target belongs to this terminal.
+
+        Observation restoration may reattach a pipe but must never target a
+        replacement behind a reused label. Unknown ownership fails closed.
+        """
+        return False
+
+    def cleanup_terminal_exact(
+        self,
+        terminal_id: str,
+        session_name: Optional[str] = None,
+        window_name: Optional[str] = None,
+        *,
+        close: bool = True,
+    ) -> TerminalCleanupResult:
+        """Close the exact backend object owned by ``terminal_id``, and confirm it.
+
+        ``terminal_id`` is AUTHORITATIVE; ``session_name`` / ``window_name`` are
+        advisory hints that only narrow the search. A backend must prove
+        ownership from its own terminal identity, never from a reusable
+        session/window label — labels are recycled. A retained deferred-init
+        tombstone routinely shares its session name (and sometimes its window
+        name) with a later replacement terminal, and closing that replacement
+        destroys an unrelated, live agent.
+
+        Contract, in both directions:
+
+        - ``ABSENT`` requires positive proof that no live object carries
+          ``terminal_id``. A failed or unreadable lookup is NOT absence.
+        - ``DELETED`` requires a post-close confirmation that the identity is
+          gone. A dispatched close that could not be confirmed is ``UNKNOWN``.
+        - ``UNKNOWN`` is the fail-closed answer for ambiguous identity (e.g.
+          the id resolves to more than one live object), missing/malformed
+          identity in the backend's own snapshot, or any read that could not be
+          answered. It is never collapsed to ``ABSENT`` or success.
+
+        ``close=False`` performs the identity proof WITHOUT mutating anything, so
+        a caller that already established the session is gone can still get a
+        truthful verdict (``STILL_PRESENT`` when the object is still there).
+
+        The default implementation returns ``UNKNOWN`` rather than raising, so a
+        backend that has not been taught exact identity fails closed — its
+        tombstones stay retryable instead of being silently declared reclaimed.
+        """
+        return TerminalCleanupResult(
+            TerminalCleanupOutcome.UNKNOWN,
+            f"{type(self).__name__} does not implement exact-terminal cleanup",
+        )

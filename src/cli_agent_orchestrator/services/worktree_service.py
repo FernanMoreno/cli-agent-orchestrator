@@ -312,7 +312,8 @@ def archive_worktree(
             raise WorktreeError("symlinked evidence paths are not allowed")
         paths.append(path)
     requested = Permissions(
-        paths=frozenset(str(root / path) for path in paths), artifacts={"worktree_evidence"}
+        paths=frozenset(str(root / path) for path in paths),
+        artifacts=frozenset({"worktree_evidence"}),
     )
     authority = WorkAuthority(repository)
     authority._principal(principal)
@@ -392,7 +393,7 @@ def archive_worktree(
         separators=(",", ":"),
     ).encode()
 
-    def accept(ref):
+    def accept(ref) -> CleanupOutcome:
         with repository.transaction() as connection:
             verify(connection)
             identifier = hashlib.sha256(f"{attempt_id}:{ref.content_hash}".encode()).hexdigest()

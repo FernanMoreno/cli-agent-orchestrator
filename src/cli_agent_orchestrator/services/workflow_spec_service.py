@@ -24,12 +24,15 @@ The service raises only NARROW exceptions (``ValueError`` / ``FileNotFoundError`
 from __future__ import annotations
 
 import ast
+import errno
 import glob
 import hashlib
 import logging
 import os
 import re
-from contextlib import contextmanager
+import stat
+import tempfile
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import local
@@ -76,13 +79,15 @@ def _authoring_lock(scan_dir: Optional[str]):
     not acquire a second flock on the same lock file and deadlock.
     """
     safe_dir = _safe_dir(scan_dir)
-    held = getattr(_authoring_context, "held", frozenset())
+    held: frozenset[str] = getattr(_authoring_context, "held", frozenset())
     if safe_dir in held:
         yield safe_dir
         return
     if not atomic_file._FCNTL_AVAILABLE:
         raise RuntimeError("conditional workflow editing requires interprocess locks")
-    lock_path = atomic_file._lock_path_for(Path(safe_dir))
+    parent_stat = os.stat(safe_dir)
+    identity = f"workflow-directory-v2:{parent_stat.st_dev}:{parent_stat.st_ino}"
+    lock_path = atomic_file.LOCK_DIR / (hashlib.sha256(identity.encode()).hexdigest() + ".lock")
     with atomic_file._file_lock(lock_path, atomic_file.DEFAULT_LOCK_TIMEOUT_SECONDS):
         _authoring_context.held = held | {safe_dir}
         try:
@@ -401,7 +406,7 @@ def upsert_index(spec: Union[WorkflowSpec, ScriptSpec], source_path: str) -> Non
         description=description,
         indexed_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
-    with _connect() as conn:
+    with closing(_connect()) as _owned_conn, _owned_conn as conn:
         conn.execute(
             "INSERT INTO workflow_index "
             "(name, source_path, mode, step_count, description, indexed_at) "
@@ -445,7 +450,7 @@ def _rebuild_index_from_files(scan_dir: Optional[str] = None) -> int:
         glob.glob(os.path.join(safe_dir, "*.yaml")) + glob.glob(os.path.join(safe_dir, "*.yml"))
     )
     py_paths = sorted(glob.glob(os.path.join(safe_dir, "*.py")))
-    with _connect() as conn:
+    with closing(_connect()) as _owned_conn, _owned_conn as conn:
         conn.execute("DELETE FROM workflow_index")
         conn.commit()
     rows = 0
@@ -500,7 +505,7 @@ def list_workflows(scan_dir: Optional[str] = None) -> List[WorkflowIndexRow]:
     O(n²) reads. Resolve the spec once and pass it down instead.
     """
     rebuild_index_from_files(scan_dir)
-    with _connect() as conn:
+    with closing(_connect()) as _owned_conn, _owned_conn as conn:
         cursor = conn.execute(
             "SELECT name, source_path, mode, step_count, description, indexed_at "
             "FROM workflow_index ORDER BY name"
@@ -526,7 +531,7 @@ def _resolve_source_path(name: str, scan_dir: Optional[str] = None) -> str:
     """
     _validate_name(name)
     rebuild_index_from_files(scan_dir)
-    with _connect() as conn:
+    with closing(_connect()) as _owned_conn, _owned_conn as conn:
         row = conn.execute(
             "SELECT source_path FROM workflow_index WHERE name = ?", (name,)
         ).fetchone()
@@ -786,6 +791,199 @@ def get_workflow_source(name: str, scan_dir: Optional[str] = None) -> dict:
         return _source_view(name, raw)
 
 
+class SafePublicationUnavailableError(OSError):
+    """No safe no-replace publication primitive on this filesystem."""
+
+
+_SPEC_FILE_CREATE_MODE = 0o644
+
+
+def _write_contained_spec_bytes(
+    path: Union[str, Path],
+    data: bytes,
+    base_dir: Optional[str] = None,
+    *,
+    create_only: bool = False,
+) -> str:
+    """Resolve + contain + atomically WRITE a spec file, guard colocated with the sinks.
+
+    The single guarded entry that writes bytes to a spec path, and the only one
+    (issue #583, Bolt 3, ADR-583-11). Companion to ``_read_contained_spec_bytes``
+    and ``_contained_spec_file`` above, and it exists for the same reason they do:
+    CodeQL's ``py/path-injection`` barrier for ``str.startswith`` is
+    **flow-sensitive and function-local**, so the "contained" state
+    ``_safe_spec_path`` establishes is NOT carried across its ``return``. Every
+    filesystem sink below therefore sits in THIS function, after the containment
+    ``startswith`` check written HERE — alerts 166/167/168 were caused by exactly
+    the alternative.
+
+    Three shapes are forbidden because they defeat the query rather than because
+    they are logically wrong (see the block comment above ``_resolve_contained_spec_path``):
+
+    - a COMPOUND ``!= base and not startswith`` guard, which leaves the
+      ``real_path == base`` branch reaching a sink un-guarded;
+    - wrapping the checked string in ``Path(...)`` before any sink or on the
+      return, which the query does not track through;
+    - delegating the check to a helper and trusting its return.
+
+    Ordering is load-bearing and every step is placed deliberately:
+
+    1. **Containment guard.** The SafeAccessCheck, dominating every sink below.
+    2. **Reject a symlink target after containment** (SR-3A2-2). ``realpath``
+       collapses links, so this check must remain on the caller's original path
+       rather than the resolved path — and following a link on a WRITE means the
+       caller's bytes land in a spec it did not name, which containment cannot
+       catch because both paths are inside the base. This is the one operation
+       here that legitimately reads the caller's own string rather than the
+       resolved path; it neither opens nor writes.
+    3. **Size cap BEFORE any file is created** (SR-3A2-3). An oversized payload
+       must not leave a temp file behind, and the bound is the SAME constant the
+       read path enforces so this cannot write a spec ``load_and_validate``
+       would then refuse.
+    4. **Read the existing mode while the original inode still exists**
+       (SR-3A2-6). ``mkstemp`` creates 0600, so without re-applying the previous
+       mode every CAO write would silently make a spec owner-only.
+    5. **Temp file inside the validated base** (BR-3A2-7) — required so
+       ``os.replace`` is same-filesystem (hence atomic) and so the intermediate
+       artefact stays inside the containment argument. Its name comes from
+       ``mkstemp`` with a LEADING-DOT prefix, which cannot match the
+       ``*.yaml``/``*.yml``/``*.py`` globs ``rebuild_index_from_files`` runs on
+       every list/get/delete — a matching name would be indexed while
+       half-written (SR-3A2-5).
+    6. **flush + fsync before the rename** (TS-3A2-4). The index is a derived
+       projection rebuilt from the files (B2-BR-3), so a crash leaving an index
+       row pointing at content that never reached disk inverts the
+       file-is-canonical invariant.
+    7. **Atomic publication**: ``os.link`` for no-replace creates, or
+       ``os.replace`` for updates. Never in-place ``open(target, "w")`` (which
+       truncates and exposes an empty file), and never ``shutil.move`` (which
+       copies across filesystems, non-atomically).
+    8. **Unlink the temp file on ANY failure**, or a chmod/disk-full error
+       orphans it indefinitely.
+
+    NOT done here, both deliberate with named owners (SR-3A2-8): no grammar
+    validation — the caller validates the in-memory text and passes THOSE bytes,
+    keeping validate-and-write on one read (the TOCTOU window
+    ``load_and_validate`` closed); and no redaction — a spec is source the user
+    expects back verbatim, and NFR-1's redaction obligation attaches to the
+    manifest, not to user source.
+
+    This helper owns atomic publication, not the admission lock. Workflow
+    create/update hold :func:`_authoring_lock` from their existence/hash
+    checks through this call. Other direct callers must provide equivalent
+    serialization when their result depends on prior target state.
+
+    Returns:
+        The resolved, contained realpath ``str`` the bytes were written to — the
+        same bare-``str`` shape the read helpers return.
+
+    Raises:
+        ValueError: the base directory is blocked, the resolved path escapes it,
+            the target is a symlink, or the payload exceeds the cap.
+        OSError: the write itself failed (the temp file is cleaned up first).
+    """
+    if not path or (isinstance(path, str) and not path.strip()):
+        raise ValueError("workflow spec path is required")
+
+    safe_base = _safe_dir(base_dir)
+
+    # Capture the CALLER's path before resolution. ``realpath`` does not mutate it,
+    # so it still detects a caller-supplied symlink after containment succeeds.
+    user_path = os.fspath(path)
+
+    real_path = _resolve_contained_spec_path(path, safe_base)
+    # (1) SafeAccessCheck — single positive containment guard, colocated with every
+    # sink below. A spec FILE is always strictly UNDER its base dir.
+    if not real_path.startswith(safe_base + os.sep):
+        raise ValueError(f"workflow spec path '{path}' escapes its validated directory")
+
+    # (2) Symlink check on the CALLER's original path, after containment and before
+    # any sink. Checking real_path would miss a symlink realpath already collapsed.
+    if os.path.islink(user_path):
+        raise ValueError(f"workflow spec path '{path}' is a symlink; refusing to write through it")
+
+    # (3) Bound the payload before anything touches the filesystem.
+    if len(data) > WORKFLOW_MAX_SPEC_BYTES:
+        raise ValueError(f"spec exceeds {WORKFLOW_MAX_SPEC_BYTES} bytes (max)")
+
+    # (4) Capture the existing mode while the original inode is still there.
+    #
+    # CORRECTED during this unit's own tests: doing nothing here does NOT yield the
+    # process umask. ``mkstemp`` creates 0600 and ``os.replace`` preserves the temp
+    # file's mode, so a freshly-created spec would land owner-only — the exact
+    # outcome SR-3A2-6 rejects. A new file therefore gets an EXPLICIT mode.
+    #
+    # 0644 is used rather than a umask-derived value deliberately: reading the umask
+    # requires the ``os.umask(0)``-then-restore idiom, and ``os.umask`` is
+    # process-global, so that read-restore window is a genuine race inside a
+    # FastAPI server. A deterministic mode is worth more than honouring a
+    # restrictive umask here, and the trade is recorded rather than hidden.
+    existing_mode: int = _SPEC_FILE_CREATE_MODE
+    if os.path.isfile(real_path):
+        existing_mode = stat.S_IMODE(os.stat(real_path).st_mode)
+
+    # (5) Temp file inside the validated base, with a name no index glob can match.
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{os.path.basename(real_path)}.", suffix=".tmp", dir=safe_base
+    )
+    raw_fd_owned = True
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            raw_fd_owned = False
+            handle.write(data)
+            handle.flush()
+            os.chmod(tmp_name, existing_mode)
+            os.fsync(handle.fileno())  # (6) content + mode durable before publication
+        if create_only:
+            # Hard-link publication is atomic and fails with FileExistsError if
+            # the destination appeared. Never fall back to replace: that would
+            # turn a create race into a silent clobber.
+            try:
+                os.link(tmp_name, real_path)
+            except FileExistsError:
+                raise
+            except OSError as exc:
+                unsupported = {
+                    errno.ENOSYS,
+                    errno.EXDEV,
+                    errno.EPERM,
+                    getattr(errno, "ENOTSUP", errno.EOPNOTSUPP),
+                    errno.EOPNOTSUPP,
+                }
+                if exc.errno in unsupported:
+                    raise SafePublicationUnavailableError(
+                        "filesystem does not support atomic no-replace workflow publication"
+                    ) from exc
+                raise
+            os.unlink(tmp_name)
+        else:
+            os.replace(tmp_name, real_path)
+
+        # Persist the directory entry. If this fails after publication, report
+        # the error honestly but never unlink the committed final as "rollback".
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_fd = os.open(safe_base, directory_flags)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except BaseException:
+        # (8) Remove only this call's temp. A published final is never rollback
+        # material, including after a parent-directory fsync failure.
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            logger.debug("could not remove temp spec file after a failed write")
+        raise
+    finally:
+        if raw_fd_owned:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+    return real_path
+
+
 def _validate_updated_source(name: str, path: str, raw: bytes) -> Union[WorkflowSpec, ScriptSpec]:
     source = _source_view(name, raw)["content"]
     extension = os.path.splitext(path)[1].lower()
@@ -801,8 +999,9 @@ def _validate_updated_source(name: str, path: str, raw: bytes) -> Union[Workflow
         # Parse only: authoring never executes supplied Python.
         inputs = _extract_inputs(source)
         findings = lint_script(source, path).findings
-        if any(finding.rule_id == "syntax" for finding in findings):
-            raise ValueError("script contains invalid Python syntax")
+        errors = [finding for finding in findings if finding.severity == "error"]
+        if errors:
+            raise ValueError("; ".join(f"{f.rule_id} (line {f.line})" for f in errors))
         return ScriptSpec(
             name=name,
             path=path,
@@ -819,10 +1018,8 @@ def update_workflow(
 ) -> dict:
     """Compare and publish a validated revision under the authoring lock.
 
-    Files remain canonical and the index remains derived. An index failure
-    restores the prior file before reporting failure. A process crash between
-    publication and indexing is recovered by the existing rebuild-on-read.
-    External editors must use this conditional operation to share its lock.
+    Files remain canonical and the index remains derived. Publication is never
+    rolled back because indexing failed; subsequent reads rebuild the projection.
     """
     _validate_name(name)
     if not isinstance(expected_source_hash, str) or not re.fullmatch(
@@ -835,6 +1032,10 @@ def update_workflow(
     _source_view(name, raw)
     with _authoring_lock(scan_dir) as safe_dir:
         path = _resolve_source_path(name, safe_dir)
+        # Resolution may collapse the named symlink; retain the name for refusal.
+        for extension in (".py", ".yaml", ".yml"):
+            if os.path.islink(os.path.join(safe_dir, name + extension)):
+                raise ValueError("workflow spec is a symlink; refusing to write through it")
         path, previous = _read_contained_spec_bytes(path, safe_dir)
         previous_view = _source_view(name, previous)
         if previous_view["source_hash"] != expected_source_hash:
@@ -848,13 +1049,44 @@ def update_workflow(
         target = _resolve_contained_spec_path(path, safe_dir)
         if not target.startswith(safe_dir + os.sep) or target != path:
             raise ValueError("workflow spec path changed outside its validated directory")
-        atomic_file._atomic_publish(Path(target), content, "utf-8")
+        _write_contained_spec_bytes(target, raw, base_dir=safe_dir)
         try:
             upsert_index(spec, target)
         except Exception:
-            atomic_file._atomic_publish(Path(target), previous_view["content"], "utf-8")
-            raise
+            logger.warning("workflow source published; derived index rebuild required")
         return _source_view(name, raw)
+
+
+def create_workflow(name: str, content: str, scan_dir: Optional[str] = None) -> dict:
+    """Create a Python spec without execution or replacement; preserve source DTO."""
+    _validate_name(name)
+    if not isinstance(content, str):
+        raise ValueError("content must be a UTF-8 string")
+    raw = content.encode("utf-8")
+    view = _source_view(name, raw)
+    with _authoring_lock(scan_dir) as safe_dir:
+        target = os.path.join(safe_dir, name + ".py")
+        # lexists also refuses dangling named links before any temp is created.
+        if os.path.lexists(target):
+            raise FileExistsError("workflow already exists; use conditional update")
+        _check_tier_collision(name, safe_dir)
+        spec = _validate_updated_source(name, target, raw)
+        real_path = _write_contained_spec_bytes(target, raw, base_dir=safe_dir, create_only=True)
+        try:
+            upsert_index(spec, real_path)
+        except Exception:
+            logger.warning("workflow source published; derived index rebuild required")
+        return view
+
+
+def validate_workflow_source(name: str, content: str) -> ScriptSpec:
+    """Validate source-only input without resolving caller paths or executing code."""
+    _validate_name(name)
+    if not isinstance(content, str):
+        raise ValueError("content must be a UTF-8 string")
+    spec = _validate_updated_source(name, name + ".py", content.encode("utf-8"))
+    assert isinstance(spec, ScriptSpec)  # The .py validator produces only ScriptSpec.
+    return spec
 
 
 def delete_workflow(name: str, scan_dir: Optional[str] = None) -> None:
@@ -882,12 +1114,12 @@ def _delete_workflow(name: str, scan_dir: Optional[str] = None) -> None:
     except FileNotFoundError:
         # The index row pointed at a now-missing file. Drop the stale row and
         # surface the unknown name rather than masking it as success.
-        with _connect() as conn:
+        with closing(_connect()) as _owned_conn, _owned_conn as conn:
             conn.execute("DELETE FROM workflow_index WHERE name = ?", (name,))
             conn.commit()
         raise KeyError(name)
     except OSError as e:
         raise ValueError(f"could not delete workflow '{name}': {e}") from e
-    with _connect() as conn:
+    with closing(_connect()) as _owned_conn, _owned_conn as conn:
         conn.execute("DELETE FROM workflow_index WHERE name = ?", (name,))
         conn.commit()

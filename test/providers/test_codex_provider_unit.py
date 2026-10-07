@@ -245,6 +245,15 @@ class TestCodexBuildCommand:
         # CAO_TERMINAL_ID must be forwarded for handoff to work
         assert "mcp_servers.cao-mcp-server.env_vars=" in command
         assert "CAO_TERMINAL_ID" in command
+        # The worker MCP subprocess must address this CAO instance, including
+        # tests and deployments that use a non-default loopback port.
+        assert "CAO_API_HOST" in command
+        assert "CAO_API_PORT" in command
+        assert "CAO_AUTH_LOCAL_TOKEN" in command
+        assert "CAO_AUTH_JWKS_URI" in command
+        assert "CAO_HOME_DIR" in command
+        assert "mcp_servers.cao-mcp-server.required=true" in command
+        assert "mcp_servers.cao-mcp-server.startup_timeout_sec=60.0" in command
         # Tool timeout must be a TOML float (600.0) for Codex's f64 deserializer
         assert "mcp_servers.cao-mcp-server.tool_timeout_sec=600.0" in command
 
@@ -385,6 +394,11 @@ class TestCodexBuildCommand:
         # CAO_TERMINAL_ID always forwarded even without explicit env_vars
         assert "mcp_servers.test-server.env_vars=" in command
         assert "CAO_TERMINAL_ID" in command
+        # Instance routing variables belong only to CAO's own MCP process.
+        assert "CAO_API_HOST" not in command
+        assert "CAO_API_PORT" not in command
+        assert "mcp_servers.test-server.required=" not in command
+        assert "mcp_servers.test-server.startup_timeout_sec=" not in command
 
     @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
     def test_build_command_mcp_preserves_existing_env_vars(self, mock_load_profile):
@@ -558,7 +572,7 @@ class TestCodexBuildCommandExtra:
             command = provider._build_codex_command()
 
         instructions = read_developer_instructions_file(command)
-        assert "You only have access to these tools: fs_read, fs_list" in instructions
+        assert "CAO allowed tool permissions: fs_read, fs_list" in instructions
         assert "Original system prompt." in instructions
         # SECURITY_PROMPT lives in constants; assert on a stable substring
         # rather than importing the constant into the test fixture.
@@ -1875,6 +1889,20 @@ class TestCodexProviderMessageExtraction:
         )
 
         assert provider.get_status(output) == TerminalStatus.WAITING_USER_ANSWER
+        persisted = provider.pending_turn_receipt_state()
+        persisted["phase"] = "sent"
+        restarted = CodexProvider("test1234", "test-session", "window-0")
+        restarted.restore_turn_receipt_state(persisted)
+        assert restarted.extract_post_turn_completion_result(output) == (
+            f"completed the requested task\n{receipt}"
+        )
+        assert (
+            restarted.extract_post_turn_completion_result(
+                output.replace(receipt, "CAO-TURN-RECEIPT-" + "0" * 32)
+            )
+            is None
+        )
+        assert restarted.blocks_new_task_input_for_reconciliation
         result = provider.extract_post_turn_completion_result(output)
         assert result == (f"completed the requested task\n{receipt}")
         assert (

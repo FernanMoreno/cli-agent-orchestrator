@@ -93,60 +93,73 @@ describe("McpApp convenience notification handlers", () => {
 });
 
 describe("EventStreamView — live SSE subscription", () => {
-  it("subscribes via the descriptor and ingests a live frame, tolerating a malformed one", async () => {
-    const liveEvent: CaoEvent = {
-      id: "live-1",
-      kind: "completion",
-      terminal_id: "t1",
-      session_name: "cao-x",
-      timestamp: "2026-01-01T00:00:09Z",
-      detail: {},
-    };
-
-    // Capture the message listener the view registers so the test can push frames.
-    let push: ((ev: { data: string }) => void) | undefined;
-    let closed = false;
-    const factory = (url: string): EventSourceLike => {
-      // The view builds the SSE URL from base + descriptor.sse_url.
-      expect(url).toBe("http://127.0.0.1:9889/events");
-      return {
-        addEventListener: (_type, listener) => {
-          push = listener;
-        },
-        close: () => {
-          closed = true;
-        },
+  it.each([
+    { descriptor: "/events", base: "http://127.0.0.1:50185" },
+    {
+      descriptor: "http://127.0.0.1:50185/events",
+      base: "http://127.0.0.1:9889",
+    },
+  ])(
+    "subscribes via $descriptor and ingests a live frame, tolerating a malformed one",
+    async ({ descriptor, base }) => {
+      const liveEvent: CaoEvent = {
+        id: "live-1",
+        kind: "completion",
+        terminal_id: "t1",
+        session_name: "cao-x",
+        timestamp: "2026-01-01T00:00:09Z",
+        detail: {},
       };
-    };
 
-    const host = buildHost({
-      tools: {
-        cao_fetch_history: () => ({ events: [] }),
-        subscribe_events: () => ({ sse_url: "/events" }),
-      },
-    });
-    const app = makeApp(host);
-    const view = render(
-      <EventStreamView app={app} eventSourceFactory={factory} />,
-    );
+      // Capture the message listener the view registers so the test can push frames.
+      let push: ((ev: { data: string }) => void) | undefined;
+      let closed = false;
+      const factory = (url: string): EventSourceLike => {
+        // The view builds the SSE URL from base + descriptor.sse_url.
+        expect(url).toBe("http://127.0.0.1:50185/events");
+        return {
+          addEventListener: (type, listener) => {
+            if (type === "message") push = listener;
+          },
+          close: () => {
+            closed = true;
+          },
+        };
+      };
 
-    // Empty ticker until a frame arrives.
-    await screen.findByText("No fleet events yet");
-    await waitFor(() => expect(push).toBeTypeOf("function"));
+      const host = buildHost({
+        tools: {
+          cao_fetch_history: () => ({ events: [] }),
+          subscribe_events: () => ({ sse_url: descriptor }),
+        },
+      });
+      const app = makeApp(host);
+      const view = render(
+        <EventStreamView
+          app={app}
+          backplaneBaseUrl={base}
+          eventSourceFactory={factory}
+        />,
+      );
 
-    // A malformed frame is swallowed (no crash, no row); a valid one is rendered.
-    push!({ data: "{not json" });
-    push!({ data: JSON.stringify(liveEvent) });
+      // Empty ticker until a frame arrives.
+      await screen.findByText("No fleet events yet");
+      await waitFor(() => expect(push).toBeTypeOf("function"));
 
-    await waitFor(() =>
-      expect(screen.getAllByTestId("event-row")).toHaveLength(1),
-    );
+      // A malformed frame is swallowed (no crash, no row); a valid one is rendered.
+      push!({ data: "{not json" });
+      push!({ data: JSON.stringify(liveEvent) });
 
-    app.disconnect();
-    view.unmount();
-    // Unmount closes the SSE source (listener release).
-    expect(closed).toBe(true);
-  });
+      await waitFor(() =>
+        expect(screen.getAllByTestId("event-row")).toHaveLength(1),
+      );
+
+      app.disconnect();
+      view.unmount();
+      // Unmount closes the SSE source (listener release).
+      expect(closed).toBe(true);
+    },
+  );
 });
 
 describe("AgentView — interval poll refreshes the snapshot", () => {

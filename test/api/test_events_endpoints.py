@@ -78,7 +78,21 @@ def test_events_stream_advertises_event_stream_media_type() -> None:
     from cli_agent_orchestrator.api.main import events_stream
 
     async def _call():
-        return await events_stream()
+        from starlette.requests import Request
+
+        from cli_agent_orchestrator.api.main import app
+
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/events",
+                "headers": [],
+                "query_string": b"",
+                "app": app,
+            }
+        )
+        return await events_stream(request)
 
     response = asyncio.run(_call())
     assert response.media_type == "text/event-stream"
@@ -147,3 +161,32 @@ def test_events_history_rejects_negative_limit(client) -> None:
 
     resp = client.get("/events/history", params={"limit": -1})
     assert resp.status_code == 422
+
+
+def test_event_ticket_single_use_scope_and_origin(client):
+    issue = client.post("/events/ticket")
+    assert issue.status_code == 200
+    assert issue.json()["expires_in"] == 30
+    assert issue.headers["cache-control"] == "no-store"
+    assert (
+        client.post("/events/ticket", headers={"Origin": "https://other.example"}).status_code
+        == 403
+    )
+    import pytest
+
+    from cli_agent_orchestrator.services.event_stream_ticket import store
+
+    with pytest.raises(ValueError):
+        store.consume(issue.json()["ticket"], "/terminals/other/ws")
+    with pytest.raises(ValueError):
+        store.consume(issue.json()["ticket"], "/events")
+
+
+def test_event_unknown_cursor_requires_resync(client):
+    response = client.get("/events?cursor=unknown")
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "event_cursor_expired"
+
+
+def test_event_reusable_query_credential_rejected(client):
+    assert client.get("/events?access_token=reusable").status_code == 401

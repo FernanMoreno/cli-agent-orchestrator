@@ -13,6 +13,10 @@ AsyncMethodT = Callable[P, Awaitable[R]]
 _HOOK_EVENT_ATTR = "_cao_hook_event"
 
 
+class McpServerStartupError(RuntimeError):
+    """A requested MCP restriction could not be enforced at startup."""
+
+
 class CaoPlugin:
     """Base class for CAO plugins.
 

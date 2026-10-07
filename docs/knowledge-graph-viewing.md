@@ -72,9 +72,9 @@ The **edge-type taxonomy** (`EdgeType`) is a closed enum organized by family:
 
 | Value | Family | Populated by |
 |---|---|---|
-| `relates_to` | topical | memory provider (from `related_keys`) |
-| `contradiction` | lint-derived | memory provider (from `wiki_lint`) |
-| `supersedes` | lifecycle | **reserved** — no provider emits it in this deliverable |
+| `relates_to` | topical | memory provider (active relationship store) |
+| `contradiction` | lint-derived | memory provider (active relationship store, including persisted lint findings) |
+| `supersedes` | lifecycle | memory provider (active relationship store) |
 
 > `GraphView` enforces referential integrity (every edge endpoint is a known
 > node) but imposes **no size cap** on node/edge counts or payloads — providers
@@ -91,20 +91,20 @@ by `(scope, scope_id)`:
   extra node per `orphan_page` lint finding (orphans are absent from the index
   by definition, so they need a synthesized node to carry the attribute).
 - **Edges** —
-  - `relates_to` edges from each topic's `related_keys` (a target outside this
-    scope's key set is dropped — never a cross-scope edge);
-  - `contradiction` edges from `wiki_lint` contradiction findings, carrying a
-    `summary` of the finding in `attrs`.
+  - Active `relates_to`, `contradiction` and `supersedes` relationships from
+    the relationship store, read after lint persists any new contradictions.
+    Both endpoints must belong to this scope's key set; provenance stays in attrs.
 - **Node attributes** —
   - `is_hub: true` — from a `graph_density` lint finding (highly-connected topic);
   - `is_orphan: true` — from an `orphan_page` lint finding (unreferenced topic).
 - **Scope-bounded** — edges never cross the `(scope, scope_id)` boundary.
-  `stale_claim`, `poison_frequency`, and `lint_error` findings are dropped.
+  `stale_claim` and `poison_frequency` do not add rendered nodes or edges;
+  `lint_error` findings mark degraded enrichment in metadata.
 
-A scope with no wiki on disk (or an unresolvable scope) is an **empty graph, not
-an error**. If the lint pass itself fails, the provider degrades to a lint-free
-graph (topics + `relates_to` only) and records `lint_error` in `meta` rather
-than returning a 500.
+A valid scope with no wiki on disk is an empty graph. Unknown scopes are
+rejected. Optional lint failure preserves topic nodes and available stored
+relationships, marking degraded enrichment in metadata. Policy/audit failures
+propagate instead of being treated as optional degradation.
 
 > Graphs can be **sparse**. A scope with topics but no `related_keys` and no
 > contradiction findings yields disconnected nodes; `global` today often has
@@ -112,42 +112,56 @@ than returning a 500.
 
 ## Caching & staleness
 
-Building the memory graph runs `wiki_lint` (ripgrep-backed detectors + an LLM
-contradiction check) **in-request**. Profiling `scope=global` measured this at
-**~30s typical and up to ~148s under load** — the dominant cost is the
-ripgrep-based `stale_claim` detector (~95 `rg` subprocess spawns), not the LLM
-detector. Because that can exceed the frontend's 120s fetch budget, the
-projection is now **cached** (`src/cli_agent_orchestrator/graph/cache.py`).
+Memory graph builds can include expensive lint detectors. The cache owns each
+build independently of the HTTP request: the API waits up to 90 seconds, and a
+request timeout or disconnect does not cancel that shared memory build. A retry
+joins the same work. Providers without the optional `project_inflight` hook keep
+request-owned cancellation; `projection_status` supplies optional build metadata.
 
-- The **projected `GraphView` is cached per `(provider, scope, scope_id)`** with
-  a **300-second TTL** (`DEFAULT_TTL_S = 300.0`).
-- The first (cold) request in a window pays the full projection cost; every
-  request within the TTL returns the cached view **near-instantly**. Concurrent
-  cold requests for the same key collapse onto a single build (single-flight —
-  no thundering herd).
-- `meta.cached` (bool) and `meta.as_of` (ISO-8601 UTC timestamp of the build)
-  tell you whether a response was served from cache and when the underlying data
-  was projected.
+- Completed views have a 300-second TTL and an LRU cap of 64 entries.
+- At most two builds run concurrently and two additional keys wait in the queue.
+  A full queue returns the same retryable 504 contract with
+  `build_state=rejected_queue_full`; no extra build task is created.
+- Each active build has a 600-second coroutine deadline. A deadline is reported
+  as `failed_deadline`, with a 600-second retry suggestion; normal request
+  timeouts suggest five seconds. Both include the `Retry-After` header and
+  `detail.retryable`, `retry_after_s`, plus available content-free build state,
+  elapsed time and start timestamp. The timeout kind remains
+  `graph_projection_timeout`.
+- Keys retain the storage owner, repository, canonical scope, lint mode and
+  resolved binding policy fingerprint. Global/federated `scope_id` is ignored
+  and reported in `meta.ignored_filters`; project/session/agent IDs remain
+  significant. Unknown memory scopes are rejected.
+- `meta.cached` and `meta.as_of` describe the resulting view. Lint mode,
+  returned `lint_error_count`, and independent relationship errors describe
+  degraded builds; vault metadata-only projections keep their own unavailable
+  enrichment/boundary diagnostics. Authorization and audit failures propagate.
 
-> **Staleness caveat — read this.** Invalidation is **TTL-only**; there is no
-> write-invalidation hook wired up today. So after you **store or forget** a
-> memory, the graph can be **up to 300s stale**. The **Refresh** button in the
-> web UI does **not** bypass the cache — within the TTL it serves the same
-> cached view. To force a fresh projection sooner, wait out the TTL. (An
-> `invalidate()` method exists in `cache.py` for a future write-path hook to
-> call, but nothing calls it yet — this is a tracked follow-up to wire Refresh
-> to bypass the cache.)
+Invalidation remains TTL-based: graph Refresh can serve a view up to 300 seconds
+old after a memory edit. `invalidate()` is available for future write hooks.
+`clear()` removes completed entries and preserves active single-flight work;
+explicit cache shutdown cancels and drains owned coroutines. The API drains its
+tracked projections during shutdown.
 
-> **First cold load may still time out on a large scope.** If the cold
-> projection runs past the UI's 120s budget, the fetch aborts — but thanks to
-> single-flight the server keeps building and caches the result, so a **Refresh
-> a moment later** returns it near-instantly.
+Cancellation cannot forcibly stop a blocking body already running in
+`asyncio.to_thread`. Such work can outlive the coroutine deadline and occupy an
+executor worker. The limits bound admitted graph coroutines and cached entries,
+not the size of each view or all residual executor work. Historical scope timings
+are workload-specific; this integration does not establish new production timings.
 
 ## The API
 
-Two routes, in `src/cli_agent_orchestrator/api/main.py`. Both take the provider
-name as a path segment and forward all query params to the provider as filters.
-These are still the right tool for **scripting / no-UI** use.
+Three routes in `src/cli_agent_orchestrator/api/main.py` expose the registered
+providers and their projections. Projection/export retain knowledge authorization,
+private-tier handling and secret/export-path gates; catalog discovery exposes
+provider names only.
+
+### `GET /graph/providers` — discover providers
+
+Requires the same `cao:read`/`cao:write`/`cao:admin` scope floor as graph reads
+when authentication is enabled. Returns `{"providers":["memory","stub"]}`
+for the shipped registry, plus any additionally registered provider names. The
+static catalog route takes precedence over `/graph/{provider}`.
 
 ### `GET /graph/{provider}` — project and return the wire shape
 

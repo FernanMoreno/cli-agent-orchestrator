@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files as _pkg_files
 from itertools import islice
-from typing import Any, Iterator, Literal, Optional
+from typing import Any, Iterator, Literal, Optional, cast
 
 import frontmatter
 from jsonschema import Draft202012Validator as _Draft202012Validator
@@ -113,7 +113,7 @@ def load_profile_schema() -> dict:
     Callers must treat the returned dict as read-only; it is shared.
     """
     schema_path = _pkg_files("cli_agent_orchestrator") / "schemas" / "agent_profile.schema.json"
-    return json.loads(schema_path.read_text(encoding="utf-8"))
+    return cast(dict[str, Any], json.loads(schema_path.read_text(encoding="utf-8")))
 
 
 # Structural ceilings, applied before anything else walks or validates a

@@ -227,3 +227,51 @@ class TestExplicitInstallStillRecordsTheProvider:
         assert install_agent("fresh", "opencode_cli").success
 
         assert recorded_provider(two_provider_workspace, "fresh") == "opencode_cli"
+
+
+def test_us5_legacy_record_is_unverified_and_incompatible_review_is_denied(
+    tmp_path, store, skills_dir
+):
+    import json
+
+    from cli_agent_orchestrator.agent_plugins.installer import (
+        PluginInstallError,
+        enable,
+        install,
+        review_installed,
+    )
+    from cli_agent_orchestrator.agent_plugins.models import PluginRecord, PluginSource
+
+    from .conftest import build_plugin
+
+    root = build_plugin(
+        tmp_path / "candidate",
+        "candidate",
+        extra_manifest={
+            "extensions": {"org.cao.trust": {"cao": "<0", "permissions": ["network:example"]}}
+        },
+    )
+    outcome = install(
+        PluginSource(kind="path", location=str(root)),
+        store=store,
+        skills_dir=skills_dir,
+        refresh_agents=False,
+    )
+    assert outcome.installed
+    review = review_installed("candidate", store=store)
+    assert review["compatibility"] == "incompatible"
+    with pytest.raises(PluginInstallError, match="incompatible"):
+        enable(
+            "candidate",
+            review_id=review["review_id"],
+            permissions=review["permissions"],
+            store=store,
+            skills_dir=skills_dir,
+            refresh_agents=False,
+        )
+    old = outcome.record.to_dict()
+    old.pop("trust", None)
+    old.pop("approval", None)
+    record = PluginRecord.from_dict(old)
+    assert record.trust is None
+    assert record.approval is None

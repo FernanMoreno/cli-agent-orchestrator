@@ -89,20 +89,23 @@ export function GraphView({
       }
     });
 
-    void app.connect().then(() => {
-      stop = app.startPolling(
-        "render_graph_view",
-        POLL_INTERVAL_MS,
-        (snap) => {
-          if (snap && Array.isArray((snap as GraphViewData).nodes)) {
-            setUnreachable(false);
-            setSnapshot(snap as GraphViewData);
-          }
-        },
-        { provider, scope, scope_id: scopeId },
-        () => setUnreachable(true),
-      );
-    });
+    void app
+      .connect()
+      .then(() => {
+        stop = app.startPolling(
+          "render_graph_view",
+          POLL_INTERVAL_MS,
+          (snap) => {
+            if (snap && Array.isArray((snap as GraphViewData).nodes)) {
+              setUnreachable(false);
+              setSnapshot(snap as GraphViewData);
+            }
+          },
+          { provider, scope, scope_id: scopeId },
+          () => setUnreachable(true),
+        );
+      })
+      .catch(() => setUnreachable(true));
 
     return () => {
       if (stop) stop();

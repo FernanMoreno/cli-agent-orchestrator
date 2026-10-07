@@ -1522,6 +1522,7 @@ class TestClaudeCodeProviderMisc:
             "cao-mcp-server": {"command": "cao-mcp-server", "args": ["--port", "8080"]}
         }
         mock_profile.permissionMode = None
+        mock_profile.provider_init_timeout = None
         mock_load.return_value = mock_profile
 
         provider = ClaudeCodeProvider("term-42", "test-session", "window-0", "test-agent")
@@ -1531,6 +1532,63 @@ class TestClaudeCodeProviderMisc:
         mcp_data = _extract_mcp_config(command)
         server_env = mcp_data["mcpServers"]["cao-mcp-server"]["env"]
         assert server_env["CAO_TERMINAL_ID"] == "term-42"
+        assert mcp_data["mcpServers"]["cao-mcp-server"]["alwaysLoad"] is True
+        timeout_ms = provider.get_init_timeout(mock_profile) * 1000
+        assert f"MCP_TIMEOUT=${{MCP_TIMEOUT:-{timeout_ms}}}" in command
+        assert f"MCP_CONNECT_TIMEOUT_MS=${{MCP_CONNECT_TIMEOUT_MS:-{timeout_ms}}}" in command
+
+    @pytest.mark.parametrize("cao_server", [True, False])
+    def test_cao_mcp_startup_budget_and_third_party_loading(
+        self, tmp_path, monkeypatch, cao_server
+    ):
+        from cli_agent_orchestrator.providers import claude_code
+
+        monkeypatch.setattr(claude_code, "CAO_HOME_DIR", tmp_path)
+        profile = AgentProfile(
+            name="reviewer",
+            description="Review",
+            system_prompt="Review",
+            provider_init_timeout=90,
+            mcpServers={
+                "custom": {
+                    "command": "python3" if cao_server else "third-party-server",
+                    "args": (
+                        ["-m", "cli_agent_orchestrator.mcp_server.server"] if cao_server else []
+                    ),
+                }
+            },
+        )
+        provider = ClaudeCodeProvider("term-budget", "session", "window", "reviewer")
+        command = provider._build_claude_command(profile)
+        config = _extract_mcp_config(command)["mcpServers"]["custom"]
+
+        if cao_server:
+            assert config["alwaysLoad"] is True
+            assert "MCP_TIMEOUT=${MCP_TIMEOUT:-90000}" in command
+            assert "MCP_CONNECT_TIMEOUT_MS=${MCP_CONNECT_TIMEOUT_MS:-90000}" in command
+            import subprocess
+
+            executable = tmp_path / "claude"
+            executable.write_text(
+                '#!/bin/sh\nprintf "%s %s" "$MCP_TIMEOUT" "$MCP_CONNECT_TIMEOUT_MS"\n'
+            )
+            executable.chmod(0o700)
+            launched = subprocess.run(
+                ["/bin/sh", "-c", command],
+                env={
+                    "PATH": str(tmp_path) + ":/usr/bin:/bin",
+                    "MCP_TIMEOUT": "120000",
+                    "MCP_CONNECT_TIMEOUT_MS": "180000",
+                },
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            assert launched.stdout == "120000 180000"
+        else:
+            assert "alwaysLoad" not in config
+            assert "MCP_TIMEOUT=" not in command
+            assert "MCP_CONNECT_TIMEOUT_MS=" not in command
 
     @patch("cli_agent_orchestrator.providers.claude_code.load_agent_profile")
     def test_build_command_resolves_bundled_mcp_command(self, mock_load):
@@ -2447,7 +2505,8 @@ class TestClaudeCodeProviderStartupPrompts:
         mock_tmux.get_history.return_value = "Welcome to Claude Code v2.1.211"
 
         provider = ClaudeCodeProvider("test123", "test-session", "window-0")
-        result = await provider.initialize()
+        with patch.object(provider, "_handle_startup_prompts", new=AsyncMock()):
+            result = await provider.initialize()
 
         assert result is True
         accepted_statuses = mock_wait_status.call_args.args[1]

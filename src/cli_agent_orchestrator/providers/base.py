@@ -73,6 +73,30 @@ class OutputExtractionError(ValueError):
     """
 
 
+class OutputExtractionRejected(OutputExtractionError):
+    """A deliberate refusal to publish extracted content.
+
+    Raised when the extractor *found* the response region and refused to publish
+    what was in it — the turn produced only private reasoning, or every candidate
+    row was chrome, a user echo, or reasoning.
+
+    The distinction is a security boundary, not a taxonomy nicety. A missing
+    marker is worth retrying with a wider capture and may legitimately degrade to
+    a labelled raw-transcript fallback. A deliberate rejection must do neither:
+    the raw pane contains the very content that was refused, so substituting it
+    silently republishes private reasoning as the agent's answer. Callers that
+    escalate or fall back on :class:`OutputExtractionError` must re-raise this
+    subtype unchanged.
+
+    Subclasses :class:`OutputExtractionError` so existing callers that handle the
+    broader type keep working and the API boundary still maps it away from 404.
+    """
+
+
+class TurnResultUnavailableError(OutputExtractionError):
+    """Expected absence of proof for an active receipt, distinct from I/O failure."""
+
+
 class BaseProvider(ABC):
     """Abstract base class for CLI tool providers.
 
@@ -356,21 +380,37 @@ class BaseProvider(ABC):
                 "sending another task"
             )
         receipt = f"{_TURN_RECEIPT_PREFIX}{secrets.token_hex(_TURN_RECEIPT_BYTES)}"
-        prepared = (
-            f"{message.rstrip()}\n\n"
-            "CAO completion receipt requirement: this delivery contract takes precedence "
-            "over any incompatible output-format instruction in the task. After you have "
-            "fully completed the task and written a concise final result, write one final line containing "
-            f"exactly this receipt: {receipt}\n"
-            "Do not quote or emit that receipt before the task is complete, and do not "
-            "perform further tool calls after it."
-        )
+        prepared = self._format_turn_receipt_input(message, receipt)
         self._pending_turn_receipt = receipt
         self._pending_turn_receipt_sha256 = hashlib.sha256(receipt.encode("utf-8")).hexdigest()
         self._pending_turn_generation = secrets.token_hex(_TURN_RECEIPT_BYTES)
         self._pending_prepared_input = prepared
         self._restored_turn_receipt = False
         return prepared
+
+    def _format_turn_receipt_input(self, message: str, receipt: str) -> str:
+        """Keep identity and final-reply instructions identical across adapters."""
+        return (
+            f"{message.rstrip()}\n\n"
+            "CAO completion receipt requirement: this delivery contract takes precedence "
+            "over any incompatible output-format instruction in the task. After you have "
+            "completed the current turn and written its concise result, write one final line containing "
+            f"exactly this receipt: {receipt}\n"
+            f"Your own CAO terminal ID is {self.terminal_id}; the assigning terminal is a different actor. "
+            "Print the receipt in your final visible terminal reply even if you already sent results "
+            "with send_message. A receipt in a callback, tool argument, or reasoning does not complete "
+            "this turn. Do not include the receipt in messages to other terminals.\n"
+            "For asynchronous coordination with assign, you may finish the dispatch phase once "
+            "the assignments are accepted. State which workers were assigned and which results are "
+            "pending, then print this turn's receipt and stop. That receipt does not prove that workers "
+            "or the overall task have finished; later callbacks are separate turns with their own "
+            "receipts. Do not wait for inbox callbacks in an unfinished turn, and do not claim overall "
+            "success until the required results have arrived and been checked. If an assignment's "
+            "acceptance is uncertain, report that uncertainty and do not repeat it.\n"
+            "For a task without asynchronous delegation, complete the requested work before printing "
+            "the receipt. Do not quote or emit that receipt before the task is complete, and "
+            "do not perform further tool calls after it."
+        )
 
     def prepared_input_for_redelivery(self) -> Optional[str]:
         """Return the exact active-turn paste text for a safe full redelivery.
@@ -456,6 +496,14 @@ class BaseProvider(ABC):
         """Forget a locally prepared receipt that was never durably claimed."""
         if self.requires_turn_receipt is True and not self._restored_turn_receipt:
             self.mark_turn_receipt_result_verified()
+
+    def mark_turn_receipt_cancelled(self) -> None:
+        """Release local input fencing after a confirmed durable cancellation.
+
+        This clears only provider memory; it never verifies a result or changes
+        durable receipt state. The recovery service owns proof of pane reset.
+        """
+        self.mark_turn_receipt_result_verified()
 
     def receipt_result_terminal_status(
         self,
@@ -971,3 +1019,62 @@ class BaseProvider(ABC):
     def _update_status(self, status: TerminalStatus) -> None:
         """Update internal status."""
         self._status = status
+
+    def record_dispatched_message(self, message: str) -> None:
+        """Record the exact text being delivered after the input boundary is armed.
+
+        Providers may use this to attribute partial terminal redraws to the
+        current dispatch. Recording text alone is never execution evidence.
+        """
+
+    def mark_redelivery_received(self) -> None:
+        """Notify the provider that CAO re-delivered the SAME logical dispatch.
+
+        ``terminal_service.redeliver_dropped_message`` re-sends a prompt the TUI
+        never accepted (a dropped paste, or an Enter that was swallowed). That is
+        a second *delivery attempt* of the dispatch already announced by
+        :meth:`mark_input_received`, not a new logical turn: the caller is still
+        waiting for the same task it dispatched, so a provider that counts turns
+        — or derives any turn identity from that count — must not believe a new
+        turn began. A provider with no such distinction needs no override.
+
+        The default delegates to :meth:`mark_input_received` so every provider
+        whose bookkeeping does not separate delivery attempts from logical turns
+        keeps exactly its previous behavior on the redelivery path.
+        """
+        self.mark_input_received()
+
+    @property
+    def allow_raw_transcript_fallback(self) -> bool:
+        """Whether LAST output may degrade to the provider raw terminal pane.
+
+        The historical service behavior is permissive because several providers
+        have no private sub-channels in their rendered transcript. Providers
+        whose pane can contain non-publishable channels must override this to
+        False. Extraction retries still widen normally; only the raw-pane
+        substitution after exhaustion is disabled.
+        """
+
+        return True
+
+    def shows_turn_work(self, buffer: str) -> Optional[bool]:
+        """Whether a raw buffer cleared at dispatch shows this turn actually running.
+
+        ``None`` (the default) means the provider declares no such signal, and any
+        PROCESSING verdict counts as the turn having started. A provider that
+        returns a bool owns the answer for turns opened by a real send: only
+        ``True`` marks the turn started, so a PROCESSING verdict that a repaint of
+        the previous answer can also produce (kiro's "no idle prompt yet"
+        fallback) no longer does. Called on the raw rolling buffer only, never on
+        a retained source. Must be pure: it is evaluated against the monitor's own
+        pinned snapshot, so no provider state can carry a stale poll's view into
+        the next turn.
+
+        Returning True also lets a fast reply close at once when its work sign and
+        answer arrive in one chunk. Without the signal such a reply waits for
+        StatusMonitor's TURN_START_BACKSTOP_S. Declare it only for a sign that
+        quoted answer text cannot reproduce (see kiro_cli's TUI_LIVE_WORK_PATTERN):
+        PR #812's review showed that arrival time, word matches and
+        provider-remembered answer identity all admit a replayed old answer.
+        """
+        return None

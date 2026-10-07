@@ -121,3 +121,12 @@ class TestSetupLogging:
             assert "%(asctime)s" in call_kwargs["format"]
             assert "%(name)s" in call_kwargs["format"]
             assert "%(levelname)s" in call_kwargs["format"]
+
+
+def test_log_redacts_terminal_token():
+    from cli_agent_orchestrator.utils.logging import _scrub
+
+    assert (
+        _scrub("/terminals/t/ws?token=secret&cursor=keep")
+        == "/terminals/t/ws?token=[REDACTED]&cursor=keep"
+    )

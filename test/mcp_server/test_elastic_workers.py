@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from test.services.test_integration_008_elastic_compat import elastic_context, store  # noqa:F401
 from unittest.mock import AsyncMock, Mock, patch
 
 from cli_agent_orchestrator.mcp_server import server
@@ -11,39 +12,31 @@ from cli_agent_orchestrator.utils import orchestration
 
 
 def test_assign_elastic_provisions_then_assigns(monkeypatch):
-    monkeypatch.setenv("CAO_ELASTIC_BROKER_URL", "http://broker:9890")
-    monkeypatch.setenv("CAO_ELASTIC_BROKER_TOKEN", "broker-token")
-    response = Mock()
-    response.raise_for_status.return_value = None
+    response = Mock(status_code=202, ok=True)
     response.json.return_value = {
+        "assignment_id": "elastic-1",
+        "operation_key": "stable-key-1",
+        "success": True,
         "worker_id": "deadbeef",
-        "target_host": "cao-worker-deadbeef.ns.svc.cluster.local",
-        "working_directory": "/home/cao/workspace/workers/deadbeef",
-        "session_name": "cao-worker-deadbeef",
-        "release_token": "release-token",
+        "elastic": True,
+        "state": "submitted",
     }
     with (
         patch.object(server, "_current_terminal_id", return_value="abc12345"),
-        # _assign_impl/_send_message_impl moved to utils/orchestration, so they
-        # resolve the caller through THAT module's name. server.py still has its
-        # own imported reference, so both need patching.
-        patch.object(orchestration, "_current_terminal_id", return_value="abc12345"),
-        patch.object(server.requests, "post", return_value=response),
-        patch.object(
-            server,
-            "_assign_impl",
-            return_value={"success": True, "terminal_id": "def67890"},
-        ) as assign,
+        patch.object(server.requests, "post", return_value=response) as post,
+        patch.object(server, "_assign_impl") as direct,
     ):
-        result = asyncio.run(server.assign_elastic("developer", "Implement it"))
-
-    assert result["success"] is True
-    assert result["worker_id"] == "deadbeef"
-    assert result["elastic"] is True
-    assert assign.call_args.args[2].endswith("/deadbeef")
-    assert assign.call_args.kwargs["target_host"].startswith("cao-worker-deadbeef")
-    assert assign.call_args.kwargs["remote_session_name"] == "cao-worker-deadbeef"
-    assert "complete_assignment" in assign.call_args.args[1]
+        result = asyncio.run(
+            server.assign_elastic("developer", "Implement it", operation_key="stable-key-1")
+        )
+    assert result["success"] and result["assignment_id"] == "elastic-1"
+    assert post.call_args.args[0].endswith("/terminals/abc12345/elastic-assignments")
+    assert post.call_args.kwargs["json"] == {
+        "operation_key": "stable-key-1",
+        "agent_profile": "developer",
+        "message": "Implement it",
+    }
+    direct.assert_not_called()
 
 
 def test_assign_elastic_deferred_failure_reports_terminal_ended(monkeypatch):
@@ -83,11 +76,8 @@ def test_assign_elastic_deferred_failure_reports_terminal_ended(monkeypatch):
         return func(*args, **kwargs)
 
     async def exercise():
-        result = await server.assign_elastic("developer", "Implement it")
-        assert result["success"] is True
-
-        # These are pod-level variables in production, injected by the broker
-        # before the remote POST /sessions creates the terminal.
+        # The fresh assignment endpoint has already durably placed this worker.
+        # Exercise its owned deferred initialization failure and callback boundary.
         monkeypatch.setenv("CAO_ELASTIC_WORKER_ID", "deadbeef")
         monkeypatch.setenv("CAO_ELASTIC_RELEASE_TOKEN", "release-token")
         provider = AsyncMock()
@@ -130,10 +120,6 @@ def test_assign_elastic_deferred_failure_reports_terminal_ended(monkeypatch):
         asyncio.run(exercise())
 
     urls = [url for url, _ in posts]
-    assert any(url.endswith("/sessions") for url in urls)
-    session_request = next(kwargs for url, kwargs in posts if url.endswith("/sessions"))
-    assert session_request["params"]["session_name"] == "cao-worker-deadbeef"
-    assert session_request["json"]["env_vars"]["CAO_CALLBACK_URL"] == "http://broker:9890"
     callback = next(
         kwargs for url, kwargs in posts if url.endswith("/terminals/abc12345/inbox/messages")
     )
@@ -163,104 +149,69 @@ def _lease_response():
 
 
 def test_assign_elastic_omits_provider_so_the_broker_default_wins(monkeypatch):
-    """A provider default in the tool signature would override the broker's.
-
-    The provider a worker can actually run is a property of the deployment's
-    image, so a caller that says nothing must leave the choice to the broker
-    rather than silently requesting whatever this signature happens to name.
-    """
-    monkeypatch.setenv("CAO_ELASTIC_BROKER_URL", "http://broker:9890")
-    monkeypatch.setenv("CAO_ELASTIC_BROKER_TOKEN", "broker-token")
+    response = Mock(status_code=202, ok=True)
+    response.json.return_value = {
+        "assignment_id": "elastic-1",
+        "success": True,
+        "state": "submitted",
+    }
     with (
         patch.object(server, "_current_terminal_id", return_value="abc12345"),
-        # _assign_impl/_send_message_impl moved to utils/orchestration, so they
-        # resolve the caller through THAT module's name. server.py still has its
-        # own imported reference, so both need patching.
-        patch.object(orchestration, "_current_terminal_id", return_value="abc12345"),
-        patch.object(server.requests, "post", return_value=_lease_response()) as post,
-        patch.object(server, "_assign_impl", return_value={"success": True}),
+        patch.object(server.requests, "post", return_value=response) as post,
     ):
-        asyncio.run(server.assign_elastic("developer", "Implement it"))
-
-    assert post.call_args.kwargs["json"] == {
-        "agent_profile": "developer",
-        "callback_terminal_id": "abc12345",
-    }
+        asyncio.run(
+            server.assign_elastic("developer", "Implement it", operation_key="default-provider-key")
+        )
+    assert "provider" not in post.call_args.kwargs["json"]
 
 
 def test_assign_elastic_forwards_an_explicit_provider(monkeypatch):
-    monkeypatch.setenv("CAO_ELASTIC_BROKER_URL", "http://broker:9890")
-    monkeypatch.setenv("CAO_ELASTIC_BROKER_TOKEN", "broker-token")
-    with (
-        patch.object(server, "_current_terminal_id", return_value="abc12345"),
-        # _assign_impl/_send_message_impl moved to utils/orchestration, so they
-        # resolve the caller through THAT module's name. server.py still has its
-        # own imported reference, so both need patching.
-        patch.object(orchestration, "_current_terminal_id", return_value="abc12345"),
-        patch.object(server.requests, "post", return_value=_lease_response()) as post,
-        patch.object(server, "_assign_impl", return_value={"success": True}),
-    ):
-        asyncio.run(server.assign_elastic("developer", "Implement it", provider="claude_code"))
-
-    assert post.call_args.kwargs["json"] == {
-        "agent_profile": "developer",
-        "callback_terminal_id": "abc12345",
-        "provider": "claude_code",
+    response = Mock(status_code=202, ok=True)
+    response.json.return_value = {
+        "assignment_id": "elastic-1",
+        "success": True,
+        "state": "submitted",
     }
-
-
-def test_assign_elastic_warns_the_worker_not_to_speak_first(monkeypatch):
-    """The turn detector reads settled prose as end-of-turn and kills the window.
-
-    A worker that opens with "working on it" is therefore terminated mid-task
-    while the assignment still reports success, so the instruction that prevents
-    it has to travel with every task.
-    """
-    monkeypatch.setenv("CAO_ELASTIC_BROKER_URL", "http://broker:9890")
-    monkeypatch.setenv("CAO_ELASTIC_BROKER_TOKEN", "broker-token")
     with (
         patch.object(server, "_current_terminal_id", return_value="abc12345"),
-        # _assign_impl/_send_message_impl moved to utils/orchestration, so they
-        # resolve the caller through THAT module's name. server.py still has its
-        # own imported reference, so both need patching.
-        patch.object(orchestration, "_current_terminal_id", return_value="abc12345"),
-        patch.object(server.requests, "post", return_value=_lease_response()),
-        patch.object(server, "_assign_impl", return_value={"success": True}) as assign,
+        patch.object(server.requests, "post", return_value=response) as post,
     ):
-        asyncio.run(server.assign_elastic("developer", "Implement it"))
+        asyncio.run(
+            server.assign_elastic(
+                "developer",
+                "Implement it",
+                provider="claude_code",
+                operation_key="explicit-provider-key",
+            )
+        )
+    assert post.call_args.kwargs["json"]["provider"] == "claude_code"
 
-    sent = assign.call_args.args[1]
-    assert "BEFORE you write any prose" in sent
-    assert "killed" in sent
+
+def test_assign_elastic_warns_the_worker_not_to_speak_first(monkeypatch, elastic_context):
+    from cli_agent_orchestrator.services import elastic_assignment_service as service
+
+    _, remote = elastic_context
+    payload = service.ElasticAssignmentRequest(
+        operation_key="warning-key-1", agent_profile="developer", message="Implement it"
+    )
+    result = asyncio.run(service.assign("1234abcd", payload, owner="operator"))
+    assert result["success"]
+    sent = remote.call_args.kwargs["worker_message"]
+    assert "finish all tools before final prose" in sent and "complete_assignment" in sent
 
 
-def test_assign_elastic_releases_when_assignment_fails(monkeypatch):
-    monkeypatch.setenv("CAO_ELASTIC_BROKER_URL", "http://broker:9890")
-    monkeypatch.setenv("CAO_ELASTIC_BROKER_TOKEN", "broker-token")
-    create_response = Mock()
-    create_response.raise_for_status.return_value = None
-    create_response.json.return_value = {
-        "worker_id": "deadbeef",
-        "target_host": "worker",
-        "working_directory": "/workspace/deadbeef",
-        "session_name": "cao-worker-deadbeef",
-        "release_token": "release-token",
-    }
-    delete_response = Mock(status_code=200)
-    with (
-        patch.object(server, "_current_terminal_id", return_value="abc12345"),
-        # _assign_impl/_send_message_impl moved to utils/orchestration, so they
-        # resolve the caller through THAT module's name. server.py still has its
-        # own imported reference, so both need patching.
-        patch.object(orchestration, "_current_terminal_id", return_value="abc12345"),
-        patch.object(server.requests, "post", return_value=create_response),
-        patch.object(server.requests, "delete", return_value=delete_response) as delete,
-        patch.object(server, "_assign_impl", return_value={"success": False}),
-    ):
-        result = asyncio.run(server.assign_elastic("developer", "Implement it"))
+def test_assign_elastic_releases_when_assignment_fails(monkeypatch, elastic_context):
+    from cli_agent_orchestrator.services import elastic_assignment_service as service
 
-    assert result["worker_released"] is True
-    assert delete.call_args.args[0].endswith("/workers/deadbeef")
+    _, remote = elastic_context
+    remote.return_value = {"success": False, "state": "refused"}
+    with patch.object(service.requests, "delete", return_value=Mock(status_code=200)) as delete:
+        payload = service.ElasticAssignmentRequest(
+            operation_key="refused-key-1", agent_profile="developer", message="Implement it"
+        )
+        result = asyncio.run(service.assign("1234abcd", payload, owner="operator"))
+    assert result["worker_released"] and delete.call_count == 1
+    assert delete.call_args.args[0].endswith("/workers/worker-1")
 
 
 def test_complete_assignment_releases_only_after_delivery(monkeypatch):
@@ -350,7 +301,12 @@ def test_wait_remote_ready_raises_something_diagnosable_on_timeout():
 
 def _remote_session_response():
     response = Mock(status_code=200)
-    response.json.return_value = {"id": "def67890", "session_name": "sess-1"}
+    response.json.return_value = {
+        "assignment_id": "fresh-1",
+        "state": "submitted",
+        "terminal_id": "def67890",
+        "success": True,
+    }
     return response
 
 
@@ -374,6 +330,7 @@ def test_assign_remote_does_not_wait_by_default(monkeypatch):
             engine=None,
             model=None,
             use_worktree=False,
+            operation_key="remote-readiness-key",
         )
 
     assert result["success"] is True
@@ -403,6 +360,7 @@ def test_assign_remote_waits_before_it_posts_the_task(monkeypatch):
             engine=None,
             model=None,
             use_worktree=False,
+            operation_key="remote-readiness-key",
             ready_wait_seconds=30.0,
         )
 
@@ -410,22 +368,18 @@ def test_assign_remote_waits_before_it_posts_the_task(monkeypatch):
     assert wait.call_args.args == ("http://cao-worker-deadbeef.ns.svc.cluster.local:9889", 30.0)
 
 
-def test_assign_elastic_asks_the_assignment_to_wait_for_its_new_worker(monkeypatch):
-    monkeypatch.setenv("CAO_ELASTIC_BROKER_URL", "http://broker:9890")
-    monkeypatch.setenv("CAO_ELASTIC_BROKER_TOKEN", "broker-token")
-    monkeypatch.delenv("CAO_ELASTIC_WORKER_READY_WAIT", raising=False)
-    with (
-        patch.object(server, "_current_terminal_id", return_value="abc12345"),
-        # _assign_impl/_send_message_impl moved to utils/orchestration, so they
-        # resolve the caller through THAT module's name. server.py still has its
-        # own imported reference, so both need patching.
-        patch.object(orchestration, "_current_terminal_id", return_value="abc12345"),
-        patch.object(server.requests, "post", return_value=_lease_response()),
-        patch.object(server, "_assign_impl", return_value={"success": True}) as assign,
-    ):
-        asyncio.run(server.assign_elastic("developer", "Implement it"))
+def test_assign_elastic_asks_the_assignment_to_wait_for_its_new_worker(
+    monkeypatch, elastic_context
+):
+    from cli_agent_orchestrator.services import elastic_assignment_service as service
 
-    assert assign.call_args.kwargs["ready_wait_seconds"] == 120.0
+    monkeypatch.delenv("CAO_ELASTIC_WORKER_READY_WAIT", raising=False)
+    _, remote = elastic_context
+    payload = service.ElasticAssignmentRequest(
+        operation_key="wait-key-1", agent_profile="developer", message="Implement it"
+    )
+    assert asyncio.run(service.assign("1234abcd", payload, owner="operator"))["success"]
+    assert remote.call_args.kwargs["ready_wait_seconds"] == 120.0
 
 
 def test_elastic_ready_wait_is_tunable_and_survives_a_bad_value(monkeypatch):
@@ -438,41 +392,29 @@ def test_elastic_ready_wait_is_tunable_and_survives_a_bad_value(monkeypatch):
 
 
 def test_assign_elastic_calls_overlap_instead_of_serialising(monkeypatch):
-    """Fan-out is the whole point of an elastic fleet.
-
-    Both blocking legs (the broker POST and the assignment itself) run off the
-    event loop, so N delegations cost roughly one placement rather than N. With
-    either leg back on the loop this takes ~3x as long, which is what a
-    supervisor delegating five tasks used to pay.
-    """
-    monkeypatch.setenv("CAO_ELASTIC_BROKER_URL", "http://broker:9890")
-    monkeypatch.setenv("CAO_ELASTIC_BROKER_TOKEN", "broker-token")
-
-    def slow_assign(*args, **kwargs):
-        time.sleep(0.3)
-        return {"success": True}
-
     def slow_post(*args, **kwargs):
-        time.sleep(0.1)
-        return _lease_response()
+        time.sleep(0.2)
+        response = Mock(status_code=202, ok=True)
+        response.json.return_value = {
+            "assignment_id": kwargs["json"]["operation_key"],
+            "success": True,
+            "state": "submitted",
+        }
+        return response
 
     async def three():
         return await asyncio.gather(
-            *(server.assign_elastic("developer", f"Task {i}") for i in range(3))
+            *(
+                server.assign_elastic("developer", f"Task {i}", operation_key=f"fanout-key-{i}")
+                for i in range(3)
+            )
         )
 
     with (
         patch.object(server, "_current_terminal_id", return_value="abc12345"),
-        # _assign_impl/_send_message_impl moved to utils/orchestration, so they
-        # resolve the caller through THAT module's name. server.py still has its
-        # own imported reference, so both need patching.
-        patch.object(orchestration, "_current_terminal_id", return_value="abc12345"),
         patch.object(server.requests, "post", side_effect=slow_post),
-        patch.object(server, "_assign_impl", side_effect=slow_assign),
     ):
         started = time.monotonic()
         results = asyncio.run(three())
         elapsed = time.monotonic() - started
-
-    assert all(r["success"] for r in results)
-    assert elapsed < 0.8, f"three delegations took {elapsed:.2f}s; expected ~0.4s"
+    assert all(row["success"] for row in results) and elapsed < 0.6

@@ -40,7 +40,7 @@ def _agui_on_auth_on(monkeypatch):
 
 class TestStreamEndpoint:
     def test_malformed_token_returns_401_not_500(self):
-        resp = client.get("/agui/v1/stream", params={"access_token": "not-a-jwt"})
+        resp = client.get("/agui/v1/stream", headers={"Authorization": "Bearer not-a-jwt"})
         assert resp.status_code == 401
         assert "invalid" in resp.text.lower() or "expired" in resp.text.lower()
 
@@ -48,14 +48,19 @@ class TestStreamEndpoint:
         def _raise(_tok: str) -> List[str]:
             raise jwt.ExpiredSignatureError("Signature has expired")
 
-        monkeypatch.setattr(main, "extract_scopes_from_token", _raise)
-        resp = client.get("/agui/v1/stream", params={"access_token": "e.x.p"})
+        monkeypatch.setattr(
+            "cli_agent_orchestrator.security.auth.extract_scopes_from_token", _raise
+        )
+        resp = client.get("/agui/v1/stream", headers={"Authorization": "Bearer e.x.p"})
         assert resp.status_code == 401
 
     def test_valid_scopes_still_pass_through(self, monkeypatch):
         # Guard against over-catching: a working extractor with read scope
         # must not be converted into a 401 by the new exception handling.
-        monkeypatch.setattr(main, "extract_scopes_from_token", lambda tok: ["cao:read"])
+        async def scopes(*args):
+            return ["cao:read"]
+
+        monkeypatch.setattr(main, "get_current_scopes", scopes)
 
         class _EmptyLog:
             def history(self, **kwargs: Any) -> List[Dict]:
@@ -80,5 +85,7 @@ class TestStreamEndpoint:
             "cli_agent_orchestrator.services.sse_bus.get_bus",
             lambda: _EmptyBus(),
         )
-        with client.stream("GET", "/agui/v1/stream", params={"access_token": "ok"}) as resp:
+        with client.stream(
+            "GET", "/agui/v1/stream", headers={"Authorization": "Bearer ok"}
+        ) as resp:
             assert resp.status_code == 200

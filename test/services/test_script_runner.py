@@ -70,6 +70,14 @@ from cli_agent_orchestrator.services.workflow_service import (
 @pytest.fixture(autouse=True)
 def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Temp DB + tables; reset the shared registry/active-drives around each test."""
+    # These historic lifecycle tests exercise the explicit legacy compatibility
+    # posture; the default-required plan security tests have separate fixtures.
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text('{"workflow":{"require_approval":false}}')
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.settings_service.SETTINGS_FILE", settings_path
+    )
+    monkeypatch.delenv("CAO_WORKFLOW_REQUIRE_APPROVAL", raising=False)
     db_path = tmp_path / "wf.db"
     monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
     _migrate_workflow_run()
@@ -712,10 +720,10 @@ async def test_resume_toctou_second_concurrent_resume_rejected(monkeypatch: pyte
     first_blocked = threading.Event()
     release_first = threading.Event()
 
-    def _blocking_update_run_generation(run_id, generation):
+    def _blocking_update_run_generation(run_id, generation, *, expected_generation=None):
         first_blocked.set()
         release_first.wait(timeout=5.0)
-        return update_run_generation(run_id, generation)
+        return update_run_generation(run_id, generation, expected_generation=expected_generation)
 
     monkeypatch.setattr(
         "cli_agent_orchestrator.services.workflow_service.update_run_generation",
@@ -833,7 +841,8 @@ async def test_resume_happy_materializes_and_deletes_temp(monkeypatch: pytest.Mo
     # The exec'd path is the engine-owned materialized temp file, NOT the on-disk
     # author file — and it is deleted in the finally after reap (BR-30).
     exec_path = captured["args"][1]
-    assert exec_path.endswith("resume-run-resume.py")
+    assert Path(exec_path).name.startswith("resume-run-resume-")
+    assert Path(exec_path).suffix == ".py"
     assert not Path(exec_path).exists()
 
 
@@ -1008,7 +1017,6 @@ def test_terminal_recorder_none_for_non_script_record():
         spec=WorkflowSpec.model_validate(
             {
                 "name": "wf",
-                "version": "1",
                 "mode": "sequential",
                 "steps": [
                     {"id": "s1", "provider": "kiro_cli", "agent": "developer", "prompt": "do it"}

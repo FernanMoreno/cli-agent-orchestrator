@@ -267,7 +267,7 @@ class TestInstallAgent:
         # persisted=True prefers the stable PATH launcher.
         assert entry["command"] == "/home/u/.local/bin/cao-mcp-server"
 
-    def test_install_rejects_kas_profile_before_writing_kiro_config(
+    def test_install_rejects_untranslatable_kas_profile_before_writing_kiro_config(
         self, install_paths: dict[str, Path]
     ) -> None:
         profile_path = install_paths["local_store_dir"] / "kas-agent.md"
@@ -277,6 +277,7 @@ class TestInstallAgent:
             "description: KAS agent\n"
             "engine: kas\n"
             "allowedTools: [fs_read]\n"
+            "toolAliases: {custom: fs_read}\n"
             "---\n"
             "KAS profile.\n",
             encoding="utf-8",
@@ -285,7 +286,8 @@ class TestInstallAgent:
         result = install_agent("kas-agent", "kiro_cli")
 
         assert result.success is False
-        assert "Cedar" in result.message
+        assert "unsafe-aliases" in result.message
+        assert not (install_paths["kiro_dir"] / "kas-agent.kas.json").exists()
         assert not (install_paths["kiro_dir"] / "kas-agent.json").exists()
 
     def test_install_sets_env_vars_before_profile_loading(
@@ -1052,3 +1054,159 @@ def test_install_omp_writes_context_only(install_paths: dict[str, Path]) -> None
     assert result.provider == "omp"
     assert result.agent_file is None
     assert (install_paths["context_dir"] / "omp-agent.md").exists()
+
+
+from cli_agent_orchestrator.services import install_service
+
+
+def _kiro_profile_text(
+    *, name: str, role: str | None, allowed_tools: str | None, tools: str | None
+) -> str:
+    """A minimal profile whose tool policy is the thing under test."""
+    role_line = f"role: {role}\n" if role else ""
+    allowed_line = f"allowedTools: {allowed_tools}\n" if allowed_tools else ""
+    tools_line = f"tools: {tools}\n" if tools else ""
+    return (
+        "---\n"
+        f"name: {name}\n"
+        "description: Test agent\n"
+        f"{role_line}{allowed_line}{tools_line}"
+        "mcpServers:\n"
+        "  cao-mcp-server:\n"
+        "    command: cao-mcp-server\n"
+        "prompt: |\n  Probe\n"
+        "---\n"
+        "Probe body.\n"
+    )
+
+
+class TestKiroToolsWrittenAtInstall:
+    """``cao install --provider kiro_cli`` writes the resolved policy into ``tools``.
+
+    On Kiro ``tools`` is availability and ``allowedTools`` only suppresses
+    prompts (CAO launches --trust-all-tools), so ``tools`` is the only field
+    that restricts anything. See ``kiro_agent_tools`` for the translation.
+    """
+
+    def _install(self, install_paths, tmp_path, text, name):
+        built_in_dir = tmp_path / "builtin-agent-store"
+        built_in_dir.mkdir(exist_ok=True)
+        (built_in_dir / f"{name}.md").write_text(text, encoding="utf-8")
+        with patch(
+            "cli_agent_orchestrator.utils.agent_profiles.resources.files",
+            return_value=built_in_dir,
+        ):
+            result = install_agent(name, "kiro_cli", {})
+        assert result.success is True, result
+        return json.loads((install_paths["kiro_dir"] / f"{name}.json").read_text())
+
+    def test_restricted_role_writes_a_tools_list_without_a_shell(self, install_paths, tmp_path):
+        cfg = self._install(
+            install_paths,
+            tmp_path,
+            _kiro_profile_text(name="sup", role="supervisor", allowed_tools=None, tools=None),
+            "sup",
+        )
+        assert cfg["tools"] != ["*"]
+        assert {"read", "fs_read", "glob", "grep"} <= set(cfg["tools"])
+        assert not ({"shell", "execute_bash", "subagent", "use_aws"} & set(cfg["tools"])), cfg
+        assert "@cao-mcp-server" in cfg["tools"]
+        assert {"read", "fs_read", "glob", "grep"} <= set(cfg["tools"])
+
+    def test_unrestricted_policy_writes_wildcard(self, install_paths, tmp_path):
+        cfg = self._install(
+            install_paths,
+            tmp_path,
+            _kiro_profile_text(name="dev", role=None, allowed_tools='["*"]', tools=None),
+            "dev",
+        )
+        assert cfg["tools"] == ["*"]
+
+    def test_developer_role_grants_the_shell(self, install_paths, tmp_path):
+        cfg = self._install(
+            install_paths,
+            tmp_path,
+            _kiro_profile_text(name="dev2", role="developer", allowed_tools=None, tools=None),
+            "dev2",
+        )
+        assert {"shell", "write", "read", "web_fetch"} <= set(cfg["tools"]), cfg
+
+    def test_explicit_profile_tools_win(self, install_paths, tmp_path):
+        cfg = self._install(
+            install_paths,
+            tmp_path,
+            _kiro_profile_text(
+                name="own", role="supervisor", allowed_tools=None, tools='["read", "shell"]'
+            ),
+            "own",
+        )
+        assert cfg["tools"] == ["read", "shell"]
+
+    def test_builtin_in_the_policy_does_not_reach_tools_verbatim(self, install_paths, tmp_path):
+        """A bare ``@builtin`` in Kiro's ``tools`` means every built-in, shell included."""
+        cfg = self._install(
+            install_paths,
+            tmp_path,
+            _kiro_profile_text(name="rev", role="reviewer", allowed_tools=None, tools=None),
+            "rev",
+        )
+        assert "@builtin" in cfg["allowedTools"]
+        assert "@builtin" not in cfg["tools"]
+        assert not ({"shell", "execute_bash", "write", "code"} & set(cfg["tools"])), cfg
+
+
+class TestKiroInstallPredatesNativeEnforcement:
+    def test_wildcard_tools_with_a_restricted_policy_is_stale(self, install_paths):
+        (install_paths["kiro_dir"] / "sup.json").write_text(
+            json.dumps({"name": "sup", "tools": ["*"], "allowedTools": ["fs_read"]})
+        )
+        assert install_service.installed_kiro_tools("sup") == ["*"]
+        assert install_service.kiro_install_predates_native_enforcement("sup", ["fs_read"]) is True
+
+    def test_a_written_policy_is_not_stale(self, install_paths):
+        (install_paths["kiro_dir"] / "sup.json").write_text(
+            json.dumps({"name": "sup", "tools": ["read"], "allowedTools": ["fs_read"]})
+        )
+        assert install_service.kiro_install_predates_native_enforcement("sup", ["fs_read"]) is False
+
+    def test_unrestricted_request_is_never_stale(self, install_paths):
+        (install_paths["kiro_dir"] / "dev.json").write_text(json.dumps({"tools": ["*"]}))
+        assert install_service.kiro_install_predates_native_enforcement("dev", ["*"]) is False
+        assert install_service.kiro_install_predates_native_enforcement("dev", None) is False
+
+    def test_missing_or_unreadable_agent_file_is_not_reported(self, install_paths):
+        assert install_service.installed_kiro_tools("nope") is None
+        assert (
+            install_service.kiro_install_predates_native_enforcement("nope", ["fs_read"]) is False
+        )
+        (install_paths["kiro_dir"] / "bad.json").write_text("{not json")
+        assert install_service.installed_kiro_tools("bad") is None
+        (install_paths["kiro_dir"] / "odd.json").write_text(json.dumps({"tools": "*"}))
+        assert install_service.installed_kiro_tools("odd") is None
+
+    def test_profile_name_is_flattened_like_the_installer_does(self, install_paths):
+        (install_paths["kiro_dir"] / "a_b.json").write_text(json.dumps({"tools": ["*"]}))
+        assert install_service.installed_kiro_tools("a/b") in (["*"], None)
+
+
+def test_shipped_supervisor_installs_orchestration_and_reads_without_write_or_shell(install_paths):
+    from importlib.resources import files
+
+    source = files("cli_agent_orchestrator.agent_store").joinpath("code_supervisor.md")
+    with patch(
+        "cli_agent_orchestrator.utils.agent_profiles.resources.files", return_value=source.parent
+    ):
+        result = install_agent("code_supervisor", "kiro_cli")
+    assert result.success, result
+    cfg = json.loads((install_paths["kiro_dir"] / "code_supervisor.json").read_text())
+    assert "@cao-mcp-server" in cfg["tools"]
+    assert {"read", "glob", "grep"} <= set(cfg["tools"])
+    assert not {
+        "shell",
+        "execute_bash",
+        "write",
+        "fs_write",
+        "code",
+        "subagent",
+        "use_aws",
+    }.intersection(cfg["tools"])

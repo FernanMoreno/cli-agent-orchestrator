@@ -2331,6 +2331,13 @@ impl<'a, S: ServerApi, H: Host> Renderer<'a, S, H> {
                     "handing off anyway — if the new window is not ready, retry with [r]",
                 ));
             }
+            Readiness::Blocked(diagnostic) => {
+                self.banner = Some(Banner::warning(
+                    "the existing agent needs inspection",
+                    diagnostic,
+                    "opening its terminal; inspect the current turn before another action",
+                ));
+            }
             Readiness::Failed(status) => {
                 self.running = false;
                 self.banner = Some(Banner::error(
@@ -3561,7 +3568,7 @@ mod tests {
 
     /// What `create_session` should answer.
     enum SessionAnswer {
-        Created(Terminal),
+        Created(Box<Terminal>),
         Unreachable(String),
         Validation(String),
         Http(u16),
@@ -3742,6 +3749,9 @@ mod tests {
                     name: "planner-1".to_string(),
                     session_name: "work".to_string(),
                     status,
+                    turn: None,
+                    turn_sequence: None,
+                    turn_completed: None,
                 }),
                 Reply::Http(code) => Err(TuiError::Http(code)),
             }
@@ -3777,7 +3787,7 @@ mod tests {
             self.create_session_params.borrow_mut().push(params.clone());
 
             match self.session.borrow_mut().pop_front() {
-                Some(SessionAnswer::Created(terminal)) => Ok(terminal),
+                Some(SessionAnswer::Created(terminal)) => Ok(*terminal),
                 Some(SessionAnswer::Unreachable(message)) => Err(TuiError::Unreachable(message)),
                 Some(SessionAnswer::Validation(detail)) => Err(TuiError::Validation(detail)),
                 Some(SessionAnswer::Http(code)) => Err(TuiError::Http(code)),
@@ -3931,6 +3941,9 @@ mod tests {
             id: id.to_string(),
             name: "planner-1".to_string(),
             session_name: "work".to_string(),
+            turn: None,
+            turn_sequence: None,
+            turn_completed: None,
             status: Some(TerminalStatus::Idle),
         }
     }
@@ -4627,7 +4640,8 @@ mod tests {
         // Half two: the production call sites are REACHED. A call in dead code would pass above.
         //
         // 2a — the hand-off success arm reaches `complete()` with the structured outcome line.
-        let server = FakeServer::healthy().with_session(SessionAnswer::Created(terminal("t-1")));
+        let server =
+            FakeServer::healthy().with_session(SessionAnswer::Created(Box::new(terminal("t-1"))));
         let host = FakeHost::outside_tmux();
         let mut shell = ready_to_launch(&server, &host);
         shell.launch();
@@ -4652,7 +4666,7 @@ mod tests {
         // 2b — the refusal arm reaches `refuse()` with the copyable argv (FR-5.3).
         let server = FakeServer::healthy()
             .with_backend("tmux")
-            .with_session(SessionAnswer::Created(terminal("t-2")));
+            .with_session(SessionAnswer::Created(Box::new(terminal("t-2"))));
         // `$TMUX` unset: there is no client whose view could be moved, so the hand-off is refused.
         // A designed outcome, not a malfunction.
         let host = FakeHost::outside_tmux();
@@ -4732,7 +4746,7 @@ mod tests {
     fn the_readiness_branch_has_three_arms_and_unknown_continues_to_the_handoff() {
         // Arm 1 — `Ready`: the terminal reports `idle`, so the hand-off runs immediately.
         let server = FakeServer::healthy()
-            .with_session(SessionAnswer::Created(terminal("t-ready")))
+            .with_session(SessionAnswer::Created(Box::new(terminal("t-ready"))))
             .with_terminal_script(vec![Reply::Status(Some(TerminalStatus::Idle))]);
         let host = FakeHost::outside_tmux();
         let mut shell = ready_to_launch(&server, &host);
@@ -4754,7 +4768,7 @@ mod tests {
         // advances one second per poll until the 30-second cap. The whole 30 polls run in
         // microseconds because the clock is injected (`handoff.rs`'s reason for the `Host` seam).
         let server = FakeServer::healthy()
-            .with_session(SessionAnswer::Created(terminal("t-unknown")))
+            .with_session(SessionAnswer::Created(Box::new(terminal("t-unknown"))))
             .with_terminal_script(vec![Reply::Status(Some(TerminalStatus::Processing))]);
         let host = FakeHost::outside_tmux();
         let mut shell = ready_to_launch(&server, &host);
@@ -4784,7 +4798,7 @@ mod tests {
 
         // Arm 3 — `Failed`: an explicit error status stops the flow.
         let server = FakeServer::healthy()
-            .with_session(SessionAnswer::Created(terminal("t-failed")))
+            .with_session(SessionAnswer::Created(Box::new(terminal("t-failed"))))
             .with_terminal_script(vec![Reply::Status(Some(TerminalStatus::Error))]);
         let host = FakeHost::outside_tmux();
         let mut shell = ready_to_launch(&server, &host);
@@ -4811,7 +4825,7 @@ mod tests {
         // Arm 3b — a 5xx during the poll is the ONE conclusive read failure (BR-12), and it must
         // also stop. Included because `Failed` has two sources and only one of them is a status.
         let server = FakeServer::healthy()
-            .with_session(SessionAnswer::Created(terminal("t-5xx")))
+            .with_session(SessionAnswer::Created(Box::new(terminal("t-5xx"))))
             .with_terminal_script(vec![Reply::Http(503)]);
         let host = FakeHost::outside_tmux();
         let mut shell = ready_to_launch(&server, &host);
@@ -4972,7 +4986,7 @@ mod tests {
         let server = FakeServer::healthy()
             // Attempt 1 fails; attempt 2 succeeds. Both answers are queued up front.
             .with_session(SessionAnswer::Unreachable(unreachable_message()))
-            .with_session(SessionAnswer::Created(terminal("t-retry")));
+            .with_session(SessionAnswer::Created(Box::new(terminal("t-retry"))));
         let host = FakeHost::outside_tmux();
         let mut shell = ready_to_launch(&server, &host);
 
@@ -5504,7 +5518,8 @@ mod tests {
     /// sequence capable of reaching either caller — the gap the predecessor shipped. (#321)
     #[test]
     fn keyboard_input_edits_the_form_and_reaches_both_production_run_paths() {
-        let server = FakeServer::healthy().with_session(SessionAnswer::Created(terminal("t-key")));
+        let server =
+            FakeServer::healthy().with_session(SessionAnswer::Created(Box::new(terminal("t-key"))));
         let host = FakeHost::outside_tmux();
         let mut shell = Renderer::new(&server, &host, 100, 40);
         assert!(shell.focus_command(CommandId::Launch));
@@ -5983,8 +5998,8 @@ mod tests {
     /// passes on the broken build, since the defect lives in the append-and-re-set loop. (#321)
     #[test]
     fn a_space_can_be_typed_into_a_text_field() {
-        let server =
-            FakeServer::healthy().with_session(SessionAnswer::Created(terminal("t-space")));
+        let server = FakeServer::healthy()
+            .with_session(SessionAnswer::Created(Box::new(terminal("t-space"))));
         let host = FakeHost::outside_tmux();
         let mut shell = Renderer::new(&server, &host, 100, 40);
         assert!(shell.focus_command(CommandId::Launch));
@@ -6737,7 +6752,8 @@ mod tests {
         let host = FakeHost::outside_tmux();
 
         // Arm 1: `launch()`'s `Incomplete` return — `--agents` left empty.
-        let server = FakeServer::healthy().with_session(SessionAnswer::Created(terminal("t-none")));
+        let server = FakeServer::healthy()
+            .with_session(SessionAnswer::Created(Box::new(terminal("t-none"))));
         let mut shell = Renderer::new(&server, &host, 100, 40);
         assert!(shell.focus_command(CommandId::Launch));
         assert!(shell.on_key(KeyCode::Enter));
@@ -6840,7 +6856,7 @@ mod tests {
         for command in catalog::commands() {
             let id = command.id;
             let server = FakeServer::healthy()
-                .with_session(SessionAnswer::Created(terminal("t-sweep")))
+                .with_session(SessionAnswer::Created(Box::new(terminal("t-sweep"))))
                 .with_run(RunAnswer::Chunks(vec!["ok\n"], 200));
             let mut shell = Renderer::new(&server, &host, 100, 40);
 
@@ -6883,8 +6899,8 @@ mod tests {
     #[test]
     fn a_q_or_r_typed_into_a_required_field_is_text_and_not_a_command_key() {
         for name in ["qbert", "herder"] {
-            let server =
-                FakeServer::healthy().with_session(SessionAnswer::Created(terminal("t-typed")));
+            let server = FakeServer::healthy()
+                .with_session(SessionAnswer::Created(Box::new(terminal("t-typed"))));
             let host = FakeHost::outside_tmux();
             let mut shell = Renderer::new(&server, &host, 100, 40);
             assert!(shell.focus_command(CommandId::Launch));
@@ -7242,7 +7258,7 @@ mod tests {
         // exercised by the suite.
         let server = FakeServer::healthy()
             .with_backend("tmux")
-            .with_session(SessionAnswer::Created(terminal("t-nav")));
+            .with_session(SessionAnswer::Created(Box::new(terminal("t-nav"))));
         let mut shell = ready_to_launch(&server, &host);
         shell.launch();
         assert_eq!(
@@ -7314,7 +7330,7 @@ mod tests {
         // Launch: attempting it makes the launch the retryable operation.
         let server = FakeServer::healthy()
             .with_session(SessionAnswer::Http(500))
-            .with_session(SessionAnswer::Created(terminal("t-ok")));
+            .with_session(SessionAnswer::Created(Box::new(terminal("t-ok"))));
         let mut shell = ready_to_launch(&server, &host);
         shell.launch();
         assert_eq!(
@@ -8192,8 +8208,8 @@ mod tests {
     /// checked here for that reason.
     #[test]
     fn the_first_enter_reveals_the_options_and_the_second_one_runs() {
-        let server =
-            server_with_many_agents(25).with_session(SessionAnswer::Created(terminal("t")));
+        let server = server_with_many_agents(25)
+            .with_session(SessionAnswer::Created(Box::new(terminal("t"))));
         let host = FakeHost::outside_tmux();
         let mut shell = shell_on_the_launch_form(&server, &host, 100, 40);
         shell
@@ -8848,7 +8864,8 @@ mod tests {
     /// would pass against a build that relabelled the header and left the launch wired.
     #[test]
     fn the_expanded_optional_header_advertises_the_key_that_collapses_it() {
-        let server = FakeServer::healthy().with_session(SessionAnswer::Created(terminal("t")));
+        let server =
+            FakeServer::healthy().with_session(SessionAnswer::Created(Box::new(terminal("t"))));
         let host = FakeHost::outside_tmux();
         let mut shell = shell_on_the_launch_form(&server, &host, 100, 40);
         shell
@@ -9148,5 +9165,24 @@ mod tests {
             "in Focus::Results the footer MUST advertise [k] — that is the focus where the key \
              works, and an unadvertised working key is the mirror-image defect. Got: {hint:?}"
         );
+    }
+    #[test]
+    fn integration_008_blocked_launch_opens_existing_terminal_once() {
+        for wire in ["waiting_quota", "reconcile"] {
+            let server = FakeServer::healthy()
+                .with_session(SessionAnswer::Created(Box::new(terminal("abcd1234"))))
+                .with_terminal_script(vec![Reply::Status(Some(TerminalStatus::from(
+                    wire.to_string(),
+                )))]);
+            let host = FakeHost::outside_tmux();
+            let mut shell = ready_to_launch(&server, &host);
+            shell.launch();
+            assert_eq!(server.create_session_calls.get(), 1);
+            let banner = shell.banner().expect("blocked launch needs a diagnostic");
+            assert_eq!(banner.severity, "warning");
+            assert!(banner.why.contains(wire));
+            assert!(!banner.remedy.contains("retry"));
+            assert_eq!(shell.pane().state(), PaneState::Complete);
+        }
     }
 }

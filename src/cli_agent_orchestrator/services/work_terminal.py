@@ -1,5 +1,7 @@
 """Server-owned terminal identity and dispatch coordination for Work terminals."""
 
+from __future__ import annotations
+
 import errno
 import hashlib
 import os
@@ -9,21 +11,28 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
 from pathlib import Path
+from types import ModuleType
+from typing import Callable, ParamSpec, TypeVar, cast
 
 from cli_agent_orchestrator import constants
 
+fcntl: ModuleType | None
 try:
-    import fcntl
+    import fcntl as _fcntl
+
+    fcntl = _fcntl
 except ImportError:  # pragma: no cover - exercised only on non-Unix platforms
     fcntl = None
 
 from cli_agent_orchestrator.constants import SESSION_PREFIX
 from cli_agent_orchestrator.utils.terminal import validate_tmux_name
 
-_terminal_identity = ContextVar("managed_work_terminal_id", default=None)
+_terminal_identity: ContextVar[str | None] = ContextVar("managed_work_terminal_id", default=None)
 _TERMINAL_DISPATCH_LOCK_TIMEOUT_SECONDS = 10.0
 _TERMINAL_DISPATCH_LOCK_POLL_SECONDS = 0.05
-_active_terminal_dispatch_lock = ContextVar("active_terminal_dispatch_lock", default=None)
+_active_terminal_dispatch_lock: ContextVar[tuple[str, _TerminalDispatchLock] | None] = ContextVar(
+    "active_terminal_dispatch_lock", default=None
+)
 
 
 class TerminalDispatchLockError(RuntimeError):
@@ -136,11 +145,17 @@ def release_terminal_dispatch_lock(terminal_id):
     return True
 
 
-def with_terminal_dispatch_lock(function):
+_TerminalCall = ParamSpec("_TerminalCall")
+_TerminalResult = TypeVar("_TerminalResult")
+
+
+def with_terminal_dispatch_lock(
+    function: Callable[_TerminalCall, _TerminalResult],
+) -> Callable[_TerminalCall, _TerminalResult]:
     """Serialize a terminal send from ownership lookup through its receipt CAS."""
 
     @wraps(function)
-    def wrapped(terminal_id, *args, **kwargs):
+    def wrapped(terminal_id, *args, **kwargs) -> _TerminalResult:
         with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id) as lock:
             token = _active_terminal_dispatch_lock.set((terminal_id, lock))
             try:
@@ -148,7 +163,9 @@ def with_terminal_dispatch_lock(function):
             finally:
                 _active_terminal_dispatch_lock.reset(token)
 
-    return wrapped
+    # The wrapper forwards every argument and return value without changing the
+    # decorated callable signature, including a keyword terminal_id.
+    return cast(Callable[_TerminalCall, _TerminalResult], wrapped)
 
 
 def current_managed_terminal_id():

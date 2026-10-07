@@ -1,5 +1,6 @@
 """CAO operations MCP server implementation."""
 
+import re
 from typing import Annotated, Any, Dict, List, Optional
 
 import requests  # type: ignore[import-untyped]
@@ -97,6 +98,7 @@ def _request_json(
     params: Optional[Dict[str, Any]] = None,
     json: Optional[Any] = None,
     operation: str,
+    turn_outcomes: bool = False,
 ) -> tuple[Optional[Any], Optional[str]]:
     """Execute an API request and return either JSON data or an error message.
 
@@ -129,6 +131,23 @@ def _request_json(
     except requests.RequestException as exc:
         return None, f"{operation} failed: {exc}"
 
+    if turn_outcomes and (response.status_code == 202 or response.status_code >= 400):
+        try:
+            body = response.json()
+            detail = body.get("detail") if isinstance(body, dict) else None
+        except ValueError:
+            detail = None
+        if (
+            response.status_code in {202, 403, 409, 503}
+            and isinstance(detail, dict)
+            and detail.get("state")
+            in {"pending", "verifying", "reconcile", "verified", "cancelling", "cancelled"}
+        ):
+            return {"turn": detail, "http_status": response.status_code}, None
+        return {
+            "http_status": response.status_code,
+            "error_message": f"{operation} failed: {_response_detail(response)}",
+        }, None
     if response.status_code >= 400:
         return None, f"{operation} failed: {_response_detail(response)}"
 
@@ -664,9 +683,30 @@ def _read_session_output_impl(
         f"/terminals/{resolved_terminal_id}/output",
         params={"mode": normalized},
         operation=f"Read output for terminal '{resolved_terminal_id}'",
+        turn_outcomes=True,
     )
     if error:
         return {"success": False, "message": error}
+    if isinstance(data, dict) and isinstance(data.get("turn"), dict):
+        return {
+            **data["turn"],
+            "success": False,
+            "terminal_id": resolved_terminal_id,
+            "mode": normalized,
+            "http_status": data["http_status"],
+        }
+    if isinstance(data, dict) and "error_message" in data:
+        code = data["http_status"]
+        return {
+            "success": False,
+            "message": data["error_message"],
+            "http_status": code,
+            "kind": (
+                "internal_error"
+                if code >= 500
+                else "permission_denied" if code in {401, 403} else "output_unavailable"
+            ),
+        }
     if not isinstance(data, dict) or not isinstance(data.get("output"), str):
         return {"success": False, "message": "Read output failed: invalid response payload"}
 
@@ -685,6 +725,67 @@ def _read_session_output_impl(
         "truncated": truncated,
         "total_chars": total_chars,
     }
+
+
+def _recover_turn_impl(terminal_id: str, generation: str, action: str) -> Dict[str, Any]:
+    """Operate on the selected durable generation without sending task input."""
+    if not isinstance(terminal_id, str) or not re.fullmatch(r"[0-9a-f]{8}", terminal_id):
+        return {"success": False, "message": "invalid terminal ID"}
+    if (
+        not isinstance(generation, str)
+        or not re.fullmatch(r"[0-9a-f]{32}", generation)
+        or not isinstance(action, str)
+        or action not in {"verify", "cancel"}
+    ):
+        return {"success": False, "message": "valid generation and verify/cancel action required"}
+    data, error = _request_json(
+        "post",
+        f"/terminals/{terminal_id}/turn/{action}",
+        params={"generation": generation},
+        operation=f"{action.title()} turn for terminal '{terminal_id}'",
+        turn_outcomes=True,
+    )
+    if error:
+        return {"success": False, "terminal_id": terminal_id, "message": error}
+    if not isinstance(data, dict):
+        return {"success": False, "message": "invalid recovery response"}
+    if isinstance(data.get("turn"), dict):
+        return {**data["turn"], "success": False, "http_status": data["http_status"]}
+    if "error_message" in data:
+        return {
+            "success": False,
+            "message": data["error_message"],
+            "http_status": data["http_status"],
+        }
+    return {
+        **data,
+        "success": data.get("generation") == generation
+        and data.get("state") == ("verified" if action == "verify" else "cancelled"),
+    }
+
+
+@mcp.tool()
+async def recover_turn(terminal_id: str, generation: str, action: str) -> Dict[str, Any]:
+    """Verify evidence or cancel the selected turn; never repeat its task."""
+    import asyncio
+
+    return await asyncio.to_thread(_recover_turn_impl, terminal_id, generation, action)
+
+
+@mcp.tool()
+async def inspect_turn(terminal_id: str) -> Dict[str, Any]:
+    """Read the current turn and permitted recovery actions from the API."""
+    import asyncio
+
+    if not isinstance(terminal_id, str) or not re.fullmatch(r"[0-9a-f]{8}", terminal_id):
+        return {"success": False, "message": "invalid terminal ID"}
+    data, error = await asyncio.to_thread(
+        _request_json,
+        "get",
+        f"/terminals/{terminal_id}/turn",
+        operation="Inspect turn",
+    )
+    return {"success": False, "message": error} if error else {"success": True, "turn": data}
 
 
 @mcp.tool()

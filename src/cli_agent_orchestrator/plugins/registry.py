@@ -6,7 +6,7 @@ import inspect
 import logging
 from typing import Any
 
-from cli_agent_orchestrator.plugins.base import _HOOK_EVENT_ATTR, CaoPlugin
+from cli_agent_orchestrator.plugins.base import _HOOK_EVENT_ATTR, CaoPlugin, McpServerStartupError
 from cli_agent_orchestrator.plugins.events import CaoEvent
 
 logger = logging.getLogger(__name__)
@@ -202,6 +202,8 @@ def register_mcp_server_surfaces(mcp: Any) -> None:
             if not (isinstance(plugin_class, type) and issubclass(plugin_class, CaoPlugin)):
                 continue
             plugin_class().on_mcp_server(mcp)
+        except McpServerStartupError:
+            raise
         except Exception:
             logger.warning(
                 "Plugin '%s' on_mcp_server registration failed",

@@ -8,8 +8,9 @@ from cli_agent_orchestrator.services.config_service import ConfigService
 
 # Query parameters that carry bearer credentials. `access_token` is the AG-UI
 # SSE pattern (browser EventSource cannot set an Authorization header);
-# `ticket` is reserved for the planned short-lived-ticket handshake.
-_CREDENTIAL_PARAMS = ("access_token", "ticket")
+# `ticket` is a single-use transport capability; `token` is the deprecated
+# terminal bearer query name and must remain redacted in legacy requests.
+_CREDENTIAL_PARAMS = ("access_token", "ticket", "token")
 REDACTED = "[REDACTED]"
 _CREDENTIAL_RE = re.compile(
     r"\b(" + "|".join(_CREDENTIAL_PARAMS) + r")=([^&\s\"']+)",

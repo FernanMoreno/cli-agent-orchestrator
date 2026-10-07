@@ -396,6 +396,12 @@
   }
 
   function handleToolCall(winInfo, id, name, args) {
+    const nativeAliases = {
+      cao___cao_fetch_history: "cao_fetch_history",
+      cao___subscribe_events: "subscribe_events",
+      cao___submit_command: "submit_command",
+    };
+    if (Object.hasOwn(nativeAliases, name)) name = nativeAliases[name];
     bump(name);
     if (name === "render_dashboard")
       return replyResult(winInfo, id, dashboardSnapshot());
@@ -409,7 +415,7 @@
       });
     if (name === "subscribe_events")
       return replyResult(winInfo, id, {
-        sse_url: "/events",
+        sse_url: new URL("/events", location.origin).href,
         history_tool: "cao_fetch_history",
         ring_capacity: 500,
       });

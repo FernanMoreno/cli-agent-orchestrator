@@ -18,6 +18,12 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def isolated_contract_auth_home(monkeypatch, tmp_path):
+    """Keep readiness contracts explicit without touching a runner login."""
+    monkeypatch.setenv(matrix._AUTH_HOME_ENV, str(tmp_path))
+
+
 def _provider_names(count: int = 1) -> list[str]:
     """Use registered provider ids without turning the contract into a fixed list."""
 
@@ -1359,3 +1365,86 @@ def test_real_provider_matrix_documentation_explains_dynamic_contract() -> None:
     assert "exclude_reason" in documentation
     assert "native_children" in documentation
     assert "64 KiB" in documentation
+
+
+def test_auth_home_requires_explicit_isolated_directory(monkeypatch, tmp_path):
+    monkeypatch.delenv(matrix._AUTH_HOME_ENV, raising=False)
+    with pytest.raises(pytest.fail.Exception, match="isolated"):
+        matrix._configured_auth_home()
+    monkeypatch.setenv(matrix._AUTH_HOME_ENV, os.environ["HOME"])
+    with pytest.raises(pytest.fail.Exception, match="isolated"):
+        matrix._configured_auth_home()
+    monkeypatch.setenv(matrix._AUTH_HOME_ENV, str(tmp_path))
+    assert matrix._configured_auth_home() == tmp_path
+
+
+def test_auth_copy_cannot_mutate_reusable_login(monkeypatch, tmp_path):
+    source = tmp_path / "auth"
+    source.mkdir()
+    (source / "record.json").write_text("private record")
+    monkeypatch.setenv(matrix._AUTH_HOME_ENV, str(source))
+    provider = matrix.MatrixProvider(
+        name="test",
+        model="model",
+        binary="test",
+        auth_env=(),
+        auth_files=(Path("record.json"),),
+        capabilities=frozenset(),
+    )
+    home = tmp_path / "isolated"
+    home.mkdir()
+    matrix._link_auth_material(SimpleNamespace(home_dir=home), provider)
+    (home / "record.json").write_text("renewed")
+    assert (source / "record.json").read_text() == "private record"
+    assert not (home / "record.json").is_symlink()
+
+
+@pytest.mark.parametrize("outcome", [None, RuntimeError("failure"), KeyboardInterrupt()])
+def test_provider_fixture_cleans_auth_home_on_success_failure_cancel(
+    monkeypatch, tmp_path, outcome
+):
+    auth = tmp_path / "auth"
+    auth.mkdir()
+    monkeypatch.setenv(matrix._AUTH_HOME_ENV, str(auth))
+    home = tmp_path / "live_provider_cao_home"
+    stopped = []
+
+    def start(*args, **kwargs):
+        home.mkdir()
+        (home / "private.json").write_text("secret")
+        return SimpleNamespace(home_dir=home, stop=lambda: stopped.append(True))
+
+    monkeypatch.setattr(matrix, "_start_cao_server", start)
+    fixture = matrix.live_provider_cao_server.__wrapped__(tmp_path)
+    next(fixture)
+    if outcome is None:
+        with pytest.raises(StopIteration):
+            next(fixture)
+    else:
+        with pytest.raises(type(outcome)):
+            fixture.throw(outcome)
+    assert stopped == [True]
+    assert not home.exists()
+
+
+def test_provider_fixture_removes_auth_after_startup_failure(monkeypatch, tmp_path):
+    home = tmp_path / "live_provider_cao_home"
+
+    def fail_start(*args, **kwargs):
+        home.mkdir()
+        (home / "credential.json").write_text("private")
+        raise RuntimeError("startup failed")
+
+    monkeypatch.setattr(matrix, "_start_cao_server", fail_start)
+    with pytest.raises(RuntimeError, match="startup failed"):
+        next(matrix.live_provider_cao_server.__wrapped__(tmp_path))
+    assert not home.exists()
+
+
+def test_provider_fixture_missing_isolation_blocks_before_launch(monkeypatch, tmp_path):
+    monkeypatch.delenv(matrix._AUTH_HOME_ENV, raising=False)
+    launched = []
+    monkeypatch.setattr(matrix, "_start_cao_server", lambda *args, **kwargs: launched.append(True))
+    with pytest.raises(pytest.fail.Exception, match="isolated"):
+        next(matrix.live_provider_cao_server.__wrapped__(tmp_path))
+    assert not launched

@@ -109,13 +109,39 @@ ok "loadable=true   mcp_present=true"
 ok "skills: $(cat "$CAP/validate.summary")"
 pass "manifest loadable, 4 shipped skills named, MCP server 'cao-ops' present"
 
-# ── step 2: add (skills projected as symlinks into the plugin store) ─────────
+# ── step 2: add disabled, review and explicitly approve exact fixture content ─────────
 hdr ""
 hdr "[2] cao plugin add ./agent-plugin/cao"
 "${CAO[@]}" plugin add "$REPO_ROOT/agent-plugin/cao" >"$CAP/add.out" 2>"$CAP/add.err" \
     || fail "plugin add exited non-zero"
 grep -q "installed" "$CAP/add.out" || fail "add did not report an install"
 ok "$(grep -m1 'installed' "$CAP/add.out")"
+"${CAO[@]}" plugin review cao --json >"$CAP/review.json" 2>"$CAP/review.err" \
+    || fail "plugin review exited non-zero"
+review_id="$("$PY" - "$CAP/review.json" <<'PYREVIEW'
+import json, sys
+r = json.load(open(sys.argv[1]))
+want = {"skill:cao-agent-routing", "skill:cao-session-management",
+        "skill:cao-supervisor-protocols", "skill:cao-worker-protocols", "@cao-ops"}
+assert r["enabled"] is False, "installation must start disabled"
+assert r["producer_status"] == "unverified", "local approval cannot verify a publisher"
+assert r["integrity"] == "matched" and r["compatibility"] == "compatible"
+assert set(r["permissions"]) == want, "fixture permission set changed; review required"
+print(r["review_id"])
+PYREVIEW
+)" || fail "local trust review assertions failed"
+for skill in cao-agent-routing cao-session-management cao-supervisor-protocols cao-worker-protocols; do
+    [ ! -e "$CAO_HOME_DIR/skills/$skill" ] || fail "install projected an unapproved skill"
+done
+# This isolated, repository-owned fixture is explicitly approved; arbitrary
+# production plugin installs do not inherit this choice or any tool grant.
+"${CAO[@]}" plugin enable cao --approve "$review_id" \
+    --permission skill:cao-agent-routing --permission skill:cao-session-management \
+    --permission skill:cao-supervisor-protocols --permission skill:cao-worker-protocols \
+    --permission @cao-ops >"$CAP/enable.out" 2>"$CAP/enable.err" \
+    || fail "exact local approval exited non-zero"
+ok "installed disabled; exact content and all five requested permissions approved locally"
+ok "publisher identity remains unverified; agent tool allowlists are unchanged"
 ok "skills projected into the skill store as symlinks -> the plugin store:"
 store_ok=1
 for skill in cao-agent-routing cao-session-management cao-supervisor-protocols cao-worker-protocols; do
@@ -364,5 +390,5 @@ else
 fi
 
 hdr ""
-hdr "$MARK PASS: dog-food pipeline asserted end to end (validate, add, install x3, remove)."
+hdr "$MARK PASS: dog-food pipeline asserted end to end (validate, add disabled, review/enable, install x3, remove)."
 exit 0

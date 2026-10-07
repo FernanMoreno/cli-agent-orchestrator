@@ -20,6 +20,7 @@ class TerminalStatus(str, Enum):
     COMPLETED = "completed"
     WAITING_USER_ANSWER = "waiting_user_answer"
     WAITING_QUOTA = "waiting_quota"
+    RECONCILE = "reconcile"
     ERROR = "error"
 
 
@@ -107,22 +108,31 @@ class Terminal(BaseModel):
     """Terminal model - represents a tmux window."""
 
     model_config = ConfigDict(use_enum_values=True)
+    runtime_id: Optional[str] = None
+    runtime_incarnation_id: Optional[str] = None
+    native_swarm_pending: Optional[bool] = None
+    turn: Optional[Dict[str, Any]] = None
+    turn_sequence: Optional[int] = Field(default=None, description="Live causal dispatch sequence")
+    turn_completed: Optional[int] = Field(
+        default=None,
+        description="Highest causally completed dispatch; separate from durable receipt verification",
+    )
 
     id: str = Field(..., description="Unique terminal identifier")
     name: str = Field(..., description="Terminal/window name")
     provider: ProviderType = Field(..., description="CLI tool provider")
     session_name: str = Field(..., description="Session name")
-    agent_profile: Optional[str] = Field(None, description="Agent profile")
+    agent_profile: Optional[str] = Field(default=None, description="Agent profile")
     caller_id: Optional[str] = Field(
         None, description="Terminal that created this one via handoff/assign (callback target)"
     )
-    allowed_tools: Optional[List[str]] = Field(None, description="Allowed CAO tools")
-    engine: Optional[KiroEngine] = Field(None, description="Resolved Kiro engine")
+    allowed_tools: Optional[List[str]] = Field(default=None, description="Allowed CAO tools")
+    engine: Optional[KiroEngine] = Field(default=None, description="Resolved Kiro engine")
     shell_command: Optional[str] = Field(
         None, description="Shell process name captured before kiro launch"
     )
     group: Optional[List[str]] = Field(
-        None,
+        default=None,
         description=(
             "Ordered, general-to-specific grouping array (e.g. "
             '["tenant_1", "project_5", "folder_12"]). CAO does ordered-prefix '
@@ -134,10 +144,24 @@ class Terminal(BaseModel):
     metadata: Optional[Dict[str, Any]] = Field(
         None, description="Free-form, consumer-defined JSON describing what this terminal is doing"
     )
+    deferred_init_failure: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "CAO-owned durable deferred-initialization failure metadata. "
+            "Separate from consumer metadata so clients cannot overwrite lifecycle truth."
+        ),
+    )
+    session_incarnation_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Durable CAO session incarnation identifier. Session names may be reused; "
+            "this value distinguishes retained rows from a later replacement."
+        ),
+    )
     status: Optional[TerminalStatus] = Field(
         None, description="Current terminal status (live only)"
     )
-    last_active: Optional[datetime] = Field(None, description="Last active timestamp")
+    last_active: Optional[datetime] = Field(default=None, description="Last active timestamp")
 
 
 class AgentStepResult(BaseModel):

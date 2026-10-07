@@ -11,6 +11,7 @@ or test.
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 import requests
 
 from cli_agent_orchestrator.constants import API_BASE_URL
@@ -190,6 +191,13 @@ class TestResultImpl:
 
 
 class TestCancelImpl:
+    @pytest.fixture(autouse=True)
+    def legacy_turn(self):
+        with patch("cli_agent_orchestrator.utils.orchestration.requests.get") as get:
+            get.return_value.status_code = 200
+            get.return_value.json.return_value = {"state": "none", "generation": None}
+            yield
+
     @patch("cli_agent_orchestrator.utils.orchestration.requests.post")
     def test_default_sends_interrupt_key(self, mock_post):
         resp = MagicMock()
@@ -255,3 +263,36 @@ class TestCancelImpl:
 
         _, kwargs = mock_post.call_args
         assert kwargs["headers"] == {"Authorization": "Bearer tok"}
+
+
+def test_remote_destination_never_gets_local_bearer(monkeypatch):
+    from cli_agent_orchestrator.utils import orchestration
+
+    monkeypatch.setattr(orchestration, "get_local_bearer", lambda: "secret")
+    assert orchestration._auth_headers("https://untrusted.example") == {}
+
+
+def test_remote_delete_does_not_send_local_token_and_blocks_redirects(monkeypatch):
+    from cli_agent_orchestrator.utils import orchestration
+
+    monkeypatch.setattr(orchestration, "get_local_bearer", lambda: "private-local")
+    response = MagicMock(status_code=200)
+    with patch.object(orchestration.requests, "delete", return_value=response) as delete:
+        result = orchestration._delete_terminal_impl(
+            "worker", target_host="http://untrusted.example:9889"
+        )
+    assert result["success"] is True
+    assert delete.call_args.kwargs["headers"] is None
+    assert delete.call_args.kwargs["allow_redirects"] is False
+
+
+def test_authenticated_local_destination_exact_origin(monkeypatch):
+    from cli_agent_orchestrator.utils import orchestration
+
+    monkeypatch.setattr(orchestration, "API_BASE_URL", "http://127.0.0.1:9889")
+    monkeypatch.setattr(orchestration, "get_local_bearer", lambda: "private-local")
+    assert orchestration._auth_headers("http://127.0.0.1:9889") == {
+        "Authorization": "Bearer private-local"
+    }
+    assert orchestration._auth_headers("http://127.0.0.1:9890") == {}
+    assert orchestration._auth_headers("http://127.0.0.1:9889@untrusted.example") == {}

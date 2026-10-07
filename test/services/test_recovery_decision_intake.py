@@ -112,7 +112,18 @@ SNAPSHOT = json.dumps({"source": "def main():\n    pass\n"})
 
 @pytest.fixture(autouse=True)
 def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Point the journal at a temp DB and create the tables (both #583 columns included)."""
+    """Use isolated historical runs with an explicit operator approval opt-out.
+
+    These null-manifest fixtures exercise recovery consent, not prepared-plan
+    admission. Production approval remains required unless its real setting
+    explicitly opts out.
+    """
+    from cli_agent_orchestrator.services import settings_service
+
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({"workflow": {"require_approval": False}}))
+    monkeypatch.setattr(settings_service, "SETTINGS_FILE", settings_file)
+    monkeypatch.delenv("CAO_WORKFLOW_REQUIRE_APPROVAL", raising=False)
     db_path = tmp_path / "wf.db"
     monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
     _migrate_workflow_run()

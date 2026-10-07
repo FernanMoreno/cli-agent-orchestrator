@@ -8,7 +8,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from functools import wraps
-from typing import Any, Callable, Iterable, Optional, cast
+from typing import Any, Callable, Iterable, Optional, ParamSpec, TypeVar, cast
 
 from cli_agent_orchestrator.clients.database import (
     MemoryMetadataModel,
@@ -136,11 +136,15 @@ def _build_plan(
     )
 
 
-def _audited_projection(function):
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _audited_projection(function: Callable[_P, _R]) -> Callable[_P, _R]:
     @wraps(function)
-    def run(vault, **kwargs):
+    def run(*args: _P.args, **kwargs: _P.kwargs) -> _R:
         if not kwargs.get("apply", False):
-            return function(vault, **kwargs)
+            return function(*args, **kwargs)
         from cli_agent_orchestrator.services.memory_service import MemoryService
 
         # Prepare and commit authority before opening the projection transaction.
@@ -148,9 +152,10 @@ def _audited_projection(function):
         with SessionLocal() as db:
             engine = db.get_bind()
         owner = MemoryService(db_engine=engine)
-        target = {"operation": "vault_projection", "vault_id": vault.id}
+        vault = args[0] if args else kwargs["vault"]
+        target = {"operation": "vault_projection", "vault_id": getattr(vault, "id")}
         with owner._legacy_operation("repair", target):
-            return function(vault, **kwargs)
+            return function(*args, **kwargs)
 
     return run
 

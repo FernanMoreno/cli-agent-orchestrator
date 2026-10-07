@@ -18,22 +18,63 @@
  * A relative `--base` such as `./` cannot work for runtime calls and is not
  * supported; use an absolute prefix.
  */
-import { browserBearer, browserFetch } from './auth'
+import { browserFetch } from "./auth";
 
-const BASE = import.meta.env.BASE_URL.replace(/\/$/, '')
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+let activeNode: string | null = null;
+let nodeEpoch = 0;
+let nodeAuthority = new AbortController();
+export function setActiveNode(name: string | null): void {
+  if (name === activeNode) return;
+  activeNode = name;
+  nodeEpoch++;
+  nodeAuthority.abort();
+  nodeAuthority = new AbortController();
+}
+export const getActiveNode = () => activeNode;
+export const getNodeEpoch = () => nodeEpoch;
+export const nodeSignal = () => nodeAuthority.signal;
+export const nodePath = (path: string) =>
+  activeNode === null
+    ? path
+    : `/nodes/${encodeURIComponent(activeNode)}${path}`;
+export interface FleetNode {
+  name: string;
+  label: string;
+  host: string;
+  role?: string;
+  online: boolean;
+  sessions: Session[];
+  error?: string;
+}
 
 /** URL for the terminal's xterm WebSocket, honouring BASE. */
-export function terminalSocketUrl(terminalId: string): string {
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const token = browserBearer()
-  const query = token ? `?token=${encodeURIComponent(token)}` : ''
-  return `${protocol}//${location.host}${BASE}/terminals/${encodeURIComponent(terminalId)}/ws${query}`
+export function terminalSocketUrl(terminalId: string, ticket?: string): string {
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  const query = ticket ? `?ticket=${encodeURIComponent(ticket)}` : "";
+  return `${protocol}//${location.host}${BASE}${nodePath(`/terminals/${encodeURIComponent(terminalId)}/ws`)}${query}`;
+}
+
+/** Mint a fresh scoped ticket for each handshake; the operator bearer stays in headers. */
+export async function terminalSocketTicketUrl(
+  terminalId: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const epoch = nodeEpoch;
+  const result = await fetchJSON<{ ticket: string }>(
+    `/terminals/${encodeURIComponent(terminalId)}/ws/ticket`,
+    { method: "POST", signal },
+  );
+  if (epoch !== nodeEpoch) throw new Error("Node selection changed");
+  if (!result?.ticket || typeof result.ticket !== "string")
+    throw new Error("Invalid terminal ticket");
+  return terminalSocketUrl(terminalId, result.ticket);
 }
 
 /** URL for a workflow run's SSE event stream, honouring BASE. */
 export function eventStreamUrl(runId: string, afterSeq?: number): string {
-  const q = afterSeq != null ? `?after_seq=${afterSeq}` : ''
-  return `${BASE}/workflows/runs/${encodeURIComponent(runId)}/events${q}`
+  const q = afterSeq != null ? `?after_seq=${afterSeq}` : "";
+  return `${BASE}${nodePath(`/workflows/runs/${encodeURIComponent(runId)}/events`)}${q}`;
 }
 
 /**
@@ -44,40 +85,65 @@ export function eventStreamUrl(runId: string, afterSeq?: number): string {
  * back-compat with existing callers.
  */
 export interface ApiError extends Error {
-  status?: number
-  detail?: string
-  kind?: string
-  detailMeta?: Record<string, unknown>
+  status?: number;
+  detail?: string;
+  kind?: string;
+  detailMeta?: Record<string, unknown>;
 }
 
-async function fetchJSON<T>(url: string, opts?: RequestInit & { timeoutMs?: number }): Promise<T> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), opts?.timeoutMs ?? 10000)
+export async function fetchJSON<T>(
+  url: string,
+  opts?: RequestInit & { timeoutMs?: number; direct?: boolean },
+): Promise<T> {
+  const epoch = nodeEpoch;
+  const signal = nodeSignal();
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    opts?.timeoutMs ?? 10000,
+  );
   try {
-    const res = await browserFetch(`${BASE}${url}`, { ...opts, signal: controller.signal })
+    const res = await browserFetch(
+      `${BASE}${opts?.direct ? url : nodePath(url)}`,
+      {
+        ...opts,
+        signal: AbortSignal.any([
+          controller.signal,
+          ...(opts?.signal ? [opts.signal] : []),
+          ...(opts?.direct ? [] : [signal]),
+        ]),
+      },
+    );
+    if (!opts?.direct && epoch !== nodeEpoch)
+      throw new Error("Node selection changed");
     if (!res.ok) {
       // Best-effort read of the JSON error body to expose the server's
       // `detail` without leaking a full response. A non-JSON body is fine —
       // detail just stays undefined.
-      let detail: string | undefined
-      let kind: string | undefined
-      let detailMeta: Record<string, unknown> | undefined
+      let detail: string | undefined;
+      let kind: string | undefined;
+      let detailMeta: Record<string, unknown> | undefined;
       try {
-        const body = await res.json()
-        if (body && typeof body.detail === 'string') detail = body.detail
-        if (body && body.detail && typeof body.detail === 'object') {
-          detailMeta = body.detail as Record<string, unknown>
-          if (typeof detailMeta.message === 'string') detail = detailMeta.message
-          if (typeof detailMeta.kind === 'string') kind = detailMeta.kind
-          if (typeof detailMeta.code === 'string') kind = detailMeta.code
+        const body = await res.json();
+        if (body && typeof body.detail === "string") detail = body.detail;
+        if (body && body.detail && typeof body.detail === "object") {
+          detailMeta = body.detail as Record<string, unknown>;
+          if (typeof detailMeta.message === "string")
+            detail = detailMeta.message;
+          if (typeof detailMeta.kind === "string") kind = detailMeta.kind;
+          if (typeof detailMeta.code === "string") kind = detailMeta.code;
         }
-      } catch { /* non-JSON error body */ }
-      const err: ApiError = new Error(`${res.status} ${res.statusText}`)
-      err.status = res.status
-      err.detail = detail
-      err.kind = kind
-      err.detailMeta = detailMeta
-      throw err
+      } catch {
+        /* non-JSON error body */
+      }
+      if (!opts?.direct && epoch !== nodeEpoch)
+        throw new Error("Node selection changed");
+      const err: ApiError = new Error(`${res.status} ${res.statusText}`);
+      err.status = res.status;
+      err.detail = detail;
+      err.kind = kind;
+      err.detailMeta = detailMeta;
+      throw err;
     }
     // A 204 No Content — e.g. the workflow-run DELETE (U7/#504) — has no JSON
     // to parse. Neither does ANY successful response whose body is empty or
@@ -87,60 +153,98 @@ async function fetchJSON<T>(url: string, opts?: RequestInit & { timeoutMs?: numb
     // instead of letting res.json() throw. Additive: every pre-existing
     // endpoint returns a non-empty JSON body, so existing callers are
     // unaffected.
-    const text = await res.text()
-    if (text.trim() === '') return undefined as T
-    return JSON.parse(text) as T
+    const text = await res.text();
+    if (!opts?.direct && epoch !== nodeEpoch)
+      throw new Error("Node selection changed");
+    if (text.trim() === "") return undefined as T;
+    return JSON.parse(text) as T;
   } finally {
-    clearTimeout(timeout)
+    clearTimeout(timeout);
   }
 }
 
 export interface Session {
-  id: string
-  name: string
-  status: string
+  id: string;
+  name: string;
+  status: string;
+}
+
+export interface TerminalTurn {
+  terminal_id: string;
+  provider: string;
+  generation: string | null;
+  state:
+    | "none"
+    | "pending"
+    | "verifying"
+    | "reconcile"
+    | "verified"
+    | "cancelling"
+    | "cancelled";
+  reason: string | null;
+  attempts: number;
+  allowed_actions: ("verify" | "cancel")[];
 }
 
 export interface Terminal {
-  id: string
-  name: string
-  provider: string
-  session_name: string
-  agent_profile: string | null
-  status: string | null
-  last_active: string | null
+  turn?: TerminalTurn | null;
+  id: string;
+  name: string;
+  provider: string;
+  session_name: string;
+  agent_profile: string | null;
+  status: string | null;
+  last_active: string | null;
 }
 
 /** Durable v1 projection returned by GET /work-items/{work_item_id}. */
 export interface WorkView {
-  schema_version: 1
-  job_id: string
-  work_item_id: string
-  attempt_id: string | null
-  job_state: 'planning' | 'running' | 'waiting' | 'completed' | 'failed' | 'revoked'
-  work_state: 'queued' | 'running' | 'waiting_children' | 'succeeded' | 'failed' | 'reconcile' | 'cancelled'
-  attempt_state: 'planned' | 'sent' | 'acknowledged' | 'running' | 'finished' | 'failed' | 'reconcile' | 'cancelled' | null
-  turn_state: 'ready' | 'input_sent' | 'acknowledged' | 'processing' | 'blocked' | null
-  process_state: 'alive' | 'dead' | 'unknown'
-  revision: number
-  result_ref: string | null
-  cleanup_state: string
-  required_action: string | null
+  schema_version: 1;
+  job_id: string;
+  work_item_id: string;
+  attempt_id: string | null;
+  job_state:
+    "planning" | "running" | "waiting" | "completed" | "failed" | "revoked";
+  work_state:
+    | "queued"
+    | "running"
+    | "waiting_children"
+    | "succeeded"
+    | "failed"
+    | "reconcile"
+    | "cancelled";
+  attempt_state:
+    | "planned"
+    | "sent"
+    | "acknowledged"
+    | "running"
+    | "finished"
+    | "failed"
+    | "reconcile"
+    | "cancelled"
+    | null;
+  turn_state:
+    "ready" | "input_sent" | "acknowledged" | "processing" | "blocked" | null;
+  process_state: "alive" | "dead" | "unknown";
+  revision: number;
+  result_ref: string | null;
+  cleanup_state: string;
+  required_action: string | null;
 }
 
 export interface SessionDetail {
-  session: Session
-  terminals: TerminalMeta[]
+  session: Session;
+  terminals: TerminalMeta[];
 }
 
 export interface TerminalMeta {
-  id: string
-  tmux_session: string
-  tmux_window: string
-  provider: string
-  agent_profile: string | null
-  created_at: string | null
-  last_active: string | null
+  id: string;
+  tmux_session: string;
+  tmux_window: string;
+  provider: string;
+  agent_profile: string | null;
+  created_at: string | null;
+  last_active: string | null;
 }
 
 /**
@@ -148,15 +252,15 @@ export interface TerminalMeta {
  * Using `string` (not a closed union) so new provider-discovered directories
  * and custom agent directories are accepted without repeated type widening.
  */
-export type AgentProfileSource = string
+export type AgentProfileSource = string;
 
 export interface AgentProfileInfo {
-  name: string
-  description: string
-  source: AgentProfileSource
+  name: string;
+  description: string;
+  source: AgentProfileSource;
   // Other enabled directories that also define this profile name (the winner
   // above is what loads). Empty/absent when the name is unique. (GH #280)
-  duplicated_in?: string[]
+  duplicated_in?: string[];
 }
 
 /**
@@ -167,14 +271,14 @@ export interface AgentProfileInfo {
  * result order — the client must preserve that order, never re-sort.
  */
 export interface ProfileSearchResult {
-  name: string
-  description: string
-  capabilities: string[]
-  tags: string[]
-  role: string
-  source: AgentProfileSource
-  coverage: number
-  score: number
+  name: string;
+  description: string;
+  capabilities: string[];
+  tags: string[];
+  role: string;
+  source: AgentProfileSource;
+  coverage: number;
+  score: number;
 }
 
 /**
@@ -185,19 +289,19 @@ export interface ProfileSearchResult {
  * are declared; the endpoint returns the full model with nulls excluded.
  */
 export interface AgentProfileDetail {
-  name: string
-  description: string
-  provider?: string
-  model?: string
-  role?: string
-  tags?: string[]
-  capabilities?: string[]
+  name: string;
+  description: string;
+  provider?: string;
+  model?: string;
+  role?: string;
+  tags?: string[];
+  capabilities?: string[];
 }
 
 /** One scaffold template from `GET /agents/profiles/templates`. `name` is `category/name`. */
 export interface TemplateSummary {
-  name: string
-  description: string
+  name: string;
+  description: string;
 }
 
 /**
@@ -205,14 +309,14 @@ export interface TemplateSummary {
  * `POST /agents/profiles/validate` and the write routes' `warnings`.
  */
 export interface ProfileValidationMessage {
-  severity: 'error' | 'warning'
-  message: string
-  path?: string | null
+  severity: "error" | "warning";
+  message: string;
+  path?: string | null;
 }
 
 export interface ProfileValidationResponse {
-  valid: boolean
-  messages: ProfileValidationMessage[]
+  valid: boolean;
+  messages: ProfileValidationMessage[];
 }
 
 /**
@@ -221,67 +325,67 @@ export interface ProfileValidationResponse {
  * (detail shape `{message, errors}`) and never reach here.
  */
 export interface ProfileWriteResponse {
-  name: string
-  warnings: ProfileValidationMessage[]
+  name: string;
+  warnings: ProfileValidationMessage[];
 }
 
 export interface TemplatePreview {
-  template: string
-  content: string
+  template: string;
+  content: string;
 }
 
 export interface AgentDirsSettings {
-  agent_dirs: Record<string, string>
-  extra_dirs: string[]
+  agent_dirs: Record<string, string>;
+  extra_dirs: string[];
   // Directory paths toggled OFF: kept in the list but skipped when scanning
   // for agent profiles. (GH #280/#281)
-  disabled_dirs?: string[]
+  disabled_dirs?: string[];
 }
 
 export interface InboxMessage {
-  id: string
-  sender_id: string
-  receiver_id: string
-  message: string
-  status: 'pending' | 'delivered' | 'failed'
-  created_at: string | null
+  id: string;
+  sender_id: string;
+  receiver_id: string;
+  message: string;
+  status: "pending" | "delivered" | "failed";
+  created_at: string | null;
 }
 
 export interface Flow {
-  name: string
-  file_path: string
-  schedule: string
-  agent_profile: string
-  provider: string
-  script: string | null
-  last_run: string | null
-  next_run: string | null
-  enabled: boolean
-  prompt_template: string | null
+  name: string;
+  file_path: string;
+  schedule: string;
+  agent_profile: string;
+  provider: string;
+  script: string | null;
+  last_run: string | null;
+  next_run: string | null;
+  enabled: boolean;
+  prompt_template: string | null;
 }
 
 export interface ProviderInfo {
-  name: string
-  binary: string
-  installed: boolean
+  name: string;
+  binary: string;
+  installed: boolean;
 }
 
 export interface MemoryStatus {
-  enabled: boolean
+  enabled: boolean;
 }
 
 export interface MemorySummary {
-  key: string
-  scope: string
-  scope_id: string | null
-  memory_type: string
-  tags: string
-  created_at: string
-  updated_at: string
+  key: string;
+  scope: string;
+  scope_id: string | null;
+  memory_type: string;
+  tags: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface MemoryDetail extends MemorySummary {
-  content: string
+  content: string;
 }
 
 // ── Graph layer (Issue #348) ────────────────────────────────────────────
@@ -289,39 +393,39 @@ export interface MemoryDetail extends MemorySummary {
 // (src/cli_agent_orchestrator/api/main.py get_graph_endpoint). `attrs` is an
 // open bag — the renderer reads is_hub / is_orphan but the server may add more.
 export interface GraphNode {
-  id: string
-  kind: string
-  label: string
-  status: string
-  attrs: Record<string, unknown>
+  id: string;
+  kind: string;
+  label: string;
+  status: string;
+  attrs: Record<string, unknown>;
 }
 
 export interface GraphEdge {
-  source: string
-  target: string
-  type: string
-  attrs: Record<string, unknown>
+  source: string;
+  target: string;
+  type: string;
+  attrs: Record<string, unknown>;
 }
 
 export interface GraphView {
-  nodes: GraphNode[]
-  edges: GraphEdge[]
-  meta: Record<string, unknown>
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  meta: Record<string, unknown>;
 }
 
 // Request body for POST /graph/{provider}/export. `dest` MUST be a relative
 // name; the server confines it under CAO_GRAPH_EXPORT_ROOT and rejects
 // absolute/traversal paths with 400.
 export interface GraphExportBody {
-  sink: string
-  dest: string
-  options?: Record<string, unknown>
+  sink: string;
+  dest: string;
+  options?: Record<string, unknown>;
 }
 
 export interface GraphExportResult {
-  written_files: string[]
-  sink: string
-  dest: string
+  written_files: string[];
+  sink: string;
+  dest: string;
 }
 
 // ── Workflow run journal (Issue #504 / U8) ──────────────────────────────
@@ -340,27 +444,27 @@ export interface GraphExportResult {
  * on null and lights up unchanged the moment they populate.
  */
 export interface WorkflowEvent {
-  run_id: string
-  seq: number
-  event_type: string
-  event_schema_version: number
-  ts: string
-  step_id?: string | null
-  attempt?: number | null
-  state?: string | null
-  elapsed_ms?: number | null
-  provider?: string | null
-  agent_profile?: string | null
-  engine?: string | null
-  terminal_id?: string | null
-  terminal_offset_start?: number | null
-  terminal_offset_len?: number | null
-  error_kind?: string | null
-  reason?: string | null
-  validation_result?: string | null
-  output_ref?: string | null
-  iteration?: number | null
-  which_guard_fired?: string | null
+  run_id: string;
+  seq: number;
+  event_type: string;
+  event_schema_version: number;
+  ts: string;
+  step_id?: string | null;
+  attempt?: number | null;
+  state?: string | null;
+  elapsed_ms?: number | null;
+  provider?: string | null;
+  agent_profile?: string | null;
+  engine?: string | null;
+  terminal_id?: string | null;
+  terminal_offset_start?: number | null;
+  terminal_offset_len?: number | null;
+  error_kind?: string | null;
+  reason?: string | null;
+  validation_result?: string | null;
+  output_ref?: string | null;
+  iteration?: number | null;
+  which_guard_fired?: string | null;
 }
 
 /**
@@ -369,62 +473,62 @@ export interface WorkflowEvent {
  * NEVER infers a gap from event numbering (BR-4).
  */
 export interface GapMarker {
-  after_seq: number
-  before_seq: number
-  missing_count: number
-  reason: string
+  after_seq: number;
+  before_seq: number;
+  missing_count: number;
+  reason: string;
 }
 
 /** One step's durable projection inside a RunInspection (server StepInspection). */
 export interface StepInspection {
-  id: string
-  state: string
-  attempts: number
-  output_json?: string | null
-  error?: string | null
-  error_kind?: string | null
-  terminal_id?: string | null
-  reprompted?: number | null
-  call_fingerprint?: string | null
+  id: string;
+  state: string;
+  attempts: number;
+  output_json?: string | null;
+  error?: string | null;
+  error_kind?: string | null;
+  terminal_id?: string | null;
+  reprompted?: number | null;
+  call_fingerprint?: string | null;
 }
 
 /** Enriched single-run inspection (server RunInspection, FR-5.1). */
 export interface RunInspection {
-  run_id: string
-  workflow_name: string
-  state: string
-  current_step_id?: string | null
-  started_at: string
-  finished_at?: string | null
-  tier: string
-  steps: StepInspection[]
+  run_id: string;
+  workflow_name: string;
+  state: string;
+  current_step_id?: string | null;
+  started_at: string;
+  finished_at?: string | null;
+  tier: string;
+  steps: StepInspection[];
 }
 
 /** A batch page of a run's ordered event timeline (server EventTimelinePage). */
 export interface EventTimelinePage {
-  events: WorkflowEvent[]
-  gaps: GapMarker[]
-  next_after_seq: number | null
+  events: WorkflowEvent[];
+  gaps: GapMarker[];
+  next_after_seq: number | null;
 }
 
 /** An offset-ranged terminal-log read (server TerminalOutputRange, U5/FR-4.3). */
 export interface TerminalOutputRange {
-  terminal_id: string
-  offset: number
-  length: number
-  data: string
+  terminal_id: string;
+  offset: number;
+  length: number;
+  data: string;
 }
 
 /** One run's side of an aligned comparison step (server StepComparisonSide). */
 export interface StepComparisonSide {
-  attempts: number
-  duration_ms?: number | null
-  provider?: string | null
-  agent_profile?: string | null
-  validation?: string | null
-  state: string
-  error_kind?: string | null
-  reprompted?: number | null
+  attempts: number;
+  duration_ms?: number | null;
+  provider?: string | null;
+  agent_profile?: string | null;
+  validation?: string | null;
+  state: string;
+  error_kind?: string | null;
+  reprompted?: number | null;
 }
 
 /**
@@ -433,72 +537,72 @@ export interface StepComparisonSide {
  * step present in one run and absent in the other is ALWAYS surfaced (BR-1).
  */
 export interface StepComparison {
-  step_id: string
-  status: 'aligned' | 'added' | 'removed' | string
-  a?: StepComparisonSide | null
-  b?: StepComparisonSide | null
+  step_id: string;
+  status: "aligned" | "added" | "removed" | string;
+  a?: StepComparisonSide | null;
+  b?: StepComparisonSide | null;
 }
 
 /** A reference-level output/artifact difference for an aligned step (server OutputDiff). */
 export interface OutputDiff {
-  step_id: string
-  a_refs: string[]
-  b_refs: string[]
+  step_id: string;
+  a_refs: string[];
+  b_refs: string[];
 }
 
 /** Compare two runs by aligned step (server RunComparison, FR-8). */
 export interface RunComparison {
-  baseline_run_id: string
-  compare_run_id: string
-  steps: StepComparison[]
-  output_diffs: OutputDiff[]
+  baseline_run_id: string;
+  compare_run_id: string;
+  steps: StepComparison[];
+  output_diffs: OutputDiff[];
 }
 
 /** A step's terminal outcome inside a DiagnosticBundle (server StepOutcome). */
 export interface StepOutcome {
-  step_id: string
-  state: string
-  error_kind?: string | null
+  step_id: string;
+  state: string;
+  error_kind?: string | null;
 }
 
 /** Provider/agent/engine metadata for a bundle (server BundleEnvironment). */
 export interface BundleEnvironment {
-  providers: string[]
-  agent_profiles: string[]
-  engines: string[]
+  providers: string[];
+  agent_profiles: string[];
+  engines: string[];
 }
 
 /** A terminal-log offset-range reference in a bundle (server TerminalReference). */
 export interface TerminalReference {
-  terminal_id: string
-  offset_start?: number | null
-  offset_len?: number | null
+  terminal_id: string;
+  offset_start?: number | null;
+  offset_len?: number | null;
 }
 
 /** Terminal + artifact references for a bundle (server BundleReferences). */
 export interface BundleReferences {
-  terminals: TerminalReference[]
-  artifacts: string[]
+  terminals: TerminalReference[];
+  artifacts: string[];
 }
 
 /** A retention-safe, size-limited output excerpt (server BundleExcerpt). */
 export interface BundleExcerpt {
-  step_id: string
-  excerpt: string
+  step_id: string;
+  excerpt: string;
 }
 
 /** A run's troubleshooting export bundle (server DiagnosticBundle, FR-9). */
 export interface DiagnosticBundle {
-  spec_id: string
-  spec_content_hash: string
-  inputs: string
-  events: WorkflowEvent[]
-  gaps: GapMarker[]
-  step_outcomes: StepOutcome[]
-  environment: BundleEnvironment
-  references: BundleReferences
-  excerpts: BundleExcerpt[]
-  capture_enabled: boolean
+  spec_id: string;
+  spec_content_hash: string;
+  inputs: string;
+  events: WorkflowEvent[];
+  gaps: GapMarker[];
+  step_outcomes: StepOutcome[];
+  environment: BundleEnvironment;
+  references: BundleReferences;
+  excerpts: BundleExcerpt[];
+  capture_enabled: boolean;
 }
 
 /**
@@ -507,285 +611,613 @@ export interface DiagnosticBundle {
  * these; U8 never reimplements the list endpoint.
  */
 export interface RunSummaryRow {
-  run_id: string
-  workflow_name: string
-  state: string
-  tier: string
-  started_at: string
-  finished_at: string | null
-  current_step_id: string | null
+  run_id: string;
+  workflow_name: string;
+  state: string;
+  tier: string;
+  started_at: string;
+  finished_at: string | null;
+  current_step_id: string | null;
 }
 
 // ── Agent Plugins (Agent Plugins 1.0.0) ──────────────────────────────────────
 // Distinct from CAO's event-plugin system, which has no web surface.
 
 export interface PluginFinding {
-  severity: 'fatal' | 'skipped' | 'warning' | 'info'
-  code: string
+  severity: "fatal" | "skipped" | "warning" | "info";
+  code: string;
   /** The specification clause this finding enforces, e.g. "§5.2". */
-  spec_ref: string
-  message: string
-  path: string | null
+  spec_ref: string;
+  message: string;
+  path: string | null;
 }
 
 export interface PluginDiscoveredSkill {
-  name: string
-  directory: string
-  description: string
+  name: string;
+  directory: string;
+  description: string;
 }
 
 /** A live session whose profile references a skill a removal would withdraw. */
 export interface PluginAffectedSession {
-  terminal_id: string
-  session_name: string
-  profile_name: string
-  skill_names: string[]
+  terminal_id: string;
+  session_name: string;
+  profile_name: string;
+  skill_names: string[];
 }
 
 export interface InstalledPlugin {
-  name: string
-  version: string | null
-  source: { kind: string; location: string; ref: string | null; subdir: string | null }
-  resolved_ref: string | null
-  installed_at: string
-  schema_id: string
-  skill_names: string[]
-  projected_skill_names: string[]
-  findings: PluginFinding[]
-  affected_sessions: PluginAffectedSession[]
+  name: string;
+  version: string | null;
+  source: {
+    kind: string;
+    location: string;
+    ref: string | null;
+    subdir: string | null;
+  };
+  resolved_ref: string | null;
+  installed_at: string;
+  schema_id: string;
+  skill_names: string[];
+  projected_skill_names: string[];
+  findings: PluginFinding[];
+  affected_sessions: PluginAffectedSession[];
 }
 
 export interface PluginListResponse {
-  plugins: InstalledPlugin[]
-  untrusted_content_warning: string
+  plugins: InstalledPlugin[];
+  untrusted_content_warning: string;
 }
 
 export interface PluginValidationReport {
-  root: string
-  loadable: boolean
-  name: string | null
-  version: string | null
-  description: string | null
-  schema_id: string | null
-  skills: PluginDiscoveredSkill[]
-  mcp_present: boolean
-  findings: PluginFinding[]
+  root: string;
+  loadable: boolean;
+  name: string | null;
+  version: string | null;
+  description: string | null;
+  schema_id: string | null;
+  skills: PluginDiscoveredSkill[];
+  mcp_present: boolean;
+  findings: PluginFinding[];
 }
 
 export interface PluginInstallOutcome {
-  installed: boolean
-  dry_run: boolean
-  report: PluginValidationReport
-  record: InstalledPlugin | null
-  projection_findings: PluginFinding[]
+  installed: boolean;
+  dry_run: boolean;
+  report: PluginValidationReport;
+  record: InstalledPlugin | null;
+  projection_findings: PluginFinding[];
 }
 
 export interface PluginUninstallOutcome {
-  name: string
-  removed: boolean
-  purged_data: boolean
-  affected_sessions: PluginAffectedSession[]
-  projection_findings: PluginFinding[]
+  name: string;
+  removed: boolean;
+  purged_data: boolean;
+  affected_sessions: PluginAffectedSession[];
+  projection_findings: PluginFinding[];
 }
 
 export interface PluginInstallBody {
-  source: string
-  kind?: 'path' | 'git'
-  ref?: string
-  subdir?: string
-  force?: boolean
+  source: string;
+  kind?: "path" | "git";
+  ref?: string;
+  subdir?: string;
+  force?: boolean;
 }
 
+export interface WorkflowPlanPreparation {
+  name_or_path: string;
+  inputs: Record<string, unknown>;
+  target_mappings: Record<string, unknown>;
+  binding_selections: Record<string, unknown>;
+  scope_source?: string;
+}
+export interface PreparedWorkflowPlan {
+  prepared_id: string;
+  plan_id: string;
+  source_hash: string;
+  expires_at: number;
+  public_plan: unknown;
+  scope_summary?: unknown;
+}
+
+export interface BeadsAssignment {
+  binding_id: string;
+  workspace_id: string;
+  task_id: string;
+  prepared_id: string;
+  plan_id: string;
+  run_id: string | null;
+  coordinator_id: string | null;
+  state: string;
+  revision: number;
+  work_verified_completed: boolean;
+  coordinator?: Record<string, unknown>;
+}
+export interface BeadsCapabilities {
+  enabled: boolean;
+  available: boolean;
+  error_kind?: string | null;
+  workspaces: { id: string; revision: string }[];
+}
+export interface Bead {
+  id: string;
+  title: string;
+  description?: string;
+  priority: number;
+  external_status: string;
+  material_hash: string;
+  work_verified_completed: boolean;
+  work_assignment?: {
+    binding_id: string;
+    run_id: string | null;
+    state: string;
+  } | null;
+  work_attempts?: {
+    id: string;
+    terminal_id: string | null;
+    state: string;
+    generation: number;
+    step_id: string;
+    run_generation: number;
+  }[];
+  work_attempts_truncated?: boolean;
+}
+export interface BeadsReceipt {
+  operation_id: string;
+  state: string;
+  error_kind?: string;
+  result?: Bead;
+}
 export const api = {
+  workflowSeeds: (name: string) =>
+    fetchJSON<Record<string, unknown>>(
+      `/workflows/${encodeURIComponent(name)}/provisions`,
+    ),
+  prepareBeadAssignment: (
+    workspace: string,
+    task: string,
+    body: Record<string, unknown>,
+  ) =>
+    fetchJSON<BeadsAssignment>(
+      `/beads/workspaces/${encodeURIComponent(workspace)}/tasks/${encodeURIComponent(task)}/plans:prepare`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+  inspectBeadAssignment: (id: string) =>
+    fetchJSON<BeadsAssignment>(`/beads/assignments/${encodeURIComponent(id)}`),
+  startBeadAssignment: (id: string, plan: string, run: string) =>
+    fetchJSON<BeadsAssignment>(
+      `/beads/assignments/${encodeURIComponent(id)}/start`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_plan_id: plan, run_id: run }),
+      },
+    ),
+  unassignBead: (id: string) =>
+    fetchJSON<BeadsAssignment>(
+      `/beads/assignments/${encodeURIComponent(id)}/unassign`,
+      { method: "POST" },
+    ),
+  closeVerifiedBead: (id: string, body: Record<string, unknown>) =>
+    fetchJSON<BeadsReceipt>(
+      `/beads/assignments/${encodeURIComponent(id)}/close-task`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+  beadsCapabilities: () => fetchJSON<BeadsCapabilities>("/beads/capabilities"),
+  listBeads: (workspace: string) =>
+    fetchJSON<{ tasks: Bead[] }>(
+      `/beads/workspaces/${encodeURIComponent(workspace)}/tasks`,
+    ),
+  mutateBead: (workspace: string, body: Record<string, unknown>) =>
+    fetchJSON<BeadsReceipt>(
+      `/beads/workspaces/${encodeURIComponent(workspace)}/mutations`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+  inspectBeadsOperation: (id: string, reconcile = false) =>
+    fetchJSON<BeadsReceipt>(
+      `/beads/operations/${encodeURIComponent(id)}${reconcile ? "/reconcile" : ""}`,
+      { method: reconcile ? "POST" : "GET" },
+    ),
+  beadsComments: (workspace: string, id: string) =>
+    fetchJSON<{ comments: Record<string, unknown>[] }>(
+      `/beads/workspaces/${encodeURIComponent(workspace)}/tasks/${encodeURIComponent(id)}/comments`,
+    ),
+  beadsEpic: (workspace: string, id: string) =>
+    fetchJSON<Record<string, unknown>>(
+      `/beads/workspaces/${encodeURIComponent(workspace)}/epics/${encodeURIComponent(id)}`,
+    ),
+  decomposeBeads: (text: string) =>
+    fetchJSON<{ tasks: Record<string, unknown>[]; draft_hash: string }>(
+      "/beads/decompose-preview",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      },
+    ),
+  bulkCreateBeads: (workspace: string, body: Record<string, unknown>) =>
+    fetchJSON<Record<string, unknown>>(
+      `/beads/workspaces/${encodeURIComponent(workspace)}/bulk-create`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+  getFleet: (signal?: AbortSignal) =>
+    fetchJSON<{ machines: FleetNode[]; source?: Record<string, unknown> }>(
+      "/api/fleet",
+      { direct: true, timeoutMs: 20000, signal },
+    ),
   // Agent Profiles & Providers
-  listProfiles: () => fetchJSON<AgentProfileInfo[]>('/agents/profiles'),
+  listProfiles: () => fetchJSON<AgentProfileInfo[]>("/agents/profiles"),
   // Server-ranked search. Result order is the relevance ranking — render as-is.
   searchProfiles: (q: string, limit?: number) =>
-    fetchJSON<ProfileSearchResult[]>(`/agents/profiles/search?q=${encodeURIComponent(q)}${limit ? `&limit=${limit}` : ''}`),
-  getProfile: (name: string) => fetchJSON<AgentProfileDetail>(`/agents/profiles/${encodeURIComponent(name)}`),
+    fetchJSON<ProfileSearchResult[]>(
+      `/agents/profiles/search?q=${encodeURIComponent(q)}${limit ? `&limit=${limit}` : ""}`,
+    ),
+  getProfile: (name: string) =>
+    fetchJSON<AgentProfileDetail>(
+      `/agents/profiles/${encodeURIComponent(name)}`,
+    ),
   // Profile authoring (issue #510).
-  getProfileSchema: () => fetchJSON<Record<string, any>>('/agents/profiles/schema'),
-  listProfileTemplates: () => fetchJSON<TemplateSummary[]>('/agents/profiles/templates'),
+  getProfileSchema: () =>
+    fetchJSON<Record<string, any>>("/agents/profiles/schema"),
+  listProfileTemplates: () =>
+    fetchJSON<TemplateSummary[]>("/agents/profiles/templates"),
   // The template identifier is `category/name` and travels as two path
   // segments — the backend route is declared as
   // `/templates/{category}/{name}/schema` — so the slash must NOT be encoded.
   getTemplateSchema: (template: string) =>
-    fetchJSON<Record<string, any>>(`/agents/profiles/templates/${template.split('/').map(encodeURIComponent).join('/')}/schema`),
+    fetchJSON<Record<string, any>>(
+      `/agents/profiles/templates/${template.split("/").map(encodeURIComponent).join("/")}/schema`,
+    ),
   previewTemplate: (template: string, config: Record<string, unknown>) =>
-    fetchJSON<TemplatePreview>('/agents/profiles/templates/preview', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    fetchJSON<TemplatePreview>("/agents/profiles/templates/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ template, config }),
       // Authoring calls run the full validator server-side; the 10s
       // default turns a slow round-trip into a phantom 'Validation failed'.
-      timeoutMs: 30000
+      timeoutMs: 30000,
     }),
   validateProfile: (content: string) =>
-    fetchJSON<ProfileValidationResponse>('/agents/profiles/validate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    fetchJSON<ProfileValidationResponse>("/agents/profiles/validate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content }),
       // Authoring calls run the full validator server-side; the 10s
       // default turns a slow round-trip into a phantom 'Validation failed'.
-      timeoutMs: 30000
+      timeoutMs: 30000,
     }),
   createProfile: (name: string, content: string) =>
-    fetchJSON<ProfileWriteResponse>('/agents/profiles', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    fetchJSON<ProfileWriteResponse>("/agents/profiles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, content }),
       // Authoring calls run the full validator server-side; the 10s
       // default turns a slow round-trip into a phantom 'Validation failed'.
-      timeoutMs: 30000
+      timeoutMs: 30000,
     }),
   // The authoring read: returns the document exactly as stored, with env-var
   // placeholders intact. An editor MUST read from here — the parsed
   // GET /agents/profiles/{name} is resolved, and round-tripping it through a
   // write would persist resolved secrets into a plaintext profile.
   getProfileSource: (name: string) =>
-    fetchJSON<{ name: string; content: string }>(`/agents/profiles/${encodeURIComponent(name)}/source`),
+    fetchJSON<{ name: string; content: string }>(
+      `/agents/profiles/${encodeURIComponent(name)}/source`,
+    ),
   replaceProfile: (name: string, content: string) =>
-    fetchJSON<ProfileWriteResponse>(`/agents/profiles/${encodeURIComponent(name)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
-      // Authoring calls run the full validator server-side; the 10s
-      // default turns a slow round-trip into a phantom 'Validation failed'.
-      timeoutMs: 30000
-    }),
+    fetchJSON<ProfileWriteResponse>(
+      `/agents/profiles/${encodeURIComponent(name)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+        // Authoring calls run the full validator server-side; the 10s
+        // default turns a slow round-trip into a phantom 'Validation failed'.
+        timeoutMs: 30000,
+      },
+    ),
   deleteProfile: (name: string) =>
-    fetchJSON<void>(`/agents/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-  listProviders: () => fetchJSON<ProviderInfo[]>('/agents/providers'),
+    fetchJSON<void>(`/agents/profiles/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }),
+  listProviders: () => fetchJSON<ProviderInfo[]>("/agents/providers"),
 
   // Settings
-  getAgentDirs: () => fetchJSON<AgentDirsSettings>('/settings/agent-dirs'),
-  setAgentDirs: (data: { agent_dirs?: Record<string, string>; extra_dirs?: string[]; disabled_dirs?: string[] }) =>
-    fetchJSON<AgentDirsSettings>('/settings/agent-dirs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  getAgentDirs: () => fetchJSON<AgentDirsSettings>("/settings/agent-dirs"),
+  setAgentDirs: (data: {
+    agent_dirs?: Record<string, string>;
+    extra_dirs?: string[];
+    disabled_dirs?: string[];
+  }) =>
+    fetchJSON<AgentDirsSettings>("/settings/agent-dirs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     }),
 
   // Sessions
-  listSessions: () => fetchJSON<Session[]>('/sessions'),
+  listSessions: () => fetchJSON<Session[]>("/sessions"),
   getSession: (name: string) => fetchJSON<SessionDetail>(`/sessions/${name}`),
-  createSession: (provider: string, agentProfile: string, sessionName?: string, workingDirectory?: string) =>
-    fetchJSON<Terminal>(`/sessions?provider=${encodeURIComponent(provider)}&agent_profile=${encodeURIComponent(agentProfile)}${sessionName ? `&session_name=${encodeURIComponent(sessionName)}` : ''}${workingDirectory ? `&working_directory=${encodeURIComponent(workingDirectory)}` : ''}`, { method: 'POST', timeoutMs: 90000 }),
+  createSession: (
+    provider: string,
+    agentProfile: string,
+    sessionName?: string,
+    workingDirectory?: string,
+  ) =>
+    fetchJSON<Terminal>(
+      `/sessions?provider=${encodeURIComponent(provider)}&agent_profile=${encodeURIComponent(agentProfile)}${sessionName ? `&session_name=${encodeURIComponent(sessionName)}` : ""}${workingDirectory ? `&working_directory=${encodeURIComponent(workingDirectory)}` : ""}`,
+      { method: "POST", timeoutMs: 90000 },
+    ),
   deleteSession: async (name: string) => {
-    const result = await fetchJSON<{ success: boolean; deleted: string[]; errors: any[] }>(`/sessions/${name}`, { method: 'DELETE' })
+    const result = await fetchJSON<{
+      success: boolean;
+      deleted: string[];
+      errors: any[];
+    }>(`/sessions/${name}`, { method: "DELETE" });
     if (!result?.success || (result.errors && result.errors.length > 0)) {
-      const err: ApiError = new Error(result?.errors?.[0]?.error || 'Session cleanup is pending; retry delete')
-      err.status = 409
-      err.detail = err.message
-      throw err
+      const err: ApiError = new Error(
+        result?.errors?.[0]?.error ||
+          "Session cleanup is pending; retry delete",
+      );
+      err.status = 409;
+      err.detail = err.message;
+      throw err;
     }
-    return result
+    return result;
   },
 
   // Terminals
+  getTerminalTurn: (id: string) =>
+    fetchJSON<TerminalTurn>(`/terminals/${encodeURIComponent(id)}/turn`),
+  verifyTerminalTurn: (id: string, generation: string) =>
+    fetchJSON<TerminalTurn>(
+      `/terminals/${encodeURIComponent(id)}/turn/verify?generation=${encodeURIComponent(generation)}`,
+      { method: "POST" },
+    ),
+  cancelTerminalTurn: (id: string, generation: string) =>
+    fetchJSON<TerminalTurn>(
+      `/terminals/${encodeURIComponent(id)}/turn/cancel?generation=${encodeURIComponent(generation)}`,
+      { method: "POST" },
+    ),
   getTerminalStatus: (id: string) =>
-    fetchJSON<Terminal>(`/terminals/${id}`).then(t => t.status),
+    fetchJSON<Terminal>(`/terminals/${id}`).then((t) =>
+      !["waiting_user_answer", "waiting_quota"].includes(t.status ?? "") &&
+      t.turn &&
+      ["reconcile", "cancelling", "cancelled"].includes(t.turn.state)
+        ? t.turn.state
+        : t.status,
+    ),
   getWorkItem: (workItemId: string) =>
     fetchJSON<WorkView>(`/work-items/${encodeURIComponent(workItemId)}`),
-  getTerminalOutput: (id: string, mode: 'full' | 'last' = 'full') =>
-    fetchJSON<{ output: string; mode: string }>(`/terminals/${id}/output?mode=${mode}`),
-  sendInput: (id: string, message: string) =>
-    fetchJSON<{ success: boolean }>(`/terminals/${id}/input?message=${encodeURIComponent(message)}`, { method: 'POST' }),
-  exitTerminal: (id: string) =>
-    fetchJSON<{ success: boolean }>(`/terminals/${id}/exit`, { method: 'POST' }),
-  deleteTerminal: async (id: string) => {
-    const result = await fetchJSON<{ success: boolean }>(`/terminals/${id}`, { method: 'DELETE' })
-    if (!result?.success) {
-      const err: ApiError = new Error('Terminal cleanup is pending; retry delete')
-      err.status = 409
-      err.detail = err.message
-      throw err
+  getTerminalOutput: async (id: string, mode: "full" | "last" = "full") => {
+    const data = await fetchJSON<{
+      output: string;
+      mode: string;
+      detail?: TerminalTurn;
+    }>(`/terminals/${id}/output?mode=${mode}`);
+    if (mode === "last" && data.detail) {
+      const error: ApiError = new Error(
+        data.detail.reason ?? "Turn result pending",
+      );
+      error.status = 202;
+      error.detail = data.detail.reason ?? undefined;
+      error.detailMeta = { ...data.detail };
+      throw error;
     }
-    return result
+    return data;
+  },
+  sendInput: (id: string, message: string) =>
+    fetchJSON<{ success: boolean }>(
+      `/terminals/${id}/input?message=${encodeURIComponent(message)}`,
+      { method: "POST" },
+    ),
+  exitTerminal: (id: string) =>
+    fetchJSON<{ success: boolean }>(`/terminals/${id}/exit`, {
+      method: "POST",
+    }),
+  deleteTerminal: async (id: string) => {
+    const result = await fetchJSON<{ success: boolean }>(`/terminals/${id}`, {
+      method: "DELETE",
+    });
+    if (!result?.success) {
+      const err: ApiError = new Error(
+        "Terminal cleanup is pending; retry delete",
+      );
+      err.status = 409;
+      err.detail = err.message;
+      throw err;
+    }
+    return result;
   },
   getWorkingDirectory: (id: string) =>
-    fetchJSON<{ working_directory: string | null }>(`/terminals/${id}/working-directory`),
-  addTerminalToSession: (sessionName: string, provider: string, agentProfile: string, workingDirectory?: string) =>
-    fetchJSON<Terminal>(`/sessions/${sessionName}/terminals?provider=${encodeURIComponent(provider)}&agent_profile=${encodeURIComponent(agentProfile)}${workingDirectory ? `&working_directory=${encodeURIComponent(workingDirectory)}` : ''}`, { method: 'POST', timeoutMs: 90000 }),
+    fetchJSON<{ working_directory: string | null }>(
+      `/terminals/${id}/working-directory`,
+    ),
+  addTerminalToSession: (
+    sessionName: string,
+    provider: string,
+    agentProfile: string,
+    workingDirectory?: string,
+  ) =>
+    fetchJSON<Terminal>(
+      `/sessions/${sessionName}/terminals?provider=${encodeURIComponent(provider)}&agent_profile=${encodeURIComponent(agentProfile)}${workingDirectory ? `&working_directory=${encodeURIComponent(workingDirectory)}` : ""}`,
+      { method: "POST", timeoutMs: 90000 },
+    ),
 
   // Inbox
   getInboxMessages: (terminalId: string, limit?: number, status?: string) =>
-    fetchJSON<InboxMessage[]>(`/terminals/${terminalId}/inbox/messages?limit=${limit || 50}${status ? `&status=${status}` : ''}`),
+    fetchJSON<InboxMessage[]>(
+      `/terminals/${terminalId}/inbox/messages?limit=${limit || 50}${status ? `&status=${status}` : ""}`,
+    ),
   sendInboxMessage: (receiverId: string, senderId: string, message: string) =>
-    fetchJSON<{ success: boolean }>(`/terminals/${receiverId}/inbox/messages?sender_id=${senderId}&message=${encodeURIComponent(message)}`, { method: 'POST' }),
+    fetchJSON<{ success: boolean }>(
+      `/terminals/${receiverId}/inbox/messages?sender_id=${senderId}&message=${encodeURIComponent(message)}`,
+      { method: "POST" },
+    ),
 
   // Flows
-  listFlows: () => fetchJSON<Flow[]>('/flows'),
-  createFlow: (data: { name: string; schedule: string; agent_profile: string; provider?: string; prompt_template: string }) =>
-    fetchJSON<Flow>('/flows', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+  listFlows: () => fetchJSON<Flow[]>("/flows"),
+  createFlow: (data: {
+    name: string;
+    schedule: string;
+    agent_profile: string;
+    provider?: string;
+    prompt_template: string;
+  }) =>
+    fetchJSON<Flow>("/flows", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
       timeoutMs: 30000,
     }),
-  deleteFlow: (name: string) => fetchJSON<{ success: boolean }>(`/flows/${name}`, { method: 'DELETE' }),
-  enableFlow: (name: string) => fetchJSON<{ success: boolean }>(`/flows/${name}/enable`, { method: 'POST' }),
-  disableFlow: (name: string) => fetchJSON<{ success: boolean }>(`/flows/${name}/disable`, { method: 'POST' }),
-  runFlow: (name: string) => fetchJSON<{ executed: boolean }>(`/flows/${name}/run`, { method: 'POST', timeoutMs: 90000 }),
+  deleteFlow: (name: string) =>
+    fetchJSON<{ success: boolean }>(`/flows/${name}`, { method: "DELETE" }),
+  enableFlow: (name: string) =>
+    fetchJSON<{ success: boolean }>(`/flows/${name}/enable`, {
+      method: "POST",
+    }),
+  disableFlow: (name: string) =>
+    fetchJSON<{ success: boolean }>(`/flows/${name}/disable`, {
+      method: "POST",
+    }),
+  runFlow: (name: string) =>
+    fetchJSON<{ executed: boolean }>(`/flows/${name}/run`, {
+      method: "POST",
+      timeoutMs: 90000,
+    }),
 
   // Memory
-  getMemoryStatus: () => fetchJSON<MemoryStatus>('/settings/memory'),
-  listMemories: (filters?: { scope?: string; type?: string; scopeId?: string; limit?: number }) => {
+  getMemoryStatus: () => fetchJSON<MemoryStatus>("/settings/memory"),
+  listMemories: (filters?: {
+    scope?: string;
+    type?: string;
+    scopeId?: string;
+    limit?: number;
+  }) => {
     const params = [
-      filters?.scope ? `scope=${encodeURIComponent(filters.scope)}` : '',
-      filters?.type ? `type=${encodeURIComponent(filters.type)}` : '',
-      filters?.scopeId ? `scope_id=${encodeURIComponent(filters.scopeId)}` : '',
-      filters?.limit ? `limit=${filters.limit}` : '',
-    ].filter(Boolean).join('&')
-    return fetchJSON<MemorySummary[]>(`/memory${params ? `?${params}` : ''}`)
+      filters?.scope ? `scope=${encodeURIComponent(filters.scope)}` : "",
+      filters?.type ? `type=${encodeURIComponent(filters.type)}` : "",
+      filters?.scopeId ? `scope_id=${encodeURIComponent(filters.scopeId)}` : "",
+      filters?.limit ? `limit=${filters.limit}` : "",
+    ]
+      .filter(Boolean)
+      .join("&");
+    return fetchJSON<MemorySummary[]>(`/memory${params ? `?${params}` : ""}`);
   },
   getMemory: (key: string, scope?: string, scopeId?: string) => {
     const params = [
-      scope ? `scope=${encodeURIComponent(scope)}` : '',
-      scopeId ? `scope_id=${encodeURIComponent(scopeId)}` : '',
-    ].filter(Boolean).join('&')
-    return fetchJSON<MemoryDetail>(`/memory/${encodeURIComponent(key)}${params ? `?${params}` : ''}`)
+      scope ? `scope=${encodeURIComponent(scope)}` : "",
+      scopeId ? `scope_id=${encodeURIComponent(scopeId)}` : "",
+    ]
+      .filter(Boolean)
+      .join("&");
+    return fetchJSON<MemoryDetail>(
+      `/memory/${encodeURIComponent(key)}${params ? `?${params}` : ""}`,
+    );
   },
   deleteMemory: (key: string, scope: string, scopeId?: string) =>
-    fetchJSON<{ success: boolean }>(`/memory/${encodeURIComponent(key)}?scope=${encodeURIComponent(scope)}${scopeId ? `&scope_id=${encodeURIComponent(scopeId)}` : ''}`, { method: 'DELETE' }),
+    fetchJSON<{ success: boolean }>(
+      `/memory/${encodeURIComponent(key)}?scope=${encodeURIComponent(scope)}${scopeId ? `&scope_id=${encodeURIComponent(scopeId)}` : ""}`,
+      { method: "DELETE" },
+    ),
   clearMemories: (scope: string, scopeId?: string) =>
-    fetchJSON<{ success: boolean; deleted_count: number }>(`/memory?scope=${encodeURIComponent(scope)}${scopeId ? `&scope_id=${encodeURIComponent(scopeId)}` : ''}`, { method: 'DELETE' }),
+    fetchJSON<{ success: boolean; deleted_count: number }>(
+      `/memory?scope=${encodeURIComponent(scope)}${scopeId ? `&scope_id=${encodeURIComponent(scopeId)}` : ""}`,
+      { method: "DELETE" },
+    ),
 
   // Graph (Issue #348). The projection runs wiki_lint (ripgrep detectors)
   // server-side, so both routes get a wide timeout — a populated scope can take
   // ~30s typical, up to ~148s under load. Errors surface as ApiError (status +
   // server detail) for the caller.
-  getGraph: (provider = 'memory', scope?: string, scopeId?: string) => {
+  getGraph: (provider = "memory", scope?: string, scopeId?: string) => {
     const params = [
-      scope ? `scope=${encodeURIComponent(scope)}` : '',
-      scopeId ? `scope_id=${encodeURIComponent(scopeId)}` : '',
-    ].filter(Boolean).join('&')
+      scope ? `scope=${encodeURIComponent(scope)}` : "",
+      scopeId ? `scope_id=${encodeURIComponent(scopeId)}` : "",
+    ]
+      .filter(Boolean)
+      .join("&");
     return fetchJSON<GraphView>(
-      `/graph/${encodeURIComponent(provider)}${params ? `?${params}` : ''}`,
+      `/graph/${encodeURIComponent(provider)}${params ? `?${params}` : ""}`,
       { timeoutMs: 120000 },
-    )
+    );
   },
-  exportGraph: (provider = 'memory', body: GraphExportBody, scope?: string, scopeId?: string) => {
+  exportGraph: (
+    provider = "memory",
+    body: GraphExportBody,
+    scope?: string,
+    scopeId?: string,
+  ) => {
     const params = [
-      scope ? `scope=${encodeURIComponent(scope)}` : '',
-      scopeId ? `scope_id=${encodeURIComponent(scopeId)}` : '',
-    ].filter(Boolean).join('&')
+      scope ? `scope=${encodeURIComponent(scope)}` : "",
+      scopeId ? `scope_id=${encodeURIComponent(scopeId)}` : "",
+    ]
+      .filter(Boolean)
+      .join("&");
     return fetchJSON<GraphExportResult>(
-      `/graph/${encodeURIComponent(provider)}/export${params ? `?${params}` : ''}`,
+      `/graph/${encodeURIComponent(provider)}/export${params ? `?${params}` : ""}`,
       {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ options: {}, ...body }),
         timeoutMs: 60000,
       },
-    )
+    );
   },
 
   // ── Workflow run journal (Issue #504 / U8) — read + delete over the
   // already-built durable-journal APIs. All additive; no server code here.
 
   // #505's run list (FINAL RunSummaryRow shape). Consumed, not built.
-  listWorkflowRuns: () => fetchJSON<RunSummaryRow[]>('/workflows/runs'),
+  prepareWorkflowPlan: (request: WorkflowPlanPreparation) =>
+    fetchJSON<PreparedWorkflowPlan>("/workflows/plans:prepare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    }),
+  reviewWorkflowPlan: (preparedId: string) =>
+    fetchJSON<PreparedWorkflowPlan>(
+      `/workflows/plans/${encodeURIComponent(preparedId)}`,
+    ),
+  approveWorkflowPlan: (planId: string) =>
+    fetchJSON<{ plan_id: string; approved: boolean }>(
+      "/workflows/plans/approve",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan_id: planId }),
+      },
+    ),
+  submitPreparedWorkflow: (request: {
+    name_or_path: string;
+    inputs: Record<string, unknown>;
+    prepared_id: string;
+    expected_plan_id: string;
+    run_id: string;
+  }) =>
+    fetchJSON<{ run_id: string; state: string }>("/workflows/runs:submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    }),
+
+  listWorkflowRuns: () => fetchJSON<RunSummaryRow[]>("/workflows/runs"),
 
   // U3 inspect — enriched single-run projection (journal-authoritative).
   inspectWorkflowRun: (runId: string) =>
@@ -794,8 +1226,10 @@ export const api = {
   // U3/U4 batch event page. `afterSeq` is the replay/next-page cursor (events
   // with seq strictly greater); omit to read from the start of the timeline.
   getWorkflowRunEvents: (runId: string, afterSeq?: number) => {
-    const q = afterSeq != null ? `?after_seq=${afterSeq}` : ''
-    return fetchJSON<EventTimelinePage>(`/workflows/runs/${encodeURIComponent(runId)}/events${q}`)
+    const q = afterSeq != null ? `?after_seq=${afterSeq}` : "";
+    return fetchJSON<EventTimelinePage>(
+      `/workflows/runs/${encodeURIComponent(runId)}/events${q}`,
+    );
   },
 
   // U6 compare — aligned-step diff of the path run against `against` (BR-1:
@@ -808,19 +1242,28 @@ export const api = {
   // U6 diagnostics — the run's troubleshooting bundle (redaction + size limits
   // are enforced server-side; this is a plain read).
   getWorkflowRunDiagnostics: (runId: string) =>
-    fetchJSON<DiagnosticBundle>(`/workflows/runs/${encodeURIComponent(runId)}/diagnostics`, {
-      timeoutMs: 30000,
-    }),
+    fetchJSON<DiagnosticBundle>(
+      `/workflows/runs/${encodeURIComponent(runId)}/diagnostics`,
+      {
+        timeoutMs: 30000,
+      },
+    ),
 
   // U7 delete — cascade-delete a run's durable data. 204 No Content on success
   // (fetchJSON returns undefined). Idempotent server-side (unknown id -> 204).
   deleteWorkflowRun: (runId: string) =>
-    fetchJSON<void>(`/workflows/runs/${encodeURIComponent(runId)}`, { method: 'DELETE' }),
+    fetchJSON<void>(`/workflows/runs/${encodeURIComponent(runId)}`, {
+      method: "DELETE",
+    }),
 
   // U5 terminal offset-range read — the bytes produced around a selected event
   // (FR-7.3). Called by SyncedTerminalPane only when an event carries non-null
   // terminal_offset_start/len (the null-offset seam). `length` is capped server-side.
-  getTerminalOutputRange: (terminalId: string, offset: number, length: number) =>
+  getTerminalOutputRange: (
+    terminalId: string,
+    offset: number,
+    length: number,
+  ) =>
     fetchJSON<TerminalOutputRange>(
       `/terminals/${encodeURIComponent(terminalId)}/output/range?offset=${offset}&length=${length}`,
     ),
@@ -837,25 +1280,25 @@ export const api = {
   // carries the same budget because validation resolves — and therefore clones — the
   // source first. If `GIT_TIMEOUT_S` moves, these move with it;
   // `test/agent_plugins/test_web_timeout_drift.py` fails if they ever cross.
-  listPlugins: () => fetchJSON<PluginListResponse>('/plugins'),
+  listPlugins: () => fetchJSON<PluginListResponse>("/plugins"),
   installPlugin: (body: PluginInstallBody) =>
-    fetchJSON<PluginInstallOutcome>('/plugins', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    fetchJSON<PluginInstallOutcome>("/plugins", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
       timeoutMs: 330000,
     }),
   validatePlugin: (body: PluginInstallBody) =>
-    fetchJSON<PluginValidationReport>('/plugins/validate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    fetchJSON<PluginValidationReport>("/plugins/validate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
       timeoutMs: 330000,
     }),
   // No git involved in a removal, so it keeps the narrower budget.
   uninstallPlugin: (name: string, purgeData = false) =>
     fetchJSON<PluginUninstallOutcome>(
-      `/plugins/${encodeURIComponent(name)}${purgeData ? '?purge_data=true' : ''}`,
-      { method: 'DELETE', timeoutMs: 60000 },
+      `/plugins/${encodeURIComponent(name)}${purgeData ? "?purge_data=true" : ""}`,
+      { method: "DELETE", timeoutMs: 60000 },
     ),
-}
+};

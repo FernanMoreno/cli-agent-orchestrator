@@ -11,8 +11,10 @@ in-process transport does not expose)."
 
 THIS module closes exactly that disclosed gap. It composes the finished U1-U9 lifecycle
 over a REAL ``cao-server`` subprocess — a genuine HTTP seam over real localhost sockets —
-using the shipped session-scoped ``cao_server`` fixture (``test/fixtures/cao_server.py``,
-registered as a pytest plugin in ``test/conftest.py``). Every request below crosses a
+using a module-owned ``cao_server`` fixture built with the shipped
+``test/fixtures/cao_server.py::_start_cao_server`` helper. This private server explicitly
+selects legacy script compatibility in its settings before startup; default-required
+approval is preserved for other modules. Every request below crosses a
 process boundary via ``requests`` to ``{cao_server.url}/...``; the assertions that a run
 is durable-before-ack and answerable-detached are therefore proven ACROSS PROCESSES
 (the submitter is THIS test process; the journal + drive live in the subprocess), which
@@ -64,16 +66,46 @@ import os
 import time
 import uuid
 from pathlib import Path
-from test.fixtures.cao_server import CaoServer
+from test.fixtures.cao_server import (
+    CaoServer,
+    _fixture_health_timeout,
+    _pick_free_port,
+    _start_cao_server,
+)
 from test.fixtures.live_workflow import live_workflow_server
 from typing import Optional
 
 import pytest
 import requests
 
-from cli_agent_orchestrator.constants import CAO_HOME_DIR, WORKFLOW_SPEC_DIR
-
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(scope="module")
+def cao_server(tmp_path_factory):
+    """A private legacy-script server; never change the shared/default posture."""
+    home = tmp_path_factory.mktemp("cao_workflow_legacy_home")
+    cao_home = home / ".aws" / "cli-agent-orchestrator"
+    cao_home.mkdir(parents=True)
+    (cao_home / "settings.json").write_text(
+        '{"workflow":{"require_approval":false}}', encoding="utf-8"
+    )
+    server = _start_cao_server(
+        home,
+        _pick_free_port(),
+        deadline=_fixture_health_timeout(),
+        extra_env={
+            "CAO_HOME_DIR": str(cao_home),
+            # The environment setting only enables enforcement. Neutralize any
+            # inherited enable flag; the private JSON boolean selects legacy mode.
+            "CAO_WORKFLOW_REQUIRE_APPROVAL": "",
+        },
+    )
+    try:
+        yield server
+    finally:
+        server.stop()
+
 
 # Poll budget for driving a run to terminal over a real socket. The script sleeps
 # ~0.2s then prints the sentinel; the reaper settles it shortly after. Generous
@@ -104,17 +136,8 @@ _SCRIPT_LONG = "import time\ntime.sleep(120)\n"
 # Real-HTTP helpers -- every call crosses the process boundary over a socket.
 # ---------------------------------------------------------------------------
 def _spec_dir(server: CaoServer) -> Path:
-    """The server subprocess's own ``WORKFLOW_SPEC_DIR`` under its isolated ``$HOME``.
-
-    An explicit ``CAO_HOME_DIR`` is inherited unchanged by the subprocess and
-    already reflected in the shared constant. Otherwise, map the constant's
-    home-relative path under the fixture's redirected ``$HOME``. In either case,
-    a spec written here lands on the SAME disk path the subprocess resolves.
-    """
-    if os.environ.get("CAO_HOME_DIR", "").strip():
-        return WORKFLOW_SPEC_DIR
-    # Fallback only when CAO_HOME_DIR is unset; constant is home-derived at import.
-    return server.home_dir / WORKFLOW_SPEC_DIR.relative_to(CAO_HOME_DIR.parent.parent)
+    """Resolve specs alongside this server's private DB, independent of parent env."""
+    return server.db_path.parent.parent / "workflows"
 
 
 def _write_script_spec(server: CaoServer, source: str, name: str) -> str:

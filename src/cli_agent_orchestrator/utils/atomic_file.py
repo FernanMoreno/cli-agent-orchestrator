@@ -68,11 +68,12 @@ import contextlib
 import hashlib
 import logging
 import os
+import secrets
 import stat
 import tempfile
 import time
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Callable, Iterator, Optional, Tuple
 
 from cli_agent_orchestrator.constants import LOCK_DIR
 
@@ -163,31 +164,49 @@ def _file_lock(lock_path: Path, timeout: float) -> Iterator[None]:
         os.close(lock_fd)
 
 
-def _umask_default_mode() -> int:
-    """Return the umask-respecting default file mode (``0o666 & ~umask``).
-
-    ``os.umask`` can only be *read* by temporarily setting it, so restore it
-    immediately to avoid a permanent process-wide side effect.
-    """
-    current = os.umask(0)
-    os.umask(current)
-    return 0o666 & ~current
-
-
-def _target_mode(target: Path) -> int:
-    """Return the permission bits to give ``target`` after the atomic replace.
+def _existing_target_mode(target: Path) -> Optional[int]:
+    """Return the permission bits of an existing ``target``, or ``None`` if absent.
 
     tempfile.mkstemp creates its temp file at a hard-coded 0600, so without
     fixing this up ``os.replace`` would silently downgrade a user-authored
     0644 file (AGENTS.md, CLAUDE.md, .agent.md) to 0600 on every rewrite,
-    breaking group-shared checkouts and other-uid tooling. Preserve the
-    existing target's mode when it exists; otherwise fall back to the
-    umask-respecting default the old ``write_text`` idiom would have produced.
+    breaking group-shared checkouts and other-uid tooling. An existing
+    target's mode is preserved verbatim. For a NEW file the answer is
+    ``None``: the caller creates the temp file itself with mode 0o666 and
+    lets the kernel apply the process umask, which yields exactly what
+    ``write_text`` would have produced without ever reading, let alone
+    setting, the umask. (Reading it requires ``os.umask(0)`` followed by a
+    restore, and the umask is process-global: any other thread creating a
+    file inside that window got 0666.)
     """
     try:
         return stat.S_IMODE(os.stat(target).st_mode)
     except FileNotFoundError:
-        return _umask_default_mode()
+        return None
+
+
+def _open_unique_temp(target: Path, mode: Optional[int]) -> Tuple[int, Path]:
+    """Create a uniquely named temp file next to ``target`` and return ``(fd, path)``.
+
+    With ``mode`` given (existing target) the file is created private via
+    ``tempfile.mkstemp`` and the caller ``fchmod``s it to ``mode`` before the
+    replace. With ``mode`` None (new target) it is created ``O_EXCL`` with
+    0o666 so the kernel applies the umask, the same default any ordinary
+    ``open(..., "w")`` receives; the name is unique per call, so a retry or an
+    unrelated writer can never collide with, or unlink, this call's temp file.
+    """
+    if mode is not None:
+        fd, temp_name = tempfile.mkstemp(
+            dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
+        )
+        return fd, Path(temp_name)
+    while True:
+        temp_path = target.parent / f".{target.name}.{secrets.token_hex(8)}.tmp"
+        try:
+            fd = os.open(str(temp_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+        except FileExistsError:
+            continue
+        return fd, temp_path
 
 
 def locked_atomic_rewrite(
@@ -282,11 +301,6 @@ def locked_atomic_write(
             a concurrent delete slip between the check and the write, turning an
             intended update back into a create. ``overwrite=False`` with
             ``must_exist=True`` is contradictory and raises ``ValueError``.
-        mode: Optional explicit permission bits for the published file. Applied
-            to the private temp file before ``os.replace``, so sensitive callers
-            never expose a umask-default target between publication and chmod.
-            When omitted, preserves an existing target mode or uses the
-            historical umask-respecting mode for a new file.
 
     Raises:
         FileExistsError: If ``target`` exists and ``overwrite`` is False.
@@ -301,10 +315,6 @@ def locked_atomic_write(
             "overwrite=False with must_exist=True can never succeed: it demands a "
             "target that exists and refuses to replace it."
         )
-    if mode is not None and (
-        not isinstance(mode, int) or isinstance(mode, bool) or mode < 0 or mode > 0o777
-    ):
-        raise ValueError("mode must be an integer permission mask between 0 and 0o777")
 
     target.parent.mkdir(parents=True, exist_ok=True)
     lock_path = _lock_path_for(target)
@@ -319,10 +329,7 @@ def locked_atomic_write(
             raise FileExistsError(f"{target} already exists")
         if must_exist and not target.exists():
             raise FileNotFoundError(f"{target} does not exist")
-        if mode is None:
-            _atomic_publish(target, content, encoding)
-        else:
-            _atomic_publish(target, content, encoding, mode=mode)
+        _atomic_publish(target, content, encoding, mode=mode)
 
 
 def locked_atomic_delete(
@@ -387,30 +394,29 @@ def _atomic_publish(target: Path, content: str, encoding: str, *, mode: int | No
     The caller MUST already hold the target's lock; this helper does no locking
     of its own.
     """
-    # Capture the mode to apply to the published file BEFORE we write —
-    # tempfile.mkstemp creates the temp at 0600, so without this fixup the
-    # os.replace below would downgrade a user-authored 0644 file to 0600.
-    publish_mode = _target_mode(target) if mode is None else mode
+    # Capture the existing target's mode BEFORE we write — tempfile.mkstemp
+    # creates the temp at 0600, so without this fixup the os.replace below
+    # would downgrade a user-authored 0644 file to 0600. A missing target
+    # yields None and the temp file is created with the umask applied by the
+    # kernel instead (see _existing_target_mode for why the umask is never
+    # touched here).
+    mode = _existing_target_mode(target) if mode is None else mode
 
     # Unique temp file in the SAME directory as target (same filesystem,
     # so the final os.replace stays atomic) rather than a fixed
     # ``target + ".tmp"`` name, so an unrelated unlocked writer (or a
     # retry of this same call) can never collide with this call's temp
     # file or unlink it out from under another in-flight write.
-    fd, temp_name = tempfile.mkstemp(
-        dir=str(target.parent),
-        prefix=f".{target.name}.",
-        suffix=".tmp",
-    )
-    temp_path = Path(temp_name)
+    fd, temp_path = _open_unique_temp(target, mode)
     try:
         with os.fdopen(fd, "w", encoding=encoding) as handle:
             handle.write(content)
             handle.flush()
-            # Restore the target's (or umask-default) mode on the temp file
-            # before the replace, so the published file keeps its intended
-            # permissions rather than inheriting mkstemp's 0600.
-            os.fchmod(handle.fileno(), publish_mode)
+            if mode is not None:
+                # Restore the target's mode on the temp file before the
+                # replace, so the published file keeps its permissions
+                # rather than inheriting mkstemp's 0600.
+                os.fchmod(handle.fileno(), mode)
             os.fsync(handle.fileno())
         os.replace(temp_path, target)
     finally:

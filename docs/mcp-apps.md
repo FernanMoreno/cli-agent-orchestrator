@@ -7,7 +7,7 @@ MCP App-capable host** — ChatGPT, Claude / Claude Desktop, VS Code (GitHub
 Copilot), Microsoft 365 Copilot, Goose, Postman, MCPJam, Archestra.AI (see the
 [client support matrix](https://modelcontextprotocol.io/extensions/client-matrix)
 for the authoritative, up-to-date list). It
-ships three single-file HTML views plus a lightweight topology widget, driven by
+ships four single-file HTML views plus a lightweight topology widget, driven by
 a small set of MCP tools and backed by an in-process event ring buffer.
 
 The whole surface is **default-off and behavior-preserving**: with
@@ -40,11 +40,50 @@ uv run cao-server                  # FastAPI + /events on :9889
 uv run cao-mcp-server              # registers the MCP App tools/resources
 ```
 
+For a graph-only external host such as KiroCrew, the minimum environment is:
+
+```bash
+export CAO_MCP_APPS_ENABLED=true
+export CAO_MCP_APPS_ONLY=true
+uv run cao-server
+uv run cao-mcp-server
+```
+
+`CAO_MCP_APPS_ONLY` limits the advertised surface to the six declared app tools
+and hides in-session tools such as `handoff`, `assign`, and `send_message`, which
+require a CAO-managed terminal. This behavior is explicit; it is never inferred
+from a missing `CAO_TERMINAL_ID`, so a misconfigured CAO session does not
+silently lose tools. The flag requires `CAO_MCP_APPS_ENABLED=true`.
+
+The three rendering tools remain model-visible under their bare names. The
+app-only history, subscription and command tools are hidden from `tools/list`;
+the iframe calls `cao___cao_fetch_history`, `cao___subscribe_events` and
+`cao___submit_command` through FastMCP's native app lookup. Their metadata tags
+them with `fastmcp.app = "cao"`. This requires FastMCP 3.2 or newer and retains
+the server's authentication checks and command scope checks. App-surface-only
+mode accepts exactly these three aliases in addition to the declared bare names;
+arbitrary namespaces and unrelated tools remain denied.
+
+`CAO_AGUI_ENABLED` is not required because `CAO_MCP_APPS_ENABLED` also enables
+the shared AG-UI/event surface. Both `/agui/v1/stream` and `/events` are mounted;
+`subscribe_events` directs the MCP App host to `/events`. A host may ignore the
+AG-UI stream, but the route is enabled by the MCP Apps flag.
+
 The surface is packaged as the built-in **`mcp_apps` event plugin** (discovered via the
 `cao.plugins` entry-point group). On MCP server startup the event plugin's
 `on_mcp_server` hook registers the tools, the `ui://cao/*` resources, the topology
 widget, and the capability advertisement — all best-effort, so an older FastMCP
-build or a missing frontend build degrades gracefully (logged, never fatal).
+build degrades without aborting startup. A missing frontend build emits a visible
+startup warning and skips the `ui://cao/*` resources. Specifically, a missing
+`apps_static/` directory means no `ui://` resources are listed and emits the
+missing-directory warning, while a failed or partial build that leaves the
+directory present keeps all four resources listed, emits the artifact-presence
+warning, and returns the `"view not built"` placeholder for each missing artifact.
+A nonempty but truncated artifact still counts as present, emits no startup
+warning, and may serve a broken view. A nonempty but unreadable artifact —
+non-UTF-8 bytes or denied permissions — also counts as present at startup, but is
+diagnosed at request time with its cause and serves the `"view not built"`
+placeholder.
 
 ## Surfaces
 
@@ -53,6 +92,7 @@ build or a missing frontend build degrades gracefully (logged, never fatal).
 | Dashboard | `ui://cao/dashboard` | Sessions, terminals, provider status, fleet overview; the mutation entry point. |
 | Agent detail | `ui://cao/agent` | One terminal: status, recent output tail, inbox depth, sub-agents. |
 | Event stream | `ui://cao/event-stream` | Compact, app-only governance ticker of normalized fleet events. |
+| Graph | `ui://cao/graph` | Polled Sigma.js view of provider graph nodes and edges, highlighting hubs, orphans, and contradictions. |
 | Topology widget | `cao://widget/topology` | Vanilla-JS live event view; also served at `/widgets/topology/` as a build-free fallback for hosts/older clients that don't render the full React views. |
 
 ## MCP tools (`mcp_server/app_tools.py`)
@@ -79,7 +119,7 @@ elevated `permissions`** (camera/microphone/geolocation/clipboard) by design.
 ## Architecture & data flow
 
 ```
-lifecycle events ─▶ event_log_publisher (observer plugin)
+lifecycle events ─▶ event_log_publisher (obevent plugin)
                       │  normalize to 6 primitives
                       ▼
                  event_log_service (500-event / 24h ring buffer)
@@ -148,12 +188,39 @@ pull-model equivalent.
   surface (including `submit_command` mutations) inherits CAO's unauthenticated,
   localhost-only trust model — keep it on a trusted loopback host and configure an
   IdP before exposing it more widely; the server logs a startup warning in this state.
+- **App-only mutation risk.** In app-surface-only mode with auth disabled,
+  `get_scopes_for_local_token()` returns the full scope set. The
+  `submit_command` pre-check also permits an empty scope set because it only
+  rejects a missing required scope when the set is non-empty. `submit_command`
+  is reachable through native app addressing; without configured auth it
+  permits fleet mutation under the localhost trust model. Startup
+  logs the existing warning beginning **"CAO_MCP_APPS_ENABLED is set but no IdP
+  is configured"**, which names the affected mutation kinds and the IdP
+  remediation. App-surface-only mode requires MCP Apps enablement, so the same
+  warning always covers this posture; do not expose it beyond trusted loopback.
+- **External app credentials stay server-side.** The MCP server process holds the
+  credential used for authenticated HTTP calls. It must never appear in a
+  `ui://` payload, tool arguments, or tool result text. A `ui://` resource is
+  server-supplied HTML rendered in a null-origin sandboxed iframe with no
+  storage, and the host gateway spools that payload to a file on disk; embedding
+  a token therefore exposes it in both the spool file and frame source. Tool
+  results are also persisted in the conversation transcript.
+- **Use the correct authentication transport.** `/agui/v1/stream` accepts
+  `?access_token=<JWT>` only because native `EventSource` cannot set request
+  headers. The graph route is ordinary HTTP and must receive the token in an
+  `Authorization` header; URL tokens are substantially more likely to enter
+  access logs and other telemetry.
+- **Fail visibly.** Insufficient graph scope must return a distinguishable error,
+  not a blank graph. For initial bring-up, the documented default is auth
+  disabled on localhost; configure an IdP and server-held credential before
+  exposing the service beyond trusted loopback.
 
 ## Configuration
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `CAO_MCP_APPS_ENABLED` | `false` | Master switch for the entire surface. |
+| `CAO_MCP_APPS_ONLY` | `false` | Expose only the six MCP Apps tools; requires `CAO_MCP_APPS_ENABLED=true`. |
 | `CAO_MCP_APPS_STATIC_DIR` | — | Override the built `apps_static/` location. |
 | `AUTH0_DOMAIN` / `CAO_AUTH_JWKS_URI` | — | Enable the auth layer (IdP). |
 | `CAO_AUTH_AUDIENCE`, `CAO_AUTH_ISSUER` | — | Token audience / issuer for validation + PRM. |
@@ -176,7 +243,7 @@ auth disabled (the default) no header is attached and behavior is unchanged.
 
 ## Building the frontend
 
-The three views are single-file HTML built from `cao_mcp_apps/`:
+The four views are single-file HTML built from `cao_mcp_apps/`:
 
 ```bash
 cd cao_mcp_apps && npm ci && npm run build:all   # emits src/.../ext_apps/apps_static/*.html
@@ -184,8 +251,9 @@ cd cao_mcp_apps && npm ci && npm run build:all   # emits src/.../ext_apps/apps_s
 
 The built bundles (and the committed `ext_apps/static/` topology widget) ship in
 the wheel via the `[tool.hatch.build].artifacts` force-include. If the bundles are
-absent (dev tree without a build), resource registration degrades gracefully and
-the topology widget still works (it needs no build step).
+absent (dev tree without a build), resource registration emits a warning and
+skips the four `ui://cao/*` resources without aborting startup; the topology
+widget still works because it needs no build step.
 
 ## Key decisions & deferred hardening
 
@@ -199,7 +267,7 @@ recorded here because they shape how the MCP Apps surface should evolve.
   tools/resources/widget, the `event_log_publisher` observer and the `/events`
   + `/events/history` HTTP endpoints are *also* gated, so "default-off" means
   *zero retention and zero exposure* of fleet metadata, not just "no UI". Any new
-  surface (endpoint, event-plugin hook, background task) MUST honor this flag.
+  surface (endpoint, event plugin hook, background task) MUST honor this flag.
 - **Auth, when enabled, verifies issuer and audience** (not just signature/expiry),
   with audience defaulting to the PRM resource id. New protected resources should
   reuse `security/auth.py` (`get_current_scopes` / `require_any_scope`) rather than

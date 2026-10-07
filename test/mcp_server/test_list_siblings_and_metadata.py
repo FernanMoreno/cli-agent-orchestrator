@@ -46,6 +46,7 @@ class TestListSiblingsImpl:
         mock_get.assert_called_once_with(
             "http://127.0.0.1:9889/terminals/caller-abc/siblings",
             params={},
+            headers={},
             timeout=_mcp_timeout(),
         )
 
@@ -63,6 +64,7 @@ class TestListSiblingsImpl:
         mock_get.assert_called_once_with(
             "http://127.0.0.1:9889/terminals/caller-abc/siblings",
             params={"depth": 2},
+            headers={},
             timeout=_mcp_timeout(),
         )
 
@@ -83,6 +85,7 @@ class TestListSiblingsImpl:
         mock_get.assert_called_once_with(
             "http://127.0.0.1:9889/terminals/caller-abc/siblings",
             params={"cross_session": "true"},
+            headers={},
             timeout=_mcp_timeout(),
         )
 
@@ -100,6 +103,7 @@ class TestListSiblingsImpl:
         mock_get.assert_called_once_with(
             "http://127.0.0.1:9889/terminals/caller-abc/siblings",
             params={},
+            headers={},
             timeout=_mcp_timeout(),
         )
 
@@ -165,6 +169,7 @@ class TestUpdateMetadataImpl:
         mock_patch.assert_called_once_with(
             "http://127.0.0.1:9889/terminals/caller-abc/metadata",
             json={"metadata": {"task": "reviewing PR"}},
+            headers={},
             timeout=_mcp_timeout(),
         )
 
@@ -292,3 +297,16 @@ class TestDiscoveryMarkerEnforcementInImpls:
 
         assert result == {"success": False, "error": "not granted 'discovery'"}
         mock_patch.assert_not_called()
+
+
+@_PERMISSIVE_MARKER
+@patch("cli_agent_orchestrator.mcp_server.server.requests.patch")
+@patch(
+    "cli_agent_orchestrator.mcp_server.server._auth_headers",
+    return_value={"Authorization": "Bearer fixture-token"},
+)
+def test_metadata_write_preserves_existing_bearer_auth(mock_headers, mock_patch, mock_marker):
+    mock_patch.return_value.json.return_value = {"metadata": {"task": "review"}}
+    with patch.dict(os.environ, {"CAO_TERMINAL_ID": "caller-abc"}):
+        assert _update_metadata_impl({"task": "review"})["success"] is True
+    assert mock_patch.call_args.kwargs["headers"] == {"Authorization": "Bearer fixture-token"}

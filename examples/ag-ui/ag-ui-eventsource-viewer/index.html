@@ -162,6 +162,10 @@
   var es = null;                 // active EventSource
   var fleetState = null;         // projected DashboardSnapshot
   var seenIds = new Set();       // dedup by event id (for ?since= replay overlap)
+  var lastConfirmed = null;
+  var connectionGeneration = 0;
+  var requestController = null;
+  var reconnectTimer = null;
   var counts = {};               // per-event-type counters
 
   // -----------------------------------------------------------------------
@@ -378,7 +382,7 @@
   // -----------------------------------------------------------------------
   function handle(type, ev) {
     var data;
-    try { data = JSON.parse(ev.data); } catch (e) { data = {}; }
+    try { data = JSON.parse(ev.data); } catch (e) { return; }
 
     // Dedup by event id (the SSE `id:` line, surfaced as ev.lastEventId, or
     // event_id inside the payload). Guards the ?since= replay->live overlap.
@@ -401,6 +405,7 @@
       // component name reaches us here, still gate it against our own mirror.
       addComponent(data.component, data.props);
     }
+    if (id) lastConfirmed = id;
   }
 
   function setStatus(state, text) {
@@ -408,60 +413,121 @@
     els.statusText.textContent = text;
   }
 
-  // Build the stream URL, attaching the access token as a query parameter when
-  // present. Native EventSource cannot set an Authorization header, so an
-  // auth-enabled server takes a `cao:read` JWT as `?access_token=`. The token is
-  // read from the in-memory input on each connect and is NEVER persisted
-  // (no localStorage / sessionStorage) or logged. Exposed on `window` purely so
-  // the shift-left recorder can assert the URL-construction contract.
-  function buildStreamUrl(base, token) {
+  // The URL carries only a short-lived, scoped one-use ticket and confirmed cursor.
+  function buildStreamUrl(base, ticket, cursor) {
     var trimmed = (base || "").trim().replace(/\/+$/, "");
     var url = new URL(trimmed + "/agui/v1/stream");
-    if (token) url.searchParams.set("access_token", token);
+    if (ticket) url.searchParams.set("ticket", ticket);
+    if (cursor) url.searchParams.set("cursor", cursor);
     return url.toString();
   }
   window.__caoBuildStreamUrl = buildStreamUrl;
 
+  async function mintTicket(base, token, cursor, expected) {
+    var controller = new AbortController();
+    requestController = controller;
+    var deadline = setTimeout(function () {
+      controller.abort(new Error("Connection unavailable: authentication timed out."));
+    }, 10000);
+    var onAbort;
+    var cancellation = new Promise(function (_resolve, reject) {
+      onAbort = function () { reject(controller.signal.reason); };
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([cancellation, (async function () {
+        var url = new URL(base + "/agui/v1/stream/ticket");
+        if (cursor) url.searchParams.set("cursor", cursor);
+        var headers = { "X-CAO-Browser": "1" };
+        if (token) headers.Authorization = "Bearer " + token;
+        var response = await fetch(url.toString(), {
+          method: "POST", headers: headers, credentials: "same-origin",
+          redirect: "error", cache: "no-store", signal: controller.signal,
+        });
+        if (expected !== connectionGeneration || controller.signal.aborted) throw new Error("Disconnected");
+        if (response.status === 409) {
+          var expired = new Error("History cursor expired; reconnecting with retained snapshot.");
+          expired.cursorExpired = true;
+          throw expired;
+        }
+        if (!response.ok) throw new Error("Connection unavailable: authorization or configured origin rejected.");
+        var result = await response.json();
+        if (!result || typeof result.ticket !== "string" || !result.ticket) throw new Error("Connection unavailable: invalid ticket response.");
+        return result.ticket;
+      })()]);
+    } finally {
+      clearTimeout(deadline);
+      controller.signal.removeEventListener("abort", onAbort);
+      if (requestController === controller) requestController = null;
+    }
+  }
+
   function connect() {
     disconnect();
     var base = (els.base.value || "").trim().replace(/\/+$/, "");
-    if (!base) { setStatus("error", "enter a base URL"); return; }
-    var token = (els.token.value || "").trim();  // in-memory only
-    var url;
+    var token = (els.token.value || "").trim(); // input memory only; never seed from URLs
     try {
-      url = buildStreamUrl(base, token);
-    } catch (e) {
-      setStatus("error", "bad URL: " + e.message);
-      return;
-    }
-    setStatus("connecting", "connecting…");
-    try {
-      es = new EventSource(url);
-    } catch (e) {
-      setStatus("error", "bad URL: " + e.message);
-      return;
-    }
+      var destination = new URL(base);
+      if (!["http:", "https:"].includes(destination.protocol) || destination.username || destination.password || destination.search || destination.hash) throw new Error("Use an HTTP(S) server base URL without credentials or query parameters.");
+    } catch (error) { setStatus("error", "Invalid server base URL."); return; }
+    var expected = connectionGeneration;
+    lastConfirmed = null;
+    seenIds.clear();
     els.connect.disabled = true;
     els.disconnect.disabled = false;
-
-    // Redact the token from anything shown in the UI (it lives only in the
-    // in-memory EventSource URL, never in the visible status text).
-    var shownUrl = base + "/agui/v1/stream" + (token ? " (+token)" : "");
-    es.onopen = function () { setStatus("connected", "connected → " + shownUrl); };
-    es.onerror = function () {
-      // EventSource auto-reconnects; reflect the transient state.
-      setStatus(es && es.readyState === 1 ? "connected" : "error",
-        es && es.readyState === 1 ? "connected" : "reconnecting…");
-    };
-    // Register a listener per named AG-UI event.
-    AGUI_EVENTS.forEach(function (type) {
-      es.addEventListener(type, function (ev) { handle(type, ev); });
-    });
-    // Also surface any unnamed/default messages in the log.
-    es.onmessage = function (ev) { logEvent("message", (function () { try { return JSON.parse(ev.data); } catch (e) { return {}; } })()); };
+    function retry(message) {
+      if (expected !== connectionGeneration || reconnectTimer) return;
+      setStatus("error", message);
+      reconnectTimer = setTimeout(function () { reconnectTimer = null; void attempt(); }, 1000);
+    }
+    async function attempt() {
+      if (expected !== connectionGeneration) return;
+      setStatus("connecting", "connecting…");
+      try {
+        var ticket = await mintTicket(base, token, lastConfirmed, expected);
+        if (expected !== connectionGeneration) return;
+        var current = new EventSource(buildStreamUrl(base, ticket, lastConfirmed));
+        es = current;
+        current.onopen = function () {
+          if (es === current && expected === connectionGeneration) setStatus("connected", "connected → " + base + "/agui/v1/stream");
+        };
+        current.addEventListener("cursor_expired", function (ev) {
+          if (es !== current || expected !== connectionGeneration) return;
+          try {
+            var frame = JSON.parse(ev.data);
+            if (!frame || frame.code !== "event_cursor_expired" || frame.resync_required !== true) return;
+          } catch (error) { return; }
+          current.close(); es = null;
+          lastConfirmed = null;
+          retry("History cursor expired; reconnecting with retained snapshot.");
+        });
+        current.onerror = function () {
+          if (es !== current || expected !== connectionGeneration) return;
+          current.close(); es = null; // native reconnect would reuse the consumed ticket
+          retry("Connection unavailable; reconnecting with a fresh ticket…");
+        };
+        AGUI_EVENTS.forEach(function (type) {
+          current.addEventListener(type, function (ev) {
+            if (es === current && expected === connectionGeneration) handle(type, ev);
+          });
+        });
+        current.onmessage = function (ev) {
+          if (es !== current || expected !== connectionGeneration) return;
+          try { logEvent("message", JSON.parse(ev.data)); if (ev.lastEventId) lastConfirmed = ev.lastEventId; } catch (error) { /* malformed */ }
+        };
+      } catch (error) {
+        if (expected !== connectionGeneration) return;
+        if (error.cursorExpired) lastConfirmed = null;
+        retry(error.message || "Connection unavailable; check server access and configured origin.");
+      }
+    }
+    void attempt();
   }
 
   function disconnect() {
+    connectionGeneration++;
+    clearTimeout(reconnectTimer); reconnectTimer = null;
+    if (requestController) { requestController.abort(new Error("Disconnected")); requestController = null; }
     if (es) { es.close(); es = null; }
     els.connect.disabled = false;
     els.disconnect.disabled = true;
@@ -471,25 +537,8 @@
   els.connect.addEventListener("click", connect);
   els.disconnect.addEventListener("click", disconnect);
 
-  // Convenience: seed the token from the page's own query string
-  // (?access_token=… or ?token=…) so an operator can hand the viewer a token by
-  // URL without editing source. It is copied into the in-memory input only —
-  // not persisted — and scrubbed from the visible address bar via history
-  // replaceState so it does not linger in the URL.
-  try {
-    var pageParams = new URL(window.location.href).searchParams;
-    var seeded = pageParams.get("access_token") || pageParams.get("token");
-    if (seeded) {
-      els.token.value = seeded;
-      if (window.history && window.history.replaceState) {
-        pageParams.delete("access_token");
-        pageParams.delete("token");
-        var clean = window.location.pathname +
-          (pageParams.toString() ? "?" + pageParams.toString() : "") + window.location.hash;
-        window.history.replaceState(null, "", clean);
-      }
-    }
-  } catch (e) { /* location not a valid URL (e.g. some test envs) — ignore */ }
+  // Reusable credentials are entered directly; page URL query parameters are ignored.
+  window.addEventListener("pagehide", disconnect);
 
   // Auto-connect on load for convenience.
   connect();

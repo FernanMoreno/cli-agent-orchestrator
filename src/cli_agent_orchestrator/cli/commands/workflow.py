@@ -75,22 +75,33 @@ def workflow():
 
 
 @workflow.command(name="validate")
-@click.argument("file")
+@click.argument("file", required=False)
+@click.option("--source", "source_file", type=click.File("r", encoding="utf-8"))
+@click.option("--name", "source_name")
 @click.option(
     "--json", "as_json", is_flag=True, default=False, help="Emit the ValidationResult as JSON."
 )
-def validate_cmd(file, as_json):
+def validate_cmd(file, as_json, source_file, source_name):
     """Validate a workflow spec file WITHOUT running it.
 
     Exit codes:
       0  spec is valid (pass or pass_reserved)
       1  spec failed validation, or the request errored
     """
+    if source_file is not None:
+        if file is not None or not source_name:
+            raise click.UsageError("provide a file OR --source with --name")
+        body = {"name": source_name, "content": source_file.read()}
+    else:
+        if file is None or source_name is not None:
+            raise click.UsageError("provide a file OR --source with --name")
+        body = {"path": file}
     try:
         response = requests.post(
             f"{API_BASE_URL}/workflows/validate",
-            json={"path": file},
+            json=body,
             timeout=MCP_REQUEST_TIMEOUT,
+            headers=_work_query_headers(),
         )
     except requests.exceptions.RequestException as e:
         raise click.ClickException(f"could not reach cao-server: {e}")
@@ -129,7 +140,10 @@ def list_cmd(scan_dir, as_json):
         params["dir"] = scan_dir
     try:
         response = requests.get(
-            f"{API_BASE_URL}/workflows", params=params, timeout=MCP_REQUEST_TIMEOUT
+            f"{API_BASE_URL}/workflows",
+            params=params,
+            timeout=MCP_REQUEST_TIMEOUT,
+            headers=_work_query_headers(),
         )
     except requests.exceptions.RequestException as e:
         raise click.ClickException(f"could not reach cao-server: {e}")
@@ -163,11 +177,19 @@ def list_cmd(scan_dir, as_json):
 
 @workflow.command(name="get")
 @click.argument("name")
+@click.option("--source", "as_source", is_flag=True)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Emit the spec as JSON.")
-def get_cmd(name, as_json):
+def get_cmd(name, as_json, as_source):
     """Show the parsed/validated spec for a workflow name or file path."""
     try:
-        response = requests.get(f"{API_BASE_URL}/workflows/{name}", timeout=MCP_REQUEST_TIMEOUT)
+        from urllib.parse import quote
+
+        suffix = "/source" if as_source else ""
+        response = requests.get(
+            f"{API_BASE_URL}/workflows/{quote(name, safe='')}{suffix}",
+            timeout=MCP_REQUEST_TIMEOUT,
+            headers=_work_query_headers(),
+        )
     except requests.exceptions.RequestException as e:
         raise click.ClickException(f"could not reach cao-server: {e}")
 
@@ -179,7 +201,7 @@ def get_cmd(name, as_json):
         raise click.ClickException(_extract_detail(response, f"status {response.status_code}"))
 
     spec = response.json()
-    if as_json:
+    if as_json or as_source:
         click.echo(_json.dumps(spec, indent=2))
         return
     click.echo(f"Name:        {spec['name']}")
@@ -339,6 +361,7 @@ def approve_cmd(plan_id, as_json):
             # verbatim, because a normalisation is how two distinct plans could share one approval.
             json={"plan_id": plan_id},
             timeout=MCP_REQUEST_TIMEOUT,
+            headers=_work_query_headers(),
         )
     except requests.exceptions.RequestException as e:
         raise click.ClickException(f"could not reach cao-server: {e}")
@@ -373,7 +396,11 @@ def delete_cmd(name, yes):
     if not yes:
         click.confirm(f"Delete workflow '{name}'?", abort=True)
     try:
-        response = requests.delete(f"{API_BASE_URL}/workflows/{name}", timeout=MCP_REQUEST_TIMEOUT)
+        response = requests.delete(
+            f"{API_BASE_URL}/workflows/{name}",
+            timeout=MCP_REQUEST_TIMEOUT,
+            headers=_work_query_headers(),
+        )
     except requests.exceptions.RequestException as e:
         raise click.ClickException(f"could not reach cao-server: {e}")
 
@@ -555,7 +582,9 @@ def _poll_to_terminal(run_id, as_json):
     while True:
         try:
             response = requests.get(
-                f"{API_BASE_URL}/workflows/runs/{run_id}", timeout=MCP_REQUEST_TIMEOUT
+                f"{API_BASE_URL}/workflows/runs/{run_id}",
+                timeout=MCP_REQUEST_TIMEOUT,
+                headers=_work_query_headers(),
             )
         except requests.exceptions.RequestException as e:
             transport_failures += 1
@@ -614,7 +643,11 @@ def _poll_to_terminal(run_id, as_json):
     help="Block on the server inline until the run finishes (the retained blocking path).",
 )
 @click.option("--json", "as_json", is_flag=True, default=False, help="Emit the result as JSON.")
-def run_cmd(name_or_path, inputs, run_id, detach, wait, as_json):
+@click.option("--prepared-id", default=None)
+@click.option("--expected-plan-id", default=None)
+def run_cmd(
+    name_or_path, inputs, run_id, detach, wait, as_json, prepared_id=None, expected_plan_id=None
+):
     """Run a workflow.
 
     By default (FR-4, issue #505) ``run`` SUBMITS the run asynchronously, prints
@@ -631,6 +664,10 @@ def run_cmd(name_or_path, inputs, run_id, detach, wait, as_json):
     payload = {"name_or_path": name_or_path, "inputs": parsed}
     if run_id is not None:
         payload["run_id"] = run_id
+    if (prepared_id is None) != (expected_plan_id is None):
+        raise click.ClickException("--prepared-id and --expected-plan-id are required together")
+    if prepared_id is not None:
+        payload.update(prepared_id=prepared_id, expected_plan_id=expected_plan_id)
 
     # --- --wait: the retained blocking path (VR-2, FR-4.5). ------------------
     # ``--wait`` blocks on the server inline until the whole workflow finishes, so
@@ -642,6 +679,7 @@ def run_cmd(name_or_path, inputs, run_id, detach, wait, as_json):
                 f"{API_BASE_URL}/workflows/runs",
                 json=payload,
                 timeout=WORKFLOW_RUN_REQUEST_TIMEOUT,
+                headers=_work_query_headers(),
             )
         except requests.exceptions.RequestException as e:
             raise click.ClickException(f"could not reach cao-server: {e}")
@@ -665,6 +703,7 @@ def run_cmd(name_or_path, inputs, run_id, detach, wait, as_json):
             f"{API_BASE_URL}/workflows/runs:submit",
             json=payload,
             timeout=MCP_REQUEST_TIMEOUT,
+            headers=_work_query_headers(),
         )
     except requests.exceptions.RequestException as e:
         raise click.ClickException(f"could not reach cao-server: {e}")
@@ -739,6 +778,7 @@ def _resolve_latest_run_id():
             f"{API_BASE_URL}/workflows/runs",
             params={"limit": 1},
             timeout=MCP_REQUEST_TIMEOUT,
+            headers=_work_query_headers(),
         )
     except requests.exceptions.RequestException as e:
         raise click.ClickException(f"could not reach cao-server: {e}")
@@ -767,7 +807,9 @@ def status_cmd(run_id, as_json):
 
     try:
         response = requests.get(
-            f"{API_BASE_URL}/workflows/runs/{run_id}", timeout=MCP_REQUEST_TIMEOUT
+            f"{API_BASE_URL}/workflows/runs/{run_id}",
+            timeout=MCP_REQUEST_TIMEOUT,
+            headers=_work_query_headers(),
         )
     except requests.exceptions.RequestException as e:
         raise click.ClickException(f"could not reach cao-server: {e}")
@@ -802,7 +844,10 @@ def runs_cmd(state, limit, as_json):
         params["limit"] = limit
     try:
         response = requests.get(
-            f"{API_BASE_URL}/workflows/runs", params=params, timeout=MCP_REQUEST_TIMEOUT
+            f"{API_BASE_URL}/workflows/runs",
+            params=params,
+            timeout=MCP_REQUEST_TIMEOUT,
+            headers=_work_query_headers(),
         )
     except requests.exceptions.RequestException as e:
         raise click.ClickException(f"could not reach cao-server: {e}")
@@ -860,7 +905,9 @@ def result_cmd(run_id, as_json):
     """Show the complete retained result for a (finished or in-flight) run."""
     try:
         response = requests.get(
-            f"{API_BASE_URL}/workflows/runs/{run_id}/result", timeout=MCP_REQUEST_TIMEOUT
+            f"{API_BASE_URL}/workflows/runs/{run_id}/result",
+            timeout=MCP_REQUEST_TIMEOUT,
+            headers=_work_query_headers(),
         )
     except requests.exceptions.RequestException as e:
         raise click.ClickException(f"could not reach cao-server: {e}")
@@ -918,6 +965,7 @@ def resume_cmd(run_id, decide, as_json):
             f"{API_BASE_URL}/workflows/runs/{run_id}/resume",
             json={"decisions": decisions} if decisions else None,
             timeout=WORKFLOW_RUN_REQUEST_TIMEOUT,
+            headers=_work_query_headers(),
         )
     except requests.exceptions.RequestException as e:
         raise click.ClickException(f"could not reach cao-server: {e}")
@@ -1035,6 +1083,7 @@ def step_cmd(run_id, step_id, prompt_file, prompt_override, as_json):
             f"{API_BASE_URL}/workflows/runs/{run_id}/steps/{step_id}:replay",
             json=payload,
             timeout=WORKFLOW_STEP_REQUEST_TIMEOUT,
+            headers=_work_query_headers(),
         )
     except requests.exceptions.RequestException as e:
         raise click.ClickException(f"could not reach cao-server: {e}")
@@ -1062,7 +1111,9 @@ def cancel_cmd(run_id):
     """Cooperatively cancel a running workflow."""
     try:
         response = requests.post(
-            f"{API_BASE_URL}/workflows/runs/{run_id}/cancel", timeout=MCP_REQUEST_TIMEOUT
+            f"{API_BASE_URL}/workflows/runs/{run_id}/cancel",
+            timeout=MCP_REQUEST_TIMEOUT,
+            headers=_work_query_headers(),
         )
     except requests.exceptions.RequestException as e:
         raise click.ClickException(f"could not reach cao-server: {e}")
@@ -1094,7 +1145,7 @@ def _open_events_stream(run_id: str, cursor):
     run from tripping a spurious read timeout between frames.
     """
     params = {}
-    headers = {"Accept": "text/event-stream"}
+    headers = {**_work_query_headers(), "Accept": "text/event-stream"}
     if cursor is not None:
         params["after_seq"] = cursor
         headers["Last-Event-ID"] = str(cursor)
@@ -1121,7 +1172,11 @@ def _events_route_or_run_missing(run_id: str) -> click.ClickException:
     than asserting a server capability it could not verify.
     """
     try:
-        probe = requests.get(f"{API_BASE_URL}/workflows/runs/{run_id}", timeout=MCP_REQUEST_TIMEOUT)
+        probe = requests.get(
+            f"{API_BASE_URL}/workflows/runs/{run_id}",
+            timeout=MCP_REQUEST_TIMEOUT,
+            headers=_work_query_headers(),
+        )
     except requests.exceptions.RequestException:
         return click.ClickException(f"unknown run '{run_id}'")
     if probe.status_code == 200:
@@ -1237,7 +1292,9 @@ def _final_events_status(run_id: str):
     """
     try:
         response = requests.get(
-            f"{API_BASE_URL}/workflows/runs/{run_id}", timeout=MCP_REQUEST_TIMEOUT
+            f"{API_BASE_URL}/workflows/runs/{run_id}",
+            timeout=MCP_REQUEST_TIMEOUT,
+            headers=_work_query_headers(),
         )
     except requests.exceptions.RequestException:
         return None
@@ -1262,6 +1319,7 @@ def _events_batch_read(run_id: str, after_seq, as_json: bool) -> None:
             f"{API_BASE_URL}/workflows/runs/{run_id}/events",
             params=params,
             timeout=MCP_REQUEST_TIMEOUT,
+            headers=_work_query_headers(),
         )
     except requests.exceptions.RequestException as e:
         raise click.ClickException(f"could not reach cao-server: {e}")
@@ -1400,3 +1458,133 @@ def events_cmd(run_id, follow, after_seq, as_json):
         click.echo(f"State: {terminal_state}")
     # EC-1: the exit code mirrors the terminal state on every output mode.
     _exit_for_state(terminal_state)
+
+
+@workflow.command(name="create")
+@click.argument("name")
+@click.option("--source", "source_file", required=True, type=click.File("r", encoding="utf-8"))
+def create_command(name, source_file):
+    """Create Python source; --source - reads stdin."""
+    _publish_workflow_source("POST", "/workflows", {"name": name, "content": source_file.read()})
+
+
+@workflow.command(name="update")
+@click.argument("name")
+@click.option("--source", "source_file", required=True, type=click.File("r", encoding="utf-8"))
+@click.option("--expected-source-hash", required=True)
+def update_command(name, source_file, expected_source_hash):
+    """Conditionally update the exact revision obtained from the source getter."""
+    from urllib.parse import quote
+
+    _publish_workflow_source(
+        "PUT",
+        "/workflows/" + quote(name, safe=""),
+        {"content": source_file.read(), "expected_source_hash": expected_source_hash},
+    )
+
+
+def _publish_workflow_source(method, suffix, body):
+    try:
+        response = requests.request(
+            method,
+            API_BASE_URL + suffix,
+            json=body,
+            headers=_work_query_headers(),
+            timeout=MCP_REQUEST_TIMEOUT,
+        )
+        result = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        raise click.ClickException(str(exc))
+    if not response.ok:
+        raise click.ClickException(_json.dumps(result.get("detail", result)))
+    click.echo(_json.dumps(result, ensure_ascii=False))
+
+
+@workflow.command(name="plan")
+@click.argument("name_or_path")
+@click.option("--targets", required=True, type=click.File("r", encoding="utf-8"))
+@click.option("--bindings", required=True, type=click.File("r", encoding="utf-8"))
+@click.option("--input", "inputs", multiple=True)
+@click.option(
+    "--scope",
+    type=click.File("r", encoding="utf-8"),
+    default=None,
+    help="Finite SCOPE source required for YAML preparation.",
+)
+@click.option("--json", "as_json", is_flag=True)
+def plan_cmd(name_or_path, targets, bindings, inputs, scope, as_json):
+    """Freeze and review exact source, policy and authorized Work bindings."""
+    try:
+        body = {
+            "name_or_path": name_or_path,
+            "inputs": _parse_inputs(inputs),
+            "target_mappings": _json.load(targets),
+            "binding_selections": _json.load(bindings),
+        }
+        if scope is not None:
+            body["scope_source"] = scope.read()
+        response = requests.post(
+            f"{API_BASE_URL}/workflows/plans:prepare",
+            json=body,
+            headers=_work_query_headers(),
+            timeout=MCP_REQUEST_TIMEOUT,
+        )
+    except (ValueError, requests.RequestException) as error:
+        raise click.ClickException(str(error))
+    if response.status_code != 201:
+        raise click.ClickException(_extract_detail(response, "plan preparation refused"))
+    plan = response.json()
+    if as_json:
+        click.echo(_json.dumps(plan, indent=2))
+    else:
+        click.echo(f"Prepared: {plan['prepared_id']}")
+        click.echo(f"Plan:     {plan['plan_id']}")
+        click.echo(_json.dumps(plan["public_plan"], indent=2))
+        click.echo(f"Review and approve: cao workflow approve {plan['plan_id']}")
+        click.echo(
+            f"Run: cao workflow run {name_or_path} --prepared-id {plan['prepared_id']} --expected-plan-id {plan['plan_id']}"
+        )
+
+
+@workflow.command(name="review-plan")
+@click.argument("prepared_id")
+def review_plan_cmd(prepared_id):
+    """Read the safe public document for a prepared plan owned by this principal."""
+    from urllib.parse import quote
+
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/workflows/plans/{quote(prepared_id, safe='')}",
+            headers=_work_query_headers(),
+            timeout=MCP_REQUEST_TIMEOUT,
+        )
+    except requests.RequestException as error:
+        raise click.ClickException(str(error))
+    if response.status_code != 200:
+        raise click.ClickException(_extract_detail(response, "prepared plan unavailable"))
+    click.echo(_json.dumps(response.json(), indent=2))
+
+
+@workflow.command(name="seeds")
+@click.argument("name")
+def seeds_command(name):
+    """Discover currently authorized Work bindings for this workflow source."""
+    from urllib.parse import quote
+
+    _publish_workflow_source("GET", "/workflows/" + quote(name, safe="") + "/provisions", None)
+
+
+@workflow.command(name="provision")
+@click.argument("name")
+@click.option("--request", "request_file", required=True, type=click.File("r", encoding="utf-8"))
+def provision_command(name, request_file):
+    """Register exact existing Work authority from an operator-owned JSON request."""
+    from urllib.parse import quote
+
+    try:
+        body = _json.load(request_file)
+    except ValueError:
+        raise click.ClickException("Provision request must be a JSON object") from None
+    if not isinstance(body, dict):
+        raise click.ClickException("Provision request must be a JSON object")
+    _publish_workflow_source("POST", "/workflows/" + quote(name, safe="") + "/provisions", body)

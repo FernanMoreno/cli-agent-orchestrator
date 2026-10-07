@@ -333,6 +333,14 @@ class TestKimiInitTimeoutWiring:
     exits early, init hangs until its own outer wait times out.
     """
 
+    @pytest.fixture(autouse=True)
+    def resolved_legacy_dialect(self, tmp_path):
+        from cli_agent_orchestrator.providers.kimi_cli import KimiDialect, KimiProbeResult
+
+        with patch.object(KimiCliProvider, "_resolve_dialect", new_callable=AsyncMock) as probe:
+            probe.return_value = KimiProbeResult(KimiDialect.LEGACY, "/usr/bin/kimi", tmp_path)
+            yield
+
     @pytest.mark.asyncio
     @patch.object(KimiCliProvider, "_handle_startup_dialog")
     @patch(f"{_KIMI}.load_agent_profile")

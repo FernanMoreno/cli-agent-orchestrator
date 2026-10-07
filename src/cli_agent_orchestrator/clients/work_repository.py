@@ -12,9 +12,9 @@ import re
 import sqlite3
 import stat
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Callable, Iterator, Mapping
+from typing import Callable, Iterator, Mapping, TypedDict, cast
 from uuid import UUID, uuid4
 
 from cli_agent_orchestrator.clients.knowledge_access_schema import KNOWLEDGE_ACCESS_SCHEMA
@@ -134,9 +134,41 @@ _PROCESS_IDENTITY_V3_FIELDS = frozenset(
 _LOWER_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
+class ProcessIdentityV3(TypedDict):
+    version: int
+    boot_id: str
+    monitor_pid: int
+    monitor_start_time_ticks: int
+    init_pid: int
+    init_start_time_ticks: int
+    init_parent_pid: int
+    pid_namespace: list[int]
+    net_namespace: list[int]
+    ipc_namespace: list[int]
+    monitor_argv_prefix_sha256: str
+    identity_sha256: str
+
+
+class BubblewrapProcessIdentity(TypedDict):
+    version: int
+    kind: str
+    boot_id: str
+    monitor_pid: int
+    monitor_start_time_ticks: int
+    init_pid: int
+    init_start_time_ticks: int
+    init_parent_pid: int
+    pid_namespace: list[int]
+    net_namespace: list[int]
+    ipc_namespace: list[int]
+    monitor_argv_sha256: str
+    monitor_executable_sha256: str
+    identity_sha256: str
+
+
 def _validate_process_identity_v3(
     value: Mapping[str, object],
-) -> tuple[dict[str, object], str]:
+) -> tuple[ProcessIdentityV3, str]:
     """Validate exact, argv-redacted v3 identity and its canonical content digest."""
     if not isinstance(value, Mapping):
         raise ValueError("process identity must be a mapping")
@@ -153,6 +185,10 @@ def _validate_process_identity_v3(
     numeric_fields = (version, monitor_pid, monitor_start, init_pid, init_start, init_parent)
     if any(type(field) is not int for field in numeric_fields):
         raise ValueError("process identity numeric fields must be integers")
+    monitor_pid = cast(int, monitor_pid)
+    monitor_start = cast(int, monitor_start)
+    init_pid = cast(int, init_pid)
+    init_start = cast(int, init_start)
     if version != 3:
         raise ValueError("process identity protocol version must be 3")
     if not isinstance(boot_id, str) or not boot_id.strip() or "\x00" in boot_id:
@@ -194,10 +230,10 @@ def _validate_process_identity_v3(
     expected_digest = hashlib.sha256(_json(payload).encode("utf-8")).hexdigest()
     if identity_digest != expected_digest:
         raise ValueError("process identity digest does not match its fields")
-    return {**payload, "identity_sha256": expected_digest}, expected_digest
+    return cast(ProcessIdentityV3, {**payload, "identity_sha256": expected_digest}), expected_digest
 
 
-def _read_stored_process_identity(row: sqlite3.Row) -> tuple[dict[str, object], str]:
+def _read_stored_process_identity(row: sqlite3.Row) -> tuple[ProcessIdentityV3, str]:
     """Decode one immutable row and recheck its exact shape and both digests."""
     try:
         value = json.loads(row["identity_json"])
@@ -235,7 +271,7 @@ _BUBBLEWRAP_IDENTITY_FIELDS = frozenset(
 
 def _validate_bubblewrap_identity(
     value: Mapping[str, object],
-) -> tuple[dict[str, object], str]:
+) -> tuple[BubblewrapProcessIdentity, str]:
     """Accept the exact Bwrap shape; argv and executable bytes never enter SQLite."""
     if not isinstance(value, Mapping) or set(value) != _BUBBLEWRAP_IDENTITY_FIELDS:
         raise ValueError("Bubblewrap process identity has an incomplete or unknown field set")
@@ -257,7 +293,8 @@ def _validate_bubblewrap_identity(
         "init_start_time_ticks",
         "init_parent_pid",
     ):
-        if type(payload[name]) is not int or payload[name] <= 0:
+        numeric_value = payload[name]
+        if type(numeric_value) is not int or numeric_value <= 0:
             raise ValueError("Bubblewrap process identity process fields are invalid")
     if (
         payload["monitor_pid"] == payload["init_pid"]
@@ -274,15 +311,16 @@ def _validate_bubblewrap_identity(
             raise ValueError("Bubblewrap process identity namespace is invalid")
         payload[name] = list(namespace)
     for name in ("monitor_argv_sha256", "monitor_executable_sha256"):
-        if not isinstance(payload[name], str) or not _LOWER_SHA256.fullmatch(payload[name]):
+        digest_value = payload[name]
+        if not isinstance(digest_value, str) or not _LOWER_SHA256.fullmatch(digest_value):
             raise ValueError("Bubblewrap process identity digest is invalid")
     digest = hashlib.sha256(_json(payload).encode("utf-8")).hexdigest()
     if value["identity_sha256"] != digest:
         raise ValueError("Bubblewrap process identity digest does not match its fields")
-    return {**payload, "identity_sha256": digest}, digest
+    return cast(BubblewrapProcessIdentity, {**payload, "identity_sha256": digest}), digest
 
 
-def _read_stored_bubblewrap_identity(row: sqlite3.Row) -> tuple[dict[str, object], str]:
+def _read_stored_bubblewrap_identity(row: sqlite3.Row) -> tuple[BubblewrapProcessIdentity, str]:
     try:
         identity, digest = _validate_bubblewrap_identity(json.loads(row["identity_json"]))
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -582,7 +620,7 @@ def _schema_objects(connection: sqlite3.Connection) -> dict[str, str]:
 
 def _expected_schemas() -> dict[int, dict[str, str]]:
     schemas = {}
-    with sqlite3.connect(":memory:") as connection:
+    with closing(sqlite3.connect(":memory:")) as owned_connection, owned_connection as connection:
         for version, statements in _MIGRATIONS.items():
             for statement in statements:
                 connection.execute(statement)
@@ -610,10 +648,10 @@ class WorkRepository:
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(str(self.path), timeout=10, isolation_level=None)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA synchronous=FULL")
         try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("PRAGMA synchronous=FULL")
             yield connection
         finally:
             connection.close()
@@ -680,9 +718,11 @@ class WorkRepository:
 
     @staticmethod
     def _registered_writer_count(connection: sqlite3.Connection) -> int:
-        return connection.execute(
-            "SELECT count(*) FROM work_registered_writers WHERE state='active'"
-        ).fetchone()[0]
+        return int(
+            connection.execute(
+                "SELECT count(*) FROM work_registered_writers WHERE state='active'"
+            ).fetchone()[0]
+        )
 
     @classmethod
     def _assert_offline_cut_allows_writer(cls, connection: sqlite3.Connection) -> None:
@@ -1290,7 +1330,7 @@ class WorkRepository:
         self,
         attempt_id: str,
         generation: int,
-    ) -> dict[str, object] | None:
+    ) -> ProcessIdentityV3 | None:
         """Read one verified v3 identity; absent identity returns ``None``."""
         _identity(attempt_id, "attempt_id")
         if type(generation) is not int or generation <= 0:
@@ -1368,7 +1408,7 @@ class WorkRepository:
 
     def read_bubblewrap_process_identity(
         self, attempt_id: str, generation: int
-    ) -> dict[str, object] | None:
+    ) -> BubblewrapProcessIdentity | None:
         """Load and verify the Bwrap identity through a closed SQLite snapshot."""
         _identity(attempt_id, "attempt_id")
         if type(generation) is not int or generation <= 0:
@@ -1871,13 +1911,13 @@ class WorkRepository:
             _identity(value, label)
         if receiver_authorization_kind != "receiver":
             raise WorkConflict("task receipt authorization kind is invalid")
-        for label, value in (
+        for label, revision_value in (
             ("task receipt attempt revision", attempt_revision),
             ("task receipt receiver revision", receiver_subject_revision),
             ("task receipt authorization revision", receiver_authorization_revision),
             ("task receipt grant revision", receiver_grant_revision),
         ):
-            if type(value) is not int or value <= 0:
+            if type(revision_value) is not int or revision_value <= 0:
                 raise WorkConflict(f"{label} is invalid")
         if (
             not isinstance(delivery_hash, str)
@@ -2028,14 +2068,14 @@ class WorkRepository:
             _identity(value, label)
         if schema_version != 1 or type(schema_version) is not int:
             raise WorkConflict("workflow receiver credential schema version is invalid")
-        for label, value in (
+        for label, revision_value in (
             ("workflow Work generation", generation),
             ("workflow receiver subject revision", receiver_subject_revision),
             ("workflow receiver authorization revision", receiver_authorization_revision),
             ("workflow receiver grant revision", receiver_grant_revision),
             ("workflow Work attempt revision", attempt_revision),
         ):
-            if type(value) is not int or value <= 0:
+            if type(revision_value) is not int or revision_value <= 0:
                 raise WorkConflict(f"{label} is invalid")
         for label, value in (
             ("workflow delivery hash", delivery_hash),
@@ -2179,11 +2219,11 @@ class WorkRepository:
             _identity(value, label)
         if type(generation) is not int or generation <= 0:
             raise WorkConflict("workflow receiver acceptance generation is invalid")
-        for label, value in (
+        for label, revision_value in (
             ("workflow receiver subject revision", receiver_subject_revision),
             ("workflow receiver authorization revision", receiver_authorization_revision),
         ):
-            if type(value) is not int or value <= 0:
+            if type(revision_value) is not int or revision_value <= 0:
                 raise WorkConflict(f"{label} is invalid")
         if receiver_authorization_kind != "receiver" or schema_version != 1:
             raise WorkConflict("workflow receiver acceptance version or authority is invalid")
@@ -2387,14 +2427,14 @@ class WorkRepository:
             _identity(value, label)
         if schema_version != 1 or type(schema_version) is not int:
             raise WorkConflict("workflow task receipt schema version is invalid")
-        for label, value in (
+        for label, revision_value in (
             ("workflow Work generation", generation),
             ("workflow attempt revision", attempt_revision),
             ("workflow receiver revision", receiver_subject_revision),
             ("workflow receiver authorization revision", receiver_authorization_revision),
             ("workflow receiver grant revision", receiver_grant_revision),
         ):
-            if type(value) is not int or value <= 0:
+            if type(revision_value) is not int or revision_value <= 0:
                 raise WorkConflict(f"{label} is invalid")
         if receiver_authorization_kind != "receiver":
             raise WorkConflict("workflow task receipt authority kind is invalid")

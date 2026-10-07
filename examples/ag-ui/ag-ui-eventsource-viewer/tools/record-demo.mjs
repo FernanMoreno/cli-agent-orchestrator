@@ -213,26 +213,39 @@ async function main() {
       recordVideo: { dir: TMP_DIR, size: VIEWPORT },
     });
     const page = await context.newPage();
+    const ticketRequests = [];
+    const streamRequests = [];
+    page.on("request", request => {
+      const pathname = new URL(request.url()).pathname;
+      if (pathname === "/agui/v1/stream/ticket") ticketRequests.push(request);
+      if (pathname === "/agui/v1/stream") streamRequests.push(request);
+    });
     await page.goto(VIEWER_URL, { waitUntil: "domcontentloaded" });
 
     // Wait for the connect banner (STATE_SNAPSHOT hydration).
     await page.getByText("connected", { exact: false }).first().waitFor({ timeout: 15000 });
     await sleep(1200);
 
-    // ── F3 (shift-left): the viewer builds the stream URL with the access token
-    // as a `?access_token=` query param (native EventSource can't set headers),
-    // holds it in memory only, and never persists it. Deterministic, no auth
-    // server needed — assert the exposed URL builder directly in the browser.
+    // F3: verify the actual browser path and the isolated URL-construction contract.
+    if (!ticketRequests.some(request => request.method() === "POST") || !streamRequests.length) {
+      throw new Error("F3: viewer did not mint a ticket before starting its stream");
+    }
+    if (streamRequests.some(request => {
+      const params = new URL(request.url()).searchParams;
+      return !params.has("ticket") || params.has("access_token") || params.has("token");
+    })) throw new Error("F3: actual stream request contains reusable credentials or lacks a ticket");
+    // Native stream URLs contain only scoped one-use tickets and a cursor.
     const urlNoToken = await page.evaluate((b) => window.__caoBuildStreamUrl(b, ""), BASE);
-    const urlWithToken = await page.evaluate(
-      (b) => window.__caoBuildStreamUrl(b, "jwt-abc.def.ghi"),
-      BASE,
+    const urlWithTicket = await page.evaluate(
+      (b) => window.__caoBuildStreamUrl(b, "one-use-ticket", "confirmed-event"), BASE,
     );
     if (urlNoToken !== `${BASE}/agui/v1/stream`) {
-      throw new Error(`F3: no-token URL should have no query, got: ${urlNoToken}`);
+      throw new Error(`F3: empty-ticket URL should have no query, got: ${urlNoToken}`);
     }
-    if (!/[?&]access_token=jwt-abc\.def\.ghi(?:&|$)/.test(urlWithToken)) {
-      throw new Error(`F3: token not attached as a query param, got: ${urlWithToken}`);
+    const streamParams = new URL(urlWithTicket).searchParams;
+    if (streamParams.get("ticket") !== "one-use-ticket" || streamParams.get("cursor") !== "confirmed-event" ||
+        streamParams.has("access_token") || streamParams.has("token")) {
+      throw new Error("F3: stream URL must contain a scoped ticket and confirmed cursor only");
     }
     const leaked = await page.evaluate(() => {
       function dump(s) {
@@ -243,7 +256,7 @@ async function main() {
       return (dump(localStorage) + dump(sessionStorage)).indexOf("jwt-abc") >= 0;
     });
     if (leaked) throw new Error("F3: access token leaked into web storage (must be in-memory only)");
-    console.log("[demo] PASS(F3): stream URL carries access_token via searchParams; not persisted.");
+    console.log("[demo] PASS(F3): stream URL carries only a scoped ticket and cursor; bearer is not persisted.");
 
     const emit = (component, props) =>
       context.request.post(`${BASE}/agui/v1/emit_ui`, { data: { component, props } });

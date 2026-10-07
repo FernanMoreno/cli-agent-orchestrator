@@ -1752,3 +1752,32 @@ class TestMetadataSizeCap:
 
             assert response.status_code == 422
             mock_svc.create_session.assert_not_called()
+
+
+def test_native_policy_refusal_keeps_structured_diagnostic(client):
+    from cli_agent_orchestrator.models.kiro_launch import KiroLaunchRefusedError
+
+    with (
+        patch(
+            "cli_agent_orchestrator.api.main.resolve_provider",
+            side_effect=lambda _, fallback_provider: fallback_provider,
+        ),
+        patch("cli_agent_orchestrator.api.main.terminal_service") as service,
+    ):
+        service.create_terminal = AsyncMock(
+            side_effect=KiroLaunchRefusedError(
+                code="policy-drift",
+                profile_field="allowedTools",
+                message="Persisted grant changed.",
+            )
+        )
+        response = client.post(
+            "/sessions/test-session/terminals",
+            params={"provider": "kiro_cli", "agent_profile": "analyst", "engine": "kas"},
+        )
+    assert response.status_code == 400
+    assert response.json()["detail"] == {
+        "code": "policy-drift",
+        "profile_field": "allowedTools",
+        "message": "Persisted grant changed.",
+    }

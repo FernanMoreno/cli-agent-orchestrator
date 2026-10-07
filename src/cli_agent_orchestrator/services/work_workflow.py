@@ -18,7 +18,11 @@ import secrets
 import time
 from contextlib import nullcontext
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from cli_agent_orchestrator.services.work_admission import WorkAdmission
 
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.models.work_contract import (
@@ -146,15 +150,21 @@ class WorkWorkflowOrigins:
     run ID, terminal ID or journal row can create this authority.
     """
 
-    def __init__(self, repository: WorkRepository):
+    def __init__(self, repository: WorkRepository, *, plans=None):
         if not isinstance(repository, WorkRepository):
             raise ValueError("verified Work repository required")
+        if plans is not None:
+            from cli_agent_orchestrator.services.work_workflow_plans import WorkWorkflowPlans
+
+            if type(plans) is not WorkWorkflowPlans or plans.repository is not repository:
+                raise ValueError("workflow plan owner must share this Work runtime")
+        self.plans = plans
         self.repository = repository
         self.origin_authority = WorkOriginAuthority(repository)
         self.authority = WorkAuthority(repository)
         self.provisioning = WorkProvisioning(repository)
         self._secret = secrets.token_bytes(32)
-        self._admission = None
+        self._admission: WorkAdmission | None = None
 
     @staticmethod
     def _binding_from_row(row) -> WorkflowStepBinding:
@@ -231,7 +241,9 @@ class WorkWorkflowOrigins:
                 raise WorkConflict("workflow output schema binding is malformed") from error
         return binding
 
-    def _read_binding(self, connection, predicate: str, identity: tuple):
+    def _read_binding(
+        self, connection, predicate: str, identity: tuple, *, historical: bool = False
+    ) -> WorkflowStepBinding | None:
         if not connection.in_transaction:
             raise WorkConflict("workflow binding reads require a stable SQLite snapshot")
         self.repository._verify(connection)
@@ -273,7 +285,7 @@ class WorkWorkflowOrigins:
         ).fetchone()
         if (
             provision is None
-            or provision["state"] != "active"
+            or (not historical and provision["state"] != "active")
             or provision["provision_fingerprint"] != binding.provision_fingerprint
             or provision["spec_hash"] != binding.spec_hash
             or provision["contract_id"] != binding.contract_id
@@ -340,10 +352,17 @@ class WorkWorkflowOrigins:
             )
         ):
             raise WorkConflict("workflow step binding differs from its Work attempt or provision")
+        self._revalidate_plan_order(connection, binding, historical=historical)
         return binding
 
     def read_binding_for_attempt(
-        self, attempt_id: str, generation: int, work_item_id: str, *, connection=None
+        self,
+        attempt_id: str,
+        generation: int,
+        work_item_id: str,
+        *,
+        connection=None,
+        historical: bool = False,
     ) -> WorkflowStepBinding | None:
         """Read one immutable workflow binding from this exact Work attempt."""
         _identity(attempt_id, "Work attempt identity")
@@ -354,12 +373,14 @@ class WorkWorkflowOrigins:
                 connection,
                 "work_attempt_id=? AND work_generation=? AND work_item_id=?",
                 (attempt_id, generation, work_item_id),
+                historical=historical,
             )
         with self.repository.read_snapshot() as snapshot:
             return self._read_binding(
                 snapshot,
                 "work_attempt_id=? AND work_generation=? AND work_item_id=?",
                 (attempt_id, generation, work_item_id),
+                historical=historical,
             )
 
     def read_step_binding(
@@ -371,6 +392,7 @@ class WorkWorkflowOrigins:
         workflow_step_attempt: int,
         *,
         connection=None,
+        historical: bool = False,
     ) -> WorkflowStepBinding | None:
         """Read a run-step binding by its durable composite workflow identity."""
         if tier not in {"yaml", "script"}:
@@ -385,12 +407,14 @@ class WorkWorkflowOrigins:
                 connection,
                 "tier=? AND run_id=? AND run_generation=? AND step_id=? AND workflow_step_attempt=?",
                 args,
+                historical=historical,
             )
         with self.repository.read_snapshot() as snapshot:
             return self._read_binding(
                 snapshot,
                 "tier=? AND run_id=? AND run_generation=? AND step_id=? AND workflow_step_attempt=?",
                 args,
+                historical=historical,
             )
 
     def _bind_admission(self, admission) -> None:
@@ -450,7 +474,13 @@ class WorkWorkflowOrigins:
         ).fetchone()
         if (
             row is None
-            or row["workflow_name"] != workflow_id
+            or (
+                row["workflow_name"] != workflow_id
+                and not (
+                    self.plans is not None
+                    and self.plans.alias_matches(connection, workflow_id, run_id)
+                )
+            )
             or row["state"] != "running"
             or row["tier"] != tier
             or row["generation"] != str(run_generation)
@@ -671,7 +701,35 @@ class WorkWorkflowOrigins:
             or handoff.delivery != provision.delivery_template
         ):
             raise OriginDenied("workflow authority does not permit this managed step")
+        self._revalidate_plan_origin(connection, handoff)
         return provision
+
+    def _revalidate_plan_origin(self, connection, handoff):
+        if self.plans is not None:
+            self.plans.revalidate_origin(connection, handoff)
+            return
+        self._refuse_unowned_v2(connection, handoff.run_id)
+
+    def _revalidate_plan_order(self, connection, binding, *, historical=False):
+        if self.plans is not None:
+            self.plans.revalidate_order(connection, binding, historical=historical)
+            return
+        self._refuse_unowned_v2(connection, binding.run_id)
+
+    @staticmethod
+    def _refuse_unowned_v2(connection, run_id):
+        # Missing composition may preserve v1 but never silently authorize v2.
+        from cli_agent_orchestrator.services import execution_manifest
+
+        row = connection.execute(
+            "SELECT manifest_json FROM workflow_run WHERE run_id=?", (run_id,)
+        ).fetchone()
+        if row is None:
+            raise OriginDenied("workflow run source is unavailable")
+        if execution_manifest.parse(row["manifest_json"]) is not None:
+            return  # Historic v1 remains governed by its existing Work authority.
+        if row["manifest_json"]:
+            raise OriginDenied("workflow scoped plan owner is unavailable")
 
     def requires_run_capability(self, principal, workflow_id, spec_hash):
         """Select managed execution from durable provisions, rejecting stale authority."""
@@ -1398,7 +1456,7 @@ class WorkWorkflowOrigins:
         work_attempt_id,
         work_generation,
         allow_pending_next,
-    ):
+    ) -> WorkflowStepRetryAuthorization | None:
         binding, _provision = self._validate_retry_context(
             connection,
             principal,
@@ -1645,6 +1703,7 @@ class WorkWorkflowOrigins:
         run_generation,
         spec_hash,
         ttl_seconds=300,
+        connection=None,
     ) -> str:
         """Issue one hashed, expiring capability for an exact durable run generation."""
         try:
@@ -1662,7 +1721,13 @@ class WorkWorkflowOrigins:
         token = secrets.token_urlsafe(32)
         digest = hashlib.sha256(token.encode("ascii")).hexdigest()
         now = time.time()
-        with self.repository.transaction() as connection:
+        from contextlib import nullcontext
+
+        if connection is not None and not connection.in_transaction:
+            raise OriginDenied("capability requires caller transaction")
+        with (
+            self.repository.transaction() if connection is None else nullcontext(connection)
+        ) as connection:
             self.repository._verify(connection)
             self.provisioning._registered(connection, principal)
             self._run_record(

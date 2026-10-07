@@ -111,6 +111,13 @@ def journal_db(monkeypatch, tmp_path):
     ``_migrate_workflow_run*`` migrators). Clears the process-local registry / drive set
     on both sides so no run leaks between tests.
     """
+    # This fixture deliberately exercises the historic explicit legacy posture.
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text('{"workflow":{"require_approval":false}}')
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.settings_service.SETTINGS_FILE", settings_path
+    )
+    monkeypatch.delenv("CAO_WORKFLOW_REQUIRE_APPROVAL", raising=False)
     from cli_agent_orchestrator.clients.database import (
         _migrate_workflow_run,
         _migrate_workflow_run_step,

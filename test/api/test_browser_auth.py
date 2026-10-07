@@ -155,6 +155,7 @@ def test_logout_old_response_cannot_delete_new_cookie(browser_app):
 def test_production_startup_accepts_locally_created_default_operator(tmp_path, monkeypatch):
     import importlib.util
     from pathlib import Path
+
     from cli_agent_orchestrator.api.browser_auth_routes import configure_browser_auth
 
     path = Path(__file__).resolve().parents[2] / "scripts/personal_deployment.py"

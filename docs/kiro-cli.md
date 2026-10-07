@@ -8,17 +8,21 @@ The Kiro CLI provider enables CLI Agent Orchestrator (CAO) to work with **Kiro C
 
 ### Prerequisites
 
-1. **AWS Credentials**: Kiro CLI authenticates via AWS
+1. **Authentication**: Complete the Kiro CLI sign-in flow before launching CAO.
 2. **Kiro CLI**: Install the CLI tool
 3. **tmux**: Required for terminal management
 
 ```bash
 # Install Kiro CLI
-npm install -g @anthropic-ai/kiro-cli
+curl -fsSL https://cli.kiro.dev/install | bash
 
 # Verify authentication
 kiro-cli --version
+kiro-cli whoami
 ```
+
+Use the [official Kiro CLI installation instructions](https://kiro.dev/docs/cli/).
+On Linux, the installer requires `unzip` in addition to its download tools.
 
 ### Using Kiro CLI Provider with CAO
 

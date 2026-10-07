@@ -265,12 +265,21 @@ class TestConfirmedAnswers:
         subprocess.run(
             ["tmux", "-S", str(tmux_socket), "kill-server"], capture_output=True, check=True
         )
-        # kill-server returns once the kill is delivered, not once the server is
-        # gone. A list-sessions that connects while it is still tearing down is
-        # answered "server exited unexpectedly", which is neither of the markers
-        # this vector is meant to exercise, so the lookup fails closed and the
-        # test flakes. Wait for the process the way every other kill here does.
-        assert _wait_until(lambda: not _process_is_alive(server_pid))
+
+        # kill-server returns before its socket transport has necessarily settled.
+        # Even after the original PID disappears, a racing query can still fail
+        # with "server exited unexpectedly". That is correctly UNKNOWN, not an
+        # absence. Wait for both the owned PID and its strict socket verdict in
+        # the existing bounded window; a persistent lookup failure still fails.
+        def shutdown_is_confirmed():
+            if _process_is_alive(server_pid):
+                return False
+            try:
+                return client.session_exists_strict("cao-alive") is False
+            except TmuxLookupError:
+                return False
+
+        assert _wait_until(shutdown_is_confirmed)
 
         assert client.session_exists_strict("cao-alive") is False
 

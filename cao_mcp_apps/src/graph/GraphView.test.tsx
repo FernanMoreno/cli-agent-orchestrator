@@ -345,3 +345,17 @@ describe("GraphView — no direct fetch (FR-19 AC3)", () => {
     expect(source).not.toMatch(/\baxios\b/);
   });
 });
+
+it("shows an error when the trusted host origin is unavailable", async () => {
+  const host = new MockHost();
+  host.appWindow.document.referrer = "";
+  const app = new McpApp({
+    scope: host.appWindow as unknown as Window,
+    target: host.appTarget as unknown as Window,
+  });
+  render(<GraphView app={app} />);
+  expect(await screen.findByRole("alert")).toBeTruthy();
+  expect(host.initialized).toBe(false);
+  expect(host.toolCalls).toHaveLength(0);
+  app.disconnect();
+});

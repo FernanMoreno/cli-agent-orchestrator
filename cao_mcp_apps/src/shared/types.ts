@@ -45,6 +45,16 @@ export interface TerminalView {
   window: string | null;
   status: string | null;
   last_active: string | null;
+  turn?: TurnRecovery;
+}
+
+export interface TurnRecovery {
+  terminal_id: string;
+  generation: string | null;
+  state: string;
+  reason?: string | null;
+  attempts: number;
+  allowed_actions: string[];
 }
 
 /** The pure projection produced by `build_dashboard_snapshot`. */
@@ -66,6 +76,8 @@ export interface AgentDetailSnapshot {
   last_active: string | null;
   output_tail: string;
   scopes: string[];
+  turn?: TurnRecovery;
+  output_error?: { kind: string; message: string; http_status: number | null };
 }
 
 /**
@@ -81,6 +93,8 @@ export type SubmitCommandKind =
   | "interrupt"
   | "pause"
   | "resume"
+  | "verify_turn"
+  | "cancel_turn"
   // DESTRUCTIVE
   | "shutdown_session";
 

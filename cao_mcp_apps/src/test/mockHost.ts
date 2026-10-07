@@ -18,7 +18,11 @@ export type ToolImpl = (
   args: Record<string, unknown>,
 ) => unknown | Promise<unknown>;
 
-type Listener = (event: { data: unknown; origin: string }) => void;
+type Listener = (event: {
+  data: unknown;
+  origin: string;
+  source?: unknown;
+}) => void;
 
 /** Minimal Window stand-in: message listeners + interval timers. */
 export class FakeWindow {
@@ -33,8 +37,12 @@ export class FakeWindow {
   }
 
   /** Deliver a frame to this window's listeners, stamped with `origin`. */
+  source?: unknown;
+  document = { referrer: "" };
+
   deliver(origin: string, data: unknown): void {
-    for (const fn of Array.from(this.listeners)) fn({ data, origin });
+    for (const fn of Array.from(this.listeners))
+      fn({ data, origin, source: this.source });
   }
 
   setInterval(fn: () => void, ms: number): ReturnType<typeof setInterval> {
@@ -94,6 +102,8 @@ export class MockHost {
   constructor(options: MockHostOptions = {}) {
     this.tools = options.tools ?? {};
     this.origin = options.origin ?? "https://host.example";
+    this.appWindow.document.referrer = this.origin;
+    this.appWindow.source = this.appTarget;
     this.hostContext = options.hostContext ?? {};
     this.hostCapabilities = options.hostCapabilities ?? {};
     this.denyOpenLink = options.denyOpenLink ?? false;
@@ -104,15 +114,10 @@ export class MockHost {
   }
 
   /** The `target` the View posts to: routes frames into the host with the View origin. */
-  get appTarget(): {
-    postMessage: (data: unknown, targetOrigin?: string) => void;
-  } {
-    return {
-      postMessage: (data: unknown) =>
-        // Frames from the View carry the iframe origin.
-        this.hostWindow.deliver("https://view.example", data),
-    };
-  }
+  readonly appTarget = {
+    postMessage: (data: unknown, _targetOrigin?: string) =>
+      this.hostWindow.deliver("https://view.example", data),
+  };
 
   /** Push a notification to the View from the host origin (e.g. tool-result replay). */
   pushNotification(method: string, params: unknown): void {
@@ -183,7 +188,12 @@ export class MockHost {
       const name = params?.name as string;
       const args = (params?.arguments ?? {}) as Record<string, unknown>;
       this.toolCalls.push({ name, arguments: args });
-      const impl = this.tools[name];
+      const appToolNames: Record<string, string> = {
+        cao___cao_fetch_history: "cao_fetch_history",
+        cao___subscribe_events: "subscribe_events",
+        cao___submit_command: "submit_command",
+      };
+      const impl = this.tools[appToolNames[name] ?? name];
       if (!impl) {
         this.replyError(id, `unknown tool: ${name}`);
         return;

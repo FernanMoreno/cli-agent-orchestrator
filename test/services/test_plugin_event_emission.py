@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from cli_agent_orchestrator.backends.base import TerminalCleanupOutcome, TerminalCleanupResult
 from cli_agent_orchestrator.models.agent_profile import AgentProfile
 from cli_agent_orchestrator.models.inbox import MessageStatus, OrchestrationType
 from cli_agent_orchestrator.models.terminal import Terminal, TerminalStatus
@@ -32,6 +33,24 @@ def _registry_mock() -> MagicMock:
     registry = MagicMock()
     registry.dispatch = AsyncMock()
     return registry
+
+
+def _persisted_session_rows(*terminal_ids):
+    """Supply actual current-incarnation membership before mocked native teardown."""
+    from cli_agent_orchestrator.clients import database
+
+    return [
+        database.create_terminal(
+            terminal_id=terminal_id,
+            tmux_session="cao-demo",
+            tmux_window=f"developer-{terminal_id[:4]}",
+            provider="kiro_cli",
+            agent_profile="developer",
+            session_incarnation_id="plugin-events-current-incarnation",
+            new_session_incarnation=index == 0,
+        )
+        for index, terminal_id in enumerate(terminal_ids)
+    ]
 
 
 class TestSessionPluginEvents:
@@ -125,7 +144,7 @@ class TestSessionPluginEvents:
         )
         # One contained terminal so we can assert its teardown phases straddle
         # the session kill in the right order.
-        mock_list_terminals.return_value = [{"id": "abcd1234"}]
+        mock_list_terminals.return_value = _persisted_session_rows("abcd1234")
         mock_capture.side_effect = lambda tid: (
             call_order.append("capture_snapshot")
             or {"tmux_session": "cao-demo", "tmux_window": "developer-abcd", "id": tid}
@@ -181,7 +200,7 @@ class TestSessionPluginEvents:
 
         mock_tmux.return_value.session_exists_strict.return_value = True
         mock_tmux.return_value.kill_session.return_value = True
-        mock_list_terminals.return_value = [{"id": "aaaa1111"}, {"id": "bbbb2222"}]
+        mock_list_terminals.return_value = _persisted_session_rows("aaaa1111", "bbbb2222")
         mock_capture.side_effect = lambda tid: {
             "tmux_session": "cao-demo",
             "tmux_window": f"developer-{tid[:4]}",
@@ -231,7 +250,7 @@ class TestSessionPluginEvents:
 
         mock_tmux.return_value.session_exists_strict.return_value = True
         mock_tmux.return_value.kill_session.return_value = True
-        mock_list_terminals.return_value = [{"id": "aaaa1111"}, {"id": "bbbb2222"}]
+        mock_list_terminals.return_value = _persisted_session_rows("aaaa1111", "bbbb2222")
         mock_capture.side_effect = lambda tid: {
             "tmux_session": "cao-demo",
             "agent_profile": "developer",
@@ -275,7 +294,7 @@ class TestSessionPluginEvents:
         mock_tmux.return_value.session_exists_strict.return_value = True
         # kill_session reports failure and the session is still there afterwards.
         mock_tmux.return_value.kill_session.return_value = False
-        mock_list_terminals.return_value = [{"id": "abcd1234"}]
+        mock_list_terminals.return_value = _persisted_session_rows("abcd1234")
         mock_capture.return_value = {
             "tmux_session": "cao-demo",
             "tmux_window": "developer-abcd",
@@ -328,7 +347,7 @@ class TestSessionPluginEvents:
 
         mock_tmux.return_value.session_exists_strict.return_value = True
         mock_tmux.return_value.kill_session.return_value = True
-        mock_list_terminals.return_value = [{"id": "aaaa1111"}, {"id": "bbbb2222"}]
+        mock_list_terminals.return_value = _persisted_session_rows("aaaa1111", "bbbb2222")
         mock_capture.side_effect = lambda tid: {
             "tmux_session": "cao-demo",
             "tmux_window": f"developer-{tid[:4]}",
@@ -371,7 +390,7 @@ class TestSessionPluginEvents:
 
         mock_tmux.return_value.session_exists_strict.return_value = True
         mock_tmux.return_value.kill_session.return_value = True
-        mock_list_terminals.return_value = [{"id": "aaaa1111"}]
+        mock_list_terminals.return_value = _persisted_session_rows("aaaa1111")
         mock_capture.return_value = {
             "tmux_session": "cao-demo",
             "tmux_window": "developer-aaaa",
@@ -551,6 +570,7 @@ class TestTerminalPluginEvents:
             "tmux_window": "developer-abcd",
             "agent_profile": "developer",
         }
+        mock_tmux.kill_window.side_effect = lambda *_: call_order.append("stop") or True
         mock_provider_manager.cleanup_provider.side_effect = lambda *_: call_order.append("cleanup")
         mock_db_delete_terminal.side_effect = lambda *_: call_order.append("db_delete") or True
         registry.dispatch.side_effect = record_dispatch
@@ -558,6 +578,7 @@ class TestTerminalPluginEvents:
         deleted = delete_terminal("abcd1234", registry=registry)
 
         assert deleted is True
+        assert call_order.index("stop") < call_order.index("cleanup")
         assert call_order[-2:] == ["db_delete", "dispatch"]
         event_type, event = registry.dispatch.await_args.args
         assert event_type == "post_kill_terminal"
@@ -580,11 +601,42 @@ class TestTerminalPluginEvents:
             "tmux_window": "developer-abcd",
             "agent_profile": "developer",
         }
+        mock_tmux.kill_window.return_value = True
         mock_db_delete_terminal.side_effect = RuntimeError("db delete failed")
 
         with pytest.raises(RuntimeError, match="db delete failed"):
             delete_terminal("abcd1234", registry=registry)
 
+        registry.dispatch.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        "outcome", [TerminalCleanupOutcome.UNKNOWN, TerminalCleanupOutcome.STILL_PRESENT]
+    )
+    @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal")
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.backends.registry._backend")
+    @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
+    def test_unconfirmed_terminal_stop_preserves_row_and_suppresses_event(
+        self, mock_get_metadata, mock_tmux, mock_provider_manager, mock_db_delete_terminal, outcome
+    ):
+        """A failed stop cannot publish deletion or reclaim the writer's resources."""
+        registry = _registry_mock()
+        mock_get_metadata.return_value = {
+            "tmux_session": "cao-demo",
+            "tmux_window": "developer-abcd",
+            "agent_profile": "developer",
+        }
+        mock_tmux.kill_window.return_value = False
+        mock_tmux.cleanup_terminal_exact.return_value = TerminalCleanupResult(outcome)
+
+        assert delete_terminal("abcd1234", registry=registry) is False
+
+        mock_tmux.kill_window.assert_called_once_with("cao-demo", "developer-abcd")
+        mock_tmux.cleanup_terminal_exact.assert_called_once_with(
+            "abcd1234", "cao-demo", "developer-abcd", close=False
+        )
+        mock_db_delete_terminal.assert_not_called()
+        mock_provider_manager.cleanup_provider.assert_not_called()
         registry.dispatch.assert_not_awaited()
 
 
@@ -626,6 +678,7 @@ class TestMessagePluginEvents:
         mock_provider_manager.get_provider.return_value = provider
         mock_tmux.send_keys.side_effect = lambda *_args, **_kwargs: call_order.append("send_keys")
         mock_update_last_active.side_effect = lambda *_: call_order.append("update_last_active")
+        mock_status_monitor.notify_input_sent.return_value = 7
         registry.dispatch.side_effect = record_dispatch
 
         delivered = send_input(
@@ -636,7 +689,8 @@ class TestMessagePluginEvents:
             orchestration_type=orchestration_type,
         )
 
-        assert delivered is True
+        assert delivered == 7
+        mock_status_monitor.notify_input_sent.assert_called_once_with("abcd1234", real_send=True)
         assert call_order[-1] == "dispatch"
         event_type, event = registry.dispatch.await_args.args
         assert event_type == "post_send_message"

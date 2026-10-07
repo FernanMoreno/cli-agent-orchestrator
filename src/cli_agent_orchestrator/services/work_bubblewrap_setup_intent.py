@@ -116,11 +116,13 @@ def _canonical_ack(
         ("destination_inode", 1),
         ("landlock_abi", 1),
     ):
-        if type(value[key]) is not int or not minimum <= value[key] <= _MAX_INT:
+        numeric_value = value[key]
+        if type(numeric_value) is not int or not minimum <= numeric_value <= _MAX_INT:
             raise ValueError(f"Bubblewrap setup ACK has invalid {key}")
     if not 0 < size <= 8388608 or not 0 < monitor_pid <= _MAX_INT:
         raise ValueError("Bubblewrap setup ACK has an unbounded size or PID")
-    if any(type(fd) is not int for fd in value["open_fds"]):
+    open_fds = value["open_fds"]
+    if not isinstance(open_fds, (list, tuple)) or any(type(fd) is not int for fd in open_fds):
         raise ValueError("Bubblewrap setup ACK has invalid descriptors")
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
     if len(encoded.encode("utf-8")) > _ACK_LIMIT:
@@ -485,10 +487,11 @@ class WorkBubblewrapSetupIntent:
                     stored_socket_identity = None
                 elif stored_fds in ([0, 1, 2, 3], (0, 1, 2, 3)):
                     stored_proxy_fd = 3
-                    stored_socket_identity = (
-                        ack.get("proxy_socket_device"),
-                        ack.get("proxy_socket_inode"),
-                    )
+                    socket_device = ack.get("proxy_socket_device")
+                    socket_inode = ack.get("proxy_socket_inode")
+                    if type(socket_device) is not int or type(socket_inode) is not int:
+                        raise ValueError("stored ACK has an invalid proxy socket identity")
+                    stored_socket_identity = (socket_device, socket_inode)
                 else:
                     raise ValueError("stored ACK has an invalid FD inventory")
                 canonical = _canonical_ack(

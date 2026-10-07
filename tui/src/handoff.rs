@@ -252,7 +252,7 @@ pub struct Refused {
 ///
 /// Extracted so the six-to-three collapse is a **pure function of the status alone** and lives
 /// in exactly one place (BR-9, INV-4), directly testable without a clock, a server, or a loop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Verdict {
     /// A conclusive verdict; stop polling.
     Settled(Readiness),
@@ -285,9 +285,45 @@ fn classify(status: Option<TerminalStatus>) -> Verdict {
         Some(
             TerminalStatus::Idle | TerminalStatus::Completed | TerminalStatus::WaitingUserAnswer,
         ) => Verdict::Settled(Readiness::Ready),
+        Some(TerminalStatus::WaitingQuota) => {
+            Verdict::Settled(Readiness::Blocked("waiting_quota".to_string()))
+        }
+        Some(TerminalStatus::Reconcile) => {
+            Verdict::Settled(Readiness::Blocked("reconcile".to_string()))
+        }
         Some(TerminalStatus::Error) => Verdict::Settled(Readiness::Failed(TerminalStatus::Error)),
         Some(TerminalStatus::Processing | TerminalStatus::Unknown) | None => Verdict::KeepPolling,
     }
+}
+
+fn classify_terminal(terminal: &Terminal) -> Verdict {
+    let active_receipt = terminal.turn.as_ref().filter(|turn| {
+        matches!(
+            turn.state.as_str(),
+            "pending" | "verifying" | "reconcile" | "cancelling"
+        )
+    });
+    if matches!(
+        terminal.status,
+        Some(
+            TerminalStatus::WaitingQuota
+                | TerminalStatus::Reconcile
+                | TerminalStatus::Idle
+                | TerminalStatus::Completed
+                | TerminalStatus::WaitingUserAnswer
+        )
+    ) {
+        if let Some(turn) = active_receipt {
+            return Verdict::Settled(Readiness::Blocked(format!(
+                "turn {} · {} · attempts {} · generation {}",
+                turn.state,
+                turn.reason.as_deref().unwrap_or("inspection required"),
+                turn.attempts,
+                turn.generation.as_deref().unwrap_or("unavailable")
+            )));
+        }
+    }
+    classify(terminal.status)
 }
 
 /// Whether a name is safe to place in a multiplexer target, mirroring the server's allow-list.
@@ -387,7 +423,7 @@ impl<'a, S: ServerRead, H: Host> HandoffDriver<'a, S, H> {
             }
 
             match self.server.terminal(terminal_id) {
-                Ok(terminal) => match classify(terminal.status) {
+                Ok(terminal) => match classify_terminal(&terminal) {
                     Verdict::Settled(readiness) => return readiness,
                     Verdict::KeepPolling => {}
                 },
@@ -562,8 +598,8 @@ fn render_argv(argv: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify, is_valid_target_name, Backend, HandoffDriver, Host, Readiness, ServerRead,
-        Terminal, TerminalStatus, Verdict, POLL_INTERVAL, READINESS_CAP,
+        classify, classify_terminal, is_valid_target_name, Backend, HandoffDriver, Host, Readiness,
+        ServerRead, Terminal, TerminalStatus, Verdict, POLL_INTERVAL, READINESS_CAP,
     };
     use crate::error::TuiError;
     use crate::types::Health;
@@ -632,6 +668,9 @@ mod tests {
                     name: "planner-1".to_string(),
                     session_name: "work".to_string(),
                     status,
+                    turn: None,
+                    turn_sequence: None,
+                    turn_completed: None,
                 }),
                 Reply::Http(code) => Err(TuiError::Http(code)),
                 Reply::Unreachable => Err(TuiError::Unreachable("connection refused".to_string())),
@@ -703,6 +742,9 @@ mod tests {
             id: "a1b2c3d4".to_string(),
             name: "planner-1".to_string(),
             session_name: "work".to_string(),
+            turn: None,
+            turn_sequence: None,
+            turn_completed: None,
             status: Some(TerminalStatus::Idle),
         }
     }
@@ -1085,6 +1127,52 @@ mod tests {
         assert_eq!(
             refused.manual_command, None,
             "with no usable session there is no correct command to offer"
+        );
+    }
+    #[test]
+    fn integration_008_blocked_status_is_immediate_not_unknown() {
+        for wire in ["waiting_quota", "reconcile"] {
+            let server = FakeServer::new(
+                "tmux",
+                vec![Reply::Status(Some(TerminalStatus::from(wire.to_string())))],
+            );
+            let host = FakeHost::outside_tmux();
+            let verdict = HandoffDriver::new(&server, &host).await_ready("abcd1234");
+            assert_ne!(verdict, Readiness::Unknown);
+            assert_eq!(server.terminal_calls.get(), 1);
+            assert_eq!(host.sleeps.get(), 0);
+            assert!(host.spawned.borrow().is_empty());
+        }
+    }
+    #[test]
+    fn integration_008_visual_completion_retains_pending_receipt_diagnostic() {
+        let mut terminal = sample_terminal();
+        terminal.status = Some(TerminalStatus::Completed);
+        terminal.turn = Some(crate::types::TurnRecovery {
+            terminal_id: terminal.id.clone(),
+            generation: Some("a".repeat(32)),
+            state: "reconcile".to_string(),
+            reason: Some("receipt_missing".to_string()),
+            attempts: 3,
+            allowed_actions: vec!["verify".to_string(), "cancel".to_string()],
+        });
+        match classify_terminal(&terminal) {
+            Verdict::Settled(Readiness::Blocked(diagnostic)) => {
+                assert!(diagnostic.contains("receipt_missing"));
+                assert!(diagnostic.contains(&"a".repeat(32)));
+                assert!(diagnostic.contains("attempts 3"));
+            }
+            other => panic!("unverified completion lost its diagnostic: {other:?}"),
+        }
+        terminal.status = Some(TerminalStatus::WaitingUserAnswer);
+        assert!(matches!(
+            classify_terminal(&terminal),
+            Verdict::Settled(Readiness::Blocked(_))
+        ));
+        terminal.turn.as_mut().unwrap().state = "verified".to_string();
+        assert_eq!(
+            classify_terminal(&terminal),
+            Verdict::Settled(Readiness::Ready)
         );
     }
 }

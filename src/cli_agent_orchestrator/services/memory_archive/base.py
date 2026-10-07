@@ -13,7 +13,10 @@ NAMES only (D5).
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from cli_agent_orchestrator.services.memory_service import MemoryService
 
 
 @dataclass
@@ -61,6 +64,12 @@ class MemoryArchiveBackend(ABC):
     """One import/export format for the CAO memory store."""
 
     format_name: str  # registry key, e.g. "okf"
+
+    if TYPE_CHECKING:
+
+        def __init__(self, memory_service: "MemoryService") -> None:
+            """Backends accept the validated memory service at construction."""
+            ...
 
     @abstractmethod
     def export_bundle(

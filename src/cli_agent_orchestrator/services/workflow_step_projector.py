@@ -101,7 +101,7 @@ class WorkflowStepProjector:
         if run is None:
             raise WorkflowProjectionError("workflow run does not exist")
 
-        outcomes = []
+        outcomes: list[ProjectionOutcome] = []
         for step in workflow_journal.get_steps(run_id):
             if step.state != "work_pending":
                 continue
@@ -118,6 +118,7 @@ class WorkflowStepProjector:
                 run_generation=generation,
                 step_id=step.step_id,
                 workflow_step_attempt=step.attempts,
+                historical=True,
             )
             if binding is None:
                 outcomes.append(ProjectionOutcome(step.step_id, "binding_missing"))
@@ -133,7 +134,11 @@ class WorkflowStepProjector:
 
             work_state = self.work_service.read_workflow_step_state(binding)
             work_status = self._classify_work_state(binding, work_state)
-            if work_status in {"work_stale", "work_reconcile", "work_cancelled"}:
+            if (
+                work_status == "work_stale"
+                or work_status == "work_reconcile"
+                or work_status == "work_cancelled"
+            ):
                 outcomes.append(ProjectionOutcome(step.step_id, work_status))
                 continue
             if work_status == "failed":
@@ -152,7 +157,11 @@ class WorkflowStepProjector:
                     raise WorkflowProjectionError(
                         "workflow journal compare-and-set did not project the durable failure"
                     )
-                outcomes.append(ProjectionOutcome(step.step_id, status))
+                outcomes.append(
+                    ProjectionOutcome(
+                        step.step_id, "failed" if status == "failed" else "already_failed"
+                    )
+                )
                 continue
 
             accepted = self.work_service.read_accepted_workflow_result(binding)
@@ -190,12 +199,16 @@ class WorkflowStepProjector:
                 raise WorkflowProjectionError(
                     "workflow journal compare-and-set did not project the accepted result"
                 )
-            outcomes.append(ProjectionOutcome(step.step_id, status))
+            outcomes.append(
+                ProjectionOutcome(
+                    step.step_id, "projected" if status == "projected" else "already_projected"
+                )
+            )
         return tuple(outcomes)
 
     def project_pending_at_startup(self) -> tuple[ProjectionOutcome, ...]:
         """Rehydrate all pending managed results before the service accepts work."""
-        outcomes = []
+        outcomes: list[ProjectionOutcome] = []
         for run_id in workflow_journal.list_work_pending_run_ids():
             try:
                 outcomes.extend(self.project_pending_for_run(run_id))

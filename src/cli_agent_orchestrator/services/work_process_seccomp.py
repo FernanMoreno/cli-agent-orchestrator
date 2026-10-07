@@ -218,7 +218,7 @@ def _prctl(
     if result == -1:
         error_number = ctypes.get_errno()
         raise OSError(error_number, os.strerror(error_number))
-    return result
+    return int(result)
 
 
 def _seccomp_tsync(program_address: int) -> None:

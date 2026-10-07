@@ -281,7 +281,7 @@ def _resolve_injection_policy(
         policy,
         terminal_id if isinstance(terminal_id, str) else None,
         ambient_terminal_id,
-        requester_terminal_id,
+        requester_terminal_id if isinstance(requester_terminal_id, str) else None,
     )
     return policy
 

@@ -58,6 +58,8 @@ logger = logging.getLogger(__name__)
 
 VALID_SEARCH_MODES = ("metadata", "bm25", "hybrid")
 
+_SCOPE_ID_UNCHECKED = object()
+
 
 MEMORY_DISABLED_MESSAGE = (
     "memory subsystem is disabled. Set memory.enabled=true in settings.json " "to re-enable."
@@ -303,7 +305,8 @@ def resolve_project_id(cwd: Optional[Path]) -> str:
     Precedence:
         1. explicit override (``CAO_PROJECT_ID`` env → ``memory.project_id`` settings)
         2. ``git config --get remote.origin.url`` (normalized)
-        3. ``sha256(realpath(cwd))[:12]`` — Phase 2 parity fallback
+        3. opt-in private marker/registry for non-Git rename continuity
+        4. ``sha256(realpath(cwd))[:12]`` — Phase 2 parity fallback
 
     Sources 1 and 2 opportunistically record the current ``cwd_hash`` into
     ``ProjectAliasModel`` (kind=``cwd_hash``) so legacy directories stay
@@ -338,6 +341,15 @@ def resolve_project_id(cwd: Optional[Path]) -> str:
             # already covers legacy-dir lookup. ``canonical`` is auth-stripped
             # by ``_normalize_git_remote``, so the returned id is safe.
             return canonical
+
+    if cwd is not None:
+        from cli_agent_orchestrator.services.project_marker import resolve as resolve_marker
+
+        marker_identity = resolve_marker(cwd)
+        if marker_identity:
+            if cwd_hash and marker_identity != cwd_hash:
+                _record_alias_safe(marker_identity, cwd_hash, "cwd_hash")
+            return marker_identity
 
     if cwd_hash:
         return cwd_hash
@@ -921,6 +933,7 @@ class MemoryService:
         tags: str = "",
         terminal_context: Optional[dict] = None,
         occurred_at: Optional[datetime] = None,
+        _expected_scope_id: Any = _SCOPE_ID_UNCHECKED,
     ) -> Memory:
         """Store or update a memory. Upserts wiki file + index.md.
 
@@ -987,6 +1000,8 @@ class MemoryService:
             )
 
         scope_id = self.resolve_scope_id(scope, terminal_context)
+        if _expected_scope_id is not _SCOPE_ID_UNCHECKED and scope_id != _expected_scope_id:
+            raise ValueError("Memory import target identity changed before write")
         # Non-global scoped memories require a resolvable scope_id for
         # on-disk isolation. Without it, writes could collapse into a
         # shared scope directory and leak memories across projects,
@@ -3395,8 +3410,9 @@ class MemoryService:
 
         corpus_tokens: list[list[str]] = []
         contents: list[str] = []
-        for wiki_file, _entry in candidates:
-            text = wiki_file.read_text(encoding="utf-8")
+        for candidate_file, _entry in candidates:
+            assert candidate_file is not None
+            text = candidate_file.read_text(encoding="utf-8")
             contents.append(text)
             corpus_tokens.append(self._bm25_tokenize(text))
         vault_memories: dict[int, Memory] = {}
@@ -3450,9 +3466,9 @@ class MemoryService:
             if idx in vault_memories:
                 results.append(vault_memories[idx])
                 continue
-            wiki_file, entry = candidates[idx]
-            assert wiki_file is not None
-            memory = self._parse_wiki_file(wiki_file, contents[idx], entry)
+            candidate_file, entry = candidates[idx]
+            assert candidate_file is not None
+            memory = self._parse_wiki_file(candidate_file, contents[idx], entry)
             if memory:
                 results.append(memory)
         return results
@@ -3657,6 +3673,7 @@ class MemoryService:
         terminal_context: Optional[dict] = None,
         scope_id: Optional[str] = None,
         target: Literal["binding", "native"] = "binding",
+        _expected_scope_id: Any = _SCOPE_ID_UNCHECKED,
     ) -> ForgetResult:
         """Remove a memory from its binding or an explicitly native target.
 
@@ -3671,6 +3688,12 @@ class MemoryService:
         self._legacy_access()
 
         key = self._sanitize_key(key)
+        if _expected_scope_id is not _SCOPE_ID_UNCHECKED:
+            live_scope_id = self.resolve_scope_id(scope, terminal_context)
+            if live_scope_id != _expected_scope_id or (
+                scope_id is not None and scope_id != _expected_scope_id
+            ):
+                raise ValueError("Memory import target identity changed before removal")
         if scope_id is None:
             scope_id = self.resolve_scope_id(scope, terminal_context)
         if target not in {"binding", "native"}:
@@ -4206,7 +4229,7 @@ class MemoryService:
             for t in list_all_terminals():
                 if (
                     t.get("agent_profile") == MEMORY_MANAGER_PROFILE
-                    and t.get("session_name") == session_name
+                    and t.get("tmux_session") == session_name
                 ):
                     return t
         except Exception as e:
@@ -4294,7 +4317,7 @@ class MemoryService:
             ctx = self._get_terminal_context(terminal_id)
             session_name = ctx.get("session_name") if ctx else None
             cm = self._find_context_manager_terminal(session_name)
-            if not cm:
+            if not cm or ctx is None:
                 return self.get_memory_context_for_terminal(terminal_id)
 
             from cli_agent_orchestrator.models.terminal import TerminalStatus

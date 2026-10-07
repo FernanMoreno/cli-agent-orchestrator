@@ -4,7 +4,7 @@
 // This is BUILD/CI tooling (not part of the shipped feature). It runs the
 // asserting example examples/agent-plugins/agent-plugins-dogfood/run.sh, which
 // drives CAO installing its OWN `cao` package through its OWN new agent-plugin
-// pipeline — validate -> add -> install (Kiro + OpenCode) -> remove — and
+// pipeline — validate -> add disabled -> review/enable -> install (Kiro + OpenCode) -> remove — and
 // ASSERTS the R1 delivery fix, the Finding 2 collision guard, and cross-provider
 // removal, exiting non-zero on ANY drift. The recorder captures the run's
 // terminal output, renders it into a terminal-styled page, records Chromium

@@ -87,8 +87,12 @@ class TestCleanupOldData:
         mock_delete_turn_receipts.assert_not_called()
         assert mock_db.query.call_count == 3
 
-    @patch("cli_agent_orchestrator.services.cleanup_service._delete_terminal_turn_receipt_rows")
-    @patch("cli_agent_orchestrator.services.cleanup_service._record_native_child_cleanup_rows")
+    @patch(
+        "cli_agent_orchestrator.services.terminal_service.should_retain_deferred_failure_tombstone",
+        return_value=False,
+    )
+    @patch("cli_agent_orchestrator.services.terminal_service.delete_terminal_row")
+    @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
     @patch("cli_agent_orchestrator.services.cleanup_service.provider_manager")
     @patch("cli_agent_orchestrator.services.cleanup_service.SessionLocal")
     @patch("cli_agent_orchestrator.services.cleanup_service.TERMINAL_LOG_DIR")
@@ -100,8 +104,9 @@ class TestCleanupOldData:
         mock_terminal_log_dir,
         mock_session_local,
         mock_provider_manager,
-        mock_record_native_child_cleanup,
-        mock_delete_turn_receipts,
+        mock_metadata,
+        mock_delete_row,
+        mock_retain,
     ):
         """Provider-deferred terminal rows never leak into destructive cleanup batches."""
         mock_db = MagicMock()
@@ -114,7 +119,6 @@ class TestCleanupOldData:
         idempotency_query = MagicMock()
         mock_db.query.side_effect = [
             old_terminal_query,
-            terminal_delete_query,
             inbox_query,
             idempotency_query,
         ]
@@ -137,10 +141,8 @@ class TestCleanupOldData:
                 call("delete-me"),
             ]
         )
-        mock_record_native_child_cleanup.assert_called_once_with(mock_db, ["delete-me"])
-        mock_delete_turn_receipts.assert_called_once_with(mock_db, ["delete-me"])
-        terminal_delete_query.filter.return_value.delete.assert_called_once_with(
-            synchronize_session=False
+        mock_delete_row.assert_called_once_with(
+            "delete-me", mock_metadata.return_value, registry=None
         )
 
     @patch("cli_agent_orchestrator.services.cleanup_service.status_monitor")
@@ -176,7 +178,7 @@ class TestCleanupOldData:
         # Session 2: query.delete() for inbox deletion
         # Session 3: query.delete() for idempotency-key deletion
         assert mock_db.query.call_count >= 2
-        assert mock_db.commit.call_count == 3
+        assert mock_db.commit.call_count == 2
 
     @patch("cli_agent_orchestrator.services.cleanup_service.SessionLocal")
     @patch("cli_agent_orchestrator.services.cleanup_service.RETENTION_DAYS", 7)

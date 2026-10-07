@@ -42,6 +42,7 @@ from typing import List
 # package's allowlist in ``scripts/build_agent_plugin.py`` needs the same edit,
 # since a packaged skill folder name must equal its frontmatter ``name``.
 SHIPPED_SKILLS: List[str] = [
+    "cao-contributing",
     "agui-author",
     "cao-agent-routing",
     "cao-mcp-apps",

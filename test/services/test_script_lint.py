@@ -14,6 +14,9 @@ explicit fixtures in ``TestStepReceiverShapeTotality`` instead. A safety net
 aimed at a different failure mode is not a safety net for this one.
 """
 
+import json
+import subprocess
+import sys
 import time
 
 import pytest
@@ -78,20 +81,77 @@ class TestSyntaxRule:
         assert result.findings[0].severity == "error"
         assert result.findings[0].line == 1
 
-    def test_deeply_nested_expression_is_total(self):
-        # Deep attribute chains MAY overflow the parser's recursion (3.10/3.11)
-        # or MAY parse cleanly (3.12+ raised its limits, and CPython's C parser
-        # is not gated by sys.setrecursionlimit). Per the never-assert-which-arm
-        # rule (gh-96670), assert only totality: a result is returned, the status
-        # is in-domain, and any failure is fail-closed as a syntax ERROR.
-        source = "a" + ".b" * 200_000 + "\n"
-        result = lint_script(source, "deep.py")
-        assert isinstance(result, ScriptValidationResult)
-        assert result.status in ("pass", "fail")
-        if result.status == "fail":
-            f = result.findings[0]
-            assert f.rule_id == "syntax"
-            assert f.severity == "error"
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "a" + ".b" * 200_000 + "\n",
+            "a" + ".b" * 600 + "\n",
+            "(" + "a" + "\n.b" * 600 + ")\n",
+            "a" + "\\\n.b" * 600 + "\n",
+            "a" + "+a" * 600 + "\n",
+            "-" * 1_100 + "a\n",
+            'f"{a' + ".b" * 3_000 + '}"\n',
+        ],
+        ids=[
+            "original-400kb",
+            "attributes",
+            "implicit-continuation",
+            "explicit-continuation",
+            "binary",
+            "unary",
+            "f-string",
+        ],
+    )
+    def test_deeply_nested_expression_is_total(self, source):
+        # A native parser crash cannot be caught by Python exception handlers.
+        # Keep the original hostile input, but contain regressions in a child.
+        code = """
+import json
+import resource
+import sys
+from cli_agent_orchestrator.services.script_lint import lint_script
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+result = lint_script(sys.stdin.read(), "deep.py")
+print(json.dumps({"status": result.status, "findings": [
+    [finding.rule_id, finding.severity, finding.line]
+    for finding in result.findings
+]}))
+"""
+        child = subprocess.run(
+            [sys.executable, "-c", code],
+            input=source,
+            text=True,
+            capture_output=True,
+            timeout=15,
+        )
+        assert child.returncode == 0, child.stderr
+        result = json.loads(child.stdout)
+        assert result["status"] == "fail"
+        assert len(result["findings"]) == 1
+        assert result["findings"][0][:2] == ["syntax", "error"]
+        assert result["findings"][0][2] >= 1
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "x = 1\n" * 10_000,
+            "x = 1;" * 10_000 + "\n",
+            "#" + ".b" * 200_000 + "\nx = 1\n",
+            'x = "' + ".b" * 200_000 + '"\n',
+            'x = """' + "line\n" * 10_000 + '"""\n',
+            "x = a" + ".b" * 100 + "\n",
+        ],
+        ids=[
+            "many-lines",
+            "many-statements",
+            "long-comment",
+            "long-string",
+            "multiline-string",
+            "ordinary-expression",
+        ],
+    )
+    def test_parser_budget_preserves_ordinary_scripts(self, source):
+        assert lint_script(source, "ordinary.py").status == "pass"
 
     def test_recursion_error_arm_is_fail_closed_syntax(self, monkeypatch):
         # Deterministic coverage of the RecursionError arm on ALL supported

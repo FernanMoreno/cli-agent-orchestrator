@@ -24,8 +24,6 @@ const CONTROLS: ControlDef[] = [
   { kind: "send_message", label: "Send", requiredScope: "cao:write" },
   { kind: "assign", label: "Assign", requiredScope: "cao:write" },
   { kind: "interrupt", label: "Interrupt", requiredScope: "cao:write" },
-  { kind: "pause", label: "Pause", requiredScope: "cao:write" },
-  { kind: "resume", label: "Resume", requiredScope: "cao:write" },
   {
     kind: "shutdown_session",
     label: "Shutdown",
@@ -46,6 +44,7 @@ export interface TaskControlProps {
   target?: string;
   /** Granted scopes; controls whose required scope is absent are hidden. */
   scopes?: string[];
+  activeTurn?: boolean;
   /** Confirm hook for destructive kinds (defaults to window.confirm). */
   confirm?: (message: string) => boolean;
 }
@@ -54,6 +53,7 @@ export function TaskControl({
   onSubmit,
   target,
   scopes,
+  activeTurn = false,
   confirm,
 }: TaskControlProps): JSX.Element {
   const [message, setMessage] = useState("");
@@ -68,11 +68,13 @@ export function TaskControl({
     // Default-off: when scopes is undefined/empty the UI shows everything
     // (matches the server's full-scope default). When a non-empty set is
     // provided, gate on membership.
-    if (!scopes || scopes.length === 0) return true;
+    if (scopes === undefined) return true;
     return scopes.includes(scope);
   };
 
   async function run(def: ControlDef): Promise<void> {
+    if (activeTurn && (def.kind === "assign" || def.kind === "interrupt"))
+      return;
     setError(null);
     if (def.kind === "send_message" || def.kind === "assign") {
       if (!message.trim()) {
@@ -117,6 +119,7 @@ export function TaskControl({
    */
   async function handleDrop(e: React.DragEvent<HTMLDivElement>): Promise<void> {
     e.preventDefault();
+    if (activeTurn || !canUse("cao:write")) return;
     setError(null);
     const dropped = e.dataTransfer.getData("text/plain").trim();
     if (!dropped) return;
@@ -161,7 +164,11 @@ export function TaskControl({
             className={`cao-btn${def.destructive ? " cao-btn-danger" : ""}`}
             data-testid={`btn-${def.kind}`}
             data-kind={def.kind}
-            disabled={busy}
+            disabled={
+              busy ||
+              (activeTurn &&
+                (def.kind === "assign" || def.kind === "interrupt"))
+            }
             onClick={() => void run(def)}
           >
             {def.label}

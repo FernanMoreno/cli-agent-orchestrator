@@ -68,6 +68,43 @@ class TestListPlugins:
         assert "findings" in entry
         assert entry["affected_sessions"] == []
 
+    def test_list_current_review_detects_tampered_installed_content(self, client, tmp_path):
+        source = build_plugin(tmp_path / "src", "demo", skills=["alpha"])
+        assert client.post("/plugins", json={"source": str(source)}).status_code == 201
+        before = client.get("/plugins").json()["plugins"][0]
+        assert before["review"]["enabled"] is True
+        skill = client.store.plugin_root("demo") / "skills" / "alpha" / "SKILL.md"
+        skill.write_text(skill.read_text() + "\nChanged after review.\n")
+        after = client.get("/plugins").json()["plugins"][0]
+        assert after["review"]["enabled"] is False
+        assert after["review"]["integrity"] == "changed"
+        assert after["name"] == before["name"]
+        assert after["affected_sessions"] == before["affected_sessions"]
+
+    def test_one_unavailable_plugin_review_preserves_other_entries(
+        self, client, tmp_path, monkeypatch
+    ):
+        from cli_agent_orchestrator.agent_plugins import installer
+
+        for name in ("unavailable", "healthy"):
+            source = build_plugin(tmp_path / name, name, skills=[name])
+            assert client.post("/plugins", json={"source": str(source)}).status_code == 201
+        original = installer.review_record
+
+        def review(record, root):
+            if record.name == "unavailable":
+                raise OSError("Package cannot be read")
+            return original(record, root)
+
+        monkeypatch.setattr(installer, "review_record", review)
+        response = client.get("/plugins")
+        assert response.status_code == 200
+        entries = {entry["name"]: entry for entry in response.json()["plugins"]}
+        assert entries["unavailable"]["review"]["enabled"] is False
+        assert entries["unavailable"]["review"]["integrity"] == "unavailable"
+        assert entries["unavailable"]["review"]["producer_status"] == "unverified"
+        assert entries["healthy"]["review"]["enabled"] is True
+
     def test_non_fatal_findings_are_reported(self, client, tmp_path):
         write_skill(client.skills_dir / "alpha", "alpha")
         source = build_plugin(tmp_path / "src", "demo", skills=["alpha"])

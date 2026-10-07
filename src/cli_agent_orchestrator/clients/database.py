@@ -1,9 +1,11 @@
 """Minimal database client with only terminal metadata."""
 
+import json as _json
 import logging
 import os
 import re
 import uuid
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, cast
@@ -11,7 +13,6 @@ from typing import Any, Dict, List, NamedTuple, Optional, cast
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
-    Column,
     DateTime,
     Float,
     Index,
@@ -24,7 +25,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.orm import DeclarativeBase, declarative_base, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.clients.work_inbox_schema import ManagedInboxStoreIdentity
@@ -34,7 +35,23 @@ from cli_agent_orchestrator.models.inbox import InboxMessage, MessageStatus
 
 logger = logging.getLogger(__name__)
 
-Base: Any = declarative_base()
+
+class Base(DeclarativeBase):
+    pass
+
+
+class SessionIncarnationModel(Base):
+    """Current logical lifetime of a reusable session name.
+
+    Keep the pointer after teardown so retries cannot claim historical terminal
+    rows. A successful new-session creation replaces it in the same transaction
+    as its initial terminal; individual terminal deletion never removes it.
+    """
+
+    __tablename__ = "session_incarnations"
+
+    session_name: Mapped[str] = mapped_column(String, primary_key=True)
+    incarnation_id: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class TerminalModel(Base):
@@ -42,27 +59,63 @@ class TerminalModel(Base):
 
     __tablename__ = "terminals"
 
-    id = Column(String, primary_key=True)  # "abc123ef"
-    tmux_session = Column(String, nullable=False)  # "cao-session-name"
-    tmux_window = Column(String, nullable=False)  # "window-name"
-    provider = Column(String, nullable=False)  # "kiro_cli", "claude_code"
-    agent_profile = Column(String)  # "developer", "reviewer" (optional)
-    working_directory = Column(String, nullable=True)  # launch-time cwd (optional)
-    allowed_tools = Column(String, nullable=True)  # JSON-encoded list of CAO tool names
-    shell_command = Column(String, nullable=True)  # shell process name captured before kiro launch
-    caller_id = Column(String, nullable=True)  # terminal that created this one (callback target)
-    engine = Column(String, nullable=True)  # resolved Kiro engine; NULL for legacy/non-Kiro rows
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # "abc123ef"
+    tmux_session: Mapped[str] = mapped_column(String, nullable=False)  # "cao-session-name"
+    tmux_window: Mapped[str] = mapped_column(String, nullable=False)  # "window-name"
+    provider: Mapped[str] = mapped_column(String, nullable=False)  # "kiro_cli", "claude_code"
+    agent_profile: Mapped[str | None] = mapped_column(String)  # "developer", "reviewer" (optional)
+    working_directory: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # launch-time cwd (optional)
+    allowed_tools: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # JSON-encoded list of CAO tool names
+    shell_command: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # shell process name captured before kiro launch
+    caller_id: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # terminal that created this one (callback target)
+    engine: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # resolved Kiro engine; NULL for legacy/non-Kiro rows
+    provider_variant: Mapped[str | None] = mapped_column(String, nullable=True)
+    kiro_policy_digest: Mapped[str | None] = mapped_column(String, nullable=True)
     # Ordered, general-to-specific array of strings (JSON-encoded), e.g.
     # '["tenant_1", "project_5", "folder_12"]'. CAO only does ordered-prefix
     # matching (list_siblings); consumers own what the levels mean (#432).
-    group = Column(Text, nullable=True)
+    group: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Free-form JSON (JSON-encoded dict), consumer-defined, no fixed schema.
     # Python attribute is ``metadata_json`` (not ``metadata``) because
     # SQLAlchemy's declarative Base reserves ``.metadata`` for the schema
     # MetaData object on every mapped class; the DB column itself is still
     # literally named "metadata" per #432's design.
-    metadata_json = Column("metadata", Text, nullable=True)
-    last_active = Column(DateTime, default=datetime.now)
+    metadata_json: Mapped[str | None] = mapped_column("metadata", Text, nullable=True)
+    # Server-owned durable deferred-init failure. Kept separate from consumer
+    # metadata so PATCH /metadata cannot erase or forge lifecycle truth.
+    deferred_init_failure_json: Mapped[str | None] = mapped_column(
+        "deferred_init_failure", Text, nullable=True
+    )
+    # Creation-time lifecycle ownership for deferred initialization.  True
+    # means an external observer (rather than CAO itself) owns final failure
+    # settlement, so runtime/lifecycle cleanup may dismantle provider resources
+    # but must retain this registry row until that observer acknowledges it.
+    deferred_init_external_owner: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
+    # True once provider/FIFO/worktree runtime state has been fully dismantled
+    # for a retained external-owner tombstone.  The row may remain for durable
+    # failure observation, but it no longer consumes a live runtime slot.
+    deferred_init_runtime_reclaimed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
+    # Durable identity for one logical lifetime of a reusable session name.
+    # Retained deferred-init tombstones can outlive the backend session; when a
+    # later session reuses the same label this value lets read/lifecycle paths
+    # distinguish the old rows from failures that belong to the CURRENT live
+    # session. NULL is reserved for rows created before this column existed.
+    session_incarnation_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_active: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.now)
 
     # ORDERING CONTRACT: the two session-scoped reads -- ``list_terminals_by_session``
     # and ``list_terminals_in_sessions`` -- order by SQLite's implicit ``rowid``,
@@ -134,26 +187,31 @@ class TerminalTurnReceiptModel(Base):
     A terminal has at most one in-flight receipt.  A settled
     ``result_verified`` row is retained as an audit handle and atomically
     replaced by the next ``prepared`` turn; an active ``prepared``/``sent``
-    row blocks a second task until it is reconciled or its result is verified.
+    row blocks a second task until its result is verified or recovery records
+    a backend-confirmed cancellation.
     """
 
     __tablename__ = "terminal_turn_receipts"
 
-    terminal_id = Column(String, primary_key=True)
-    provider = Column(String, nullable=False)
+    terminal_id: Mapped[str] = mapped_column(String, primary_key=True)
+    provider: Mapped[str] = mapped_column(String, nullable=False)
     # Opaque per-turn generation, distinct from the receipt itself, so state
     # transitions have a CAS key even though the plaintext nonce is never
     # persisted.
-    generation = Column(String, nullable=False)
-    receipt_sha256 = Column(String, nullable=False)
+    generation: Mapped[str] = mapped_column(String, nullable=False)
+    receipt_sha256: Mapped[str] = mapped_column(String, nullable=False)
     # prepared | sent | result_verified.  Validation is duplicated at the
     # repository boundary for existing SQLite databases where a CHECK would
     # otherwise be absent.
-    phase = Column(String, nullable=False)
-    result_sha256 = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
-    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
-    verified_at = Column(DateTime(timezone=True), nullable=True)
+    phase: Mapped[str] = mapped_column(String, nullable=False)
+    result_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         CheckConstraint(
@@ -175,6 +233,223 @@ class TerminalTurnReceiptModel(Base):
     )
 
 
+class TerminalTurnRecoveryModel(Base):
+    """Durable diagnostics and verified results, retained by generation."""
+
+    __tablename__ = "terminal_turn_recovery"
+    terminal_id: Mapped[str] = mapped_column(String, primary_key=True)
+    generation: Mapped[str] = mapped_column(String, primary_key=True)
+    state: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completion_detected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    result_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('pending', 'verifying', 'reconcile', 'verified', 'cancelling', 'cancelled')",
+            name="ck_terminal_turn_recovery_state",
+        ),
+        CheckConstraint("attempts >= 0", name="ck_terminal_turn_recovery_attempts"),
+    )
+
+
+class TerminalLateObservationModel(Base):
+    """Separate finite evidence-read budget; never authorizes native input."""
+
+    __tablename__ = "terminal_late_observations"
+    terminal_id: Mapped[str] = mapped_column(String, primary_key=True)
+    generation: Mapped[str] = mapped_column(String, primary_key=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_due: Mapped[float] = mapped_column(Float, nullable=False)
+    deadline: Mapped[float] = mapped_column(Float, nullable=False)
+    __table_args__ = (
+        CheckConstraint("attempts >= 0 AND attempts <= 6", name="ck_terminal_late_budget"),
+    )
+
+
+class AssignmentIntentModel(Base):
+    """Immutable whole-assignment identity retained even after terminal deletion."""
+
+    __tablename__ = "assignment_intents"
+    assignment_id: Mapped[str] = mapped_column(String, primary_key=True)
+    owner: Mapped[str] = mapped_column(String, nullable=False)
+    parent_terminal_id: Mapped[str] = mapped_column(String, nullable=False)
+    parent_incarnation_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    generation: Mapped[str | None] = mapped_column(String, nullable=True)
+    operation_key: Mapped[str] = mapped_column(String, nullable=False)
+    request_hash: Mapped[str] = mapped_column(String, nullable=False)
+    state: Mapped[str] = mapped_column(String, nullable=False)
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('admitted', 'submitted', 'reconcile')", name="ck_assignment_intent_state"
+        ),
+    )
+
+
+class LocalPeerProjectModel(Base):
+    """Project roots explicitly approved for local CAO peer coordination."""
+
+    __tablename__ = "local_peer_projects"
+    project_id: Mapped[str] = mapped_column(String, primary_key=True)
+    canonical_root: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    git_common_dir: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+
+class LocalPeerGrantModel(Base):
+    """Revocable project-scoped grant pinned to a peer's public signing key."""
+
+    __tablename__ = "local_peer_grants"
+    grant_id: Mapped[str] = mapped_column(String, primary_key=True)
+    peer_instance_id: Mapped[str] = mapped_column(String, nullable=False)
+    project_id: Mapped[str] = mapped_column(String, nullable=False)
+    peer_display_name: Mapped[str] = mapped_column(String, nullable=False)
+    peer_public_key: Mapped[str] = mapped_column(String, nullable=False)
+    scopes_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        UniqueConstraint("peer_instance_id", "project_id", name="uq_local_peer_grant_project"),
+        Index("ix_local_peer_grant_active", "peer_instance_id", "project_id", "revoked_at"),
+        CheckConstraint(
+            "length(peer_public_key) BETWEEN 40 AND 64", name="ck_local_peer_public_key"
+        ),
+    )
+
+
+class LocalPeerChallengeModel(Base):
+    """Short-lived one-use pairing challenge, retained for safe retries."""
+
+    __tablename__ = "local_peer_pairing_challenges"
+    challenge_id: Mapped[str] = mapped_column(String, primary_key=True)
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    code_hash: Mapped[str] = mapped_column(String, nullable=False)
+    initiator_instance_id: Mapped[str] = mapped_column(String, nullable=False)
+    initiator_process_generation: Mapped[str] = mapped_column(String, nullable=False)
+    initiator_display_name: Mapped[str] = mapped_column(String, nullable=False)
+    initiator_public_key: Mapped[str] = mapped_column(String, nullable=False)
+    initiator_loopback_port: Mapped[int] = mapped_column(Integer, nullable=False)
+    candidate_instance_id: Mapped[str] = mapped_column(String, nullable=False)
+    candidate_process_generation: Mapped[str] = mapped_column(String, nullable=False)
+    candidate_display_name: Mapped[str] = mapped_column(String, nullable=False)
+    candidate_public_key: Mapped[str] = mapped_column(String, nullable=False)
+    project_id: Mapped[str] = mapped_column(String, nullable=False)
+    canonical_root: Mapped[str] = mapped_column(String, nullable=False)
+    git_common_dir: Mapped[str | None] = mapped_column(String, nullable=True)
+    requested_scopes_json: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[float] = mapped_column(Float, nullable=False)
+    consumed_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    __table_args__ = (
+        CheckConstraint("role IN ('initiator', 'candidate')", name="ck_local_peer_challenge_role"),
+        CheckConstraint("length(code_hash) = 64", name="ck_local_peer_challenge_code_hash"),
+    )
+
+
+class LocalPeerTaskModel(Base):
+    """Durable task receipt for an assignment accepted from a local CAO peer."""
+
+    __tablename__ = "local_peer_tasks"
+    task_id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_instance_id: Mapped[str] = mapped_column(String, nullable=False)
+    target_instance_id: Mapped[str] = mapped_column(String, nullable=False)
+    requester_terminal_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    requester_principal_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    project_id: Mapped[str] = mapped_column(String, nullable=False)
+    operation_key: Mapped[str] = mapped_column(String, nullable=False)
+    request_hash: Mapped[str] = mapped_column(String, nullable=False)
+    assignment_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    terminal_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    use_worktree: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    state: Mapped[str] = mapped_column(String, nullable=False, default="accepted")
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )
+    __table_args__ = (
+        UniqueConstraint(
+            "source_instance_id",
+            "requester_terminal_id",
+            "project_id",
+            "operation_key",
+            name="uq_local_peer_task_key",
+        ),
+        Index("ix_local_peer_task_target_project", "target_instance_id", "project_id"),
+        CheckConstraint(
+            "state IN ('accepted', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted', 'reconcile')",
+            name="ck_local_peer_task_state",
+        ),
+        CheckConstraint("length(request_hash) = 64", name="ck_local_peer_task_hash"),
+    )
+
+
+class LocalPeerRequestNonceModel(Base):
+    """Short-lived replay fence for signed peer HTTP requests."""
+
+    __tablename__ = "local_peer_request_nonces"
+    peer_instance_id: Mapped[str] = mapped_column(String, primary_key=True)
+    nonce: Mapped[str] = mapped_column(String, primary_key=True)
+    expires_at: Mapped[float] = mapped_column(Float, nullable=False)
+    __table_args__ = (CheckConstraint("length(nonce) = 32", name="ck_local_peer_nonce_length"),)
+
+
+class ProjectMarkerModel(Base):
+    """Private memory identity registry; never a portable Work grant."""
+
+    __tablename__ = "project_markers"
+    project_id: Mapped[str] = mapped_column(String, primary_key=True)
+    nonce: Mapped[str] = mapped_column(String, nullable=False)
+    realpath: Mapped[str] = mapped_column(String, nullable=False)
+    device: Mapped[int] = mapped_column(Integer, nullable=False)
+    inode: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class BeadsOperationModel(Base):
+    """Private operation evidence for bounded external metadata writes."""
+
+    __tablename__ = "beads_operations"
+    operation_id: Mapped[str] = mapped_column(String, primary_key=True)
+    owner: Mapped[str] = mapped_column(String, nullable=False)
+    workspace_id: Mapped[str] = mapped_column(String, nullable=False)
+    workspace_identity: Mapped[str] = mapped_column(String, nullable=False)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    request_hash: Mapped[str] = mapped_column(String, nullable=False)
+    state: Mapped[str] = mapped_column(String, nullable=False)
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('claimed', 'applied', 'uncertain', 'partial')",
+            name="ck_beads_operation_state",
+        ),
+    )
+
+
 class NativeChildModel(Base):
     """Durable lifecycle receipt for a terminal created by another terminal.
 
@@ -191,24 +466,28 @@ class NativeChildModel(Base):
 
     __tablename__ = "native_children"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    parent_terminal_id = Column(String, nullable=False, index=True)
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    parent_terminal_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     # Generated before the backend resource exists, so an interrupted create
     # remains traceable even when no terminal registry row was committed.
-    terminal_id = Column(String, nullable=False, unique=True, index=True)
-    provider = Column(String, nullable=False)
-    agent_profile = Column(String, nullable=False)
+    terminal_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    agent_profile: Mapped[str] = mapped_column(String, nullable=False)
     # planned | acknowledged | sent | running | succeeded | failed |
     # reconcile | cancelled.  Validation lives in the service boundary so old
     # SQLite files remain additive-only.
-    state = Column(String, nullable=False, default="planned")
-    lease_expires_at = Column(DateTime(timezone=True), nullable=False)
-    error_kind = Column(String, nullable=True)
-    error_summary = Column(Text, nullable=True)
-    cleanup_completed_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=_utcnow)
-    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
-    settled_at = Column(DateTime(timezone=True), nullable=True)
+    state: Mapped[str] = mapped_column(String, nullable=False, default="planned")
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    error_kind: Mapped[str | None] = mapped_column(String, nullable=True)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cleanup_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class InboxModel(Base):
@@ -216,12 +495,12 @@ class InboxModel(Base):
 
     __tablename__ = "inbox"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    sender_id = Column(String, nullable=False)
-    receiver_id = Column(String, nullable=False)
-    message = Column(String, nullable=False)
-    status = Column(String, nullable=False)  # MessageStatus enum value
-    created_at = Column(DateTime, default=datetime.now)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    sender_id: Mapped[str] = mapped_column(String, nullable=False)
+    receiver_id: Mapped[str] = mapped_column(String, nullable=False)
+    message: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)  # MessageStatus enum value
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.now)
 
 
 class ManagedInboxTarget(NamedTuple):
@@ -242,38 +521,48 @@ class MemoryMetadataModel(Base):
 
     __tablename__ = "memory_metadata"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    key = Column(String, nullable=False)
-    memory_type = Column(String, nullable=False)
-    scope = Column(String, nullable=False)
-    scope_id = Column(String, nullable=True)
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    key: Mapped[str] = mapped_column(String, nullable=False)
+    memory_type: Mapped[str] = mapped_column(String, nullable=False)
+    scope: Mapped[str] = mapped_column(String, nullable=False)
+    scope_id: Mapped[str | None] = mapped_column(String, nullable=True)
     # A NOT NULL discriminator keeps the widened unique constraint total:
     # SQLite considers NULL values distinct inside UNIQUE indexes.
-    source_kind = Column(String, nullable=False, default="native", server_default="native")
-    file_path = Column(String, nullable=False)
-    tags = Column(String, nullable=False, default="")
-    source_provider = Column(String, nullable=True)
-    source_terminal_id = Column(String, nullable=True)
-    token_estimate = Column(Integer, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=_utcnow)
-    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+    source_kind: Mapped[str] = mapped_column(
+        String, nullable=False, default="native", server_default="native"
+    )
+    file_path: Mapped[str] = mapped_column(String, nullable=False)
+    tags: Mapped[str] = mapped_column(String, nullable=False, default="")
+    source_provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_terminal_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    token_estimate: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
     # 3-factor scoring. ``access_count`` feeds the usage factor;
     # ``last_accessed_at`` backs a server-side rate-limit on increments. NOT
     # NULL DEFAULT 0 so existing rows read as "never recalled" without a
     # backfill. Migrated onto existing DBs by ``_migrate_add_access_count``.
-    access_count = Column(Integer, nullable=False, default=0, server_default="0")
-    last_accessed_at = Column(DateTime(timezone=True), nullable=True, default=None)
+    access_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    last_accessed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
     # LLM wiki compilation. NULL = never LLM-compiled (pre-existing rows, or
     # every compile attempt fell back to append). Non-NULL = UTC timestamp of
     # the last successful compile.
-    last_compiled_at = Column(DateTime(timezone=True), nullable=True, default=None)
+    last_compiled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
     # Comma-separated sanitised keys of cross-referenced articles. NULL =
     # never computed (pre-existing rows or LLM error). ``""`` = computed, no
     # related found (success — distinct from NULL to avoid endless retries).
     # Practical max ≤ 256 bytes (3 keys × 60 chars + 2 commas). The CHECK
     # constraint applies on FRESH databases only — existing DBs rely on the
     # parse-side cap in ``_parse_related_keys``.
-    related_keys = Column(Text, nullable=True, default=None)
+    related_keys: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
 
     __table_args__ = (
         UniqueConstraint("key", "scope", "scope_id", "source_kind", name="uq_memory_key_scope"),
@@ -306,26 +595,28 @@ class VaultNoteModel(Base):
 
     __tablename__ = "vault_note"
 
-    note_uid = Column(String, primary_key=True)
-    vault_id = Column(String, nullable=False)
-    scope = Column(String, nullable=False)
-    scope_id = Column(
+    note_uid: Mapped[str] = mapped_column(String, primary_key=True)
+    vault_id: Mapped[str] = mapped_column(String, nullable=False)
+    scope: Mapped[str] = mapped_column(String, nullable=False)
+    scope_id: Mapped[str] = mapped_column(
         String,
         nullable=False,
         default=VAULT_NOTE_SCOPE_ID_SENTINEL,
         server_default=VAULT_NOTE_SCOPE_ID_SENTINEL,
     )
-    cao_key = Column(String, nullable=False)
-    vault_relpath = Column(String, nullable=False)
-    managed = Column(Boolean, nullable=False)
-    content_sha256 = Column(String, nullable=True)
-    frontmatter_sha256 = Column(String, nullable=True)
-    size_bytes = Column(Integer, nullable=True)
-    mtime_ns = Column(Integer, nullable=True)
-    status = Column(String, nullable=False)
-    last_reconciled_at = Column(DateTime(timezone=True), nullable=True)
-    key_source = Column(String, nullable=True)
-    key_source_reason = Column(String, nullable=True)
+    cao_key: Mapped[str] = mapped_column(String, nullable=False)
+    vault_relpath: Mapped[str] = mapped_column(String, nullable=False)
+    managed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    content_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
+    frontmatter_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    mtime_ns: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    last_reconciled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    key_source: Mapped[str | None] = mapped_column(String, nullable=True)
+    key_source_reason: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("vault_id", "scope", "scope_id", "cao_key", name="uq_vault_note_key"),
@@ -338,20 +629,22 @@ class VaultExclusionModel(Base):
 
     __tablename__ = "vault_exclusion"
 
-    vault_id = Column(String, primary_key=True)
-    scope = Column(String, primary_key=True)
-    scope_id = Column(
+    vault_id: Mapped[str] = mapped_column(String, primary_key=True)
+    scope: Mapped[str] = mapped_column(String, primary_key=True)
+    scope_id: Mapped[str] = mapped_column(
         String,
         primary_key=True,
         default=VAULT_NOTE_SCOPE_ID_SENTINEL,
         server_default=VAULT_NOTE_SCOPE_ID_SENTINEL,
     )
-    cao_key = Column(String, primary_key=True)
-    last_known_relpath = Column(String, nullable=False)
-    content_sha256 = Column(String, nullable=True)
-    key_source = Column(String, nullable=True)
-    key_source_reason = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    cao_key: Mapped[str] = mapped_column(String, primary_key=True)
+    last_known_relpath: Mapped[str] = mapped_column(String, nullable=False)
+    content_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
+    key_source: Mapped[str | None] = mapped_column(String, nullable=True)
+    key_source_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
 
 
 class VaultMigrationReceiptModel(Base):
@@ -359,24 +652,30 @@ class VaultMigrationReceiptModel(Base):
 
     __tablename__ = "vault_migration_receipt"
 
-    receipt_id = Column(String, primary_key=True)
-    scope = Column(String, nullable=False)
-    scope_id = Column(
+    receipt_id: Mapped[str] = mapped_column(String, primary_key=True)
+    scope: Mapped[str] = mapped_column(String, nullable=False)
+    scope_id: Mapped[str] = mapped_column(
         String,
         nullable=False,
         default=VAULT_NOTE_SCOPE_ID_SENTINEL,
         server_default=VAULT_NOTE_SCOPE_ID_SENTINEL,
     )
-    cao_key = Column(String, nullable=False)
-    native_relpath = Column(String, nullable=False)
-    native_snapshot_sha256 = Column(String, nullable=False)
-    vault_id = Column(String, nullable=False)
-    managed_relpath = Column(String, nullable=False)
-    vault_note_uid = Column(String, nullable=False)
-    published_content_sha256 = Column(String, nullable=False)
-    superseded_edges = Column(Text, nullable=False, default="[]", server_default="[]")
-    status = Column(String, nullable=False, default="active", server_default="active")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    cao_key: Mapped[str] = mapped_column(String, nullable=False)
+    native_relpath: Mapped[str] = mapped_column(String, nullable=False)
+    native_snapshot_sha256: Mapped[str] = mapped_column(String, nullable=False)
+    vault_id: Mapped[str] = mapped_column(String, nullable=False)
+    managed_relpath: Mapped[str] = mapped_column(String, nullable=False)
+    vault_note_uid: Mapped[str] = mapped_column(String, nullable=False)
+    published_content_sha256: Mapped[str] = mapped_column(String, nullable=False)
+    superseded_edges: Mapped[str] = mapped_column(
+        Text, nullable=False, default="[]", server_default="[]"
+    )
+    status: Mapped[str] = mapped_column(
+        String, nullable=False, default="active", server_default="active"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
 
 
 class VaultFindingModel(Base):
@@ -384,14 +683,16 @@ class VaultFindingModel(Base):
 
     __tablename__ = "vault_finding"
 
-    id = Column(String, primary_key=True)
-    vault_id = Column(String, nullable=False)
-    vault_relpath = Column(String, nullable=False)
-    code = Column(String, nullable=False)
-    severity = Column(String, nullable=False)
-    detail = Column(String, nullable=False)
-    reconcile_run_id = Column(String, nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    vault_id: Mapped[str] = mapped_column(String, nullable=False)
+    vault_relpath: Mapped[str] = mapped_column(String, nullable=False)
+    code: Mapped[str] = mapped_column(String, nullable=False)
+    severity: Mapped[str] = mapped_column(String, nullable=False)
+    detail: Mapped[str] = mapped_column(String, nullable=False)
+    reconcile_run_id: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
 
 
 class VaultNoteAliasModel(Base):
@@ -399,13 +700,15 @@ class VaultNoteAliasModel(Base):
 
     __tablename__ = "vault_note_alias"
 
-    vault_id = Column(String, primary_key=True)
-    former_relpath = Column(String, primary_key=True)
-    cao_key = Column(String, nullable=False)
-    scope = Column(String, nullable=True)
-    scope_id = Column(String, nullable=True)
-    content_sha256 = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    vault_id: Mapped[str] = mapped_column(String, primary_key=True)
+    former_relpath: Mapped[str] = mapped_column(String, primary_key=True)
+    cao_key: Mapped[str] = mapped_column(String, nullable=False)
+    scope: Mapped[str | None] = mapped_column(String, nullable=True)
+    scope_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    content_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
 
 
 class VaultRecallCounterModel(Base):
@@ -413,9 +716,9 @@ class VaultRecallCounterModel(Base):
 
     __tablename__ = "vault_recall_counter"
 
-    vault_id = Column(String, primary_key=True)
-    counter_name = Column(String, primary_key=True)
-    value = Column(Integer, nullable=False, default=0, server_default="0")
+    vault_id: Mapped[str] = mapped_column(String, primary_key=True)
+    counter_name: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
 
 # Relationship-store sentinel: ``memory_relationships.scope_id`` is NOT NULL and
@@ -452,33 +755,39 @@ class MemoryRelationshipModel(Base):
 
     # Application-generated uuid4 string PK, matching ``MemoryMetadataModel.id``
     # (str(uuid4())). API-stable identifier exposed in mutation responses.
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    scope = Column(String, nullable=False)
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    scope: Mapped[str] = mapped_column(String, nullable=False)
     # NOT NULL: sentinel RELATIONSHIP_SCOPE_ID_SENTINEL ("") for global/federated
     # so the dedup UNIQUE index is total (see the sentinel comment above).
-    scope_id = Column(String, nullable=False)
-    source_key = Column(String, nullable=False)
-    target_key = Column(String, nullable=False)
+    scope_id: Mapped[str] = mapped_column(String, nullable=False)
+    source_key: Mapped[str] = mapped_column(String, nullable=False)
+    target_key: Mapped[str] = mapped_column(String, nullable=False)
     # Closed taxonomy reusing the graph EdgeType values.
-    type = Column(String, nullable=False)  # relates_to | contradiction | supersedes
+    type: Mapped[str] = mapped_column(
+        String, nullable=False
+    )  # relates_to | contradiction | supersedes
     # compiler | wiki_lint | human | legacy_related_keys | external_import(reserved) | vault
-    origin = Column(String, nullable=False)
+    origin: Mapped[str] = mapped_column(String, nullable=False)
     # active | proposal | rejected | superseded | deleted (auditable soft-delete)
-    status = Column(String, nullable=False, default="active")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active")
     # Optional evidence metadata. NULL = no evidence (NEVER fabricated / coerced
     # to 0); a stored value is a validated REAL in [0, 1].
-    confidence = Column(Float, nullable=True, default=None)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     # Optional ordering hint (e.g. legacy related_keys position). NULL if none.
-    rank = Column(Integer, nullable=True, default=None)
+    rank: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     # Bounded JSON blob. NULL if none; the CHECK caps FRESH DBs, the service
     # caps existing DBs (mirrors the ck_related_keys_length precedent).
-    attributes_json = Column(Text, nullable=True, default=None)
+    attributes_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     # The source memory's updated_at at write time; basis for staleness
     # detection (an edge is stale when this predates the source's current
     # updated_at). NULL when unknown.
-    source_updated_at = Column(DateTime(timezone=True), nullable=True, default=None)
-    created_at = Column(DateTime(timezone=True), default=_utcnow)
-    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+    source_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
 
     __table_args__ = (
         # Dedup: differing type or origin coexist as distinct rows (multi-edge +
@@ -521,10 +830,12 @@ class ProjectAliasModel(Base):
     # project_id, so reverse lookups (get_project_id_by_alias) are stable. A
     # cwd-hash first resolved via an override and later via its git remote
     # upserts the same row rather than creating a second, ambiguous mapping.
-    alias = Column(String, primary_key=True)
-    project_id = Column(String, nullable=False, index=True)
-    kind = Column(String, nullable=False)  # "git_remote" | "cwd_hash" | "manual"
-    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    alias: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(
+        String, nullable=False
+    )  # "git_remote" | "cwd_hash" | "manual"
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class WorkflowOutcomeModel(Base):
@@ -538,16 +849,22 @@ class WorkflowOutcomeModel(Base):
 
     __tablename__ = "workflow_outcomes"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    session_name = Column(String, nullable=False)
-    workflow_name = Column(String, nullable=True)  # optional grouping label
-    task_label = Column(String, nullable=False)  # e.g. "convert package X"
-    agent_profile = Column(String, nullable=True)  # profile that did the work
-    source_terminal_id = Column(String, nullable=True)
-    success = Column(Boolean, nullable=False)
-    score = Column(Integer, nullable=True)  # optional 0-100 metric
-    friction_notes = Column(Text, nullable=False, default="")  # short, content-free
-    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_name: Mapped[str] = mapped_column(String, nullable=False)
+    workflow_name: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # optional grouping label
+    task_label: Mapped[str] = mapped_column(String, nullable=False)  # e.g. "convert package X"
+    agent_profile: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # profile that did the work
+    source_terminal_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)  # optional 0-100 metric
+    friction_notes: Mapped[str] = mapped_column(
+        Text, nullable=False, default=""
+    )  # short, content-free
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class FlowModel(Base):
@@ -555,15 +872,15 @@ class FlowModel(Base):
 
     __tablename__ = "flows"
 
-    name = Column(String, primary_key=True)
-    file_path = Column(String, nullable=False)
-    schedule = Column(String, nullable=False)
-    agent_profile = Column(String, nullable=False)
-    provider = Column(String, nullable=False)
-    script = Column(String, nullable=True)
-    last_run = Column(DateTime, nullable=True)
-    next_run = Column(DateTime, nullable=True)
-    enabled = Column(Boolean, default=True)
+    name: Mapped[str] = mapped_column(String, primary_key=True)
+    file_path: Mapped[str] = mapped_column(String, nullable=False)
+    schedule: Mapped[str] = mapped_column(String, nullable=False)
+    agent_profile: Mapped[str] = mapped_column(String, nullable=False)
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    script: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_run: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    next_run: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    enabled: Mapped[bool | None] = mapped_column(Boolean, default=True)
 
 
 class HandoffResultModel(Base):
@@ -594,13 +911,15 @@ class HandoffResultModel(Base):
 
     __tablename__ = "handoff_results"
 
-    job_id = Column(String, primary_key=True)
-    state = Column(String, nullable=False)  # "running" | "completed" | "error"
-    terminal_id = Column(String, nullable=True)
-    last_message = Column(Text, nullable=True)
-    error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=_utcnow)
-    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+    job_id: Mapped[str] = mapped_column(String, primary_key=True)
+    state: Mapped[str] = mapped_column(String, nullable=False)  # "running" | "completed" | "error"
+    terminal_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
 
 
 class IdempotencyKeyModel(Base):
@@ -623,8 +942,8 @@ class IdempotencyKeyModel(Base):
 
     __tablename__ = "idempotency_keys"
 
-    key = Column(String, primary_key=True)
-    terminal_id = Column(String, nullable=False)
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    terminal_id: Mapped[str] = mapped_column(String, nullable=False)
     # sha256 hexdigest of the REQUESTED create fields (review on PR #634).
     # Without it a key means only "some earlier call anywhere on this server
     # used this string", not "this is a retry of THIS request" -- so a second
@@ -642,8 +961,8 @@ class IdempotencyKeyModel(Base):
     # legacy row to tolerate -- it can only come from a scratch sqlite built
     # from an earlier revision of this branch, whose fix is deleting the file.
     # It is compared like any other value and simply mismatches, loudly.
-    request_fingerprint = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.now)
+    request_fingerprint: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.now)
 
 
 def _ensure_db_dir() -> None:
@@ -672,8 +991,12 @@ def init_db() -> None:
     """Initialize database tables and apply schema migrations."""
     _migrate_project_aliases_schema()
     Base.metadata.create_all(bind=engine)
+    from cli_agent_orchestrator.clients.runtime_channel_schema import RemoteBase
+
+    RemoteBase.metadata.create_all(bind=engine)
     _restrict_db_file_permissions()
     _migrate_terminals_schema()
+    _migrate_workflow_plan_snapshot()
     _migrate_add_access_count()
     _migrate_add_last_compiled_at()
     _migrate_add_related_keys()
@@ -710,9 +1033,64 @@ def init_db() -> None:
     from cli_agent_orchestrator.clients.work_repository import initialize_work_store
 
     initialize_work_store()
+    _migrate_workflow_continuations()
     # Appended LAST (issue #447, ``handoff_results``). Its own new table, no shared
     # columns with anything above, so registry order is immaterial here too.
     _migrate_add_handoff_results()
+    _migrate_local_peer_principal()
+
+
+def _migrate_local_peer_principal() -> None:
+    """Expand peer receipts without inventing an owner for legacy records.
+
+    Old readers ignore this nullable column. Failed migration blocks startup;
+    repeat application and concurrent startup preserve all existing receipts.
+    """
+    with engine.connect() as connection:
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+        columns = {
+            row[1] for row in connection.exec_driver_sql("PRAGMA table_info(local_peer_tasks)")
+        }
+        if columns and "requester_principal_id" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE local_peer_tasks ADD COLUMN requester_principal_id TEXT"
+            )
+        connection.commit()
+
+
+def init_runtime_db() -> None:
+    """Initialize ordinary bridge dependencies without creating Work authority.
+
+    Existing Work tables are preserved and checked by the ordinary ownership
+    guard. This initializer never creates, migrates or clears a Work ledger.
+    """
+    names = {
+        "terminals",
+        "session_incarnations",
+        "inbox",
+        "idempotency_keys",
+        "terminal_turn_receipts",
+        "terminal_turn_recovery",
+        "terminal_late_observations",
+        "native_children",
+        "memory_metadata",
+        "memory_relationships",
+        "project_aliases",
+        "vault_note",
+        "vault_exclusion",
+        "vault_recall_counter",
+        "vault_note_alias",
+    }
+    Base.metadata.create_all(
+        bind=engine, tables=[table for name, table in Base.metadata.tables.items() if name in names]
+    )
+    from cli_agent_orchestrator.clients.runtime_channel_schema import RemoteBase
+
+    RemoteBase.metadata.create_all(bind=engine)
+    # Existing terminal schema migration uses the configured private DB path.
+    if str(engine.url.database) == str(constants.DATABASE_FILE):
+        _migrate_terminals_schema()
+    _restrict_db_file_permissions()
 
 
 def _restrict_db_file_permissions() -> None:
@@ -759,7 +1137,7 @@ def _migrate_add_handoff_results() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS handoff_results (
                     job_id TEXT PRIMARY KEY,
@@ -792,7 +1170,7 @@ def _migrate_project_aliases_schema() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             row = conn.execute(
                 "SELECT name FROM sqlite_master " "WHERE type='table' AND name='project_aliases'"
             ).fetchone()
@@ -818,7 +1196,7 @@ def _migrate_memory_indexes() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_memory_scope ON memory_metadata (scope, scope_id)"
             )
@@ -845,7 +1223,7 @@ def _migrate_memory_source_kind() -> None:
 
     expected_unique_columns = ("key", "scope", "scope_id", "source_kind")
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             table_exists = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memory_metadata'"
             ).fetchone()
@@ -933,7 +1311,7 @@ def _migrate_add_access_count() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             cursor = conn.execute("PRAGMA table_info(memory_metadata)")
             columns = {row[1] for row in cursor.fetchall()}
             if "access_count" not in columns:
@@ -960,7 +1338,7 @@ def _migrate_add_last_compiled_at() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             cursor = conn.execute("PRAGMA table_info(memory_metadata)")
             columns = {row[1] for row in cursor.fetchall()}
             if "last_compiled_at" not in columns:
@@ -984,7 +1362,7 @@ def _migrate_add_related_keys() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             cursor = conn.execute("PRAGMA table_info(memory_metadata)")
             columns = {row[1] for row in cursor.fetchall()}
             if "related_keys" not in columns:
@@ -1013,7 +1391,7 @@ def _migrate_memory_relationships() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS memory_relationships ("
                 "id TEXT PRIMARY KEY, "
@@ -1098,7 +1476,7 @@ def _migrate_workflow_plan_approval() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS workflow_plan_approval ("
                 "plan_id TEXT PRIMARY KEY, "
@@ -1185,7 +1563,7 @@ def _migrate_memory_scope_null_uniqueness(engine: Any = None, *, strict: bool = 
                             "index is absent from sqlite_master"
                         )
             return
-        with sqlite3.connect(target) as conn:
+        with closing(sqlite3.connect(target)) as connection, connection as conn:
             duplicates = conn.execute(
                 "SELECT key, scope, source_kind, COUNT(*) FROM memory_metadata "
                 "WHERE scope_id IS NULL GROUP BY key, scope, source_kind HAVING COUNT(*) > 1"
@@ -1235,7 +1613,7 @@ def _migrate_vault_exclusions() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS vault_exclusion ("
                 "vault_id VARCHAR NOT NULL, "
@@ -1277,7 +1655,7 @@ def _migrate_vault_migration_receipts() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             columns = conn.execute("PRAGMA table_info(vault_migration_receipt)").fetchall()
             if columns:
                 return
@@ -1310,7 +1688,7 @@ def _migrate_vault_key_provenance() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             for table in ("vault_note", "vault_exclusion"):
                 table_exists = conn.execute(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -1470,7 +1848,7 @@ def _migrate_workflow_index() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             row = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_index'"
             ).fetchone()
@@ -1551,7 +1929,7 @@ def _migrate_workflow_run() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS workflow_run ("
                 "run_id TEXT PRIMARY KEY, "
@@ -1654,7 +2032,7 @@ def _migrate_workflow_run_step() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS workflow_run_step ("
                 "run_id TEXT NOT NULL, "
@@ -1711,7 +2089,7 @@ def _migrate_workflow_outcome_indexes() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_outcome_session "
                 "ON workflow_outcomes (session_name, created_at)"
@@ -1748,7 +2126,7 @@ def _migrate_workflow_run_event() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS workflow_run_event ("
                 "run_id TEXT NOT NULL, "
@@ -1797,7 +2175,7 @@ def _migrate_workflow_run_seq() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS workflow_run_seq ("
                 "run_id TEXT PRIMARY KEY, "
@@ -1831,7 +2209,7 @@ def _migrate_workflow_run_indexes() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        with sqlite3.connect(str(DATABASE_FILE)) as conn:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_workflow_run_started_at "
                 "ON workflow_run (started_at)"
@@ -1850,40 +2228,71 @@ def _migrate_terminals_schema() -> None:
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
     try:
-        conn = sqlite3.connect(str(DATABASE_FILE))
-        cursor = conn.execute("PRAGMA table_info(terminals)")
-        columns = {row[1] for row in cursor.fetchall()}
-        if "allowed_tools" not in columns:
-            conn.execute("ALTER TABLE terminals ADD COLUMN allowed_tools TEXT")
-            conn.commit()
-            logger.info("Migration: added allowed_tools column to terminals table")
-        if "shell_command" not in columns:
-            conn.execute("ALTER TABLE terminals ADD COLUMN shell_command TEXT")
-            conn.commit()
-            logger.info("Migration: added shell_command column to terminals table")
-        if "caller_id" not in columns:
-            conn.execute("ALTER TABLE terminals ADD COLUMN caller_id TEXT")
-            conn.commit()
-            logger.info("Migration: added caller_id column to terminals table")
-        if "engine" not in columns:
-            conn.execute("ALTER TABLE terminals ADD COLUMN engine TEXT")
-            conn.commit()
-            logger.info("Migration: added engine column to terminals table")
-        if "group" not in columns:
-            # "group" is a SQL reserved word in some dialects but not SQLite;
-            # quoted defensively so this ALTER survives if that ever changes.
-            conn.execute('ALTER TABLE terminals ADD COLUMN "group" TEXT')
-            conn.commit()
-            logger.info("Migration: added group column to terminals table")
-        if "metadata" not in columns:
-            conn.execute('ALTER TABLE terminals ADD COLUMN "metadata" TEXT')
-            conn.commit()
-            logger.info("Migration: added metadata column to terminals table")
-        if "working_directory" not in columns:
-            conn.execute("ALTER TABLE terminals ADD COLUMN working_directory TEXT")
-            conn.commit()
-            logger.info("Migration: added working_directory column to terminals table")
-        conn.close()
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as conn:
+            cursor = conn.execute("PRAGMA table_info(terminals)")
+            columns = {row[1] for row in cursor.fetchall()}
+            if "allowed_tools" not in columns:
+                conn.execute("ALTER TABLE terminals ADD COLUMN allowed_tools TEXT")
+                conn.commit()
+                logger.info("Migration: added allowed_tools column to terminals table")
+            if "shell_command" not in columns:
+                conn.execute("ALTER TABLE terminals ADD COLUMN shell_command TEXT")
+                conn.commit()
+                logger.info("Migration: added shell_command column to terminals table")
+            if "caller_id" not in columns:
+                conn.execute("ALTER TABLE terminals ADD COLUMN caller_id TEXT")
+                conn.commit()
+                logger.info("Migration: added caller_id column to terminals table")
+            if "engine" not in columns:
+                conn.execute("ALTER TABLE terminals ADD COLUMN engine TEXT")
+                conn.commit()
+                logger.info("Migration: added engine column to terminals table")
+            if "kiro_policy_digest" not in columns:
+                conn.execute("ALTER TABLE terminals ADD COLUMN kiro_policy_digest TEXT")
+                conn.commit()
+            if "provider_variant" not in columns:
+                conn.execute("ALTER TABLE terminals ADD COLUMN provider_variant TEXT")
+                conn.commit()
+            if "group" not in columns:
+                # "group" is a SQL reserved word in some dialects but not SQLite;
+                # quoted defensively so this ALTER survives if that ever changes.
+                conn.execute('ALTER TABLE terminals ADD COLUMN "group" TEXT')
+                conn.commit()
+                logger.info("Migration: added group column to terminals table")
+            if "metadata" not in columns:
+                conn.execute('ALTER TABLE terminals ADD COLUMN "metadata" TEXT')
+                conn.commit()
+                logger.info("Migration: added metadata column to terminals table")
+            if "working_directory" not in columns:
+                conn.execute("ALTER TABLE terminals ADD COLUMN working_directory TEXT")
+                conn.commit()
+                logger.info("Migration: added working_directory column to terminals table")
+            if "deferred_init_failure" not in columns:
+                conn.execute("ALTER TABLE terminals ADD COLUMN deferred_init_failure TEXT")
+                conn.commit()
+                logger.info("Migration: added deferred_init_failure column to terminals table")
+            if "deferred_init_external_owner" not in columns:
+                conn.execute(
+                    "ALTER TABLE terminals ADD COLUMN deferred_init_external_owner "
+                    "INTEGER NOT NULL DEFAULT 0"
+                )
+                conn.commit()
+                logger.info(
+                    "Migration: added deferred_init_external_owner column to terminals table"
+                )
+            if "deferred_init_runtime_reclaimed" not in columns:
+                conn.execute(
+                    "ALTER TABLE terminals ADD COLUMN deferred_init_runtime_reclaimed "
+                    "INTEGER NOT NULL DEFAULT 0"
+                )
+                conn.commit()
+                logger.info(
+                    "Migration: added deferred_init_runtime_reclaimed column to terminals table"
+                )
+            if "session_incarnation_id" not in columns:
+                conn.execute("ALTER TABLE terminals ADD COLUMN session_incarnation_id TEXT")
+                conn.commit()
+                logger.info("Migration: added session_incarnation_id column to terminals table")
     except Exception as e:
         logger.warning(f"Migration check for terminals schema failed: {e}")
 
@@ -1898,11 +2307,16 @@ def create_terminal(
     shell_command: Optional[str] = None,
     caller_id: Optional[str] = None,
     engine: Optional[str] = None,
+    provider_variant: Optional[str] = None,
     group: Optional[List[str]] = None,
     metadata: Optional[Dict[str, Any]] = None,
     working_directory: Optional[str] = None,
+    deferred_init_external_owner: bool = False,
+    session_incarnation_id: Optional[str] = None,
     idempotency_key: Optional[str] = None,
     request_fingerprint: Optional[str] = None,
+    new_session_incarnation: bool = False,
+    kiro_policy_digest: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create terminal metadata record.
 
@@ -1925,7 +2339,25 @@ def create_terminal(
     """
     import json as _json
 
+    if kiro_policy_digest is not None and (
+        not isinstance(kiro_policy_digest, str)
+        or __import__("re").fullmatch(r"[0-9a-f]{64}", kiro_policy_digest) is None
+    ):
+        raise ValueError("invalid KAS policy digest")
+
     with SessionLocal() as db:
+        if new_session_incarnation:
+            if not session_incarnation_id:
+                raise ValueError("A new session incarnation requires an incarnation id")
+            incarnation = db.get(SessionIncarnationModel, tmux_session)
+            if incarnation is None:
+                db.add(
+                    SessionIncarnationModel(
+                        session_name=tmux_session, incarnation_id=session_incarnation_id
+                    )
+                )
+            else:
+                incarnation.incarnation_id = session_incarnation_id
         terminal = TerminalModel(
             id=terminal_id,
             tmux_session=tmux_session,
@@ -1933,12 +2365,16 @@ def create_terminal(
             provider=provider,
             agent_profile=agent_profile,
             working_directory=working_directory,
-            allowed_tools=_json.dumps(allowed_tools) if allowed_tools else None,
+            allowed_tools=_json.dumps(allowed_tools) if allowed_tools is not None else None,
             shell_command=shell_command,
             caller_id=caller_id,
             engine=engine,
+            provider_variant=provider_variant,
+            kiro_policy_digest=kiro_policy_digest,
             group=_json.dumps(group) if group else None,
             metadata_json=_json.dumps(metadata) if metadata else None,
+            deferred_init_external_owner=bool(deferred_init_external_owner),
+            session_incarnation_id=session_incarnation_id,
         )
         db.add(terminal)
         if idempotency_key:
@@ -1967,6 +2403,8 @@ def create_terminal(
             "shell_command": terminal.shell_command,
             "caller_id": terminal.caller_id,
             "engine": terminal.engine,
+            "provider_variant": terminal.provider_variant,
+            "kiro_policy_digest": terminal.kiro_policy_digest,
             # Normalized the same way as what was actually stored (an empty
             # container is stored as NULL, same as omitted) -- self-ROAST
             # finding: echoing the raw `group`/`metadata` input here made
@@ -1975,6 +2413,9 @@ def create_terminal(
             # returns {"group": None}, an API-consistency gap.
             "group": group if group else None,
             "metadata": metadata if metadata else None,
+            "deferred_init_external_owner": bool(deferred_init_external_owner),
+            "deferred_init_runtime_reclaimed": False,
+            "session_incarnation_id": session_incarnation_id,
         }
 
 
@@ -2060,6 +2501,10 @@ def get_terminal_metadata(terminal_id: str) -> Optional[Dict[str, Any]]:
         allowed_tools = _json.loads(terminal.allowed_tools) if terminal.allowed_tools else None
         group = _json.loads(terminal.group) if terminal.group else None
         metadata = _json.loads(terminal.metadata_json) if terminal.metadata_json else None
+        raw_deferred_failure = getattr(terminal, "deferred_init_failure_json", None)
+        deferred_init_failure = (
+            _json.loads(raw_deferred_failure) if isinstance(raw_deferred_failure, str) else None
+        )
         return {
             "id": terminal.id,
             "tmux_session": terminal.tmux_session,
@@ -2071,8 +2516,18 @@ def get_terminal_metadata(terminal_id: str) -> Optional[Dict[str, Any]]:
             "shell_command": terminal.shell_command,
             "caller_id": terminal.caller_id,
             "engine": terminal.engine or ("v2" if terminal.provider == "kiro_cli" else None),
+            "provider_variant": terminal.provider_variant,
+            "kiro_policy_digest": getattr(terminal, "kiro_policy_digest", None),
             "group": group,
             "metadata": metadata,
+            "deferred_init_failure": deferred_init_failure,
+            "deferred_init_external_owner": bool(
+                getattr(terminal, "deferred_init_external_owner", False)
+            ),
+            "deferred_init_runtime_reclaimed": bool(
+                getattr(terminal, "deferred_init_runtime_reclaimed", False)
+            ),
+            "session_incarnation_id": getattr(terminal, "session_incarnation_id", None),
             "last_active": terminal.last_active,
         }
 
@@ -2107,6 +2562,9 @@ _TURN_RECEIPT_ACTIVE_PHASES = frozenset({"prepared", "sent"})
 _TURN_RECEIPT_SETTLED_PHASE = "result_verified"
 _TURN_RECEIPT_GENERATION_RE = re.compile(r"^[0-9a-f]{32}$")
 _TURN_RECEIPT_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+_CACHED_TURN_RECEIPT_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:CAO-TURN-RECEIPT-|CAO_TURN_RECEIPT_)[0-9a-fA-F]{32}(?![A-Za-z0-9_])"
+)
 
 
 def _validate_turn_receipt_value(name: str, value: str, pattern: "re.Pattern[str]") -> None:
@@ -2129,6 +2587,274 @@ def _turn_receipt_row(row: TerminalTurnReceiptModel) -> Dict[str, Any]:
     }
 
 
+def _lock_turn_parent(db: Session, terminal_id: str) -> bool:
+    """Serialize all turn decisions with claims and terminal teardown."""
+    return (
+        db.query(TerminalModel)
+        .filter(TerminalModel.id == terminal_id)
+        .update({TerminalModel.last_active: TerminalModel.last_active}, synchronize_session=False)
+        == 1
+    )
+
+
+def _turn_recovery(db: Any, terminal_id: str, generation: str) -> Any:
+    return (
+        db.query(TerminalTurnRecoveryModel)
+        .filter(
+            TerminalTurnRecoveryModel.terminal_id == terminal_id,
+            TerminalTurnRecoveryModel.generation == generation,
+        )
+        .first()
+    )
+
+
+def _ensure_turn_recovery(db: Any, receipt: Any) -> Any:
+    row = _turn_recovery(db, receipt.terminal_id, receipt.generation)
+    if row is None:
+        row = TerminalTurnRecoveryModel(
+            terminal_id=receipt.terminal_id,
+            generation=receipt.generation,
+            state="verified" if receipt.phase == "result_verified" else "pending",
+            attempts=0,
+            created_at=_utcnow(),
+            updated_at=_utcnow(),
+        )
+        db.add(row)
+    return row
+
+
+def _turn_recovery_row(row: Any) -> Dict[str, Any]:
+    return {
+        key: getattr(row, key)
+        for key in (
+            "terminal_id",
+            "generation",
+            "state",
+            "attempts",
+            "completion_detected_at",
+            "reason",
+            "result_text",
+            "created_at",
+            "updated_at",
+        )
+    }
+
+
+def get_terminal_turn_recovery(
+    terminal_id: str,
+    generation: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Read a generation without modifying budget or suppressing read failures."""
+    with SessionLocal() as db:
+        if generation is None:
+            receipt = (
+                db.query(TerminalTurnReceiptModel)
+                .filter(
+                    TerminalTurnReceiptModel.terminal_id == terminal_id,
+                )
+                .first()
+            )
+            if receipt is None:
+                return None
+            generation = receipt.generation
+        row = _turn_recovery(db, terminal_id, generation)
+        return _turn_recovery_row(row) if row is not None else None
+
+
+def list_late_turn_candidates(
+    *, limit: int = 16, after: str = "", now: float | None = None
+) -> List[Dict[str, str]]:
+    """Only the current unsettled generation with detected final evidence."""
+    import time
+
+    observed_at = time.time() if now is None else now
+    with SessionLocal() as db:
+        rows = (
+            db.query(TerminalTurnRecoveryModel)
+            .outerjoin(
+                TerminalLateObservationModel,
+                (TerminalTurnRecoveryModel.terminal_id == TerminalLateObservationModel.terminal_id)
+                & (TerminalTurnRecoveryModel.generation == TerminalLateObservationModel.generation),
+            )
+            .join(
+                TerminalTurnReceiptModel,
+                (TerminalTurnRecoveryModel.terminal_id == TerminalTurnReceiptModel.terminal_id)
+                & (TerminalTurnRecoveryModel.generation == TerminalTurnReceiptModel.generation),
+            )
+            .filter(
+                TerminalTurnRecoveryModel.state == "reconcile",
+                TerminalTurnRecoveryModel.terminal_id > after,
+                (
+                    (TerminalLateObservationModel.terminal_id.is_(None))
+                    | (
+                        (TerminalLateObservationModel.attempts < 6)
+                        & (TerminalLateObservationModel.next_due <= observed_at)
+                        & (TerminalLateObservationModel.deadline > observed_at)
+                    )
+                ),
+                TerminalTurnRecoveryModel.completion_detected_at.isnot(None),
+                TerminalTurnReceiptModel.phase != "result_verified",
+            )
+            .order_by(TerminalTurnRecoveryModel.terminal_id)
+            .limit(min(max(limit, 1), 64))
+            .all()
+        )
+        return [{"terminal_id": row.terminal_id, "generation": row.generation} for row in rows]
+
+
+def claim_late_turn_observation(terminal_id: str, generation: str, *, now: float) -> bool:
+    """Claim before reading, preserving six slots/cooldown across server restart.
+
+    Parent serialization also fences cancellation, settlement, deletion and new
+    generations. A lost observer consumes its slot; it never causes a replay.
+    """
+    import math
+
+    _validate_turn_receipt_value("generation", generation, _TURN_RECEIPT_GENERATION_RE)
+    if not math.isfinite(now) or now < 0:
+        raise ValueError("invalid observation time")
+    with SessionLocal() as db:
+        if not _lock_turn_parent(db, terminal_id):
+            return False
+        receipt = (
+            db.query(TerminalTurnReceiptModel)
+            .filter_by(terminal_id=terminal_id, generation=generation)
+            .first()
+        )
+        recovery = _turn_recovery(db, terminal_id, generation)
+        if (
+            receipt is None
+            or receipt.phase == "result_verified"
+            or recovery is None
+            or recovery.state != "reconcile"
+            or recovery.completion_detected_at is None
+        ):
+            return False
+        row = (
+            db.query(TerminalLateObservationModel)
+            .filter_by(terminal_id=terminal_id, generation=generation)
+            .first()
+        )
+        if row is None:
+            row = TerminalLateObservationModel(
+                terminal_id=terminal_id,
+                generation=generation,
+                attempts=0,
+                next_due=now,
+                deadline=now + 3600,
+            )
+            db.add(row)
+        if row.attempts >= 6 or now < row.next_due or now >= row.deadline:
+            return False
+        row.attempts += 1
+        row.next_due = now + 60
+        db.commit()
+        return True
+
+
+def mark_terminal_turn_verification_started(
+    terminal_id: str,
+    generation: str,
+    receipt_sha256: str,
+) -> Optional[Dict[str, Any]]:
+    """Record final-response detection before capture, without consuming an attempt."""
+    _validate_turn_receipt_value("generation", generation, _TURN_RECEIPT_GENERATION_RE)
+    _validate_turn_receipt_value("hash", receipt_sha256, _TURN_RECEIPT_HASH_RE)
+    with SessionLocal() as db:
+        if not _lock_turn_parent(db, terminal_id):
+            return None
+        receipt = (
+            db.query(TerminalTurnReceiptModel)
+            .filter(
+                TerminalTurnReceiptModel.terminal_id == terminal_id,
+                TerminalTurnReceiptModel.generation == generation,
+                TerminalTurnReceiptModel.receipt_sha256 == receipt_sha256,
+            )
+            .first()
+        )
+        if receipt is None:
+            return None
+        row = _ensure_turn_recovery(db, receipt)
+        if row.state in {"pending", "verifying"}:
+            row.completion_detected_at = row.completion_detected_at or _utcnow()
+            row.state = "verifying"
+            row.updated_at = _utcnow()
+        db.commit()
+        return _turn_recovery_row(row)
+
+
+def record_terminal_turn_verification_failure(
+    terminal_id: str,
+    generation: str,
+    receipt_sha256: str,
+    reason: str,
+) -> Optional[Dict[str, Any]]:
+    """Count final-response verification failures, with a durable budget of three."""
+    _validate_turn_receipt_value("generation", generation, _TURN_RECEIPT_GENERATION_RE)
+    _validate_turn_receipt_value("hash", receipt_sha256, _TURN_RECEIPT_HASH_RE)
+    with SessionLocal() as db:
+        if not _lock_turn_parent(db, terminal_id):
+            return None
+        receipt = (
+            db.query(TerminalTurnReceiptModel)
+            .filter(
+                TerminalTurnReceiptModel.terminal_id == terminal_id,
+                TerminalTurnReceiptModel.generation == generation,
+                TerminalTurnReceiptModel.receipt_sha256 == receipt_sha256,
+            )
+            .first()
+        )
+        if receipt is None:
+            return None
+        row = _ensure_turn_recovery(db, receipt)
+        if row.state in {"pending", "verifying"}:
+            row.attempts += 1
+            row.state = "reconcile" if row.attempts >= 3 else "verifying"
+            row.completion_detected_at = row.completion_detected_at or _utcnow()
+            row.reason = reason
+            row.updated_at = _utcnow()
+        db.commit()
+        return _turn_recovery_row(row)
+
+
+def _transition_turn_cancellation(terminal_id: str, generation: str, finish: bool) -> bool:
+    _validate_turn_receipt_value("generation", generation, _TURN_RECEIPT_GENERATION_RE)
+    with SessionLocal() as db:
+        if not _lock_turn_parent(db, terminal_id):
+            return False
+        receipt = (
+            db.query(TerminalTurnReceiptModel)
+            .filter(
+                TerminalTurnReceiptModel.terminal_id == terminal_id,
+                TerminalTurnReceiptModel.generation == generation,
+            )
+            .first()
+        )
+        if receipt is None:
+            return False
+        row = _ensure_turn_recovery(db, receipt)
+        target = "cancelled" if finish else "cancelling"
+        allowed = {"cancelling"} if finish else {"pending", "verifying", "reconcile"}
+        if row.state == target:
+            return True
+        if row.state not in allowed or receipt.phase == "result_verified":
+            return False
+        row.state = target
+        row.updated_at = _utcnow()
+        db.commit()
+        return True
+
+
+def begin_terminal_turn_cancellation(terminal_id: str, generation: str) -> bool:
+    """Fence result settlement before asking the backend to stop execution."""
+    return _transition_turn_cancellation(terminal_id, generation, finish=False)
+
+
+def finish_terminal_turn_cancellation(terminal_id: str, generation: str) -> bool:
+    """Record backend-confirmed stoppage; callers must prove it before invoking."""
+    return _transition_turn_cancellation(terminal_id, generation, finish=True)
+
+
 def begin_terminal_turn_receipt(
     terminal_id: str,
     provider: str,
@@ -2140,8 +2866,8 @@ def begin_terminal_turn_receipt(
     ``None`` means an active receipt already owns the terminal or the terminal
     no longer exists.  Both cases are intentionally non-destructive: callers
     must reconcile rather than overwrite an uncertain delivery.  A prior
-    ``result_verified`` row can be replaced because it has durable evidence
-    that its earlier task completed.
+    ``result_verified`` row or backend-confirmed ``cancelled`` recovery may
+    be replaced; merely beginning cancellation never releases the claim.
     """
     if not isinstance(provider, str) or not provider.strip() or len(provider) > 128:
         raise ValueError("invalid terminal turn receipt provider")
@@ -2176,7 +2902,19 @@ def begin_terminal_turn_receipt(
                 .filter(TerminalTurnReceiptModel.terminal_id == terminal_id)
                 .first()
             )
-            if existing is not None and existing.phase in _TURN_RECEIPT_ACTIVE_PHASES:
+            old_recovery = (
+                _turn_recovery(db, terminal_id, existing.generation)
+                if existing is not None
+                else None
+            )
+            stopped = old_recovery is not None and old_recovery.state == "cancelled"
+            if (
+                existing is not None
+                and existing.phase != _TURN_RECEIPT_SETTLED_PHASE
+                and not stopped
+            ):
+                return None
+            if _turn_recovery(db, terminal_id, generation) is not None:
                 return None
             if existing is None:
                 existing = TerminalTurnReceiptModel(
@@ -2190,7 +2928,7 @@ def begin_terminal_turn_receipt(
                 )
                 db.add(existing)
             else:
-                # A verified result is the only legal replacement boundary.
+                # A verified result or confirmed cancellation releases this generation.
                 # Do not mutate the loaded ORM object: two senders can both
                 # observe result_verified, and a plain assignment would let
                 # both commit a new task.  This CAS makes exactly one winner
@@ -2200,7 +2938,7 @@ def begin_terminal_turn_receipt(
                     db.query(TerminalTurnReceiptModel)
                     .filter(
                         TerminalTurnReceiptModel.terminal_id == terminal_id,
-                        TerminalTurnReceiptModel.phase == _TURN_RECEIPT_SETTLED_PHASE,
+                        TerminalTurnReceiptModel.phase == existing.phase,
                         TerminalTurnReceiptModel.generation == existing.generation,
                     )
                     .update(
@@ -2220,6 +2958,16 @@ def begin_terminal_turn_receipt(
                 if replaced != 1:
                     db.rollback()
                     return None
+            db.add(
+                TerminalTurnRecoveryModel(
+                    terminal_id=terminal_id,
+                    generation=generation,
+                    state="pending",
+                    attempts=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
             db.commit()
             stored = (
                 db.query(TerminalTurnReceiptModel)
@@ -2315,6 +3063,11 @@ def verify_terminal_turn_receipt_result(
     now = _utcnow()
     try:
         with SessionLocal() as db:
+            if not _lock_turn_parent(db, terminal_id):
+                return False
+            recovery = _turn_recovery(db, terminal_id, generation)
+            if recovery is not None and recovery.state in {"cancelling", "cancelled"}:
+                return False
             updated = (
                 db.query(TerminalTurnReceiptModel)
                 .filter(
@@ -2333,6 +3086,18 @@ def verify_terminal_turn_receipt_result(
                     synchronize_session=False,
                 )
             )
+            if updated == 1:
+                receipt = (
+                    db.query(TerminalTurnReceiptModel)
+                    .filter(
+                        TerminalTurnReceiptModel.terminal_id == terminal_id,
+                    )
+                    .first()
+                )
+                recovery = _ensure_turn_recovery(db, receipt)
+                recovery.state = "verified"
+                recovery.reason = None
+                recovery.updated_at = now
             db.commit()
             if updated == 1:
                 return True
@@ -2362,6 +3127,8 @@ def settle_terminal_turn_receipt_result(
     generation: str,
     receipt_sha256: str,
     result_sha256: str,
+    *,
+    result_text: Optional[str] = None,
 ) -> bool:
     """Atomically settle a receipt and its native-child completion projection.
 
@@ -2414,6 +3181,11 @@ def settle_terminal_turn_receipt_result(
                 db.rollback()
                 return False
 
+            recovery = _ensure_turn_recovery(db, receipt)
+            if recovery.state in {"cancelling", "cancelled"}:
+                db.rollback()
+                return False
+
             if receipt.phase in _TURN_RECEIPT_ACTIVE_PHASES:
                 updated = (
                     db.query(TerminalTurnReceiptModel)
@@ -2443,6 +3215,17 @@ def settle_terminal_turn_receipt_result(
                 # Never replace another result or a newer receipt generation.
                 db.rollback()
                 return False
+
+            recovery.state = "verified"
+            recovery.reason = None
+            recovery.updated_at = now
+            # The first proven output is immutable even if later captures differ.
+            if recovery.result_text is None and result_text is not None:
+                # Cache presentation text only; the digest above still proves
+                # the unmodified provider output, including its private marker.
+                recovery.result_text = _CACHED_TURN_RECEIPT_RE.sub(
+                    "[redacted receipt]", result_text
+                )
 
             # Do not load a child and assign to its ORM object: a concurrent
             # wait/status path could set ``failed`` after that read, and a
@@ -2476,9 +3259,23 @@ def settle_terminal_turn_receipt_result(
                     .first()
                 )
                 if winner is not None and winner.state != "succeeded":
-                    # Preserve the result digest for audit/reconciliation but
-                    # never undo a cancellation or terminal failure.
-                    completion_safe = False
+                    # A confirmed cancellation can release this terminal for a
+                    # later independent turn. Its proof belongs to that new
+                    # generation, while the original child outcome stays final.
+                    previous_cancellation = None
+                    if winner.state == "cancelled":
+                        previous_cancellation = (
+                            db.query(TerminalTurnRecoveryModel)
+                            .filter(
+                                TerminalTurnRecoveryModel.terminal_id == terminal_id,
+                                TerminalTurnRecoveryModel.generation != generation,
+                                TerminalTurnRecoveryModel.state == "cancelled",
+                            )
+                            .first()
+                        )
+                    # Other final failures, and cancellations without a
+                    # confirmed prior turn boundary, still block completion.
+                    completion_safe = previous_cancellation is not None
 
             db.commit()
             return completion_safe
@@ -2494,6 +3291,141 @@ def _delete_terminal_turn_receipt_rows(db: Any, terminal_ids: List[str]) -> None
             db.query(TerminalTurnReceiptModel)
             .filter(TerminalTurnReceiptModel.terminal_id.in_(terminal_ids))
             .delete(synchronize_session=False)
+        )
+
+        db.query(TerminalTurnRecoveryModel).filter(
+            TerminalTurnRecoveryModel.terminal_id.in_(terminal_ids)
+        ).delete(synchronize_session=False)
+        db.query(TerminalLateObservationModel).filter(
+            TerminalLateObservationModel.terminal_id.in_(terminal_ids)
+        ).delete(synchronize_session=False)
+
+
+def update_terminal_deferred_init_failure(
+    terminal_id: str, failure: Optional[Dict[str, Any]]
+) -> bool:
+    """Replace CAO-owned deferred-init failure state for one terminal."""
+
+    import json as _json
+
+    with SessionLocal() as db:
+        terminal = db.query(TerminalModel).filter(TerminalModel.id == terminal_id).first()
+        if not terminal:
+            return False
+        terminal.deferred_init_failure_json = _json.dumps(failure) if failure else None
+        db.commit()
+        return True
+
+
+def update_terminal_deferred_init_external_owner(terminal_id: str, owned: bool) -> bool:
+    """Update server-owned deferred-init lifecycle ownership for one terminal."""
+
+    with SessionLocal() as db:
+        terminal = db.query(TerminalModel).filter(TerminalModel.id == terminal_id).first()
+        if not terminal:
+            return False
+        terminal.deferred_init_external_owner = bool(owned)
+        db.commit()
+        return True
+
+
+def update_terminal_deferred_init_runtime_reclaimed(terminal_id: str, reclaimed: bool) -> bool:
+    """Persist whether a retained deferred-init row still owns live runtime resources."""
+
+    with SessionLocal() as db:
+        terminal = db.query(TerminalModel).filter(TerminalModel.id == terminal_id).first()
+        if not terminal:
+            return False
+        terminal.deferred_init_runtime_reclaimed = bool(reclaimed)
+        db.commit()
+        return True
+
+
+def get_session_incarnation(session_name: str) -> Optional[str]:
+    """Read the durable current pointer, including for an already-deleted session."""
+
+    if not session_name:
+        return None
+    with SessionLocal() as db:
+        incarnation = db.get(SessionIncarnationModel, session_name)
+        return str(incarnation.incarnation_id) if incarnation is not None else None
+
+
+def get_session_incarnations(session_names: List[str]) -> Dict[str, str]:
+    """Read current pointers in one query for a fleet listing."""
+
+    names = [name for name in session_names if name]
+    if not names:
+        return {}
+    with SessionLocal() as db:
+        return {
+            str(row.session_name): str(row.incarnation_id)
+            for row in db.query(SessionIncarnationModel)
+            .filter(SessionIncarnationModel.session_name.in_(names))
+            .all()
+        }
+
+
+def update_terminals_session_incarnation(
+    terminal_ids: List[str], incarnation_id: str, *, session_name: Optional[str] = None
+) -> bool:
+    """Atomically assign one session incarnation to the specified terminal rows.
+
+    Used while the per-session lifecycle lock is held. All requested rows must
+    exist and have no conflicting identity. When session_name is supplied, its
+    durable pointer is committed atomically with the backfill. A conflicting
+    pointer or a row belonging to another session rejects the whole assignment.
+    """
+
+    unique_ids = list(dict.fromkeys(str(terminal_id) for terminal_id in terminal_ids))
+    if not unique_ids and session_name is None:
+        return True
+    with SessionLocal() as db:
+        terminals = db.query(TerminalModel).filter(TerminalModel.id.in_(unique_ids)).all()
+        if len(terminals) != len(unique_ids) or any(
+            (terminal.session_incarnation_id not in (None, incarnation_id))
+            or (session_name is not None and terminal.tmux_session != session_name)
+            for terminal in terminals
+        ):
+            db.rollback()
+            return False
+        if session_name is not None:
+            current = db.get(SessionIncarnationModel, session_name)
+            if current is not None and current.incarnation_id != incarnation_id:
+                db.rollback()
+                return False
+            if current is None:
+                db.add(
+                    SessionIncarnationModel(
+                        session_name=session_name, incarnation_id=incarnation_id
+                    )
+                )
+        for terminal in terminals:
+            terminal.session_incarnation_id = str(incarnation_id)
+        db.commit()
+        return True
+
+
+def list_pending_deferred_init_external_owner_terminal_ids() -> List[str]:
+    """External-owner deferred inits whose background task cannot resume after restart."""
+
+    with SessionLocal() as db:
+        rows = (
+            db.query(TerminalModel.id)
+            .filter(TerminalModel.deferred_init_external_owner.is_(True))
+            .all()
+        )
+        return [str(row[0]) for row in rows]
+
+
+def count_runtime_allocated_terminals() -> int:
+    """Count terminal rows that still represent live/allocated provider runtime."""
+
+    with SessionLocal() as db:
+        return int(
+            db.query(TerminalModel)
+            .filter(TerminalModel.deferred_init_runtime_reclaimed.is_(False))
+            .count()
         )
 
 
@@ -2678,6 +3610,15 @@ def list_terminals_by_session(tmux_session: str) -> List[Dict[str, Any]]:
                 "agent_profile": t.agent_profile,
                 "working_directory": t.working_directory,
                 "engine": t.engine or ("v2" if t.provider == "kiro_cli" else None),
+                "deferred_init_failure": (
+                    _json.loads(t.deferred_init_failure_json)
+                    if isinstance(t.deferred_init_failure_json, str)
+                    and t.deferred_init_failure_json
+                    else None
+                ),
+                "deferred_init_external_owner": bool(t.deferred_init_external_owner),
+                "deferred_init_runtime_reclaimed": bool(t.deferred_init_runtime_reclaimed),
+                "session_incarnation_id": t.session_incarnation_id,
                 "last_active": t.last_active,
             }
             for t in terminals
@@ -2758,10 +3699,34 @@ def list_terminals_in_sessions(tmux_sessions: List[str]) -> List[Dict[str, Any]]
                 "agent_profile": t.agent_profile,
                 "working_directory": t.working_directory,
                 "engine": t.engine or ("v2" if t.provider == "kiro_cli" else None),
+                "deferred_init_failure": (
+                    _json.loads(t.deferred_init_failure_json)
+                    if isinstance(t.deferred_init_failure_json, str)
+                    and t.deferred_init_failure_json
+                    else None
+                ),
+                "deferred_init_external_owner": bool(t.deferred_init_external_owner),
+                "deferred_init_runtime_reclaimed": bool(t.deferred_init_runtime_reclaimed),
+                "session_incarnation_id": t.session_incarnation_id,
                 "last_active": t.last_active,
             }
             for t in terminals
         ]
+
+
+def list_terminal_observation_candidates(*, after: str = "", limit: int = 16) -> List[str]:
+    """Bounded reconstruction inventory; terminal ids carry no launch authority."""
+    with SessionLocal() as db:
+        rows = (
+            db.query(TerminalModel.id)
+            .filter(
+                TerminalModel.id > after, TerminalModel.deferred_init_runtime_reclaimed.is_(False)
+            )
+            .order_by(TerminalModel.id)
+            .limit(min(max(limit, 1), 64))
+            .all()
+        )
+        return [row[0] for row in rows]
 
 
 def list_all_terminals() -> List[Dict[str, Any]]:
@@ -2777,6 +3742,15 @@ def list_all_terminals() -> List[Dict[str, Any]]:
                 "agent_profile": t.agent_profile,
                 "working_directory": t.working_directory,
                 "engine": t.engine or ("v2" if t.provider == "kiro_cli" else None),
+                "deferred_init_failure": (
+                    _json.loads(t.deferred_init_failure_json)
+                    if isinstance(t.deferred_init_failure_json, str)
+                    and t.deferred_init_failure_json
+                    else None
+                ),
+                "deferred_init_external_owner": bool(t.deferred_init_external_owner),
+                "deferred_init_runtime_reclaimed": bool(t.deferred_init_runtime_reclaimed),
+                "session_incarnation_id": t.session_incarnation_id,
                 "last_active": t.last_active,
             }
             for t in terminals
@@ -3618,3 +4592,103 @@ def get_flows_to_run() -> List[Flow]:
             )
             for f in flows
         ]
+
+
+def update_terminal_provider_variant(terminal_id: str, provider_variant: str) -> bool:
+    """Persist a resolved provider runtime variant for restart reconstruction."""
+
+    with SessionLocal() as db:
+        terminal = db.query(TerminalModel).filter(TerminalModel.id == terminal_id).first()
+        if terminal:
+            terminal.provider_variant = provider_variant
+            db.commit()
+            return True
+        return False
+
+
+def _migrate_workflow_plan_snapshot() -> None:
+    """Create the integrity-checked private plan snapshot schema.
+
+    This migration is deliberately separate from the private snapshot store.
+    Callers that will lend a SQLite transaction to ``freeze_and_attach`` must
+    run it before opening that transaction; attempting DDL through the borrowed
+    connection could commit caller work or deadlock against its write lock.
+
+    Startup's existing database chmod remains best-effort for compatibility;
+    this migrator itself is mode-agnostic. Private snapshot reads and writes
+    independently enforce their stricter fail-closed permission contract before
+    touching persisted executable material.
+    """
+    import sqlite3
+
+    from cli_agent_orchestrator.constants import DATABASE_FILE
+
+    try:
+        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS workflow_plan_snapshot ("
+                "plan_id TEXT PRIMARY KEY, "
+                "component_set_version TEXT NOT NULL"
+                ")"
+            )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS workflow_plan_snapshot_component ("
+                "plan_id TEXT NOT NULL, "
+                "component_name TEXT NOT NULL, "
+                "content_digest TEXT NOT NULL, "
+                "content BLOB NOT NULL, "
+                "PRIMARY KEY (plan_id, component_name), "
+                "FOREIGN KEY (plan_id) REFERENCES workflow_plan_snapshot(plan_id) "
+                "ON DELETE CASCADE"
+                ")"
+            )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS workflow_run_plan_snapshot ("
+                "run_id TEXT PRIMARY KEY, "
+                "plan_id TEXT NOT NULL, "
+                "FOREIGN KEY (run_id) REFERENCES workflow_run(run_id) ON DELETE CASCADE, "
+                "FOREIGN KEY (plan_id) REFERENCES workflow_plan_snapshot(plan_id) "
+                "ON DELETE RESTRICT"
+                ")"
+            )
+            for statement in (
+                "CREATE TABLE IF NOT EXISTS workflow_prepared_plan (prepared_id TEXT PRIMARY KEY,plan_id TEXT NOT NULL REFERENCES workflow_plan_snapshot(plan_id),workflow_name TEXT NOT NULL,tier TEXT NOT NULL,source_hash TEXT NOT NULL,principal_id TEXT NOT NULL,created_at REAL NOT NULL,expires_at REAL NOT NULL,public_manifest_json TEXT NOT NULL)",
+                "CREATE TABLE IF NOT EXISTS workflow_scoped_run (run_id TEXT PRIMARY KEY REFERENCES workflow_run(run_id) ON DELETE CASCADE,prepared_id TEXT NOT NULL REFERENCES workflow_prepared_plan(prepared_id),principal_id TEXT NOT NULL,plan_id TEXT NOT NULL)",
+                "CREATE TABLE IF NOT EXISTS workflow_plan_step_alias (run_id TEXT NOT NULL REFERENCES workflow_run(run_id) ON DELETE CASCADE,step_id TEXT NOT NULL,target_key TEXT NOT NULL,agent_profile TEXT NOT NULL,workflow_alias TEXT NOT NULL,seed_id TEXT NOT NULL,seed_revision INTEGER NOT NULL,provision_id TEXT NOT NULL,PRIMARY KEY(run_id,step_id))",
+            ):
+                conn.execute(statement)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_workflow_run_plan_snapshot_plan "
+                "ON workflow_run_plan_snapshot(plan_id)"
+            )
+    except Exception as e:  # noqa: BLE001 — retryable; strict operations fail closed
+        logger.debug(f"workflow_plan_snapshot migration skipped: {e}")
+
+
+def update_terminal_kiro_policy_digest(terminal_id: str, digest: Optional[str]) -> bool:
+    if digest is not None and not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("KAS policy digest must be lowercase SHA-256")
+    with SessionLocal() as db:
+        terminal = db.get(TerminalModel, terminal_id)
+        if terminal is None:
+            return False
+        terminal.kiro_policy_digest = digest
+        db.commit()
+        return True
+
+
+def _migrate_workflow_continuations() -> None:
+    """Initialize verified additive controller/correlation tables after Work."""
+    from cli_agent_orchestrator.clients.beads_work_schema import initialize as initialize_beads
+    from cli_agent_orchestrator.clients.work_continuation_schema import initialize
+
+    connection = engine.raw_connection()
+    try:
+        initialize(connection)
+        initialize_beads(connection)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()

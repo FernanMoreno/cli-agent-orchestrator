@@ -181,9 +181,9 @@ async def config(request: Request):
 async def setup(request: Request):
     from cli_agent_orchestrator.security.auth import principal_from_token
     from cli_agent_orchestrator.services.browser_setup import (
-        private_deployment,
-        create_first_account,
         PublicationUncertain,
+        create_first_account,
+        private_deployment,
     )
 
     try:
@@ -197,7 +197,7 @@ async def setup(request: Request):
             or request.headers.get("origin") != origin
             or request.headers.get("x-cao-browser") != "1"
             or request.client is None
-            or request.client.host != "127.0.0.1"
+            or request.scope["client"][0] != "127.0.0.1"
         ):
             raise HTTPException(403, detail={"code": "browser_origin_rejected"})
         authorization = request.headers.get("authorization", "")
@@ -227,7 +227,7 @@ async def setup(request: Request):
             body["username"],
             body["password"],
             body["remember"],
-            request.client.host,
+            request.scope["client"][0],
         )
         request.app.state.browser_auth = service
         request.app.state.browser_auth_config = policy
@@ -260,7 +260,11 @@ async def login(request: Request):
     body = await _body(request, {"username": str, "password": str, "remember": bool})
     try:
         secret, dto = await asyncio.to_thread(
-            service.login, body["username"], body["password"], body["remember"], request.client.host
+            service.login,
+            body["username"],
+            body["password"],
+            body["remember"],
+            request.scope["client"][0],
         )
     except Exception as exc:
         return _failure(exc)
@@ -338,7 +342,7 @@ async def password(request: Request):
             secret,
             body["current_password"],
             body["new_password"],
-            request.client.host,
+            request.scope["client"][0],
         )
         return Response(status_code=204, headers={"Cache-Control": "no-store"})
     except Exception as exc:
@@ -360,6 +364,12 @@ class BrowserSessionLifetimeMiddleware:
         config = getattr(connection.app.state, "browser_auth_config", {})
         name = "cao_browser_" + str(config.get("installation_id", ""))
         explicit = "authorization" in connection.headers
+        ticket_transport = scope["path"] in ("/events", "/agui/v1/stream") or (
+            scope["type"] == "websocket"
+            and scope["path"].startswith("/terminals/")
+            and scope["path"].endswith("/ws")
+        )
+        explicit = explicit or (ticket_transport and "ticket" in connection.query_params)
         if scope["type"] == "websocket" and scope["path"].startswith("/terminals/"):
             explicit = explicit or "token" in connection.query_params
         if scope["path"] == "/agui/v1/stream":

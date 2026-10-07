@@ -28,12 +28,27 @@ import json
 import logging
 import re
 import uuid
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Protocol, Set, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    Set,
+    Union,
+    cast,
+)
 
 if TYPE_CHECKING:  # avoid a runtime circular import (script_runner imports this module)
     from cli_agent_orchestrator.services.script_runner import ScriptRunRecord
+    from cli_agent_orchestrator.services.work_workflow_plans import WorkWorkflowPlans
+    from cli_agent_orchestrator.security.auth import Principal
 
 from pydantic import ValidationError
 
@@ -211,6 +226,8 @@ class RunRecord:
     managed_step_admitters: Dict[str, Callable] = field(default_factory=dict, repr=False)
     work_pending: bool = False
     run_generation: int = 1
+    scoped_plan_owner: Optional[WorkWorkflowPlans] = field(default=None, repr=False)
+    scoped_principal: Optional[Principal] = field(default=None, repr=False)
 
 
 # Process-local run registry (ADR-8, B3-LC-2 singleton). A process restart loses
@@ -384,6 +401,18 @@ async def _ajournal(fn: Any, *args: Any, **kwargs: Any) -> None:
     await asyncio.to_thread(fn, *args, **kwargs)
 
 
+class _YamlDeliveryRecorder(Protocol):
+    record_pre_delivery: Callable[[str, dict], None]
+    guard_delivery: Callable[[], None]
+
+    def __call__(self, *args: Any, **kwargs: Any) -> None: ...
+
+
+class _YamlAttemptRecorder(_YamlDeliveryRecorder, Protocol):
+    contract_attempt_number: Optional[int]
+    contract_call_fingerprint: Optional[str]
+
+
 def _yaml_attempt_recorder(
     run_id: str,
     step_id: str,
@@ -428,8 +457,8 @@ def _yaml_attempt_recorder(
             allow_contract_change=allow_contract_change,
         )
         identity = (number, call_fingerprint, frozen_fields)
-        _record.contract_attempt_number = number
-        _record.contract_call_fingerprint = call_fingerprint
+        recorder.contract_attempt_number = number
+        recorder.contract_call_fingerprint = call_fingerprint
 
     def _guard_delivery() -> None:
         if identity is None:
@@ -439,11 +468,12 @@ def _yaml_attempt_recorder(
     def _record(*_args: Any, **_kwargs: Any) -> None:
         """Keep the callback shape callable while the substrate uses its hooks."""
 
-    _record.contract_attempt_number = None
-    _record.contract_call_fingerprint = None
-    _record.record_pre_delivery = _record_pre_delivery
-    _record.guard_delivery = _guard_delivery
-    return _record
+    recorder = cast(_YamlAttemptRecorder, _record)
+    recorder.contract_attempt_number = None
+    recorder.contract_call_fingerprint = None
+    recorder.record_pre_delivery = _record_pre_delivery
+    recorder.guard_delivery = _guard_delivery
+    return recorder
 
 
 def _yaml_replay_attempt_recorder(run_id: str, step_id: str, generation: str):
@@ -478,9 +508,10 @@ def _yaml_replay_attempt_recorder(run_id: str, step_id: str, generation: str):
     def _record(*_args: Any, **_kwargs: Any) -> None:
         """Keep the callback shape callable while the substrate uses its hooks."""
 
-    _record.record_pre_delivery = _record_pre_delivery
-    _record.guard_delivery = _guard_delivery
-    return _record
+    recorder = cast(_YamlDeliveryRecorder, _record)
+    recorder.record_pre_delivery = _record_pre_delivery
+    recorder.guard_delivery = _guard_delivery
+    return recorder
 
 
 def _yaml_call_fingerprint(step: WorkflowStep, prompt: str) -> str:
@@ -1246,7 +1277,10 @@ async def _drive(record: RunRecord, order: List[WorkflowStep]) -> WorkflowRunRes
     the registry is always left consistent (domain-entities lifecycle,
     B3-RD-3/RD-5).
     """
+    from cli_agent_orchestrator.services.work_workflow_plans import WorkWorkflowPlans
+
     try:
+        await asyncio.to_thread(WorkWorkflowPlans.guard_drive, record)
         for index, step in enumerate(order):
             if record.cancelled:  # B3-BR-7 — cancel observed at a step boundary
                 await _skip_remaining(record, order, from_index=index)
@@ -1305,7 +1339,10 @@ async def _drive(record: RunRecord, order: List[WorkflowStep]) -> WorkflowRunRes
             if record.state == RunState.FAILED:  # halt (B3-BR-4 on_failure=halt)
                 await _skip_remaining(record, order, from_index=index + 1)
                 break
-    except WorkflowEngineError:
+    except ResumeNotAllowedError:
+        # Work owns the pending attempt despite an uncertain recovery read.
+        raise
+    except Exception as error:
         # Settle the registered record into a terminal FAILED state before the
         # error propagates to the boundary (-> 500). Mark the in-flight step FAILED
         # too. The exception is NOT masked — it is re-raised unchanged.
@@ -1316,10 +1353,13 @@ async def _drive(record: RunRecord, order: List[WorkflowStep]) -> WorkflowRunRes
                 StepState.COMPLETED_UNVALIDATED,
             ):
                 cur.state = StepState.FAILED
+        failed_step_id = record.current_step_id
         record.state = RunState.FAILED
         record.current_step_id = None
         record.finished_at = _now()
         # Persist the terminal FAILED state (best-effort) before re-raising (§1).
+        if failed_step_id is not None:
+            await _ajournal(_journal_step, record, failed_step_id, "internal_error")
         await _ajournal(_journal_current_step, record)
         # U2 emission (BR-1, after the in-memory FAILED settle): an engine-internal
         # invariant violation faulted the run (error_kind "error", not a step
@@ -1328,7 +1368,11 @@ async def _drive(record: RunRecord, order: List[WorkflowStep]) -> WorkflowRunRes
         # below — see the ORDER IS LOAD-BEARING comment there.
         await _journal_event(record, "run.failed", state=record.state.value, error_kind="error")
         await _ajournal(_journal_run_state, record)
-        logger.error("drive: run '%s' failed with an engine error", record.run_id)
+        logger.error(
+            "drive: run '%s' failed with a substrate error (%s)",
+            record.run_id,
+            type(error).__name__,
+        )
         raise
 
     if record.work_pending:
@@ -1773,7 +1817,7 @@ def check_generation(run_id: str, generation: str) -> None:
         )
 
 
-def update_run_generation(run_id: str, generation: str) -> None:
+def update_run_generation(run_id: str, generation: str, *, expected_generation=None) -> None:
     """Persist a run's bumped generation (A4 write-side helper).
 
     A thin additive write helper alongside the base's
@@ -1794,11 +1838,23 @@ def update_run_generation(run_id: str, generation: str) -> None:
 
     from cli_agent_orchestrator.constants import DATABASE_FILE
 
-    with sqlite3.connect(str(DATABASE_FILE)) as conn:
-        conn.execute(
-            "UPDATE workflow_run SET generation = ? WHERE run_id = ?",
-            (generation, run_id),
+    with closing(sqlite3.connect(str(DATABASE_FILE))) as _owned_conn, _owned_conn as conn:
+        if expected_generation is None:
+            expected_generation = conn.execute(
+                "SELECT generation FROM workflow_run WHERE run_id=?", (run_id,)
+            ).fetchone()
+            expected_generation = expected_generation[0] if expected_generation else None
+        changed = conn.execute(
+            "UPDATE workflow_run SET generation = ? WHERE run_id = ? AND generation = ?",
+            (generation, run_id, expected_generation),
         )
+        if changed.rowcount != 1:
+            raise ValueError("generation_changed")
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='workflow_driver'").fetchone():
+            conn.execute(
+                "UPDATE workflow_driver SET run_generation=?,revision=revision+1 WHERE run_id=?",
+                (generation, run_id),
+            )
 
 
 def _is_resumable_for_tier(row: workflow_journal.RunRow) -> bool:
@@ -1854,6 +1910,34 @@ async def resume_from_last_completed(
     run_id: str,
     *,
     managed_step_admitters: Optional[Mapping[str, Callable]] = None,
+    scoped_plan_owner=None,
+    scoped_principal=None,
+) -> WorkflowRunResult:
+    # Admission owns liveness before scoped/private validation can yield; no
+    # competing resume may rebuild or mutate the cached record during that gap.
+    _validate_key_part(run_id, "run_id")
+    if run_id in _active_drives:
+        raise ResumeNotAllowedError(
+            f"run '{run_id}' is currently executing; cannot resume a live run"
+        )
+    _active_drives.add(run_id)
+    try:
+        return await _resume_from_last_completed_impl(
+            run_id,
+            managed_step_admitters=managed_step_admitters,
+            scoped_plan_owner=scoped_plan_owner,
+            scoped_principal=scoped_principal,
+        )
+    finally:
+        _active_drives.discard(run_id)
+
+
+async def _resume_from_last_completed_impl(
+    run_id: str,
+    *,
+    managed_step_admitters: Optional[Mapping[str, Callable]] = None,
+    scoped_plan_owner=None,
+    scoped_principal=None,
 ) -> WorkflowRunResult:
     """Resume a crashed/failed run from its durable journal (§3, FR-6.2, N6).
 
@@ -1891,11 +1975,6 @@ async def resume_from_last_completed(
     # 2. Liveness guard (B4-BR-7a / F4): never resume a run a drive loop is
     # actively executing in THIS process. Do NOT trust a cached record's RUNNING
     # state — a rebuilt crash remnant is RUNNING in the cache with no live drive.
-    if run_id in _active_drives:
-        raise ResumeNotAllowedError(
-            f"run '{run_id}' is currently executing; cannot resume a live run"
-        )
-
     # 3. Load the durable row; absent (or an unreadable journal) -> KeyError -> 404 (F1).
     # Read stays on-loop deliberately: a small point read via the sync helper
     # shared with the sync status path.
@@ -1908,6 +1987,22 @@ async def resume_from_last_completed(
         row = None
     if row is None:
         raise KeyError(f"unknown run_id '{run_id}'")
+    from cli_agent_orchestrator.services.work_workflow_plans import WorkWorkflowPlans
+
+    is_scoped = await asyncio.to_thread(
+        WorkWorkflowPlans.requires_scoped_validation, run_id, getattr(row, "manifest_json", None)
+    )
+    if is_scoped:
+        if type(scoped_plan_owner) is not WorkWorkflowPlans or scoped_principal is None:
+            raise ResumeNotAllowedError("scoped resume requires its authoritative plan owner")
+        exact_inputs = await asyncio.to_thread(
+            scoped_plan_owner.validate_resume, scoped_principal, run_id
+        )
+        if exact_inputs is None:
+            raise ResumeNotAllowedError("scoped resume private attachment is unavailable")
+        from dataclasses import replace
+
+        row = replace(row, inputs_json=json.dumps(exact_inputs))
 
     # 4. Terminal runs are not resumable (B4-BR-7). A corrupt (non-enum) state
     # string is corrupt journal data -> 422, consistent with a corrupt snapshot —
@@ -1933,6 +2028,13 @@ async def resume_from_last_completed(
         # The row existed above but the rebuild degraded it to absent (e.g.
         # corrupt inputs_json) — surface as unknown rather than resuming garbage.
         raise KeyError(f"unknown run_id '{run_id}'")
+    if is_scoped:
+        record.scoped_plan_owner = scoped_plan_owner
+        record.scoped_principal = scoped_principal
+        record.inputs = exact_inputs
+        managed_step_admitters = await asyncio.to_thread(
+            scoped_plan_owner.step_admitters, scoped_principal, run_id, record.spec
+        )
     record.managed_step_admitters = _validate_managed_step_admitters(
         record.spec, managed_step_admitters
     )

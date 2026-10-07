@@ -33,6 +33,7 @@ AG_UI_AVAILABLE = False
 
 try:
     from ag_ui.core.events import (
+        BaseEvent,
         CustomEvent,
     )
     from ag_ui.core.events import Interrupt as AgUiInterrupt
@@ -141,7 +142,7 @@ def get_run_plane_content_type(accept: Optional[str] = None) -> str:
     """
     if not AG_UI_AVAILABLE:
         return "text/event-stream"
-    encoder = EventEncoder(accept=accept)
+    encoder = EventEncoder() if accept is None else EventEncoder(accept=accept)
     return encoder.get_content_type() or "text/event-stream"
 
 
@@ -179,7 +180,7 @@ async def run_plane_stream(
     thread_id = run_input.thread_id
     run_id = run_input.run_id
 
-    encoder = EventEncoder(accept=accept)
+    encoder = EventEncoder() if accept is None else EventEncoder(accept=accept)
 
     # Guard: heartbeat comment frames are SSE-specific. If content negotiation
     # ever yields a non-SSE type, fall back to text/event-stream to avoid
@@ -192,13 +193,12 @@ async def run_plane_stream(
         return encoder.encode(event)
 
     # Track lifecycle state for legality.
+    outcome: RunFinishedInterruptOutcome | RunFinishedSuccessOutcome
     finished = False
 
     # ── 1. RUN_STARTED ──────────────────────────────────────────────────
-    run_started = RunStartedEvent(
-        type="RUN_STARTED",
-        thread_id=thread_id,
-        run_id=run_id,
+    run_started = RunStartedEvent.model_validate(
+        {"type": "RUN_STARTED", "thread_id": thread_id, "run_id": run_id}
     )
     yield _emit(run_started)
 
@@ -214,11 +214,13 @@ async def run_plane_stream(
             interrupt = approval_construct.get_interrupt(interrupt_id)
             if interrupt is None:
                 # Unknown interrupt -> RUN_ERROR
-                err = RunErrorEvent(
-                    type="RUN_ERROR",
-                    thread_id=thread_id,
-                    run_id=run_id,
-                    message=f"Unknown interrupt: {interrupt_id}",
+                err = RunErrorEvent.model_validate(
+                    {
+                        "type": "RUN_ERROR",
+                        "thread_id": thread_id,
+                        "run_id": run_id,
+                        "message": f"Unknown interrupt: {interrupt_id}",
+                    }
                 )
                 yield _emit(err)
                 finished = True
@@ -234,14 +236,14 @@ async def run_plane_stream(
                 decision_str = "deny"
 
             if decision_str is None:
-                err = RunErrorEvent(
-                    type="RUN_ERROR",
-                    thread_id=thread_id,
-                    run_id=run_id,
-                    message=(
-                        f"Ambiguous resume payload for interrupt {interrupt_id}: "
-                        f"payload must include 'approved' (boolean) or 'editedArgs'"
-                    ),
+                err = RunErrorEvent.model_validate(
+                    {
+                        "type": "RUN_ERROR",
+                        "thread_id": thread_id,
+                        "run_id": run_id,
+                        "message": f"Ambiguous resume payload for interrupt {interrupt_id}: "
+                        f"payload must include 'approved' (boolean) or 'editedArgs'",
+                    }
                 )
                 yield _emit(err)
                 finished = True
@@ -257,11 +259,13 @@ async def run_plane_stream(
                     edited_text=edited_text,
                 )
             except (KeyError, ValueError) as e:
-                err = RunErrorEvent(
-                    type="RUN_ERROR",
-                    thread_id=thread_id,
-                    run_id=run_id,
-                    message=f"Resume failed for interrupt {interrupt_id}: {e}",
+                err = RunErrorEvent.model_validate(
+                    {
+                        "type": "RUN_ERROR",
+                        "thread_id": thread_id,
+                        "run_id": run_id,
+                        "message": f"Resume failed for interrupt {interrupt_id}: {e}",
+                    }
                 )
                 yield _emit(err)
                 finished = True
@@ -270,11 +274,13 @@ async def run_plane_stream(
                 # Delivery to the terminal failed; the interrupt is left
                 # unresolved (retryable). Surface an explicit error rather than
                 # finishing the run as a success (P1).
-                err = RunErrorEvent(
-                    type="RUN_ERROR",
-                    thread_id=thread_id,
-                    run_id=run_id,
-                    message=f"Delivery failed for interrupt {interrupt_id} (retryable): {e}",
+                err = RunErrorEvent.model_validate(
+                    {
+                        "type": "RUN_ERROR",
+                        "thread_id": thread_id,
+                        "run_id": run_id,
+                        "message": f"Delivery failed for interrupt {interrupt_id} (retryable): {e}",
+                    }
                 )
                 yield _emit(err)
                 finished = True
@@ -288,11 +294,13 @@ async def run_plane_stream(
             if snapshot_fn is not None:
                 try:
                     snapshot = snapshot_fn()
-                    snap_evt = StateSnapshotEvent(
-                        type="STATE_SNAPSHOT",
-                        thread_id=thread_id,
-                        run_id=run_id,
-                        snapshot=snapshot,
+                    snap_evt = StateSnapshotEvent.model_validate(
+                        {
+                            "type": "STATE_SNAPSHOT",
+                            "thread_id": thread_id,
+                            "run_id": run_id,
+                            "snapshot": snapshot,
+                        }
                     )
                     yield _emit(snap_evt)
                 except Exception:
@@ -337,11 +345,13 @@ async def run_plane_stream(
                 type="interrupt",
                 interrupts=ag_interrupts,
             )
-            run_finished = RunFinishedEvent(
-                type="RUN_FINISHED",
-                thread_id=thread_id,
-                run_id=run_id,
-                outcome=outcome,
+            run_finished = RunFinishedEvent.model_validate(
+                {
+                    "type": "RUN_FINISHED",
+                    "thread_id": thread_id,
+                    "run_id": run_id,
+                    "outcome": outcome,
+                }
             )
             yield _emit(run_finished)
             finished = True
@@ -351,11 +361,13 @@ async def run_plane_stream(
     if snapshot_fn is not None:
         try:
             snapshot = snapshot_fn()
-            snap_evt = StateSnapshotEvent(
-                type="STATE_SNAPSHOT",
-                thread_id=thread_id,
-                run_id=run_id,
-                snapshot=snapshot,
+            snap_evt = StateSnapshotEvent.model_validate(
+                {
+                    "type": "STATE_SNAPSHOT",
+                    "thread_id": thread_id,
+                    "run_id": run_id,
+                    "snapshot": snapshot,
+                }
             )
             yield _emit(snap_evt)
         except Exception:
@@ -410,11 +422,8 @@ async def run_plane_stream(
     # ── 6. RUN_FINISHED (success) ───────────────────────────────────────
     if not finished:
         outcome = RunFinishedSuccessOutcome(type="success")
-        run_finished = RunFinishedEvent(
-            type="RUN_FINISHED",
-            thread_id=thread_id,
-            run_id=run_id,
-            outcome=outcome,
+        run_finished = RunFinishedEvent.model_validate(
+            {"type": "RUN_FINISHED", "thread_id": thread_id, "run_id": run_id, "outcome": outcome}
         )
         yield _emit(run_finished)
 
@@ -433,122 +442,135 @@ def _translate_live_frame(
     if not AG_UI_AVAILABLE:  # pragma: no cover - optional [agui] extra absent
         return None
 
+    evt: BaseEvent
     try:
         if agui_type == _AGUI_STATE_SNAPSHOT:
             # data should contain a snapshot payload (from state_snapshot_frame)
             snapshot_value = data.get("snapshot") or data
-            evt = StateSnapshotEvent(
-                type="STATE_SNAPSHOT",
-                thread_id=thread_id,
-                run_id=run_id,
-                snapshot=snapshot_value,
+            evt = StateSnapshotEvent.model_validate(
+                {
+                    "type": "STATE_SNAPSHOT",
+                    "thread_id": thread_id,
+                    "run_id": run_id,
+                    "snapshot": snapshot_value,
+                }
             )
             return encoder.encode(evt)
 
         elif agui_type == _AGUI_STATE_DELTA:
             delta = data.get("delta") or data.get("ops") or []
-            evt = StateDeltaEvent(
-                type="STATE_DELTA",
-                thread_id=thread_id,
-                run_id=run_id,
-                delta=delta,
+            evt = StateDeltaEvent.model_validate(
+                {"type": "STATE_DELTA", "thread_id": thread_id, "run_id": run_id, "delta": delta}
             )
             return encoder.encode(evt)
 
         elif agui_type == _AGUI_STEP_STARTED:
             step_id = data.get("step_id") or data.get("terminal_id") or str(uuid.uuid4())
             step_name = data.get("step_name") or data.get("provider") or "step"
-            evt = StepStartedEvent(
-                type="STEP_STARTED",
-                thread_id=thread_id,
-                run_id=run_id,
-                step_id=step_id,
-                step_name=step_name,
+            evt = StepStartedEvent.model_validate(
+                {
+                    "type": "STEP_STARTED",
+                    "thread_id": thread_id,
+                    "run_id": run_id,
+                    "step_id": step_id,
+                    "step_name": step_name,
+                }
             )
             return encoder.encode(evt)
 
         elif agui_type == _AGUI_STEP_FINISHED:
             step_id = data.get("step_id") or data.get("terminal_id") or "unknown"
             step_name = data.get("step_name") or "step"
-            evt = StepFinishedEvent(
-                type="STEP_FINISHED",
-                thread_id=thread_id,
-                run_id=run_id,
-                step_id=step_id,
-                step_name=step_name,
+            evt = StepFinishedEvent.model_validate(
+                {
+                    "type": "STEP_FINISHED",
+                    "thread_id": thread_id,
+                    "run_id": run_id,
+                    "step_id": step_id,
+                    "step_name": step_name,
+                }
             )
             return encoder.encode(evt)
 
         elif agui_type == _AGUI_TOOL_CALL_START:
             tool_call_id = data.get("tool_call_id") or str(uuid.uuid4())
             tool_call_name = data.get("tool_call_name") or "unknown"
-            evt = ToolCallStartEvent(
-                type="TOOL_CALL_START",
-                thread_id=thread_id,
-                run_id=run_id,
-                tool_call_id=tool_call_id,
-                tool_call_name=tool_call_name,
+            evt = ToolCallStartEvent.model_validate(
+                {
+                    "type": "TOOL_CALL_START",
+                    "thread_id": thread_id,
+                    "run_id": run_id,
+                    "tool_call_id": tool_call_id,
+                    "tool_call_name": tool_call_name,
+                }
             )
             return encoder.encode(evt)
 
         elif agui_type == _AGUI_TOOL_CALL_END:
             tool_call_id = data.get("tool_call_id") or "unknown"
-            evt = ToolCallEndEvent(
-                type="TOOL_CALL_END",
-                thread_id=thread_id,
-                run_id=run_id,
-                tool_call_id=tool_call_id,
+            evt = ToolCallEndEvent.model_validate(
+                {
+                    "type": "TOOL_CALL_END",
+                    "thread_id": thread_id,
+                    "run_id": run_id,
+                    "tool_call_id": tool_call_id,
+                }
             )
             return encoder.encode(evt)
 
         elif agui_type == _AGUI_GENERATIVE_UI:
-            evt = CustomEvent(
-                type="CUSTOM",
-                thread_id=thread_id,
-                run_id=run_id,
-                name="cao.generative_ui",
-                value=data,
+            evt = CustomEvent.model_validate(
+                {
+                    "type": "CUSTOM",
+                    "thread_id": thread_id,
+                    "run_id": run_id,
+                    "name": "cao.generative_ui",
+                    "value": data,
+                }
             )
             return encoder.encode(evt)
 
         elif agui_type == _AGUI_TEXT_MESSAGE_CONTENT:
-            evt = CustomEvent(
-                type="CUSTOM",
-                thread_id=thread_id,
-                run_id=run_id,
-                name="cao.message_delivery",
-                value=data,
+            evt = CustomEvent.model_validate(
+                {
+                    "type": "CUSTOM",
+                    "thread_id": thread_id,
+                    "run_id": run_id,
+                    "name": "cao.message_delivery",
+                    "value": data,
+                }
             )
             return encoder.encode(evt)
 
         elif agui_type == _AGUI_RAW:
-            evt = CustomEvent(
-                type="CUSTOM",
-                thread_id=thread_id,
-                run_id=run_id,
-                name="cao.raw",
-                value=data,
+            evt = CustomEvent.model_validate(
+                {
+                    "type": "CUSTOM",
+                    "thread_id": thread_id,
+                    "run_id": run_id,
+                    "name": "cao.raw",
+                    "value": data,
+                }
             )
             return encoder.encode(evt)
 
         elif agui_type == _AGUI_RUN_ERROR:
             message = data.get("message") or "unknown error"
-            evt = RunErrorEvent(
-                type="RUN_ERROR",
-                thread_id=thread_id,
-                run_id=run_id,
-                message=message,
+            evt = RunErrorEvent.model_validate(
+                {"type": "RUN_ERROR", "thread_id": thread_id, "run_id": run_id, "message": message}
             )
             return encoder.encode(evt)
 
         else:
             # Unmapped type -> custom event with the raw data
-            evt = CustomEvent(
-                type="CUSTOM",
-                thread_id=thread_id,
-                run_id=run_id,
-                name=f"cao.{agui_type.lower()}",
-                value=data,
+            evt = CustomEvent.model_validate(
+                {
+                    "type": "CUSTOM",
+                    "thread_id": thread_id,
+                    "run_id": run_id,
+                    "name": f"cao.{agui_type.lower()}",
+                    "value": data,
+                }
             )
             return encoder.encode(evt)
 

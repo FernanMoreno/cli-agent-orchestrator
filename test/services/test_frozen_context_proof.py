@@ -267,7 +267,7 @@ def test_an_oversized_block_is_injected_truncated_and_says_so(monkeypatch):
 def test_the_gate_dependency_is_real_when_enforcement_is_on(tmp_path, monkeypatch):
     """``unit-of-work.md`` made this unit depend on ``approval-gate``.
 
-    Enforcement defaults OFF, so that dependency is satisfied by construction and would be invisible.
+    This explicitly verifies the required approval posture against the frozen plan.
     This turns it on — through the REAL setting and the REAL store, not a stubbed predicate, because a
     stubbed setting only proves the stub.
     """
@@ -287,14 +287,25 @@ def test_the_gate_dependency_is_real_when_enforcement_is_on(tmp_path, monkeypatc
     approval_gate.ensure_plan_approved(tier="script", manifest_json=manifest_json)  # must not raise
 
 
-def test_enforcement_off_is_the_default_so_the_scenario_above_needs_no_approval(
-    monkeypatch, tmp_path
-):
-    """Why the main scenario does not grant an approval: with the default, nothing is gated."""
+def test_enforcement_is_required_by_default_for_the_frozen_plan(monkeypatch, tmp_path):
+    """An absent settings file requires approval for the actual stored identity."""
     monkeypatch.delenv("CAO_WORKFLOW_REQUIRE_APPROVAL", raising=False)
     monkeypatch.setattr(settings_service, "SETTINGS_FILE", tmp_path / "absent.json")
     _freeze_a_run()
+    with pytest.raises(approval_gate.PlanApprovalRequiredError) as refused:
+        approval_gate.ensure_plan_approved(
+            tier="script", manifest_json=workflow_journal.get_run(RUN_ID).manifest_json
+        )
+    assert refused.value.plan_id == "plan-v1:frozen-proof"
 
+
+def test_explicit_file_optout_preserves_legacy_frozen_context(monkeypatch, tmp_path):
+    """Only an exact operator JSON boolean false opts out of this legacy gate."""
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({"workflow": {"require_approval": False}}))
+    monkeypatch.setattr(settings_service, "SETTINGS_FILE", settings_file)
+    monkeypatch.delenv("CAO_WORKFLOW_REQUIRE_APPROVAL", raising=False)
+    _freeze_a_run()
     approval_gate.ensure_plan_approved(
         tier="script", manifest_json=workflow_journal.get_run(RUN_ID).manifest_json
     )

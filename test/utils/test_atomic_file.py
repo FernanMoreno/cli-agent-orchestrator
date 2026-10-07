@@ -310,19 +310,22 @@ def test_temp_files_are_unique_per_call_not_fixed_name(tmp_path: Path) -> None:
 
     import cli_agent_orchestrator.utils.atomic_file as atomic_file_module
 
-    real_mkstemp = atomic_file_module.tempfile.mkstemp
+    # Spy on the helper that names the temp file: the first call creates a
+    # NEW target (O_EXCL create with the umask applied), the second rewrites
+    # an existing one (mkstemp), so spying on mkstemp alone would see one.
+    real_open_temp = atomic_file_module._open_unique_temp
 
-    def spying_mkstemp(*args, **kwargs):
-        fd, name = real_mkstemp(*args, **kwargs)
-        seen_names.append(name)
-        return fd, name
+    def spying_open_temp(*args, **kwargs):
+        fd, path = real_open_temp(*args, **kwargs)
+        seen_names.append(str(path))
+        return fd, path
 
-    atomic_file_module.tempfile.mkstemp = spying_mkstemp
+    atomic_file_module._open_unique_temp = spying_open_temp
     try:
         locked_atomic_rewrite(target, lambda existing: "one")
         locked_atomic_rewrite(target, lambda existing: "two")
     finally:
-        atomic_file_module.tempfile.mkstemp = real_mkstemp
+        atomic_file_module._open_unique_temp = real_open_temp
 
     assert len(seen_names) == 2
     assert seen_names[0] != seen_names[1], "temp file names must not collide across calls"
@@ -575,28 +578,6 @@ def test_write_preserves_an_existing_file_mode(tmp_path: Path) -> None:
     locked_atomic_write(target, "replaced\n")
 
     assert stat.S_IMODE(target.stat().st_mode) == 0o644
-
-
-def test_write_explicit_mode_is_applied_to_temp_before_atomic_publication(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Sensitive callers must not publish a umask-default file then chmod it."""
-    import cli_agent_orchestrator.utils.atomic_file as atomic_file_module
-
-    target = tmp_path / "private.json"
-    observed_temp_modes: list[int] = []
-    real_replace = atomic_file_module.os.replace
-
-    def inspect_before_replace(source, destination):
-        observed_temp_modes.append(stat.S_IMODE(Path(source).stat().st_mode))
-        return real_replace(source, destination)
-
-    monkeypatch.setattr(atomic_file_module.os, "replace", inspect_before_replace)
-
-    locked_atomic_write(target, '{"private":true}\n', mode=0o600)
-
-    assert observed_temp_modes == [0o600]
-    assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
 
 def test_write_leaves_no_temp_files(tmp_path: Path) -> None:
@@ -867,3 +848,57 @@ def test_delete_does_not_disturb_the_lock_file_itself(tmp_path: Path) -> None:
     assert not target.exists()
     assert lock_path.exists()
     assert LOCK_DIR in lock_path.parents
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file modes")
+def test_umask_is_never_touched(tmp_path: Path, monkeypatch) -> None:
+    """The umask is process-global and cao-server is threaded: reading it via
+    os.umask(0) + restore leaves a window in which another thread's new file is
+    born 0666. Neither the new-file nor the rewrite path may call os.umask."""
+    calls: list[int] = []
+    real_umask = os.umask
+
+    def recording_umask(mask: int) -> int:
+        calls.append(mask)
+        return real_umask(mask)
+
+    monkeypatch.setattr(os, "umask", recording_umask)
+    target = tmp_path / "AGENTS.md"
+    locked_atomic_rewrite(target, lambda existing: "first")  # new file
+    locked_atomic_rewrite(target, lambda existing: existing + " again")  # rewrite
+    assert calls == []
+    assert target.read_text(encoding="utf-8") == "first again"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file modes")
+def test_new_file_mode_follows_a_restrictive_umask_too(tmp_path: Path) -> None:
+    """The kernel, not CAO, applies the umask: a 0o077 umask yields 0600."""
+    target = tmp_path / "private.md"
+    old_umask = os.umask(0o077)
+    try:
+        locked_atomic_rewrite(target, lambda existing: "content")
+    finally:
+        os.umask(old_umask)
+    assert stat.S_IMODE(os.stat(target).st_mode) == 0o600
+
+
+def test_write_explicit_mode_is_applied_to_temp_before_atomic_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sensitive callers must not publish a umask-default file then chmod it."""
+    import cli_agent_orchestrator.utils.atomic_file as atomic_file_module
+
+    target = tmp_path / "private.json"
+    observed_temp_modes: list[int] = []
+    real_replace = atomic_file_module.os.replace
+
+    def inspect_before_replace(source, destination):
+        observed_temp_modes.append(stat.S_IMODE(Path(source).stat().st_mode))
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(atomic_file_module.os, "replace", inspect_before_replace)
+
+    locked_atomic_write(target, '{"private":true}\n', mode=0o600)
+
+    assert observed_temp_modes == [0o600]
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600

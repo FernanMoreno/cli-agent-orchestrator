@@ -1035,7 +1035,7 @@ class TestDeleteSession:
         """DELETE /sessions/{name} deletes session and returns success."""
         with patch("cli_agent_orchestrator.api.main.session_service") as mock_svc:
             mock_svc.delete_session.return_value = {
-                "deleted": ["test-session"],
+                "deleted": ["cao-test-session"],
                 "errors": [],
             }
 
@@ -1044,8 +1044,8 @@ class TestDeleteSession:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert data["deleted"] == ["test-session"]
-        mock_svc.delete_session.assert_called_once_with("test-session", registry=ANY)
+        assert data["deleted"] == ["cao-test-session"]
+        mock_svc.delete_session.assert_called_once_with("cao-test-session", registry=ANY)
 
     def test_delete_session_deferred_cleanup_is_conflict(self, client):
         """Deferred Grok cleanup must not look like a successful delete."""
@@ -1243,7 +1243,7 @@ class TestListTerminalsInSession:
             {"id": "abcd5678", "tmux_session": "s1", "provider": "claude_code"},
         ]
         with patch(
-            "cli_agent_orchestrator.clients.database.list_terminals_by_session",
+            "cli_agent_orchestrator.services.session_service.list_current_session_terminals",
             return_value=mock_terminals,
         ):
             response = client.get("/sessions/s1/terminals")
@@ -1255,7 +1255,7 @@ class TestListTerminalsInSession:
     def test_list_terminals_empty(self, client):
         """GET /sessions/{name}/terminals returns empty list."""
         with patch(
-            "cli_agent_orchestrator.clients.database.list_terminals_by_session",
+            "cli_agent_orchestrator.services.session_service.list_current_session_terminals",
             return_value=[],
         ):
             response = client.get("/sessions/empty-session/terminals")
@@ -1266,7 +1266,7 @@ class TestListTerminalsInSession:
     def test_list_terminals_server_error(self, client):
         """GET /sessions/{name}/terminals returns 500 on error."""
         with patch(
-            "cli_agent_orchestrator.clients.database.list_terminals_by_session",
+            "cli_agent_orchestrator.services.session_service.list_current_session_terminals",
             side_effect=Exception("DB error"),
         ):
             response = client.get("/sessions/s1/terminals")
@@ -1749,7 +1749,8 @@ class TestLifespan:
     """Tests for the lifespan() context manager."""
 
     @pytest.mark.asyncio
-    async def test_lifespan_startup_and_shutdown(self):
+    @pytest.mark.parametrize("recovery_complete", [True, False])
+    async def test_lifespan_startup_and_shutdown(self, recovery_complete):
         """lifespan starts the event-bus consumers on entry, cleans up on exit.
 
         The watchdog PollingObserver inbox watcher was replaced by event-bus
@@ -1773,12 +1774,32 @@ class TestLifespan:
         async def never_returns():
             await asyncio.sleep(3600)
 
+        retry_stopped = asyncio.Event()
+
+        async def recovery_retry():
+            try:
+                await asyncio.sleep(3600)
+            finally:
+                retry_stopped.set()
+
+        recovery = AsyncMock(return_value=recovery_complete)
+        retry = AsyncMock(side_effect=recovery_retry)
         mock_load = AsyncMock()
         mock_teardown = AsyncMock()
 
         with (
             patch("cli_agent_orchestrator.api.main.setup_logging"),
             patch("cli_agent_orchestrator.api.main.init_db"),
+            patch.object(
+                main_module.terminal_service,
+                "recover_interrupted_deferred_init_external_owners",
+                recovery,
+            ),
+            patch.object(
+                main_module.terminal_service,
+                "retry_interrupted_deferred_init_external_owners",
+                retry,
+            ),
             patch("cli_agent_orchestrator.api.main._seed_default_skills_at_startup") as mock_seed,
             patch(
                 "cli_agent_orchestrator.services.memory_reconciliation.reconcile_memory_startup",
@@ -1804,6 +1825,10 @@ class TestLifespan:
         ):
             async with lifespan(app):
                 # Inside the lifespan — startup completed.
+                recovery.assert_awaited_once()
+                if not recovery_complete:
+                    await asyncio.sleep(0)
+                    retry.assert_awaited_once()
                 mock_seed.assert_called_once_with()
                 # The registry was loaded and stored on app state.
                 mock_load.assert_awaited_once()
@@ -1816,6 +1841,11 @@ class TestLifespan:
 
             # After exit — shutdown tears down the plugin registry.
             mock_teardown.assert_awaited_once()
+
+        if not recovery_complete:
+            assert retry_stopped.is_set()
+        else:
+            retry.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_lifespan_cancels_inbox_reconciliation_on_shutdown(self):

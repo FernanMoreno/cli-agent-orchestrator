@@ -17,7 +17,7 @@ def _identity(value):
     )
 
 
-def _invalid():
+def _invalid() -> dict[str, object]:
     return {
         "ok": False,
         "code": "knowledge_query_invalid",
@@ -35,7 +35,7 @@ def _selectors(job_id, grant_id, grant_revision):
     )
 
 
-async def _read(path, key, **params):
+async def _read(path, key, **params) -> dict[str, object]:
     try:
         result = await asyncio.to_thread(
             knowledge_get, path, local_transport=utils.get_json, **params

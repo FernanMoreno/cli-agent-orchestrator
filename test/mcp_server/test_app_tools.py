@@ -69,18 +69,30 @@ def test_cao_fetch_history_returns_normalized_events() -> None:
 
     log = EventLog()
     log.append("launch", "abcd1234", "cao-foo", {"event_type": "post_create_terminal"})
-    with patch.object(app_tools, "get_event_log", return_value=log):
+    with patch.object(
+        app_tools,
+        "_get_json",
+        return_value={"events": log.history(), "cursor": log.history()[-1]["id"]},
+    ):
         result = app_tools._cao_fetch_history_impl(limit=10)
 
     assert len(result["events"]) == 1
     assert result["events"][0]["kind"] == "launch"
 
 
-def test_subscribe_events_descriptor() -> None:
+def test_subscribe_events_descriptor(monkeypatch) -> None:
     """subscribe_events returns the SSE descriptor the iframe connects to."""
 
-    desc = app_tools._subscribe_events_impl()
-    assert desc["sse_url"] == "/events"
+    monkeypatch.setattr(app_tools, "API_BASE_URL", "http://127.0.0.1:50185")
+    response = MagicMock()
+    response.json.return_value = {"ticket": "one-use"}
+    with (
+        patch.object(app_tools.requests, "post", return_value=response) as post,
+        patch.object(app_tools, "_get_json", return_value={"events": [{"id": "confirmed"}]}),
+    ):
+        desc = app_tools._subscribe_events_impl(last_event_id="confirmed")
+    assert desc["sse_url"] == "http://127.0.0.1:50185/events?ticket=one-use&cursor=confirmed"
+    assert post.call_args.kwargs["allow_redirects"] is False
     assert desc["history_tool"] == "cao_fetch_history"
     assert desc["ring_capacity"] == 500
 

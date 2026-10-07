@@ -19,6 +19,7 @@ import pytest
 from cli_agent_orchestrator.services import approval_gate, approval_store, settings_service
 from cli_agent_orchestrator.services.approval_gate import (
     PlanApprovalRequiredError,
+    PlanApprovalUnavailableError,
     ensure_plan_approved,
     plan_id_from_manifest,
 )
@@ -134,7 +135,7 @@ def test_an_unreadable_manifest_refuses(enforcement_on, approved, manifest):
     A freeze that failed writes NULL, and every shape of unreadable manifest must converge here
     rather than on permission.
     """
-    with pytest.raises(PlanApprovalRequiredError) as excinfo:
+    with pytest.raises(PlanApprovalUnavailableError) as excinfo:
         ensure_plan_approved(tier="script", manifest_json=manifest)
     assert excinfo.value.plan_id is None
 
@@ -257,10 +258,10 @@ def test_the_env_var_can_turn_the_gate_on(monkeypatch, tmp_path):
         assert settings_service.is_workflow_approval_required() is True
 
 
-def test_the_setting_defaults_to_disabled(monkeypatch, tmp_path):
+def test_the_setting_defaults_to_required(monkeypatch, tmp_path):
     monkeypatch.delenv("CAO_WORKFLOW_REQUIRE_APPROVAL", raising=False)
     monkeypatch.setattr(settings_service, "SETTINGS_FILE", tmp_path / "absent.json")
-    assert settings_service.is_workflow_approval_required() is False
+    assert settings_service.is_workflow_approval_required() is True
 
 
 def test_settings_json_can_enable_and_disable(monkeypatch, tmp_path):
@@ -275,7 +276,7 @@ def test_settings_json_can_enable_and_disable(monkeypatch, tmp_path):
     assert settings_service.is_workflow_approval_required() is False
 
 
-def test_an_unreadable_setting_resolves_to_disabled(monkeypatch, tmp_path):
+def test_an_unreadable_setting_resolves_to_required(monkeypatch, tmp_path):
     """The ONE place this mechanism is deliberately not fail-closed.
 
     Resolving an unparseable settings file to "gate on" would refuse every script run in the
@@ -287,16 +288,16 @@ def test_an_unreadable_setting_resolves_to_disabled(monkeypatch, tmp_path):
     settings_file.write_text("{not valid json")
     monkeypatch.setattr(settings_service, "SETTINGS_FILE", settings_file)
 
-    assert settings_service.is_workflow_approval_required() is False
+    assert settings_service.is_workflow_approval_required() is True
 
 
-def test_a_non_dict_workflow_section_resolves_to_disabled(monkeypatch, tmp_path):
+def test_a_non_dict_workflow_section_resolves_to_required(monkeypatch, tmp_path):
     monkeypatch.delenv("CAO_WORKFLOW_REQUIRE_APPROVAL", raising=False)
     settings_file = tmp_path / "settings.json"
     settings_file.write_text(json.dumps({"workflow": "not a dict"}))
     monkeypatch.setattr(settings_service, "SETTINGS_FILE", settings_file)
 
-    assert settings_service.is_workflow_approval_required() is False
+    assert settings_service.is_workflow_approval_required() is True
 
 
 # ---------------------------------------------------------------------------

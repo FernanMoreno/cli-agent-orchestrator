@@ -440,3 +440,115 @@ class TestFullCommitPin:
         )
 
         assert not (resolved.staging / "source" / ".git").exists()
+
+
+def test_local_subdir_stages_only_selected_plugin(tmp_path, monkeypatch):
+    import cli_agent_orchestrator.agent_plugins.resolver as resolver
+
+    monorepo = tmp_path / "monorepo"
+    plugin = build_plugin(monorepo / "agent-plugin" / "demo", "demo")
+    (monorepo / "unrelated-private-data").write_text("must not be copied")
+    copies = []
+    copytree = shutil.copytree
+
+    def inspect_copy(source, target, *args, **kwargs):
+        copies.append(Path(source))
+        return copytree(source, target, *args, **kwargs)
+
+    monkeypatch.setattr(resolver.shutil, "copytree", inspect_copy)
+    resolved = resolve(
+        PluginSource(kind="path", location=str(monorepo), subdir="agent-plugin/demo"),
+        tmp_path / "staging",
+    )
+    assert copies[0] == plugin.resolve()
+    assert (resolved.root / "plugin.json").is_file()
+    assert not (resolved.staging / "source" / "unrelated-private-data").exists()
+
+
+@requires_git
+def test_us5_pinned_revision_is_evidence_not_verified_producer(tmp_path, store, skills_dir):
+    from cli_agent_orchestrator.agent_plugins.installer import install, review_installed
+
+    repo = build_plugin(tmp_path / "repo", "candidate")
+    _git("init", cwd=repo)
+    _git("add", ".", cwd=repo)
+    _git("commit", "-m", "fixture", cwd=repo)
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    outcome = install(
+        PluginSource(kind="git", location=str(repo), ref=commit),
+        store=store,
+        skills_dir=skills_dir,
+        refresh_agents=False,
+    )
+    assert outcome.installed
+    review = review_installed("candidate", store=store)
+    assert review["resolved_ref"] == commit
+    assert review["source"]["ref"] == commit
+    assert review["producer_status"] == "unverified"
+    assert review["integrity"] == "matched"
+    assert review["enabled"] is False
+
+
+def test_us5_changed_source_reference_invalidates_local_approval(tmp_path, store, skills_dir):
+    from dataclasses import replace
+
+    from cli_agent_orchestrator.agent_plugins.installer import (
+        PluginInstallError,
+        enable,
+        install,
+        review_installed,
+    )
+    from cli_agent_orchestrator.agent_plugins.mcp_delivery import collect_plugin_mcp_servers
+
+    root = build_plugin(tmp_path / "candidate", "candidate", with_mcp=True)
+    outcome = install(
+        PluginSource(kind="path", location=str(root)),
+        store=store,
+        skills_dir=skills_dir,
+        refresh_agents=False,
+    )
+    review = review_installed("candidate", store=store)
+    approved = enable(
+        "candidate",
+        review_id=review["review_id"],
+        permissions=review["permissions"],
+        store=store,
+        skills_dir=skills_dir,
+        refresh_agents=False,
+    )
+    assert collect_plugin_mcp_servers(store=store).servers
+    store.write_record(
+        replace(
+            approved,
+            resolved_ref="a" * 40,
+            source=replace(approved.source, ref="another-reference"),
+        )
+    )
+    current = review_installed("candidate", store=store)
+    assert current["integrity"] == "changed"
+    assert current["review_id"] != review["review_id"]
+    assert not collect_plugin_mcp_servers(store=store).servers
+    with pytest.raises(PluginInstallError, match="changed"):
+        enable(
+            "candidate",
+            review_id=current["review_id"],
+            permissions=current["permissions"],
+            store=store,
+            skills_dir=skills_dir,
+            refresh_agents=False,
+        )
+
+
+@requires_git
+def test_us5_full_commit_pin_cannot_resolve_a_same_named_branch(tmp_path):
+    repo = build_plugin(tmp_path / "repo", "candidate")
+    _git("init", cwd=repo)
+    _git("add", ".", cwd=repo)
+    _git("commit", "-m", "original", cwd=repo)
+    original = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    (repo / "extra.txt").write_text("changed content")
+    _git("add", ".", cwd=repo)
+    _git("commit", "-m", "changed", cwd=repo)
+    _git("branch", original, cwd=repo)
+    with pytest.raises(ResolverError, match="Pinned commit"):
+        resolve(PluginSource(kind="git", location=str(repo), ref=original), tmp_path / "staging")

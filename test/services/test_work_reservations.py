@@ -6,10 +6,12 @@ import multiprocessing
 import os
 import sqlite3
 import time
+from test.services.test_local_peer_recovery import cancel_peer_task, cancellable_peer_task
 
 import pytest
 
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
+from cli_agent_orchestrator.services import local_peer_registry, local_peer_service
 from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 
 
@@ -367,3 +369,66 @@ def test_release_rechecks_cas_after_server_stop_verification(tmp_path):
             actor_id="operator",
         )
     assert manager.get(first.id).state == "active"
+
+
+def test_completion_wins_if_persisted_while_cancellation_stops_worker(
+    cancellable_peer_task, monkeypatch
+):
+    from cli_agent_orchestrator.services import terminal_service
+
+    task = cancellable_peer_task
+
+    def stop(*args, **kwargs):
+        local_peer_service._update_task(
+            task["task_id"], state="succeeded", result_json='{"state":"succeeded","output":"done"}'
+        )
+        return True
+
+    monkeypatch.setattr(terminal_service, "delete_terminal", stop)
+    receipt = cancel_peer_task(task)
+    assert receipt["state"] == receipt["result"]["state"] == "succeeded"
+    assert receipt["result"]["output"] == "done"
+
+
+def test_cancel_does_not_release_lease_until_worker_stops(cancellable_peer_task, monkeypatch):
+    from cli_agent_orchestrator.services import terminal_service
+
+    task = cancellable_peer_task
+    monkeypatch.setattr(terminal_service, "delete_terminal", lambda *args, **kwargs: False)
+    pending = cancel_peer_task(task)
+    assert pending["state"] not in {"succeeded", "failed", "cancelled"}
+    with pytest.raises(local_peer_registry.ProjectWriteLeaseBusy):
+        local_peer_registry.acquire_project_write_lease(
+            project_id=task["project_id"], task_id="successor", owner_instance_id="target-profile"
+        )
+    monkeypatch.setattr(terminal_service, "delete_terminal", lambda *args, **kwargs: True)
+    assert cancel_peer_task(task)["state"] == "cancelled"
+    local_peer_registry.acquire_project_write_lease(
+        project_id=task["project_id"], task_id="successor", owner_instance_id="target-profile"
+    )
+    assert not local_peer_registry.update_project_write_lease(
+        project_id=task["project_id"],
+        task_id=task["task_id"],
+        owner_instance_id="target-profile",
+        state="released",
+    )
+
+
+def test_concurrent_peer_terminal_transitions_share_one_sqlite_winner(cancellable_peer_task):
+    import concurrent.futures
+    import json
+    import threading
+
+    barrier = threading.Barrier(2)
+
+    def finish(state):
+        barrier.wait(timeout=10)
+        return local_peer_service._update_task(
+            cancellable_peer_task["task_id"], state=state, result_json=json.dumps({"state": state})
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(finish, ["succeeded", "cancelled"]))
+    assert results[0] == results[1]
+    assert results[0]["state"] == results[0]["result"]["state"]
+    assert local_peer_service.refresh_local_task(cancellable_peer_task["task_id"]) == results[0]

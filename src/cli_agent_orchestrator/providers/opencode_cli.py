@@ -23,7 +23,9 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import subprocess
+import tempfile
 import textwrap
 from collections import Counter
 from pathlib import Path
@@ -39,6 +41,7 @@ from cli_agent_orchestrator.constants import (
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
 from cli_agent_orchestrator.services.settings_service import get_server_settings
+from cli_agent_orchestrator.utils.mcp_resolution import is_cao_mcp_server
 from cli_agent_orchestrator.utils.terminal import wait_for_shell
 
 logger = logging.getLogger(__name__)
@@ -57,7 +60,8 @@ USER_MESSAGE_PATTERN = r"^┃\s{2}"
 # Two middle-dot separators and a trailing duration are required.
 # OpenCode formats duration as "Ns" for short runs and "Nm Ns" once the turn
 # exceeds 60 seconds (e.g. "1m 8s").  Both forms must be matched.
-COMPLETION_MARKER_PATTERN = r"▣\s+\S+\s+·\s+.+?\s+·\s+(?:\d+m\s+)?\d+(?:\.\d+)?s"
+# Display names may contain spaces; a marker stays on one rendered line.
+COMPLETION_MARKER_PATTERN = r"▣[ \t]+[^·\n]+·[ \t]+[^·\n]+·[ \t]+(?:\d+m[ \t]+)?\d+(?:\.\d+)?s"
 V2_COMPLETION_MARKER_PATTERN = (
     r"(?m)^\s*[^\n·┃›]+\s+·\s+[^\n]+?\s+·\s+(?:\d+m\s+)?\d+(?:\.\d+)?s\s*$"
 )
@@ -83,7 +87,7 @@ PROVIDER_ERROR_PATTERN = (
 # that merely discusses a rate limit cannot park a worker.
 QUOTA_PROVIDER_ERROR_PATTERN = re.compile(
     r"\b(?:rate[ -]?limit(?:ed|\s+exceeded)?|quota\s+exceeded|"
-    r"usage\s+limit\s+reached|insufficient\s+credits?|credits?\s+exhausted)\b",
+    r"usage\s+limit\s+(?:reached|exceeded)|insufficient\s+credits?|credits?\s+exhausted)\b",
     re.IGNORECASE,
 )
 
@@ -122,6 +126,22 @@ def _crop_auxiliary_sidebar(text: str) -> str:
     return "\n".join(line[:boundary].rstrip() for line in lines)
 
 
+def _find_cao_mcp_server_name(source_config: dict) -> Optional[str]:
+    """Return the configured MCP server id for CAO's bundled MCP, if present."""
+    mcp = source_config.get("mcp", {}) or {}
+    servers = mcp.get("servers", mcp)
+    if not isinstance(servers, dict):
+        return None
+    for name, config in servers.items():
+        if not isinstance(name, str) or not isinstance(config, dict):
+            continue
+        if config.get("enabled") is False or config.get("disabled") is True:
+            continue
+        if is_cao_mcp_server(name, config):
+            return name
+    return None
+
+
 def _has_current_quota_provider_error(text: str) -> bool:
     """Return whether OpenCode's current provider-error overlay is a quota stop.
 
@@ -131,6 +151,16 @@ def _has_current_quota_provider_error(text: str) -> bool:
     failure remains on its existing path.
     """
     rows = [row for row in text.splitlines() if row.strip()]
+    # Mini v2 renders this native refusal without the v1 provider-error label.
+    # Require its exact overlay row and current OpenCode Go idle chrome, not
+    # arbitrary task prose mentioning a usage limit.
+    if (
+        rows
+        and "OpenCode Go" in rows[-1]
+        and re.search(IDLE_FOOTER_PATTERN, rows[-1])
+        and any(row.strip() == "Go usage limit exceeded" for row in rows[-4:-1])
+    ):
+        return True
     return any(
         re.search(PROVIDER_ERROR_PATTERN, row, re.IGNORECASE)
         and QUOTA_PROVIDER_ERROR_PATTERN.search(row)
@@ -138,15 +168,43 @@ def _has_current_quota_provider_error(text: str) -> bool:
     )
 
 
-def detect_opencode_major() -> int:
+def resolve_opencode_runtime() -> tuple[str, dict[str, str]]:
+    """Pin the server's executable and PATH for both probing and terminal launch."""
+    environment = os.environ.copy()
+    environment["PATH"] = os.pathsep.join(
+        os.path.abspath(part or ".")
+        for part in environment.get("PATH", os.defpath).split(os.pathsep)
+    )
+    executable = shutil.which("opencode", path=environment["PATH"])
+    if executable is None:
+        raise ValueError("OpenCode executable is unavailable in the launch PATH")
+    return str(Path(executable).absolute()), environment
+
+
+def detect_opencode_major(runtime: Optional[tuple[str, dict[str, str]]] = None) -> int:
     """Probe the executable used by this server; unsupported versions fail closed."""
+    executable, environment = runtime or resolve_opencode_runtime()
     output = subprocess.check_output(
-        ["opencode", "--version"], text=True, timeout=10, stderr=subprocess.STDOUT
+        [executable, "--version"], env=environment, text=True, timeout=10, stderr=subprocess.STDOUT
     )
     match = re.fullmatch(r"(?:opencode\s+v?)?(\d+)\.\d+\.\d+(?:[-+][\w.-]+)?\s*", output.strip())
     if match is None or int(match[1]) not in (1, 2):
         raise ValueError("unsupported OpenCode CLI version")
     return int(match[1])
+
+
+def _has_current_v2_model_refusal(text: str) -> bool:
+    """Recognize mini's native refusal immediately above its current idle footer."""
+    rows = [row.strip() for row in text.splitlines() if row.strip()]
+    if not rows or re.search(IDLE_FOOTER_PATTERN, rows[-1]) is None:
+        return False
+    return (len(rows) >= 2 and rows[-2] == "This model is not available in your country") or (
+        len(rows) >= 4
+        and "OpenCode Go" in rows[-1]
+        and rows[-2] == "┃"
+        and re.search(r" · \d+(?:\.\d+)?(?:ms|s)$", rows[-3]) is not None
+        and rows[-4] == "Upstream request failed: Model is unavailable."
+    )
 
 
 class OpenCodeCliProvider(BaseProvider):
@@ -192,6 +250,81 @@ class OpenCodeCliProvider(BaseProvider):
         self._initialized = False
         self._cli_major = 1
         self._v2_config_dir = None
+        self._launch_runtime: tuple[str, dict[str, str]] | None = None
+        self._owned_v2_config_dir: Path | None = None
+        self._v2_data_home: Path | None = None
+        self._v2_cao_mcp_server_name: str | None = None
+
+    @property
+    def runtime_variant(self) -> str:
+        return f"opencode-v{self._cli_major}"
+
+    def restore_runtime_variant(self, variant: Optional[str]) -> None:
+        if variant is None:
+            # Legacy rows predate durable dialect storage. Probe only the
+            # executable; never initialize or launch another agent.
+            self._cli_major = detect_opencode_major()
+        elif variant in {"opencode-v1", "opencode-v2"}:
+            self._cli_major = int(variant[-1])
+        else:
+            raise ValueError("unsupported persisted OpenCode runtime variant")
+
+    def _v2_current_receipt_response(self, clean: str, *, viewport: bool = False) -> Optional[str]:
+        """A current idle answer can outlive mini's last duration marker.
+
+        A transport error renders a duration before the assistant continues.
+        Mini then shows tokens/cost in its final footer instead of another
+        duration. Only a standalone active receipt in the assistant region
+        permits that later response to supersede the earlier boundary.
+        """
+        footers = list(re.finditer(r"(?m)^.*ctrl\+p\s+menu[^\n]*$", clean))
+        if not footers or clean[footers[-1].end() :].strip():
+            return None
+        before = clean[: footers[-1].start()]
+        users = list(re.finditer(r"(?m)^\s*›\s+", before))
+        if not users and not viewport:
+            return None
+        turn = before[users[-1].end() :] if users else before
+        # A wrapped nonce in the echoed delivery contract is still user text.
+        # The server-owned contract ends after this sentence, even when mini
+        # wraps it across rows. Exclude that entire block before witnessing an
+        # assistant receipt; a blank line inside the task is not its boundary.
+        turn = self._v2_without_delivery_contract(turn)
+        if users:
+            blocks = re.split(r"\n[ \t]*\n", turn, maxsplit=1)
+            if len(blocks) != 2:
+                return None
+            response = blocks[1]
+        else:
+            response = turn
+        durations = list(re.finditer(V2_COMPLETION_MARKER_PATTERN, response))
+        if durations:
+            response = response[durations[-1].end() :]
+        # The empty composer belongs to the UI, not the answer.
+        response = re.sub(r"\n[ \t]*┃[ \t]*\s*$", "", response).strip()
+        if self._result_has_active_receipt(response):
+            return textwrap.dedent(response)
+        return None
+
+    @staticmethod
+    def _v2_without_delivery_contract(turn: str) -> str:
+        """Skip the complete echoed contract, including wrapped paragraphs."""
+        contract_starts = list(re.finditer(r"CAO\s+completion\s+receipt\s+requirement:", turn))
+        if not contract_starts:
+            return turn
+        # The server appends its contract after the task, which may itself quote
+        # an older complete contract. The final block owns this turn's boundary.
+        contract_start = contract_starts[-1]
+        # A quoted final sentence inside the task precedes the actual contract;
+        # it cannot expose the contract's echoed nonce as assistant evidence.
+        contract_end = re.search(
+            r"Do\s+not\s+quote\s+or\s+emit\s+that\s+receipt\s+before\s+the\s+task\s+is\s+"
+            r"complete,\s+and\s+do\s+not\s+perform\s+further\s+tool\s+calls\s+after\s+it\.",
+            turn[contract_start.end() :],
+        )
+        # An incomplete echoed contract is not assistant evidence. Wait for a
+        # complete boundary rather than exposing its nonce to receipt detection.
+        return turn[contract_start.end() + contract_end.end() :] if contract_end is not None else ""
 
     @property
     def paste_enter_count(self) -> int:
@@ -251,24 +384,71 @@ class OpenCodeCliProvider(BaseProvider):
         Raises:
             TimeoutError: If shell or OpenCode doesn't reach IDLE/COMPLETED in time.
         """
+        self._validate_native_profile()
+        self._launch_runtime = resolve_opencode_runtime()
+        self._cli_major = await asyncio.to_thread(detect_opencode_major, self._launch_runtime)
+        try:
+            return await self._initialize_validated()
+        except BaseException:
+            self.cleanup()
+            raise
+
+    def _validate_native_profile(self) -> None:
+        """Read the selected native profile without installing or rewriting it."""
+        if not self._agent_profile:
+            return
+        import frontmatter
+
+        from cli_agent_orchestrator.utils.opencode_config import to_opencode_agent_id
+
+        agent_id = to_opencode_agent_id(self._agent_profile)
+        path = OPENCODE_AGENTS_DIR / f"{agent_id}.md"
+        try:
+            if not path.is_file():
+                raise ValueError("missing native agent")
+            profile = frontmatter.loads(path.read_text(encoding="utf-8"))
+            if profile.metadata.get("mode", "all") not in ("all", "primary", "subagent"):
+                raise ValueError("unsupported native agent mode")
+        except Exception:
+            raise ValueError(
+                f"OpenCode native profile {agent_id!r} is missing, unreadable, or invalid; "
+                f"prepare it with cao install {shlex.quote(self._agent_profile)} "
+                "--provider opencode_cli"
+            ) from None
+        self._agent_profile = agent_id
+
+    async def _initialize_validated(self) -> bool:
         init_timeout = get_server_settings()["provider_init_timeout"]
         if not await wait_for_shell(self.terminal_id, timeout=init_timeout):
             raise TimeoutError(f"Shell initialization timed out after {init_timeout}s")
 
-        self._cli_major = await asyncio.to_thread(detect_opencode_major)
         if self._cli_major == 2:
             from cli_agent_orchestrator.utils.opencode_config import read_config
             from cli_agent_orchestrator.utils.opencode_v2 import write_v2_configuration
 
+            parent = CAO_HOME_DIR / "opencode-v2"
+            parent.mkdir(parents=True, exist_ok=True)
+            self._owned_v2_config_dir = Path(tempfile.mkdtemp(prefix="terminal-", dir=parent))
+            source_config = read_config()
+            self._v2_cao_mcp_server_name = _find_cao_mcp_server_name(source_config)
+            source_auth = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share")))
+            source_auth = source_auth / "opencode/auth.json"
             self._v2_config_dir = write_v2_configuration(
-                CAO_HOME_DIR / "opencode-v2" / self.terminal_id,
+                self._owned_v2_config_dir,
                 source_agents=OPENCODE_AGENTS_DIR,
-                source_config=read_config(),
+                source_config=source_config,
                 selected_model=self._model,
                 session_id=self.terminal_id,
-                source_auth=Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share")))
-                / "opencode/auth.json",
+                source_auth=source_auth,
             )
+            self._v2_data_home = self._owned_v2_config_dir / "data"
+            self._v2_data_home.mkdir(mode=0o700)
+            opencode_data = self._v2_data_home / "opencode"
+            opencode_data.mkdir(mode=0o700)
+            if source_auth.is_file():
+                (opencode_data / "auth.json").symlink_to(source_auth.resolve())
+            if self._v2_cao_mcp_server_name is not None:
+                (self._v2_data_home / "mcp-startup.log").touch(mode=0o600)
         command = self._build_launch_command()
         # A generated native child starts at a shell prompt.  It must
         # never be inferred from a racy foreground-process probe: instruct the
@@ -285,11 +465,45 @@ class OpenCodeCliProvider(BaseProvider):
         # alt-screen splash can be fully rendered before that stream yields an
         # unambiguous status, so startup must also inspect the current viewport.
         # This is a readiness check only: it happens before any prompt is sent.
+        ready_deadline = asyncio.get_running_loop().time() + 120.0
         if not await self._wait_for_initial_ready(timeout=120.0):
             raise TimeoutError("OpenCode CLI initialization timed out after 120 seconds")
+        if self._v2_cao_mcp_server_name is not None:
+            remaining = ready_deadline - asyncio.get_running_loop().time()
+            if remaining <= 0 or not await self._wait_for_v2_cao_mcp_ready(timeout=remaining):
+                raise TimeoutError(
+                    "OpenCode v2 CAO MCP server did not connect before initialization timed out"
+                )
 
         self._initialized = True
         return True
+
+    async def _wait_for_v2_cao_mcp_ready(self, timeout: float) -> bool:
+        """Wait for this terminal's private OpenCode log to confirm CAO MCP."""
+        server_name = self._v2_cao_mcp_server_name
+        data_home = self._v2_data_home
+        if server_name is None:
+            return True
+        if data_home is None:
+            return False
+
+        log_path = data_home / "mcp-startup.log"
+        connected = re.compile(
+            rf'\bmessage="mcp connected"\s+server={re.escape(server_name)}(?:\s|$)'
+        )
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            try:
+                log_text = await asyncio.to_thread(log_path.read_text, encoding="utf-8")
+            except OSError:
+                log_text = ""
+            if connected.search(log_text):
+                logger.info("OpenCode v2 CAO MCP ready for %s: %s", self.terminal_id, server_name)
+                return True
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(0.25, remaining))
 
     async def _wait_for_initial_ready(self, timeout: float) -> bool:
         """Wait until the new TUI has proved it can accept its first input.
@@ -339,8 +553,8 @@ class OpenCodeCliProvider(BaseProvider):
     def _build_launch_command(self) -> str:
         """Build the inline-env opencode launch command string."""
         env_pairs = [
-            f"OPENCODE_CONFIG={OPENCODE_CONFIG_FILE}",
-            f"OPENCODE_CONFIG_DIR={OPENCODE_CONFIG_DIR}",
+            "OPENCODE_CONFIG=" + shlex.quote(str(OPENCODE_CONFIG_FILE)),
+            "OPENCODE_CONFIG_DIR=" + shlex.quote(str(OPENCODE_CONFIG_DIR)),
             "OPENCODE_DISABLE_AUTOUPDATE=1",
             "OPENCODE_DISABLE_MOUSE=1",
             "OPENCODE_DISABLE_TERMINAL_TITLE=1",
@@ -348,14 +562,30 @@ class OpenCodeCliProvider(BaseProvider):
             "TERM=xterm-256color",
         ]
         cmd_parts = ["opencode"]
+        if self._launch_runtime is not None:
+            executable, environment = self._launch_runtime
+            cmd_parts[0] = executable
+            env_pairs.append("PATH=" + shlex.quote(environment["PATH"]))
         if self._cli_major == 2:
             # Private servers keep child sessions out of the operator's shared
             # v2 daemon; mini exposes agent/model flags and terminal input.
             cmd_parts += ["mini", "--standalone"]
+            if self._v2_data_home is not None:
+                env_pairs.append("XDG_DATA_HOME=" + shlex.quote(str(self._v2_data_home)))
         if self._agent_profile:
             cmd_parts += ["--agent", self._agent_profile]
         if self._model:
             cmd_parts += ["--model", self._model]
+        log_redirect = ""
+        if (
+            self._cli_major == 2
+            and self._v2_cao_mcp_server_name is not None
+            and self._v2_data_home is not None
+        ):
+            # The CLI can choose a log location independently of XDG_DATA_HOME.
+            # Capture its documented stderr stream for this standalone server.
+            cmd_parts += ["--log-level", "info", "--print-logs"]
+            log_redirect = " 2> " + shlex.quote(str(self._v2_data_home / "mcp-startup.log"))
         # env vars are shell words; join cmd parts with shlex for proper quoting
         if self._v2_config_dir is not None:
             env_pairs[:2] = [
@@ -369,8 +599,9 @@ class OpenCodeCliProvider(BaseProvider):
                 + " ".join(env_pairs)
                 + " "
                 + shlex.join(cmd_parts)
+                + log_redirect
             )
-        return " ".join(env_pairs) + " " + shlex.join(cmd_parts)
+        return " ".join(env_pairs) + " " + shlex.join(cmd_parts) + log_redirect
 
     def get_status(self, output: str) -> TerminalStatus:
         """Detect current TUI state from the StatusMonitor buffer string.
@@ -411,7 +642,9 @@ class OpenCodeCliProvider(BaseProvider):
         # until the step timeout, hiding a definitive error as a monitor lag.
         if _has_current_quota_provider_error(clean):
             return TerminalStatus.WAITING_QUOTA
-        if re.search(PROVIDER_ERROR_PATTERN, clean, re.IGNORECASE):
+        if re.search(PROVIDER_ERROR_PATTERN, clean, re.IGNORECASE) or (
+            self._cli_major == 2 and _has_current_v2_model_refusal(clean)
+        ):
             return TerminalStatus.ERROR
 
         # ── 2. WAITING_USER_ANSWER ───────────────────────────────────────────
@@ -449,6 +682,11 @@ class OpenCodeCliProvider(BaseProvider):
             esc_is_stale = True
 
         # ── 4. COMPLETED ─────────────────────────────────────────────────────
+        if (
+            self._cli_major == 2
+            and self._v2_current_receipt_response(clean, viewport=True) is not None
+        ):
+            return TerminalStatus.COMPLETED
         # Requires the last full completion marker (with duration) followed by the
         # idle footer and no subsequent ``▣`` token (which would indicate a new
         # incomplete turn visible in the scrollback).
@@ -499,12 +737,15 @@ class OpenCodeCliProvider(BaseProvider):
             return TerminalStatus.UNKNOWN
 
         # Join with newlines so multiline patterns work.
-        joined = "\n".join(rows)
+        # Keep blank lines: they delimit mini's user block from its answer.
+        joined = "\n".join(ln.rstrip() for ln in screen_lines)
 
         # ── 1. ERROR ─────────────────────────────────────────────────────
         if _has_current_quota_provider_error(joined):
             return TerminalStatus.WAITING_QUOTA
-        if re.search(PROVIDER_ERROR_PATTERN, joined, re.IGNORECASE):
+        if re.search(PROVIDER_ERROR_PATTERN, joined, re.IGNORECASE) or (
+            self._cli_major == 2 and _has_current_v2_model_refusal(joined)
+        ):
             return TerminalStatus.ERROR
 
         # ── 2. WAITING_USER_ANSWER ───────────────────────────────────────
@@ -530,6 +771,11 @@ class OpenCodeCliProvider(BaseProvider):
             esc_is_stale = True
 
         # ── 4. COMPLETED ────────────────────────────────────────────────
+        if (
+            self._cli_major == 2
+            and self._v2_current_receipt_response(joined, viewport=True) is not None
+        ):
+            return TerminalStatus.COMPLETED
         completion_matches = list(re.finditer(completion_pattern, joined))
         if completion_matches:
             last_end = completion_matches[-1].end()
@@ -574,12 +820,21 @@ class OpenCodeCliProvider(BaseProvider):
         if self._cli_major == 2:
             if self.get_status(clean) != TerminalStatus.COMPLETED:
                 raise ValueError("OpenCode v2 turn is not completed")
-            completion = list(re.finditer(V2_COMPLETION_MARKER_PATTERN, clean))[-1]
+            current_response = self._v2_current_receipt_response(clean)
+            if current_response is not None:
+                return current_response
+            completions = list(re.finditer(V2_COMPLETION_MARKER_PATTERN, clean))
+            if not completions:
+                raise ValueError("No complete OpenCode v2 answer boundary found")
+            completion = completions[-1]
             before = clean[: completion.start()]
             users = list(re.finditer(r"(?m)^\s*›\s+", before))
             if not users:
                 raise ValueError("No user message found in OpenCode v2 output")
             turn = before[users[-1].end() :]
+            # A task may contain paragraphs before its echoed delivery contract.
+            # The first blank line is not the assistant boundary in that case.
+            turn = self._v2_without_delivery_contract(turn)
             # Mini separates the complete user block from the assistant with
             # an empty line. Preserve all later line feeds, including receipts.
             blocks = re.split(r"\n[ \t]*\n", turn, maxsplit=1)
@@ -699,3 +954,9 @@ class OpenCodeCliProvider(BaseProvider):
     def cleanup(self) -> None:
         """Clean up OpenCode provider state."""
         self._initialized = False
+        if self._owned_v2_config_dir is not None:
+            shutil.rmtree(self._owned_v2_config_dir, ignore_errors=True)
+            self._owned_v2_config_dir = None
+            self._v2_config_dir = None
+            self._v2_data_home = None
+            self._v2_cao_mcp_server_name = None

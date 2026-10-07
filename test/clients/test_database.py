@@ -3058,6 +3058,10 @@ class TestListTerminalsInSessions:
             "working_directory",
             "engine",
             "last_active",
+            "deferred_init_failure",
+            "deferred_init_external_owner",
+            "deferred_init_runtime_reclaimed",
+            "session_incarnation_id",
         }
 
     def test_an_upsert_would_break_the_ordering_contract(self, db):

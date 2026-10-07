@@ -1,6 +1,7 @@
 """Service helpers for installing agent profiles."""
 
 import errno
+import json
 import logging
 import os
 import re
@@ -62,7 +63,11 @@ from cli_agent_orchestrator.utils.path_validation import (
     validate_path_component,
 )
 from cli_agent_orchestrator.utils.skill_injection import compose_agent_prompt
-from cli_agent_orchestrator.utils.tool_mapping import granted_mcp_servers, resolve_allowed_tools
+from cli_agent_orchestrator.utils.tool_mapping import (
+    granted_mcp_servers,
+    kiro_agent_tools,
+    resolve_allowed_tools,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -446,6 +451,40 @@ def _materialize_opencode_mcp(
         log_delivery_findings(McpDeliveryResult(findings=tuple(collisions)), agent_name=agent_name)
 
 
+def installed_kiro_tools(profile_name: str) -> Optional[List[str]]:
+    """The ``tools`` list in the Kiro agent JSON ``cao install`` wrote for ``profile_name``.
+
+    ``None`` when no agent file exists or it cannot be read as JSON with a
+    list-valued ``tools``. The launch gate and the server use this to notice a
+    profile installed before CAO wrote the policy into ``tools`` (it carries
+    ``["*"]``) and say so, since on Kiro the installed file is the policy.
+    """
+    agent_file = KIRO_AGENTS_DIR / f"{flatten_path_separators(profile_name)}.json"
+    try:
+        data = json.loads(agent_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    tools = data.get("tools") if isinstance(data, dict) else None
+    if not isinstance(tools, list) or not all(isinstance(t, str) for t in tools):
+        return None
+    return tools
+
+
+def kiro_install_predates_native_enforcement(
+    profile_name: str, allowed_tools: Optional[List[str]]
+) -> bool:
+    """True when a restricted policy is requested but the installed Kiro agent has ``tools: ["*"]``.
+
+    That file was written before CAO put the policy into ``tools`` (or by
+    hand), so the restriction the launch prints is not what the agent runs
+    with. A missing or unreadable agent file is not reported here: launch
+    fails on that on its own.
+    """
+    if allowed_tools is None or "*" in allowed_tools:
+        return False
+    return installed_kiro_tools(profile_name) == ["*"]
+
+
 def install_agent(
     source: str,
     provider: Optional[str] = None,
@@ -629,13 +668,6 @@ def install_agent(
         safe_filename = flatten_path_separators(profile.name)
 
         if provider == ProviderType.KIRO_CLI.value:
-            if profile.engine == KiroEngine.KAS:
-                raise ValueError(
-                    "Kiro KAS profiles cannot be installed in Phase 0: CAO cannot "
-                    "render KAS profiles or translate allowedTools/toolsSettings to Cedar. "
-                    "Set engine: v2 or wait for a later migration phase."
-                )
-            KIRO_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
             # Kiro natively supports skill:// resources with progressive loading
             # (metadata at startup, full content on demand).
             #
@@ -667,29 +699,19 @@ def install_agent(
                 f"skill://{SKILLS_DIR}/**/SKILL.md",
                 f"skill://{SKILLS_DIR}/*/SKILL.md",
             ]
-            raw_prompt = (
-                profile.prompt.strip() if profile.prompt and profile.prompt.strip() else None
-            )
-            kiro_agent_config = KiroAgentConfig(
-                name=profile.name,
-                description=profile.description,
-                tools=profile.tools if profile.tools is not None else ["*"],
-                allowedTools=allowed_tools,
+            from cli_agent_orchestrator.models.kiro_engine import resolve_kiro_engine
+            from cli_agent_orchestrator.services.kiro_profile_service import install_profile
+
+            outcome = install_profile(
+                profile,
+                directory=KIRO_AGENTS_DIR,
+                engine=resolve_kiro_engine(profile=profile.engine),
                 resources=kiro_resources,
-                prompt=raw_prompt,
-                # Raise the cao-mcp-server tool-call timeout so kiro doesn't
-                # cancel long handoff RPCs client-side (see helper docstring).
-                mcpServers=_inject_kiro_mcp_timeout(profile.mcpServers),
-                toolAliases=profile.toolAliases,
-                toolsSettings=profile.toolsSettings,
-                hooks=profile.hooks,
-                model=profile.model,
+                mcp_servers=_inject_kiro_mcp_timeout(profile.mcpServers),
+                allowed_tools=allowed_tools,
+                artifact_name=safe_filename,
             )
-            agent_file = KIRO_AGENTS_DIR / f"{safe_filename}.json"
-            agent_file.write_text(
-                kiro_agent_config.model_dump_json(indent=2, exclude_none=True),
-                encoding="utf-8",
-            )
+            agent_file = outcome.artifact_path
 
         elif provider == ProviderType.COPILOT_CLI.value:
             COPILOT_AGENTS_DIR.mkdir(parents=True, exist_ok=True)

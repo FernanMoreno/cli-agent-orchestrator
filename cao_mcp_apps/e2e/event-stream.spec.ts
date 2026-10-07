@@ -8,9 +8,6 @@
 // feed (/events). The event-stream bundle is subscribed there and renders a new
 // row live — exactly the real path: choke point -> Backplane -> EventLog -> SSE.
 //
-// NOTE (authored-but-not-executed locally): the sandbox network mode
-// (COMMON_DEPENDENCIES) blocks the Playwright browser download. Authored +
-// CI-wired; structured to pass in CI where chromium installs successfully.
 
 import { expect, test } from "@playwright/test";
 
@@ -26,6 +23,12 @@ test.describe("event-stream E2E", () => {
 
     // The ticker hydrated with the single seed event.
     await expect(stream.getByTestId("event-row")).toHaveCount(1);
+    await expect
+      .poll(async () => {
+        const response = await page.request.get("/event-subscribers");
+        return (await response.json()).count;
+      })
+      .toBeGreaterThan(0);
 
     // Send a task to the agent through the choke point.
     await agent.getByTestId("task-input").fill("run the build");

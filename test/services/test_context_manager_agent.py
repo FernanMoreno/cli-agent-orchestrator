@@ -131,7 +131,7 @@ class TestGetCuratedMemoryContext:
     @patch("cli_agent_orchestrator.providers.manager.provider_manager")
     @patch("cli_agent_orchestrator.services.status_monitor.status_monitor")
     def test_falls_back_when_context_manager_busy(
-        self, mock_status_monitor, mock_pm, mock_find, mock_phase1
+        self, mock_status_monitor, mock_pm, mock_find, mock_phase1, monkeypatch
     ):
         from cli_agent_orchestrator.models.terminal import TerminalStatus
         from cli_agent_orchestrator.services.memory_service import MemoryService
@@ -142,10 +142,18 @@ class TestGetCuratedMemoryContext:
         mock_pm.get_provider.return_value = MagicMock()
 
         svc = MemoryService()
-        result = svc.get_curated_memory_context("t1", "Fix the bug")
+        monkeypatch.setattr(
+            svc, "_get_terminal_context", lambda _id: {"session_name": "same-session"}
+        )
+        with patch(
+            "cli_agent_orchestrator.services.terminal_service.send_input"
+        ) as mock_send_input:
+            result = svc.get_curated_memory_context("t1", "Fix the bug")
 
         assert "fallback" in result
         mock_phase1.assert_called_once_with("t1")
+        mock_status_monitor.get_status.assert_called_once_with("cm-1")
+        mock_send_input.assert_not_called()
 
     @patch.object(
         __import__(
@@ -166,7 +174,14 @@ class TestGetCuratedMemoryContext:
     @patch("cli_agent_orchestrator.providers.manager.provider_manager")
     @patch("cli_agent_orchestrator.services.status_monitor.status_monitor")
     def test_returns_curated_response_from_context_manager(
-        self, mock_status_monitor, mock_pm, mock_get_output, mock_send_input, mock_find, mock_phase1
+        self,
+        mock_status_monitor,
+        mock_pm,
+        mock_get_output,
+        mock_send_input,
+        mock_find,
+        mock_phase1,
+        monkeypatch,
     ):
         from cli_agent_orchestrator.models.terminal import TerminalStatus
         from cli_agent_orchestrator.services.memory_service import MemoryService
@@ -186,7 +201,10 @@ class TestGetCuratedMemoryContext:
         ]
 
         svc = MemoryService()
-        svc._curator_policy_allows_reuse = lambda *_args: True  # type: ignore[method-assign]
+        monkeypatch.setattr(
+            svc, "_get_terminal_context", lambda _id: {"session_name": "same-session"}
+        )
+        monkeypatch.setattr(svc, "_curator_policy_allows_reuse", lambda *_args: True)
         result = svc.get_curated_memory_context("t1", "Write tests")
 
         assert "<cao-memory>" in result
@@ -212,7 +230,14 @@ class TestGetCuratedMemoryContext:
     @patch("cli_agent_orchestrator.providers.manager.provider_manager")
     @patch("cli_agent_orchestrator.services.status_monitor.status_monitor")
     def test_falls_back_when_current_curator_dispatch_emits_no_block(
-        self, mock_status_monitor, mock_pm, mock_get_output, mock_send_input, mock_find, mock_phase1
+        self,
+        mock_status_monitor,
+        mock_pm,
+        mock_get_output,
+        mock_send_input,
+        mock_find,
+        mock_phase1,
+        monkeypatch,
     ):
         """A prior dispatch's block cannot be reused for the current worker."""
         from cli_agent_orchestrator.models.terminal import TerminalStatus
@@ -227,13 +252,37 @@ class TestGetCuratedMemoryContext:
         mock_get_output.side_effect = [stale, stale + "\nNo memory block this turn."]
 
         svc = MemoryService()
-        svc._curator_policy_allows_reuse = lambda *_args: True  # type: ignore[method-assign]
+        monkeypatch.setattr(
+            svc, "_get_terminal_context", lambda _id: {"session_name": "same-session"}
+        )
+        monkeypatch.setattr(svc, "_curator_policy_allows_reuse", lambda *_args: True)
         result = svc.get_curated_memory_context("t1", "Current task")
 
         assert result == "<cao-memory>\nfallback\n</cao-memory>"
         assert "prior worker" not in result
         mock_send_input.assert_called_once()
         mock_phase1.assert_called_once_with("t1")
+
+    @patch("cli_agent_orchestrator.services.terminal_service.send_input")
+    def test_missing_requester_context_falls_back_without_dispatch(
+        self, mock_send_input, monkeypatch
+    ):
+        from cli_agent_orchestrator.services.memory_service import MemoryService
+
+        svc = MemoryService()
+        find_curator = MagicMock(return_value={"id": "cm-1", "agent_profile": "memory_manager"})
+        fallback = MagicMock(return_value="<cao-memory>\nfallback\n</cao-memory>")
+        reuse_policy = MagicMock(return_value=True)
+        monkeypatch.setattr(svc, "_get_terminal_context", lambda _id: None)
+        monkeypatch.setattr(svc, "_find_context_manager_terminal", find_curator)
+        monkeypatch.setattr(svc, "get_memory_context_for_terminal", fallback)
+        monkeypatch.setattr(svc, "_curator_policy_allows_reuse", reuse_policy)
+
+        assert svc.get_curated_memory_context("missing-worker", "Task") == fallback.return_value
+        find_curator.assert_called_once_with(None)
+        fallback.assert_called_once_with("missing-worker")
+        reuse_policy.assert_not_called()
+        mock_send_input.assert_not_called()
 
     @patch("cli_agent_orchestrator.services.terminal_service.send_input")
     @patch("cli_agent_orchestrator.services.terminal_service.get_output")

@@ -17,7 +17,10 @@ import time
 import weakref
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from cli_agent_orchestrator.services.work_origin import WorkOrigins
 
 from cli_agent_orchestrator.backends.base import (
     ProcessRestrictionContract,
@@ -141,8 +144,8 @@ class DockerWorkBackend(TmuxBackend):
         self._base_layer_count = 0
         self._base_layer_digests: tuple[str, ...] = ()
         self._mcp_proxy_factory = mcp_proxy_factory
-        self._work_origins = None
-        self._mcp_proxy_instances = weakref.WeakSet()
+        self._work_origins: WorkOrigins | None = None
+        self._mcp_proxy_instances: weakref.WeakSet[WorkMcpProxy] = weakref.WeakSet()
         self._mcp_proxy_factory_lock = threading.Lock()
         self._local_docker_host: str | None = None
         self._docker_environment: dict[str, str] | None = None
@@ -1134,16 +1137,23 @@ class DockerWorkBackend(TmuxBackend):
                 or ready.get("worker_socket_fd") != (3 if mcp_enabled else -1)
             ):
                 raise DockerWorkExecutionUncertain("Docker supervisor setup evidence differs")
-            runtime_identity = self._validate_running_container(
-                container_id,
-                attempt_id=attempt_id,
-                generation=generation,
-                image_id=attempt_image_id,
-                command=supervisor_command,
-                mcp_enabled=mcp_enabled,
-            )
+
+            def inspect_current() -> dict[str, str]:
+                if container_id is None or attempt_image_id is None:
+                    raise DockerWorkExecutionUncertain("Docker runtime identity is unavailable")
+                return self._validate_running_container(
+                    container_id,
+                    attempt_id=attempt_id,
+                    generation=generation,
+                    image_id=attempt_image_id,
+                    command=supervisor_command,
+                    mcp_enabled=mcp_enabled,
+                )
+
+            runtime_identity = inspect_current()
             authorize(authorize_setup)
             if endpoint is not None:
+                assert mcp_proxy is not None  # Only a bound proxy creates this endpoint.
                 docker_proof = issue_docker_runtime_isolation_proof(
                     attempt_id=attempt_id,
                     generation=generation,
@@ -1153,18 +1163,12 @@ class DockerWorkBackend(TmuxBackend):
                     container_id=container_id,
                     started_at=runtime_identity["started_at"],
                     worker_socket_identity=endpoint.worker_socket_identity,
-                    inspect_current=lambda: self._validate_running_container(
-                        container_id,
-                        attempt_id=attempt_id,
-                        generation=generation,
-                        image_id=attempt_image_id,
-                        command=supervisor_command,
-                        mcp_enabled=mcp_enabled,
-                    ),
+                    inspect_current=inspect_current,
                 )
                 mcp_proxy.activate_with_isolation_proof(endpoint, docker_proof)
 
                 def serve_proxy() -> None:
+                    assert mcp_proxy is not None
                     try:
                         mcp_proxy.serve(attempt_id, generation)
                     except WorkMcpProxyError as error:

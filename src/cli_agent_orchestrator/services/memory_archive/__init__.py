@@ -5,8 +5,9 @@ module-level dict populated at import time via ``register_backend``.
 ``get_backend`` raises ``ValueError`` on unknown names, which the CLI
 maps to a ``click.ClickException`` and the API maps to HTTP 400.
 
-``okf`` is the first registered backend; the parked CAO-native tar.gz
-format registers later as ``cao``.
+``okf`` is the canonical registered backend. Its bounded tar reader also
+validates frozen CAO-native format-v1 archives before conversion through the
+same current importer; historical SQLite rows are never materialized directly.
 """
 
 from typing import Dict, Type

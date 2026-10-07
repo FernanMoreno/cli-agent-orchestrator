@@ -74,7 +74,7 @@ class WorkTaskReceiverCredentialContext:
 class WorkAttemptCredentials:
     """Keep only a digest durable and validate the full current binding per request."""
 
-    def __init__(self, repository: WorkRepository, *, max_ttl_seconds: float = 120.0):
+    def __init__(self, repository: WorkRepository, *, max_ttl_seconds: float = 120.0, origins=None):
         if not isinstance(repository, WorkRepository):
             raise ValueError("verified work repository required")
         if (
@@ -86,6 +86,25 @@ class WorkAttemptCredentials:
         self.repository = repository
         self.max_ttl_seconds = float(max_ttl_seconds)
         self.contracts = WorkContracts(repository)
+        self.origins = None
+        if origins is not None:
+            self.bind_origins(origins)
+
+    def bind_origins(self, origins):
+        from cli_agent_orchestrator.services.work_origin import WorkOrigins
+
+        if (
+            not isinstance(origins, WorkOrigins)
+            or origins.repository is not self.repository
+            or (self.origins is not None and self.origins is not origins)
+        ):
+            raise ValueError("attempt credentials require this exact Work origin owner")
+        self.origins = origins
+
+    def _origin_reader(self):
+        from cli_agent_orchestrator.services.work_origin import WorkOrigins
+
+        return self.origins or WorkOrigins(self.repository)
 
     @staticmethod
     def _require_transaction(connection: sqlite3.Connection) -> None:
@@ -151,14 +170,12 @@ class WorkAttemptCredentials:
         if receiver_origin is not None:
             from cli_agent_orchestrator.services.work_origin import WorkOrigins
 
-            WorkOrigins(self.repository)._revalidate_replay_authorizations(
-                connection, receiver_origin
-            )
+            self._origin_reader()._revalidate_replay_authorizations(connection, receiver_origin)
             receiver_secret = secrets.token_bytes(32)
         else:
             from cli_agent_orchestrator.services.work_origin import WorkOrigins
 
-            workflow_origins = WorkOrigins(self.repository)
+            workflow_origins = self._origin_reader()
             workflow_receiver_binding = workflow_origins._workflow_binding_for_attempt(
                 connection,
                 attempt_id=binding.attempt_id,
@@ -410,7 +427,7 @@ class WorkAttemptCredentials:
         try:
             from cli_agent_orchestrator.services.work_origin import WorkOrigins
 
-            WorkOrigins(self.repository)._revalidate_replay_authorizations(connection, origin)
+            self._origin_reader()._revalidate_replay_authorizations(connection, origin)
         except Exception as error:
             raise WorkAttemptCredentialRejected("receiver authority is no longer live") from error
         if (
@@ -489,7 +506,7 @@ class WorkAttemptCredentials:
         )
         from cli_agent_orchestrator.services.work_origin import WorkOrigins
 
-        workflow_origins = WorkOrigins(self.repository)
+        workflow_origins = self._origin_reader()
         try:
             binding = workflow_origins._workflow_binding_for_attempt(
                 connection,

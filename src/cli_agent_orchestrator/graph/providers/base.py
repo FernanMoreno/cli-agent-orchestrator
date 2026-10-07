@@ -19,6 +19,11 @@ class GraphProvider(ABC):
     result — returns an empty GraphView(nodes=[], edges=[]).
     """
 
+    # Optional provider hooks are detected by capability, not by provider name:
+    # project_inflight(**filters) returns an authorized cache-owned Future;
+    # projection_status(**filters) returns content-free build diagnostics.
+    # Do not add defaults: their presence would disable generic timeout cancellation.
+
     @abstractmethod
     async def project(self, **filters: Any) -> GraphView:
         """Build a GraphView for the given filters (e.g. scope, scope_id)."""

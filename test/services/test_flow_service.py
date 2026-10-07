@@ -517,6 +517,16 @@ class TestEnableFlow:
 class TestExecuteFlow:
     """Tests for execute_flow function."""
 
+    @pytest.fixture(autouse=True)
+    def current_incarnation_rows(self, monkeypatch):
+        from cli_agent_orchestrator.services import flow_service
+
+        monkeypatch.setattr(
+            flow_service,
+            "list_current_session_terminals",
+            lambda session, **kwargs: flow_service.list_terminals_by_session(session),
+        )
+
     @pytest.mark.asyncio
     @patch("cli_agent_orchestrator.services.flow_service.send_input")
     @patch("cli_agent_orchestrator.services.flow_service.create_terminal")
@@ -999,7 +1009,7 @@ Prompt.
         assert busy_calls[0].args[1] == "t1"
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.services.flow_service.delete_terminals_by_session")
+    @patch("cli_agent_orchestrator.services.flow_service.delete_terminals_by_ids")
     @patch("cli_agent_orchestrator.services.flow_service.send_input")
     @patch("cli_agent_orchestrator.services.flow_service.create_terminal")
     @patch("cli_agent_orchestrator.services.flow_service.provider_manager")
@@ -1057,7 +1067,7 @@ Prompt.
         mock_create_terminal.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.services.flow_service.delete_terminals_by_session")
+    @patch("cli_agent_orchestrator.services.flow_service.delete_terminals_by_ids")
     @patch("cli_agent_orchestrator.services.flow_service.send_input")
     @patch("cli_agent_orchestrator.services.flow_service.create_terminal")
     @patch("cli_agent_orchestrator.services.flow_service.provider_manager")
@@ -1104,7 +1114,7 @@ Prompt.
         mock_create_terminal.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.services.flow_service.delete_terminals_by_session")
+    @patch("cli_agent_orchestrator.services.flow_service.delete_terminals_by_ids")
     @patch("cli_agent_orchestrator.services.flow_service.send_input")
     @patch("cli_agent_orchestrator.services.flow_service.create_terminal")
     @patch("cli_agent_orchestrator.services.flow_service.provider_manager")
@@ -1151,7 +1161,7 @@ Prompt.
         mock_create_terminal.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.services.flow_service.delete_terminals_by_session")
+    @patch("cli_agent_orchestrator.services.flow_service.delete_terminals_by_ids")
     @patch("cli_agent_orchestrator.services.flow_service.send_input")
     @patch("cli_agent_orchestrator.services.flow_service.create_terminal")
     @patch("cli_agent_orchestrator.services.flow_service.provider_manager")
@@ -1205,7 +1215,7 @@ Prompt.
         mock_create_terminal.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("cli_agent_orchestrator.services.flow_service.delete_terminals_by_session")
+    @patch("cli_agent_orchestrator.services.flow_service.delete_terminals_by_ids")
     @patch("cli_agent_orchestrator.services.flow_service.send_input")
     @patch("cli_agent_orchestrator.services.flow_service.create_terminal")
     @patch("cli_agent_orchestrator.services.flow_service.provider_manager")

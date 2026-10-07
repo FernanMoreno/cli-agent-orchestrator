@@ -1,13 +1,18 @@
 """One read projection of durable work; terminal liveness never determines success."""
 
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
-from cli_agent_orchestrator.models.work import EventPage, WorkView
+from cli_agent_orchestrator.models.work import EventPage, ProcessState, TurnState, WorkView
 from cli_agent_orchestrator.security.auth import SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE, Principal
 
 
 def project_work(job: dict, work: dict) -> WorkView:
     attempt = work["attempts"][-1] if work["attempts"] else None
     state = attempt["state"] if attempt else None
+    turn_states = {
+        "sent": TurnState.INPUT_SENT,
+        "acknowledged": TurnState.ACKNOWLEDGED,
+        "running": TurnState.PROCESSING,
+    }
     return WorkView(
         job_id=job["id"],
         work_item_id=work["id"],
@@ -15,12 +20,8 @@ def project_work(job: dict, work: dict) -> WorkView:
         job_state=job["state"],
         work_state=work["state"],
         attempt_state=state,
-        turn_state={
-            "sent": "input_sent",
-            "acknowledged": "acknowledged",
-            "running": "processing",
-        }.get(state),
-        process_state="unknown",
+        turn_state=turn_states.get(state) if state is not None else None,
+        process_state=ProcessState.UNKNOWN,
         revision=work["revision"],
         result_ref=work["accepted_result_id"],
         cleanup_state=attempt["cleanup_state"] if attempt else "not_requested",
@@ -57,6 +58,19 @@ class WorkQueries:
             job = self.repository._job(connection, work["job_id"])
             self._owner(principal, job)
             return project_work(job, work)
+
+    def operational_status(self, principal: Principal, work_item_id: str) -> dict:
+        from cli_agent_orchestrator.security.auth import is_verified_principal
+        from cli_agent_orchestrator.services.work_operations import project_operations
+
+        if not is_verified_principal(principal):
+            raise PermissionError("verified reader required")
+        self._scope(principal)
+        with self.repository.read_snapshot() as connection:
+            work = self.repository._work(connection, work_item_id)
+            job = self.repository._job(connection, work["job_id"])
+            self._owner(principal, job)
+            return project_operations(connection, principal, job, work)
 
     def events(
         self, principal: Principal, job_id: str, *, after_sequence=0, limit=100

@@ -38,6 +38,18 @@ def tmux():
 # ── _resolve_and_validate_working_directory ──────────────────────────
 
 
+def test_first_session_keeps_auth0_context_for_codex_mcp(tmux, tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTH0_DOMAIN", "test.local")
+    monkeypatch.setenv("AUTH0_AUDIENCE", "cao://test")
+    window = MagicMock(name="worker")
+    window.name = "worker"
+    tmux.server.new_session.return_value.windows = [window]
+    tmux.create_session("cao-auth-proof", "worker", "proof000", str(tmp_path))
+    environment = tmux.server.new_session.call_args.kwargs["environment"]
+    assert environment["AUTH0_DOMAIN"] == "test.local"
+    assert environment["AUTH0_AUDIENCE"] == "cao://test"
+
+
 class TestResolveAndValidateWorkingDirectory:
     def test_defaults_to_cwd(self, tmux, tmp_path):
         with patch("os.getcwd", return_value=str(tmp_path)):
@@ -103,20 +115,6 @@ class TestCreateSession:
             "start-server", ";", "set-option", "-s", "exit-empty", "off"
         )
 
-    def test_reapplies_exit_empty_after_failed_server_start(self, tmux, tmp_path):
-        window = MagicMock(name="window")
-        window.name = "win"
-        session = MagicMock()
-        session.windows = [window]
-        tmux.server.new_session.return_value = session
-        tmux.server.cmd.side_effect = [
-            MagicMock(returncode=1, stderr=["server exited unexpectedly"]),
-            MagicMock(returncode=0, stderr=[]),
-        ]
-        tmux.create_session("ses", "win", "tid", str(tmp_path))
-        order = [c[0] for c in tmux.server.mock_calls if c[0] in ("cmd", "new_session")]
-        assert order == ["cmd", "new_session", "cmd"]
-
     def test_disables_exit_empty_before_new_session(self, tmux, tmp_path):
         """Copilot review (PR #599): ``assert_any_call`` only proves the call
         happened at SOME point, not that it happened before ``new_session`` —
@@ -173,6 +171,29 @@ class TestCreateSession:
         # Must still succeed despite the set-option failure.
         result = tmux.create_session("ses", "my-window", "tid1", str(tmp_path))
         assert result == "my-window"
+
+    def test_exit_empty_is_retried_once_after_a_failed_set(self, tmux, tmp_path, caplog):
+        """A create right after an external ``kill-server`` can reach the old
+        server while it is still exiting, and tmux reports ``server exited
+        unexpectedly``. The set is retried once, and a retry that succeeds
+        leaves nothing to warn about."""
+        mock_window = MagicMock()
+        mock_window.name = "my-window"
+        mock_session = MagicMock()
+        mock_session.windows = [mock_window]
+        tmux.server.new_session.return_value = mock_session
+        tmux.server.cmd.side_effect = [
+            MagicMock(returncode=1, stdout=[], stderr=["server exited unexpectedly"]),
+            MagicMock(returncode=0, stdout=[], stderr=[]),
+        ]
+
+        with patch("cli_agent_orchestrator.clients.tmux.time.sleep") as mock_sleep:
+            tmux.create_session("ses", "my-window", "tid1", str(tmp_path))
+
+        exit_empty = call("start-server", ";", "set-option", "-s", "exit-empty", "off")
+        assert tmux.server.cmd.call_args_list == [exit_empty, exit_empty]
+        mock_sleep.assert_called_once_with(tmux._EXIT_EMPTY_RETRY_DELAY_S)
+        assert "exit-empty" not in caplog.text
 
     def test_create_session_window_name_none(self, tmux, tmp_path):
         mock_window = MagicMock()
@@ -299,12 +320,10 @@ class TestCreateSessionEnvironmentFiltering:
                 "HOME": "/home/user",
                 "CLAUDE_CODE_USE_BEDROCK": "1",
                 "CLAUDE_CODE_SKIP_FOUNDRY_AUTH": "1",
-                "CLAUDE_CODE_OAUTH_TOKEN": "test-oauth-token",
             },
         )
         assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
         assert env["CLAUDE_CODE_SKIP_FOUNDRY_AUTH"] == "1"
-        assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "test-oauth-token"
 
     def test_cao_kiro_mise_aws_prefixes_pass(self, tmux, tmp_path):
         env = self._get_passed_environment(
@@ -418,7 +437,7 @@ class TestCreateWindow:
 
 class TestSendKeys:
     @patch("cli_agent_orchestrator.clients.tmux.time")
-    @patch("cli_agent_orchestrator.clients.tmux.subprocess")
+    @patch("cli_agent_orchestrator.clients.tmux_transport.subprocess")
     def test_send_keys_success(self, mock_subprocess, mock_time, tmux):
         mock_subprocess.run.return_value = MagicMock(returncode=0)
         tmux.send_keys("ses", "win", "hello", enter_count=1)
@@ -428,7 +447,7 @@ class TestSendKeys:
         assert mock_subprocess.run.call_count == 6
 
     @patch("cli_agent_orchestrator.clients.tmux.time")
-    @patch("cli_agent_orchestrator.clients.tmux.subprocess")
+    @patch("cli_agent_orchestrator.clients.tmux_transport.subprocess")
     def test_send_keys_multiple_enters(self, mock_subprocess, mock_time, tmux):
         mock_subprocess.run.return_value = MagicMock(returncode=0)
         tmux.send_keys("ses", "win", "hello", enter_count=3)
@@ -438,7 +457,7 @@ class TestSendKeys:
         assert mock_subprocess.run.call_count == 10
 
     @patch("cli_agent_orchestrator.clients.tmux.time")
-    @patch("cli_agent_orchestrator.clients.tmux.subprocess")
+    @patch("cli_agent_orchestrator.clients.tmux_transport.subprocess")
     def test_send_keys_cancels_copy_mode_before_paste(self, mock_subprocess, mock_time, tmux):
         """A pane in copy mode consumes send-keys through the mode's key
         table instead of delivering them to the application, so the
@@ -453,7 +472,7 @@ class TestSendKeys:
         assert first.kwargs.get("check") is False
 
     @patch("cli_agent_orchestrator.clients.tmux.time")
-    @patch("cli_agent_orchestrator.clients.tmux.subprocess")
+    @patch("cli_agent_orchestrator.clients.tmux_transport.subprocess")
     def test_send_keys_cancels_copy_mode_before_each_enter(self, mock_subprocess, mock_time, tmux):
         """The leading cancel alone is not enough: submit_delay is up to 2s
         (claude_code's paste_submit_delay), and a wheel scroll inside that
@@ -473,7 +492,7 @@ class TestSendKeys:
             assert calls[i - 1].kwargs.get("check") is False
 
     @patch("cli_agent_orchestrator.clients.tmux.time")
-    @patch("cli_agent_orchestrator.clients.tmux.subprocess")
+    @patch("cli_agent_orchestrator.clients.tmux_transport.subprocess")
     def test_send_keys_raises_on_failure(self, mock_subprocess, mock_time, tmux):
         mock_subprocess.run.side_effect = Exception("tmux send failed")
 
@@ -725,11 +744,11 @@ class TestKillSession:
     def test_kill_session_success(self, tmux):
         mock_session = MagicMock()
         tmux.server.sessions.get.return_value = mock_session
-        # The strict verify runs list-sessions: exit 0 with "ses" absent from the
+        # The strict verify runs list-sessions: exit 0 with "cao-ses" absent from the
         # name list is an authoritative "gone" (#498).
         tmux.server.cmd.return_value = _cmd_result(0, stdout=["other"])
 
-        result = tmux.kill_session("ses")
+        result = tmux.kill_session("cao-ses")
 
         assert result is True
         mock_session.kill.assert_called_once()
@@ -748,7 +767,7 @@ class TestKillSession:
         tmux.server.sessions.get.return_value = mock_session
         # 1st verify: still listed -> must sleep and retry. 2nd: gone -> True.
         tmux.server.cmd.side_effect = [
-            _cmd_result(0, stdout=["ses"]),
+            _cmd_result(0, stdout=["cao-ses"]),
             _cmd_result(0, stdout=[]),
         ]
         sleeps: list[float] = []
@@ -756,7 +775,7 @@ class TestKillSession:
             "cli_agent_orchestrator.clients.tmux.time.sleep", lambda s: sleeps.append(s)
         )
 
-        result = tmux.kill_session("ses")
+        result = tmux.kill_session("cao-ses")
 
         assert result is True
         mock_session.kill.assert_called_once()
@@ -779,7 +798,7 @@ class TestKillSession:
         )
         monkeypatch.setattr(tmux, "_KILL_SESSION_VERIFY_TIMEOUT_SECONDS", 0)
 
-        result = tmux.kill_session("ses")
+        result = tmux.kill_session("cao-ses")
 
         assert result is False
         mock_session.kill.assert_called_once()
@@ -787,14 +806,14 @@ class TestKillSession:
     def test_kill_session_not_found(self, tmux):
         tmux.server.sessions.get.return_value = None
 
-        result = tmux.kill_session("nonexistent")
+        result = tmux.kill_session("cao-nonexistent")
 
         assert result is False
 
     def test_kill_session_error(self, tmux):
         tmux.server.sessions.get.side_effect = Exception("tmux error")
 
-        result = tmux.kill_session("ses")
+        result = tmux.kill_session("cao-ses")
 
         assert result is False
 
@@ -803,10 +822,10 @@ class TestKillSession:
         tmux.server.sessions.get.return_value = mock_session
         # Every verify authoritatively still lists the session, so the bounded
         # poll expires without confirmation.
-        tmux.server.cmd.return_value = _cmd_result(0, stdout=["ses"])
+        tmux.server.cmd.return_value = _cmd_result(0, stdout=["cao-ses"])
         monkeypatch.setattr(tmux, "_KILL_SESSION_VERIFY_TIMEOUT_SECONDS", 0)
 
-        result = tmux.kill_session("ses")
+        result = tmux.kill_session("cao-ses")
 
         assert result is False
         mock_session.kill.assert_called_once()
@@ -822,7 +841,7 @@ class TestKillWindow:
         mock_session.windows.get.return_value = mock_window
         tmux.server.sessions.get.return_value = mock_session
 
-        result = tmux.kill_window("ses", "win")
+        result = tmux.kill_window("cao-ses", "win")
 
         assert result is True
         mock_window.kill.assert_called_once()
@@ -830,7 +849,7 @@ class TestKillWindow:
     def test_kill_window_session_not_found(self, tmux):
         tmux.server.sessions.get.return_value = None
 
-        result = tmux.kill_window("ses", "win")
+        result = tmux.kill_window("cao-ses", "win")
 
         assert result is False
 
@@ -839,14 +858,14 @@ class TestKillWindow:
         mock_session.windows.get.return_value = None
         tmux.server.sessions.get.return_value = mock_session
 
-        result = tmux.kill_window("ses", "nonexistent")
+        result = tmux.kill_window("cao-ses", "cao-nonexistent")
 
         assert result is False
 
     def test_kill_window_error(self, tmux):
         tmux.server.sessions.get.side_effect = Exception("tmux error")
 
-        result = tmux.kill_window("ses", "win")
+        result = tmux.kill_window("cao-ses", "win")
 
         assert result is False
 
@@ -928,7 +947,26 @@ class TestPipePane:
 
         tmux.pipe_pane("ses", "win", "/tmp/log.txt")
 
-        mock_pane.cmd.assert_called_once_with("pipe-pane", "-o", "cat >> /tmp/log.txt")
+        # Our FIFO writer, not `cat >> path`: cat follows a symlink and appends
+        # to a regular file swapped in at the FIFO path; the writer refuses both.
+        import shlex
+        import sys
+
+        from cli_agent_orchestrator.utils import fifo_writer
+
+        mock_pane.cmd.assert_called_once_with(
+            "pipe-pane",
+            "-o",
+            f"{shlex.quote(sys.executable)} -I -S {shlex.quote(fifo_writer.__file__)} /tmp/log.txt",
+        )
+
+    def test_pipe_pane_command_quotes_the_fifo_path(self, tmux):
+        """The path rides through `sh -c`; a space or quote in it must not split the command."""
+        import shlex
+
+        command = tmux._pipe_pane_command("/tmp/odd dir/it's.fifo")
+        assert command.endswith(" " + shlex.quote("/tmp/odd dir/it's.fifo"))
+        assert shlex.split(command)[-1] == "/tmp/odd dir/it's.fifo"
 
     def test_pipe_pane_session_not_found(self, tmux):
         tmux.server.sessions.get.return_value = None
@@ -1151,3 +1189,86 @@ class TestRealTmuxExitEmpty:
             )
         finally:
             subprocess.run(["tmux", "-L", socket_name, "kill-server"], capture_output=True)
+
+    def test_exit_empty_off_when_the_first_set_reaches_a_dying_server(self):
+        """``tmux kill-server`` returns before the old server has exited, so
+        the create that follows can connect to it just as it goes away. tmux
+        prints ``server exited unexpectedly`` and the option is never set.
+        The test above hits that window about once in 60 runs under load.
+
+        Here the dying server is a stand-in listening on the socket path: it
+        accepts one connection, closes it and removes the socket, which is
+        exactly what a real tmux client sees from a server mid-exit.
+        """
+        self._require_tmux()
+
+        import socket
+        import tempfile
+        import threading
+
+        import libtmux
+
+        from cli_agent_orchestrator.clients.tmux import TmuxClient
+
+        # Short directory: tmp_path can exceed the ~108-byte AF_UNIX path limit.
+        socket_dir = tempfile.mkdtemp(prefix="cao-tmux-")
+        socket_path = os.path.join(socket_dir, "s")
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(socket_path)
+        listener.listen(1)
+
+        def die_on_first_connect() -> None:
+            conn, _ = listener.accept()
+            conn.close()
+            listener.close()
+            os.unlink(socket_path)
+
+        dying = threading.Thread(target=die_on_first_connect, daemon=True)
+        dying.start()
+
+        client = TmuxClient()
+        client.server = libtmux.Server(socket_path=socket_path)
+
+        try:
+            client.create_session("dying-probe", "win1", "term-real-tmux-4", socket_dir)
+            dying.join(timeout=5)
+            assert not dying.is_alive(), "the stand-in server was never contacted"
+
+            result = subprocess.run(
+                ["tmux", "-S", socket_path, "show-options", "-s", "exit-empty"],
+                capture_output=True,
+                text=True,
+            )
+            assert result.stdout.strip() == "exit-empty off", (
+                "exit-empty must be 'off' even when the first set reached a server "
+                f"that was exiting; tmux said {result.stdout.strip()!r} {result.stderr!r}"
+            )
+        finally:
+            subprocess.run(["tmux", "-S", socket_path, "kill-server"], capture_output=True)
+            shutil.rmtree(socket_dir, ignore_errors=True)
+
+
+class TestKillRefusesForeignSessions:
+    """CAO shares the operator's tmux server; kills stay inside the cao- namespace."""
+
+    def test_kill_session_refuses_unprefixed_name_before_any_lookup(self, tmux):
+        with pytest.raises(ValueError, match="only acts on sessions it created"):
+            tmux.kill_session("dev")
+        tmux.server.sessions.get.assert_not_called()
+        tmux.server.cmd.assert_not_called()
+
+    def test_kill_session_cli_fallback_is_never_reached_for_a_foreign_name(self, tmux):
+        with patch("cli_agent_orchestrator.clients.tmux_transport.subprocess") as mock_subprocess:
+            with pytest.raises(ValueError):
+                tmux.kill_session("dev")
+        mock_subprocess.run.assert_not_called()
+
+    def test_kill_window_refuses_unprefixed_session(self, tmux):
+        with pytest.raises(ValueError, match="only acts on sessions it created"):
+            tmux.kill_window("dev", "editor")
+        tmux.server.sessions.get.assert_not_called()
+
+    def test_prefixed_name_proceeds_to_the_normal_path(self, tmux):
+        tmux.server.sessions.get.return_value = None
+        assert tmux.kill_session("cao-dev") is False  # absent, not refused
+        tmux.server.sessions.get.assert_called_once()

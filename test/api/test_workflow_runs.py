@@ -30,6 +30,19 @@ from cli_agent_orchestrator.models.workflow_runtime import (
 )
 from cli_agent_orchestrator.services import workflow_service
 
+
+@pytest.fixture(autouse=True)
+def legacy_run_mode(monkeypatch):
+    """These engine envelope tests explicitly select legacy, unscoped execution."""
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.settings_service.is_workflow_approval_required",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.approval_gate.is_workflow_approval_required", lambda: False
+    )
+
+
 _SPEC = WorkflowSpec(
     name="wf", steps=[WorkflowStep(id="s1", provider="claude_code", agent="dev", prompt="go")]
 )
@@ -195,6 +208,13 @@ def script_run_env(client, monkeypatch, tmp_path):
     validation/cap passed — the tests assert it is NOT called on rejection AND
     that no ``workflow_run`` row was written (the run route validates + caps the
     inputs BEFORE any journal write or registry entry, BR-A3 / ADR-6)."""
+    # This fixture deliberately exercises the historic explicit legacy posture.
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text('{"workflow":{"require_approval":false}}')
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.settings_service.SETTINGS_FILE", settings_path
+    )
+    monkeypatch.delenv("CAO_WORKFLOW_REQUIRE_APPROVAL", raising=False)
     from cli_agent_orchestrator.clients.database import _migrate_workflow_run
     from cli_agent_orchestrator.models.workflow import InputDecl, ScriptSpec
     from cli_agent_orchestrator.services import script_runner, workflow_journal
@@ -288,11 +308,17 @@ def test_script_run_resolved_inputs_passed_to_runner(client, script_run_env):
     assert script_run_env["spy"]["inputs"] == {"topic": "birds"}
 
 
-def test_blocking_script_start_returns_approval_refusal(client, monkeypatch):
+def test_blocking_script_start_returns_approval_refusal(client, monkeypatch, tmp_path):
     """A script approval refusal is actionable rather than an internal error."""
     from cli_agent_orchestrator.models.workflow import ScriptSpec
     from cli_agent_orchestrator.services import approval_gate, script_runner
 
+    settings_path = tmp_path / "legacy-settings.json"
+    settings_path.write_text('{"workflow":{"require_approval":false}}')
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.settings_service.SETTINGS_FILE", settings_path
+    )
+    monkeypatch.delenv("CAO_WORKFLOW_REQUIRE_APPROVAL", raising=False)
     spec = ScriptSpec(
         name="scr",
         path="/tmp/scr.py",
@@ -808,6 +834,13 @@ def test_submit_oversized_inputs_400_pre_journal(client, monkeypatch, tmp_path):
 @pytest.fixture
 def async_script_env(client, monkeypatch, tmp_path):
     """A ScriptSpec resolver + real journal DB + mocked script prepared drive."""
+    # This fixture deliberately exercises the historic explicit legacy posture.
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text('{"workflow":{"require_approval":false}}')
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.services.settings_service.SETTINGS_FILE", settings_path
+    )
+    monkeypatch.delenv("CAO_WORKFLOW_REQUIRE_APPROVAL", raising=False)
     from cli_agent_orchestrator.clients.database import (
         _migrate_workflow_run,
         _migrate_workflow_run_step,

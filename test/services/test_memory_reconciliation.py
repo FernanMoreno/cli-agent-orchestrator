@@ -1097,7 +1097,7 @@ def test_repair_audits_once_and_redacts_historical_metadata(tmp_path, engine):
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
     base = tmp_path / "memory"
-    secret = "AKIAABCDEFGHIJKLMNOP"
+    secret = "AKIAABCDEFGHIJKLMNOP"  # gitleaks:allow
     topic = _write_topic(base, "global", None, "historical", tags=secret)
     original = topic.read_bytes()
     service = MemoryReconciliationService(base, engine)

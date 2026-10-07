@@ -31,6 +31,7 @@ from cli_agent_orchestrator.utils.orchestration import (
     _result_impl,
     _send_message_impl,
     _status_impl,
+    _verify_impl,
 )
 
 # Heartbeat cadence (seconds) for `cao agent handoff`'s progress ticker -- see
@@ -104,7 +105,14 @@ def agent():
     help="Give the worker its own git worktree instead of sharing the caller's checkout.",
 )
 @click.option("--json", "as_json", is_flag=True, default=False, help="Emit the result as JSON.")
-def assign_cmd(agent_profile, message, working_directory, engine, model, use_worktree, as_json):
+@click.option(
+    "--operation-key",
+    default=None,
+    help="Reuse this exact key to inspect/retry a whole assignment after a lost response.",
+)
+def assign_cmd(
+    agent_profile, message, working_directory, engine, model, use_worktree, as_json, operation_key
+):
     """Assign a task to a new worker terminal without blocking.
 
     Equivalent to the MCP `assign` tool. Must run from inside a CAO terminal
@@ -123,6 +131,7 @@ def assign_cmd(agent_profile, message, working_directory, engine, model, use_wor
         engine=engine,
         model=model,
         use_worktree=use_worktree,
+        **({"operation_key": operation_key} if operation_key is not None else {}),
     )
     if not _emit(result, as_json):
         raise click.exceptions.Exit(1)
@@ -319,6 +328,15 @@ def result_cmd(terminal_id, as_json):
         raise click.exceptions.Exit(1)
 
 
+@agent.command(name="verify")
+@click.argument("terminal_id")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Emit the result as JSON.")
+def verify_cmd(terminal_id, as_json):
+    """Verify current turn evidence without resending the worker's task."""
+    if not _emit(_verify_impl(terminal_id), as_json):
+        raise click.exceptions.Exit(1)
+
+
 @agent.command(name="cancel")
 @click.argument("terminal_id")
 @click.option(
@@ -335,8 +353,8 @@ def result_cmd(terminal_id, as_json):
 def cancel_cmd(terminal_id, delete_flag, as_json):
     """Stop a worker terminal's current turn.
 
-    Default: sends an interrupt (C-c) -- cooperative, the terminal survives
-    so it can be reassigned (same spirit as `cao workflow cancel`). --delete
+    Receipt-backed turns use durable cancellation; legacy turns receive C-c.
+    --delete
     instead frees the terminal entirely, equivalent to the delete_terminal
     MCP tool -- use it once you are done with a worker (assign's own success
     message points here for cleanup).

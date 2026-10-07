@@ -2,7 +2,7 @@
 
 import os
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -252,6 +252,8 @@ class TestCreateTerminal:
             OrchestrationType.SEND_MESSAGE,
             None,
             True,
+            initial_caller_id=None,
+            delete_on_failure=False,
         )
 
     @pytest.mark.asyncio
@@ -313,6 +315,9 @@ class TestCreateTerminal:
             group=None,
             metadata=None,
             working_directory=os.path.realpath(os.getcwd()),
+            deferred_init_external_owner=False,
+            session_incarnation_id=ANY,
+            new_session_incarnation=True,
             idempotency_key=None,
             # No key supplied, so no fingerprint is computed (review on PR #634).
             request_fingerprint=None,
@@ -2070,6 +2075,13 @@ class TestCreateTerminalEnvVars:
 
 
 class TestGetTerminal:
+    @pytest.fixture(autouse=True)
+    def durable_turn_fixture(self, monkeypatch):
+        monkeypatch.setattr(
+            "cli_agent_orchestrator.services.turn_recovery_service.get_turn",
+            lambda _: {"state": "idle"},
+        )
+
     """Tests for get_terminal function."""
 
     @patch("cli_agent_orchestrator.services.terminal_service.status_monitor")
@@ -2084,6 +2096,7 @@ class TestGetTerminal:
             "agent_profile": "developer",
             "last_active": datetime.now(),
         }
+        mock_status_monitor.turn_state.return_value = (0, 0)
         mock_status_monitor.get_status.return_value = TerminalStatus.IDLE
 
         result = get_terminal("test1234")
@@ -2111,7 +2124,9 @@ class TestGetTerminal:
             "agent_profile": "developer",
             "last_active": datetime.now(),
         }
+        mock_status_monitor.turn_state.return_value = (0, 0)
         mock_status_monitor.get_status.return_value = TerminalStatus.UNKNOWN
+        mock_status_monitor.turn_state.return_value = (0, 0)
 
         result = get_terminal("test1234")
 
@@ -2172,9 +2187,13 @@ class TestSendInput:
         mock_provider.paste_enter_count = 2
         mock_provider.paste_submit_delay = 0.3
 
+        mock_status_monitor.notify_input_sent.return_value = 7
+
         result = send_input("test1234", "test message")
 
-        assert result is True
+        # send_input returns the exact turn its dispatch opened (#812 review):
+        # the number notify_input_sent produced, not a re-derived one.
+        assert result == 7
         mock_tmux.send_keys.assert_called_once_with(
             "cao-session",
             "developer-abcd",
@@ -2184,6 +2203,141 @@ class TestSendInput:
             submit_delay=0.3,
         )
         mock_update.assert_called_once_with("test1234")
+
+    @patch("cli_agent_orchestrator.services.terminal_service.MemoryService")
+    @patch("cli_agent_orchestrator.services.terminal_service.status_monitor")
+    @patch("cli_agent_orchestrator.services.terminal_service.update_last_active")
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.backends.registry._backend")
+    @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
+    def test_send_input_keeps_turn_open_when_transport_outcome_is_uncertain(
+        self,
+        mock_get_metadata,
+        mock_tmux,
+        mock_pm,
+        mock_update,
+        mock_status_monitor,
+        mock_memory_service,
+    ):
+        """A transport exception cannot prove an input was never accepted."""
+        mock_memory_service.return_value.get_curated_memory_context.return_value = ""
+        mock_get_metadata.return_value = {
+            "tmux_session": "cao-session",
+            "tmux_window": "developer-abcd",
+        }
+        mock_provider = mock_pm.get_provider.return_value
+        mock_provider.paste_enter_count = 1
+        mock_provider.paste_submit_delay = 0.3
+        mock_status_monitor.get_status.return_value = TerminalStatus.IDLE
+        mock_status_monitor.notify_input_sent.return_value = 5
+        mock_tmux.send_keys.side_effect = RuntimeError("tmux: no server running")
+
+        with pytest.raises(RuntimeError, match="no server running"):
+            send_input("test1234", "hello")
+
+        mock_status_monitor.abort_turn.assert_not_called()
+        mock_status_monitor.notify_input_delivered.assert_not_called()
+
+    @patch("cli_agent_orchestrator.services.terminal_service.MemoryService")
+    @patch("cli_agent_orchestrator.services.terminal_service.status_monitor")
+    @patch("cli_agent_orchestrator.services.terminal_service.update_last_active")
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.backends.registry._backend")
+    @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
+    def test_dispatches_to_one_terminal_do_not_interleave(
+        self,
+        mock_get_metadata,
+        mock_tmux,
+        mock_pm,
+        mock_update,
+        mock_status_monitor,
+        mock_memory_service,
+    ):
+        """A second send_input, or a special key, waits for the first dispatch to
+        finish: interleaved, their keys landed in a different order from their turn
+        numbers (PR #812 round 10)."""
+        import threading
+        import time
+
+        from cli_agent_orchestrator.services.terminal_service import send_special_key
+
+        mock_memory_service.return_value.get_curated_memory_context.return_value = ""
+        mock_get_metadata.return_value = {"tmux_session": "s", "tmux_window": "w"}
+        mock_provider = mock_pm.get_provider.return_value
+        mock_provider.paste_enter_count = 1
+        mock_provider.paste_submit_delay = 0.3
+        mock_status_monitor.get_status.return_value = TerminalStatus.IDLE
+        steps = []
+        typing = threading.Event()
+        release = threading.Event()
+        mock_status_monitor.notify_input_sent.side_effect = lambda *a, **k: (
+            steps.append("open") or len(steps)
+        )
+
+        def slow_keys(_session, _window, message, **_kwargs):
+            steps.append(f"keys {message}")
+            if message == "first":
+                typing.set()
+                assert release.wait(5)
+
+        mock_tmux.send_keys.side_effect = slow_keys
+        mock_tmux.send_special_key.side_effect = lambda *a: steps.append("special")
+        first = threading.Thread(target=send_input, args=("test1234", "first"))
+        first.start()
+        assert typing.wait(5)
+        others = [
+            threading.Thread(target=send_input, args=("test1234", "second")),
+            threading.Thread(target=send_special_key, args=("test1234", "Enter")),
+        ]
+        for t in others:
+            t.start()
+        time.sleep(0.2)
+        assert steps == ["open", "keys first"]
+        release.set()
+        for t in [first, *others]:
+            t.join(5)
+        # Each dispatch opens its turn and types before the next one opens.
+        assert steps[0::2] == ["open"] * 3
+        assert steps[1] == "keys first"
+        assert sorted(steps[1::2]) == ["keys first", "keys second", "special"]
+
+    @patch("cli_agent_orchestrator.services.terminal_service.MemoryService")
+    @patch("cli_agent_orchestrator.services.terminal_service.status_monitor")
+    @patch("cli_agent_orchestrator.services.terminal_service.update_last_active")
+    @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
+    @patch("cli_agent_orchestrator.backends.registry._backend")
+    @patch("cli_agent_orchestrator.services.terminal_service.get_terminal_metadata")
+    def test_send_input_assumes_processing_when_the_provider_declares_it(
+        self,
+        mock_get_metadata,
+        mock_tmux,
+        mock_pm,
+        mock_update,
+        mock_status_monitor,
+        mock_memory_service,
+    ):
+        """The TRUE branch of assume_processing_on_dispatch (PR #812 review): a
+        provider that declares it gets notify_input_sent(assume_processing=True),
+        and the turn number that call returns is the one send_input reports. The
+        FALSE branch is pinned by the next test; a MagicMock's auto-attribute is
+        not True, which is why the flag is compared with `is True`."""
+        mock_memory_service.return_value.get_curated_memory_context.return_value = ""
+        mock_get_metadata.return_value = {
+            "tmux_session": "cao-session",
+            "tmux_window": "supervisor-abcd",
+        }
+        mock_provider = mock_pm.get_provider.return_value
+        mock_provider.paste_enter_count = 1
+        mock_provider.paste_submit_delay = 2.0
+        mock_provider.assume_processing_on_dispatch = True
+        mock_status_monitor.get_status.return_value = TerminalStatus.IDLE
+        mock_status_monitor.notify_input_sent.return_value = 4
+
+        assert send_input("test1234", "hello supervisor") == 4
+
+        mock_status_monitor.notify_input_sent.assert_called_once_with(
+            "test1234", assume_processing=True, real_send=True
+        )
 
     @patch("cli_agent_orchestrator.services.terminal_service.MemoryService")
     @patch("cli_agent_orchestrator.services.terminal_service.status_monitor")
@@ -2227,11 +2381,13 @@ class TestSendInput:
         send_input("test1234", "hello worker")
 
         mock_provider.mark_input_received.assert_called_once()
-        mock_status_monitor.notify_input_sent.assert_called_once_with("test1234")
+        mock_status_monitor.notify_input_sent.assert_called_once_with("test1234", real_send=True)
         # The active provider receives the same explicit buffer-generation
         # boundary, so stateful detectors never compare post-dispatch output
         # with the discarded rolling buffer.
-        mock_status_monitor.clear_rolling_buffer.assert_called_once_with("test1234", mock_provider)
+        mock_status_monitor.clear_rolling_buffer.assert_called_once_with(
+            "test1234", mock_provider, turn=mock_status_monitor.notify_input_sent.return_value
+        )
         # reset_buffer would wipe the arm — must NOT be called on send_input.
         mock_status_monitor.reset_buffer.assert_not_called()
 
@@ -2362,9 +2518,11 @@ class TestSendInput:
         mock_provider.paste_enter_count = 1
         mock_provider.paste_submit_delay = 0.3
 
+        mock_status_monitor.notify_input_sent.return_value = 3
+
         result = send_input("test1234", "1")
 
-        assert result is True
+        assert result == 3
         mock_tmux.send_keys.assert_called_once_with(
             "cao-session",
             "developer-abcd",
@@ -2713,6 +2871,7 @@ class TestDeleteTerminal:
         mock_status_monitor,
     ):
         """Test deleting terminal successfully."""
+        mock_tmux.kill_window.return_value = True
         mock_get_metadata.return_value = {
             "tmux_session": "cao-session",
             "tmux_window": "developer-abcd",
@@ -2741,6 +2900,7 @@ class TestDeleteTerminal:
         mock_status_monitor,
     ):
         """Test deleting terminal when stop_pipe_pane fails."""
+        mock_tmux.kill_window.return_value = True
         mock_get_metadata.return_value = {
             "tmux_session": "cao-session",
             "tmux_window": "developer-abcd",
@@ -2769,6 +2929,7 @@ class TestDeleteTerminal:
         mock_status_monitor,
     ):
         """A retryable Grok cleanup must not be reported as a successful delete."""
+        mock_tmux.kill_window.return_value = True
 
         mock_get_metadata.return_value = {
             "tmux_session": "cao-session",
@@ -2824,6 +2985,7 @@ class TestDeleteTerminalWorktree:
         mock_status_monitor,
         mock_worktree_service,
     ):
+        mock_tmux.kill_window.return_value = True
         from cli_agent_orchestrator.services.worktree_service import (
             parse_worktree_path as real_parse_worktree_path,
         )
@@ -2866,6 +3028,7 @@ class TestDeleteTerminalWorktree:
         still-running worktree just because B's pane cwd happens to
         path-match it; the parsed terminal_id must match the terminal
         actually being deleted (B), not A."""
+        mock_tmux.kill_window.return_value = True
         from cli_agent_orchestrator.services.worktree_service import (
             parse_worktree_path as real_parse_worktree_path,
         )
@@ -2901,6 +3064,7 @@ class TestDeleteTerminalWorktree:
         mock_status_monitor,
         mock_worktree_service,
     ):
+        mock_tmux.kill_window.return_value = True
         from cli_agent_orchestrator.services.worktree_service import (
             parse_worktree_path as real_parse_worktree_path,
         )
@@ -2942,6 +3106,7 @@ class TestDeleteTerminalWorktree:
         steps downstream. This is exactly the shape every OTHER
         TestDeleteTerminal test above relies on implicitly (they never
         configure get_pane_working_directory)."""
+        mock_tmux.kill_window.return_value = True
         from cli_agent_orchestrator.services.worktree_service import (
             parse_worktree_path as real_parse_worktree_path,
         )
@@ -3206,6 +3371,7 @@ class TestDeferredInitWaitingUserAnswerSurvival:
             sender_id="super123",
             orchestration_type=OrchestrationType.ASSIGN,
             task_delivery=True,
+            _initial_task_owner=ANY,
         )
         assert [call.args[1] for call in mock_transition.call_args_list] == [
             "acknowledged",

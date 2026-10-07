@@ -324,18 +324,26 @@ class AntigravityCliProvider(BaseProvider):
             command_parts.extend(["--model", model])
 
         # System prompt injection via -i.
-        if profile is not None:
-            system_prompt = profile.system_prompt or ""
-            system_prompt = self._apply_skill_prompt(system_prompt)
+        if profile is not None or (
+            self._allowed_tools is not None and "*" not in self._allowed_tools
+        ):
+            system_prompt = (profile.system_prompt or "") if profile is not None else ""
+            if profile is not None:
+                system_prompt = self._apply_skill_prompt(system_prompt)
             # Soft tool restriction: when the profile is not allowed every tool
             # (e.g. the read-only reviewer), append the security prompt. agy
             # honors a clear instruction not to use disallowed tools.
-            if self._allowed_tools and "*" not in self._allowed_tools:
+            if self._allowed_tools is not None and "*" not in self._allowed_tools:
+                from cli_agent_orchestrator.utils.tool_mapping import tool_constraint_instruction
+
+                constraints = (
+                    f"{SECURITY_PROMPT}\n{tool_constraint_instruction(self._allowed_tools)}"
+                )
                 system_prompt = (
-                    f"{system_prompt}\n\n{SECURITY_PROMPT}" if system_prompt else SECURITY_PROMPT
+                    f"{system_prompt}\n\n{constraints}" if system_prompt else constraints
                 )
             if system_prompt:
-                role_name = profile.name or "agent"
+                role_name = (profile.name or "agent") if profile is not None else "agent"
                 guarded = (
                     f"{system_prompt}\n\n---\n"
                     f"You are the {role_name}. Acknowledge your role in one sentence, "
@@ -345,7 +353,7 @@ class AntigravityCliProvider(BaseProvider):
                 command_parts.extend(["-i", guarded])
 
             # MCP servers (cao-mcp-server etc.) → agy's shared mcp_config.json.
-            if profile.mcpServers:
+            if profile is not None and profile.mcpServers:
                 self._register_mcp_servers(profile.mcpServers)
 
         return shlex.join(command_parts)

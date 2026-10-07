@@ -81,16 +81,20 @@ class MemoryConfig(BaseModel):
 
 
 class WorkflowConfig(BaseModel):
-    require_approval: bool = False
+    require_approval: bool = True
 
 
 class TerminalConfig(BaseModel):
     backend: str = "tmux"
     herdr_session: str = "cao"
+    spawn_mode: str = "window"
+    pane_window: str = "cao-agents"
+    pane_layout: str = "tiled"
 
 
 class AppsConfig(BaseModel):
     enabled: bool = False
+    only: bool = False
     static_dir: Optional[str] = None
 
 
@@ -169,7 +173,11 @@ _LEGACY_KEY_MAP: Dict[str, Tuple[str, ...]] = {
 _OWNED_DEFAULTS: Dict[str, Any] = {
     "terminal.backend": "tmux",
     "terminal.herdr_session": "cao",
+    "terminal.spawn_mode": "window",
+    "terminal.pane_window": "cao-agents",
+    "terminal.pane_layout": "tiled",
     "apps.enabled": False,
+    "apps.only": False,
     "apps.static_dir": None,
     "auth.jwks_uri": "",
     "auth.audience": "",
@@ -185,10 +193,14 @@ _OWNED_DEFAULTS: Dict[str, Any] = {
 # config path, value type, and default. Backs both ``get()``'s env-precedence
 # tier and the ``cao config list`` introspection view. Types: "str", "bool",
 # "int", "float", "list" (comma-separated).
-ENV_REGISTRY: Dict[str, Tuple[str, str, Any]] = {
+ENV_REGISTRY: Dict[str, Tuple[str, Literal["str", "bool", "int", "float", "list", "dict"], Any]] = {
     "CAO_TERMINAL_BACKEND": ("terminal.backend", "str", "tmux"),
     "CAO_HERDR_SESSION": ("terminal.herdr_session", "str", "cao"),
+    "CAO_TERMINAL_SPAWN_MODE": ("terminal.spawn_mode", "str", "window"),
+    "CAO_TERMINAL_PANE_WINDOW": ("terminal.pane_window", "str", "cao-agents"),
+    "CAO_TERMINAL_PANE_LAYOUT": ("terminal.pane_layout", "str", "tiled"),
     "CAO_MCP_APPS_ENABLED": ("apps.enabled", "bool", False),
+    "CAO_MCP_APPS_ONLY": ("apps.only", "bool", False),
     "CAO_MCP_APPS_STATIC_DIR": ("apps.static_dir", "str", None),
     "CAO_AUTH_JWKS_URI": ("auth.jwks_uri", "str", ""),
     "CAO_AUTH_AUDIENCE": ("auth.audience", "str", ""),
@@ -219,7 +231,7 @@ ENV_REGISTRY: Dict[str, Tuple[str, str, Any]] = {
         "bool",
         False,
     ),
-    "CAO_WORKFLOW_REQUIRE_APPROVAL": ("workflow.require_approval", "bool", False),
+    "CAO_WORKFLOW_REQUIRE_APPROVAL": ("workflow.require_approval", "bool", True),
 }
 
 # Reverse index: dotted path -> env var name, for get()'s env-precedence lookup.
@@ -842,9 +854,13 @@ class ConfigService:
             terminal=TerminalConfig(
                 backend=_get_value("terminal.backend", default="tmux"),
                 herdr_session=_get_value("terminal.herdr_session", default="cao"),
+                spawn_mode=_get_value("terminal.spawn_mode", default="window"),
+                pane_window=_get_value("terminal.pane_window", default="cao-agents"),
+                pane_layout=_get_value("terminal.pane_layout", default="tiled"),
             ),
             apps=AppsConfig(
                 enabled=_get_value("apps.enabled", default=False),
+                only=_get_value("apps.only", default=False),
                 static_dir=_get_value("apps.static_dir", default=None),
             ),
             network=NetworkConfig(

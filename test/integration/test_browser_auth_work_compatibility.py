@@ -5,6 +5,11 @@ claim Docker/ELF worker execution or compatibility with a live deployment.
 """
 
 import time
+from test.services.test_work_lineage_origin import (
+    _issue_receiver_receipt,
+    _managed_context,
+    _managed_handoff,
+)
 from types import SimpleNamespace
 
 import jwt
@@ -25,11 +30,6 @@ from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuth
 from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
 from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 from cli_agent_orchestrator.services.work_service import DeliveryObservation, WorkService
-from test.services.test_work_lineage_origin import (
-    _issue_receiver_receipt,
-    _managed_context,
-    _managed_handoff,
-)
 
 
 def test_browser_identity_preserves_preexisting_work_provision_grants_and_receipt(

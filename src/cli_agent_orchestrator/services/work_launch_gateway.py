@@ -110,7 +110,8 @@ class DurableLaunchGateway:
                 retryable=False,
                 required_action="inspect_server_configuration",
             )
-        return await dispatcher()
+        result: dict | None = await dispatcher()
+        return result
 
     @staticmethod
     def _error(

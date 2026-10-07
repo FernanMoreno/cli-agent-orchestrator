@@ -140,7 +140,7 @@ def test_missing_revision_is_rejected_without_writing(client, workflow):
     assert path.read_text() == SOURCE
 
 
-def test_index_failure_does_not_leave_a_published_edit(workflow):
+def test_index_failure_preserves_canonical_publication_for_rebuild(workflow):
     path, database = workflow
     assert hasattr(service, "update_workflow"), "conditional authoring service missing"
     service.rebuild_index_from_files()
@@ -148,16 +148,21 @@ def test_index_failure_does_not_leave_a_published_edit(workflow):
         connection.execute(
             "CREATE TRIGGER fail_changed BEFORE INSERT ON workflow_index WHEN NEW.description='changed' BEGIN SELECT RAISE(ABORT,'index unavailable'); END"
         )
-    with pytest.raises(sqlite3.IntegrityError, match="index unavailable"):
-        service.update_workflow(
-            "revision",
-            SOURCE.replace("original", "changed"),
-            hashlib.sha256(path.read_bytes()).hexdigest(),
-        )
-    assert path.read_text() == SOURCE
+    changed = SOURCE.replace("original", "changed")
+    result = service.update_workflow(
+        "revision", changed, hashlib.sha256(path.read_bytes()).hexdigest()
+    )
+    assert result["source_hash"] == hashlib.sha256(changed.encode()).hexdigest()
+    assert path.read_text() == changed
     with sqlite3.connect(database) as connection:
         assert (
             connection.execute("SELECT description FROM workflow_index").fetchone()[0] == "original"
+        )
+        connection.execute("DROP TRIGGER fail_changed")
+    service.rebuild_index_from_files()
+    with sqlite3.connect(database) as connection:
+        assert (
+            connection.execute("SELECT description FROM workflow_index").fetchone()[0] == "changed"
         )
 
 

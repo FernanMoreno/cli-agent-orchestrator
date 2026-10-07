@@ -689,3 +689,58 @@ class TestMemoryProviderEdgeCases:
         assert disabled.meta["cached"] is False
         assert len(set(fingerprints)) == len(fingerprints)
         assert provider._build.await_count == 5
+
+
+@pytest.mark.asyncio
+async def test_detached_projection_canonical_global_key_keeps_owner_partition(
+    svc, db_engine, tmp_path, monkeypatch
+):
+    calls = []
+
+    async def build(self, scope, scope_id, lint_enabled, resolved_binding=None):
+        calls.append(str(self._svc.base_dir))
+        return GraphView(
+            nodes=[Node(id=self._svc.base_dir.name, kind="topic", label="owner")], edges=[]
+        )
+
+    monkeypatch.setattr(MemoryGraphProvider, "_build", build)
+    provider = MemoryGraphProvider(memory_service=svc, lint_enabled=lambda: False)
+    first = await provider.project(scope="global", scope_id="ignored-one")
+    second = await provider.project(scope="global", scope_id="ignored-two")
+    assert first.meta["ignored_filters"] == ["scope_id"]
+    assert second.meta["cached"] is True
+    other_svc = MemoryService(base_dir=tmp_path / "other-owner", db_engine=db_engine)
+    other = await MemoryGraphProvider(memory_service=other_svc, lint_enabled=lambda: False).project(
+        scope="global"
+    )
+    assert other.nodes[0].id == "other-owner"
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_memory_unknown_scope_refused_before_build(svc, monkeypatch):
+    provider = MemoryGraphProvider(memory_service=svc)
+    with pytest.raises(ValueError, match="scope"):
+        await provider.project(scope="unsupported-scope")
+
+
+@pytest.mark.asyncio
+async def test_returned_lint_errors_mark_enrichment_failed(populated_scope, monkeypatch):
+    svc = populated_scope
+
+    async def lint(*args, **kwargs):
+        return [
+            LintIssue(
+                issue_type="lint_error",
+                key="run_lint",
+                severity="warning",
+                description="detector failed",
+            )
+        ]
+
+    monkeypatch.setattr(wiki_lint, "run_lint", lint)
+    result = await MemoryGraphProvider(memory_service=svc, lint_enabled=lambda: True).project(
+        scope="global"
+    )
+    assert result.meta["lint_enrichment"] == "failed"
+    assert result.meta["lint_error_count"] == 1

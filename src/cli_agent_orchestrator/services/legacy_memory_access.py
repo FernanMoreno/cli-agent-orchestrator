@@ -2,6 +2,10 @@
 
 import inspect
 from functools import wraps
+from typing import Callable, ParamSpec, TypeVar
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 
 _TARGET_FIELDS = frozenset(
     {
@@ -24,7 +28,9 @@ _TARGET_FIELDS = frozenset(
 )
 
 
-def audited_legacy(action, *, owner=None):
+def audited_legacy(
+    action: str, *, owner: str | None = None
+) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
     """Audit before entering an operation and before returning its result.
 
     Only identifiers participate in the target hash; content, prompts, credentials

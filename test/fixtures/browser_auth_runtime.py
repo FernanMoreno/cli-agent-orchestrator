@@ -10,17 +10,17 @@ import contextlib
 import importlib.util
 import json
 import os
-from pathlib import Path
+import shutil
 import socket
 import sqlite3
-import shutil
-import sys
 import subprocess
-import uuid
+import sys
 import tempfile
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 PASSWORD = "Fixture-password-484!"
 USERNAME = "operator"
@@ -96,6 +96,7 @@ def main():
             }
         )
         import jwt
+
         from cli_agent_orchestrator.security.auth import FULL_SCOPE_SET, principal_from_token
         from cli_agent_orchestrator.services.browser_auth import BrowserAuthService
 

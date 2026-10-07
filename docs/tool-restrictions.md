@@ -18,7 +18,7 @@ CAO controls what tools an agent can use through a two-layer system:
 
 - **`role`** — High-level abstraction. A named preset that maps to a default set of `allowedTools`. Think of it as "what kind of agent is this?" Built-in roles ship with CAO; users can define custom roles.
 - **`allowedTools`** — Low-level control. An explicit list of tools the agent can use. Always overrides `role` when set.
-- **`--yolo`** — Escape hatch. Bypasses ALL restrictions and skips confirmation prompts. The agent can do anything.
+- **`--yolo`** — Sets the launch policy to `["*"]` and skips confirmation. It does not rewrite the installed Kiro/OpenCode tool set or strengthen providers with advisory enforcement.
 
 ## Default Behavior
 
@@ -97,6 +97,8 @@ allowedTools: ["fs_read", "fs_list", "execute_bash"]
 
 No `role` is needed — `allowedTools` is the full specification of what tools the agent can use.
 
+An explicit list, including `allowedTools: []`, is never expanded with configured MCP servers. Declaring a server configures it; grant `@server` or a matching selector explicitly when access is intended. Empty lists remain restrictions across persistence and provider prompts, distinct from an unresolved `None` policy. Soft providers emit an explicit no-tools instruction; Hermes warns that enforcement depends on its selected profile.
+
 #### Tool Vocabulary
 
 | Tool | What it allows | Example: Claude Code | Example: Copilot CLI |
@@ -107,8 +109,8 @@ No `role` is needed — `allowedTools` is the full specification of what tools t
 | `fs_list` | Search/list files | `Glob`, `Grep` | `list`, `grep` |
 | `fs_*` | All filesystem ops | All of the above | All of the above |
 | `web_fetch` | Fetch URLs / search the web | `WebFetch`, `WebSearch` | (not mapped) |
-| `@builtin` | Provider built-in capabilities | (internal) | (internal) |
-| `@cao-mcp-server` | CAO orchestration tools | `handoff`, `assign`, `send_message`, plus Hermes prompt answers via `answer_user_prompt` | Same |
+| `@builtin` | Provider chrome selector; does not grant shell or filesystem capabilities | (internal) | (internal) |
+| `@cao-mcp-server` | CAO orchestration tools | `handoff`, `assign`, `send_message`, local peer task tools, plus Hermes prompt answers via `answer_user_prompt` | Same |
 | `discovery` | Sibling discovery/metadata (`list_siblings`, `update_metadata`) | Same | Same |
 | `*` | Everything (unrestricted) | All tools | All tools |
 
@@ -129,10 +131,10 @@ cao launch --agents code_supervisor --yolo
 ```
 
 `--yolo` does two things:
-1. Sets `allowedTools: ["*"]` — the agent can use ALL tools
+1. Requests `allowedTools: ["*"]` at launch; installed provider availability remains unchanged
 2. Skips the confirmation prompt — launches immediately after showing a warning
 
-**Use `--yolo` when you want zero restrictions.** This overrides everything — role, allowedTools, CLI flags. The agent can execute any command: `aws`, `rm -rf`, `curl`, read credentials, anything.
+`--yolo` overrides the resolved launch allowlist. Kiro and OpenCode availability is installed: reinstall with the intended profile policy to change that tool set. On advisory providers, neither a normal launch nor `--yolo` supplies a native security boundary.
 
 A warning is still displayed so you know what's happening:
 
@@ -182,16 +184,16 @@ Proceed? [Y/n]
 | | `Y` at prompt | `--auto-approve` | `--yolo` |
 |---|---|---|---|
 | **Confirmation prompt** | Shown | Skipped | Skipped |
-| **Tool restrictions** | Enforced | Enforced | Removed — `["*"]` |
+| **Requested tool policy** | Preserved | Preserved | Unrestricted — `["*"]` (installed availability unchanged) |
 | **Use case** | Interactive launch | Automated flows, scripts, agent-to-agent | Unrestricted access |
 
 ```bash
 cao launch --agents my_agent                  # interactive — shows prompt
 cao launch --agents my_agent --auto-approve   # automated — skips prompt, keeps restrictions
-cao launch --agents my_agent --yolo           # unrestricted — skips prompt AND removes restrictions
+cao launch --agents my_agent --yolo           # requests unrestricted launch policy and skips confirmation
 ```
 
-The confirmation prompt is a **review gate** — it shows the resolved role and allowed tools, then lets you proceed or cancel. `--auto-approve` skips this gate while keeping all restrictions enforced — useful for CAO flows, scripted launches, and agent-to-agent workflows. `--yolo` sits at the top of the override hierarchy — it **overrides both role and allowedTools**, grants unrestricted access (`["*"]`), and skips the prompt entirely.
+The confirmation prompt is a **review gate** — it shows the resolved role and allowed tools, then lets you proceed or cancel. `--auto-approve` skips this gate while preserving the resolved policy — useful for CAO flows, scripted launches, and agent-to-agent workflows. `--yolo` sits at the top of the override hierarchy — it **overrides both role and allowedTools**, requests unrestricted access (`["*"]`), and skips the prompt entirely. Kiro and OpenCode retain their installed tool availability.
 
 ### How Tool Restrictions Are Enforced (Implementation Detail)
 
@@ -207,7 +209,9 @@ CAO defines a universal tool vocabulary (`execute_bash`, `fs_read`, `fs_write`, 
 | `fs_list` | `Glob`, `Grep` | `list`, `grep` | `Grep`, `Glob` |
 | `web_fetch` | `WebFetch`, `WebSearch` | (not mapped) | `WebFetch`, `WebSearch` + disabled web search |
 
-**Providers that accept CAO vocabulary directly** — Kiro CLI accepts `allowedTools` in the agent JSON at install time, using the same vocabulary as CAO. No translation needed. Kimi CLI, MiniMax Code, and Codex use system prompt instructions to enforce restrictions. CAO passes the `allowedTools` list directly without translation — so no `TOOL_MAPPING` entry exists for them, and none is needed.
+**Installed availability** — Kiro receives the resolved CAO policy in both `allowedTools` (approval behavior) and translated `tools` (actual availability). Translation retains old/new native names and gates shell-equivalent subagent/AWS capabilities with shell access, code edits with write access, and knowledge reads with read access. `@builtin` grants harmless chrome only. OpenCode maps named categories into installed `permission:` rules; `@builtin` does not enable shell or filesystem tools.
+
+**Advisory providers** — Kimi CLI, MiniMax Code, OMP, Codex and Antigravity use prompt instructions. Their launch flags still permit tools; these instructions are not native enforcement.
 
 #### MCP-side enforcement for `assign` and `handoff`
 
@@ -269,16 +273,18 @@ As described in [How Tool Restrictions Are Enforced](#how-tool-restrictions-are-
 | Provider | Enforcement | How it works |
 |----------|------------|-------------|
 | **Claude Code** | Hard | `--disallowedTools` flags block specific tools |
-| **Kiro CLI** | Hard | `allowedTools` in agent JSON at install time |
+| **Kiro CLI** | Hard (install time) | Resolved policy translated into JSON `tools`; `allowedTools` only governs approval |
 | **Copilot CLI** | Hard | `--deny-tool` flags override `--allow-all` |
-| **OpenCode CLI** | Hard | `permission:` YAML frontmatter enforced natively at install time |
+| **OpenCode CLI** | Hard (install time) | `permission:` YAML frontmatter enforced natively at install time |
 | **Grok Build CLI** | Native (mapped families) | Restricted profiles use deny-by-default `--permission-mode dontAsk` with explicit native/MCP allows and defense-in-depth denies; native subagents are disabled |
 | **Kimi CLI** | Soft | Security system prompt only |
+| **OMP** | Soft | Security append-system-prompt only |
 | **MiniMax Code** | Soft | Security bootstrap prompt only |
 | **Codex** | Soft | Security system prompt only |
 | **Antigravity CLI** | Soft | Security system prompt only |
 | **Hermes** | Profile-defined | CAO launches default `hermes` or the optional `hermesProfile` wrapper declared by the CAO profile; restrict tools in that Hermes profile |
 | **Cursor CLI** | Not enforced (v2026) | `allowedTools` is currently ignored — no native flag or system-prompt path is active; see [Cursor CLI Tool Restrictions](cursor-cli.md#tool-restrictions) |
+| Gemini CLI | None | Restricted launches are rejected before input; only explicitly unrestricted policies may launch with `--approval-mode=yolo` |
 
 **Hard enforcement** = the agent physically cannot use denied tools, enforced by the provider runtime.
 
@@ -293,10 +299,20 @@ claude --dangerously-skip-permissions --disallowedTools Bash --disallowedTools E
 
 `permissionMode` is a separate axis from `--disallowedTools`: `permissionMode` controls which permission tier the session runs under (unconditional bypass vs. classifier-gated tiers like `auto`), while `--disallowedTools` enforces the per-tool denylist. The two stack — a profile can set `permissionMode: auto` *and* a tool denylist, and both apply on the launch command. See [Permission Mode Override](claude-code.md#permission-mode-override) for full details.
 
-**Kiro CLI** — Writes `allowedTools` into the agent JSON at install time:
+**Kiro CLI** — Writes availability and approval into the installed agent JSON:
 ```json
-{ "allowedTools": ["@cao-mcp-server", "fs_read", "fs_list"] }
+{
+  "tools": ["@cao-mcp-server", "fs_read", "glob", "grep", "knowledge", "read"],
+  "allowedTools": ["@cao-mcp-server", "fs_read", "fs_list"]
+}
 ```
+
+An explicit profile `tools` list wins; otherwise `kiro_agent_tools` translates
+`allowedTools`. `[]` installs no tools, while `["*"]` preserves all availability.
+Profiles installed before this change may still contain `tools: ["*"]`; reinstall
+with `cao install <profile> --provider kiro_cli` to enforce their intended policy.
+A launch `--allowed-tools`/role override or `--yolo` does not rewrite installed
+availability. The v3/KAS engine remains subject to its separate engine/policy validation.
 
 **Copilot CLI** — Adds `--deny-tool` flags that override `--allow-all`:
 ```bash
@@ -329,7 +345,11 @@ separate from `allowedTools`, including `allowedTools: ["*"]`.
 See the [Grok Build CLI provider guide](grok-cli.md#tool-restrictions) for the
 complete mapping and isolation behavior.
 
-**Kimi CLI / MiniMax Code / Codex** — Prepends to the system or bootstrap prompt:
+Grok writes profile/skill rules to mode-0600 `rules.md` inside its private
+mode-0700 home. The launch line references that file after permission flags, so
+a large rules body cannot displace restrictions past the terminal line limit.
+
+**Kimi CLI / MiniMax Code / OMP / Codex / Antigravity** — Injects into its system or bootstrap prompt:
 ```
 You may ONLY use these tools: @cao-mcp-server, fs_read, fs_list
 Do NOT attempt to use: execute_bash, fs_write
@@ -379,7 +399,7 @@ Each agent is restricted based on its own profile, not its parent's permissions.
 
 1. **Claude Code tool mapping is nearly complete, with MCP tools the remaining gap.** The current mapping covers `Bash` (and its `Task`/`Agent`/`Monitor`/`BashOutput`/`KillShell` execution family), `Read`, `Edit`, `Write`, `Glob`, `Grep`, and — via `web_fetch` — [`WebFetch`](https://code.claude.com/docs/en/permissions#webfetch) and `WebSearch`. The subagent tool is intentionally **not** a separate category: it is folded into `execute_bash`, because a subagent spawns with its own full toolset and can run shell, so exposing it standalone would let a profile grant subagent access without `execute_bash` and re-open that escape. Claude Code **renamed this tool from `Task` to `Agent`**, so both names are denied — current builds expose only `Agent`, so denying just `Task` would be a silent no-op. Provider MCP tools remain unmapped (see limitation #2) — they cannot be blocked via `--disallowedTools`.
 
-2. **`@cao-mcp-server` is server-level, not per-tool control.** Grok restricted profiles translate it to an allow rule for the configured CAO MCP server; other providers generally treat it as an intent marker. No provider currently blocks individual MCP tools: once the server is available, its `handoff`, `assign`, `send_message`, and `answer_user_prompt` tools are all exposed. **CAO enforces the server-level grant on its own side for `assign` and `handoff`** (see [MCP-side enforcement](#mcp-side-enforcement-for-assign-and-handoff) above), so a profile without `@cao-mcp-server` cannot use them even where the provider still exposes them. `send_message` and `answer_user_prompt` are not gated this way. `answer_user_prompt` is exposed by the MCP server, but its structured prompt-navigation behavior is currently implemented for Hermes workers that report `waiting_user_answer`; other providers may only receive ordinary text input until they implement equivalent prompt states. Future versions may support `@cao-mcp-server:send_message` syntax for per-tool MCP control.
+2. **`@cao-mcp-server` is server-level, not per-tool control.** Grok restricted profiles translate it to an allow rule for the configured CAO MCP server; other providers generally treat it as an intent marker. No provider currently blocks individual MCP tools: once the server is available, its `handoff`, `assign`, `send_message`, local peer task tools, and `answer_user_prompt` tools are all exposed. **CAO enforces the server-level grant on its own side for `assign` and `handoff`** (see [MCP-side enforcement](#mcp-side-enforcement-for-assign-and-handoff) above), so a profile without `@cao-mcp-server` cannot use them even where the provider still exposes them. The local CAO peer tools are project-scoped coordination between trusted profiles on the same computer; they are not an operating-system sandbox. `send_message` and `answer_user_prompt` are not gated this way. `answer_user_prompt` is exposed by the MCP server, but its structured prompt-navigation behavior is currently implemented for Hermes workers that report `waiting_user_answer`; other providers may only receive ordinary text input until they implement equivalent prompt states. Future versions may support `@cao-mcp-server:send_message` syntax for per-tool MCP control. See [Local CAO Coordination](local-cao-coordination.md) for setup and trust boundaries.
 
 3. **Soft enforcement is best-effort.** Kimi CLI, MiniMax Code, and Codex rely on prompt instructions to restrict tools. The agent may ignore these restrictions. Do not rely on soft enforcement for security-critical workloads.
 

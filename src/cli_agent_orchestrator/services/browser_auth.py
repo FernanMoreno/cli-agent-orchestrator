@@ -6,8 +6,8 @@ import math
 import re
 import secrets
 import time
-from dataclasses import fields
 from contextlib import contextmanager
+from dataclasses import fields
 
 from cli_agent_orchestrator.clients.browser_auth_repository import BrowserAuthRepository
 from cli_agent_orchestrator.models.browser_auth import BrowserAuthError, BrowserSessionPolicy

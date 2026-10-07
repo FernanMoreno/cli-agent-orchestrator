@@ -124,7 +124,7 @@ def build_agent_detail_snapshot(
         A new agent-detail snapshot dict. Deterministic and side-effect free.
     """
 
-    return {
+    result = {
         "terminal_id": terminal.get("id", ""),
         "session_name": terminal.get("session_name", terminal.get("tmux_session", "")),
         "provider": terminal.get("provider", ""),
@@ -134,6 +134,9 @@ def build_agent_detail_snapshot(
         "output_tail": output_tail or "",
         "scopes": list(scopes) if scopes else [],
     }
+    if isinstance(terminal.get("turn"), dict):
+        result["turn"] = dict(terminal["turn"])
+    return result
 
 
 def diff_snapshot(prev: Dict[str, Any], curr: Dict[str, Any]) -> List[Dict[str, Any]]:

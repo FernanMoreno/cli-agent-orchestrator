@@ -18,8 +18,10 @@ from cli_agent_orchestrator.clients.work_repository import (
     WorkRepository,
 )
 from cli_agent_orchestrator.models.work import EventPage, WorkView
+from cli_agent_orchestrator.models.work_operations import WorkOperations
 from cli_agent_orchestrator.security.auth import (
     SCOPE_ADMIN,
+    SCOPE_READ,
     SCOPE_WRITE,
     Principal,
     get_current_principal,
@@ -345,3 +347,14 @@ def revoke_decision(
         return _revocation_payload(
             service.revoke(principal=principal, decision_id=decision_id, reason=body.reason)
         )
+
+
+@router.get("/work-items/{work_item_id}/operations", response_model=WorkOperations)
+def get_work_operations(
+    work_item_id: str,
+    principal: Annotated[Principal, Depends(get_current_principal)],
+    _scopes: Annotated[list[str], Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN))],
+):
+    """Observe retained capacity; action links retain their existing live fences."""
+    with work_errors():
+        return queries().operational_status(principal, work_item_id)

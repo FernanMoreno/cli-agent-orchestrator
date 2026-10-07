@@ -231,7 +231,7 @@ class AnswerDelivery(Protocol):
 
     def send_input(
         self, terminal_id: str, text: str, **kwargs: Any
-    ) -> None: ...  # pragma: no cover
+    ) -> bool | None: ...  # pragma: no cover
 
     def send_special_key(self, terminal_id: str, key: str) -> bool: ...  # pragma: no cover
 
@@ -824,6 +824,7 @@ class AgentHandoffWithApproval(AguiConstruct):
         action: Dict[str, Any],
     ) -> Interrupt:
         """Claim is the linearization point; post-claim delivery is never retried."""
+        assert self._decisions is not None  # Durable registration requires this port.
         entry = self._delivery_locks.get(binding.terminal_id)
         if entry is None:
             entry = self._delivery_locks[binding.terminal_id] = _RefCountedLock()

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Set
 
 from cli_agent_orchestrator.constants import OPENCODE_CONFIG_DIR, OPENCODE_CONFIG_FILE, SKILLS_DIR
-from cli_agent_orchestrator.utils.mcp_resolution import resolve_cao_mcp_command
+from cli_agent_orchestrator.utils.mcp_resolution import cao_mcp_environment, resolve_cao_mcp_command
 from cli_agent_orchestrator.utils.path_validation import flatten_path_separators
 
 logger = logging.getLogger(__name__)
@@ -160,8 +160,9 @@ def translate_mcp_server_config(cao_config: Dict[str, Any]) -> Dict[str, Any]:
         "command": full_command,
         "enabled": True,
     }
-    if "env" in cao_config:
-        result["environment"] = cao_config["env"]
+    environment = cao_mcp_environment("", cao_config)
+    if environment or "env" in cao_config:
+        result["environment"] = environment
     # Emitted only when the source actually has one: an invented `cwd` would
     # change where a profile-declared server runs, and an empty string is not a
     # directory. OpenCode's `mcp` entries are `additionalProperties: false`, so

@@ -139,7 +139,23 @@ def collect_plugin_mcp_servers(
     # election below reads claims in the same total order the rule uses.
     claims: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
 
+    from cli_agent_orchestrator.agent_plugins.trust import delivery_allowed
+
     for record in records:
+        try:
+            allowed = delivery_allowed(record, store.plugin_root(record.name))
+        except (OSError, ValueError):
+            allowed = False
+        if not allowed:
+            findings.append(
+                Finding(
+                    Severity.SKIPPED,
+                    "trust.not_approved",
+                    "CAO local policy",
+                    f"Plugin {record.name} is disabled, changed, incompatible or lacks exact approval.",
+                )
+            )
+            continue
         try:
             result = load_and_map(
                 store.plugin_root(record.name),

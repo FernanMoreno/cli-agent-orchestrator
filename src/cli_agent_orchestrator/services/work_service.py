@@ -16,7 +16,7 @@ import stat
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Callable, Literal
+from typing import Annotated, Callable, Literal, Mapping
 from uuid import uuid4
 
 from pydantic import (
@@ -29,12 +29,17 @@ from pydantic import (
     model_validator,
 )
 
-from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
+from cli_agent_orchestrator.clients.work_repository import (
+    BubblewrapProcessIdentity,
+    WorkConflict,
+    WorkRepository,
+)
 from cli_agent_orchestrator.models.work_origin import (
     MAX_WORKFLOW_STEP_RESULT_BYTES,
     WorkAttemptRef,
     WorkflowStepResultV1,
 )
+from cli_agent_orchestrator.services.step_output_store import ImmutableResultStore
 from cli_agent_orchestrator.services.work_origin import (
     OriginConflict,
     OriginDenied,
@@ -302,7 +307,7 @@ def _bubblewrap_namespace_identity(pid: int, kind: str) -> list[int]:
     return [namespace.st_dev, namespace.st_ino]
 
 
-def _original_bubblewrap_pair_gone(identity: dict[str, object]) -> bool:
+def _original_bubblewrap_pair_gone(identity: BubblewrapProcessIdentity) -> bool:
     """Prove both original PIDs exited without treating a live mismatch as exit."""
     try:
         current_boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
@@ -310,12 +315,15 @@ def _original_bubblewrap_pair_gone(identity: dict[str, object]) -> bool:
             return False
         if current_boot != identity["boot_id"]:
             return True
-        for role in ("monitor", "init"):
+        for pid, original_start_time in (
+            (identity["monitor_pid"], identity["monitor_start_time_ticks"]),
+            (identity["init_pid"], identity["init_start_time_ticks"]),
+        ):
             try:
-                _, start_time, state = _read_bubblewrap_proc_stat(identity[f"{role}_pid"])
+                _, start_time, state = _read_bubblewrap_proc_stat(pid)
             except FileNotFoundError:
                 continue
-            if start_time == identity[f"{role}_start_time_ticks"] and state not in {"Z", "X", "x"}:
+            if start_time == original_start_time and state not in {"Z", "X", "x"}:
                 return False
         return True
     except (OSError, TypeError, ValueError):
@@ -339,7 +347,7 @@ def _bubblewrap_pidfd_exited(descriptor: int, timeout_seconds: float) -> bool | 
     return any(flags & (select.POLLIN | select.POLLHUP) for _, flags in events)
 
 
-def _orphaned_bubblewrap_init_matches(identity: dict[str, object]) -> bool:
+def _orphaned_bubblewrap_init_matches(identity: BubblewrapProcessIdentity) -> bool:
     """Require the original monitor gone and its exact namespace init live."""
     if Path("/proc/sys/kernel/random/boot_id").read_text().strip() != identity["boot_id"]:
         return False
@@ -358,13 +366,14 @@ def _orphaned_bubblewrap_init_matches(identity: dict[str, object]) -> bool:
     _, init_start, init_state = _read_bubblewrap_proc_stat(identity["init_pid"])
     if init_start != identity["init_start_time_ticks"] or init_state in {"Z", "X", "x"}:
         return False
+    fields: Mapping[str, object] = identity
     return all(
-        _bubblewrap_namespace_identity(identity["init_pid"], kind) == identity[f"{kind}_namespace"]
+        _bubblewrap_namespace_identity(identity["init_pid"], kind) == fields[f"{kind}_namespace"]
         for kind in ("pid", "net", "ipc")
     )
 
 
-def _cleanup_orphaned_bubblewrap_init(identity: dict[str, object]) -> bool:
+def _cleanup_orphaned_bubblewrap_init(identity: BubblewrapProcessIdentity) -> bool:
     """Kill only a surviving exact init pinned after its monitor has ended."""
     if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
         return False
@@ -388,13 +397,14 @@ def _cleanup_orphaned_bubblewrap_init(identity: dict[str, object]) -> bool:
             os.close(init_fd)
 
 
-def _cleanup_bubblewrap_identity(identity: dict[str, object]) -> bool:
+def _cleanup_bubblewrap_identity(identity: BubblewrapProcessIdentity) -> bool:
     """Signal only a twice-validated live pair through pinned pidfds."""
     if identity.get("version") != 1 or identity.get("kind") != "bubblewrap":
         return False
     monitor_pid = identity["monitor_pid"]
     init_pid = identity["init_pid"]
-    expected = {key: identity[key] for key in _BWRAP_IDENTITY_KEYS}
+    fields: Mapping[str, object] = identity
+    expected = {key: fields[key] for key in _BWRAP_IDENTITY_KEYS}
     try:
         before = _read_bubblewrap_live_identity(monitor_pid, init_pid)
     except (OSError, ValueError):
@@ -437,6 +447,7 @@ class WorkService:
         *,
         origins: WorkOrigins | None = None,
         artifacts=None,
+        workflow_origins=None,
     ):
         self.repository = repository
         if origins is not None and (
@@ -445,6 +456,19 @@ class WorkService:
         ):
             raise ValueError("task receipt origin must use this work repository")
         self.origins = origins
+        from cli_agent_orchestrator.services.work_workflow import WorkWorkflowOrigins
+
+        if workflow_origins is not None and (
+            not isinstance(workflow_origins, WorkWorkflowOrigins)
+            or workflow_origins.repository is not repository
+        ):
+            raise ValueError("workflow result resolver must use this exact Work repository")
+        self.workflow_origins = (
+            workflow_origins
+            or (getattr(origins, "_workflow_origins", None) if origins is not None else None)
+            or WorkWorkflowOrigins(repository)
+        )
+
         if artifacts is not None and not all(
             callable(getattr(artifacts, method, None)) for method in ("publish", "read")
         ):
@@ -625,7 +649,9 @@ class WorkService:
             raise DeliveryUncertain(sent["id"]) from error
         return self._record_delivery(sent, observation, actor_id=actor_id)
 
-    def _record_delivery(self, sent, observation, *, actor_id):
+    def _record_delivery(
+        self, sent: dict, observation: DeliveryObservation, *, actor_id: str
+    ) -> dict:
         """Record only authenticated receipts or the server's proven process failure."""
         work_item_id = sent["id"]
         current = self.repository.get_work(work_item_id)
@@ -906,13 +932,13 @@ class WorkService:
             WorkAttemptCredentials,
         )
 
-        credentials = WorkAttemptCredentials(self.repository)
+        credentials = WorkAttemptCredentials(self.repository, origins=self.origins)
         try:
             attempt = credentials.authenticate_in_transaction(
-                connection, attempt_credential, allow_finished=True
+                connection, attempt_credential, allow_finished=True  # gitleaks:allow
             )
             receiver = credentials.authenticate_receiver_in_transaction(
-                connection, receiver_credential, allow_finished=True
+                connection, receiver_credential, allow_finished=True  # gitleaks:allow
             )
         except WorkAttemptCredentialRejected as error:
             raise WorkConflict(
@@ -1034,12 +1060,13 @@ class WorkService:
         from cli_agent_orchestrator.services.work_workflow import WorkWorkflowOrigins
 
         try:
-            exact = WorkWorkflowOrigins(self.repository).read_step_binding(
+            exact = self.workflow_origins.read_step_binding(
                 tier=binding.tier,
                 run_id=binding.run_id,
                 run_generation=binding.run_generation,
                 step_id=binding.step_id,
                 workflow_step_attempt=binding.workflow_step_attempt,
+                historical=True,
             )
         except Exception as error:
             raise WorkConflict("workflow result binding could not be revalidated") from error
@@ -1162,15 +1189,16 @@ class WorkService:
         ):
             raise WorkConflict("workflow Work state binding identity is invalid")
 
-        def read(snapshot):
+        def read(snapshot) -> WorkflowStepWorkState:
             if not snapshot.in_transaction:
                 raise WorkConflict("workflow Work state reads require a stable SQLite snapshot")
             self.repository._verify(snapshot)
-            exact = WorkWorkflowOrigins(self.repository).read_binding_for_attempt(
+            exact = self.workflow_origins.read_binding_for_attempt(
                 attempt_id,
                 generation,
                 work_item_id,
                 connection=snapshot,
+                historical=True,
             )
             if exact is None or exact != binding:
                 raise WorkConflict("workflow Work state binding is absent or changed")
@@ -1209,7 +1237,7 @@ class WorkService:
         with self.repository.read_snapshot() as snapshot:
             return read(snapshot)
 
-    def read_result(self, work_item_id: str, *, artifacts) -> bytes:
+    def read_result(self, work_item_id: str, *, artifacts: ImmutableResultStore) -> bytes:
         from cli_agent_orchestrator.services.step_output_store import ArtifactRef
 
         work = self.repository.get_work(work_item_id)

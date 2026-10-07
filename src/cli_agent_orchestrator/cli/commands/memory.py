@@ -985,7 +985,7 @@ def export_cmd(fmt, scope, output, include_private, include_history, redact, pru
     help="Full parse/validate/secret pipeline, report only — no writes.",
 )
 def import_cmd(path, fmt, scope, conflict, dry_run):
-    """Import an archive bundle directory into a memory scope."""
+    """Import an archive bundle directory or tar.gz into a memory scope."""
     svc = _get_memory_service()
     try:
         report = svc.import_memories(

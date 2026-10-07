@@ -1817,7 +1817,7 @@ def test_start_keeps_command_gated_when_unshare_omits_network_and_ipc_namespaces
 
 
 def test_worker_does_not_inherit_server_environment(tmp_path: Path, monkeypatch) -> None:
-    key = "CAO_T097_CANARY_SECRET"
+    key = "CAO_T097_CANARY_SECRET"  # gitleaks:allow
     monkeypatch.setenv(key, "server-secret-must-not-reach-worker")
     report = tmp_path / "worker-environment.txt"
     code = (

@@ -106,6 +106,17 @@ def _patched_lifespan(backend: object, tasks: list):
         patch_main("setup_logging")
         patch_main("init_db")
         stack.enter_context(
+            patch("cli_agent_orchestrator.services.local_peer_registry.register_instance")
+        )
+        stack.enter_context(
+            patch("cli_agent_orchestrator.services.local_peer_registry.unregister_instance")
+        )
+        stack.enter_context(
+            patch(
+                "cli_agent_orchestrator.services.local_peer_service.reconcile_local_peer_tasks_at_startup"
+            )
+        )
+        stack.enter_context(
             patch(
                 "cli_agent_orchestrator.services.memory_reconciliation.reconcile_memory_startup",
                 return_value=None,

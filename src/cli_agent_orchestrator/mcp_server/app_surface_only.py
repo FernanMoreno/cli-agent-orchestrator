@@ -1,0 +1,60 @@
+"""FastMCP middleware for exposing only the MCP Apps tool surface."""
+
+from typing import Sequence
+
+from fastmcp.exceptions import ToolError
+from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+from fastmcp.tools import Tool, ToolResult
+from mcp import types as mt
+
+# Model-visible tools retain bare names; app-only tools use native addressing.
+APP_SURFACE_TOOL_NAMES = frozenset(
+    {
+        "render_dashboard",
+        "render_agent_view",
+        "cao_fetch_history",
+        "subscribe_events",
+        "render_graph_view",
+        "submit_command",
+    }
+)
+
+
+APP_NATIVE_TOOL_NAMES = frozenset(
+    {"cao___cao_fetch_history", "cao___subscribe_events", "cao___submit_command"}
+)
+
+
+def _is_app_surface_tool_name(tool_name: str) -> bool:
+    """Return whether a tool name is explicitly part of the app surface.
+
+    Exact matching makes denial uniform and non-enumerable: unknown and existing
+    non-allowlisted names receive the same rejection before provider lookup.
+    """
+
+    return tool_name in APP_SURFACE_TOOL_NAMES | APP_NATIVE_TOOL_NAMES
+
+
+class AppSurfaceOnlyMiddleware(Middleware):
+    """Hide and reject tools that are not part of the MCP Apps surface."""
+
+    async def on_list_tools(
+        self,
+        context: MiddlewareContext[mt.ListToolsRequest],
+        call_next: CallNext[mt.ListToolsRequest, Sequence[Tool]],
+    ) -> Sequence[Tool]:
+        tools = await call_next(context)
+        return [tool for tool in tools if _is_app_surface_tool_name(tool.name)]
+
+    async def on_call_tool(
+        self,
+        context: MiddlewareContext[mt.CallToolRequestParams],
+        call_next: CallNext[mt.CallToolRequestParams, ToolResult],
+    ) -> ToolResult:
+        tool_name = context.message.name
+        if not _is_app_surface_tool_name(tool_name):
+            raise ToolError(
+                f"Tool '{tool_name}' is unavailable because the server is in "
+                "app-surface-only mode (CAO_MCP_APPS_ONLY=true)."
+            )
+        return await call_next(context)

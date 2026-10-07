@@ -4,58 +4,191 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: 'Version bump type'
+        description: 'Expected bump already committed and validated by CI'
         required: true
         type: choice
         options:
           - patch
           - minor
           - major
+  schedule:
+    # Weekly release, Monday 09:17 UTC. Scheduled runs fail closed if CI for
+    # the exact release SHA is missing or incomplete, or if the prior release
+    # did not reach both GitHub Releases and PyPI. A post-tag publishing failure
+    # requires maintainer recovery of that exact version; a later schedule will
+    # not skip over it.
+    - cron: '17 9 * * 1'
 
 permissions:
   contents: read
 
+# Never cancel an in-flight release; queue manual and scheduled releases.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  preflight:
+    if: github.repository == 'awslabs/cli-agent-orchestrator'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      bump: ${{ steps.policy.outputs.bump }}
+      candidate_sha: ${{ steps.policy.outputs.candidate_sha }}
+      version: ${{ steps.policy.outputs.version }}
+      count: ${{ steps.policy.outputs.count }}
+      last_tag: ${{ steps.policy.outputs.last_tag }}
+      should_release: ${{ steps.policy.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Evaluate exact-candidate release policy
+        id: policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+
+          LAST_TAG=$(
+            git tag --merged "$GITHUB_SHA" --list 'v[0-9]*' --sort=-v:refname |
+              grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' |
+              head -n 1
+          )
+          if [ -z "$LAST_TAG" ]; then
+            echo "No stable v<major>.<minor>.<patch> tag is reachable from $GITHUB_SHA"
+            exit 1
+          fi
+
+          COUNT=$(git rev-list "${LAST_TAG}..${GITHUB_SHA}" --count)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "last_tag=$LAST_TAG" >> "$GITHUB_OUTPUT"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "No commits since $LAST_TAG; skipping this scheduled release."
+            echo "bump=patch" >> "$GITHUB_OUTPUT"
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          gh release view "$LAST_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          VERSION=${LAST_TAG#v}
+          python - "$VERSION" <<'PY'
+          import json
+          import sys
+          import urllib.error
+          import urllib.request
+
+          version = sys.argv[1]
+          url = f"https://pypi.org/pypi/cli-agent-orchestrator/{version}/json"
+          try:
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  json.load(response)
+          except (urllib.error.URLError, json.JSONDecodeError) as exc:
+              raise SystemExit(
+                  f"Prior release v{version} is not verifiably published on PyPI: {exc}"
+              )
+          PY
+
+          # Maintained allow-list of release-blocking workflows. Add another
+          # workflow file here only when release policy requires it.
+          REQUIRED_WORKFLOWS=(ci.yml cargo-deny.yml)
+          for workflow in "${REQUIRED_WORKFLOWS[@]}"; do
+            STATE=$(
+              gh run list \
+                --repo "$GITHUB_REPOSITORY" \
+                --commit "$GITHUB_SHA" \
+                --workflow "$workflow" \
+                --limit 10 \
+                --json conclusion,headSha,status \
+                --jq 'map(select(.headSha == env.GITHUB_SHA)) | first |
+                  if . == null then "missing"
+                  else "\(.status):\(.conclusion // "none")"
+                  end'
+            )
+            if [ "$STATE" != "completed:success" ]; then
+              echo "$workflow is '$STATE' at $GITHUB_SHA; refusing to release"
+              exit 1
+            fi
+          done
+
+          COMMITS=$(git log "${LAST_TAG}..${GITHUB_SHA}" --format='%s%n%b')
+          if grep -Eq '(^[a-z]+(\([^)]*\))?!:|^BREAKING[ -]CHANGE:)' <<<"$COMMITS"; then
+            BUMP=major
+          elif grep -Eq '^feat(\([^)]*\))?:' <<<"$COMMITS"; then
+            BUMP=minor
+          else
+            BUMP=patch
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            BUMP="$INPUT_BUMP"
+          fi
+          IFS=. read -r MAJOR MINOR PATCH <<<"${LAST_TAG#v}"
+          case "$BUMP" in
+            major) EXPECTED="$((MAJOR + 1)).0.0";;
+            minor) EXPECTED="$MAJOR.$((MINOR + 1)).0";;
+            patch) EXPECTED="$MAJOR.$MINOR.$((PATCH + 1))";;
+            *) echo "Unsupported bump: $BUMP"; exit 1;;
+          esac
+          CANDIDATE_VERSION=$(git show "$GITHUB_SHA:pyproject.toml" | sed -n 's/^version = "\(.*\)"$/\1/p' | head -n 1)
+          if [ "$CANDIDATE_VERSION" != "$EXPECTED" ]; then
+            echo "Prepare version $EXPECTED in a committed change and pass CI before releasing (candidate is $CANDIDATE_VERSION)."
+            exit 1
+          fi
+          echo "candidate_sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$CANDIDATE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+
   release:
+    needs: preflight
+    if: >-
+      github.repository == 'awslabs/cli-agent-orchestrator' &&
+      needs.preflight.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
-
-      - name: Install git-cliff
-        uses: taiki-e/install-action@v2
-        with:
-          tool: git-cliff
+          ref: ${{ needs.preflight.outputs.candidate_sha }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
 
-      - name: Bump version and generate changelog
-        id: bump
+      - name: Archive validated candidate and generate provenance
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_SHA: ${{ needs.preflight.outputs.candidate_sha }}
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
-          python scripts/bump_version.py ${{ inputs.bump }}
-          VERSION=$(grep '^version = ' pyproject.toml | head -1 | cut -d'"' -f2)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          mkdir -p dist
+          git archive --format=tar.gz --prefix="cli-agent-orchestrator-$VERSION/" "$CANDIDATE_SHA" > "dist/cli-agent-orchestrator-$VERSION-source.tar.gz"
+          python scripts/build_release_manifest.py --dist dist --output release-manifest.json
 
-      - name: Commit and tag
+      - name: Tag exact validated candidate
+        env:
+          CANDIDATE_SHA: ${{ needs.preflight.outputs.candidate_sha }}
+          VERSION: ${{ needs.preflight.outputs.version }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml CHANGELOG.md .devcontainer/features/cao/devcontainer-feature.json
-          git commit -m "chore: release v${{ steps.bump.outputs.version }}"
-          git tag "v${{ steps.bump.outputs.version }}"
-          git push && git push --tags
+          set -euo pipefail
+          git tag "v$VERSION" "$CANDIDATE_SHA"
+          git push origin "refs/tags/v$VERSION"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          tag_name: v${{ steps.bump.outputs.version }}
+          tag_name: v${{ needs.preflight.outputs.version }}
           generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            release-manifest.json
+          fail_on_unmatched_files: true
