@@ -126,6 +126,10 @@ El operador puede revisar quién produjo un plugin, de dónde viene, con qué ve
 - **FR-018**: Los controles obligatorios de compatibilidad, dependencias de todos los entornos distribuidos, arquitectura, tipos y seguridad MUST cubrir las versiones anunciadas, informar sus omisiones y bloquear el resultado cuando corresponda a la política.
 - **FR-019**: Las validaciones de esta especificación MUST poder completarse para la coordinación CAO usando varias instancias en una misma PC, sin cuenta central, relay ni servicio CAO alojado.
 
+### Entorno de cobertura obligatoria
+
+FR-018 exige que el gate de cobertura ejecute las regresiones nativas en un host apto verificado, con las mismas selecciones y mínimos de Python/MCP Apps. Un probe denegado no acredita aceptación. La preparación de un runner desechable de CI debe comprobar capacidades reales antes de efectos y registrar/restaurar cualquier ajuste temporal; no cambia la política de hosts del producto ni sustituye aislamiento real por simulación. La restauración sólo puede ocurrir tras confirmar el drenaje del grupo propio; si no se confirma, la ejecución falla y declara la eliminación de la VM como frontera final, igual que ante SIGKILL del wrapper.
+
 ## Key Entities
 
 - **Tarea local coordinada**: trabajo enviado entre instancias CAO autorizadas, con proyecto, origen, destinatario, estado, resultado y actividad de cancelación identificables.

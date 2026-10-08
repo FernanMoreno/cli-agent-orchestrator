@@ -265,6 +265,8 @@ se registra con su evidencia; nunca se transforma en aprobación.
 
 - [X] T090 Aislar la autoridad local de la fixture MCP memory del shim global E2E; reproducir el desajuste de aliases después del parche de puerto, preservar destino explícito, bearer y rechazo de bypass local, y verificar vecinos, per FR-007–009/T069/T072.
 
+- [ ] T091 Resolver el fallo real del ratchet en el runner CI sin bajar mínimos ni excluir cobertura; diagnosticar las capacidades nativas y conservar la aceptación real/denegación fail-closed, per FR-018/T069/T072/T073.
+
 ## Implementation Strategy
 
 ### MVP First

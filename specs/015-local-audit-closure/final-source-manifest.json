@@ -1,5 +1,5 @@
 {
-  "scope": "Frozen source/test/executable scripts after T077\u2013T090. T088\u2013T090 change three test fixture files only; production and dependency configuration remain byte-identical to T087. Full T087 validation retains its archived identity; subsequent validation binds this manifest.",
+  "scope": "Frozen source/test/executable scripts after T077\u2013T091. Since T087 three test fixture corrections plus CI-only native host helper and its permanent regressions. ci.yml launcher changes are recorded in the extended configuration freeze. Production/dependencies/QEMU remain byte-identical to T087; hosted acceptance pending.",
   "files": [
     {
       "path": "cao_mcp_apps/src/agent/AgentView.tsx",
@@ -168,6 +168,10 @@
     {
       "path": "scripts/bump_version.py",
       "sha256": "260afe2d453d566ab1a68226b235a82eb378912e3207936a21b28a03e01735fd"
+    },
+    {
+      "path": "scripts/ci_native_work_host.py",
+      "sha256": "e7aa7659c2192b26a1b15c7bff6f126748c0f842e6d417766894ce13ea10e445"
     },
     {
       "path": "scripts/docker_install.py",
@@ -4802,6 +4806,10 @@
       "sha256": "06324428b1e383be97401cf74005e7d159a9c864b92ed1215123abb73b6eabab"
     },
     {
+      "path": "test/test_ci_native_work_host.py",
+      "sha256": "1629f7861cc163bdb4013dffdcd0f58fba1e6bebe992dd7a2ef26748d8f865ac"
+    },
+    {
       "path": "test/test_command_catalog_matches_click.py",
       "sha256": "8556712241eb1a5aab3b7ba48c0b5f2bd4ca5a996118acab2c17e67bcea734e7"
     },
@@ -5447,6 +5455,7 @@
     "cao_mcp_apps/src/test/integration.test.tsx",
     "cao_mcp_apps/src/test/mockHost.ts",
     "cao_mcp_apps/src/test/turn-recovery.test.tsx",
+    "scripts/ci_native_work_host.py",
     "src/cli_agent_orchestrator/clients/beads_work_schema.py",
     "src/cli_agent_orchestrator/clients/database.py",
     "src/cli_agent_orchestrator/clients/work_repository.py",
@@ -5466,6 +5475,7 @@
     "test/services/test_recovery_bundle.py",
     "test/services/test_wiki_lint.py",
     "test/services/test_work_process_supervisor.py",
+    "test/test_ci_native_work_host.py",
     "web/src/App.tsx",
     "web/src/api.ts",
     "web/src/auth.ts",
@@ -5506,13 +5516,24 @@
     "sha256": "74c64da609f1c71cae85c9b95e9ae1269b6c1a7de2039eb3129652ea22de243c"
   },
   "changed_since_t087": [
+    "scripts/ci_native_work_host.py",
     "test/agent_plugins/test_no_auto_grant.py",
+    "test/services/test_memory_gateway.py",
     "test/services/test_work_process_supervisor.py",
-    "test/services/test_memory_gateway.py"
+    "test/test_ci_native_work_host.py"
   ],
   "production_changes_since_t087": [],
   "previous_t089_manifest": {
     "commit": "3276454aea81030f99cb03cf6a21e621e5a17509",
     "sha256": "6e6a9aa0abf336f1f290bac0c4cbf6019a8d9d395d1443a83d58f1704ec06f87"
-  }
+  },
+  "previous_t090_manifest": {
+    "commit": "68b95bf5570ac4bff888f256d4e37ffe48d18baf",
+    "sha256": "64e6443b8b0523687c1e276cf97151d7a8c0497e05afe48cb59d5f06146b2e96"
+  },
+  "ci_control_changes_since_t090": [
+    ".github/workflows/ci.yml",
+    "scripts/ci_native_work_host.py",
+    "test/test_ci_native_work_host.py"
+  ]
 }
