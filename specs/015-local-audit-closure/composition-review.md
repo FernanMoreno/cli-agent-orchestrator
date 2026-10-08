@@ -1,6 +1,6 @@
 # Revisión de composición — spec 015
 
-Estado actual: **composición aprobada, publicación pendiente**. Las cinco selecciones completas actuales pasan sin fallos; el ratchet obligatorio de Python 3.12/MCP Apps pasa y el chequeo suplementario de cobertura de 3.14 falla, con sus resultados separados. La revisión focalizada final C-001–C-007 no tiene P1/P2 abierto. Las secciones históricas siguientes conservan sus fechas y alcance; los 16470 éxitos anteriores no representan la fuente final.
+Estado actual: **composición de producción aprobada; fixtures T088/T089 revisadas, aceptación global posterior en verificación**. Las cinco selecciones completas actuales pasan sin fallos; el ratchet obligatorio de Python 3.12/MCP Apps pasa y el chequeo suplementario de cobertura de 3.14 falla, con sus resultados separados. La revisión focalizada final C-001–C-007 no tiene P1/P2 abierto. Las secciones históricas siguientes conservan sus fechas y alcance; los 16470 éxitos anteriores no representan la fuente final.
 
 ## Superficie e invariantes
 
@@ -137,3 +137,9 @@ La revisión de cierre reconstruida verificó las fronteras C-001–C-007 contra
 La revisión independiente volvió a comprobar C-001–C-007 y la identidad de fuente final de 1358 archivos sin diferencias. Leídos los cinco posthash y JUnit completos, todos registran pytest exit 0, 16704 casos, cero fallos/errores y 1361 registros posteriores sin cambios. Los vecinos de autorización y observación de T087 también pasan en las selecciones completas, superando el diagnóstico intermitente anterior sin inventar su causa. `project-composition-check caos` e Import Linter ejecutados después de la matriz conservan cinco contratos y cero rotos (400 archivos, 1680 dependencias).
 
 La composición queda apta para commit, condicionada a revisar el índice final, enlaces, secretos, diff y publicación. Esta revisión es focalizada en las fronteras afectadas y no declara inspección exhaustiva línea a línea del diff acumulado. El gráfico histórico conserva su procedencia y se verificó contra fuentes actuales; no hay nueva dependencia entre subsistemas que exija regenerarlo. La evidencia durable se conserva en los artefactos mantenidos del spec; los perfiles y copias temporales se eliminan después de registrar sus resultados.
+
+## Fixtures de CI posteriores — T088/T089
+
+Graphify localizó WorkProcessSupervisor y create_terminal; las fuentes actuales confirmaron el preflight Kiro antes de reconciliar proyecciones y el probe exacto user/map-root/net/IPC/PID antes de Work. T088 sólo sustituye el preflight junto al proveedor ya simulado. T089 sólo aplica precondiciones a seis casos nativos y diferencia omisión conocida de errores de bootstrap. No cambia propiedad de estado, transacciones, eventos, APIs, autorización, esquema ni efectos de producción. Los fixtures reales conservan gating/identidad, cleanup, entorno y persistencia; los controles inesperados convierten un SKIP incorrecto en FAIL.
+
+La revisión independiente aprueba ambos fixes después de resolver dos P2. No se requiere extracción estructural nueva para dos archivos de pruebas: los hashes exactos y los contratos ejecutables conservan la identidad; los snapshots Graphify anteriores mantienen su alcance histórico. Resultados y omisiones separados en [evidencia de CI](final-ci-fixture-evidence.md); aceptación global posterior pendiente.

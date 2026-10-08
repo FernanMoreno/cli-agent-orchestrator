@@ -8,7 +8,6 @@ import json
 import multiprocessing
 import os
 import select
-import shutil
 import signal
 import socket
 import subprocess
@@ -35,6 +34,132 @@ from cli_agent_orchestrator.services.work_service import (
     DeliveryUncertain,
     WorkService,
 )
+
+
+def _require_native_work_namespaces(supervisor: WorkProcessSupervisor) -> str:
+    """Preflight native proofs without hiding unrelated launcher regressions."""
+    try:
+        return supervisor._require_capabilities()
+    except WorkProcessIsolationUnavailable as exc:
+        message = str(exc)
+        missing_capability = message in {
+            "Linux PID, network, and IPC namespaces are required to contain Work",
+            "this Python/Linux host lacks pidfd_open or pidfd_send_signal",
+            "this host lacks the close-on-exec startup gate",
+            "an executable util-linux unshare command is required for PID namespaces",
+        }
+        diagnostic = message.partition("; ")[2]
+        denied_namespace = message.startswith(
+            "rootless user/network/IPC/PID namespace probe failed before work launch: exit=1; "
+        ) and diagnostic in {
+            "unshare: unshare failed: Operation not permitted",
+            "unshare: unshare failed: Permission denied",
+            "unshare: write failed /proc/self/uid_map: Operation not permitted",
+            "unshare: write failed /proc/self/uid_map: Permission denied",
+            "unshare: write failed /proc/self/gid_map: Operation not permitted",
+            "unshare: write failed /proc/self/gid_map: Permission denied",
+        }
+        if not (missing_capability or denied_namespace):
+            raise
+        pytest.skip(f"host cannot run the required Work namespaces: {exc}")
+
+
+@pytest.fixture
+def native_work_namespaces() -> str:
+    return _require_native_work_namespaces(WorkProcessSupervisor())
+
+
+@pytest.fixture
+def namespace_probe_prerequisites() -> None:
+    """Omit only executable-double probes whose host cannot reach subprocess.run."""
+    if not work_process_supervisor.sys.platform.startswith("linux"):
+        pytest.skip("executable namespace guard probes require Linux")
+    try:
+        WorkProcessSupervisor._require_pidfd_support()
+    except WorkProcessIsolationUnavailable as exc:
+        pytest.skip(f"executable namespace guard probes unavailable: {exc}")
+    if not hasattr(os, "pipe2"):
+        pytest.skip("executable namespace guard probes require pipe2")
+
+
+@pytest.mark.parametrize(
+    "diagnostic",
+    [
+        "unshare: write failed /proc/self/uid_map: Operation not permitted",
+        "unshare: unshare failed: Permission denied",
+    ],
+)
+def test_native_namespace_guard_skips_denied_real_probe(
+    tmp_path, diagnostic, namespace_probe_prerequisites
+):
+    arguments = tmp_path / "probe-arguments.json"
+    unshare = tmp_path / "unshare"
+    unshare.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        f"Path({str(arguments)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+        f"sys.stderr.write({diagnostic!r} + '\\n')\n"
+        "sys.exit(1)\n",
+        encoding="utf-8",
+    )
+    unshare.chmod(0o755)
+
+    with pytest.raises(pytest.skip.Exception, match="host cannot run the required Work namespaces"):
+        _require_native_work_namespaces(WorkProcessSupervisor(unshare_path=str(unshare)))
+
+    command = json.loads(arguments.read_text(encoding="utf-8"))
+    assert command[:8] == [
+        "--user",
+        "--map-root-user",
+        "--net",
+        "--ipc",
+        "--pid",
+        "--fork",
+        "--kill-child=SIGKILL",
+        "--",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("diagnostic", "returncode"),
+    [
+        ("synthetic bootstrap regression", 1),
+        ("unshare: unexpected runtime failure", 1),
+        ("unshare: failed to execute /broken/python: Permission denied", 126),
+        ("unshare: failed to execute /broken/python: Permission denied", 1),
+        ("unshare: write failed /proc/self/uid_map: Operation not permitted", 126),
+    ],
+)
+def test_native_namespace_guard_does_not_skip_unexpected_probe_failure(
+    tmp_path, diagnostic, returncode, namespace_probe_prerequisites
+):
+    unshare = tmp_path / "unshare"
+    unshare.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        f"sys.stderr.write({diagnostic!r} + '\\n')\n"
+        f"sys.exit({returncode})\n",
+        encoding="utf-8",
+    )
+    unshare.chmod(0o755)
+
+    with pytest.raises(WorkProcessIsolationUnavailable, match=diagnostic):
+        try:
+            _require_native_work_namespaces(WorkProcessSupervisor(unshare_path=str(unshare)))
+        except pytest.skip.Exception as exc:
+            pytest.fail(f"unexpected probe failure was skipped: {exc}")
+
+
+def test_native_namespace_guard_does_not_skip_unexpected_runtime_error(monkeypatch):
+    supervisor = WorkProcessSupervisor()
+
+    def broken_probe():
+        raise RuntimeError("unexpected probe regression")
+
+    monkeypatch.setattr(supervisor, "_require_capabilities", broken_probe)
+    with pytest.raises(RuntimeError, match="unexpected probe regression"):
+        _require_native_work_namespaces(supervisor)
 
 
 def _wait_for_json(path: Path, timeout: float = 5.0) -> dict[str, int]:
@@ -612,6 +737,7 @@ def _cleanup_partial_attempt_with_reattach_fallback(
 
 def test_terminate_waits_for_setsid_double_fork_descendants_to_disappear(
     tmp_path: Path,
+    native_work_namespaces: str,
 ) -> None:
     """A detached grandchild must be gone before the attempt reports TERMINATED."""
     marker = tmp_path / "tree.json"
@@ -689,6 +815,7 @@ while True:
 
 def test_uncertain_cleanup_blocks_start_until_explicit_reconciliation(
     tmp_path: Path,
+    native_work_namespaces: str,
 ) -> None:
     supervisor = WorkProcessSupervisor()
     attempt = None
@@ -713,7 +840,10 @@ def test_uncertain_cleanup_blocks_start_until_explicit_reconciliation(
         _cleanup_started_attempt(supervisor, attempt)
 
 
-def test_wait_reconciles_uncertain_attempt_after_natural_exit(tmp_path: Path) -> None:
+def test_wait_reconciles_uncertain_attempt_after_natural_exit(
+    tmp_path: Path,
+    native_work_namespaces: str,
+) -> None:
     """A later monitor/pidfd observation can resolve uncertainty without a signal."""
     allow_exit = tmp_path / "allow-exit"
     result = tmp_path / "natural-result.txt"
@@ -1782,13 +1912,11 @@ def test_reattach_rejects_v1_identity_with_typed_t097_cleanup_gate() -> None:
 
 
 def test_start_keeps_command_gated_when_unshare_omits_network_and_ipc_namespaces(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path,
+    monkeypatch,
+    native_work_namespaces: str,
 ) -> None:
-    if not sys.platform.startswith("linux"):
-        pytest.skip("Work namespace verification requires Linux")
-    real_unshare = shutil.which("unshare")
-    if real_unshare is None:
-        pytest.skip("executable unshare is unavailable")
+    real_unshare = native_work_namespaces
 
     wrapper = tmp_path / "unshare-without-network-ipc"
     wrapper.write_text(
@@ -1816,7 +1944,11 @@ def test_start_keeps_command_gated_when_unshare_omits_network_and_ipc_namespaces
         _cleanup_started_attempt(supervisor, attempt)
 
 
-def test_worker_does_not_inherit_server_environment(tmp_path: Path, monkeypatch) -> None:
+def test_worker_does_not_inherit_server_environment(
+    tmp_path: Path,
+    monkeypatch,
+    native_work_namespaces: str,
+) -> None:
     key = "CAO_T097_CANARY_SECRET"  # gitleaks:allow
     monkeypatch.setenv(key, "server-secret-must-not-reach-worker")
     report = tmp_path / "worker-environment.txt"
@@ -1857,6 +1989,7 @@ def test_worker_cannot_receive_an_unchecked_environment_mapping(tmp_path: Path) 
 
 def test_restart_preserves_uncertain_work_and_pending_cleanup_without_redelivery(
     tmp_path: Path,
+    native_work_namespaces: str,
 ) -> None:
     """A restarted service cannot replay or claim cleanup without a reattach handle."""
     repository_path = tmp_path / "work.sqlite3"

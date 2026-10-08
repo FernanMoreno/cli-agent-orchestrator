@@ -12,7 +12,7 @@ description: "Dependency-ordered tasks for closing local CAO audit gaps"
 
 **Organization**: Las tareas siguen las historias del spec. Los specs 009–013 conservan los contratos detallados de cada dominio.
 
-**Estado de ejecución**: los controles se acreditan en `implementation-evidence.md`. Marcar una tarea de ejecución y registro no convierte un gate fallido en aprobado: el control global de tipos bloquea el cierre completo y la publicación.
+**Estado de ejecución**: los controles históricos se acreditan en `implementation-evidence.md` y el cierre actual en [integración final](final-integration-evidence.md). El bloqueo global de tipos quedó resuelto. Marcar una tarea de ejecución y registro no convierte un gate fallido u omitido en aprobado; el diagnóstico suplementario de cobertura de Python 3.14 y las cuentas no disponibles conservan sus resultados explícitos.
 
 ## Phase 1: Setup
 
@@ -258,6 +258,10 @@ se registra con su evidencia; nunca se transforma en aprobación.
 - [X] T086 Observar el fin de la transacción de reintento antes del cierre del journal y exigir el cierre después, conservando comparación de autorización durable y estado/contador; reproducir el acceso inválido actual y repetir matriz, per FR-003–006/FR-010–012/T080/T069.
 
 - [X] T087 Esperar de forma acotada la observabilidad del entorno del hijo real antes de verificar el canal privado de credenciales; reproducir lecturas transitorias vacías, rechazar entorno sin FD, credencial expuesta y proceso salido; conservar la barrera previa a efectos Work y repetir la matriz congelada, per FR-005–006/FR-009–012/T069/T076.
+
+- [X] T088 Hacer autocontenida la fixture de lanzamiento nativo de plugins cuando sustituye el proveedor Kiro; reproducir ausencia de kiro-cli sin instalarlo ni omitir casos, usar el seam de capacidades existente sólo en esa fixture, conservar rechazo de bytes alterados y éxito sin concesión, per FR-014/FR-016–018/T069/T072.
+
+- [X] T089 Comprobar la capacidad real user/net/IPC/PID antes de seis regresiones nativas Work que dependían sólo del ejecutable unshare; reproducir uid_map denegado, distinguir omisión por capacidad de fallos inesperados, conservar todas las aserciones de aislamiento y aceptación obligatoria en QEMU, y repetir los controles afectados, per FR-018/T069/T070/T072.
 
 ## Implementation Strategy
 

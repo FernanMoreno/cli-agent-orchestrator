@@ -519,6 +519,9 @@
   "notes": [
     "Compatibility uses full pytest EOF/JUnit/source identity for each version. The additional per-version raw 87% floor was a temporary runner check, not a CI matrix requirement.",
     "Python3.14 supplemental floor failed with wrapper exit1; its passing pytest exit0 is a separate fact.",
-    "Logs and temporary snapshots are disposable. This sanitized result and its hashes remain after their cleanup."
-  ]
+    "Logs and temporary snapshots are disposable. This sanitized result and its hashes remain after their cleanup.",
+    "T088/T089 fixture-only corrections are recorded separately in final-ci-fixture-evidence.md; these five completed runs retain the T087 identity and are not represented as rerun against the new test bytes."
+  ],
+  "validation_identity": "Historical full local T087 matrix, preserved byte-equivalent source archive; T088/T089 change two CI fixtures only and have separate later evidence.",
+  "public_source_manifest_path": "final-source-manifest-t087.json"
 }

@@ -1,4 +1,4 @@
-# Final integration candidate — 2026-10-07
+# Final integration and fork publication — 2026-10-08
 
 The user authorized completion, reviewed commits and a non-force push to
 `main` of `FernanMoreno/cli-agent-orchestrator`. The isolated candidate branch
@@ -15,8 +15,7 @@ source manifests. Existing tracked historical artifacts remain in the tree.
 The original workspace and unrelated work are preserved. Captured provider
 fixtures intentionally retain their ANSI, CRLF and trailing-space bytes.
 
-The [source manifest](final-source-manifest.json) binds 1,358 source/test/executable-script files
-by SHA-256. The fresh Python snapshots additionally verified the project
+The [current source manifest](final-source-manifest.json) binds 1,358 source/test/executable-script files by SHA-256 after T088/T089. The [T087 archive](final-source-manifest-t087.json) binds the completed prior local matrix; only two CI fixture files differ, with production/configuration byte-identical. The fresh Python snapshots additionally verified the project
 manifest, lock and CI workflow: 1,361 files each. The historical T080 diagnostic snapshots contained 1,338 files and reproduced the T081 fixture issue. Their temporary copies and raw logs are no longer available after environment cleanup. The baseline Python
 attempts failed or were interrupted; they are retained as diagnostic history
 and cannot substitute for successful final runs.
@@ -93,13 +92,11 @@ passed acceptance.
 
 ## Publication status
 
-Commits and push await completion of the final Python matrix, the joint
-coverage ratchet and final candidate verification. Remote CI results must
-refer to the exact published SHA.
+El push normal HTTPS terminó con exit 0 y la lectura remota confirmó `main` en `71156b2108f71e42020581dce50e14510e5c66c1`. El hook completo aprobó 16523 casos, omitió 74 y aprobó los controles JIT/tamaño. El perfil temporal de esa ejecución se eliminó tras guardar su resultado. CI remoto está en ejecución sobre ese SHA; aún no se presenta como aprobado. El historial y los resultados definitivos se mantienen en [verificación del fork](final-fork-publication-evidence.md).
 
 The managed server fixture also binds HOME and CAO_HOME_DIR together while
 preserving explicit overrides. Real child-process regression and the original
-HTTP refusal case passed; full matrix acceptance remains pending. See
+HTTP refusal case passed, followed by the five successful whole-matrix selections. See
 [fixture profile evidence](final-fixture-profile-evidence.md).
 
 Remote-channel cancellation now survives simultaneous send/result completion
@@ -108,7 +105,7 @@ parser fallback. See [runtime compatibility](final-runtime-compatibility-evidenc
 
 A subsequent Python 3.14 SQLite-build fixture finding is corrected without
 altering production credential redaction; see [deleted-byte fixture proof](final-sqlite-fixture-evidence.md).
-The historical T083 snapshot is preserved in `final-source-manifest-t083.json`. The current linked source manifest binds T077–T087; the reconstructed full matrix completed successfully against that freeze. No commit or publication has occurred.
+The historical T083 snapshot is preserved in `final-source-manifest-t083.json`. The archived T087 manifest binds the reconstructed completed local matrix; the current manifest includes the two later fixture corrections. The implementation is committed and published; see the publication status above.
 
 The Python 3.10 native parser crash is guarded before AST construction, with
 intentional statement/f-string complexity limits and large benign controls;
@@ -118,24 +115,28 @@ transaction completion before closure and enforce closure afterward; see
 
 ## Recovered validation environment
 
-The original workspace retained all maintained changes after temporary native copies and logs were removed. The reconstructed candidate uses the same baseline and filtered publication scope. The final 1,358-file source freeze SHA-256 is `74c64da609f1c71cae85c9b95e9ae1269b6c1a7de2039eb3129652ea22de243c`; original and candidate have zero differences. Historical recorded results remain scoped to their stated identities; missing raw files cannot be reinspected. New temporary profiles, test copies and scanner exports will be removed after results are recorded, as requested.
+The original workspace retained all maintained changes after temporary native copies and logs were removed. The reconstructed candidate uses the same baseline and filtered publication scope. The historical T087 1,358-file source freeze SHA-256 is `74c64da609f1c71cae85c9b95e9ae1269b6c1a7de2039eb3129652ea22de243c`; original and candidate had zero differences at that validation. The current fixture-only freeze and its two changed paths are recorded separately. Historical recorded results remain scoped to their stated identities; missing raw files cannot be reinspected. New temporary profiles, test copies and scanner exports will be removed after results are recorded, as requested.
 
 T087 keeps the private-FD barrier strict while waiting for transient empty child environment observation; see [the regression evidence](final-private-fd-evidence.md). Final sanitized diagnostics passed all six targeted cases; one unchanged native-history neighbor failed intermittently and passed on isolated retry. Acceptance relies on the fresh whole matrix, not that retry.
 
 ## Cobertura conjunta aceptada de la fuente final
 
-La selección completa Python 3.12 terminó con 16604 PASS, 100 SKIP y cero fallos. Su informe individual produce 87.1310926894555% de cobertura; SHA-256 del JSON `b7fc06fd1e8e47b8228cef3bcf2a5478763cee86a148c0ec70405b9a8ddb5590`. El ratchet real terminó con exit 0: Python **87.13% ≥87.00%** y MCP Apps **90.01% ≥90.00%**, usando ambos informes presentes y sin cambiar mínimos. El posthash verifica 1361 fuentes/configs sin diferencias. Las otras cuatro versiones también completaron la selección; los cinco informes se presentan por separado. Commits y publicación siguen pendientes.
+La selección completa Python 3.12 terminó con 16604 PASS, 100 SKIP y cero fallos. Su informe individual produce 87.1310926894555% de cobertura; SHA-256 del JSON `b7fc06fd1e8e47b8228cef3bcf2a5478763cee86a148c0ec70405b9a8ddb5590`. El ratchet real terminó con exit 0: Python **87.13% ≥87.00%** y MCP Apps **90.01% ≥90.00%**, usando ambos informes presentes y sin cambiar mínimos. El posthash verifica 1361 fuentes/configs sin diferencias. Las otras cuatro versiones también completaron la selección; los cinco informes se presentan por separado. Commits y push ya se comprobaron; la verificación de CI remoto continúa.
 
 ## Cierre de compatibilidad y composición
 
-Las cinco selecciones completas de CI terminaron con pytest exit 0 y cero fallos/errores en los JUnit de 16704 casos por versión: 3.10 y 3.11 registran 16603 PASS/101 SKIP; 3.12, 3.13 y 3.14 registran 16604 PASS/100 SKIP. Los cinco posthash verifican 1361 registros sin diferencias; la fuente final sigue vinculada a `74c64da609f1c71cae85c9b95e9ae1269b6c1a7de2039eb3129652ea22de243c`.
+Las cinco selecciones locales completas T087 equivalentes a CI terminaron con pytest exit 0 y cero fallos/errores en los JUnit de 16704 casos por versión: 3.10 y 3.11 registran 16603 PASS/101 SKIP; 3.12, 3.13 y 3.14 registran 16604 PASS/100 SKIP. Los cinco posthash verifican 1361 registros sin diferencias; la fuente T087 validada queda vinculada a `74c64da609f1c71cae85c9b95e9ae1269b6c1a7de2039eb3129652ea22de243c` y a su manifiesto archivado.
 
 El ratchet obligatorio real usa Python 3.12, como CI, y aprueba 87.1310926894555% frente a 87% y MCP Apps 90.01% frente a 90%. Python 3.14 midió 86.98323713788628% y falló el chequeo adicional por versión del runner temporal; se conserva ese fallo diagnóstico. CI no exige cinco ratchets y no se han cambiado mínimos, exclusiones ni selección. El análisis identificó 801 sentencias menos en el denominador por la medición de anotaciones de Python 3.14.
 
-Después de completar la matriz se repitió `project-composition-check caos`: exit 0, cinco contratos conservados y cero rotos. Las omisiones por capacidades/cuentas siguen documentadas. El cierre de publicación continúa pendiente del commit, hook normal de push, SHA remoto y resultados reales de CI.
+Después de completar la matriz se repitió `project-composition-check caos`: exit 0, cinco contratos conservados y cero rotos. Las omisiones por capacidades/cuentas siguen documentadas. El commit, hook normal de push y SHA remoto ya se comprobaron; los resultados reales de CI se registran por separado.
 
 La comprobación de seguridad actual del árbol congelado y sus locks está en [evidencia de sandbox y seguridad](final-sandbox-security-evidence.md); los resultados históricos mantienen sus identidades anteriores.
 
-T072 queda completada tras la revisión del diff, el índice seleccionado, los 482 enlaces Markdown y los scanners reales del árbol congelado. T073 queda pendiente hasta verificar publicación y CI; no se acredita ningún push todavía.
+T072 queda completada tras la revisión del diff, el índice seleccionado, los 482 enlaces Markdown y los scanners reales del árbol congelado. T073 conserva su estado pendiente hasta incorporar los resultados de CI; el push HTTPS ya está acreditado.
 
-El primer commit y el hook completo pasan, pero el primer transporte SSH falla sin publicar; el estado preciso se conserva en [verificación del fork](final-fork-publication-evidence.md). T073 sigue pendiente.
+El primer transporte SSH falló después de aprobar el hook. Un intento HTTPS posterior completó el push; ambos resultados se conservan con su alcance en [verificación del fork](final-fork-publication-evidence.md).
+
+## Correcciones posteriores de fixtures de CI
+
+El primer backend remoto de MCP Apps registró 8 FAIL/16569 PASS/127 SKIP en ubuntu-latest. T088 volvió autocontenida la fixture del proveedor Kiro simulado (134 PASS), y T089 comprobó precondiciones reales antes de seis casos nativos (91 PASS; denegación: 12 PASS/6 SKIP). La revisión independiente encontró y corrigió dos P2 en la clasificación de denegaciones/prerequisitos; ambos quedaron ADDRESSED sin P1/P2 abierto. Producción, configuración, locks y aceptación QEMU permanecen sin cambios. La fuente actual se liga a `6e6a9aa0abf336f1f290bac0c4cbf6019a8d9d395d1443a83d58f1704ec06f87`; los informes previos conservan la identidad T087. Véase [evidencia de fixtures CI](final-ci-fixture-evidence.md). El hook completo y CI posteriores se comprobarán antes del cierre; no se presenta el CI inicial fallido como aprobado.

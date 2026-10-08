@@ -1,5 +1,5 @@
 {
-  "scope": "Frozen source/test/executable scripts after T077\u2013T089. T088/T089 change two CI fixture files only; production and dependency configuration remain byte-identical to T087. Full T087 validation retains its archived identity; subsequent validation binds this manifest.",
+  "scope": "Frozen final source/test and executable-script files after T077\u2013T087, including resource ownership, peer keys, profile isolation, cancellation, Python compatibility, safe parser preflight, SQLite observers and bounded private-FD observation. Matrix additionally binds project, lock and CI configuration.",
   "files": [
     {
       "path": "cao_mcp_apps/src/agent/AgentView.tsx",
@@ -1931,7 +1931,7 @@
     },
     {
       "path": "test/agent_plugins/test_no_auto_grant.py",
-      "sha256": "7e852f9c7a437b46ed22ecdaeaa6acd649d6dcec797c9064e16707f5d75987d8"
+      "sha256": "eedf4c868c8d8b54586abd3e31a4d1932a1e5e64c3f86c8e8e2c14687904f451"
     },
     {
       "path": "test/agent_plugins/test_packaged_mcp_server.py",
@@ -4535,7 +4535,7 @@
     },
     {
       "path": "test/services/test_work_process_supervisor.py",
-      "sha256": "54be52ce2e555db5f32280967a04dcc548343bec8a4494f001b60285daf8bb64"
+      "sha256": "865ecf535f65f0976d4d690b738f39921bee7975877b16f6ed9d93b5d18a0817"
     },
     {
       "path": "test/services/test_work_process_supervisor_fds.py",
@@ -5454,7 +5454,6 @@
     "src/cli_agent_orchestrator/services/local_peer_identity.py",
     "src/cli_agent_orchestrator/services/work_origin.py",
     "src/cli_agent_orchestrator/services/work_service.py",
-    "test/agent_plugins/test_no_auto_grant.py",
     "test/api/test_scope_coverage.py",
     "test/clients/test_startup_connection_ownership.py",
     "test/clients/test_tmux_session_exists_strict.py",
@@ -5500,14 +5499,5 @@
     "web/src/test/work-state.test.tsx",
     "web/src/test/workflow-plan-review.test.tsx",
     "web/src/test/workflow-plan-reviewer.test.tsx"
-  ],
-  "previous_t087_manifest": {
-    "path": "final-source-manifest-t087.json",
-    "sha256": "74c64da609f1c71cae85c9b95e9ae1269b6c1a7de2039eb3129652ea22de243c"
-  },
-  "changed_since_t087": [
-    "test/agent_plugins/test_no_auto_grant.py",
-    "test/services/test_work_process_supervisor.py"
-  ],
-  "production_changes_since_t087": []
+  ]
 }

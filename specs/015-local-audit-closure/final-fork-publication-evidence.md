@@ -14,9 +14,9 @@ El transporte SSH registró `Connection to github.com closed by remote host` dur
 
 La sesión GitHub vigente corresponde a `FernanMoreno`. La lectura autenticada por HTTPS confirmó el mismo SHA del fork. El siguiente intento usará HTTPS con el credential helper oficial de gh, conservando el remote origin SSH y el hook normal; el cambio de transporte evita mantener una conexión SSH abierta durante la suite larga. No se introducen tokens en comandos ni artefactos.
 
-## Estado de cierre
+## Estado anterior al push aprobado
 
-La publicación, el SHA final remoto y los resultados reales de CI permanecen pendientes. T073 no está acreditada todavía. Los perfiles temporales se retiran sólo después del EOF de sus procesos y de conservar los resultados; las regresiones mantenidas no se eliminan.
+En ese momento, la publicación, el SHA final remoto y los resultados reales de CI permanecían pendientes. T073 no está acreditada todavía. Los perfiles temporales se retiran sólo después del EOF de sus procesos y de conservar los resultados; las regresiones mantenidas no se eliminan.
 
 ## Segundo intento HTTPS interrumpido por recursos
 
@@ -25,3 +25,15 @@ La prueba del hook volvió a ejecutar la selección normal con perfiles privados
 Resultado parcial: **9667 passed, 66 skipped, 49 warnings en 2501.61 s**, pytest interrumpido y push exit 1. Este intento **no constituye aprobación**, no llegó a los controles posteriores y no publicó cambios: el fork seguía en el SHA base. SHA-256 del log: `5677f10dc6d4d14406530b33641bd0fb6098c3d6265dd7bd52d84bc476f6d735`. El posthash verifica 1361 registros de fuente/configuración sin diferencias.
 
 El perfil temporal de este intento se retira tras confirmar EOF y registrar esta evidencia. Para reducir el consumo, el siguiente intento se prepara con un solo worker real, conservando la misma selección, el aislamiento antes de importar y el hook normal. El inicio depende de observar memoria disponible suficiente; no se omiten pruebas ni se cambia el producto para resolver una limitación externa de RAM.
+
+## Interrupciones posteriores del entorno
+
+El intento HTTPS con un solo worker terminó con exit 143 al 32 %, sin resumen final de pytest; la causa de la señal no quedó establecida y el monitor no envió señales. SHA-256 del log: `768dededacf0a4adbb89bb97c6b0b121deda147dd5ff5dea73f89aba21cf8eca`. Un intento independiente posterior quedó sin procesos ni exit final tras reiniciarse el entorno a las 10:35:22 del 8 de octubre (Europe/Madrid); su log terminaba al 0 % a las 05:11:21, SHA-256 `d3213528b55c35cc74f756bc68f5454dc3a71203f4545e2c618dd1d25d4dc091`. Ninguno acredita aceptación ni publicación; los perfiles inactivos se eliminaron después de conservar los resultados.
+
+## Push HTTPS aprobado
+
+El push no forzado terminó con **exit 0**. El hook normal completo registró **16523 passed, 74 skipped, 81 warnings en 3966.67 s**, JIT limpio en cuatro archivos y los cuatro presupuestos gzip aprobados (49.4/49.4/48.5/86.6 KB). SHA-256 del log: `eb36e88efdd3e0e22363947be9a49f8009cf59dce5fe6956e535050d06c668af`. El posthash conservó los 1361 registros sin diferencias. No se omitieron hooks, casos ni controles.
+
+La lectura independiente de `refs/heads/main` confirmó `71156b2108f71e42020581dce50e14510e5c66c1` en `FernanMoreno/cli-agent-orchestrator`. El perfil temporal se eliminó inmediatamente tras conservar el resultado y comprobar cero procesos propios activos. CI remoto se está comprobando sobre ese SHA; un estado en ejecución no se acredita como aprobado.
+
+La aceptación remota [T097 en QEMU](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/37760286549) terminó con success sobre ese mismo SHA: **8 passed en 288.27 s**, sin omisiones en el resumen de pytest. SHA-256 del log de GitHub: `d82675af76477545a76b4bdad25d9f811e4a094114a14cb4f37625ec5e66c1e9`. El archivo temporal descargado se eliminó inmediatamente después de extraer el resultado; el log remoto conserva la evidencia original.

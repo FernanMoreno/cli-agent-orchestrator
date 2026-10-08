@@ -1,3 +1,7 @@
+# Alcance actual de este informe
+
+La tabla completa siguiente corresponde a la fuente local T087, conservada en [su manifiesto](final-source-manifest-t087.json). T088/T089 corrigen dos fixtures descubiertas en ubuntu-latest y conservan producción/configuración; sus pruebas y la aceptación posterior se registran en [la evidencia de CI](final-ci-fixture-evidence.md). No se presenta la matriz histórica como repetida sobre bytes de pruebas diferentes.
+
 # Validación final de la matriz Python 3.10–3.14
 
 **Compatibilidad aprobada en las cinco versiones:** cada selección completa de CI terminó con pytest exit 0, JUnit sin fallos ni errores y 1361 hashes posteriores sin diferencias. El informe obligatorio de cobertura de Python 3.12 supera el mínimo del 87%. **El control suplementario del wrapper para Python 3.14 falla:** 86.98323713788628% y wrapper exit 1; se conserva ese resultado sin presentar el redondeo como aprobación.

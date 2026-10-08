@@ -753,6 +753,7 @@ async def test_us5_fresh_native_launch_cannot_scan_changed_plugin(
 
     from cli_agent_orchestrator.agent_plugins.installer import enable, review_installed
     from cli_agent_orchestrator.models.agent_profile import AgentProfile
+    from cli_agent_orchestrator.providers.kiro_capabilities import KiroCapabilities
     from cli_agent_orchestrator.services.terminal_service import create_terminal
     from cli_agent_orchestrator.utils.opencode_config import ensure_skills_symlink
 
@@ -812,6 +813,19 @@ async def test_us5_fresh_native_launch_cannot_scan_changed_plugin(
     ]
     with ExitStack() as stack:
         mocks = {name: stack.enter_context(patch(seam + name)) for name in names}
+        if native_provider == "kiro_cli":
+            # The provider is fake, so its earlier wrapper preflight must also
+            # be independent of a locally installed/authenticated Kiro CLI.
+            stack.enter_context(
+                patch(
+                    seam + "probe_kiro_capabilities",
+                    return_value=KiroCapabilities(
+                        version="2.13.0",
+                        flags=frozenset({"--agent-engine", "--agent", "--trust-all-tools"}),
+                        agent_engines=frozenset({"v2"}),
+                    ),
+                )
+            )
         backend = stack.enter_context(patch("cli_agent_orchestrator.backends.registry._backend"))
         backend.session_exists.return_value = False
         mocks["generate_terminal_id"].return_value = "test1234"
