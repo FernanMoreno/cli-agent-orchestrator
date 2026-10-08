@@ -230,7 +230,7 @@ se registra con su evidencia; nunca se transforma en aprobación.
 - [X] T070 Ejecutar aceptación real Docker/Bubblewrap y controles de aislamiento, dispositivos, shells y gitleaks disponibles; provisionar únicamente runners/herramientas revisados y documentar límites del host, per FR-018/SC-010/T054–T056.
 - [X] T071 Revisar autenticación/modelos de todos los adaptadores reales y ejecutar las celdas utilizables con hogares privados; observar cuota sólo con una ventana explícita y acotada, registrar proveedores y escenarios bloqueados, per FR-009/FR-014/T040/T044.
 - [X] T072 Revisar el candidato de publicación, contratos, secretos, arquitectura, tipos y suites de clientes/Rust; comprobar enlaces, diff y evidencia antes de integrar, per FR-013/FR-015/FR-018/T038/T043/T056/T064.
-- [ ] T073 Crear commits revisables del estado validado, integrar sin reescribir historial y hacer push no forzado a `origin/main`; verificar el SHA remoto y registrar resultados de CI, según autorización expresa del usuario.
+- [X] T073 Crear commits revisables del estado validado, integrar sin reescribir historial y hacer push no forzado a `origin/main`; verificar el SHA remoto y registrar resultados de CI, según autorización expresa del usuario.
 
 - [X] T074 Corregir dependencias vulnerables con versiones compatibles y locks mínimos; reproducir el gate Trivy exacto, comprobar builds y conservar severidades/política, per FR-018/T072.
 - [X] T075 Eliminar la dependencia del reloj real en la regresión Web de expiración del ticket tras aprobación; conservar la caducidad de producción y las aserciones de rechazo, per FR-008/T072.
@@ -265,8 +265,8 @@ se registra con su evidencia; nunca se transforma en aprobación.
 
 - [X] T090 Aislar la autoridad local de la fixture MCP memory del shim global E2E; reproducir el desajuste de aliases después del parche de puerto, preservar destino explícito, bearer y rechazo de bypass local, y verificar vecinos, per FR-007–009/T069/T072.
 
-- [ ] T091 Resolver el fallo real del ratchet en el runner CI sin bajar mínimos ni excluir cobertura; diagnosticar las capacidades nativas y conservar la aceptación real/denegación fail-closed, per FR-018/T069/T072/T073.
-- [ ] T092 [US4] Corregir tras RED la identificación del launcher delegado en test/test_cao_contributing_skill_accuracy.py; conservar unicidad/flags/negativos, revisión independiente y validación completa posterior.
+- [X] T091 Resolver el fallo real del ratchet en el runner CI sin bajar mínimos ni excluir cobertura; diagnosticar las capacidades nativas y conservar la aceptación real/denegación fail-closed, per FR-018/T069/T072/T073.
+- [X] T092 [US4] Corregir tras RED la identificación del launcher delegado en test/test_cao_contributing_skill_accuracy.py; conservar unicidad/flags/negativos, revisión independiente y validación completa posterior.
 - [X] T093 [US4] Acotar los IDs del parametrizador Docker de payloads inválidos tras medir el nodeid real; mantener sus tres datos/aserciones y verificar recolección/verbose/vecinos sin atribuir todavía la cancelación CI.
 
 ## Implementation Strategy

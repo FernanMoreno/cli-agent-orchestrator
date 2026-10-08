@@ -73,3 +73,38 @@ Una recolección real, sin ejecutar pruebas, encontró 16814 casos y un nodeid d
 Después, los tres IDs miden 109–113 bytes; los tres casos verbose y sus vecinos pasan (92 PASS, 6.16 s, output 13205 bytes). La revisión independiente declara spec PASS/quality Approved, sin P1/P2. Fuente SHA-256 `841a86d74bc31c67695bde560b9e43e7080f1ae9e71ac89753641458a8811a5b`. La recolección completa posterior vuelve a registrar exactamente 16814 casos, exit 0, 1842448 bytes de IDs totales y máximo 10089 bytes. No acredita ejecución de la suite completa ni demuestra causalidad de las cancelaciones antiguas.
 
 La fuente final T093 contiene 1363 registros, incluidos los tres documentos canónico/distribuidos, manifiesto SHA-256 `b0b5836af7ff40a0ddd18d9bf0d238961cce6827130dc3cad902a313c6a7bcaa`; freeze ampliado 1366, SHA-256 `6d58e988dc885a83c720ae19a6fd705f9d954876fe697ad95570f08313fdc174`. Código runtime, dependencias y QEMU conservan los bytes T087; cambia el launcher CI, controles de pruebas y documentación distribuida. Los artefactos wheel históricos conservan su identidad anterior; la paridad de documentos actual no atribuye esos binarios a la fuente nueva. Todos los perfiles de recolección/ejecución se eliminaron inmediatamente después de registrar resultados. Hook completo y CI del SHA nuevo siguen pendientes.
+
+El hook completo posterior T093 confirma 16633 PASS/74 SKIP/93 warnings en 2933.23 s, JIT/tamaño aprobados y push exit 0 a `0bacd89a2f1e59a4eea792da140eaa45cd5d3cd0`; ver [recibo de publicación](final-fork-publication-evidence.md). Los 1366 posthash coinciden; perfil y log eliminados. T092 queda verificado también en suite completa; T091 mantiene pendiente la aceptación hospedada/floors 87+90 y QEMU del nuevo SHA.
+
+## Primer recibo hospedado T093: Python 3.13
+
+Job 113450117535 del CI 37817604297 termina success sobre `0bacd89a2f1e59a4eea792da140eaa45cd5d3cd0`: CPython real **3.13.16**, **16703 PASS/111 SKIP/23 deselected/1602 warnings en 2939.00 s**. El runner declara Ubuntu 24.04/kernel 6.17.0-1022-azure/UID 1001, image ubuntu24/20261004.327.1. Helper observa AppArmor userns=1 y probe real FAIL con uid_map EPERM; tras el único cambio 1→0, final_probe PASS; JUnit acredita **38 supervisor PASS/0 SKIP**, incluidos los seis requeridos. Al terminar observa restauración 0→1 verificada. Esto prueba el before/after de ese host; no atribuye el antiguo timeout a AppArmor o al nodeid.
+
+SHA-256 del log GitHub `26df720ba55f2f37020c5999bfce02bcc1c7071dae68ee21c38e9c9a00b939c5`; descarga temporal eliminada tras extraer el recibo. Las otras cuatro versiones y el ratchet conjunto siguen pendientes.
+
+## Ratchet hospedado T093 aprobado
+
+Job 113450117380 del mismo SHA/CI termina success, CPython real **3.12.15**: **16703 PASS/111 SKIP/23 deselected/52 warnings en 3676.35 s**. Probe inicial uid_map EPERM con AppArmor=1; preparación observada 1→0; probe final real PASS; **38 supervisor PASS/0 SKIP**, incluidos seis requeridos; baseline 0→1 restaurado y verificado. Ratchet real conjunta: **Python 87.08% ≥ 87.00%, frontend 90.01% ≥ 90.00%**, sin cambios de mínimos, exclusiones ni selección. Se resuelve el fallo anterior 86.7746% del host restringido sin tocar política runtime. No se atribuye el timeout histórico a una causa no observada.
+
+SHA-256 log GitHub `dfe4748f1378d085c06ad16675645f7d467353f2ff54a2960a13e8b8c21c4f8d`; descarga temporal retirada inmediatamente. Python 3.14 real 3.14.8 también termina success: **16703 PASS/111 SKIP/23 deselected/1672 warnings en 3499.98 s**, log SHA-256 `3d16dd064f7c5512b88c2e363ff05a372b7cdc488cdecd1e6a1cfc7ec5c824e5`; profile before/after y 38 nativos verificados. Matriz 3.10/3.11/3.12 aún pendiente.
+
+Recibos de matriz del SHA T093 (descargas borradas tras cada extracción):
+
+| CPython observado | Resumen pytest | SHA-256 log |
+|---|---|---|
+| 3.10.22 | 16702 passed, 112 skipped, 23 deselected, 23 warnings in 4171.21s (1:09:31) | `9c42c9780aa15175ae8e43c18935889f14ee0b585df177976f3a661e9b61c265` |
+| 3.11.17 | 16702 passed, 112 skipped, 23 deselected, 23 warnings in 4356.02s (1:12:36) | `c2cfe018e8a83b290137d2fae311474e26e5442d8f57a29cc59fc5696fadadb5` |
+| 3.13.16 | 16703 passed, 111 skipped, 23 deselected, 1602 warnings in 2939.00s (0:48:58) | `26df720ba55f2f37020c5999bfce02bcc1c7071dae68ee21c38e9c9a00b939c5` |
+| 3.14.8 | 16703 passed, 111 skipped, 23 deselected, 1672 warnings in 3499.98s (0:58:19) | `3d16dd064f7c5512b88c2e363ff05a372b7cdc488cdecd1e6a1cfc7ec5c824e5` |
+
+Cada job observa probe inicial denegado, preparación, probe final real aprobado, 38 supervisor PASS/0 SKIP y restauración verificada. El job Unit Tests (3.12) continúa pendiente; la versión se verificará en su log, sin inferirla sólo por la etiqueta del job.
+
+El primer Unit Tests (3.12) del CI T093 continuaba activo después de más de dos horas, mientras los otros cuatro terminaron en 49–73 minutos. Una consulta del log activo obtuvo HTTP 404; su output temporal se eliminó. Se solicitó cancelar el intento y reintentar únicamente el trabajo incompleto sobre el mismo SHA, sin cambios de código/selección/mínimos. Esto es recuperación diagnóstica; el intento interrumpido no se acredita como aprobado y la causa sigue sin prueba.
+
+Después de la cancelación, el log del primer 3.12 sí estuvo disponible (2340223 bytes, SHA-256 `f6edad970f905662fd6835594a6954e081bacc14d497f923538800b09017f4b7`). Sus últimas pruebas pasan al **89% hasta 19:37:18Z**: el trabajo seguía avanzando, por lo que **no se acredita un bloqueo**. El motivo de su lentitud no está demostrado. La cancelación diagnóstica interrumpió una ejecución todavía parcial; no hubo resumen completo ni aprobación de ese job. Descarga eliminada inmediatamente. Se solicitó rerun sólo de Unit Tests (3.12) y sus dependientes sobre el mismo commit.
+
+## Aceptación hospedada final T093
+
+[CI 37817604297, attempt 2](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/37817604297) concluye **success** sobre `0bacd89a2f1e59a4eea792da140eaa45cd5d3cd0`: **19 trabajos success**, Required release gates incluido; Dependency Review es el único SKIP, condicionado al evento push. El reintento únicamente de 3.12 conserva los resultados previos (sus nuevos IDs mantienen los timestamps originales, verificado por API). Unit Tests (3.12), job 113504196866: CPython observado **3.12.15**, **16703 PASS/111 SKIP/23 deselected/52 warnings en 3906.07 s**; probe antes denegado, preparación observada, final real PASS, **38 supervisor PASS/0 SKIP**, y restauración 0→1 verificada. Log SHA-256 `8cb1de5bfa0278a275ecb13e9179df42f8153ba0d3a4d2072c00439e7e19cbe0`; descarga temporal eliminada inmediatamente.
+
+Las cinco versiones reales 3.10.22/3.11.17/3.12.15/3.13.16/3.14.8 suman **83513 PASS/557 SKIP, cero fallos/errores** en sus selecciones completas (23 casos deselected por job). Ratchet obligatorio **87.08/90.01**, QEMU estricto **8 PASS**, cargo-deny, arquitectura, calidad, seguridad, Web y MCP/Playwright aprobados. Se cierra T091 sin bajar mínimos ni cambiar producto/selección. El primer 3.12 cancelado y los CI históricos fallidos conservan sus resultados; no se atribuye su duración a una causa no probada. Los estados pendientes de secciones anteriores son recibos históricos. El commit documental de cierre conserva los mismos 1366 registros/hashes del freeze y no cambia runtime, tests, configuración ni locks.
