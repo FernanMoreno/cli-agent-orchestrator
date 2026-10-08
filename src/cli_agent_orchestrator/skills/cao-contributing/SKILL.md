@@ -68,7 +68,7 @@ noise. `test/test_cao_contributing_skill_accuracy.py` fails if this table drifts
 
 | Job | Runs | Blocking? |
 |-----|------|-----------|
-| **Unit Tests** (3.10 / 3.11 / 3.12 / 3.13 / 3.14) | `uv run pytest test/ examples/workflow/tests/ --ignore=test/providers/test_kiro_cli_integration.py --ignore=test/e2e -m "not e2e" --cov=src/cli_agent_orchestrator --cov-report=term-missing` | **Yes** |
+| **Unit Tests** (3.10 / 3.11 / 3.12 / 3.13 / 3.14) | `uv run python scripts/ci_native_work_host.py -- test/ examples/workflow/tests/ --ignore=test/providers/test_kiro_cli_integration.py --ignore=test/e2e -m "not e2e" --cov=src/cli_agent_orchestrator --cov-report=xml --cov-report=term-missing -v` | **Yes** |
 | ↳ step: **Validate Markdown links** | `uv run python scripts/validate_markdown_links.py` — every relative link in every tracked `.md`, including `skills/` | **Yes** |
 | **Code Quality** | black `--check`, isort `--check-only`, then `uv run mypy src/` | **Yes** — black, isort and mypy are mandatory |
 | **AG-UI demo (shift-left recording)** | boots a `CAO_AGUI_ENABLED` server, drives the viewer, records a GIF artifact | **Yes** |
@@ -84,6 +84,10 @@ noise. `test/test_cao_contributing_skill_accuracy.py` fails if this table drifts
 | **Architecture contracts** | Import Linter plus HTTP and enforcement boundary tests | **Yes** |
 | **Required release gates** | Aggregates all mandatory matrix, build, type, security and architecture jobs; failed, skipped, cancelled and unavailable results block release | **Yes** |
 | **Dependency Review** | `actions/dependency-review-action` over the PR's dependency delta: `fail-on-severity: high` plus denied licences `GPL-3.0`/`AGPL-3.0` | **Yes** — CI-only; there is nothing to run locally, and it is skipped on forks (`if: github.repository == 'awslabs/cli-agent-orchestrator'`), so a green run on your fork has not exercised it |
+
+The Unit Tests launcher requires real native namespace readiness, runs pytest without
+elevating it, and checks that the selected Work supervisor proofs passed without skips.
+It restores any temporary CI host adjustment after draining its own process group.
 
 > **The `-m "not e2e"` on the CI command replaces your local `addopts` — it does not
 > compose with it.** So a local run that *also* deselects `integration` is a strict subset

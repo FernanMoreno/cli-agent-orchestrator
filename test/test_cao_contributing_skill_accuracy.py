@@ -49,6 +49,7 @@ properties are asserted here that prose review kept missing:
 from __future__ import annotations
 
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -285,6 +286,78 @@ def _isolated_home_recipe() -> str:
     return matching[0]
 
 
+def _simple_shell_words(line: str) -> list[str]:
+    """Parse literal words; reject compounds, substitutions and control flow.
+
+    Quotes and escapes protect data. An unquoted hash starts a comment only at
+    the beginning of a word, including after whitespace. This bounded grammar
+    deliberately does not interpret arbitrary shell programs.
+    """
+    quote = ""
+    word_start = True
+    end = len(line)
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if quote == "'":
+            if char == "'":
+                quote = ""
+            index += 1
+            continue
+        if char == "\\" and (not quote or (index + 1 < len(line) and line[index + 1] in '\\$`"')):
+            assert index + 1 < len(line), "Unit Tests uses an unsupported trailing escape."
+            word_start = False
+            index += 2
+            continue
+        assert (
+            char != "`" and line[index : index + 2] != "$("
+        ), "Unit Tests uses an unsupported shell substitution; update this helper deliberately."
+        if quote == '"':
+            if char == '"':
+                quote = ""
+            index += 1
+            continue
+        if char == "#" and word_start:
+            end = index
+            break
+        assert (
+            char not in ";&|"
+        ), "Unit Tests uses a compound shell command; update this helper deliberately."
+        assert (
+            char not in "()<>"
+        ), "Unit Tests uses unsupported shell operators; update this helper deliberately."
+        if char in "'\"":
+            quote = char
+            word_start = False
+        else:
+            word_start = char.isspace()
+        index += 1
+    assert not quote, "Unit Tests uses an unsupported unterminated quote."
+    words = shlex.split(line[:end], comments=False)
+    assert not words or words[0] not in {
+        "if",
+        "then",
+        "else",
+        "elif",
+        "fi",
+        "for",
+        "while",
+        "until",
+        "do",
+        "done",
+        "case",
+        "esac",
+        "select",
+        "function",
+        "{",
+        "}",
+        "!",
+        "time",
+        "coproc",
+    }, "Unit Tests uses unsupported shell control syntax; update this helper deliberately."
+    return words
+
+
 def _unit_tests_pytest_command() -> str:
     """The Unit Tests job's pytest invocation, and only that one.
 
@@ -296,9 +369,19 @@ def _unit_tests_pytest_command() -> str:
     while the documented job produced no coverage and deselected nothing.
     """
     steps = _ci_spec()["jobs"]["test"]["steps"]
-    commands = [str(s.get("run", "")) for s in steps if "pytest" in str(s.get("run", ""))]
+    commands = []
+    for step in steps:
+        # Shell continuation joins an invocation; comments describe it without
+        # contributing executable flags. Recognize only the two reviewed launchers.
+        logical_lines = str(step.get("run", "")).replace("\\\n", " ").splitlines()
+        for line in logical_lines:
+            words = _simple_shell_words(line)
+            direct = words[:3] == ["uv", "run", "pytest"]
+            native = words[:5] == ["uv", "run", "python", "scripts/ci_native_work_host.py", "--"]
+            if direct or native:
+                commands.append(shlex.join(words))
     assert len(commands) == 1, (
-        "Expected exactly one pytest step in the Unit Tests job, found "
+        "Expected exactly one pytest invocation in the Unit Tests job, found "
         f"{len(commands)}. Update this helper deliberately -- picking one of "
         "several silently would reintroduce the ambiguity it exists to remove."
     )
@@ -517,9 +600,16 @@ class TestReferencedSkillsExist:
 
 class TestQuotedCommandsAreReal:
     def test_the_coverage_target_matches_ci(self):
-        match = re.search(r"--cov=(\S+)", _unit_tests_pytest_command())
-        assert match, "The Unit Tests job no longer passes --cov; update this test."
-        target = match.group(1)
+        arguments = shlex.split(_unit_tests_pytest_command())
+        targets = [
+            argument.removeprefix("--cov=")
+            for argument in arguments
+            if argument.startswith("--cov=")
+        ]
+        assert (
+            len(targets) == 1
+        ), "The Unit Tests job no longer passes --cov exactly once; update this test."
+        target = targets[0]
         # Compare exact tokens. A substring check would pass "--cov=src" against a
         # skill saying "--cov=src/cli_agent_orchestrator", which is the very drift
         # this test exists to catch.
@@ -531,10 +621,28 @@ class TestQuotedCommandsAreReal:
         )
 
     def test_the_marker_expression_matches_ci(self):
-        match = re.search(r'-m\s+"([^"]+)"', _unit_tests_pytest_command())
-        assert match, "The Unit Tests job no longer passes -m; update this test."
-        assert match.group(1) in _skill_text(), (
-            f'The Unit Tests job deselects with -m "{match.group(1)}"; the skill must '
+        arguments = shlex.split(_unit_tests_pytest_command())
+        markers = [i for i, argument in enumerate(arguments) if argument == "-m"]
+        assert len(markers) == 1 and markers[0] + 1 < len(
+            arguments
+        ), "The Unit Tests job no longer passes -m exactly once with its value; update this test."
+        expression = arguments[markers[0] + 1]
+        assert expression.strip(), "The Unit Tests job must pass a nonempty -m expression."
+        rows = [
+            runs
+            for job, runs, _verdict in _gate_map_rows()
+            if re.match(r"\*\*Unit Tests\*\*(?:\s|$)", job)
+        ]
+        assert len(rows) == 1, "Expected exactly one documented Unit Tests command row."
+        quoted = re.findall(r"`([^`]+)`", rows[0])
+        assert len(quoted) == 1, "Expected exactly one quoted Unit Tests command."
+        documented = shlex.split(quoted[0])
+        documented_markers = [i for i, argument in enumerate(documented) if argument == "-m"]
+        assert len(documented_markers) == 1 and documented_markers[0] + 1 < len(
+            documented
+        ), "The documented Unit Tests command must pass -m exactly once with its value."
+        assert expression == documented[documented_markers[0] + 1], (
+            f'The Unit Tests job deselects with -m "{expression}"; the skill must '
             "quote it verbatim, because it replaces any local addopts rather than "
             "composing with them."
         )
@@ -548,7 +656,7 @@ class TestQuotedCommandsAreReal:
         used to say. Pinned in both directions: the flags must still be in ci.yml,
         and the skill must still name them.
         """
-        command = _unit_tests_pytest_command()
+        command = shlex.split(_unit_tests_pytest_command())
         missing_from_ci = [flag for flag in CI_REQUIRED_IGNORES if flag not in command]
         assert not missing_from_ci, (
             f"The Unit Tests job no longer passes {missing_from_ci}. The skill's "
@@ -563,6 +671,184 @@ class TestQuotedCommandsAreReal:
             'implies -m "not e2e" is the whole story and that every integration test '
             "runs in CI; the Kiro provider integration test does not."
         )
+
+
+_UNIT_TEST_ARGS = (
+    "test/ examples/workflow/tests/ --ignore=test/providers/test_kiro_cli_integration.py "
+    '--ignore=test/e2e -m "not e2e" --cov=src/cli_agent_orchestrator'
+)
+_DIRECT_PYTEST = "uv run pytest "
+_NATIVE_PYTEST = "uv run python scripts/ci_native_work_host.py -- "
+
+
+def _selection_spec(*commands: str) -> dict:
+    """Independent Unit Tests fixtures; another job must never rescue its flags."""
+    return {
+        "jobs": {
+            "test": {"steps": [{"run": command} for command in commands]},
+            "cao-mcp-apps": {"steps": [{"run": _DIRECT_PYTEST + _UNIT_TEST_ARGS}]},
+        }
+    }
+
+
+class TestUnitTestsCommandSelection:
+    @pytest.mark.parametrize("launcher", [_DIRECT_PYTEST, _NATIVE_PYTEST])
+    def test_recognizes_only_the_executable_invocation(self, monkeypatch, launcher):
+        run = "# pytest is described here, not executed\n" + launcher + _UNIT_TEST_ARGS
+        run = run.replace(" --ignore=", " \\\n  --ignore=", 1)
+        run += " # pytest --cov=decoy -m 'decoy'"
+        monkeypatch.setitem(globals(), "_ci_spec", lambda: _selection_spec(run))
+        assert shlex.split(_unit_tests_pytest_command()) == shlex.split(launcher + _UNIT_TEST_ARGS)
+
+    @pytest.mark.parametrize(
+        "decoy",
+        [
+            "# uv run pytest " + _UNIT_TEST_ARGS,
+            "echo pytest " + _UNIT_TEST_ARGS,
+            "printf '%s\\n' pytest " + _UNIT_TEST_ARGS,
+            "uv run python scripts/another_pytest_wrapper.py -- " + _UNIT_TEST_ARGS,
+        ],
+    )
+    def test_comment_or_unrecognized_launcher_is_not_a_pytest_step(self, monkeypatch, decoy):
+        monkeypatch.setitem(globals(), "_ci_spec", lambda: _selection_spec(decoy))
+        with pytest.raises(AssertionError, match="found 0"):
+            _unit_tests_pytest_command()
+
+    @pytest.mark.parametrize(
+        "commands",
+        [
+            (_DIRECT_PYTEST + _UNIT_TEST_ARGS, _NATIVE_PYTEST + _UNIT_TEST_ARGS),
+            (_NATIVE_PYTEST + _UNIT_TEST_ARGS, _NATIVE_PYTEST + _UNIT_TEST_ARGS),
+            (_DIRECT_PYTEST + _UNIT_TEST_ARGS + "\n" + _NATIVE_PYTEST + _UNIT_TEST_ARGS,),
+        ],
+    )
+    def test_multiple_executable_invocations_remain_ambiguous(self, monkeypatch, commands):
+        monkeypatch.setitem(globals(), "_ci_spec", lambda: _selection_spec(*commands))
+        with pytest.raises(AssertionError, match="found 2"):
+            _unit_tests_pytest_command()
+
+    @pytest.mark.parametrize("launcher", [_DIRECT_PYTEST, _NATIVE_PYTEST])
+    @pytest.mark.parametrize("operator", [";", "&&"])
+    def test_compound_after_setup_cannot_hide_another_invocation(
+        self, monkeypatch, launcher, operator
+    ):
+        valid = _NATIVE_PYTEST + _UNIT_TEST_ARGS
+        hidden = "echo setup " + operator + " " + launcher + _UNIT_TEST_ARGS
+        monkeypatch.setitem(globals(), "_ci_spec", lambda: _selection_spec(valid, hidden))
+        with pytest.raises(AssertionError, match="compound"):
+            _unit_tests_pytest_command()
+
+    @pytest.mark.parametrize("launcher", [_DIRECT_PYTEST, _NATIVE_PYTEST])
+    @pytest.mark.parametrize("operator", [";", "&&"])
+    @pytest.mark.parametrize("word", ["setup'#'", 'setup"#"', "setup#"])
+    def test_midword_hash_cannot_hide_compound_invocations(
+        self, monkeypatch, launcher, operator, word
+    ):
+        valid = _NATIVE_PYTEST + _UNIT_TEST_ARGS
+        hidden = "echo " + word + operator + " " + launcher + _UNIT_TEST_ARGS
+        monkeypatch.setitem(globals(), "_ci_spec", lambda: _selection_spec(valid, hidden))
+        with pytest.raises(AssertionError, match="compound"):
+            _unit_tests_pytest_command()
+
+    @pytest.mark.parametrize("launcher", [_DIRECT_PYTEST, _NATIVE_PYTEST])
+    @pytest.mark.parametrize(
+        "path", ["test/hash#literal.py", 'test/hash"#"literal.py', "test/hash'#'literal.py"]
+    )
+    def test_hash_inside_argument_does_not_hide_following_flags(self, monkeypatch, launcher, path):
+        run = launcher + _UNIT_TEST_ARGS.replace("test/ ", path + " ", 1)
+        monkeypatch.setitem(globals(), "_ci_spec", lambda: _selection_spec(run))
+        assert shlex.split(_unit_tests_pytest_command()) == shlex.split(run)
+
+    @pytest.mark.parametrize(
+        "decoy", ["echo setup'#'", 'echo setup"#"', r"echo setup\#\;", "echo setup#"]
+    )
+    def test_quoted_raw_or_escaped_hash_data_remains_a_decoy(self, monkeypatch, decoy):
+        valid = _NATIVE_PYTEST + _UNIT_TEST_ARGS
+        monkeypatch.setitem(globals(), "_ci_spec", lambda: _selection_spec(valid, decoy))
+        assert shlex.split(_unit_tests_pytest_command()) == shlex.split(valid)
+
+    @pytest.mark.parametrize(
+        "unsupported",
+        [
+            'echo "$(uv run pytest test/)"',
+            "echo `uv run pytest test/`",
+            "if true\nthen uv run pytest test/\nfi",
+        ],
+    )
+    def test_unsupported_shell_syntax_cannot_hide_invocations(self, monkeypatch, unsupported):
+        valid = _NATIVE_PYTEST + _UNIT_TEST_ARGS
+        monkeypatch.setitem(globals(), "_ci_spec", lambda: _selection_spec(valid, unsupported))
+        with pytest.raises(AssertionError, match="unsupported"):
+            _unit_tests_pytest_command()
+
+    @pytest.mark.parametrize(
+        "decoy",
+        [
+            '# echo setup; uv run pytest test/ --cov=decoy -m "decoy"',
+            'echo "setup; uv run pytest test/ --cov=decoy -m decoy"',
+            'echo ";" "&&" "uv run pytest"',
+        ],
+    )
+    def test_quoted_or_commented_operator_data_is_not_a_compound(self, monkeypatch, decoy):
+        valid = _NATIVE_PYTEST + _UNIT_TEST_ARGS
+        monkeypatch.setitem(globals(), "_ci_spec", lambda: _selection_spec(valid, decoy))
+        assert shlex.split(_unit_tests_pytest_command()) == shlex.split(valid)
+
+    @pytest.mark.parametrize("launcher", [_DIRECT_PYTEST, _NATIVE_PYTEST])
+    @pytest.mark.parametrize("expression", ["", "   ", "\t"])
+    def test_empty_marker_cannot_satisfy_documentation(self, monkeypatch, launcher, expression):
+        run = launcher + _UNIT_TEST_ARGS.replace('-m "not e2e"', f'-m "{expression}"')
+        monkeypatch.setitem(globals(), "_ci_spec", lambda: _selection_spec(run))
+        with pytest.raises(AssertionError, match="nonempty"):
+            TestQuotedCommandsAreReal().test_the_marker_expression_matches_ci()
+
+    @pytest.mark.parametrize("launcher", [_DIRECT_PYTEST, _NATIVE_PYTEST])
+    def test_marker_must_equal_the_documented_argument_not_a_prose_substring(
+        self, monkeypatch, launcher
+    ):
+        run = launcher + _UNIT_TEST_ARGS.replace('-m "not e2e"', '-m "not"')
+        monkeypatch.setitem(globals(), "_ci_spec", lambda: _selection_spec(run))
+        with pytest.raises(AssertionError, match="quote it verbatim"):
+            TestQuotedCommandsAreReal().test_the_marker_expression_matches_ci()
+
+    def test_documented_marker_drift_cannot_be_rescued_by_prose(self, monkeypatch):
+        text = _skill_text().replace(
+            '--ignore=test/e2e -m "not e2e"', '--ignore=test/e2e -m "different_marker"', 1
+        )
+        assert 'The `-m "not e2e"`' in text  # Independent explanatory prose still exists.
+        monkeypatch.setitem(globals(), "_skill_text", lambda: text)
+        with pytest.raises(AssertionError, match="quote it verbatim"):
+            TestQuotedCommandsAreReal().test_the_marker_expression_matches_ci()
+
+    @pytest.mark.parametrize("launcher", [_DIRECT_PYTEST, _NATIVE_PYTEST])
+    @pytest.mark.parametrize(
+        "removed,guard,message",
+        [
+            (
+                "--cov=src/cli_agent_orchestrator",
+                "test_the_coverage_target_matches_ci",
+                "no longer passes --cov",
+            ),
+            ('-m "not e2e"', "test_the_marker_expression_matches_ci", "no longer passes -m"),
+            (
+                "--ignore=test/providers/test_kiro_cli_integration.py",
+                "test_the_path_exclusions_are_documented_as_well_as_the_marker",
+                "no longer passes.*kiro_cli_integration",
+            ),
+            (
+                "--ignore=test/e2e",
+                "test_the_path_exclusions_are_documented_as_well_as_the_marker",
+                "no longer passes.*test/e2e",
+            ),
+        ],
+    )
+    def test_missing_flag_cannot_be_rescued_by_comments_or_another_job(
+        self, monkeypatch, launcher, removed, guard, message
+    ):
+        run = launcher + _UNIT_TEST_ARGS.replace(removed, "") + " # " + removed
+        monkeypatch.setitem(globals(), "_ci_spec", lambda: _selection_spec(run))
+        with pytest.raises(AssertionError, match=message):
+            getattr(TestQuotedCommandsAreReal(), guard)()
 
 
 def _run_recipe_shape(recipe_body: str, stub_exit: int, shell: str = "bash") -> dict[str, object]:

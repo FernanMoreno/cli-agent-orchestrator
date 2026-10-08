@@ -1,6 +1,10 @@
 {
-  "scope": "Frozen source/test/executable scripts after T077\u2013T091. Since T087 three test fixture corrections plus CI-only native host helper and its permanent regressions. ci.yml launcher changes are recorded in the extended configuration freeze. Production/dependencies/QEMU remain byte-identical to T087; hosted acceptance pending.",
+  "scope": "Frozen T077\u2013T093 source/test/executable scripts plus three canonical/distributed contribution documentation files. Since T087: four fixture/control-test corrections, one Docker case-name metadata correction, CI-only native host helper/tests, ci.yml launcher (extended configuration), and contribution docs. Runtime code, dependencies and strict QEMU unchanged. New full hook/hosted acceptance pending.",
   "files": [
+    {
+      "path": "agent-plugin/cao-contributor/skills/cao-contributing/SKILL.md",
+      "sha256": "eaa66a32701038858e4a5e2622cd0647b89df8a519a08f02765c7a49ce011624"
+    },
     {
       "path": "cao_mcp_apps/src/agent/AgentView.tsx",
       "sha256": "b97418a481ef55451d682cfb084b68f40b3d1f3797046e6de57c18025c640135"
@@ -224,6 +228,10 @@
     {
       "path": "scripts/vendor_ext_apps_skills.py",
       "sha256": "e511932579e358ac017e45f6f5c7aff5599a237b168bdbfe73a6dd907ef7c100"
+    },
+    {
+      "path": "skills/cao-contributing/SKILL.md",
+      "sha256": "eaa66a32701038858e4a5e2622cd0647b89df8a519a08f02765c7a49ce011624"
     },
     {
       "path": "src/cao_workflow/__init__.py",
@@ -1666,6 +1674,10 @@
       "sha256": "14d95ce9b9a36c7183735f68e722ea293de22ade68fc8673b915182cdc4840eb"
     },
     {
+      "path": "src/cli_agent_orchestrator/skills/cao-contributing/SKILL.md",
+      "sha256": "eaa66a32701038858e4a5e2622cd0647b89df8a519a08f02765c7a49ce011624"
+    },
+    {
       "path": "src/cli_agent_orchestrator/telemetry/__init__.py",
       "sha256": "ec11b7d4dad0dc288b29d3a400a4e9290d93500d65bf0ddf2d605928bf6a58be"
     },
@@ -2375,7 +2387,7 @@
     },
     {
       "path": "test/backends/test_docker_backend_contracts.py",
-      "sha256": "f2b0163dfb37fe26fb7153138142dd23c512aabc511930b941bf5d247a79a1a6"
+      "sha256": "841a86d74bc31c67695bde560b9e43e7080f1ae9e71ac89753641458a8811a5b"
     },
     {
       "path": "test/backends/test_docker_work_supervisor.py",
@@ -4803,7 +4815,7 @@
     },
     {
       "path": "test/test_cao_contributing_skill_accuracy.py",
-      "sha256": "06324428b1e383be97401cf74005e7d159a9c864b92ed1215123abb73b6eabab"
+      "sha256": "f8c23c962b209fe43b0b41315dbbe7fa424cb65940f645d362e8881c51267497"
     },
     {
       "path": "test/test_ci_native_work_host.py",
@@ -5443,6 +5455,7 @@
     }
   ],
   "changed_since_initial": [
+    "agent-plugin/cao-contributor/skills/cao-contributing/SKILL.md",
     "cao_mcp_apps/src/agent/AgentView.tsx",
     "cao_mcp_apps/src/dashboard/Dashboard.tsx",
     "cao_mcp_apps/src/event-stream/EventStreamView.tsx",
@@ -5456,6 +5469,7 @@
     "cao_mcp_apps/src/test/mockHost.ts",
     "cao_mcp_apps/src/test/turn-recovery.test.tsx",
     "scripts/ci_native_work_host.py",
+    "skills/cao-contributing/SKILL.md",
     "src/cli_agent_orchestrator/clients/beads_work_schema.py",
     "src/cli_agent_orchestrator/clients/database.py",
     "src/cli_agent_orchestrator/clients/work_repository.py",
@@ -5463,8 +5477,10 @@
     "src/cli_agent_orchestrator/services/local_peer_identity.py",
     "src/cli_agent_orchestrator/services/work_origin.py",
     "src/cli_agent_orchestrator/services/work_service.py",
+    "src/cli_agent_orchestrator/skills/cao-contributing/SKILL.md",
     "test/agent_plugins/test_no_auto_grant.py",
     "test/api/test_scope_coverage.py",
+    "test/backends/test_docker_backend_contracts.py",
     "test/clients/test_startup_connection_ownership.py",
     "test/clients/test_tmux_session_exists_strict.py",
     "test/clients/test_workflow_index_connection_lifecycle.py",
@@ -5475,6 +5491,7 @@
     "test/services/test_recovery_bundle.py",
     "test/services/test_wiki_lint.py",
     "test/services/test_work_process_supervisor.py",
+    "test/test_cao_contributing_skill_accuracy.py",
     "test/test_ci_native_work_host.py",
     "web/src/App.tsx",
     "web/src/api.ts",
@@ -5516,10 +5533,15 @@
     "sha256": "74c64da609f1c71cae85c9b95e9ae1269b6c1a7de2039eb3129652ea22de243c"
   },
   "changed_since_t087": [
+    "agent-plugin/cao-contributor/skills/cao-contributing/SKILL.md",
     "scripts/ci_native_work_host.py",
+    "skills/cao-contributing/SKILL.md",
+    "src/cli_agent_orchestrator/skills/cao-contributing/SKILL.md",
     "test/agent_plugins/test_no_auto_grant.py",
+    "test/backends/test_docker_backend_contracts.py",
     "test/services/test_memory_gateway.py",
     "test/services/test_work_process_supervisor.py",
+    "test/test_cao_contributing_skill_accuracy.py",
     "test/test_ci_native_work_host.py"
   ],
   "production_changes_since_t087": [],
@@ -5535,5 +5557,18 @@
     ".github/workflows/ci.yml",
     "scripts/ci_native_work_host.py",
     "test/test_ci_native_work_host.py"
+  ],
+  "previous_t091_manifest": {
+    "commit": "2a22fbcf5af4b12fbe065b718b1cc80cd9e5554a",
+    "sha256": "a7214e973b40d28f929ce64d9fc7ebc18e8f9e99fcd2cf19f84546e32de31011",
+    "publication": "blocked by documentation accuracy tests; not remote acceptance"
+  },
+  "contribution_documentation_changes_since_t091": [
+    "skills/cao-contributing/SKILL.md",
+    "src/cli_agent_orchestrator/skills/cao-contributing/SKILL.md",
+    "agent-plugin/cao-contributor/skills/cao-contributing/SKILL.md"
+  ],
+  "test_metadata_changes_since_t091": [
+    "test/backends/test_docker_backend_contracts.py"
   ]
 }

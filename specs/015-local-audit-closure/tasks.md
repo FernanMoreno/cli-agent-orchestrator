@@ -266,6 +266,8 @@ se registra con su evidencia; nunca se transforma en aprobación.
 - [X] T090 Aislar la autoridad local de la fixture MCP memory del shim global E2E; reproducir el desajuste de aliases después del parche de puerto, preservar destino explícito, bearer y rechazo de bypass local, y verificar vecinos, per FR-007–009/T069/T072.
 
 - [ ] T091 Resolver el fallo real del ratchet en el runner CI sin bajar mínimos ni excluir cobertura; diagnosticar las capacidades nativas y conservar la aceptación real/denegación fail-closed, per FR-018/T069/T072/T073.
+- [ ] T092 [US4] Corregir tras RED la identificación del launcher delegado en test/test_cao_contributing_skill_accuracy.py; conservar unicidad/flags/negativos, revisión independiente y validación completa posterior.
+- [X] T093 [US4] Acotar los IDs del parametrizador Docker de payloads inválidos tras medir el nodeid real; mantener sus tres datos/aserciones y verificar recolección/verbose/vecinos sin atribuir todavía la cancelación CI.
 
 ## Implementation Strategy
 

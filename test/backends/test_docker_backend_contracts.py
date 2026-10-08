@@ -227,7 +227,11 @@ def test_native_query_failure_is_unavailability(native, error):
         backend._run(["info"])
 
 
-@pytest.mark.parametrize("payload", [b"", bytearray(b"worker"), b"x" * (8 * 1024 * 1024 + 1)])
+@pytest.mark.parametrize(
+    "payload",
+    [b"", bytearray(b"worker"), b"x" * (8 * 1024 * 1024 + 1)],
+    ids=["empty", "mutable", "oversized"],
+)
 def test_archive_rejects_empty_mutable_or_unbounded_worker(payload):
     with pytest.raises(docker.DockerWorkBackendUnavailable, match="byte bound"):
         docker.DockerWorkBackend._worker_archive(payload)
