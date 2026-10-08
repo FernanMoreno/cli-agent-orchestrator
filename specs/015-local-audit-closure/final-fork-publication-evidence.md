@@ -37,3 +37,9 @@ El push no forzado terminó con **exit 0**. El hook normal completo registró **
 La lectura independiente de `refs/heads/main` confirmó `71156b2108f71e42020581dce50e14510e5c66c1` en `FernanMoreno/cli-agent-orchestrator`. El perfil temporal se eliminó inmediatamente tras conservar el resultado y comprobar cero procesos propios activos. CI remoto se está comprobando sobre ese SHA; un estado en ejecución no se acredita como aprobado.
 
 La aceptación remota [T097 en QEMU](https://github.com/FernanMoreno/cli-agent-orchestrator/actions/runs/37760286549) terminó con success sobre ese mismo SHA: **8 passed en 288.27 s**, sin omisiones en el resumen de pytest. SHA-256 del log de GitHub: `d82675af76477545a76b4bdad25d9f811e4a094114a14cb4f37625ec5e66c1e9`. El archivo temporal descargado se eliminó inmediatamente después de extraer el resultado; el log remoto conserva la evidencia original.
+
+## Hook del candidato T088/T089: fallo de fixture de memoria
+
+El push normal HTTPS del commit `3276454aea81030f99cb03cf6a21e621e5a17509` terminó con exit 1: **1 failed, 16530 passed, 74 skipped, 93 warnings en 2419.23 s**. El fallo fue `test/services/test_memory_gateway.py::test_local_mcp_memory_also_crosses_authenticated_http`: la aserción leía una URL del módulo constants cambiada por el shim de la fixture E2E con puerto 46901, mientras el cliente conservaba la URL importada con puerto 9889. La reproducción determinista del shim confirmó el mismo fallo; este resultado no acredita aceptación. SHA-256 del log: `ec2a8f7a1b47392795ff36f0790626ddc3f06d84c4f55e59df27566e45cb3f2c`.
+
+El posthash verificó los 1361 registros sin diferencias. Tras confirmar cero procesos del perfil, se eliminó inmediatamente el perfil temporal; el fork conserva `main` en `71156b2108f71e42020581dce50e14510e5c66c1`. Los controles JIT/tamaño no se alcanzaron en este intento.

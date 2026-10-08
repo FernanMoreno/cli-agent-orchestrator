@@ -15,7 +15,7 @@ source manifests. Existing tracked historical artifacts remain in the tree.
 The original workspace and unrelated work are preserved. Captured provider
 fixtures intentionally retain their ANSI, CRLF and trailing-space bytes.
 
-The [current source manifest](final-source-manifest.json) binds 1,358 source/test/executable-script files by SHA-256 after T088/T089. The [T087 archive](final-source-manifest-t087.json) binds the completed prior local matrix; only two CI fixture files differ, with production/configuration byte-identical. The fresh Python snapshots additionally verified the project
+The [current source manifest](final-source-manifest.json) binds 1,358 source/test/executable-script files by SHA-256 after T088–T090. The [T087 archive](final-source-manifest-t087.json) binds the completed prior local matrix; only three test fixture files differ, with production/configuration byte-identical. The fresh Python snapshots additionally verified the project
 manifest, lock and CI workflow: 1,361 files each. The historical T080 diagnostic snapshots contained 1,338 files and reproduced the T081 fixture issue. Their temporary copies and raw logs are no longer available after environment cleanup. The baseline Python
 attempts failed or were interrupted; they are retained as diagnostic history
 and cannot substitute for successful final runs.
@@ -105,7 +105,7 @@ parser fallback. See [runtime compatibility](final-runtime-compatibility-evidenc
 
 A subsequent Python 3.14 SQLite-build fixture finding is corrected without
 altering production credential redaction; see [deleted-byte fixture proof](final-sqlite-fixture-evidence.md).
-The historical T083 snapshot is preserved in `final-source-manifest-t083.json`. The archived T087 manifest binds the reconstructed completed local matrix; the current manifest includes the two later fixture corrections. The implementation is committed and published; see the publication status above.
+The historical T083 snapshot is preserved in `final-source-manifest-t083.json`. The archived T087 manifest binds the reconstructed completed local matrix; the current manifest includes the three later fixture corrections. The implementation is committed and published; see the publication status above.
 
 The Python 3.10 native parser crash is guarded before AST construction, with
 intentional statement/f-string complexity limits and large benign controls;
@@ -115,7 +115,7 @@ transaction completion before closure and enforce closure afterward; see
 
 ## Recovered validation environment
 
-The original workspace retained all maintained changes after temporary native copies and logs were removed. The reconstructed candidate uses the same baseline and filtered publication scope. The historical T087 1,358-file source freeze SHA-256 is `74c64da609f1c71cae85c9b95e9ae1269b6c1a7de2039eb3129652ea22de243c`; original and candidate had zero differences at that validation. The current fixture-only freeze and its two changed paths are recorded separately. Historical recorded results remain scoped to their stated identities; missing raw files cannot be reinspected. New temporary profiles, test copies and scanner exports will be removed after results are recorded, as requested.
+The original workspace retained all maintained changes after temporary native copies and logs were removed. The reconstructed candidate uses the same baseline and filtered publication scope. The historical T087 1,358-file source freeze SHA-256 is `74c64da609f1c71cae85c9b95e9ae1269b6c1a7de2039eb3129652ea22de243c`; original and candidate had zero differences at that validation. The current fixture-only freeze and its three changed paths are recorded separately. Historical recorded results remain scoped to their stated identities; missing raw files cannot be reinspected. New temporary profiles, test copies and scanner exports will be removed after results are recorded, as requested.
 
 T087 keeps the private-FD barrier strict while waiting for transient empty child environment observation; see [the regression evidence](final-private-fd-evidence.md). Final sanitized diagnostics passed all six targeted cases; one unchanged native-history neighbor failed intermittently and passed on isolated retry. Acceptance relies on the fresh whole matrix, not that retry.
 
@@ -139,4 +139,6 @@ El primer transporte SSH falló después de aprobar el hook. Un intento HTTPS po
 
 ## Correcciones posteriores de fixtures de CI
 
-El primer backend remoto de MCP Apps registró 8 FAIL/16569 PASS/127 SKIP en ubuntu-latest. T088 volvió autocontenida la fixture del proveedor Kiro simulado (134 PASS), y T089 comprobó precondiciones reales antes de seis casos nativos (91 PASS; denegación: 12 PASS/6 SKIP). La revisión independiente encontró y corrigió dos P2 en la clasificación de denegaciones/prerequisitos; ambos quedaron ADDRESSED sin P1/P2 abierto. Producción, configuración, locks y aceptación QEMU permanecen sin cambios. La fuente actual se liga a `6e6a9aa0abf336f1f290bac0c4cbf6019a8d9d395d1443a83d58f1704ec06f87`; los informes previos conservan la identidad T087. Véase [evidencia de fixtures CI](final-ci-fixture-evidence.md). El hook completo y CI posteriores se comprobarán antes del cierre; no se presenta el CI inicial fallido como aprobado.
+El primer backend remoto de MCP Apps registró 8 FAIL/16569 PASS/127 SKIP en ubuntu-latest. T088 volvió autocontenida la fixture del proveedor Kiro simulado (134 PASS), y T089 comprobó precondiciones reales antes de seis casos nativos (91 PASS; denegación: 12 PASS/6 SKIP). La revisión independiente encontró y corrigió dos P2 en la clasificación de denegaciones/prerequisitos; ambos quedaron ADDRESSED sin P1/P2 abierto. Producción, configuración, locks y aceptación QEMU permanecen sin cambios. La fuente T089 del commit `3276454a` se ligaba a `6e6a9aa0abf336f1f290bac0c4cbf6019a8d9d395d1443a83d58f1704ec06f87`; los informes previos conservan la identidad T087. Véase [evidencia de fixtures CI](final-ci-fixture-evidence.md). El hook completo y CI posteriores se comprobarán antes del cierre; no se presenta el CI inicial fallido como aprobado.
+
+T090 agrega la corrección de orden de la fixture memory HTTP, con RED/GREEN del shim E2E, 175 vecinos y revisión independiente aprobados. El manifiesto actual tiene SHA-256 `64e6443b8b0523687c1e276cf97151d7a8c0497e05afe48cb59d5f06146b2e96`; producción sigue idéntica a T087. El hook anterior falló y no publicó T088/T089; la aceptación posterior continúa pendiente. Véase [fixtures CI](final-ci-fixture-evidence.md).

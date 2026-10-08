@@ -1,5 +1,5 @@
 {
-  "scope": "Frozen source/test/executable scripts after T077\u2013T089. T088/T089 change two CI fixture files only; production and dependency configuration remain byte-identical to T087. Full T087 validation retains its archived identity; subsequent validation binds this manifest.",
+  "scope": "Frozen source/test/executable scripts after T077\u2013T090. T088\u2013T090 change three test fixture files only; production and dependency configuration remain byte-identical to T087. Full T087 validation retains its archived identity; subsequent validation binds this manifest.",
   "files": [
     {
       "path": "cao_mcp_apps/src/agent/AgentView.tsx",
@@ -4131,7 +4131,7 @@
     },
     {
       "path": "test/services/test_memory_gateway.py",
-      "sha256": "ae847e447fecc34679182ff9ad4da2b5057c080517f7f99216f627fdc9ae8053"
+      "sha256": "d16a3ceee6e200b55150462812a204f0ed91679ebb10f03613d19e091eb288d1"
     },
     {
       "path": "test/services/test_memory_injection_contracts.py",
@@ -5507,7 +5507,12 @@
   },
   "changed_since_t087": [
     "test/agent_plugins/test_no_auto_grant.py",
-    "test/services/test_work_process_supervisor.py"
+    "test/services/test_work_process_supervisor.py",
+    "test/services/test_memory_gateway.py"
   ],
-  "production_changes_since_t087": []
+  "production_changes_since_t087": [],
+  "previous_t089_manifest": {
+    "commit": "3276454aea81030f99cb03cf6a21e621e5a17509",
+    "sha256": "6e6a9aa0abf336f1f290bac0c4cbf6019a8d9d395d1443a83d58f1704ec06f87"
+  }
 }

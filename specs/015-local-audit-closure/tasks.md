@@ -263,6 +263,8 @@ se registra con su evidencia; nunca se transforma en aprobación.
 
 - [X] T089 Comprobar la capacidad real user/net/IPC/PID antes de seis regresiones nativas Work que dependían sólo del ejecutable unshare; reproducir uid_map denegado, distinguir omisión por capacidad de fallos inesperados, conservar todas las aserciones de aislamiento y aceptación obligatoria en QEMU, y repetir los controles afectados, per FR-018/T069/T070/T072.
 
+- [X] T090 Aislar la autoridad local de la fixture MCP memory del shim global E2E; reproducir el desajuste de aliases después del parche de puerto, preservar destino explícito, bearer y rechazo de bypass local, y verificar vecinos, per FR-007–009/T069/T072.
+
 ## Implementation Strategy
 
 ### MVP First

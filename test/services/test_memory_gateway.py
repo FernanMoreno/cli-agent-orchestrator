@@ -929,10 +929,12 @@ def test_recovery_rejects_an_invalid_authority_url_before_transport(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_local_mcp_memory_also_crosses_authenticated_http(monkeypatch):
-    from cli_agent_orchestrator.constants import API_BASE_URL
     from cli_agent_orchestrator.mcp_server import server
 
     monkeypatch.delenv("CAO_MEMORY_API_URL", raising=False)
+    # E2E fixtures can replace constants.API_BASE_URL after this consumer imports it.
+    # Set an explicit local authority at the consumer seam, independent of test order.
+    monkeypatch.setattr(memory_gateway, "API_BASE_URL", "http://127.0.0.1:50185")
     monkeypatch.setattr(server, "_get_terminal_context_from_env", lambda: None)
     monkeypatch.setattr(memory_gateway, "get_local_bearer", lambda: "verified-bearer")
     monkeypatch.setattr(
@@ -952,7 +954,7 @@ async def test_local_mcp_memory_also_crosses_authenticated_http(monkeypatch):
         include_related=False,
     )
     assert result["success"] is True
-    assert post.call_args.args[0] == API_BASE_URL + "/internal/memory/recall"
+    assert post.call_args.args[0] == "http://127.0.0.1:50185/internal/memory/recall"
     assert post.call_args.kwargs["headers"]["Authorization"] == "Bearer verified-bearer"
 
 
