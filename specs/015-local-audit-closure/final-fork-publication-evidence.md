@@ -17,3 +17,11 @@ La sesión GitHub vigente corresponde a `FernanMoreno`. La lectura autenticada p
 ## Estado de cierre
 
 La publicación, el SHA final remoto y los resultados reales de CI permanecen pendientes. T073 no está acreditada todavía. Los perfiles temporales se retiran sólo después del EOF de sus procesos y de conservar los resultados; las regresiones mantenidas no se eliminan.
+
+## Segundo intento HTTPS interrumpido por recursos
+
+La prueba del hook volvió a ejecutar la selección normal con perfiles privados y datos temporales en ext4. Al 58%, dos lecturas consecutivas de memoria disponible descendieron a 502 y 458 MiB, el swap estaba lleno y las herramientas tardaban hasta 20.5 s. Se verificó la cadena de procesos del propio pytest y su TMPDIR antes de enviar SIGINT únicamente a ese master; ningún proceso ni temporal de otro proyecto se modificó.
+
+Resultado parcial: **9667 passed, 66 skipped, 49 warnings en 2501.61 s**, pytest interrumpido y push exit 1. Este intento **no constituye aprobación**, no llegó a los controles posteriores y no publicó cambios: el fork seguía en el SHA base. SHA-256 del log: `5677f10dc6d4d14406530b33641bd0fb6098c3d6265dd7bd52d84bc476f6d735`. El posthash verifica 1361 registros de fuente/configuración sin diferencias.
+
+El perfil temporal de este intento se retira tras confirmar EOF y registrar esta evidencia. Para reducir el consumo, el siguiente intento se prepara con un solo worker real, conservando la misma selección, el aislamiento antes de importar y el hook normal. El inicio depende de observar memoria disponible suficiente; no se omiten pruebas ni se cambia el producto para resolver una limitación externa de RAM.
