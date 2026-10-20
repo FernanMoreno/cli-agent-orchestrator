@@ -82,6 +82,39 @@ When launched with an agent profile (e.g., `--agents code_supervisor`), CAO:
 3. Passes it via `--append-system-prompt` (newlines escaped to `\n` for tmux compatibility)
 4. Injects MCP servers via `--mcp-config` JSON if the profile defines `mcpServers`
 
+### Explicit CAO MCP tool filters
+
+For a full CAO-managed Claude profile, `cao_tool_profile` selects the server
+catalog and `enabled_tools` can reduce it further:
+
+```yaml
+allowedTools:
+  - "@cao-mcp-server"
+mcpServers:
+  cao-mcp-server:
+    command: cao-mcp-server
+    cao_tool_profile: collaboration
+    enabled_tools:
+      - send_message
+      - list_siblings
+```
+
+CAO consumes the explicit filter and applies its intersection with the selected
+profile inside that MCP child. Both discovery and direct calls use this subset.
+An empty list denies all tools; absent/null means the selected profile without
+an additional filter. Unknown tool names cannot add tools to the profile.
+Malformed non-null filters reject the launch. Internal environment markers are
+reserved for CAO and cannot be supplied through the source profile.
+
+This restriction preserves each operation's existing identity/project authority
+checks. It does not grant native file or shell access. The example does not
+advertise a question channel because it omits the three required interaction
+tools. Legacy unprofiled entries retain their existing serialization; their
+`enabled_tools` field has no new CAO enforcement guarantee. Thin native-agent
+wrappers below do not use this CAO configuration path. See
+[T032 validation](../specs/025-provider-mcp-profiles/validation-t032.md) for
+executed checks and remaining acceptance gates.
+
 ### Launch Command
 
 The provider builds the command via `_build_claude_command()`:

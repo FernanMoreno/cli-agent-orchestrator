@@ -4092,13 +4092,25 @@ def main():
 
 def _install_tool_profile_middleware_if_requested(server_instance: FastMCP) -> bool:
     """An absent profile preserves compatibility; an invalid one aborts startup."""
-    from cli_agent_orchestrator.utils.mcp_tool_policy import MCP_TOOL_PROFILE_ENV
+    from cli_agent_orchestrator.utils.mcp_tool_policy import (
+        MCP_TOOL_FILTER_ENV,
+        MCP_TOOL_PROFILE_ENV,
+        resolve_tool_filter,
+    )
 
     if MCP_TOOL_PROFILE_ENV not in os.environ:
+        if MCP_TOOL_FILTER_ENV in os.environ:
+            raise ValueError("CAO MCP tool filter requires an explicit tool profile")
         return False
     from cli_agent_orchestrator.mcp_server.tool_profiles import ToolProfileMiddleware
 
-    server_instance.add_middleware(ToolProfileMiddleware(os.environ[MCP_TOOL_PROFILE_ENV]))
+    profile = os.environ[MCP_TOOL_PROFILE_ENV]
+    allowed_tools = (
+        resolve_tool_filter(os.environ[MCP_TOOL_FILTER_ENV], profile)
+        if MCP_TOOL_FILTER_ENV in os.environ
+        else None
+    )
+    server_instance.add_middleware(ToolProfileMiddleware(profile, allowed_tools=allowed_tools))
     return True
 
 

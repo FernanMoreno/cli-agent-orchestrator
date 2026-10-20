@@ -22,6 +22,7 @@ from cli_agent_orchestrator.constants import (
 )
 from cli_agent_orchestrator.utils.mcp_resolution import cao_mcp_environment, resolve_cao_mcp_command
 from cli_agent_orchestrator.utils.mcp_tool_policy import (
+    MCP_TOOL_FILTER_ENV,
     MCP_TOOL_PROFILE_CONFIG,
     MCP_TOOL_PROFILE_ENV,
 )
@@ -133,6 +134,7 @@ def validate_mcp_tool_profile_installation(cao_config: Mapping[str, Any]) -> Non
         isinstance(cao_config.get(field), Mapping)
         and (
             MCP_TOOL_PROFILE_ENV in cao_config[field]
+            or MCP_TOOL_FILTER_ENV in cao_config[field]
             or _CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV in cao_config[field]
         )
         for field in ("env", "environment")

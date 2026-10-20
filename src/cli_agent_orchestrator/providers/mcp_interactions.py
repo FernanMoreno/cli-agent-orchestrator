@@ -22,6 +22,7 @@ from cli_agent_orchestrator.utils.mcp_resolution import (
     CAO_MCP_SERVER_MODULE,
 )
 from cli_agent_orchestrator.utils.mcp_tool_policy import (
+    MCP_TOOL_FILTER_ENV,
     MCP_TOOL_PROFILE_CONFIG,
     MCP_TOOL_PROFILE_ENV,
     resolve_tool_profile,
@@ -143,6 +144,8 @@ def overlay_interaction_capability_file(
         environment.pop(_CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV, None)
         env.pop(MCP_TOOL_PROFILE_ENV, None)
         environment.pop(MCP_TOOL_PROFILE_ENV, None)
+        env.pop(MCP_TOOL_FILTER_ENV, None)
+        environment.pop(MCP_TOOL_FILTER_ENV, None)
         bundled = is_bundled_cao_mcp_entry(name, config)
         if has_tool_profile and not bundled:
             raise ValueError("CAO MCP tool profile requires a canonical bundled server")

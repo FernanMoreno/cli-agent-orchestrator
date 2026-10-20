@@ -36,6 +36,11 @@ from cli_agent_orchestrator.utils.mcp_resolution import (
     is_cao_mcp_server,
     resolve_mcp_server_config,
 )
+from cli_agent_orchestrator.utils.mcp_tool_policy import (
+    MCP_TOOL_FILTER_ENV,
+    MCP_TOOL_PROFILE_ENV,
+    encode_tool_filter,
+)
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 from cli_agent_orchestrator.utils.text import strip_terminal_escapes
 
@@ -628,6 +633,12 @@ class ClaudeCodeProvider(BaseProvider):
                         cao_mcp_present = True
 
                     env = cao_mcp_environment(server_name, mcp_config[server_name])
+                    if MCP_TOOL_PROFILE_ENV in env and "enabled_tools" in mcp_config[server_name]:
+                        enabled_tools = mcp_config[server_name].pop("enabled_tools")
+                        if enabled_tools is not None:
+                            env[MCP_TOOL_FILTER_ENV] = encode_tool_filter(
+                                enabled_tools, env[MCP_TOOL_PROFILE_ENV]
+                            )
                     if is_cao_mcp_server(server_name, mcp_config[server_name]):
                         if self._cao_mcp_ready_path is None:
                             tmp_dir = CAO_HOME_DIR / "tmp"
