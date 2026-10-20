@@ -177,8 +177,22 @@ mcpServers:
     cao_tool_profile: interaction
 ```
 
-The supported values are `interaction` and `collaboration`. Reinstall the agent
-after changing its source profile. CAO publishes a pending native artifact before
+The supported profiles are:
+
+| Profile | Surface |
+| --- | --- |
+| `interaction` | Ask, wait and acknowledge human answers. |
+| `collaboration` | Interaction plus messaging, siblings and interaction recovery. |
+| `coordination` | Collaboration plus the four project-scoped local peer operations. |
+| `supervision` | Collaboration plus inspect, verify and cancel for self/direct children. |
+| `knowledge` | Collaboration plus skill loading and memory recall. |
+| `knowledge_writer` | Knowledge plus memory store and outcome reporting. |
+| `elastic_worker` | Collaboration plus completion inside a configured elastic worker. |
+
+General assignment/handoff, terminal deletion and workflow/Work/Beads/Ralph or
+memory deletion are excluded from all these profiles. Native grants and each
+operation's identity/project/settings/generation checks remain independent.
+Reinstall the agent after changing its source profile. CAO publishes a pending native artifact before
 updating shared configuration, then marks it ready only when the selected server
 and agent grants match. A failed installation remains unlaunchable until a
 successful reinstall or refresh repairs it.

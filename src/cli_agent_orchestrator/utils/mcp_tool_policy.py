@@ -11,17 +11,34 @@ MAX_TOOL_FILTER_LENGTH = 4096
 INTERACTION_TOOLS = frozenset(
     {"cao_ask_user", "cao_wait_for_user_answers", "cao_acknowledge_user_answers"}
 )
+COLLABORATION_TOOLS = INTERACTION_TOOLS | {
+    "send_message",
+    "list_siblings",
+    "cao_list_interactions",
+    "cao_get_interaction",
+    "cao_escalate_interaction",
+}
+KNOWLEDGE_TOOLS = COLLABORATION_TOOLS | {"load_skill", "memory_recall"}
 TOOL_PROFILES = MappingProxyType(
     {
         "interaction": INTERACTION_TOOLS,
-        "collaboration": INTERACTION_TOOLS
+        "collaboration": COLLABORATION_TOOLS,
+        "coordination": COLLABORATION_TOOLS
         | {
-            "send_message",
-            "list_siblings",
-            "cao_list_interactions",
-            "cao_get_interaction",
-            "cao_escalate_interaction",
+            "list_local_cao_peers",
+            "assign_local_cao_task",
+            "get_local_cao_task",
+            "cancel_local_cao_task",
         },
+        "supervision": COLLABORATION_TOOLS
+        | {
+            "inspect_terminal_turn",
+            "verify_terminal_turn",
+            "cancel_terminal_turn",
+        },
+        "knowledge": KNOWLEDGE_TOOLS,
+        "knowledge_writer": KNOWLEDGE_TOOLS | {"memory_store", "report_outcome"},
+        "elastic_worker": COLLABORATION_TOOLS | {"complete_assignment"},
     }
 )
 
@@ -29,7 +46,7 @@ TOOL_PROFILES = MappingProxyType(
 def resolve_tool_profile(value: object) -> frozenset[str]:
     """Reject malformed/unknown selection without echoing profile input."""
     if not isinstance(value, str) or value not in TOOL_PROFILES:
-        raise ValueError("CAO MCP tool profile must be interaction or collaboration")
+        raise ValueError("CAO MCP tool profile must be a supported profile name")
     return TOOL_PROFILES[value]
 
 

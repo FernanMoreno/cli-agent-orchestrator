@@ -29,10 +29,10 @@ Las tres herramientas del recorrido restringido son `cao_ask_user`, `cao_wait_fo
 
 ## Pendientes comunes, en orden
 
-- [ ] OC-01 Diseñar perfiles explícitos de interacción, colaboración y coordinación, con catálogo, llamadas y permisos coherentes. Mantener disponible el recorrido restringido de tres herramientas.
-- [ ] OC-02 Añadir primero las capacidades de colaboración básica y consulta de interacciones. Verificar permisos tanto en el cliente como en el servidor; no sustituirlos por instrucciones de texto.
-- [ ] OC-03 Añadir delegación, supervisión y conocimiento solo a los perfiles correspondientes; distinguir asignación local de trabajadores elásticos.
-- [ ] OC-04 Probar herramientas permitidas, denegadas, nombres desconocidos, permisos vacíos/parciales, colisiones y aislamiento entre terminales; preservar respuestas humanas y autoridad delegada.
+- [x] OC-01 Diseñar perfiles explícitos de interacción, colaboración y coordinación, con catálogo, llamadas y permisos coherentes. Mantener disponible el recorrido restringido de tres herramientas.
+- [x] OC-02 Añadir primero las capacidades de colaboración básica y consulta de interacciones. Verificar permisos tanto en el cliente como en el servidor; no sustituirlos por instrucciones de texto.
+- [x] OC-03 Añadir delegación, supervisión y conocimiento solo a los perfiles correspondientes; distinguir asignación local de trabajadores elásticos.
+- [x] OC-04 Probar herramientas permitidas, denegadas, nombres desconocidos, permisos vacíos/parciales, colisiones y aislamiento entre terminales; preservar respuestas humanas y autoridad delegada.
 - [ ] OC-05 Validar mensajes genéricos con PostgreSQL, proyección AG-UI y reinicio de API en la fuente final. Resolver y probar por separado el contrato externo `cao.work.message`; no asumir que es alias del MCP `send_message`.
 - [ ] OC-06 Verificar concurrencia con múltiples terminales: límites de tareas, esperas y cancelación acotadas, orden de mensajes, ausencia de cruces de credenciales y limpieza propia. Medir latencia del control separada del tiempo del modelo.
 - [ ] OC-07 Consolidar evidencia y actualizar las tareas de Spec 022/023; conservar fallos anteriores. La aceptación requiere código integrado en main y recibos vinculados a la fuente ejecutada.
@@ -48,8 +48,8 @@ Las tres herramientas del recorrido restringido son `cao_ask_user`, `cao_wait_fo
 ## Pendientes específicos de v2
 
 - [ ] OC2-01 Actualizar o retirar los lanzadores externos con hashes/rutas antiguos. Fijar sus entradas a la fuente final antes de ejecutarlos; el recorrido directo exitoso no valida esos lanzadores.
-- [ ] OC2-02 Validar cada perfil ampliado con nombres MCP canónicos y resolución efectiva de permisos; conservar `codemode=false` en el flujo directo y no conceder `execute` para resolver herramientas ausentes.
-- [ ] OC2-03 Extender la validación previa para comprobar las herramientas requeridas por cada perfil, manteniendo la comprobación exacta del flujo de tres herramientas.
+- [x] OC2-02 Validar cada perfil ampliado con nombres MCP canónicos y resolución efectiva de permisos; conservar `codemode=false` en el flujo directo y no conceder `execute` para resolver herramientas ausentes.
+- [x] OC2-03 Extender la validación previa para comprobar las herramientas requeridas por cada perfil, manteniendo la comprobación exacta del flujo de tres herramientas.
 - [ ] OC2-04 Repetir la aceptación final vinculada a fuente/runner actuales cuando se implementen los nuevos perfiles; comprobar catálogo ofertado al modelo y llamadas reales.
 - [ ] OC2-05 Acreditar aislamiento con las modalidades de autenticación que se declaren soportadas, incluida renovación OAuth si corresponde. El éxito con API key de OpenCode Go no acredita OAuth ni todos los proveedores/modelos.
 - [ ] OC2-06 Registrar por separado el timeout histórico externo y su reconciliación. No cerrarlo administrativamente basándose solo en una ejecución nueva exitosa.
@@ -58,9 +58,9 @@ Las tres herramientas del recorrido restringido son `cao_ask_user`, `cao_wait_fo
 
 El helper `_tool_denied_reason` autoriza las operaciones que lo utilizan mediante el selector de servidor `@cao-mcp-server` o `*`; los nombres sueltos de herramientas en `allowed_tools` no son una allowlist MCP por operación. Las rutas de interacción tienen además su autoridad propia. El filtro histórico de tres herramientas solo se instala en el proceso hijo marcado; no es global. La base opt-in de perfiles integrada el 2026-10-20 añade otro filtro por hijo mediante el overlay, según el avance registrado al final; no convierte los nombres de allowed_tools en permisos MCP por operación.
 
-- [ ] OC-AUTH Implementar o extender una política del servidor por perfil/herramienta para los nuevos perfiles, antes de dar por efectiva la separación propuesta. Verificar tanto catálogo como invocación directa y conservar las comprobaciones de autoridad de cada operación.
-- [ ] OC-LOCAL Documentar y probar que la coordinación local pasa hoy por `_tool_denied_reason("assign", local_only=True)` y requiere identidad de terminal y contexto del proyecto; habilitar solo el nombre en el cliente no basta.
-- [ ] OC-CATALOG Auditar también `handoff`, `assign`, `assign_elastic`, `list_native_children`, `join_native_child`, `get_handoff_result`, `delete_terminal`, `answer_user_prompt` y `emit_ui`, más las familias de workflows, trabajo, Beads, Ralph y escritura/borrado de memoria. Decidir explícitamente por perfil qué se expone y qué se deniega; la tabla anterior es una propuesta inicial, no un inventario exhaustivo ni una exclusión ya implementada.
+- [x] OC-AUTH Implementar o extender una política del servidor por perfil/herramienta para los nuevos perfiles, antes de dar por efectiva la separación propuesta. Verificar tanto catálogo como invocación directa y conservar las comprobaciones de autoridad de cada operación.
+- [x] OC-LOCAL Documentar y probar que la coordinación local pasa hoy por `_tool_denied_reason("assign", local_only=True)` y requiere identidad de terminal y contexto del proyecto; habilitar solo el nombre en el cliente no basta.
+- [x] OC-CATALOG Auditar también `handoff`, `assign`, `assign_elastic`, `list_native_children`, `join_native_child`, `get_handoff_result`, `delete_terminal`, `answer_user_prompt` y `emit_ui`, más las familias de workflows, trabajo, Beads, Ralph y escritura/borrado de memoria. Decidir explícitamente por perfil qué se expone y qué se deniega; la tabla anterior es una propuesta inicial, no un inventario exhaustivo ni una exclusión ya implementada.
 
 ## Fuentes
 
@@ -139,3 +139,11 @@ Pasaron **52 pruebas**, incluidas **29 nuevas**, tras reproducir **24 fallos/28 
 Implementadas listas `enabled_tools` válidas por agente: vacía deniega todo, parcial intersecta el perfil y los nombres desconocidos no amplían. El formato nativo v2 vincula filtros inmutables al agente y su configuración; el formato v1 sin filtro conserva sus bytes y binding. El hijo privado recibe el filtro protegido, sin ponerlo en el MCP compartido. El preflight usa la misma intersección y exige las tres herramientas si se solicita interacción. Se conserva el rechazo de valores malformados. Esto sustituye únicamente el rechazo de listas válidas de T034.
 
 Verificación final: **193 pruebas** en siete módulos, compatibilidad exacta con el código anterior en **12 casos**, tipado **404 archivos**, estilo y composición **5/0**. Revisión solo con Codex. Sin CLI real, autenticación ni PostgreSQL; T032 ampliada no reanudada. T035 cerrado; el resto de la lista OpenCode, autoridad ampliada, v1 real, T007 y gates reales/globales siguen en curso. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t035.md).
+
+## Continuación T036 — catálogo ampliado y autoridad
+
+Integrados siete perfiles cerrados: interacción, colaboración, `coordination`, `supervision`, `knowledge`, `knowledge_writer` y `elastic_worker`. Cada perfil añade solo su familia; la colaboración básica no obtiene delegación, supervisión ni escritura. Auditadas las **79 operaciones** del catálogo: las restantes se deniegan también por llamada directa. Asignación general, handoff, borrado, Work/workflows, Beads/Ralph y borrado de memoria siguen fuera de estos perfiles.
+
+La supervisión ahora exige metadatos actuales del terminal propio o de un hijo asignado directamente al llamante antes de inspeccionar/verificar/cancelar; conserva permisos del servidor, generación y autoridad Work. Coordinación mantiene el gate `assign` local con identidad/proyecto, y el cierre elástico exige trabajador configurado. Conocimiento conserva los controles existentes de ámbito, memoria y aprendizaje; escritura es un perfil separado.
+
+Pasaron **181 pruebas** de catálogo/transporte/autoridad/preflight y ocho comprobaciones suplementarias de los cuatro handlers locales sin identidad/proyecto, sin enviar tareas ni mensajes. Tipado **404 archivos**, estilo y composición **5/0**, revisión solo con Codex. Las casillas cerradas de OpenCode corresponden a implementación y contratos offline; **OC1 y la aceptación real de OC2/OC-05/06 siguen pendientes**, junto a los lanzadores externos y modalidades de autenticación. T032 aplazada no se reanudó. [Inventario completo](../specs/025-provider-mcp-profiles/catalog-inventory.md) y [evidencia/límites](../specs/025-provider-mcp-profiles/validation-t036.md).

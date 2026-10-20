@@ -4035,10 +4035,30 @@ async def workflow_events(
     }
 
 
+def _turn_target_denied_reason(terminal_id: str) -> Optional[str]:
+    """Keep a bound caller's supervision within self or directly assigned children."""
+    denied = "Cannot authorize terminal turn target"
+    try:
+        caller_id = _current_terminal_id()
+        if caller_id is None:
+            return None  # Existing unbound operator context.
+        if not isinstance(terminal_id, str) or not re.fullmatch(r"[a-f0-9]{8}", terminal_id):
+            return denied
+        target = mcp_utils.get_json(f"/terminals/{terminal_id}", timeout=_mcp_timeout())
+        if not isinstance(target, dict) or target.get("id") != terminal_id:
+            return denied
+        if terminal_id == caller_id or target.get("caller_id") == caller_id:
+            return None
+    except Exception:
+        # Unknown identity/metadata/auth/transport is never permission to act.
+        return denied
+    return denied
+
+
 @mcp.tool()
 async def inspect_terminal_turn(terminal_id: str) -> Dict[str, Any]:
     """Inspect turn diagnosis and allowed actions without exposing receipt secrets."""
-    denied = _tool_denied_reason("inspect_terminal_turn")
+    denied = _tool_denied_reason("inspect_terminal_turn") or _turn_target_denied_reason(terminal_id)
     if denied:
         return {"success": False, "error": denied}
     return await asyncio.to_thread(_inspect_turn_impl, terminal_id)
@@ -4047,7 +4067,7 @@ async def inspect_terminal_turn(terminal_id: str) -> Dict[str, Any]:
 @mcp.tool()
 async def verify_terminal_turn(terminal_id: str, generation: str) -> Dict[str, Any]:
     """Recover the inspected durable turn without resending its task."""
-    denied = _tool_denied_reason("verify_terminal_turn")
+    denied = _tool_denied_reason("verify_terminal_turn") or _turn_target_denied_reason(terminal_id)
     if denied:
         return {"success": False, "error": denied}
     return await asyncio.to_thread(_turn_action_impl, terminal_id, generation, "verify")
@@ -4056,7 +4076,7 @@ async def verify_terminal_turn(terminal_id: str, generation: str) -> Dict[str, A
 @mcp.tool()
 async def cancel_terminal_turn(terminal_id: str, generation: str) -> Dict[str, Any]:
     """Recover the inspected durable turn without resending its task."""
-    denied = _tool_denied_reason("cancel_terminal_turn")
+    denied = _tool_denied_reason("cancel_terminal_turn") or _turn_target_denied_reason(terminal_id)
     if denied:
         return {"success": False, "error": denied}
     return await asyncio.to_thread(_turn_action_impl, terminal_id, generation, "cancel")

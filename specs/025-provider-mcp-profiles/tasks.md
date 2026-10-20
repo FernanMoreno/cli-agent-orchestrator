@@ -101,10 +101,12 @@ T034 evidence: [native installation filter refusal](validation-t034.md): RED 24 
 ## Complete OpenCode backlog continuation
 
 - [x] T035 Implement bound version-two native explicit filters, retaining version-one compatibility and malformed-input refusal; propagate private policy and exact preflight/server enforcement. Verify installation, repair, legacy-marker/interaction channel and instance isolation contracts.
-- [ ] T036 Complete OC-01–04/OC-AUTH/OC-LOCAL/OC-CATALOG: audit every registered operation and its authority, define separate coordination/supervision/knowledge/elastic profiles and test both surface and operation gates.
+- [x] T036 Complete OC-01–04/OC-AUTH/OC-LOCAL/OC-CATALOG: audit every registered operation and its authority, define separate coordination/supervision/knowledge/elastic profiles and test both surface and operation gates.
 - [ ] T037 Complete OC1-01–05 with a privately pinned v1 binary, effective agent/model, isolation and actual Unicode/error/cancel/interaction/message/restart scenarios; retain unsupported-feature refusals until implemented.
 - [ ] T038 Complete OC2-01–06 and OC-05–07 with refreshed source-bound runners, expanded real catalogs/calls, separate generic/Work message authority, authentication modes and concurrency/control metrics. Preserve historical RECONCILE_REQUIRED and distinguish unproven historical causes.
 
 Execute T035 → T036 → T037/T038 serially in main. These refine T007–T014 rather than claiming completion. User now requests the entire OpenCode list; no blanket cancellation of the deferred Claude T032 validation or other restrictions is inferred.
 
 T035 evidence: [native filter propagation](validation-t035.md): RED 28 failures/126 controls, final 193 passes across seven scoped modules, exact version-one byte/binding compatibility in 12 cases, 404-file typing, composition 5/0 and Codex-only review. T034 valid-list refusal is superseded by bound propagation; malformed refusal remains. Full OpenCode list/T007/live/global acceptance remains in progress.
+
+T036 evidence: [expanded catalog and authority](validation-t036.md): seven immutable profiles classify all 79 registered operations; 181 passing contracts, eight supplemental real-handler local refusal probes, 404-file typing, composition 5/0 and Codex-only review. Only offline/configuration/catalog/authority items are closed; OpenCode real v1/v2/message/concurrency/auth acceptance remains T037/T038.

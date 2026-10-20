@@ -321,3 +321,35 @@ async def test_filtered_legacy_opt_in_preserves_three_tool_server_intersection(l
         assert {tool.name for tool in await client.list_tools()} == TOOL_PROFILES["interaction"]
         with pytest.raises(ToolError):
             await client.call_tool("send_message")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "profile", ["coordination", "supervision", "knowledge", "knowledge_writer", "elastic_worker"]
+)
+@pytest.mark.parametrize("empty_filter", [False, True])
+async def test_expanded_profiles_reach_actual_native_preflight(
+    launch, monkeypatch, profile, empty_filter
+):
+    instance, backend, _ = launch
+    config, path, agent = ready_agent(monkeypatch, profile)
+    path.write_text(
+        render_native_agent(
+            agent,
+            "reviewer",
+            {"cao": profile},
+            source_config=config,
+            filters={"cao": []} if empty_filter else None,
+        )
+    )
+    before = copy.deepcopy(config)
+    assert await instance.initialize() is True
+    generated = json.loads((instance._v2_config_dir / "opencode.json").read_text())
+    env = generated["mcp"]["servers"]["cao"]["environment"]
+    assert env[MCP_TOOL_PROFILE_ENV] == profile
+    if empty_filter:
+        assert json.loads(env[MCP_TOOL_FILTER_ENV]) == []
+    else:
+        assert MCP_TOOL_FILTER_ENV not in env
+    assert config == before
+    backend.send_keys.assert_called_once()
