@@ -1,14 +1,16 @@
 """Work backend effects must stay inside a durable terminal target binding."""
 
-import sqlite3
-
 import pytest
+from psycopg import sql
 
 from cli_agent_orchestrator.backends.base import WorkEffectAuthorizationRequired
 from cli_agent_orchestrator.backends.work_backend import WorkBackendView
+from cli_agent_orchestrator.clients.postgres import connect
 from cli_agent_orchestrator.clients.work_repository import WorkConflict
 from cli_agent_orchestrator.constants import FIFO_DIR
 from cli_agent_orchestrator.services.work_admission import WorkAdmission
+
+pytestmark = pytest.mark.postgres
 
 
 class RecordingBackend:
@@ -76,32 +78,49 @@ def test_work_view_rejects_effects_without_attempt_target(method, args):
 
 
 @pytest.fixture
-def terminal_store(tmp_path):
-    path = tmp_path / "target-bindings.sqlite3"
-    with sqlite3.connect(path) as connection:
-        connection.row_factory = sqlite3.Row
-        connection.executescript(
-            "CREATE TABLE work_attempts (id TEXT PRIMARY KEY, terminal_id TEXT);"
-            "CREATE TABLE terminals (id TEXT PRIMARY KEY, tmux_session TEXT, tmux_window TEXT);"
+def terminal_store(postgres_targets):
+    target = postgres_targets.main
+    migration_target = target.migration_target()
+    attempts = sql.Identifier(target.schema, "work_attempts")
+    terminals = sql.Identifier(target.schema, "terminals")
+    with connect(migration_target) as connection:
+        connection.execute(
+            sql.SQL("CREATE TABLE {} (id TEXT PRIMARY KEY, terminal_id TEXT)").format(attempts)
+        )
+        connection.execute(
+            sql.SQL(
+                "CREATE TABLE {} (id TEXT PRIMARY KEY, tmux_session TEXT, tmux_window TEXT)"
+            ).format(terminals)
         )
         connection.executemany(
-            "INSERT INTO work_attempts(id,terminal_id) VALUES (?,?)",
+            sql.SQL("INSERT INTO {}(id,terminal_id) VALUES (%s,%s)").format(attempts),
             [("attempt-a", "abcd1234"), ("attempt-b", "beef5678")],
         )
         connection.executemany(
-            "INSERT INTO terminals(id,tmux_session,tmux_window) VALUES (?,?,?)",
+            sql.SQL("INSERT INTO {}(id,tmux_session,tmux_window) VALUES (%s,%s,%s)").format(
+                terminals
+            ),
             [
                 ("abcd1234", "work-session", "work-window"),
                 ("beef5678", "foreign-session", "foreign-window"),
             ],
         )
-    return path
+        connection.execute(
+            sql.SQL("GRANT SELECT,INSERT,UPDATE,DELETE ON {},{} TO {}").format(
+                attempts, terminals, sql.Identifier(target.user)
+            )
+        )
+    try:
+        yield target
+    finally:
+        with connect(migration_target) as connection:
+            connection.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(attempts))
+            connection.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(terminals))
 
 
-def _guard_for(connection_path, *, attempt_id="attempt-a", bound_terminal_id="abcd1234"):
+def _guard_for(target, *, attempt_id="attempt-a", bound_terminal_id="abcd1234"):
     def guard(effect, terminal_id, session_name=None, window_name=None, file_path=None):
-        with sqlite3.connect(connection_path) as connection:
-            connection.row_factory = sqlite3.Row
+        with connect(target) as connection:
             arguments = dict(
                 attempt_id=attempt_id,
                 bound_terminal_id=bound_terminal_id,
@@ -110,14 +129,9 @@ def _guard_for(connection_path, *, attempt_id="attempt-a", bound_terminal_id="ab
                 session_name=session_name,
                 window_name=window_name,
             )
-            try:
-                WorkAdmission._check_terminal_effect_target(
-                    connection, **arguments, file_path=file_path
-                )
-            except TypeError as error:
-                if "file_path" not in str(error):
-                    raise
-                WorkAdmission._check_terminal_effect_target(connection, **arguments)
+            WorkAdmission._check_terminal_effect_target(
+                connection, **arguments, file_path=file_path
+            )
 
     return guard
 
@@ -174,9 +188,9 @@ def test_work_view_rejects_a_target_when_its_durable_row_has_changed(
         terminal_id="abcd1234",
         expected_target=("work-session", "work-window"),
     )
-    with sqlite3.connect(terminal_store) as connection:
+    with connect(terminal_store) as connection:
         connection.execute(
-            "UPDATE terminals SET tmux_session=?,tmux_window=? WHERE id='abcd1234'",
+            "UPDATE terminals SET tmux_session=%s,tmux_window=%s WHERE id='abcd1234'",
             (durable_session, durable_window),
         )
 
@@ -195,7 +209,7 @@ def test_work_view_rechecks_the_durable_attempt_terminal_before_each_send(termin
         expected_target=("work-session", "work-window"),
     )
     view.bind_terminal_target("abcd1234", "work-session", "work-window")
-    with sqlite3.connect(terminal_store) as connection:
+    with connect(terminal_store) as connection:
         connection.execute("UPDATE work_attempts SET terminal_id='beef5678' WHERE id='attempt-a'")
 
     with pytest.raises(WorkConflict, match="durable terminal binding changed"):
@@ -267,13 +281,13 @@ def test_work_create_session_binds_its_durable_terminal_for_later_input(terminal
         terminal_id="abcd1234",
         expected_target=("new-session", "new-window"),
     )
-    with sqlite3.connect(terminal_store) as connection:
+    with connect(terminal_store) as connection:
         connection.execute("DELETE FROM terminals WHERE id='abcd1234'")
 
     assert view.create_session("new-session", "new-window", "abcd1234") == "new-window"
-    with sqlite3.connect(terminal_store) as connection:
+    with connect(terminal_store) as connection:
         connection.execute(
-            "INSERT INTO terminals(id,tmux_session,tmux_window) VALUES (?,?,?)",
+            "INSERT INTO terminals(id,tmux_session,tmux_window) VALUES (%s,%s,%s)",
             ("abcd1234", "new-session", "new-window"),
         )
     view.send_keys("new-session", "new-window", "task")
@@ -291,13 +305,13 @@ def test_work_view_cannot_kill_a_session_shared_with_another_terminal(terminal_s
     )
     # A successful view-owned create is the only way to acquire session kill
     # authority. Remove the old row so the fresh-session precondition is true.
-    with sqlite3.connect(terminal_store) as connection:
+    with connect(terminal_store) as connection:
         connection.execute("DELETE FROM terminals WHERE id='abcd1234'")
     view.create_session("work-session", "work-window", "abcd1234")
     backend.effects.clear()
-    with sqlite3.connect(terminal_store) as connection:
+    with connect(terminal_store) as connection:
         connection.execute(
-            "INSERT INTO terminals(id,tmux_session,tmux_window) VALUES (?,?,?)",
+            "INSERT INTO terminals(id,tmux_session,tmux_window) VALUES (%s,%s,%s)",
             ("abcd1234", "work-session", "work-window"),
         )
         connection.execute("UPDATE terminals SET tmux_session='work-session' WHERE id='beef5678'")
@@ -358,8 +372,7 @@ def test_work_pipe_pane_rejects_unbound_path_before_backend(terminal_store):
 
 
 def test_work_view_cannot_kill_a_session_without_a_server_instance_fence(terminal_store):
-    with sqlite3.connect(terminal_store) as connection:
-        connection.row_factory = sqlite3.Row
+    with connect(terminal_store) as connection:
         with pytest.raises(WorkConflict, match="server-instance-fenced"):
             WorkAdmission._check_terminal_effect_target(
                 connection,
@@ -414,7 +427,7 @@ def test_work_view_does_not_kill_created_session_until_durable_row_exists(termin
         terminal_id="abcd1234",
         expected_target=("new-session", "new-window"),
     )
-    with sqlite3.connect(terminal_store) as connection:
+    with connect(terminal_store) as connection:
         connection.execute("DELETE FROM terminals WHERE id='abcd1234'")
     view.create_session("new-session", "new-window", "abcd1234")
     backend.effects.clear()
@@ -426,8 +439,7 @@ def test_work_view_does_not_kill_created_session_until_durable_row_exists(termin
 
 
 def test_work_guard_refuses_name_only_session_rollback(terminal_store):
-    with sqlite3.connect(terminal_store) as connection:
-        connection.row_factory = sqlite3.Row
+    with connect(terminal_store) as connection:
         for session_name, window_name in (
             ("new-session", "new-window"),
             ("work-session", "work-window"),

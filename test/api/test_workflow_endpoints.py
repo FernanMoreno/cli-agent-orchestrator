@@ -6,13 +6,11 @@ that a schema-invalid output is stored with a 200 + unvalidated state (does NOT
 500).
 """
 
-import sqlite3
 import uuid
 from pathlib import Path
 
 import pytest
 
-from cli_agent_orchestrator.clients.database import _migrate_workflow_index
 from cli_agent_orchestrator.clients.tmux import tmux_client
 
 _GOOD_SPEC = """\
@@ -25,14 +23,6 @@ steps:
     agent: developer
     prompt: do it
 """
-
-
-@pytest.fixture
-def isolated_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_index()
-    return db_path
 
 
 @pytest.fixture
@@ -90,7 +80,7 @@ class TestValidateEndpoint:
 
 
 class TestListEndpoint:
-    def test_list_returns_rows(self, client, isolated_db, spec_dir):
+    def test_list_returns_rows(self, client, isolated_memory_db, spec_dir):
         _write(spec_dir, "alpha")
         _write(spec_dir, "beta")
         resp = client.get("/workflows", params={"dir": str(spec_dir)})
@@ -98,13 +88,13 @@ class TestListEndpoint:
         names = [r["name"] for r in resp.json()]
         assert names == ["alpha", "beta"]
 
-    def test_blocked_dir_maps_to_400(self, client, isolated_db):
+    def test_blocked_dir_maps_to_400(self, client, isolated_memory_db):
         resp = client.get("/workflows", params={"dir": "/etc"})
         assert resp.status_code == 400
 
 
 class TestGetEndpoint:
-    def test_get_known(self, client, isolated_db, spec_dir):
+    def test_get_known(self, client, isolated_memory_db, spec_dir):
         # spec_dir is the patched default scan dir, so the name-based GET resolves
         # against it without a ?dir param.
         _write(spec_dir, "known")
@@ -112,17 +102,17 @@ class TestGetEndpoint:
         assert resp.status_code == 200
         assert resp.json()["name"] == "known"
 
-    def test_get_unknown_maps_to_404(self, client, isolated_db, spec_dir):
+    def test_get_unknown_maps_to_404(self, client, isolated_memory_db, spec_dir):
         resp = client.get("/workflows/doesnotexist")
         assert resp.status_code == 404
 
 
 class TestDeleteEndpoint:
-    def test_delete_unknown_maps_to_404(self, client, isolated_db, spec_dir):
+    def test_delete_unknown_maps_to_404(self, client, isolated_memory_db, spec_dir):
         resp = client.delete("/workflows/ghostwf")
         assert resp.status_code == 404
 
-    def test_delete_traversal_name_maps_to_400(self, client, isolated_db, spec_dir):
+    def test_delete_traversal_name_maps_to_400(self, client, isolated_memory_db, spec_dir):
         # ".." fails the name validator -> ValueError -> 400.
         resp = client.delete("/workflows/..")
         assert resp.status_code in (400, 404, 405)

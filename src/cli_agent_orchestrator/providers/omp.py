@@ -74,6 +74,7 @@ class ProviderError(Exception):
 
 
 class OmpProvider(BaseProvider):
+    supports_interaction_mcp_overlay = True
     """Launch and monitor an interactive OMP session inside a CAO terminal."""
 
     supports_screen_detection = True
@@ -179,7 +180,9 @@ class OmpProvider(BaseProvider):
             command.extend(["--append-system-prompt", str(context_path)])
 
         if profile is not None and profile.mcpServers:
-            extension_dir = self._write_extension_root(profile.mcpServers)
+            extension_dir = self._write_extension_root(
+                self.interaction_mcp_servers(profile.mcpServers)
+            )
             command.extend(["--extension", extension_dir])
 
         return shlex.join(command)

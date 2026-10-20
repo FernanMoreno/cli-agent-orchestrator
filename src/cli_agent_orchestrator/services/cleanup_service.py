@@ -13,6 +13,7 @@ from cli_agent_orchestrator.clients.database import (
     _record_native_child_cleanup_rows,
     delete_old_handoff_results,
 )
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.constants import (
     LOG_DIR,
     MEMORY_BASE_DIR,
@@ -84,7 +85,9 @@ def cleanup_old_data():
                 from cli_agent_orchestrator import constants
                 from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
-                with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id):
+                with terminal_dispatch_lock(
+                    DatabaseTarget.from_settings(scope="main"), terminal_id
+                ):
                     terminal_service.ensure_terminal_is_not_work_owned(terminal_id)
                     metadata = terminal_service.get_terminal_metadata(terminal_id)
                     if metadata and metadata.get("engine") == "kas":
@@ -150,16 +153,14 @@ def cleanup_old_data():
         logger.info(f"Deleted {server_logs_deleted} old server log files")
 
         # Clean up old handoff result records (issue #447).
-        # Same RETENTION_DAYS window as terminals/messages, but a UTC cutoff, NOT
-        # ``cutoff_date`` (PR #453 review finding 1). The three tables above default
-        # their timestamp to naive-local ``datetime.now``, so the naive-local
-        # ``cutoff_date`` matches them. ``HandoffResultModel.created_at`` defaults to
-        # ``_utcnow()`` instead, and SQLite drops the offset -- what lands in the
-        # column is UTC wall-clock. Comparing that to a local cutoff deletes rows
-        # UTC-offset hours early (east of UTC) or late (west); measured ~10-19h early
-        # under TZ=+10. This is the most sensitive swept table (it holds full worker
-        # output), so it gets the clock its WRITER uses rather than the one its
-        # neighbours use.
+        # Same RETENTION_DAYS window as terminals/messages, but an aware UTC cutoff,
+        # not ``cutoff_date`` (PR #453 review finding 1). The three tables above use
+        # naive-local timestamp defaults, so the naive-local cutoff matches them.
+        # ``HandoffResultModel.created_at`` is timezone-aware and defaults to
+        # ``_utcnow()``; compare it with an aware UTC cutoff so session timezone and
+        # local clock offsets cannot move the retention boundary. This is the most
+        # sensitive swept table (it holds full worker output), so use the clock its
+        # writer uses rather than the one its neighbours use.
         handoff_cutoff = datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)
         try:
             deleted_handoff = delete_old_handoff_results(handoff_cutoff)

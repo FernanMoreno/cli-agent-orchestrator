@@ -1,62 +1,60 @@
-"""The workflow index migrator owns its connection and transaction lifetime."""
+"""Migration failure must roll back its DDL and ledger row atomically."""
 
-import sqlite3
-from contextlib import closing
+from uuid import uuid4
 
 import pytest
+from psycopg import Error as PsycopgError
 
-from cli_agent_orchestrator import constants
-from cli_agent_orchestrator.clients import database
+from cli_agent_orchestrator.clients.postgres import connect
+from cli_agent_orchestrator.clients.postgres.migrations import ComponentMigration, migrate_component
+
+pytestmark = pytest.mark.postgres
 
 
-@pytest.mark.parametrize("fail_query", [False, True])
-def test_workflow_index_migration_closes_after_transaction(tmp_path, monkeypatch, fail_query):
-    path = tmp_path / "index.db"
-    connect = sqlite3.connect
-    with closing(connect(path)) as connection, connection:
-        connection.execute("CREATE TABLE transaction_probe (value TEXT NOT NULL)")
+def test_failed_workflow_component_migration_rolls_back_ddl_and_history(postgres_targets):
+    target = postgres_targets["main"]
+    component = "workflow_failure_" + uuid4().hex
+    table = "workflow_probe_" + uuid4().hex[:12]
+    migration = (
+        ComponentMigration(
+            component=component,
+            scope="main",
+            version=1,
+            statements=(
+                f"CREATE TABLE {table} (value TEXT NOT NULL)",
+                "SELECT 1 / 0",
+            ),
+            tables=(table,),
+        ),
+    )
 
-    events = []
-    connections = []
+    ledger_seed_id = uuid4().hex
+    ledger_seed_table = f"workflow_history_seed_{ledger_seed_id[:12]}"
+    ledger_seed = ComponentMigration(
+        component="workflow_history_seed_" + ledger_seed_id,
+        scope="main",
+        version=1,
+        statements=(f"CREATE TABLE {ledger_seed_table} (value INTEGER)",),
+        tables=(ledger_seed_table,),
+    )
+    migrate_component(target, (ledger_seed,))
 
-    class TrackedConnection(sqlite3.Connection):
-        def execute(self, sql, parameters=()):
-            if not events:
-                # A real pending write proves that exit still commits or rolls back
-                # before the connection closes, including the handled error path.
-                super().execute("INSERT INTO transaction_probe VALUES ('pending')")
-                events.append("write")
-                if fail_query:
-                    raise sqlite3.OperationalError("injected index migration failure")
-            return super().execute(sql, parameters)
+    with pytest.raises(PsycopgError):
+        migrate_component(target, migration)
 
-        def __exit__(self, exception_type, exception, traceback):
-            result = super().__exit__(exception_type, exception, traceback)
-            events.append("rollback" if exception_type else "commit")
-            return result
-
-        def close(self):
-            events.append("close")
-            super().close()
-
-    def tracked_connect(*args, **kwargs):
-        kwargs["factory"] = TrackedConnection
-        connection = connect(*args, **kwargs)
-        connections.append(connection)
-        return connection
-
-    monkeypatch.setattr(constants, "DATABASE_FILE", path)
-    monkeypatch.setattr(sqlite3, "connect", tracked_connect)
-    database._migrate_workflow_index()
-
-    with closing(connect(path)) as verification:
-        rows = verification.execute("SELECT value FROM transaction_probe").fetchall()
-        index_exists = verification.execute(
-            "SELECT name FROM sqlite_master WHERE name = 'workflow_index'"
-        ).fetchone()
-    assert rows == ([] if fail_query else [("pending",)])
-    assert bool(index_exists) is not fail_query
-    assert len(connections) == 1
-    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
-        connections[0].execute("SELECT 1")
-    assert events == ["write", "rollback" if fail_query else "commit", "close"]
+    with connect(target, readonly=True) as connection:
+        assert (
+            connection.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema=%s AND table_name=%s",
+                (target.schema, table),
+            ).fetchone()
+            is None
+        )
+        assert (
+            connection.execute(
+                "SELECT 1 FROM _cao_schema_migrations WHERE scope=%s AND component=%s",
+                (target.scope, component),
+            ).fetchone()
+            is None
+        )

@@ -45,17 +45,18 @@ _BWRAP_VERSION_RE = re.compile(
 )
 # Approved Bubblewrap 0.13.0 builds from the checksum-pinned upstream source
 # archive, recorded with their build profiles in
-# docs/auditoria-t097/soluciones/S08-limites-del-entorno.md. Hosted builds:
-# ubuntu-24.04 image 20260920.314.1 (GCC 13.3.0, Meson 1.3.2), and pinned
-# Ubuntu 26.10 QEMU guest image 20260919 (GCC 15.3.0-4ubuntu1, Meson 1.10.1).
-# The guest digest passed all eight cases in run 36460464186. Production
-# registry activation still requires acceptance on the deployment host.
+# docs/auditoria-t097/soluciones/S08-limites-del-entorno.md. Profiles include
+# hosted Ubuntu 24.04, the pinned Ubuntu 26.10 guest, and a twice-reproduced
+# Ubuntu 26.10 OCI build. The latter establishes a fixed build digest, not T097
+# guest acceptance. Production registry activation still requires acceptance
+# on the deployment host.
 _BWRAP_SHA256_ALLOWLIST: frozenset[str] = frozenset(
     {
         "f41ba3f7be0280df0afe201f0e2eeb16a17e969782491e830e6753c67f78d70d",
         "a5882b87c0b8105a5d9e81db5f64a4f8d373affc36f531e5df7409db5b1af8f6",
         "15eae8145dc0053ce790a954f2abe9914a17f49b4ccb20778b88ecc9b9522250",
         "efd07a9dfd55016ec5cb16facb67aac2735fa900e261f6a44be1517dcf31c015",
+        "18a513db177974d371d2c1fbf9d6f8f5b2bcb43565e242e5a7b4bdc4886e4c39",
     }
 )
 _BWRAP_MAX_BYTES = 64 * 1024 * 1024

@@ -1,4 +1,4 @@
-"""Independent C07 proofs through actual scoped Work, SQLite and owned Python."""
+"""Independent C07 proofs through actual scoped Work, PostgreSQL and owned Python."""
 
 import asyncio
 import json
@@ -62,7 +62,10 @@ def fresh_driver(f, app):
     from cli_agent_orchestrator.services.work_admission import WorkAdmission
     from cli_agent_orchestrator.services.work_origin import WorkOrigins
 
-    repository = WorkRepository(f.context.repo.path)
+    repository = WorkRepository(
+        f.context.repo.target,
+        filesystem_home=f.context.repo.filesystem_home,
+    )
     origins = WorkOrigins(repository)
     old = f.context.service
     admission = WorkAdmission(
@@ -586,7 +589,7 @@ def test_actual_live_unattached_process_never_reclaimed_by_expired_lease(
                         ).fetchone()[0]
                         == 0
                     )
-                    conn.execute("UPDATE workflow_driver SET lease_expires_at=?", (expiry,))
+                    conn.execute("UPDATE workflow_driver SET lease_expires_at=%s", (expiry,))
             finally:
                 release.set()
             return await task
@@ -703,12 +706,12 @@ def test_actual_owned_python_exit_and_late_success_are_not_work_cleanup_proof(
         assert status["state"] == "stopping" and not status["work_verified_completed"]
         with f.context.repo.read_snapshot() as conn:
             assert (
-                conn.execute("SELECT state FROM work_items WHERE id=?", (work[0],)).fetchone()[0]
+                conn.execute("SELECT state FROM work_items WHERE id=%s", (work[0],)).fetchone()[0]
                 == "succeeded"
             )
             assert (
                 conn.execute(
-                    "SELECT cleanup_state FROM work_attempts WHERE id=?", (work[1],)
+                    "SELECT cleanup_state FROM work_attempts WHERE id=%s", (work[1],)
                 ).fetchone()[0]
                 != "complete"
             )

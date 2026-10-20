@@ -67,9 +67,15 @@ json_props = st.dictionaries(
 
 # Component names: mix of valid and invalid.
 valid_components = st.sampled_from(sorted(GENERATIVE_UI_COMPONENTS))
-invalid_components = st.text(min_size=1, max_size=30).filter(
-    lambda s: s not in GENERATIVE_UI_COMPONENTS
-)
+
+
+def _outside_component_allowlist(candidate: str) -> str:
+    while candidate in GENERATIVE_UI_COMPONENTS:
+        candidate += "\x00"
+    return candidate
+
+
+invalid_components = st.text(min_size=1, max_size=30).map(_outside_component_allowlist)
 
 # AG-UI type strings (mix of known and unknown).
 agui_types = st.one_of(

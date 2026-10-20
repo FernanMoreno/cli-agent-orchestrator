@@ -28,7 +28,7 @@ Each acceptance case enters the real FastAPI lifespan through `TestClient`.
 Startup composes the opt-in Docker backend, v2 process adapter, workflow origins,
 result service, and projector on the same repository, then projects verified
 pending results before serving requests. The tests close that server and enter
-a second lifespan over the same SQLite and immutable content stores before
+a second lifespan over the same PostgreSQL and immutable content stores before
 resume/recovery. A separate startup composition check is
 `test/api/test_workflow_managed_ingress.py::test_managed_workflow_runtime_composition_binds_startup_projector`,
 run with:

@@ -213,13 +213,17 @@ def test_non_regular_markdown_entry_is_refused_before_open(tmp_path, monkeypatch
         pytest.skip(f"FIFO unavailable: {exc}")
     from cli_agent_orchestrator.services.vault import scan
 
-    monkeypatch.setattr(
-        scan.os,
-        "open",
-        lambda *_args, **_kwargs: pytest.fail("non-regular entry reached open"),
-    )
+    vault = _vault(root)
+    original_open = scan.os.open
 
-    report = scan_vault(_vault(root))
+    def refuse_fifo_open(path, *args, **kwargs):
+        if not isinstance(path, int) and os.fsdecode(path).rsplit("/", 1)[-1] == fifo.name:
+            pytest.fail("non-regular entry reached open")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(scan.os, "open", refuse_fifo_open)
+
+    report = scan_vault(vault)
 
     assert report.notes[0].findings[0].code == FindingCode.NON_REGULAR_FILE_REFUSED
 

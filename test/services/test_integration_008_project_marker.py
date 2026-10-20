@@ -1,5 +1,6 @@
 import json
 import shutil
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import patch
 
 import pytest
@@ -12,9 +13,7 @@ from cli_agent_orchestrator.services import memory_service
 
 @pytest.fixture
 def marker_store(tmp_path, monkeypatch):
-    engine = create_engine(
-        f"sqlite:///{tmp_path/'marker.sqlite'}", connect_args={"check_same_thread": False}
-    )
+    engine = configured_orm_engine()
     database.Base.metadata.create_all(engine)
     monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=engine))
     monkeypatch.setattr("cli_agent_orchestrator.constants.LOCK_DIR", tmp_path / "locks")

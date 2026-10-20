@@ -10,6 +10,7 @@ import requests
 from pydantic import Field
 
 from cli_agent_orchestrator.clients import database
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.services import assignment_service as intents
 from cli_agent_orchestrator.services import terminal_service
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
@@ -151,7 +152,7 @@ def _allocate(parent_id, expected_incarnation, expected_generation, broker_url, 
     from cli_agent_orchestrator import constants
     from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
-    with terminal_dispatch_lock(constants.DATABASE_FILE, parent_id):
+    with terminal_dispatch_lock(DatabaseTarget.from_settings(scope="main"), parent_id):
         terminal_service.ensure_terminal_is_not_work_owned(parent_id)
         parent = database.get_terminal_metadata(parent_id)
         receipt = database.get_terminal_turn_receipt(parent_id)

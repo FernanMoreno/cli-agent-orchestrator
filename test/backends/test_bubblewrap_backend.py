@@ -166,7 +166,7 @@ def test_bubblewrap_process_preflight_requires_receiver_descriptor_for_receiver_
     )
 
     name = action.rsplit(".", 1)[-1]
-    repository = WorkRepository(tmp_path / f"bubblewrap-{name}.sqlite3")
+    repository = WorkRepository(filesystem_home=tmp_path)
     repository.initialize()
     executable = ExecutableIdentity(
         command_token="/worker",
@@ -586,7 +586,7 @@ def test_bound_process_executor_forwards_exact_work_fences_to_recorded_bubblewra
     )
     from cli_agent_orchestrator.services import work_bubblewrap_composition
 
-    repository = WorkRepository(tmp_path / "bubblewrap-bound.sqlite3")
+    repository = WorkRepository(filesystem_home=tmp_path)
     repository.initialize()
     digest = "b" * 64
     executable = ExecutableIdentity(
@@ -687,7 +687,7 @@ def test_tool_contract_gets_fresh_attempt_bound_proxy_before_recorded_launch(
     from cli_agent_orchestrator.services import work_bubblewrap_composition
     from cli_agent_orchestrator.services.work_mcp_proxy import WorkMcpProxy
 
-    repository = WorkRepository(tmp_path / "bubblewrap-proxy.sqlite3")
+    repository = WorkRepository(filesystem_home=tmp_path)
     repository.initialize()
     digest = "d" * 64
     executable = ExecutableIdentity(
@@ -830,8 +830,7 @@ def test_work_backend_view_rejects_unenforceable_commands_before_tmux_effects(
         WorkEffectAuthorizationRequired,
     )
     from cli_agent_orchestrator.backends.bubblewrap_backend import BubblewrapWorkBackend
-    from cli_agent_orchestrator.backends.work_backend import WorkBackendView
-    from cli_agent_orchestrator.constants import FIFO_DIR
+    from cli_agent_orchestrator.backends.work_backend import FIFO_DIR, WorkBackendView
 
     monkeypatch.setattr(bubblewrap_backend, "_query_abi_version", lambda: 9)
     client = NoTmuxEffects()

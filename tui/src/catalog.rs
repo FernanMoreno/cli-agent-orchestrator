@@ -1602,7 +1602,7 @@ fn entry(id: CommandId) -> Command {
             id: CommandId::MemoryRepair,
             parent: Some("memory"),
             leaf_name: "repair",
-            summary: "Reconcile surviving canonical topics into SQLite and index.md.",
+            summary: "Reconcile surviving canonical topics into PostgreSQL and index.md.",
             policy: Policy::Handoff,
             params: &[Param { name: "--apply", required: false, kind: ParamKind::Flag }],
             handoff_reason: Some(

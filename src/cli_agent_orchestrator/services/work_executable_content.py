@@ -36,16 +36,20 @@ class WorkExecutableContent:
         def accept(ref: ArtifactRef) -> ArtifactRef:
             with self.repository.transaction() as connection:
                 self.repository._verify(connection)
+                connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+                    (f"executable-content:{self.repository.target.store_id}:{ref.content_hash}",),
+                )
                 row = connection.execute(
                     "SELECT content_hash,immutable_location,byte_length "
-                    "FROM work_executable_contents WHERE content_hash=?",
+                    "FROM work_executable_contents WHERE content_hash=%s",
                     (ref.content_hash,),
                 ).fetchone()
                 expected = (ref.content_hash, ref.immutable_location, ref.byte_length)
                 if row is None:
                     connection.execute(
                         "INSERT INTO work_executable_contents "
-                        "(content_hash,immutable_location,byte_length,created_at) VALUES (?,?,?,?)",
+                        "(content_hash,immutable_location,byte_length,created_at) VALUES (%s,%s,%s,%s)",
                         (*expected, time.time()),
                     )
                 elif tuple(row) != expected:
@@ -83,7 +87,7 @@ class WorkExecutableContent:
                 raise ContractConflict("command is absent from the bound V2 contract")
             catalog = connection.execute(
                 "SELECT content_hash,immutable_location,byte_length "
-                "FROM work_executable_contents WHERE content_hash=?",
+                "FROM work_executable_contents WHERE content_hash=%s",
                 (identity.sha256_digest,),
             ).fetchone()
             if catalog is None or (

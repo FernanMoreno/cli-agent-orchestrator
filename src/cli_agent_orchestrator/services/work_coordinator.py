@@ -264,12 +264,12 @@ class WorkCoordinator:
             from datetime import datetime
 
             started_at = connection.execute(
-                "SELECT started_at FROM workflow_run WHERE run_id=?", (rid,)
+                "SELECT started_at FROM workflow_run WHERE run_id=%s", (rid,)
             ).fetchone()[0]
             deadline = datetime.fromisoformat(started_at.replace("Z", "+00:00")).timestamp()
             deadline += policy["deadline_seconds"]
             connection.execute(
-                "INSERT INTO workflow_coordinator VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO workflow_coordinator VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
                     coordinator_id,
                     rid,
@@ -321,7 +321,7 @@ class WorkCoordinator:
         )
         return {key: value[key] for key in ("coordinator_id", "run_id", "state")}
 
-    def _row(self, connection, principal, identity, *, read_only=False):
+    def _row(self, connection, principal, identity, *, read_only=False, lock=False):
         if read_only:
             from cli_agent_orchestrator.security.auth import (
                 SCOPE_ADMIN,
@@ -336,8 +336,10 @@ class WorkCoordinator:
                 raise PermissionError("coordinator_read_authority_required")
         else:
             self.plans._owner(principal)
+        lock_clause = " FOR UPDATE" if lock else ""
         row = connection.execute(
-            "SELECT * FROM workflow_coordinator WHERE id=? OR run_id=?", (identity, identity)
+            "SELECT * FROM workflow_coordinator WHERE id=%s OR run_id=%s" + lock_clause,
+            (identity, identity),
         ).fetchone()
         if row is None:
             raise LookupError("coordinator_missing")
@@ -370,7 +372,7 @@ class WorkCoordinator:
         from datetime import datetime
 
         started = connection.execute(
-            "SELECT started_at FROM workflow_run WHERE run_id=?", (row["run_id"],)
+            "SELECT started_at FROM workflow_run WHERE run_id=%s", (row["run_id"],)
         ).fetchone()[0]
         started_epoch = datetime.fromisoformat(started.replace("Z", "+00:00")).timestamp()
         if row["deadline"] > started_epoch + policy["deadline_seconds"] + 1:
@@ -381,11 +383,11 @@ class WorkCoordinator:
         with self.repository.read_snapshot() as conn:
             row = self._row(conn, principal, identity, read_only=True)
             events = conn.execute(
-                "SELECT kind,iteration,binding_id,accepted_result_id,content_hash,public_evidence_json FROM workflow_coordinator_events WHERE coordinator_id=? ORDER BY sequence DESC LIMIT 64",
+                "SELECT kind,iteration,binding_id,accepted_result_id,content_hash,public_evidence_json FROM workflow_coordinator_events WHERE coordinator_id=%s ORDER BY sequence DESC LIMIT 64",
                 (row["id"],),
             ).fetchall()
             driver = conn.execute(
-                "SELECT state,pause_reason FROM workflow_driver WHERE run_id=?", (row["run_id"],)
+                "SELECT state,pause_reason FROM workflow_driver WHERE run_id=%s", (row["run_id"],)
             ).fetchone()
         verified = False
         completion_evidence_state = "unverified"
@@ -401,7 +403,7 @@ class WorkCoordinator:
                         raise ValueError("coordinator_completion_integrity")
                     with self.repository.read_snapshot() as conn:
                         wake = conn.execute(
-                            "SELECT * FROM workflow_continuation_outbox WHERE binding_id=? AND accepted_result_id=?",
+                            "SELECT * FROM workflow_continuation_outbox WHERE binding_id=%s AND accepted_result_id=%s",
                             (completion["binding_id"], completion["accepted_result_id"]),
                         ).fetchone()
                     if wake is not None:
@@ -449,7 +451,7 @@ class WorkCoordinator:
         text = canonical(content)
         digest = hashlib.sha256(text.encode()).hexdigest()
         prior = conn.execute(
-            "SELECT * FROM workflow_coordinator_events WHERE coordinator_id=? AND request_id=?",
+            "SELECT * FROM workflow_coordinator_events WHERE coordinator_id=%s AND request_id=%s",
             (row["id"], request_id),
         ).fetchone()
         if prior:
@@ -461,11 +463,11 @@ class WorkCoordinator:
                 raise ValueError("coordinator_request_conflict")
             return False
         sequence = conn.execute(
-            "SELECT COALESCE(MAX(sequence),0)+1 FROM workflow_coordinator_events WHERE coordinator_id=?",
+            "SELECT COALESCE(MAX(sequence),0)+1 FROM workflow_coordinator_events WHERE coordinator_id=%s",
             (row["id"],),
         ).fetchone()[0]
         conn.execute(
-            "INSERT INTO workflow_coordinator_events VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO workflow_coordinator_events VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (row["id"], sequence, request_id, kind, iteration, binding, result, digest, text, None),
         )
         return True
@@ -482,11 +484,11 @@ class WorkCoordinator:
             raise ValueError("coordinator_feedback_invalid")
         self.plans.validate_resume(principal, self.status(principal, identity)["run_id"])
         with self.repository.transaction() as conn:
-            row = self._row(conn, principal, identity)
+            row = self._row(conn, principal, identity, lock=True)
             if row["state"] in ("completed", "stopped", "stopping", "escalated"):
                 raise ValueError("coordinator_terminal")
             prior = conn.execute(
-                "SELECT iteration FROM workflow_coordinator_events WHERE coordinator_id=? AND request_id=?",
+                "SELECT iteration FROM workflow_coordinator_events WHERE coordinator_id=%s AND request_id=%s",
                 (row["id"], request_id),
             ).fetchone()
             iteration = prior[0] if prior else row["current_iteration"] + 1
@@ -495,13 +497,13 @@ class WorkCoordinator:
             if (
                 prior is None
                 and conn.execute(
-                    "SELECT 1 FROM workflow_coordinator_events WHERE coordinator_id=? AND request_id=?",
+                    "SELECT 1 FROM workflow_coordinator_events WHERE coordinator_id=%s AND request_id=%s",
                     (row["id"], "context-" + str(iteration)),
                 ).fetchone()
             ):
                 iteration += 1
             count = conn.execute(
-                "SELECT count(*) FROM workflow_coordinator_events WHERE coordinator_id=? AND kind='feedback'",
+                "SELECT count(*) FROM workflow_coordinator_events WHERE coordinator_id=%s AND kind='feedback'",
                 (row["id"],),
             ).fetchone()[0]
             if prior is None and (
@@ -517,14 +519,14 @@ class WorkCoordinator:
         self.plans.validate_resume(principal, run_id)
         with self.repository.transaction() as conn:
             check_effect(conn, run_id)
-            row = self._row(conn, principal, run_id)
+            row = self._row(conn, principal, run_id, lock=True)
             if (
                 not 1 <= iteration <= row["max_iterations"]
                 or iteration > row["current_iteration"] + 1
             ):
                 raise ValueError("coordinator_iteration_invalid")
             prior = conn.execute(
-                "SELECT public_evidence_json FROM workflow_coordinator_events WHERE coordinator_id=? AND request_id=?",
+                "SELECT public_evidence_json FROM workflow_coordinator_events WHERE coordinator_id=%s AND request_id=%s",
                 (row["id"], "context-" + str(iteration)),
             ).fetchone()
             if prior:
@@ -532,7 +534,7 @@ class WorkCoordinator:
             feedback = [
                 json.loads(e[0])["text"]
                 for e in conn.execute(
-                    "SELECT public_evidence_json FROM workflow_coordinator_events WHERE coordinator_id=? AND kind='feedback' AND iteration=? ORDER BY sequence",
+                    "SELECT public_evidence_json FROM workflow_coordinator_events WHERE coordinator_id=%s AND kind='feedback' AND iteration=%s ORDER BY sequence",
                     (row["id"], iteration),
                 )
             ]
@@ -665,13 +667,13 @@ class WorkCoordinator:
         satisfied, proof = self._criteria(principal, run_id, policy, accepted)
         progress = hashlib.sha256(accepted.canonical_bytes).hexdigest()
         with self.repository.transaction() as conn:
-            row = self._row(conn, principal, run_id)
+            row = self._row(conn, principal, run_id, lock=True)
             if row["state"] in ("completed", "stopping", "stopped", "escalated"):
                 return False
             from cli_agent_orchestrator.services.workflow_continuation_driver import process_stopped
 
             driver = conn.execute(
-                "SELECT * FROM workflow_driver WHERE run_id=?", (run_id,)
+                "SELECT * FROM workflow_driver WHERE run_id=%s", (run_id,)
             ).fetchone()
             if not process_stopped(driver["process_identity_json"]):
                 raise DriverRefused("orphan_process_reconciliation_required")
@@ -711,7 +713,7 @@ class WorkCoordinator:
                 # Retire only this exact accepted checkpoint's active pointer.
                 # A replayed result must never clear a subsequent pending step.
                 advanced = conn.execute(
-                    "UPDATE workflow_run SET current_step_id=NULL WHERE run_id=? AND state='running' AND generation=? AND current_step_id=? AND EXISTS(SELECT 1 FROM workflow_run_step s WHERE s.run_id=workflow_run.run_id AND s.step_id=? AND s.state='completed' AND s.attempts=?)",
+                    "UPDATE workflow_run SET current_step_id=NULL WHERE run_id=%s AND state='running' AND generation=%s AND current_step_id=%s AND EXISTS(SELECT 1 FROM workflow_run_step s WHERE s.run_id=workflow_run.run_id AND s.step_id=%s AND s.state='completed' AND s.attempts=%s)",
                     (
                         run_id,
                         str(event["run_generation"]),
@@ -723,7 +725,7 @@ class WorkCoordinator:
                 if advanced.rowcount != 1:
                     raise ValueError("coordinator_checkpoint_CAS_lost")
             conn.execute(
-                "UPDATE workflow_coordinator SET state=?,current_iteration=?,last_progress_hash=?,no_progress_count=?,escalation_reason=?,revision=revision+1 WHERE id=?",
+                "UPDATE workflow_coordinator SET state=%s,current_iteration=%s,last_progress_hash=%s,no_progress_count=%s,escalation_reason=%s,revision=revision+1 WHERE id=%s",
                 (state, iteration, progress, stalled, reason, row["id"]),
             )
             if complete or reason:
@@ -742,15 +744,15 @@ class WorkCoordinator:
                     accepted.accepted_result_id,
                 )
                 conn.execute(
-                    "UPDATE workflow_continuation_outbox SET state='consumed',revision=revision+1 WHERE id=?",
+                    "UPDATE workflow_continuation_outbox SET state='consumed',revision=revision+1 WHERE id=%s",
                     (event["id"],),
                 )
                 conn.execute(
-                    "UPDATE workflow_driver SET state='stopped',lease_expires_at=0,revision=revision+1 WHERE run_id=?",
+                    "UPDATE workflow_driver SET state='stopped',lease_expires_at=0,revision=revision+1 WHERE run_id=%s",
                     (run_id,),
                 )
                 conn.execute(
-                    "UPDATE workflow_run SET state=?,finished_at=? WHERE run_id=?",
+                    "UPDATE workflow_run SET state=%s,finished_at=%s WHERE run_id=%s",
                     (
                         "completed" if complete else "failed",
                         time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -765,11 +767,11 @@ class WorkCoordinator:
             return
         with self.repository.transaction() as conn:
             row = conn.execute(
-                "SELECT state FROM workflow_coordinator WHERE run_id=?", (run_id,)
+                "SELECT state FROM workflow_coordinator WHERE run_id=%s", (run_id,)
             ).fetchone()
             if row and row[0] not in ("completed", "stopped", "stopping", "escalated"):
                 conn.execute(
-                    "UPDATE workflow_coordinator SET state='paused',escalation_reason='executor_without_checkpoint',revision=revision+1 WHERE run_id=?",
+                    "UPDATE workflow_coordinator SET state='paused',escalation_reason='executor_without_checkpoint',revision=revision+1 WHERE run_id=%s",
                     (run_id,),
                 )
 
@@ -797,11 +799,11 @@ class WorkCoordinator:
         run_id = status["run_id"]
         self.driver.request_stop(principal, run_id)
         with self.repository.transaction() as conn:
-            row = self._row(conn, principal, identity)
+            row = self._row(conn, principal, identity, lock=True)
             if row["state"] == "completed":
                 raise ValueError("coordinator_completed")
             conn.execute(
-                "UPDATE workflow_coordinator SET state='stopping',revision=revision+1 WHERE id=?",
+                "UPDATE workflow_coordinator SET state='stopping',revision=revision+1 WHERE id=%s",
                 (row["id"],),
             )
             self._event(
@@ -831,12 +833,12 @@ class WorkCoordinator:
         from cli_agent_orchestrator.services.workflow_continuation_driver import process_stopped
 
         with self.repository.transaction() as conn:
-            row = self._row(conn, principal, identity)
+            row = self._row(conn, principal, identity, lock=True)
             driver = conn.execute(
-                "SELECT * FROM workflow_driver WHERE run_id=?", (row["run_id"],)
+                "SELECT * FROM workflow_driver WHERE run_id=%s", (row["run_id"],)
             ).fetchone()
             work = conn.execute(
-                "SELECT w.state,a.cleanup_state FROM work_workflow_step_bindings b JOIN work_items w ON w.id=b.work_item_id JOIN work_attempts a ON a.id=b.work_attempt_id WHERE b.run_id=?",
+                "SELECT w.state,a.cleanup_state FROM work_workflow_step_bindings b JOIN work_items w ON w.id=b.work_item_id JOIN work_attempts a ON a.id=b.work_attempt_id WHERE b.run_id=%s",
                 (row["run_id"],),
             ).fetchall()
             stopped = process_stopped(driver["process_identity_json"]) and all(
@@ -844,15 +846,15 @@ class WorkCoordinator:
             )
             if stopped and row["state"] == "stopping":
                 conn.execute(
-                    "UPDATE workflow_coordinator SET state='stopped',revision=revision+1 WHERE id=?",
+                    "UPDATE workflow_coordinator SET state='stopped',revision=revision+1 WHERE id=%s",
                     (row["id"],),
                 )
                 conn.execute(
-                    "UPDATE workflow_driver SET state='stopped',stop_evidence_ref='owned-process-and-Work-cleanup',revision=revision+1 WHERE run_id=?",
+                    "UPDATE workflow_driver SET state='stopped',stop_evidence_ref='owned-process-and-Work-cleanup',revision=revision+1 WHERE run_id=%s",
                     (row["run_id"],),
                 )
                 conn.execute(
-                    "UPDATE workflow_run SET state='cancelled' WHERE run_id=?", (row["run_id"],)
+                    "UPDATE workflow_run SET state='cancelled' WHERE run_id=%s", (row["run_id"],)
                 )
         return self.status(principal, identity)
 
@@ -861,7 +863,7 @@ class WorkCoordinator:
         with self.repository.read_snapshot() as conn:
             row = self._row(conn, principal, identity)
             event = conn.execute(
-                "SELECT * FROM workflow_continuation_outbox WHERE run_id=? ORDER BY created_at DESC,id DESC LIMIT 1",
+                "SELECT * FROM workflow_continuation_outbox WHERE run_id=%s ORDER BY created_at DESC,id DESC LIMIT 1",
                 (row["run_id"],),
             ).fetchone()
         if event is None:

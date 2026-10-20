@@ -207,7 +207,7 @@ def local_identity() -> dict[str, object]:
         # A candidate registry scan may have dropped this row after a transient
         # process-fence mismatch. Republish without pruning while serving the
         # probe; stale-row pruning itself performs identity HTTP checks outside
-        # its SQLite write transaction.
+        # its PostgreSQL write transaction.
         register_instance(identity, prune_stale=False)
     except (LocalPeerUnavailableError, ProfileAlreadyRunningError) as error:
         raise LocalPeerUnavailable(
@@ -1049,7 +1049,7 @@ def refresh_local_task(task_id: str) -> dict[str, object]:
             task = _update_task(task_id, terminal_id=idempotency.terminal_id)
     if task["state"] in {"succeeded", "failed", "cancelled"}:
         task = _repair_terminal_receipt(task_id)
-        # Receipt and shared lease live in different SQLite databases. Retry the
+        # Receipt and shared lease live in different PostgreSQL targets. Retry the
         # exact-owner release after a crash/failure between their two commits.
         if (
             receipt_confirms_writer_stopped(task)

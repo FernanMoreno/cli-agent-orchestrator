@@ -30,6 +30,7 @@ from cli_agent_orchestrator.clients.database import update_flow_enabled as db_up
 from cli_agent_orchestrator.clients.database import (
     update_flow_run_times as db_update_flow_run_times,
 )
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.constants import DEFAULT_PROVIDER, PROVIDERS
 from cli_agent_orchestrator.models.flow import Flow
@@ -223,15 +224,18 @@ def _is_terminal_busy(terminal_id: str) -> bool:
 def _verify_flow_terminal_ownership(terminal_ids: list[str]) -> None:
     """Check current pane IDs against a verified existing Work store."""
     try:
-        with WorkRepository(constants.DATABASE_FILE).read_snapshot() as connection:
-            for terminal_id in terminal_ids:
-                if connection.execute(
-                    "SELECT 1 FROM work_attempts WHERE terminal_id=? LIMIT 1",
-                    (terminal_id,),
-                ).fetchone():
-                    raise WorkOwnedTerminalError(
-                        f"Terminal '{terminal_id}' is owned by Work; Flow execution is denied"
-                    )
+        with WorkRepository().read_snapshot() as connection:
+            # Execute the ownership read even for an empty pane list. Catalog
+            # verification alone cannot prove the runtime role can read attempts
+            # after a script changes database privileges.
+            owned = connection.execute(
+                "SELECT terminal_id FROM work_attempts WHERE terminal_id=ANY(%s) LIMIT 1",
+                (terminal_ids,),
+            ).fetchone()
+            if owned is not None:
+                raise WorkOwnedTerminalError(
+                    f"Terminal '{owned['terminal_id']}' is owned by Work; Flow execution is denied"
+                )
     except WorkOwnedTerminalError:
         raise
     except Exception as error:
@@ -247,7 +251,7 @@ def _verified_flow_terminal_rows(session_name: str, terminal_locks: ExitStack):
         terminal_ids = sorted({terminal["id"] for terminal in terminals})
         for terminal_id in terminal_ids:
             terminal_locks.enter_context(
-                terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id)
+                terminal_dispatch_lock(DatabaseTarget.from_settings(scope="main"), terminal_id)
             )
         _verify_flow_terminal_ownership(terminal_ids)
         return terminals

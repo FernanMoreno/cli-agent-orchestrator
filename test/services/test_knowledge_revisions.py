@@ -1,25 +1,29 @@
 """Knowledge history is immutable, scoped, reviewed and never implicitly instructional."""
 
 import hashlib
-import importlib.util
 import json
-import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from cli_agent_orchestrator.clients.postgres import (
+    DatabaseError,
+    DatabaseTarget,
+    IntegrityError,
+    connect,
+)
+from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.security import auth
 from cli_agent_orchestrator.services.step_output_store import ImmutableResultStore
 
-
-def test_knowledge_schema_is_exported_for_the_verified_migration():
-    assert importlib.util.find_spec("cli_agent_orchestrator.clients.knowledge_schema") is not None
+pytestmark = pytest.mark.postgres
 
 
 @pytest.fixture
-def knowledge(tmp_path, monkeypatch):
+def knowledge(tmp_path, monkeypatch, postgres_targets):
+    bootstrap_scope(postgres_targets.main)
     from cli_agent_orchestrator.services.knowledge_revisions import (
         KnowledgeDenied,
         KnowledgeRevisions,
@@ -28,7 +32,7 @@ def knowledge(tmp_path, monkeypatch):
     monkeypatch.delenv("CAO_AUTH_JWKS_URI", raising=False)
     monkeypatch.delenv("AUTH0_DOMAIN", raising=False)
     principal = auth.local_operator_principal()
-    repository = WorkRepository(tmp_path / "knowledge.db")
+    repository = WorkRepository(postgres_targets.main)
     repository.initialize()
     job = repository.create_job(
         project_id="project",
@@ -162,7 +166,21 @@ def test_redaction_precedes_truncation_and_audit_has_no_content(knowledge):
     assert revision.source_hash == hashlib.sha256(raw.encode()).hexdigest()
     assert revision.delivered_hash == hashlib.sha256(revision.content.encode()).hexdigest()
     with repository.connection() as connection:
-        dump = "\n".join(connection.iterdump())
+        tables = connection.execute(
+            "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname=%s",
+            (repository.target.schema,),
+        ).fetchall()
+        from psycopg import sql
+
+        dump = "\n".join(
+            repr(tuple(row))
+            for table in tables
+            for row in connection.execute(
+                sql.SQL("SELECT * FROM {}.{}").format(
+                    sql.Identifier(repository.target.schema), sql.Identifier(table[0])
+                )
+            ).fetchall()
+        )
     assert "AKIAIOSFODNN7EXAMPLE" not in dump
     with repository.connection() as connection:
         event = dict(connection.execute("SELECT * FROM work_knowledge_events").fetchone())
@@ -204,35 +222,37 @@ def test_review_requires_actual_examined_evidence(knowledge):
             )
 
 
-def test_cas_concurrent_proposals_have_one_winner(knowledge):
-    propose(knowledge)
+@pytest.mark.parametrize("expected_version", [0, 1])
+def test_cas_concurrent_proposals_have_one_winner(knowledge, expected_version):
+    if expected_version:
+        propose(knowledge)
 
     def contender(content):
         try:
-            return propose(knowledge, expected_version=1, content=content).revision
+            return propose(knowledge, expected_version=expected_version, content=content).revision
         except ValueError:
             return "conflict"
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(contender, ("first", "second")))
-    assert sorted(results, key=str) == [2, "conflict"]
+    assert sorted(results, key=str) == [expected_version + 1, "conflict"]
 
 
-def test_failed_event_commit_rolls_back_revision_and_history_is_immutable(knowledge):
+def test_failed_event_commit_rolls_back_revision_and_history_is_immutable(knowledge, monkeypatch):
     _, repository, _, _, _, _ = knowledge
     first = propose(knowledge)
-    with repository.transaction() as connection:
-        connection.execute(
-            "CREATE TRIGGER refuse_knowledge BEFORE INSERT ON work_knowledge_events BEGIN SELECT RAISE(ABORT,'refused'); END"
-        )
-    # The extra trigger changes the verified schema only when named work_*.
-    with pytest.raises(sqlite3.IntegrityError):
+
+    def refuse_event(connection, *args):
+        connection.execute("SELECT 1/0")
+
+    monkeypatch.setattr(knowledge[0], "_event", refuse_event)
+    with pytest.raises(DatabaseError):
         propose(knowledge, expected_version=first.record_version)
     with repository.connection() as connection:
         assert (
             connection.execute("SELECT count(*) FROM work_knowledge_revisions").fetchone()[0] == 1
         )
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(IntegrityError):
             connection.execute("UPDATE work_knowledge_revisions SET content='tampered'")
 
 
@@ -314,7 +334,7 @@ def test_reopen_reads_frozen_content_and_labels_without_live_memory(knowledge):
 
     approved = approve(knowledge, propose(knowledge))
     reopened = KnowledgeRevisions(
-        WorkRepository(knowledge[1].path), authorize=knowledge[0].authorize
+        WorkRepository(knowledge[1].target), authorize=knowledge[0].authorize
     )
     assert reopened.read_revision(knowledge[2], "record") == approved
     assert reopened.instructions(knowledge[2], scope="project", scope_id="project") == (approved,)

@@ -9,6 +9,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from test.fixtures.vault_factory import build_vault_fixture
+from test.postgres.orm import configured_orm_engine
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -44,7 +45,7 @@ def _indexed_non_injectable_binding(tmp_path, monkeypatch, *, mapping_folder="Pr
     from cli_agent_orchestrator.services.vault import reader
     from cli_agent_orchestrator.services.vault import reconcile as reconcile_module
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reader, "SessionLocal", Session)

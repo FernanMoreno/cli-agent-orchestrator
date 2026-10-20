@@ -23,7 +23,7 @@ import json
 import logging
 import os
 import re
-import sqlite3
+import stat
 import threading
 import time
 import uuid
@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, cast
 
 import requests
 from pydantic import ValidationError
@@ -77,6 +77,7 @@ from cli_agent_orchestrator.clients.database import (
     update_terminal_shell_command,
     update_terminals_session_incarnation,
 )
+from cli_agent_orchestrator.clients.postgres.config import DatabaseTarget
 from cli_agent_orchestrator.constants import (
     CALLBACK_TERMINAL_ID_ENV,
     CALLBACK_URL_ENV,
@@ -94,6 +95,10 @@ from cli_agent_orchestrator.models.terminal import (
     TerminalInputBlockedError,
     TerminalLimitError,
     TerminalStatus,
+)
+from cli_agent_orchestrator.models.work_contract import (
+    EffectiveWorkContractV2,
+    WorkContractBinding,
 )
 from cli_agent_orchestrator.plugins import (
     PluginRegistry,
@@ -114,6 +119,7 @@ from cli_agent_orchestrator.providers.kiro_capabilities import (
     requested_kiro_capabilities,
 )
 from cli_agent_orchestrator.providers.manager import provider_manager
+from cli_agent_orchestrator.security.auth import Principal, is_verified_principal
 from cli_agent_orchestrator.services import worktree_service
 from cli_agent_orchestrator.services.elastic_worker_gateway import (
     elastic_worker_gateway_headers,
@@ -163,6 +169,303 @@ from cli_agent_orchestrator.utils.terminal import (
 )
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from cli_agent_orchestrator.services.interactions.service import InteractionService
+
+
+def _interaction_service() -> "InteractionService":
+    """Resolve the database-scoped interaction service lazily for runtime seams."""
+    from cli_agent_orchestrator.services.interactions.service import (
+        get_default_interaction_service,
+    )
+
+    return get_default_interaction_service()
+
+
+def bind_validated_assignment_owner(
+    terminal_id: str, incarnation_id: str, assignment_id: str
+) -> dict[str, Any]:
+    """Bind source ownership only after the durable assignment is submitted."""
+    return cast(
+        dict[str, Any],
+        _interaction_service().bind_validated_assignment_owner(
+            terminal_id, incarnation_id, assignment_id
+        ),
+    )
+
+
+def _interaction_capability_path(terminal_id: str, incarnation_id: str) -> Path:
+    terminal_key = hashlib.sha256(terminal_id.encode("utf-8")).hexdigest()
+    incarnation_key = hashlib.sha256(incarnation_id.encode("utf-8")).hexdigest()
+    return (
+        constants.CAO_HOME_DIR
+        / "tmp"
+        / "interaction-capabilities"
+        / f"{terminal_key}.{incarnation_key}.cap"
+    )
+
+
+def _write_interaction_capability_file(terminal_id: str, incarnation_id: str, token: str) -> Path:
+    """Atomically publish a source token in a private, per-incarnation file."""
+    from cli_agent_orchestrator.utils.atomic_file import locked_atomic_write
+
+    path = _interaction_capability_path(terminal_id, incarnation_id)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if path.parent.is_symlink():
+        raise OSError("interaction capability directory may not be a symlink")
+    os.chmod(path.parent, 0o700)
+    directory_stat = path.parent.stat()
+    if hasattr(os, "getuid") and directory_stat.st_uid != os.getuid():
+        raise OSError("interaction capability directory is not owned by the server user")
+    if stat.S_IMODE(directory_stat.st_mode) != 0o700:
+        raise OSError("interaction capability directory permissions are not private")
+    locked_atomic_write(path, token, mode=0o600)
+    file_stat = path.stat()
+    if path.is_symlink() or stat.S_IMODE(file_stat.st_mode) != 0o600:
+        raise OSError("interaction capability file permissions are not private")
+    if hasattr(os, "getuid") and file_stat.st_uid != os.getuid():
+        raise OSError("interaction capability file is not owned by the server user")
+    return path
+
+
+def _install_interaction_source_capability(
+    provider_instance: BaseProvider,
+    interaction_service: Any,
+    *,
+    terminal_id: str,
+    incarnation_id: str,
+    **source_kwargs: Any,
+) -> bool:
+    """Install a source capability fail-closed before provider initialization.
+
+    The durable source is registered as unavailable first. Its private file
+    and provider path are installed before the ledger activates that exact
+    token, preventing a publication failure from briefly advertising a usable
+    capability. Any failed step clears the provider path, removes a partial
+    file, and leaves the source unavailable so legacy terminal execution can
+    continue safely.
+    """
+    issued = None
+    capability_path = _interaction_capability_path(terminal_id, incarnation_id)
+    try:
+        issued = interaction_service.register_source(
+            terminal_id=terminal_id,
+            incarnation_id=incarnation_id,
+            capability_available=False,
+            **source_kwargs,
+        )
+        written_path = _write_interaction_capability_file(terminal_id, incarnation_id, issued.token)
+        provider_instance.set_interaction_capability_file(written_path)
+        interaction_service.activate_capability(terminal_id, incarnation_id, issued.token)
+        return True
+    except Exception:
+        if issued is not None:
+            try:
+                interaction_service.mark_capability_unavailable(
+                    terminal_id, incarnation_id, issued.token
+                )
+            except Exception:
+                logger.warning(
+                    "Could not mark interaction capability unavailable for terminal %s",
+                    terminal_id,
+                    exc_info=True,
+                )
+            try:
+                provider_instance.set_interaction_capability_file(None)
+            except Exception:
+                logger.warning(
+                    "Could not clear interaction capability path for terminal %s",
+                    terminal_id,
+                    exc_info=True,
+                )
+            try:
+                if capability_path.is_symlink() or capability_path.is_file():
+                    capability_path.unlink()
+            except OSError:
+                logger.warning(
+                    "Could not remove private interaction capability file for terminal %s",
+                    terminal_id,
+                    exc_info=True,
+                )
+        logger.warning(
+            "Could not issue interaction capability for terminal %s; "
+            "continuing without explicit interaction tools",
+            terminal_id,
+            exc_info=True,
+        )
+        return False
+
+
+def _remove_interaction_capability_files(terminal_id: str) -> None:
+    """Remove only this terminal's private source-capability files."""
+    directory = constants.CAO_HOME_DIR / "tmp" / "interaction-capabilities"
+    if directory.is_symlink() or not directory.is_dir():
+        return
+    terminal_key = hashlib.sha256(terminal_id.encode("utf-8")).hexdigest() + "."
+    for path in directory.glob(f"{terminal_key}*.cap"):
+        if path.is_file() and not path.is_symlink():
+            try:
+                path.unlink()
+            except OSError:
+                logger.warning(
+                    "Could not remove private interaction capability file for terminal %s",
+                    terminal_id,
+                    exc_info=True,
+                )
+
+
+def _interaction_source_status(
+    terminal_id: str,
+    metadata: dict[str, Any],
+    *,
+    allow_native_manual: bool = False,
+):
+    """Return exact source status, treating legacy terminals as unregistered."""
+    if not metadata.get("session_incarnation_id"):
+        return None
+    service = _interaction_service()
+    try:
+        status = service.source_status(
+            terminal_id,
+            metadata["session_incarnation_id"],
+        )
+    except Exception as exc:
+        raise TerminalInputBlockedError(
+            f"Terminal {terminal_id} could not verify its current interaction state; "
+            "input was not sent.",
+            action="inspect",
+            delivery_may_have_occurred=False,
+        ) from exc
+    if status.state == "unregistered":
+        return None
+    if status.state != "current":
+        raise TerminalInputBlockedError(
+            f"Terminal {terminal_id} interaction source is {status.state}; input was not sent.",
+            action="inspect",
+            delivery_may_have_occurred=False,
+        )
+    if service.has_required_wait(
+        terminal_id,
+        metadata["session_incarnation_id"],
+        status.current_generation,
+    ):
+        raise TerminalInputBlockedError(
+            f"Terminal {terminal_id} has a required interaction awaiting its owner; "
+            "answer it through the interaction response channel before sending terminal input.",
+            action="wait_for_interaction",
+            delivery_may_have_occurred=False,
+        )
+    if not allow_native_manual:
+        try:
+            native_pending = service.has_unresolved_native_notice(
+                terminal_id, metadata["session_incarnation_id"]
+            )
+        except Exception as exc:
+            raise TerminalInputBlockedError(
+                f"Terminal {terminal_id} could not verify its provider-owned interaction; "
+                "input was not sent.",
+                action="inspect",
+                delivery_may_have_occurred=False,
+            ) from exc
+        if native_pending:
+            raise TerminalInputBlockedError(
+                f"Terminal {terminal_id} has a provider-owned interaction that requires "
+                "manual action in the exact terminal; automated input was not sent.",
+                action="wait_for_interaction",
+                delivery_may_have_occurred=False,
+            )
+    return status
+
+
+def _advance_interaction_turn(
+    terminal_id: str,
+    metadata: dict[str, Any],
+    *,
+    reason: str,
+    idempotency_key: str | None = None,
+) -> int | None:
+    """Advance a registered source before any new task or direct input effect."""
+    if not metadata.get("session_incarnation_id"):
+        return None
+    service = _interaction_service()
+    try:
+        return cast(
+            int | None,
+            service.advance_turn(
+                terminal_id,
+                metadata["session_incarnation_id"],
+                reason=reason,
+                idempotency_key=idempotency_key or uuid.uuid4().hex,
+            ),
+        )
+    except Exception as exc:
+        from cli_agent_orchestrator.services.interactions.models import InteractionConflict
+
+        if isinstance(exc, InteractionConflict):
+            raise TerminalInputBlockedError(
+                f"Terminal {terminal_id} has a required interaction awaiting its owner; "
+                "input was not sent.",
+                action="wait_for_interaction",
+                delivery_may_have_occurred=False,
+            ) from exc
+        raise TerminalInputBlockedError(
+            f"Terminal {terminal_id} could not advance its interaction turn safely; "
+            "input was not sent.",
+            action="inspect",
+            delivery_may_have_occurred=False,
+        ) from exc
+
+
+@with_terminal_dispatch_lock
+def record_direct_interaction_input(
+    terminal_id: str,
+    *,
+    expected_incarnation_id: str | None = None,
+    reason: str = "websocket_input",
+    idempotency_key: str | None = None,
+) -> int | None:
+    """Fence a human PTY write before its first byte reaches the provider.
+
+    This is used only by the already-authorized local WebSocket attachment,
+    whose raw PTY writes do not pass through :func:`send_input`. It deliberately
+    leaves a provider-owned manual dialog open; a changed source generation
+    makes prior explicit interactions stale without inventing an answer.
+    """
+    from cli_agent_orchestrator.services import remote_terminal_service as remote
+
+    if remote.placement(terminal_id):
+        raise TerminalInputBlockedError(
+            "Direct PTY input is unavailable for a remote terminal; no local substitute was used.",
+            action="inspect",
+            delivery_may_have_occurred=False,
+        )
+
+    metadata = get_terminal_metadata(terminal_id)
+    if not metadata:
+        raise ValueError(f"Terminal '{terminal_id}' not found")
+    current_incarnation_id = metadata.get("session_incarnation_id")
+    if expected_incarnation_id is not None and current_incarnation_id != expected_incarnation_id:
+        raise TerminalInputBlockedError(
+            "The terminal session changed before direct input; no input was sent.",
+            action="inspect",
+            delivery_may_have_occurred=False,
+        )
+    ensure_terminal_is_not_work_owned(terminal_id)
+    source_status = _interaction_source_status(
+        terminal_id,
+        metadata,
+        allow_native_manual=reason == "websocket_input",
+    )
+    if source_status is None:
+        return None
+    return _advance_interaction_turn(
+        terminal_id,
+        metadata,
+        reason=reason,
+        idempotency_key=idempotency_key,
+    )
+
 
 _DEFERRED_INIT_FAILURE_MESSAGE_MAX = 4096
 _DEFERRED_INIT_FAILURE_SCAN_MAX = 16384
@@ -219,34 +522,28 @@ class WorkOwnershipStoreUnavailableError(RuntimeError):
 def ensure_terminal_is_not_work_owned(terminal_id: str) -> None:
     """Reject ordinary mutations of terminals bound in durable Work state.
 
-    A pre-Work installation has no ``work_*`` schema and remains compatible.
-    Once any Work schema exists, verify its ledger before trusting the exact
-    ``work_attempts.terminal_id`` binding. This is deliberately uncached so a
+    Verify the provisioned Work ledger before trusting the exact
+    ``work_attempts.terminal_id`` binding. Missing schema fails closed. This is deliberately uncached so a
     restarted process sees ownership persisted by its predecessor.
     """
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget, connect
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    database_path = Path(DATABASE_FILE)
-    if not database_path.is_file():
-        return
 
     try:
-        readonly_uri = database_path.resolve().as_uri() + "?mode=ro"
-        with closing(sqlite3.connect(readonly_uri, uri=True, timeout=10)) as connection:
-            work_tables = {
-                row[0]
-                for row in connection.execute(
-                    "SELECT name FROM sqlite_master " "WHERE type='table' AND name GLOB 'work_*'"
-                )
-            }
-        if not work_tables:
-            return
-        if "work_migrations" not in work_tables:
-            raise WorkOwnershipStoreUnavailableError("durable Work ownership store is incomplete")
-        with WorkRepository(database_path).read_snapshot() as connection:
+        target = DatabaseTarget.from_settings()
+        with connect(target, readonly=True) as probe:
+            tables = probe.execute(
+                "SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND left(c.relname,5)='work_' LIMIT 1",
+                (target.schema,),
+            ).fetchone()
+            migration = probe.execute(
+                "SELECT 1 FROM _cao_schema_migrations WHERE scope='main' AND component='work' LIMIT 1"
+            ).fetchone()
+            if tables is None and migration is None:
+                return
+        with WorkRepository(target).read_snapshot() as connection:
             owned = connection.execute(
-                "SELECT 1 FROM work_attempts WHERE terminal_id=? LIMIT 1",
+                "SELECT 1 FROM work_attempts WHERE terminal_id=%s LIMIT 1",
                 (terminal_id,),
             ).fetchone()
     except WorkOwnershipStoreUnavailableError:
@@ -1203,6 +1500,9 @@ async def create_terminal(
     expected_parent_incarnation_id: str | None = None,
     expected_parent_generation: str | None = None,
     worktree_subdirectory: Optional[str] = None,
+    creation_principal: Principal | None = None,
+    assignment_id: str | None = None,
+    interaction_work_binding: WorkContractBinding | None = None,
 ) -> Terminal:
     """Create a new terminal with an initialized CLI agent.
 
@@ -1569,6 +1869,11 @@ async def create_terminal(
     # new one, but had no equivalent for a window added to a session that
     # already existed — see the `except` block.
     window_created = False
+    # Rollback must detach a pipe-pane writer before removing its window or
+    # session. Set this only after the attach succeeds so failures earlier in
+    # creation do not issue a spurious stop against a target that never had a
+    # pipe.
+    pipe_pane_started = False
     kas_profile = None
     kas_digest = None
     # Reassigned to the resolved repo root once a worktree is actually created
@@ -1828,9 +2133,8 @@ async def create_terminal(
             (they are only assigned from a successful RETURN), the `except`
             cleanup would tear down nothing, and the failure would leave a live
             tmux session with no registry row -- the exact divergence #498 exists
-            to eliminate. A "database is locked" OperationalError out of
-            db_create_terminal is an ordinary outcome under CAO's concurrent
-            writers, so this is a routine path, not a pathological one.
+            to eliminate. A PostgreSQL transaction or connection failure out of
+            db_create_terminal must roll back the backend resource as well.
 
             NOT covered (pre-existing, and deliberately not claimed): a failure
             INSIDE the backend create itself, after it has already made the tmux
@@ -1859,7 +2163,7 @@ async def create_terminal(
             nonlocal deferred_delete_on_failure, session_incarnation_id
             assert session_name is not None  # narrowed by the caller
             parent_lock = (
-                terminal_dispatch_lock(constants.DATABASE_FILE, caller_id)
+                terminal_dispatch_lock(DatabaseTarget.from_settings(scope="main"), caller_id)
                 if fence_parent and caller_id
                 else nullcontext()
             )
@@ -1948,7 +2252,7 @@ async def create_terminal(
                     if deferred_delete_on_failure is False:
                         # Restart recovery may be retried after server startup.
                         # Fence this external-owner row BEFORE it becomes
-                        # visible in SQLite so a concurrent recovery pass never
+                        # visible in PostgreSQL so a concurrent recovery pass never
                         # mistakes this process's live initialization for a
                         # crash-stranded row from the previous process.
                         _mark_deferred_init_external_owner_active(terminal_id)
@@ -2067,6 +2371,7 @@ async def create_terminal(
             # (LogWriter writes TERMINAL_LOG_DIR/{id}.log from the FIFO). A pane
             # has a single pipe-pane target, so we pipe ONLY to the FIFO.
             get_backend().pipe_pane(session_name, window_name, str(fifo_path))
+            pipe_pane_started = True
 
             # Nudge the shell so it re-renders its prompt AFTER pipe-pane attaches.
             # pipe-pane only captures output produced after it starts; on a fast
@@ -2093,6 +2398,107 @@ async def create_terminal(
             engine=resolved_engine,
             resume_session_id=resume_session_id,
         )
+
+        # Issue a source capability only after the durable terminal row and
+        # session incarnation exist, and only when this exact provider can
+        # place the private file path on a real bundled CAO MCP server. The
+        # provider receives the file path before initialize() writes its MCP
+        # configuration; the raw token never enters its environment or argv.
+        from cli_agent_orchestrator.backends.work_backend import WorkBackendView
+        from cli_agent_orchestrator.services.interactions.capability import (
+            REQUIRED_MCP_TOOL,
+            canonical_tool_fingerprint,
+        )
+
+        try:
+            backend_is_work = isinstance(get_backend(), WorkBackendView)
+            source_work_binding = None
+            execution_mode = "local"
+            if backend_is_work:
+                # Work V1 can use the same source-bound MCP surface only when
+                # the launch passes the immutable server WorkContractBinding.
+                # Work V2 has no terminal interaction channel, and a Work
+                # backend without the exact binding remains unsupported.
+                if (
+                    isinstance(interaction_work_binding, WorkContractBinding)
+                    and not isinstance(interaction_work_binding.contract, EffectiveWorkContractV2)
+                    and REQUIRED_MCP_TOOL in interaction_work_binding.contract.permissions.tools
+                ):
+                    source_work_binding = interaction_work_binding
+                    execution_mode = "work_v1"
+
+            source_registration_eligible = (
+                isinstance(provider_instance, BaseProvider)
+                and (
+                    (not backend_is_work and interaction_work_binding is None)
+                    or source_work_binding is not None
+                )
+                and session_incarnation_id
+                and isinstance(allowed_tools, list)
+                and REQUIRED_MCP_TOOL in allowed_tools
+            )
+            if source_registration_eligible:
+                assert session_incarnation_id is not None
+                interaction_service = _interaction_service()
+                verified_creator = (
+                    creation_principal
+                    if creation_principal is not None and is_verified_principal(creation_principal)
+                    else None
+                )
+                allowed_fingerprint, _ = canonical_tool_fingerprint(allowed_tools)
+                provider_version = getattr(provider_instance, "provider_version", None)
+                source_principal = None if source_work_binding is not None else verified_creator
+                # Provider capability discovery may inspect a native CLI and
+                # its configuration (OpenCode probes ``--version``).  Keep
+                # that bounded subprocess/config work off the API event loop;
+                # the provider caches the resulting runtime pin for init.
+                source_configured = await asyncio.to_thread(
+                    provider_instance.interaction_source_configured,
+                    getattr(profile, "mcpServers", None),
+                )
+                if source_configured:
+                    _install_interaction_source_capability(
+                        provider_instance,
+                        interaction_service,
+                        terminal_id=terminal_id,
+                        incarnation_id=session_incarnation_id,
+                        session_name=session_name,
+                        provider=provider,
+                        provider_version=provider_version,
+                        execution_mode=execution_mode,
+                        principal=source_principal,
+                        allowed_tool_fingerprint=allowed_fingerprint,
+                        assignment_id=assignment_id,
+                        work_binding=source_work_binding,
+                    )
+                elif not backend_is_work and interaction_work_binding is None:
+                    # Some providers can report a bounded native dialog but
+                    # cannot carry CAO's explicit MCP capability. Register
+                    # them as observation-only sources so StatusMonitor can
+                    # persist manual notices. This path never writes a token,
+                    # installs a provider path, or expands tool permissions.
+                    capabilities = provider_instance.interaction_capabilities
+                    if capabilities.get("native_detection") == "manual_only":
+                        interaction_service.register_observer_source(
+                            terminal_id=terminal_id,
+                            incarnation_id=session_incarnation_id,
+                            session_name=session_name,
+                            provider=provider,
+                            provider_version=provider_version,
+                            principal=verified_creator,
+                            allowed_tool_fingerprint=allowed_fingerprint,
+                            assignment_id=assignment_id,
+                        )
+        except Exception:
+            # Interaction support is additive. If the durable ledger or its
+            # private file cannot be established, the launch stays legacy and
+            # no raw capability is sent to the provider.
+            logger.warning(
+                "Could not issue interaction capability for terminal %s; "
+                "continuing without explicit interaction tools",
+                terminal_id,
+                exc_info=True,
+            )
 
         # Deferred-init path: return fast so callers (e.g. MCP assign) do not
         # block on `provider.initialize()`. The remaining initialize + input
@@ -2276,6 +2682,11 @@ async def create_terminal(
                 status_monitor.clear_terminal(terminal_id)
         except Exception:
             pass  # Ignore cleanup errors
+        if pipe_pane_started and session_name and window_name:
+            try:
+                get_backend().stop_pipe_pane(session_name, window_name)
+            except Exception:
+                pass  # Ignore cleanup errors
         # Roll back the DB terminal row so a failed create does not leave an
         # orphan record: the stale row would still be listed for the session
         # and report UNKNOWN status even though nothing is running. Idempotent
@@ -2316,6 +2727,8 @@ async def create_terminal(
         try:
             if terminal_id is not None:
                 cleanup_complete = provider_manager.cleanup_provider(terminal_id) is not False
+                if cleanup_complete:
+                    _remove_interaction_capability_files(terminal_id)
         except Exception:
             # Preserve the existing rollback contract for an unexpected
             # provider-manager failure. Only an explicit False is a Grok
@@ -2547,7 +2960,7 @@ def _write_deferred_sidecar(target: Path, payload: bytes) -> None:
 
 
 def _write_deferred_failure_fallback(terminal_id: str, failure: dict[str, Any]) -> bool:
-    """Atomically persist deferred failure outside SQLite as a last-resort tombstone."""
+    """Atomically persist deferred failure outside PostgreSQL as a last-resort tombstone."""
 
     try:
         target = _deferred_failure_fallback_path(terminal_id)
@@ -2939,7 +3352,7 @@ async def retry_interrupted_deferred_init_external_owners(
     This is intentionally not an eternal polling loop. Once the previous
     process's durable rows have been scanned successfully there is no restart
     cohort left to discover. Retrying only after an incomplete pass closes the
-    transient SQLite hole without continuously reclassifying live workers.
+    transient database outage without continuously reclassifying live workers.
     """
 
     delay = max(0.0, float(initial_delay))
@@ -3037,11 +3450,11 @@ async def _surface_deferred_init_failure(
             await asyncio.sleep(0.05 * attempt)
     if not persisted:
         logger.error(
-            "Deferred-init failure for %s could not be persisted in SQLite",
+            "Deferred-init failure for %s could not be persisted in PostgreSQL",
             terminal_id,
         )
         # CAO-owned failures are immediately notified/teardown and do not need a
-        # long-lived tombstone. External owners do: if SQLite is temporarily
+        # long-lived tombstone. External owners do: if PostgreSQL is temporarily
         # unavailable, persist a small sidecar so GET /terminals remains able to
         # surface ERROR after the DB recovers or the server restarts.
         if not delete_worker and not terminal_missing:
@@ -3300,7 +3713,7 @@ def redeliver_dropped_message(
             attempt,
         )
         try:
-            send_special_key(terminal_id, "Enter")
+            send_special_key(terminal_id, "Enter", same_turn=True)
         except Exception as exc:
             # Once a task is visibly composed, a backend error after an Enter
             # has no atomic "the key was not accepted" witness. The prompt may
@@ -3769,7 +4182,7 @@ def restore_terminal_observation(terminal_id: str) -> bool:
     session_name = metadata["tmux_session"]
     with (
         session_lifecycle_lock(session_name),
-        terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id),
+        terminal_dispatch_lock(DatabaseTarget.from_settings(scope="main"), terminal_id),
     ):
         ensure_terminal_is_not_work_owned(terminal_id)
         metadata = get_terminal_metadata(terminal_id)
@@ -4175,6 +4588,11 @@ def send_input(
         else:
             ensure_terminal_is_not_work_owned(terminal_id)
 
+        # The ledger is the source of truth for registered sources. Validate it
+        # before provider state, receipt preparation, or inbox delivery changes;
+        # a legacy terminal with no source retains the existing input behavior.
+        interaction_status = _interaction_source_status(terminal_id, metadata)
+
         if (
             metadata.get("provider") == ProviderType.KIRO_CLI.value
             and resolve_kiro_engine(persisted=metadata.get("engine")) == KiroEngine.KAS
@@ -4190,46 +4608,44 @@ def send_input(
             else str(orchestration_type or "")
         )
 
-        current_status: TerminalStatus | None = None
-        if provider:
-            current_status = status_monitor.get_status(terminal_id)
+        current_status: TerminalStatus | None = status_monitor.get_status(terminal_id)
 
-            # Guard: refuse to type into a terminal whose provider process has
-            # exited. Without this check, queued messages would be pasted into
-            # a bare shell and executed as arbitrary commands.
-            if current_status == TerminalStatus.ERROR:
+        # Guard: refuse to type into a terminal whose provider process has
+        # exited. Without this check, queued messages would be pasted into
+        # a bare shell and executed as arbitrary commands.
+        if current_status == TerminalStatus.ERROR:
+            raise TerminalInputBlockedError(
+                f"Terminal {terminal_id} provider is in ERROR state "
+                "(provider process may have exited). Refusing to deliver input.",
+                action="inspect",
+            )
+
+        # Provider quota surfaces are neither ready composers nor
+        # operator-owned prompts. A model-task delivery here can be
+        # interpreted as quota-panel input or be submitted later alongside
+        # an already-running turn, so refuse it for every provider instead
+        # of relying on an adapter-specific interactive-dialog opt-in.
+        if current_status == TerminalStatus.WAITING_QUOTA and (
+            task_delivery or orchestration_type is not None or attach_turn_receipt
+        ):
+            raise _quota_wait_blocked_error(
+                terminal_id,
+                delivery_may_have_occurred=False,
+            )
+
+        if current_status == TerminalStatus.WAITING_USER_ANSWER:
+            automated_delivery = task_delivery or orchestration_type is not None
+            if automated_delivery or interaction_status is not None:
                 raise TerminalInputBlockedError(
-                    f"Terminal {terminal_id} provider is in ERROR state "
-                    "(provider process may have exited). Refusing to deliver input.",
-                    action="inspect",
-                )
-
-            # Provider quota surfaces are neither ready composers nor
-            # operator-owned prompts. A model-task delivery here can be
-            # interpreted as quota-panel input or be submitted later alongside
-            # an already-running turn, so refuse it for every provider instead
-            # of relying on an adapter-specific interactive-dialog opt-in.
-            if current_status == TerminalStatus.WAITING_QUOTA and (
-                task_delivery or orchestration_type is not None or attach_turn_receipt
-            ):
-                raise _quota_wait_blocked_error(
-                    terminal_id,
+                    (
+                        f"Terminal {terminal_id} is waiting for a provider-owned interaction. "
+                        "Automated task input is blocked until the interaction is resolved."
+                        if automated_delivery
+                        else f"Terminal {terminal_id} is waiting for a provider-owned interaction. "
+                        "Use an authorized live terminal attachment for manual input."
+                    ),
+                    action="wait_for_interaction" if automated_delivery else "answer_user_prompt",
                     delivery_may_have_occurred=False,
-                )
-
-            if (
-                provider.blocks_orchestrated_input_while_waiting_user_answer is True
-                # An explicit orchestration type identifies an automated
-                # dispatch, including SEND_MESSAGE and any future enum value.
-                # The only literal human answer is the direct input endpoint
-                # with neither a type nor task_delivery set.
-                and (task_delivery or orchestration_type is not None)
-                and current_status == TerminalStatus.WAITING_USER_ANSWER
-            ):
-                raise TerminalInputBlockedError(
-                    f"Terminal {terminal_id} is waiting for a user answer. "
-                    "Use answer_user_prompt to submit a selection or approval before "
-                    "sending automated task input."
                 )
 
         # A receipt-bearing provider may have survived a server restart with
@@ -4267,6 +4683,21 @@ def send_input(
                 f"Terminal {terminal_id} cannot safely full-redeliver a receipt-bearing task; "
                 "reconcile the existing delivery instead.",
                 action="reconcile",
+            )
+
+        # A new human or automated turn invalidates explicit interactions from
+        # the prior source generation. Redelivery is the same logical task and
+        # does not advance. The durable advance happens before the status
+        # monitor boundary and before the provider transport effect.
+        if interaction_status is not None and not redelivery and not prepared_input:
+            _advance_interaction_turn(
+                terminal_id,
+                metadata,
+                reason=(
+                    "task_delivery"
+                    if task_delivery or orchestration_type is not None
+                    else "direct_input"
+                ),
             )
 
         # A managed launch can prepare a durable turn receipt before its first
@@ -4408,6 +4839,11 @@ def send_input(
             # transport boundary; managed views enforce their own fresh guard
             # inside send_keys.
             ensure_terminal_is_not_work_owned(terminal_id)
+        # A native notice can be recorded while receipt/provider/status work
+        # above is running. Recheck the exact source immediately before bytes
+        # reach the provider, including same-task redelivery paths that do not
+        # advance the turn.
+        _interaction_source_status(terminal_id, metadata)
         try:
             transport_attempted = True
             backend.send_keys(
@@ -4518,7 +4954,7 @@ def send_input(
 
 
 @with_terminal_dispatch_lock
-def send_special_key(terminal_id: str, key: str) -> bool:
+def send_special_key(terminal_id: str, key: str, *, same_turn: bool = False) -> bool:
     """Send a tmux special key sequence (e.g., C-d, C-c) to terminal.
 
     Unlike send_input(), this sends the key as a tmux key name (not literal text)
@@ -4565,6 +5001,30 @@ def send_special_key(terminal_id: str, key: str) -> bool:
         else:
             ensure_terminal_is_not_work_owned(terminal_id)
 
+        source_status = _interaction_source_status(terminal_id, metadata)
+        current_status = status_monitor.get_status(terminal_id)
+        if source_status is not None and current_status in {
+            TerminalStatus.WAITING_USER_ANSWER,
+            TerminalStatus.WAITING_QUOTA,
+        }:
+            raise TerminalInputBlockedError(
+                f"Terminal {terminal_id} is waiting for a provider-owned interaction; "
+                "use an authorized live terminal attachment for manual input.",
+                action=(
+                    "wait_for_interaction"
+                    if current_status == TerminalStatus.WAITING_USER_ANSWER
+                    else "wait_for_quota"
+                ),
+                delivery_may_have_occurred=False,
+            )
+
+        if source_status is not None and not same_turn:
+            _advance_interaction_turn(
+                terminal_id,
+                metadata,
+                reason="special_key",
+            )
+
         if isinstance(backend, WorkBackendView):
             backend._revalidate_before_effect(
                 terminal_id, metadata["tmux_session"], metadata["tmux_window"]
@@ -4574,6 +5034,10 @@ def send_special_key(terminal_id: str, key: str) -> bool:
             # Recheck after monitor work so a late durable Work binding cannot
             # slip through between the entry guard and the transport call.
             ensure_terminal_is_not_work_owned(terminal_id)
+        # same_turn=True deliberately skips turn advancement, and a native
+        # notice may also appear after a normal advance. Fence both paths at the
+        # final transport boundary.
+        _interaction_source_status(terminal_id, metadata)
         backend.send_special_key(metadata["tmux_session"], metadata["tmux_window"], key)
         status_monitor.notify_input_delivered(terminal_id)
 
@@ -5494,6 +5958,15 @@ def dismantle_terminal_runtime(
         if not runtime_complete:
             return False
 
+    # Stop pipe-pane before removing its session/window. Otherwise a normal
+    # terminal delete kills the last window first, then reports a misleading
+    # "session not found" while trying to detach the already-dead writer.
+    if metadata and kill_window and not tombstone:
+        try:
+            get_backend().stop_pipe_pane(metadata["tmux_session"], metadata["tmux_window"])
+        except Exception as e:
+            logger.warning(f"Failed to stop pipe-pane for {terminal_id}: {e}")
+
     # Establish that the ordinary writer stopped before removing any resource
     # it can still use. False/failed backend kills are not stop evidence.
     if metadata and kill_window and not tombstone:
@@ -5523,14 +5996,6 @@ def dismantle_terminal_runtime(
             svc.unregister_terminal(terminal_id)
         except Exception as e:
             logger.warning(f"Failed to unregister terminal {terminal_id} from herdr inbox: {e}")
-
-    if metadata and kill_window and not tombstone:
-        # Stop pipe-pane logging. Before the FIFO steps below, so the pane stops
-        # writing to the FIFO before its reader (and the FIFO file) go away.
-        try:
-            get_backend().stop_pipe_pane(metadata["tmux_session"], metadata["tmux_window"])
-        except Exception as e:
-            logger.warning(f"Failed to stop pipe-pane for {terminal_id}: {e}")
 
     # Deliberately OUTSIDE the `if metadata:` block below: both of these need
     # only terminal_id. Gating them on metadata meant a failed snapshot (a
@@ -5582,6 +6047,7 @@ def dismantle_terminal_runtime(
     # temporary process race into a permanent private-home leak.
     if provider_manager.cleanup_provider(terminal_id) is False:
         return False
+    _remove_interaction_capability_files(terminal_id)
     with _memory_injected_lock:
         _memory_injected_terminals.discard(terminal_id)
     # Drop any per-curator dispatch lock so the registry doesn't grow
@@ -5673,7 +6139,7 @@ def delete_terminal(terminal_id: str, registry: PluginRegistry | None = None) ->
     from cli_agent_orchestrator import constants
 
     try:
-        with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id):
+        with terminal_dispatch_lock(DatabaseTarget.from_settings(scope="main"), terminal_id):
             ensure_terminal_is_not_work_owned(terminal_id)
             metadata = capture_terminal_snapshot(terminal_id)
             if not dismantle_terminal_runtime(terminal_id, metadata):

@@ -16,7 +16,7 @@ import stat
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Callable, Literal, Mapping
+from typing import Annotated, Callable, Literal, Mapping, Protocol, TypeVar
 from uuid import uuid4
 
 from pydantic import (
@@ -39,7 +39,7 @@ from cli_agent_orchestrator.models.work_origin import (
     WorkAttemptRef,
     WorkflowStepResultV1,
 )
-from cli_agent_orchestrator.services.step_output_store import ImmutableResultStore
+from cli_agent_orchestrator.services.step_output_store import ArtifactRef, ImmutableResultStore
 from cli_agent_orchestrator.services.work_origin import (
     OriginConflict,
     OriginDenied,
@@ -47,6 +47,20 @@ from cli_agent_orchestrator.services.work_origin import (
     WorkOrigins,
 )
 from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
+
+_ArtifactResult = TypeVar("_ArtifactResult")
+
+
+class WorkArtifactStore(Protocol):
+    """The result-store protocol required by Work result acceptance."""
+
+    def publish(
+        self,
+        content: bytes,
+        accept: Callable[[ArtifactRef], _ArtifactResult],
+    ) -> _ArtifactResult: ...
+
+    def read(self, ref: ArtifactRef) -> bytes: ...
 
 
 def validate_workflow_step_result(binding, content: bytes) -> dict:
@@ -446,13 +460,13 @@ class WorkService:
         repository: WorkRepository,
         *,
         origins: WorkOrigins | None = None,
-        artifacts=None,
+        artifacts: WorkArtifactStore | None = None,
         workflow_origins=None,
     ):
         self.repository = repository
         if origins is not None and (
             not isinstance(origins, WorkOrigins)
-            or Path(origins.repository.path).resolve() != Path(repository.path).resolve()
+            or origins.repository.target.identity != repository.target.identity
         ):
             raise ValueError("task receipt origin must use this work repository")
         self.origins = origins
@@ -499,7 +513,7 @@ class WorkService:
 
         if (
             not isinstance(scheduler, WorkScheduler)
-            or Path(scheduler.repository.path).resolve() != Path(self.repository.path).resolve()
+            or scheduler.repository.target.identity != self.repository.target.identity
         ):
             raise WorkConflict("scheduler must use this work repository")
         if type(expected_revision) is not int or expected_revision <= 0:
@@ -711,7 +725,7 @@ class WorkService:
         The exact durable replay path is intentionally available across a restart;
         it only returns existing history.  A new acknowledgement additionally
         requires this service's paired ``WorkOrigins`` runtime to validate the
-        live receiver grant and lineage inside the same SQLite transaction.
+        live receiver grant and lineage inside the same Work transaction.
         """
         if not isinstance(receipt, TaskReceivedReceiptV1):
             raise TypeError("authenticated task receipt required")
@@ -866,7 +880,7 @@ class WorkService:
         )
         acceptance = connection.execute(
             "SELECT * FROM work_workflow_step_receiver_acceptances "
-            "WHERE attempt_id=? AND generation=?",
+            "WHERE attempt_id=%s AND generation=%s",
             (binding.work_attempt_id, binding.work_generation),
         ).fetchone()
         expected_acceptance = self.origins._workflow_receiver_acceptance_hash(
@@ -1080,7 +1094,7 @@ class WorkService:
             self.repository._verify(connection)
             work = self.repository._work(connection, exact.work_item_id)
             attempt = connection.execute(
-                "SELECT * FROM work_attempts WHERE id=? AND generation=?",
+                "SELECT * FROM work_attempts WHERE id=%s AND generation=%s",
                 (exact.work_attempt_id, exact.work_generation),
             ).fetchone()
             if work["accepted_result_id"] is None:
@@ -1091,7 +1105,7 @@ class WorkService:
             # expiry or revocation cannot erase that historical fact.
             self._require_workflow_task_received(connection, exact, require_live_authority=False)
             result_row = connection.execute(
-                "SELECT * FROM work_results WHERE id=?",
+                "SELECT * FROM work_results WHERE id=%s",
                 (work["accepted_result_id"],),
             ).fetchone()
             if (
@@ -1164,7 +1178,7 @@ class WorkService:
         """Read raw durable Work states for the exact immutable workflow binding.
 
         This reader does not interpret terminal observations or authorize retry.
-        It uses one SQLite snapshot for the binding, bound attempt, current
+        It uses one verified Work snapshot for the binding, bound attempt, current
         attempt, and item state so callers can distinguish a current terminal
         attempt from a stale binding after an explicit Work replacement.
         """
@@ -1191,7 +1205,7 @@ class WorkService:
 
         def read(snapshot) -> WorkflowStepWorkState:
             if not snapshot.in_transaction:
-                raise WorkConflict("workflow Work state reads require a stable SQLite snapshot")
+                raise WorkConflict("workflow Work state reads require a stable Work snapshot")
             self.repository._verify(snapshot)
             exact = self.workflow_origins.read_binding_for_attempt(
                 attempt_id,
@@ -1281,7 +1295,7 @@ class WorkService:
                         else None
                     ),
                 )
-            # Repository snapshots have closed; never hold SQLite locks while waiting.
+            # Close the Work snapshot before waiting; never hold a database transaction here.
             time.sleep(min(0.1, remaining))
 
     def recover_incomplete_proxy_effects(self) -> int:

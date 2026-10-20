@@ -3,6 +3,7 @@
 import asyncio
 import uuid
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -25,10 +26,7 @@ def test_lint_finds_surviving_agent_topic_with_zero_metadata_rows(
         encoding="utf-8",
     )
     before = topic.read_bytes()
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'metadata.db'}",
-        connect_args={"check_same_thread": False},
-    )
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
 
     monkeypatch.setattr(wiki_lint, "_build_llm_client", lambda: None)

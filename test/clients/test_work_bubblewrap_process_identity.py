@@ -2,11 +2,11 @@
 
 import hashlib
 import json
-import sqlite3
-from test.clients.test_work_migrations import verified_store_at_version
 
 import pytest
+from psycopg import IntegrityError
 
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget, connect
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 
 
@@ -42,7 +42,7 @@ def _sent_attempt(store):
         connection.execute(
             "INSERT INTO work_items "
             "(id,job_id,operation_kind,idempotency_key,request_hash,contract_id,created_at) "
-            "VALUES ('w','j','launch','k',?,'c',1)",
+            "VALUES ('w','j','launch','k',%s,'c',1)",
             ("c" * 64,),
         )
         connection.execute(
@@ -52,31 +52,69 @@ def _sent_attempt(store):
         )
 
 
-def test_v29_to_v30_adds_only_private_bubblewrap_identity_table(tmp_path):
-    import cli_agent_orchestrator.clients.work_repository as module
+@pytest.mark.postgres
+def test_native_work_baseline_contains_private_bubblewrap_identity_table(postgres_targets):
+    from cli_agent_orchestrator.clients.postgres.migrations import (
+        migrate_component,
+        verify_component,
+    )
+    from cli_agent_orchestrator.clients.work_postgres_schema import (
+        WORK_POSTGRES_MIGRATIONS,
+        WORK_TABLES,
+    )
+    from cli_agent_orchestrator.clients.workflows_postgres_schema import WORKFLOW_MIGRATIONS
 
-    store = verified_store_at_version(module, tmp_path / "work.db", 29)
-    with store.connection() as connection:
-        old_objects = module._schema_objects(connection)
-    store.initialize()
-    store.initialize()
-    with store.connection() as connection:
-        new_objects = module._schema_objects(connection)
-        assert module.SCHEMA_VERSION >= 30
-        assert set(old_objects.items()).issubset(set(new_objects.items()))
-        assert "work_bubblewrap_process_identities" in new_objects
-        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    target = postgres_targets.main
+    migrate_component(target, WORK_POSTGRES_MIGRATIONS[:1])
+    migrate_component(target, WORKFLOW_MIGRATIONS)
+    migrate_component(target, WORK_POSTGRES_MIGRATIONS)
+    with connect(target, readonly=True) as connection:
+        verify_component(connection, WORK_POSTGRES_MIGRATIONS)
+        columns = connection.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema=%s AND table_name='work_bubblewrap_process_identities' "
+            "ORDER BY ordinal_position",
+            (target.schema,),
+        ).fetchall()
+        assert tuple(row[0] for row in columns) == (
+            "attempt_id",
+            "generation",
+            "protocol_version",
+            "identity_json",
+            "identity_sha256",
+            "created_at",
+        )
+        unvalidated_foreign_keys = connection.execute(
+            "SELECT count(*) FROM pg_catalog.pg_constraint AS constraint_row "
+            "JOIN pg_catalog.pg_class AS relation ON relation.oid=constraint_row.conrelid "
+            "JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid=relation.relnamespace "
+            "WHERE namespace.nspname=%s AND constraint_row.contype='f' "
+            "AND NOT constraint_row.convalidated",
+            (target.schema,),
+        ).fetchone()[0]
+        assert unvalidated_foreign_keys == 0
+        table_names = connection.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema=%s AND table_type='BASE TABLE'",
+            (target.schema,),
+        ).fetchall()
+    assert {
+        *WORK_TABLES,
+        "_cao_schema_migrations",
+        "_cao_store_identity",
+    } <= {row[0] for row in table_names}
 
 
 def test_bubblewrap_identity_survives_restart_and_rejects_replacement(tmp_path):
-    store = WorkRepository(tmp_path / "work.db")
+    target = DatabaseTarget.from_settings(scope="main")
+    store = WorkRepository(target, filesystem_home=tmp_path)
     store.initialize()
     _sent_attempt(store)
     identity = _identity()
     store.persist_bubblewrap_process_identity("a", 1, identity)
     store.persist_bubblewrap_process_identity("a", 1, identity)
 
-    reopened = WorkRepository(store.path)
+    reopened = WorkRepository(store.target, filesystem_home=store.filesystem_home)
     assert reopened.read_bubblewrap_process_identity("a", 1) == identity
     with reopened.connection() as connection:
         row = connection.execute(
@@ -90,7 +128,7 @@ def test_bubblewrap_identity_survives_restart_and_rejects_replacement(tmp_path):
 
 
 def test_bubblewrap_identity_rejects_raw_argv_and_bad_relationship(tmp_path):
-    store = WorkRepository(tmp_path / "work.db")
+    store = WorkRepository(DatabaseTarget.from_settings(scope="main"), filesystem_home=tmp_path)
     store.initialize()
     _sent_attempt(store)
     with pytest.raises(ValueError):
@@ -108,7 +146,7 @@ def test_bubblewrap_identity_rejects_raw_argv_and_bad_relationship(tmp_path):
 
 @pytest.mark.parametrize("first", ["bubblewrap", "unshare"])
 def test_attempt_cannot_hold_two_process_identity_kinds(tmp_path, first):
-    store = WorkRepository(tmp_path / "work.db")
+    store = WorkRepository(DatabaseTarget.from_settings(scope="main"), filesystem_home=tmp_path)
     store.initialize()
     _sent_attempt(store)
 
@@ -117,15 +155,15 @@ def test_attempt_cannot_hold_two_process_identity_kinds(tmp_path, first):
             connection.execute(
                 "INSERT INTO work_process_identities "
                 "(attempt_id,generation,protocol_version,identity_json,identity_sha256,created_at) "
-                "VALUES ('a',1,3,'{}',?,1)",
+                "VALUES ('a',1,3,'{}',%s,1)",
                 ("a" * 64,),
             )
 
     if first == "bubblewrap":
         store.persist_bubblewrap_process_identity("a", 1, _identity())
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(IntegrityError):
             insert_unshare()
     else:
         insert_unshare()
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(IntegrityError):
             store.persist_bubblewrap_process_identity("a", 1, _identity())

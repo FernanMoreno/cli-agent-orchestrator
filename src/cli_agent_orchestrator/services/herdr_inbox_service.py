@@ -23,6 +23,8 @@ import time
 from contextlib import ExitStack
 from typing import Callable, Dict, Optional, Set
 
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+
 logger = logging.getLogger(__name__)
 
 # Exponential backoff parameters
@@ -131,7 +133,7 @@ def _retain_deferred_failure_tombstone(terminal_id, *, on_cleanup_deferred=None)
     from cli_agent_orchestrator.services.terminal_service import ensure_terminal_is_not_work_owned
     from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
-    with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id):
+    with terminal_dispatch_lock(DatabaseTarget.from_settings(scope="main"), terminal_id):
         try:
             ensure_terminal_is_not_work_owned(terminal_id)
         except Exception:
@@ -177,9 +179,9 @@ class HerdrInboxService:
 
         # Workspace tracking for lifecycle events
         self._workspace_to_session: Dict[str, str] = {}  # workspace_id → session_name
-        # A workspace-close cleanup whose DB read/teardown could not complete is
-        # retried by the existing maintenance loop. This prevents one transient
-        # SQLite outage from permanently stranding provider/FIFO state after the
+        # A workspace-close cleanup whose database read/teardown could not complete
+        # is retried by the existing maintenance loop. This prevents one transient
+        # database outage from permanently stranding provider/FIFO state after the
         # herdr workspace itself is already gone.
         # Closed-workspace retries are keyed by the backend workspace identity,
         # not merely by the reusable CAO session label. This fences cleanup from
@@ -255,7 +257,7 @@ class HerdrInboxService:
         )
         from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
-        with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id):
+        with terminal_dispatch_lock(DatabaseTarget.from_settings(scope="main"), terminal_id):
             ensure_terminal_is_not_work_owned(terminal_id)
             delete_terminal(terminal_id)
 
@@ -275,7 +277,9 @@ class HerdrInboxService:
             with ExitStack() as locks:
                 for terminal_id in sorted(terminal_ids):
                     locks.enter_context(
-                        terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id)
+                        terminal_dispatch_lock(
+                            DatabaseTarget.from_settings(scope="main"), terminal_id
+                        )
                     )
                 for terminal_id in terminal_ids:
                     ensure_terminal_is_not_work_owned(terminal_id)
@@ -445,7 +449,7 @@ class HerdrInboxService:
         with session_lifecycle_lock(session_name):
             try:
                 terminals = list_terminals_by_session(session_name)
-            except Exception as exc:  # noqa: BLE001 — retry when SQLite recovers
+            except Exception as exc:  # noqa: BLE001 — retry when the database recovers
                 logger.warning(
                     "workspace.closed: could not list terminals for %s; deferring cleanup: %s",
                     session_name,
@@ -541,7 +545,7 @@ class HerdrInboxService:
         """Re-scan retained external-owner rows for durable failures.
 
         Startup recovery can persist an interrupted-init failure AFTER Herdr's
-        one-time startup cleanup if SQLite was temporarily unavailable. Querying
+        one-time startup cleanup if the database was temporarily unavailable. Querying
         the small external-owner cohort on each maintenance tick lets Herdr find
         that newly durable tombstone even when its workspace vanished entirely.
 
@@ -898,7 +902,9 @@ class HerdrInboxService:
             from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
             try:
-                with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id):
+                with terminal_dispatch_lock(
+                    DatabaseTarget.from_settings(scope="main"), terminal_id
+                ):
                     ensure_terminal_is_not_work_owned(terminal_id)
                     retained = _retain_deferred_failure_tombstone_unlocked(
                         terminal_id, on_cleanup_deferred=self._pending_tombstone_runtime_cleanup.add
@@ -1212,7 +1218,9 @@ class HerdrInboxService:
             # direct DB delete, so a Grok private home can return explicit
             # deferred cleanup and retain its terminal row for retry.
             try:
-                with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id):
+                with terminal_dispatch_lock(
+                    DatabaseTarget.from_settings(scope="main"), terminal_id
+                ):
                     ensure_terminal_is_not_work_owned(terminal_id)
                 if _retain_deferred_failure_tombstone(
                     terminal_id, on_cleanup_deferred=self._pending_tombstone_runtime_cleanup.add
@@ -1267,7 +1275,9 @@ class HerdrInboxService:
                     terminals = list_terminals_by_session(session_name)
                     for terminal in terminals:
                         terminal_id = terminal["id"]
-                        with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id):
+                        with terminal_dispatch_lock(
+                            DatabaseTarget.from_settings(scope="main"), terminal_id
+                        ):
                             ensure_terminal_is_not_work_owned(terminal_id)
 
                     # Resolve the map membership before deleting DB rows.

@@ -38,6 +38,8 @@ pytest_plugins = (
     "test.fixtures.jwt_factory",
     "test.fixtures.jwks_server",
     "test.fixtures.terminal_factory",
+    "test.postgres.fixtures",
+    "test.postgres.interactions",
 )
 
 
@@ -182,46 +184,70 @@ def _hermetic_cao_env(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def isolated_memory_db(tmp_path_factory, monkeypatch):
-    """Route default memory sessions to an initialized per-test SQLite database."""
-    from sqlalchemy import create_engine
+def isolated_memory_db(tmp_path_factory, monkeypatch, request):
+    """Route ordinary tests to an isolated, fully migrated PostgreSQL target."""
+    if (
+        request.node.get_closest_marker("postgres") is not None
+        or request.node.get_closest_marker("offline_database") is not None
+    ):
+        # PostgreSQL tests set their own explicit config/migrations. Offline
+        # Filesystem artifact tests never need the runtime PG target at all.
+        yield None
+        return
+
+    from test.postgres.fixtures import (
+        make_orm_engine,
+        reset_postgres_worker_targets,
+    )
+
     from sqlalchemy.orm import sessionmaker
 
+    from cli_agent_orchestrator import constants
     from cli_agent_orchestrator.clients import database
 
-    metadata_dir = tmp_path_factory.mktemp("memory-metadata")
-    database_path = metadata_dir / "cli-agent-orchestrator.db"
-    engine = create_engine(
-        f"sqlite:///{database_path}",
-        connect_args={"check_same_thread": False},
-    )
-    database.Base.metadata.create_all(bind=engine)
-    from cli_agent_orchestrator import constants
-    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    targets = request.getfixturevalue("postgres_worker_targets")
+    reset_postgres_worker_targets(targets)
 
-    WorkRepository(database_path).initialize()
-    monkeypatch.setattr(constants, "DATABASE_FILE", database_path)
-    # The derived workflow index is created by raw SQL, outside Base.metadata.
-    # Workflow reads now share this isolated database and need its schema too.
-    database._migrate_workflow_index()
-    monkeypatch.setattr(constants, "MEMORY_BASE_DIR", metadata_dir / "memory")
+    # Module-level SQLAlchemy objects are intentionally rebound only for this
+    # test. The target configuration and runtime role are provided by the
+    # private PostgreSQL fixture; migration credentials are never installed in
+    # the engine or session factory.
+    database.engine.dispose()
+    engine = make_orm_engine(targets.main)
+    monkeypatch.setattr(database, "engine", engine)
+
+    monkeypatch.setenv("CAO_DATABASE_CONFIG_FILE", str(targets.config_file))
+    monkeypatch.setenv("CAO_HOME_DIR", str(targets.home))
+    monkeypatch.setattr(constants, "CAO_HOME_DIR", targets.home)
+    monkeypatch.setattr(constants, "DATABASE_FILE", targets.home / "postgres-target")
+    memory_root = tmp_path_factory.mktemp("memory-metadata") / "memory"
+    monkeypatch.setattr(constants, "MEMORY_BASE_DIR", memory_root)
+    peer_state_root = tmp_path_factory.mktemp("peer-metadata") / "peer"
+    monkeypatch.setattr(constants, "LOCAL_PEER_DIR", peer_state_root)
     monkeypatch.setattr(
         database,
         "SessionLocal",
         sessionmaker(autocommit=False, autoflush=False, bind=engine),
     )
+    # The interaction service caches a repository bound to DATABASE_FILE.
+    # Reset it for each test so its connection target cannot leak across the
+    # per-test database boundary.
+    from cli_agent_orchestrator.services.interactions import service as interaction_service
+
+    monkeypatch.setattr(interaction_service, "_DEFAULT_SERVICE", None)
     # Legacy access audit writes to the metadata database, including read paths.
     # Imported aliases must also remain isolated from the operator database.
     import sys
 
-    for module_name in ("memory_service", "audit_log", "wiki_lint"):
+    for module_name in ("memory_service", "audit_log", "wiki_lint", "local_peer_registry"):
         module = sys.modules.get("cli_agent_orchestrator.services." + module_name)
-        if module is not None and hasattr(module, "MEMORY_BASE_DIR"):
-            monkeypatch.setattr(module, "MEMORY_BASE_DIR", metadata_dir / "memory")
+        if module is not None:
+            if hasattr(module, "MEMORY_BASE_DIR"):
+                monkeypatch.setattr(module, "MEMORY_BASE_DIR", memory_root)
+            if module_name == "local_peer_registry" and hasattr(module, "LOCAL_PEER_DIR"):
+                monkeypatch.setattr(module, "LOCAL_PEER_DIR", peer_state_root)
     relationships = sys.modules.get("cli_agent_orchestrator.services.memory_relationship_service")
     if relationships is not None:
         monkeypatch.setattr(relationships, "SessionLocal", database.SessionLocal)
-    try:
-        yield engine
-    finally:
-        engine.dispose()
+    yield targets.main
+    engine.dispose()

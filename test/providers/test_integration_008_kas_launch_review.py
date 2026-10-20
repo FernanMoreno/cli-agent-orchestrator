@@ -242,21 +242,25 @@ def test_session_bulk_fallback_releases_kas_proof_only_after_success(
 
 
 @pytest.mark.asyncio
-async def test_actual_terminal_creation_persists_closed_kas_launch_proof(monkeypatch, tmp_path):
+@pytest.mark.postgres
+async def test_actual_terminal_creation_persists_closed_kas_launch_proof(
+    monkeypatch, tmp_path, postgres_core_runtime
+):
     import contextlib
+    from test.postgres.fixtures import make_orm_engine
 
-    from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
-    from sqlalchemy.pool import StaticPool
 
     from cli_agent_orchestrator.providers.manager import ProviderManager
     from cli_agent_orchestrator.services import terminal_service
 
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    engine = make_orm_engine(postgres_core_runtime)
+    monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(
+        database,
+        "SessionLocal",
+        sessionmaker(autocommit=False, autoflush=False, bind=engine),
     )
-    database.Base.metadata.create_all(engine)
-    monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=engine))
     monkeypatch.setattr(constants, "ENABLE_KAS_LAUNCH", True)
     monkeypatch.setattr(kiro_profiles, "KIRO_AGENTS_DIR", tmp_path)
     original = AgentProfile(

@@ -564,6 +564,23 @@ class TestClaudeCodeProviderStatusDetection:
 
         assert status == TerminalStatus.UNKNOWN
 
+    def test_get_status_current_http_504_is_provider_error(self):
+        output = "API Error (504): Gateway Timeout\n" + "─" * 30 + "\n❯ \n" + "─" * 30
+
+        provider = ClaudeCodeProvider("test123", "test-session", "window-0")
+
+        assert provider.get_status(output) == TerminalStatus.ERROR
+
+    def test_get_status_screen_current_http_504_is_provider_error(self):
+        provider = ClaudeCodeProvider("test123", "test-session", "window-0")
+
+        assert (
+            provider.get_status_from_screen(
+                ["API Error (504): Gateway Timeout", "─" * 30, "❯", "─" * 30]
+            )
+            == TerminalStatus.ERROR
+        )
+
     def test_get_status_completed_after_compaction_not_false_processing(self):
         """Compaction spinner before its own separator, then more output; last sep has no spinner → COMPLETED."""
         output = (
@@ -2015,6 +2032,40 @@ _UPGRADE_NUDGE_FRAME = (
     "  2. No\n"
     "Enter to confirm · Esc to cancel\n"
 )
+
+
+def test_reusable_oauth_credentials_require_a_fresh_access_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    credentials = tmp_path / ".claude/.credentials.json"
+    credentials.parent.mkdir(parents=True)
+
+    def write_receipt(expires_at):
+        credentials.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "private-access",
+                        "refreshToken": "private-refresh",
+                        **({"expiresAt": expires_at} if expires_at is not None else {}),
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path))
+    write_receipt(int((time.time() - 1) * 1000))
+    assert ClaudeCodeProvider._has_reusable_oauth_credentials() is False
+
+    write_receipt(int((time.time() + 10) * 1000))
+    assert ClaudeCodeProvider._has_reusable_oauth_credentials() is False
+
+    write_receipt(int((time.time() + 600) * 1000))
+    assert ClaudeCodeProvider._has_reusable_oauth_credentials() is True
+
+    write_receipt(None)
+    assert ClaudeCodeProvider._has_reusable_oauth_credentials() is True
 
 
 class TestClaudeCodeProviderStartupPrompts:

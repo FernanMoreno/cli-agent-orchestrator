@@ -33,9 +33,15 @@ from cli_agent_orchestrator.services.work_service import WorkService
 
 
 @pytest.mark.integration
-def test_cookie_renewal_and_logout_preserve_running_real_docker_work(tmp_path, monkeypatch):
+def test_cookie_renewal_and_logout_preserve_running_real_docker_work(
+    tmp_path, monkeypatch, request
+):
     if os.environ.get("CAO_BROWSER_DOCKER_ACCEPTANCE") != "1":
         pytest.skip("set CAO_BROWSER_DOCKER_ACCEPTANCE=1 for real local Docker acceptance")
+    postgres_targets = request.getfixturevalue("postgres_targets")
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
+
+    bootstrap_scope(postgres_targets.main)
     image = (
         os.environ.get("CAO_BROWSER_DOCKER_IMAGE_ID")
         or subprocess.check_output(
@@ -63,7 +69,7 @@ def test_cookie_renewal_and_logout_preserve_running_real_docker_work(tmp_path, m
         timeout=60,
     )
     worker = worker_path.read_bytes()
-    repository = WorkRepository(tmp_path / "work.sqlite3")
+    repository = WorkRepository(tmp_path / "work.db")
     repository.initialize()
     monkeypatch.delenv("AUTH0_DOMAIN", raising=False)
     monkeypatch.setenv("CAO_ENABLE_PUBLIC_WORK_INGRESS", "true")
@@ -74,8 +80,12 @@ def test_cookie_renewal_and_logout_preserve_running_real_docker_work(tmp_path, m
         assert actor.kind == "jwt" and auth.SCOPE_ADMIN in actor.scopes
         reference = fixture.provision_launch(repository, actor, tmp_path, worker)
         provision_before = WorkProvisioning(repository).resolve_launch(actor, "browser-docker")
+        from cli_agent_orchestrator.clients.browser_auth_repository import BROWSER_AUTH_MIGRATIONS
+        from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
+
+        migrate_component(postgres_targets.auth, BROWSER_AUTH_MIGRATIONS)
         service = BrowserAuthService(
-            tmp_path / "browser-auth.sqlite3",
+            postgres_targets.auth,
             {
                 "id": actor.id,
                 "issuer": actor.issuer,
@@ -84,6 +94,7 @@ def test_cookie_renewal_and_logout_preserve_running_real_docker_work(tmp_path, m
                 "scopes": sorted(actor.scopes),
             },
         )
+        service.initialize_store()
         service.create_account("browser-operator", "Docker-fixture-passphrase")
         backend = DockerWorkBackend(image_ref=image, repository=repository)
         results, inputs = [], []
@@ -264,6 +275,9 @@ def test_cookie_renewal_and_logout_preserve_running_real_docker_work(tmp_path, m
             }
             proof_path = os.environ.get("CAO_BROWSER_DOCKER_PROOF")
             if proof_path:
-                Path(proof_path).write_text(json.dumps(proof, indent=2) + "\n")
+                descriptor = os.open(proof_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+                    output.write(json.dumps(proof, indent=2) + "\n")
+                assert os.stat(proof_path).st_mode & 0o777 == 0o600
         finally:
             client.close()

@@ -12,7 +12,7 @@ Covers the master enable/disable switch introduced in U5:
     * ``get_memory_context_for_terminal()``   → returns ``""``
     * ``get_curated_memory_context()``        → returns ``""``
 - **AC3** — Disabled ``store()`` touches neither the filesystem (no wiki
-  files, no ``index.md``) nor SQLite (no metadata row).
+  files, no ``index.md``) nor PostgreSQL (no metadata row).
 - **AC4** — With ``enabled=True`` (default) behavior is unchanged — a
   round-trip store + recall still works.
 - **MCP** — The MCP memory tools return an explicit ``disabled`` discriminator
@@ -25,11 +25,11 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from typing import Any
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine
 
 from cli_agent_orchestrator.clients.database import Base, MemoryMetadataModel
 from cli_agent_orchestrator.services.memory_service import (
@@ -53,7 +53,7 @@ def _run(coro: Any) -> Any:
 
 
 def _make_engine(db_path: Path) -> Any:
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return engine
 
@@ -192,11 +192,11 @@ class TestMemoryServiceShortCircuits:
 
 
 # ---------------------------------------------------------------------------
-# AC3 — disabled store writes nothing to filesystem or SQLite
+# AC3 — disabled store writes nothing to filesystem or PostgreSQL
 # ---------------------------------------------------------------------------
 
 
-def test_disabled_store_writes_nothing_to_filesystem_or_sqlite(tmp_path: Path) -> None:
+def test_disabled_store_writes_nothing_to_filesystem_or_postgres(tmp_path: Path) -> None:
     base_dir = tmp_path / "mem"
     base_dir.mkdir()
     db_path = tmp_path / "u5-noio.db"
@@ -231,7 +231,7 @@ def test_disabled_store_writes_nothing_to_filesystem_or_sqlite(tmp_path: Path) -
 
     with svc._get_db_session() as db:
         rows = db.query(MemoryMetadataModel).filter_by(key="ghost-key", scope="global").all()
-        assert rows == [], f"disabled store() must not insert SQLite metadata; got {rows}"
+        assert rows == [], f"disabled store() must not insert PostgreSQL metadata; got {rows}"
 
 
 # ---------------------------------------------------------------------------

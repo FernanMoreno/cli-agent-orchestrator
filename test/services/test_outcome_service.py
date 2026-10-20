@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from typing import Any
 from unittest.mock import patch
 
@@ -26,7 +27,7 @@ from cli_agent_orchestrator.services.outcome_service import (
 
 
 def _make_svc(db_path: Path) -> OutcomeService:
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return OutcomeService(db_engine=engine)
 
@@ -181,7 +182,7 @@ class TestListing:
             svc.record_outcome(session_name="s", task_label=f"task-{i}", success=True)
         out = svc.list_outcomes(limit=3)
         assert len(out) == 3
-        # created_at has second precision in SQLite; ids differ, so check
+        # created_at is stored at database precision; ids differ, so check
         # the newest task is present and the oldest two are cut.
         labels = {o["task_label"] for o in out}
         assert "task-4" in labels

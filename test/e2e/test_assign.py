@@ -39,6 +39,7 @@ Run:
 import time
 import uuid
 from test.e2e.conftest import (
+    _provider_launch_params,
     cleanup_terminal,
     create_terminal,
     extract_output,
@@ -62,7 +63,9 @@ def _send_inbox_message(sender_id: str, receiver_id: str, message: str):
         f"{API_BASE_URL}/terminals/{receiver_id}/inbox/messages",
         params={"sender_id": sender_id, "message": message},
     )
-    assert resp.status_code == 200, f"Inbox message send failed: {resp.status_code} {resp.text}"
+    assert (
+        resp.status_code == 200
+    ), f"Inbox message send failed: HTTP {resp.status_code}; response body omitted"
     return resp.json()
 
 
@@ -75,7 +78,9 @@ def _get_inbox_messages(terminal_id: str, status_filter: str = None):
         f"{API_BASE_URL}/terminals/{terminal_id}/inbox/messages",
         params=params,
     )
-    assert resp.status_code == 200, f"Get inbox messages failed: {resp.status_code} {resp.text}"
+    assert (
+        resp.status_code == 200
+    ), f"Get inbox messages failed: HTTP {resp.status_code}; response body omitted"
     return resp.json()
 
 
@@ -184,12 +189,14 @@ def _create_terminal_in_session(session_name: str, provider: str, agent_profile:
     """Create a terminal in an existing session."""
     resp = requests.post(
         f"{API_BASE_URL}/sessions/{session_name}/terminals",
-        params={"provider": provider, "agent_profile": agent_profile},
+        params=_provider_launch_params(
+            provider, {"provider": provider, "agent_profile": agent_profile}
+        ),
     )
     assert resp.status_code in (
         200,
         201,
-    ), f"Terminal creation in session failed: {resp.status_code} {resp.text}"
+    ), f"Terminal creation in session failed: HTTP {resp.status_code}; response body omitted"
     return resp.json()["id"]
 
 

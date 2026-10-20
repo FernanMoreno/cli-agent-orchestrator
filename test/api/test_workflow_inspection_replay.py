@@ -1,6 +1,6 @@
 """U3 endpoint tests — inspection + event-replay read API (issue #504, FR-5).
 
-Covers the two U3 read routes over a REAL durable journal (temp SQLite DB), not
+Covers the two U3 read routes over a REAL durable journal (isolated PostgreSQL target), not
 mocks — the point is to prove journal-authoritative behaviour end-to-end:
 
 - ``GET /workflows/runs/{run_id}`` returns the enriched ``RunInspection`` with
@@ -17,13 +17,11 @@ mocks — the point is to prove journal-authoritative behaviour end-to-end:
   the events as a ``GapMarker`` (BR-4); ``after_seq`` beyond max -> empty page,
   not an error (BR-6).
 
-The journal is pointed at a temp DB via the patched ``DATABASE_FILE`` and the
-event migration memo is reset, mirroring ``test_workflow_journal_events.py``.
+Each test uses the shared isolated PostgreSQL target and an empty process-local
+registry, so the route reads the durable journal without touching user data.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
@@ -37,16 +35,11 @@ _SPEC = WorkflowSpec(
 
 
 @pytest.fixture(autouse=True)
-def _isolated_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Fresh temp journal DB + clean registry/migration memo for each test."""
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    workflow_journal._event_migrated_paths.clear()
+def _isolated_journal(isolated_memory_db, monkeypatch: pytest.MonkeyPatch):
+    """Use the shared isolated PostgreSQL target and clear the process cache."""
     # The registry is a process-global cache; start each test with it empty so a
     # prior test's live record never masks the journal-authoritative read path.
     monkeypatch.setattr(workflow_service, "run_registry", {})
-    yield db_path
-    workflow_journal._event_migrated_paths.clear()
 
 
 def _seed_run(

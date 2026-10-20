@@ -1,5 +1,6 @@
-"""T093 stage 1 uses a verified temporary SQLite store, never runtime registries."""
+"""T093 stage 1 uses the verified PostgreSQL Work store, never runtime registries."""
 
+import concurrent.futures
 import hashlib
 import importlib
 import importlib.util
@@ -16,6 +17,15 @@ from cli_agent_orchestrator.services.delegation_snapshot import (
 )
 from cli_agent_orchestrator.services.knowledge_policy import KnowledgePolicy
 from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
+
+pytestmark = pytest.mark.postgres
+
+
+@pytest.fixture(autouse=True)
+def _provision_work_postgres_schema(postgres_targets):
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
+
+    bootstrap_scope(postgres_targets.main)
 
 
 def provisioning_module():
@@ -96,7 +106,7 @@ def provision_arguments(subject, job, grant, contract, *, expected_revision, lea
 def test_v2_provision_roundtrips_ordered_executable_identity(tmp_path):
     models = importlib.import_module("cli_agent_orchestrator.models.work_contract")
     module = provisioning_module()
-    repository = WorkRepository(tmp_path / "v2-provision.sqlite3")
+    repository = WorkRepository(tmp_path / "v2-provision")
     repository.initialize()
     actor = auth._verified_principal("https://issuer.test", "v2-owner", [auth.SCOPE_ADMIN], "jwt")
     job, grant, original = trusted_launch_setup(repository, tmp_path, actor)
@@ -129,17 +139,16 @@ def test_v2_provision_roundtrips_ordered_executable_identity(tmp_path):
 
 
 def test_provisioning_is_scoped_by_principal_survives_restart_and_fences_cas(tmp_path):
-    """A selector never becomes a global capability, even across SQLite restart."""
-    repository = WorkRepository(tmp_path / "provisioning.sqlite3")
+    """A selector never becomes a global capability, even across repository restart."""
+    repository = WorkRepository(tmp_path / "provisioning")
     repository.initialize()
-    repository_module = importlib.import_module("cli_agent_orchestrator.clients.work_repository")
-    assert repository_module.SCHEMA_VERSION >= 19, "T093 requires verified schema v19"
     with repository.read_snapshot() as connection:
-        assert tuple(
+        assert (
             connection.execute(
-                "SELECT checksum,verification_result FROM work_migrations WHERE version=19"
-            ).fetchone()
-        ) == (repository_module._CHECKSUMS[19], "verified")
+                "SELECT to_regclass('work_launch_provisions') IS NOT NULL"
+            ).fetchone()[0]
+            is True
+        )
 
     module = provisioning_module()
     first = auth._verified_principal("https://issuer.test", "first", [auth.SCOPE_ADMIN], "jwt")
@@ -189,7 +198,7 @@ def test_provisioning_is_scoped_by_principal_survives_restart_and_fences_cas(tmp
     with repository.read_snapshot() as connection:
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_launch_provisions WHERE principal_id=? AND selector=?",
+                "SELECT count(*) FROM work_launch_provisions WHERE principal_id=%s AND selector=%s",
                 (first.id, "same-selector"),
             ).fetchone()[0]
             == 2
@@ -202,6 +211,125 @@ def test_provisioning_is_scoped_by_principal_survives_restart_and_fences_cas(tmp
     with pytest.raises(module.ProvisionUnavailable):
         restarted.resolve_launch(first, "same-selector")
     assert restarted.resolve_launch(second, "same-selector").ref == second_ref
+
+
+def test_concurrent_first_revision_allocates_one_cas_winner(tmp_path):
+    """Advisory selector locking makes a missing-row revision counter race safe."""
+    module = provisioning_module()
+    repository = WorkRepository(tmp_path / "concurrent-provisioning")
+    repository.initialize()
+    principal = auth._verified_principal(
+        "https://issuer.test", "concurrent-owner", [auth.SCOPE_ADMIN], "jwt"
+    )
+    job, grant, contract = trusted_launch_setup(repository, tmp_path, principal)
+    service = module.WorkProvisioning(repository)
+
+    def attempt(lease_seconds):
+        try:
+            ref = service.provision_launch(
+                principal,
+                **provision_arguments(
+                    principal,
+                    job,
+                    grant,
+                    contract,
+                    expected_revision=0,
+                    lease_seconds=lease_seconds,
+                ),
+            )
+        except module.ProvisionConflict:
+            return "conflict", None
+        return "created", ref
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(attempt, (300, 301)))
+
+    assert sorted(result for result, _ref in outcomes) == ["conflict", "created"]
+    created = next(ref for result, ref in outcomes if result == "created")
+    assert created.revision == 1
+    with repository.read_snapshot() as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_launch_provisions WHERE principal_id=%s AND selector=%s",
+                (principal.id, "same-selector"),
+            ).fetchone()[0]
+            == 1
+        )
+
+
+@pytest.mark.parametrize(("read_only", "expected_lock_count"), [(True, 0), (False, 2)])
+def test_origin_revision_locks_only_writer_transactions(
+    monkeypatch, read_only, expected_lock_count
+):
+    """A lock wait must not masquerade as a fresh read in an RR snapshot."""
+    from cli_agent_orchestrator.models.work_origin import (
+        OriginAuthorizationRef,
+        OriginSubjectRef,
+    )
+    from cli_agent_orchestrator.services.work_origin import WorkOriginAuthority
+    from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
+
+    subject_ref = OriginSubjectRef(subject_id="workflow-1", kind="workflow", revision=1)
+    authorization_ref = OriginAuthorizationRef(
+        subject_id="workflow-1", origin_kind="workflow", revision=1
+    )
+    rows = {
+        "work_origin_subjects": {
+            "revision": 1,
+            "origin_kind": "workflow",
+            "state": "active",
+            "issuer_id": "owner-1",
+        },
+        "work_origin_authorizations": {
+            "revision": 1,
+            "subject_revision": 1,
+            "state": "active",
+            "expires_at": time.time() + 60,
+            "issuer_id": "owner-1",
+            "job_id": "job-1",
+            "grant_id": "grant-1",
+            "grant_revision": 1,
+            "actions": '["admit_step","execute"]',
+        },
+    }
+
+    class Cursor:
+        def __init__(self, row):
+            self.row = row
+
+        def fetchone(self):
+            return self.row
+
+    class ConnectionStub:
+        in_transaction = True
+
+        def __init__(self):
+            self.read_only = read_only
+
+        def execute(self, statement, _params):
+            for table, row in rows.items():
+                if table in statement:
+                    return Cursor(row)
+            raise AssertionError(f"unexpected query: {statement}")
+
+    locks = []
+    monkeypatch.setattr(
+        WorkOriginAuthority,
+        "_lock_history",
+        staticmethod(lambda _connection, *identity: locks.append(identity)),
+    )
+    result = WorkProvisioning._origin_revision(
+        ConnectionStub(),
+        subject_ref=subject_ref,
+        authorization_ref=authorization_ref,
+        required_actions={"admit_step", "execute"},
+        job_id="job-1",
+        grant_id="grant-1",
+        grant_revision=1,
+    )
+
+    assert result[:2] == (subject_ref, authorization_ref)
+    assert len(locks) == expected_lock_count
 
 
 def test_provision_models_reject_untrusted_version_coercion_and_extra_fields():
@@ -253,7 +381,7 @@ def test_provision_models_reject_untrusted_version_coercion_and_extra_fields():
 
 def test_provisioning_denies_invalid_admin_or_mixed_durable_evidence_without_writing(tmp_path):
     """A partial provision must never survive an ownership, grant, or snapshot denial."""
-    repository = WorkRepository(tmp_path / "denied.sqlite3")
+    repository = WorkRepository(tmp_path / "denied")
     repository.initialize()
     module = provisioning_module()
     first = auth._verified_principal("https://issuer.test", "first", [auth.SCOPE_ADMIN], "jwt")
@@ -282,7 +410,7 @@ def test_provisioning_denies_invalid_admin_or_mixed_durable_evidence_without_wri
 
 def test_internal_provision_port_rejects_unsealed_admin_or_subject_without_writing(tmp_path):
     """A Principal-shaped body value must not become provisioning authority."""
-    repository = WorkRepository(tmp_path / "forged-principal.sqlite3")
+    repository = WorkRepository(tmp_path / "forged-principal")
     repository.initialize()
     module = provisioning_module()
     principal = auth._verified_principal(

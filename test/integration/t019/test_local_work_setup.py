@@ -71,7 +71,7 @@ def test_local_setup_provisions_only_through_internal_authority_services(
     compiler = shutil.which("cc")
     if compiler is None:
         pytest.skip("a static C compiler is required for the local Docker demo worker")
-    repository = WorkRepository(tmp_path / "work.sqlite3")
+    repository = WorkRepository(tmp_path / "work.db")
     repository.initialize()
     if existing_scheduler:
         from cli_agent_orchestrator.services.work_scheduler import WorkScheduler
@@ -170,7 +170,7 @@ async def test_local_setup_dispatches_bundled_worker_and_cleans_attempt(tmp_path
     if compiler is None:
         pytest.skip("a static C compiler is required for the local Docker demo worker")
 
-    repository = WorkRepository(tmp_path / "work.sqlite3")
+    repository = WorkRepository(tmp_path / "work.db")
     repository.initialize()
     checkout_root = tmp_path / "checkout"
     checkout_root.mkdir(mode=0o700)

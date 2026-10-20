@@ -1,4 +1,4 @@
-"""Memory model for CAO memory system (Phase 1 — file-based, no SQLite)."""
+"""Memory model for CAO's file-backed content and PostgreSQL metadata."""
 
 import os
 import re

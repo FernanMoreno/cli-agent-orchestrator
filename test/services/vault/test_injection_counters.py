@@ -6,6 +6,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -148,7 +149,7 @@ def test_zero_counter_amount_writes_no_row(tmp_path, monkeypatch) -> None:
     """A future computed counter amount of zero remains a write-free no-op."""
     from cli_agent_orchestrator.services.vault import reader
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reader, "SessionLocal", Session)

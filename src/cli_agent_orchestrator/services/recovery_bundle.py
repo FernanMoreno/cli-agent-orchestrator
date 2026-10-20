@@ -1,39 +1,43 @@
-"""Private, fail-closed v1 capture of a closed SQLite recovery profile.
+"""PostgreSQL-native, offline-cut recovery bundles.
 
-This module deliberately provides no restore or public transport surface.  A
-server-owned cut verifier is installed when the capture service is constructed;
-a digest is integrity evidence only and never grants capture authority.
+This module captures the configured main PostgreSQL store plus the external
+objects its durable rows reference, and restores only to a distinct, prepared
+PostgreSQL target. It never publishes a configuration or makes a restored
+store executable.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
-import re
 import shutil
-import sqlite3
 import stat
 import tempfile
 import uuid
-from collections import Counter
-from contextlib import closing
+from abc import ABC, abstractmethod
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
-from pathlib import Path
-from typing import TypedDict, TypeGuard, cast
+from datetime import date, datetime
+from datetime import time as datetime_time
+from datetime import timezone
+from decimal import Decimal
+from pathlib import Path, PurePosixPath
+from typing import Any, TypedDict
 
-from cli_agent_orchestrator.clients.work_inbox_schema import ManagedInboxStoreIdentity
-from cli_agent_orchestrator.clients.work_recovery_schema import RECOVERY_STATE_BLOCKED_RESTORE
-from cli_agent_orchestrator.clients.work_repository import WorkRepository
-from cli_agent_orchestrator.services.recovery_inventory import (
-    WORK_SQLITE_PROFILE_VERSION,
-    RecoveryInventoryError,
-    WorkStoreInventory,
-    inspect_offline_work_store,
-    inspect_portable_work_store,
-    inspect_work_store,
-    verified_inbox_store_identity,
+from psycopg import sql
+
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget, connect
+from cli_agent_orchestrator.clients.postgres.migrations import (
+    SchemaMismatch,
+    catalog_manifest,
+    verify_component,
+    verify_runtime_role,
 )
+from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope, component_migrations
+from cli_agent_orchestrator.clients.work_postgres_schema import WORK_POSTGRES_MIGRATIONS
+from cli_agent_orchestrator.clients.work_repository import WorkRepository, bootstrap_work_store
 from cli_agent_orchestrator.services.secret_gate import scan_for_secrets
 from cli_agent_orchestrator.services.work_authority import (
     OfflineCutLease,
@@ -42,199 +46,150 @@ from cli_agent_orchestrator.services.work_authority import (
 )
 
 _ERROR = "recovery bundle rejected"
-_FORMAT = "recovery-bundle-v1"
-_FORMAT_V2 = "recovery-bundle-v2"
-_DIGEST = re.compile(r"[0-9a-f]{64}\Z")
-_LEGACY_WORK_SQLITE_PROFILE_VERSION = 24
-_SUPPORTED_BUNDLE_PROFILE_VERSIONS = frozenset((_LEGACY_WORK_SQLITE_PROFILE_VERSION, 25))
-_SUPPORTED_V2_PROFILE_VERSIONS = frozenset((28, 29, 30, 31, 38, WORK_SQLITE_PROFILE_VERSION))
-_MAX_EXECUTABLE_CONTENT_BYTES = 8 * 1024 * 1024
+_FORMAT = "cao-postgres-recovery-bundle-v3"
+_MANIFEST = "manifest.json"
+_MAX_EXECUTABLE_BYTES = 8 * 1024 * 1024
+_MAX_OBJECT_BYTES = 512 * 1024 * 1024
+_OBJECT_ROLES = frozenset(
+    {
+        "result-content",
+        "worktree-evidence",
+        "delivery-content",
+        "executable-content",
+        "memory-content",
+    }
+)
 
 
 class RecoveryBundleError(RuntimeError):
-    """Fixed, non-sensitive rejection for every capture or verification failure."""
+    """Fixed, non-sensitive error raised for malformed or unsafe bundles."""
+
+
+class _ObjectMetadata(TypedDict):
+    digest: str
+    size: int
+    roles: list[str]
+
+
+class PostgresArchiveRunner(ABC):
+    """Server-owned pg_dump/pg_restore adapter.
+
+    Implementations are composed by the installer or a controlled test. The
+    method receives targets and private file paths, never caller-supplied
+    command fragments or credentials.
+    """
+
+    @abstractmethod
+    def dump(self, target: DatabaseTarget, destination: Path, *, snapshot_id: str) -> None:
+        """Dump the target application schema from the supplied exported snapshot."""
+
+    @abstractmethod
+    def restore(self, target: DatabaseTarget, archive: Path) -> None:
+        """Restore to an absent schema atomically; failure must roll back all DDL/data."""
 
 
 @dataclass(frozen=True)
 class RecoveryCaptureSource:
-    """Explicit private storage roots for the one closed v24 capture profile."""
+    """Configured main target and its declared file-backed content roots."""
 
-    database_path: Path
+    database: DatabaseTarget
     immutable_result_root: Path | None = None
     delivery_content_root: Path | None = None
     executable_content_root: Path | None = None
     memory_root: Path | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.database_path, Path) or any(
-            root is not None and not isinstance(root, Path)
-            for root in (
-                self.immutable_result_root,
-                self.delivery_content_root,
-                self.executable_content_root,
-                self.memory_root,
-            )
-        ):
+        if not isinstance(self.database, DatabaseTarget) or self.database.scope != "main":
+            raise RecoveryBundleError(_ERROR)
+        roots = (
+            self.immutable_result_root,
+            self.delivery_content_root,
+            self.executable_content_root,
+            self.memory_root,
+        )
+        if any(root is not None and not isinstance(root, Path) for root in roots):
             raise RecoveryBundleError(_ERROR)
 
 
 @dataclass(frozen=True)
 class RecoveryBundleReceipt:
-    """Digest-bound locator returned only after the private directory is published."""
+    """Verified private bundle locator and its server-published source receipt."""
 
     bundle_path: Path
     manifest_digest: str
     manifest_size: int
-    source_database: Path | None = None
-    lease_id: str | None = None
-    publication_revision: int | None = None
-
-    def __post_init__(self) -> None:
-        if (
-            not isinstance(self.bundle_path, Path)
-            or not _is_digest(self.manifest_digest)
-            or type(self.manifest_size) is not int
-            or self.manifest_size < 0
-            or (
-                (
-                    self.source_database is None
-                    or self.lease_id is None
-                    or self.publication_revision is None
-                )
-                and not (
-                    self.source_database is None
-                    and self.lease_id is None
-                    and self.publication_revision is None
-                )
-            )
-            or (
-                self.source_database is not None
-                and (
-                    not isinstance(self.source_database, Path)
-                    or not self.source_database.is_absolute()
-                    or not _is_lease_id(self.lease_id)
-                    or type(self.publication_revision) is not int
-                    or self.publication_revision <= 0
-                )
-            )
-        ):
-            raise RecoveryBundleError(_ERROR)
+    source_target_identity: tuple[str, int, str, str, str]
+    source_store_id: str
+    capture_id: str
+    lease_id: str
+    publication_revision: int
 
 
 @dataclass(frozen=True)
-class _ExternalObject:
-    digest: str | None
-    size: int | None
-    root: Path
-    relative_path: Path
+class RecoveryRestoreReceipt:
+    """Outcome of a validated restore; configuration activation is separate."""
+
+    target_identity: tuple[str, int, str, str, str]
+    source_store_id: str
+    bundle_digest: str
+    work_installation_uuid: str
+    execution_state: str
+
+
+@dataclass(frozen=True)
+class _ExternalRef:
     role: str
     identifier: str
-
-
-def _is_digest(value: object) -> TypeGuard[str]:
-    return isinstance(value, str) and _DIGEST.fullmatch(value) is not None
-
-
-def _is_lease_id(value: object) -> TypeGuard[str]:
-    return (
-        isinstance(value, str) and len(value) == 32 and all(c in "0123456789abcdef" for c in value)
-    )
+    root: Path
+    relative_path: str
+    expected_digest: str | None
+    expected_size: int | None
+    relative_memory_path: str | None = None
 
 
 def _reject() -> RecoveryBundleError:
     return RecoveryBundleError(_ERROR)
 
 
-def _canonical_json(value: object) -> bytes:
+def _json_bytes(value: object) -> bytes:
     return json.dumps(
-        value, ensure_ascii=False, separators=(",", ":"), sort_keys=True, allow_nan=False
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
     ).encode("utf-8")
 
 
-def _inventory_evidence(inventory: WorkStoreInventory) -> dict[str, object]:
-    """Stable, non-secret observation of the closed inventory used for each phase."""
-    return {
-        "profile_version": inventory.profile_version,
-        "fingerprint": hashlib.sha256(_canonical_json(asdict(inventory))).hexdigest(),
-    }
+def _digest_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
 
 
-def _lease_evidence(lease: OfflineCutLease) -> dict[str, object]:
-    return {
-        "id": lease.id,
-        "store_identity": public_offline_store_identity(lease.store_identity),
-        "operator_principal_id": lease.operator_principal_id,
-        "owner": lease.owner,
-        "scope": lease.scope,
-        "epoch": lease.epoch,
-        "fence": lease.fence,
-        "expires_at": lease.expires_at,
-        "revision": lease.revision,
-    }
-
-
-def _phase_evidence(lease: OfflineCutLease, inventory: WorkStoreInventory) -> dict[str, object]:
-    return {
-        "lease": _lease_evidence(lease),
-        "writer_count": 0,
-        "inventory": _inventory_evidence(inventory),
-    }
-
-
-def _duplicate_key(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("duplicate key")
-        result[key] = value
-    return result
+def _is_digest(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value)
+    )
 
 
 def _private_directory(path: Path) -> None:
     info = path.lstat()
     if (
-        stat.S_ISLNK(info.st_mode)
-        or not stat.S_ISDIR(info.st_mode)
+        not stat.S_ISDIR(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
         or stat.S_IMODE(info.st_mode) & 0o077
+        or info.st_uid != os.geteuid()
     ):
         raise _reject()
 
 
-def _private_regular_file(path: Path) -> os.stat_result:
+def _private_file(path: Path) -> os.stat_result:
     info = path.lstat()
     if (
-        stat.S_ISLNK(info.st_mode)
-        or not stat.S_ISREG(info.st_mode)
+        not stat.S_ISREG(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
         or stat.S_IMODE(info.st_mode) & 0o077
+        or info.st_uid != os.geteuid()
     ):
         raise _reject()
     return info
-
-
-def _stable_file_identity(info: os.stat_result) -> tuple[int, ...]:
-    """Detect replacement or mutation of a referenced private source during capture."""
-    return (
-        info.st_dev,
-        info.st_ino,
-        info.st_mode,
-        info.st_size,
-        info.st_mtime_ns,
-        info.st_ctime_ns,
-    )
-
-
-def _regular_file_without_links(path: Path) -> os.stat_result:
-    """A capture source need not be private merely to be copied read-only."""
-    info = path.lstat()
-    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
-        raise _reject()
-    return info
-
-
-def _directory_without_links(path: Path) -> None:
-    info = path.lstat()
-    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
-        raise _reject()
 
 
 def _fsync_directory(path: Path) -> None:
@@ -245,94 +200,232 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def _open_readonly_database(path: Path) -> sqlite3.Connection:
-    _regular_file_without_links(path)
-    connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, isolation_level=None)
-    connection.execute("PRAGMA query_only=ON")
-    return connection
+def _normal(value: object) -> object:
+    """Losslessly normalize native values for stable row fingerprints."""
+    if value is None or type(value) in {str, int, bool}:
+        return value
+    if isinstance(value, float):
+        if value != value or value in {float("inf"), float("-inf")}:
+            raise _reject()
+        return {"$float64": value.hex()}
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return {"$bytes": bytes(value).hex()}
+    if isinstance(value, Decimal):
+        return {"$decimal": str(value)}
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            value = value.astimezone(timezone.utc)
+        return {"$datetime": value.isoformat(), "aware": value.tzinfo is not None}
+    if isinstance(value, date):
+        return {"$date": value.isoformat()}
+    if isinstance(value, datetime_time):
+        return {"$time": value.isoformat()}
+    if isinstance(value, uuid.UUID):
+        return {"$uuid": str(value)}
+    if isinstance(value, list):
+        return [_normal(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _normal(item) for key, item in value.items()}
+    raise _reject()
 
 
-def _verified_source_inventory(path: Path) -> tuple[WorkStoreInventory, ManagedInboxStoreIdentity]:
-    """Obtain inventory and the inbox pair only from a strictly verified source."""
-    connection = _open_readonly_database(path)
-    try:
-        inventory = inspect_work_store(connection)
-        return inventory, verified_inbox_store_identity(connection)
-    finally:
-        connection.close()
+def _complete_histories(scope: str) -> tuple[tuple, ...]:
+    histories: dict[tuple[str, str], tuple] = {}
+    for history in component_migrations(scope):
+        key = (history[0].scope, history[0].component)
+        if key not in histories or len(history) > len(histories[key]):
+            histories[key] = tuple(history)
+    return tuple(histories[key] for key in sorted(histories))
 
 
-def _quote(identifier: str) -> str:
-    return '"' + identifier.replace('"', '""') + '"'
+def _owned_tables(scope: str) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                "_cao_schema_migrations",
+                "_cao_store_identity",
+                *(
+                    table
+                    for history in _complete_histories(scope)
+                    for step in history
+                    for table in step.tables
+                ),
+            }
+        )
+    )
 
 
-def _scan_utf8_bytes(value: bytes) -> None:
-    try:
-        text = value.decode("utf-8")
-    except UnicodeDecodeError:
-        raise _reject() from None
-    if any(character not in "\n\r\t" and not character.isprintable() for character in text):
+def _table_primary_key(connection, target: DatabaseTarget, table: str) -> tuple[str, ...]:
+    rows = connection.execute(
+        """SELECT a.attname FROM pg_constraint c
+        JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace
+        JOIN unnest(c.conkey) WITH ORDINALITY k(attnum,position) ON TRUE
+        JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum
+        WHERE c.contype='p' AND n.nspname=%s AND t.relname=%s ORDER BY k.position""",
+        (target.schema, table),
+    ).fetchall()
+    return tuple(row[0] for row in rows)
+
+
+def _row_digest(
+    connection,
+    target: DatabaseTarget,
+    table: str,
+    *,
+    memory_root: Path | None,
+    excluded_capture_id: str | None,
+) -> tuple[int, str]:
+    columns = tuple(
+        row[0]
+        for row in connection.execute(
+            """SELECT a.attname FROM pg_class t JOIN pg_namespace n ON n.oid=t.relnamespace
+            JOIN pg_attribute a ON a.attrelid=t.oid WHERE n.nspname=%s AND t.relname=%s
+            AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum""",
+            (target.schema, table),
+        ).fetchall()
+    )
+    if not columns:
         raise _reject()
-    if scan_for_secrets(text) is not None:
-        raise _reject()
-
-
-def _scan_exportable_database(
-    connection: sqlite3.Connection, inventory: WorkStoreInventory
-) -> None:
-    """Inspect every logical SQLite cell without parsing or rewriting opaque payloads."""
-    for table in inventory.tables:
-        cursor = connection.execute(f"SELECT * FROM {_quote(table)}")
-        columns = tuple(column[0] for column in cursor.description)
-        for row in cursor:
-            for column, value in zip(columns, row):
-                if isinstance(value, str):
-                    if scan_for_secrets(value) is not None:
-                        raise _reject()
-                elif isinstance(value, bytes):
-                    if (table, column) != ("work_delegation_snapshots", "content"):
-                        raise _reject()
-                    _scan_utf8_bytes(value)
-                elif value is not None and type(value) not in {int, float}:
-                    raise _reject()
-    for reference in inventory.references:
-        if reference.resolution == "requires_future_profile":
-            present = connection.execute(
-                f"SELECT 1 FROM {_quote(reference.source_table)} LIMIT 1"
-            ).fetchone()
-            if present is not None:
+    order = _table_primary_key(connection, target, table) or columns
+    query = sql.SQL("SELECT * FROM {} ORDER BY {}").format(
+        sql.Identifier(target.schema, table),
+        sql.SQL(",").join(sql.Identifier(column) for column in order),
+    )
+    parameters: tuple[object, ...] = ()
+    if table == "work_offline_cut_observations" and excluded_capture_id is not None:
+        query = sql.SQL("SELECT * FROM {} WHERE capture_id<>%s ORDER BY {}").format(
+            sql.Identifier(target.schema, table),
+            sql.SQL(",").join(sql.Identifier(column) for column in order),
+        )
+        parameters = (excluded_capture_id,)
+    digest = hashlib.sha256()
+    count = 0
+    for row in connection.execute(query, parameters):
+        normalized = {column: _normal(row[column]) for column in columns}
+        if table == "memory_metadata" and "file_path" in columns:
+            if memory_root is None or not isinstance(row["file_path"], str):
                 raise _reject()
+            normalized["file_path"] = _safe_relative_path(row["file_path"], memory_root)
+        payload = _json_bytes(normalized)
+        digest.update(len(payload).to_bytes(8, "big"))
+        digest.update(payload)
+        count += 1
+    return count, digest.hexdigest()
 
 
-def _declared_external_objects(
-    connection: sqlite3.Connection, source: RecoveryCaptureSource
-) -> tuple[_ExternalObject, ...]:
-    declared: list[_ExternalObject] = []
+def _scan_exportable_rows(connection, tables: tuple[str, ...]) -> None:
+    """Reject secrets and unsafe text before a database dump is published."""
+    byte_content_columns = {
+        ("work_delegation_snapshots", "content"),
+        ("workflow_plan_snapshot_component", "content"),
+    }
+    for table in tables:
+        query = sql.SQL("SELECT * FROM {}").format(sql.Identifier(table))
+        for row in connection.execute(query):
+            for column, value in zip(row.keys(), row):
+                if isinstance(value, str):
+                    if (
+                        any(
+                            character not in "\n\r\t" and not character.isprintable()
+                            for character in value
+                        )
+                        or scan_for_secrets(value) is not None
+                    ):
+                        raise _reject()
+                elif isinstance(value, (bytes, bytearray, memoryview)):
+                    if (table, column) not in byte_content_columns:
+                        raise _reject()
+                    try:
+                        decoded = bytes(value).decode("utf-8")
+                    except UnicodeDecodeError:
+                        raise _reject() from None
+                    if (
+                        any(
+                            character not in "\n\r\t" and not character.isprintable()
+                            for character in decoded
+                        )
+                        or scan_for_secrets(decoded) is not None
+                    ):
+                        raise _reject()
+
+
+def _sequence_inventory(
+    connection, target: DatabaseTarget, tables: tuple[str, ...]
+) -> list[dict[str, object]]:
+    sequences = connection.execute(
+        """SELECT t.relname AS table_name, a.attname AS column_name, s.relname AS sequence_name,
+        q.seqstart, q.seqincrement, q.seqmin, q.seqmax, q.seqcache, q.seqcycle
+        FROM pg_class t JOIN pg_namespace n ON n.oid=t.relnamespace
+        JOIN pg_attribute a ON a.attrelid=t.oid
+        JOIN pg_depend d ON d.refobjid=t.oid AND d.refobjsubid=a.attnum AND d.deptype IN ('a','i')
+        JOIN pg_class s ON s.oid=d.objid JOIN pg_sequence q ON q.seqrelid=s.oid
+        WHERE n.nspname=%s AND t.relname=ANY(%s) ORDER BY t.relname,a.attnum""",
+        (target.schema, list(tables)),
+    ).fetchall()
+    result: list[dict[str, object]] = []
+    for row in sequences:
+        state_query = sql.SQL("SELECT last_value,is_called FROM {}").format(
+            sql.Identifier(target.schema, row["sequence_name"])
+        )
+        state = connection.execute(state_query).fetchone()
+        result.append(
+            {
+                "table": row["table_name"],
+                "column": row["column_name"],
+                "start": row["seqstart"],
+                "increment": row["seqincrement"],
+                "minimum": row["seqmin"],
+                "maximum": row["seqmax"],
+                "cache": row["seqcache"],
+                "cycle": row["seqcycle"],
+                "last_value": state["last_value"],
+                "is_called": state["is_called"],
+            }
+        )
+    return result
+
+
+def _safe_relative_path(value: str, root: Path) -> str:
+    path = Path(value)
+    if not path.is_absolute():
+        raise _reject()
+    try:
+        relative = path.relative_to(root.absolute())
+    except ValueError:
+        raise _reject() from None
+    if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise _reject()
+    return PurePosixPath(*relative.parts).as_posix()
+
+
+def _external_refs(connection, source: RecoveryCaptureSource) -> tuple[_ExternalRef, ...]:
+    roots = {
+        "result-content": source.immutable_result_root,
+        "worktree-evidence": source.immutable_result_root,
+        "delivery-content": source.delivery_content_root,
+        "executable-content": source.executable_content_root,
+    }
     queries = (
         (
             "result-content",
             "SELECT id,content_hash,immutable_location,byte_length FROM work_results",
-            source.immutable_result_root,
         ),
         (
             "worktree-evidence",
             "SELECT id,content_hash,immutable_location,byte_length FROM work_worktree_evidence",
-            source.immutable_result_root,
         ),
         (
             "delivery-content",
-            "SELECT attempt_id || ':' || generation,content_hash,content_ref,byte_length "
-            "FROM work_delivery_content_refs",
-            source.delivery_content_root,
+            "SELECT attempt_id || ':' || generation,content_hash,content_ref,byte_length FROM work_delivery_content_refs",
         ),
         (
             "executable-content",
-            "SELECT content_hash,content_hash,immutable_location,byte_length "
-            "FROM work_executable_contents",
-            source.executable_content_root,
+            "SELECT content_hash,content_hash,immutable_location,byte_length FROM work_executable_contents",
         ),
     )
-    for role, query, root in queries:
+    refs: list[_ExternalRef] = []
+    for role, query in queries:
+        root = roots[role]
         for identifier, digest, location, size in connection.execute(query):
             if (
                 not isinstance(identifier, str)
@@ -341,95 +434,45 @@ def _declared_external_objects(
                 or location != digest
                 or type(size) is not int
                 or size < 0
-                or role == "executable-content"
-                and not 1 <= size <= _MAX_EXECUTABLE_CONTENT_BYTES
                 or root is None
+                or (role == "executable-content" and not 1 <= size <= _MAX_EXECUTABLE_BYTES)
             ):
                 raise _reject()
-            declared.append(
-                _ExternalObject(
-                    digest=digest,
-                    size=size,
-                    root=root,
-                    relative_path=Path(digest),
-                    role=role,
-                    identifier=identifier,
-                )
-            )
+            _directory_no_symlink(root.absolute())
+            refs.append(_ExternalRef(role, identifier, root.absolute(), digest, digest, size))
     memory_rows = connection.execute("SELECT id,file_path FROM memory_metadata").fetchall()
     if memory_rows and source.memory_root is None:
         raise _reject()
-    if source.memory_root is not None:
-        memory_root = source.memory_root.absolute()
-        _directory_without_links(memory_root)
-        for identifier, stored_path in memory_rows:
-            if (
-                not isinstance(identifier, str)
-                or not identifier
-                or not isinstance(stored_path, str)
-            ):
+    if source.memory_root is not None and memory_rows:
+        root = source.memory_root.absolute()
+        _directory_no_symlink(root)
+        for identifier, path in memory_rows:
+            if not isinstance(identifier, str) or not identifier or not isinstance(path, str):
                 raise _reject()
-            try:
-                relative_path = Path(stored_path).absolute().relative_to(memory_root)
-            except ValueError:
-                raise _reject() from None
-            if not relative_path.parts:
-                raise _reject()
-            declared.append(
-                _ExternalObject(
-                    digest=None,
-                    size=None,
-                    root=memory_root,
-                    relative_path=relative_path,
-                    role="memory-content",
-                    identifier=identifier,
-                )
+            relative = _safe_relative_path(path, root)
+            refs.append(
+                _ExternalRef("memory-content", identifier, root, relative, None, None, relative)
             )
-    return tuple(sorted(declared, key=lambda item: (item.role, item.identifier)))
-
-
-def _open_regular_file_beneath(root: Path, relative_path: Path) -> int:
-    """Open one regular file without following any component below ``root``."""
-    if (
-        relative_path.is_absolute()
-        or not relative_path.parts
-        or any(component in {".", ".."} for component in relative_path.parts)
-    ):
+    addresses = [(reference.role, reference.identifier) for reference in refs]
+    if len(addresses) != len(set(addresses)):
         raise _reject()
-    directory_descriptor = os.open(
-        root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-    )
-    try:
-        for component in relative_path.parts[:-1]:
-            child_descriptor = os.open(
-                component,
-                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-                dir_fd=directory_descriptor,
-            )
-            os.close(directory_descriptor)
-            directory_descriptor = child_descriptor
-        source_descriptor = os.open(
-            relative_path.parts[-1],
-            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
-            dir_fd=directory_descriptor,
-        )
-        try:
-            if not stat.S_ISREG(os.fstat(source_descriptor).st_mode):
-                raise _reject()
-            return source_descriptor
-        except BaseException:
-            os.close(source_descriptor)
-            raise
-    finally:
-        os.close(directory_descriptor)
+    return tuple(sorted(refs, key=lambda item: (item.role, item.identifier)))
 
 
-def _open_private_executable_root(root: Path) -> int:
-    """Anchor every root component without following a symlink in an ancestor."""
+def _directory_no_symlink(path: Path) -> None:
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+        raise _reject()
+
+
+def _open_regular_file_beneath(root: Path, relative_path: str) -> tuple[int, os.stat_result]:
+    relative = PurePosixPath(relative_path)
+    if not _valid_relative_memory(relative_path):
+        raise _reject()
     absolute = root.absolute()
-    if not absolute.is_absolute() or ".." in absolute.parts:
+    if ".." in absolute.parts:
         raise _reject()
-    descriptor = os.open(
+    directory = os.open(
         absolute.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     )
     try:
@@ -437,1133 +480,579 @@ def _open_private_executable_root(root: Path) -> int:
             child = os.open(
                 component,
                 os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-                dir_fd=descriptor,
+                dir_fd=directory,
             )
+            os.close(directory)
+            directory = child
+        for component in relative.parts[:-1]:
+            child = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=directory,
+            )
+            os.close(directory)
+            directory = child
+        descriptor = os.open(
+            relative.parts[-1],
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+            dir_fd=directory,
+        )
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
             os.close(descriptor)
-            descriptor = child
-        info = os.fstat(descriptor)
-        if (
-            not stat.S_ISDIR(info.st_mode)
-            or stat.S_IMODE(info.st_mode) != 0o700
-            or info.st_uid != os.geteuid()
-        ):
-            raise _reject()
-        return descriptor
-    except BaseException:
-        os.close(descriptor)
-        raise
-
-
-def _open_private_executable_leaf(root_descriptor: int, digest: str) -> tuple[int, os.stat_result]:
-    """Open a digest leaf under an anchored root and validate that exact inode."""
-    if not _is_digest(digest):
-        raise _reject()
-    descriptor = os.open(
-        digest,
-        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
-        dir_fd=root_descriptor,
-    )
-    try:
-        info = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(info.st_mode)
-            or stat.S_IMODE(info.st_mode) != 0o600
-            or info.st_uid != os.geteuid()
-            or not 1 <= info.st_size <= _MAX_EXECUTABLE_CONTENT_BYTES
-        ):
             raise _reject()
         return descriptor, info
-    except BaseException:
-        os.close(descriptor)
-        raise
+    finally:
+        os.close(directory)
 
 
-def _digest_open_executable(descriptor: int) -> tuple[str, int]:
-    """Rehash a securely opened leaf within the same fixed byte bound."""
-    before = os.fstat(descriptor)
+def _hash_open_file(
+    descriptor: int,
+    *,
+    before: os.stat_result,
+    scan_text: bool,
+    maximum_size: int = _MAX_OBJECT_BYTES,
+) -> tuple[str, int, tuple[int, ...]]:
+    if before.st_size > maximum_size:
+        raise _reject()
     digest = hashlib.sha256()
+    content = bytearray() if scan_text else None
     size = 0
     while block := os.read(descriptor, 1024 * 1024):
         size += len(block)
-        if size > _MAX_EXECUTABLE_CONTENT_BYTES:
+        if size > maximum_size:
             raise _reject()
         digest.update(block)
-    if _stable_file_identity(os.fstat(descriptor)) != _stable_file_identity(before):
+        if content is not None:
+            content.extend(block)
+    after = os.fstat(descriptor)
+    identity_before = (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
+    identity_after = (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+    if identity_before != identity_after or size != after.st_size:
         raise _reject()
-    return digest.hexdigest(), size
+    if content is not None:
+        try:
+            decoded = content.decode("utf-8")
+        except UnicodeDecodeError:
+            raise _reject() from None
+        if scan_for_secrets(decoded) is not None:
+            raise _reject()
+    return digest.hexdigest(), size, identity_after
 
 
-def _copy_open_file_as_object(
-    source_descriptor: int,
-    objects: Path,
-    *,
-    expected_digest: str | None = None,
-    expected_size: int | None = None,
-    scan_utf8: bool = False,
-    max_bytes: int | None = None,
-) -> tuple[str, int]:
-    """Copy an already-open regular file before it can be published."""
-    temporary = objects / f".capture-{uuid.uuid4().hex}"
-    digest = hashlib.sha256()
-    size = 0
+def _file_hash(path: Path, *, scan_text: bool) -> tuple[str, int, tuple[int, ...]]:
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise _reject()
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
     try:
+        return _hash_open_file(descriptor, before=os.fstat(descriptor), scan_text=scan_text)
+    finally:
+        os.close(descriptor)
+
+
+def _object_size_limit(role: str) -> int:
+    return _MAX_EXECUTABLE_BYTES if role == "executable-content" else _MAX_OBJECT_BYTES
+
+
+def _external_hash(reference: _ExternalRef) -> tuple[str, int, tuple[int, ...]]:
+    descriptor, before = _open_regular_file_beneath(reference.root, reference.relative_path)
+    try:
+        return _hash_open_file(
+            descriptor,
+            before=before,
+            scan_text=reference.role != "executable-content",
+            maximum_size=_object_size_limit(reference.role),
+        )
+    finally:
+        os.close(descriptor)
+
+
+def _copy_object(
+    reference: _ExternalRef, expected: dict[str, _ObjectMetadata], objects: Path
+) -> dict[str, object]:
+    descriptor, source_info = _open_regular_file_beneath(reference.root, reference.relative_path)
+    try:
+        digest, size, identity = _hash_open_file(
+            descriptor,
+            before=source_info,
+            scan_text=reference.role != "executable-content",
+            maximum_size=_object_size_limit(reference.role),
+        )
+        if (reference.expected_digest is not None and digest != reference.expected_digest) or (
+            reference.expected_size is not None and size != reference.expected_size
+        ):
+            raise _reject()
+        temporary = objects / f".object-{uuid.uuid4().hex}"
+        target = objects / digest
         destination_descriptor = os.open(
             temporary,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
             0o600,
         )
-        try:
-            source_info = os.fstat(source_descriptor)
-            if not stat.S_ISREG(source_info.st_mode) or (
-                max_bytes is not None and source_info.st_size > max_bytes
-            ):
-                raise _reject()
-            with (
-                os.fdopen(source_descriptor, "rb", closefd=False) as input_file,
-                os.fdopen(destination_descriptor, "wb", closefd=False) as output_file,
-            ):
-                if scan_utf8:
-                    block = input_file.read()
-                    _scan_utf8_bytes(block)
-                    digest.update(block)
-                    size += len(block)
-                    output_file.write(block)
-                else:
-                    while block := input_file.read(1024 * 1024):
-                        size += len(block)
-                        if max_bytes is not None and size > max_bytes:
-                            raise _reject()
-                        digest.update(block)
-                        output_file.write(block)
-                output_file.flush()
-                os.fsync(output_file.fileno())
-        finally:
-            os.close(destination_descriptor)
-        digest_text = digest.hexdigest()
-        if (expected_digest is not None and digest_text != expected_digest) or (
-            expected_size is not None and size != expected_size
-        ):
-            raise _reject()
-        target = objects / digest_text
-        try:
-            os.link(temporary, target, follow_symlinks=False)
-        except FileExistsError:
-            existing_digest, existing_size = _file_digest(target)
-            if (existing_digest, existing_size) != (digest_text, size):
-                raise _reject()
-        os.unlink(temporary)
-        _fsync_directory(objects)
-        return digest_text, size
-    finally:
-        if temporary.exists() or temporary.is_symlink():
-            temporary.unlink()
-
-
-def _copy_file_as_object(
-    source: Path,
-    objects: Path,
-    *,
-    expected_digest: str | None = None,
-    expected_size: int | None = None,
-    scan_utf8: bool = False,
-    require_private_source: bool = True,
-) -> tuple[str, int]:
-    """Copy one regular file into its digest name, verifying before it can be published."""
-    if require_private_source:
-        _private_regular_file(source)
-    else:
-        _regular_file_without_links(source)
-    source_descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
-    try:
-        return _copy_open_file_as_object(
-            source_descriptor,
-            objects,
-            expected_digest=expected_digest,
-            expected_size=expected_size,
-            scan_utf8=scan_utf8,
-        )
-    finally:
-        os.close(source_descriptor)
-
-
-def _copy_executable_file_as_object(
-    root: Path, digest: str, expected_size: int, objects: Path
-) -> tuple[str, int, tuple[int, int], tuple[int, ...]]:
-    root_descriptor = _open_private_executable_root(root)
-    try:
-        root_info = os.fstat(root_descriptor)
-        source_descriptor, source_info = _open_private_executable_leaf(root_descriptor, digest)
-        try:
-            copied_digest, size = _copy_open_file_as_object(
-                source_descriptor,
-                objects,
-                expected_digest=digest,
-                expected_size=expected_size,
-                max_bytes=_MAX_EXECUTABLE_CONTENT_BYTES,
-            )
-            source_identity = _stable_file_identity(source_info)
-            if _stable_file_identity(os.fstat(source_descriptor)) != source_identity:
-                raise _reject()
-            return (
-                copied_digest,
-                size,
-                (root_info.st_dev, root_info.st_ino),
-                source_identity,
-            )
-        finally:
-            os.close(source_descriptor)
-    finally:
-        os.close(root_descriptor)
-
-
-def _verify_executable_source(
-    root: Path,
-    digest: str,
-    size: int,
-    root_identity: tuple[int, int],
-    source_identity: tuple[int, ...],
-) -> None:
-    root_descriptor = _open_private_executable_root(root)
-    try:
-        root_info = os.fstat(root_descriptor)
-        if (root_info.st_dev, root_info.st_ino) != root_identity:
-            raise _reject()
-        source_descriptor, source_info = _open_private_executable_leaf(root_descriptor, digest)
-        try:
-            if _stable_file_identity(source_info) != source_identity:
-                raise _reject()
-            if _digest_open_executable(source_descriptor) != (digest, size):
-                raise _reject()
-        finally:
-            os.close(source_descriptor)
-    finally:
-        os.close(root_descriptor)
-
-
-def _copy_memory_file_as_object(root: Path, relative_path: Path, objects: Path) -> tuple[str, int]:
-    """Copy memory content through a descriptor confined beneath its physical root."""
-    source_descriptor = _open_regular_file_beneath(root, relative_path)
-    try:
-        return _copy_open_file_as_object(source_descriptor, objects, scan_utf8=True)
-    finally:
-        os.close(source_descriptor)
-
-
-def _file_digest(path: Path) -> tuple[str, int]:
-    _private_regular_file(path)
-    digest = hashlib.sha256()
-    size = 0
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
-    try:
-        info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode):
-            raise _reject()
-        with os.fdopen(descriptor, "rb", closefd=False) as input_file:
-            while block := input_file.read(1024 * 1024):
-                digest.update(block)
-                size += len(block)
-    finally:
-        os.close(descriptor)
-    return digest.hexdigest(), size
-
-
-def _compact_staging_database(copied_database: Path, stage: Path) -> Path:
-    """Remove free SQLite pages in private staging before inspection and publication."""
-    compacted_database = stage / ".sqlite-compact"
-    with (
-        closing(sqlite3.connect(copied_database)) as _owned_connection,
-        _owned_connection as connection,
-    ):
-        connection.execute("VACUUM INTO ?", (str(compacted_database),))
-    os.chmod(compacted_database, 0o600)
-    return compacted_database
-
-
-def _write_manifest(
-    stage: Path,
-    objects: list[dict[str, object]],
-    references: list[dict[str, object]],
-    cut_evidence: dict[str, object] | None = None,
-    profile_version: int = WORK_SQLITE_PROFILE_VERSION,
-) -> tuple[str, int]:
-    manifest = {
-        "format": _FORMAT_V2 if cut_evidence is not None else _FORMAT,
-        "objects": objects,
-        "profile_version": profile_version,
-        "references": references,
-    }
-    if cut_evidence is not None:
-        manifest["cut_evidence"] = cut_evidence
-    encoded = _canonical_json(manifest)
-    path = stage / "manifest.json"
-    descriptor = os.open(
-        path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600
-    )
-    try:
-        with os.fdopen(descriptor, "wb", closefd=False) as output:
-            output.write(encoded)
-            output.flush()
-            os.fsync(output.fileno())
-    finally:
-        os.close(descriptor)
-    _fsync_directory(stage)
-    return hashlib.sha256(encoded).hexdigest(), len(encoded)
-
-
-class _BundleObject(TypedDict):
-    digest: str
-    path: str
-    roles: list[str]
-    size: int
-
-
-class _BundleReference(TypedDict):
-    digest: str
-    identifier: str
-    path: str
-    role: str
-    size: int
-    version: object
-
-
-class _RecoveryManifest(TypedDict, total=False):
-    format: str
-    profile_version: int
-    objects: list[_BundleObject]
-    references: list[_BundleReference]
-    cut_evidence: dict[str, object]
-
-
-def _is_bundle_object(value: object) -> TypeGuard[_BundleObject]:
-    return (
-        isinstance(value, dict)
-        and set(value) == {"digest", "path", "roles", "size"}
-        and isinstance(value["digest"], str)
-        and isinstance(value["path"], str)
-        and type(value["size"]) is int
-        and isinstance(value["roles"], list)
-        and all(isinstance(role, str) for role in value["roles"])
-    )
-
-
-def _is_bundle_reference(value: object) -> TypeGuard[_BundleReference]:
-    return (
-        isinstance(value, dict)
-        and set(value) == {"digest", "identifier", "path", "role", "size", "version"}
-        and all(isinstance(value[field], str) for field in ("digest", "identifier", "path", "role"))
-        and type(value["size"]) is int
-    )
-
-
-def _read_manifest(path: Path, receipt: RecoveryBundleReceipt) -> _RecoveryManifest:
-    digest, size = _file_digest(path)
-    if (digest, size) != (receipt.manifest_digest, receipt.manifest_size):
-        raise _reject()
-    raw = path.read_bytes()
-    try:
-        manifest = json.loads(raw, object_pairs_hook=_duplicate_key, parse_constant=lambda _: None)
-    except (TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
-        raise _reject() from None
-    if not isinstance(manifest, dict) or _canonical_json(manifest) != raw:
-        raise _reject()
-    if manifest.get("format") == _FORMAT:
-        expected_keys = {"format", "objects", "profile_version", "references"}
-        valid_profile = manifest.get("profile_version") in _SUPPORTED_BUNDLE_PROFILE_VERSIONS
-    elif manifest.get("format") == _FORMAT_V2:
-        expected_keys = {"format", "objects", "profile_version", "references", "cut_evidence"}
-        valid_profile = manifest.get("profile_version") in _SUPPORTED_V2_PROFILE_VERSIONS
-    else:
-        raise _reject()
-    if (
-        set(manifest) != expected_keys
-        or type(manifest["profile_version"]) is not int
-        or not valid_profile
-    ):
-        raise _reject()
-    if manifest["format"] == _FORMAT_V2:
-        evidence = manifest["cut_evidence"]
-        if (
-            not isinstance(evidence, dict)
-            or set(evidence)
-            != {
-                "coverage",
-                "capture_id",
-                "epoch",
-                "expires_at",
-                "fence",
-                "lease_id",
-                "operator_principal_id",
-                "owner",
-                "phases",
-                "revision",
-                "scope",
-                "store_identity",
-                "version",
-            }
-            or evidence["version"] != 2
-            or evidence["scope"] != "registered-work-writers"
-            or evidence["owner"] != "work"
-            or not _is_lease_id(evidence["lease_id"])
-            or not _is_lease_id(evidence["capture_id"])
-            or not isinstance(evidence["operator_principal_id"], str)
-            or not evidence["operator_principal_id"]
-            or not isinstance(evidence["store_identity"], str)
-            or not evidence["store_identity"]
-            or type(evidence["epoch"]) is not int
-            or type(evidence["fence"]) is not int
-            or type(evidence["revision"]) is not int
-            or evidence["epoch"] <= 0
-            or evidence["fence"] <= 0
-            or evidence["revision"] <= 0
-            or not isinstance(evidence["expires_at"], (int, float))
-            or isinstance(evidence["expires_at"], bool)
-            or not isinstance(evidence["phases"], dict)
-            or set(evidence["phases"])
-            != {
-                "before",
-                "after",
-                "promote",
-            }
-            or not isinstance(evidence["coverage"], list)
-        ):
-            raise _reject()
-    objects = manifest["objects"]
-    if not isinstance(objects, list) or not objects:
-        raise _reject()
-    if not isinstance(manifest["references"], list):
-        raise _reject()
-    # Decode the nested shape before the verifier checks its semantic constraints.
-    if not all(_is_bundle_object(item) for item in objects) or not all(
-        _is_bundle_reference(item) for item in manifest["references"]
-    ):
-        raise _reject()
-    return cast(_RecoveryManifest, manifest)
-
-
-def _verify_v2_phase_evidence(
-    evidence: dict[str, object],
-    object_roles: dict[str, tuple[str, ...]],
-    sqlite_path: Path,
-    *,
-    profile_version: int,
-) -> None:
-    expected_lease = {
-        "id": evidence["lease_id"],
-        "store_identity": evidence["store_identity"],
-        "operator_principal_id": evidence["operator_principal_id"],
-        "owner": evidence["owner"],
-        "scope": evidence["scope"],
-        "epoch": evidence["epoch"],
-        "fence": evidence["fence"],
-        "expires_at": evidence["expires_at"],
-        "revision": evidence["revision"],
-    }
-    phases = evidence["phases"]
-    assert isinstance(phases, dict)  # _read_manifest validated the phase mapping.
-    observations: list[dict[str, object]] = []
-    for name in ("before", "after", "promote"):
-        phase = phases[name]
-        if not isinstance(phase, dict) or set(phase) != {
-            "inventory",
-            "lease",
-            "observed_at",
-            "writer_count",
-        }:
-            raise _reject()
-        if (
-            phase["lease"] != expected_lease
-            or phase["writer_count"] != 0
-            or not isinstance(phase["observed_at"], (int, float))
-            or isinstance(phase["observed_at"], bool)
-        ):
-            raise _reject()
-        inventory = phase["inventory"]
-        if (
-            not isinstance(inventory, dict)
-            or set(inventory) != {"fingerprint", "profile_version"}
-            or inventory["profile_version"] != profile_version
-            or not _is_digest(inventory["fingerprint"])
-        ):
-            raise _reject()
-        observations.append(inventory)
-    if observations[0] != observations[1] or observations[1] != observations[2]:
-        raise _reject()
-    with closing(_open_readonly_database(sqlite_path)) as _owned_copied, _owned_copied as copied:
-        if (
-            _inventory_evidence(inspect_offline_work_store(copied, profile_version=profile_version))
-            != observations[1]
-        ):
-            raise _reject()
-    expected_coverage = [
-        {"digest": digest, "classification": "integrity-only", "roles": list(roles)}
-        for digest, roles in sorted(object_roles.items())
-    ]
-    if evidence["coverage"] != expected_coverage:
-        raise _reject()
-
-
-def _verify_v2_publication(receipt: RecoveryBundleReceipt, evidence: dict[str, object]) -> None:
-    if receipt.source_database is None or receipt.lease_id != evidence["lease_id"]:
-        raise _reject()
-    try:
-        source = receipt.source_database.resolve()
-        with (
-            closing(
-                sqlite3.connect(source.as_uri() + "?mode=ro", uri=True, isolation_level=None)
-            ) as _owned_connection,
-            _owned_connection as connection,
-        ):
-            connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA query_only=ON")
-            row = connection.execute(
-                "SELECT * FROM work_offline_cuts WHERE id=?", (receipt.lease_id,)
-            ).fetchone()
-            observations = connection.execute(
-                "SELECT phase,observation FROM work_offline_cut_observations "
-                "WHERE lease_id=? AND capture_id=? ORDER BY phase",
-                (receipt.lease_id, evidence["capture_id"]),
-            ).fetchall()
-    except (OSError, sqlite3.Error):
-        raise _reject() from None
-    if (
-        row is None
-        or row["state"] != "published"
-        or row["revision"] != receipt.publication_revision
-        or any(
-            row[key] != evidence[key]
-            for key in (
-                "operator_principal_id",
-                "owner",
-                "scope",
-                "epoch",
-                "fence",
-            )
-        )
-        or public_offline_store_identity(row["store_identity"]) != evidence["store_identity"]
-        or row["published_path"] != str(receipt.bundle_path.resolve())
-        or row["published_capture_id"] != evidence["capture_id"]
-        or row["published_manifest_digest"] != receipt.manifest_digest
-        or row["published_manifest_size"] != receipt.manifest_size
-    ):
-        raise _reject()
-    try:
-        observed = {row["phase"]: json.loads(row["observation"]) for row in observations}
-    except (TypeError, ValueError, json.JSONDecodeError):
-        raise _reject() from None
-    if observed != evidence["phases"]:
-        raise _reject()
-
-
-def _verify_recovery_bundle(
-    receipt: RecoveryBundleReceipt, *, require_publication: bool
-) -> RecoveryBundleReceipt:
-    """Verify byte integrity and, for v2, durable server-owned publication eligibility."""
-    try:
-        if not isinstance(receipt, RecoveryBundleReceipt):
-            raise _reject()
-        bundle = receipt.bundle_path
-        _private_directory(bundle)
-        entries = {entry.name: entry for entry in bundle.iterdir()}
-        if set(entries) != {"manifest.json", "objects"}:
-            raise _reject()
-        _private_regular_file(entries["manifest.json"])
-        _private_directory(entries["objects"])
-        manifest = _read_manifest(entries["manifest.json"], receipt)
-        objects = manifest["objects"]
-        previous_digest = ""
-        expected_names: set[str] = set()
-        object_roles: dict[str, tuple[str, ...]] = {}
-        for object_ in objects:
-            if not isinstance(object_, dict) or set(object_) != {"digest", "path", "roles", "size"}:
-                raise _reject()
-            digest = object_["digest"]
-            size = object_["size"]
-            roles = object_["roles"]
-            if (
-                not _is_digest(digest)
-                or type(size) is not int
-                or size < 0
-                or object_["path"] != f"objects/{digest}"
-                or digest <= previous_digest
-                or not isinstance(roles, list)
-                or not roles
-                or tuple(roles) != tuple(sorted(set(roles)))
-                or any(
-                    not isinstance(role, str) or re.fullmatch(r"[a-z][a-z0-9-]*", role) is None
-                    for role in roles
-                )
-            ):
-                raise _reject()
-            previous_digest = digest
-            expected_names.add(digest)
-            object_roles[digest] = tuple(roles)
-            if _file_digest(entries["objects"] / digest) != (digest, size):
-                raise _reject()
-        if {entry.name for entry in entries["objects"].iterdir()} != expected_names:
-            raise _reject()
-        sqlite_role = f"sqlite-v{manifest['profile_version']}"
-        if sum(sqlite_role in roles for roles in object_roles.values()) != 1 or any(
-            role.startswith("sqlite-v") and role != sqlite_role
-            for roles in object_roles.values()
-            for role in roles
-        ):
-            raise _reject()
-        sqlite_digest = next(
-            digest for digest, roles in object_roles.items() if sqlite_role in roles
-        )
-        if manifest["format"] == _FORMAT:
-            with (
-                closing(
-                    _open_readonly_database(entries["objects"] / sqlite_digest)
-                ) as _owned_historical,
-                _owned_historical as historical,
-            ):
-                if (
-                    historical.execute(
-                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_offline_cuts'"
-                    ).fetchone()
-                    is not None
-                ):
-                    raise _reject()
-        references = manifest["references"]
-        previous_reference: tuple[str, str, str] | None = None
-        for reference in references:
-            if not isinstance(reference, dict) or set(reference) != {
-                "digest",
-                "identifier",
-                "path",
-                "role",
-                "size",
-                "version",
-            }:
-                raise _reject()
-            digest = reference["digest"]
-            size = reference["size"]
-            role = reference["role"]
-            identifier = reference["identifier"]
-            current_reference = (role, identifier, digest)
-            if (
-                not _is_digest(digest)
-                or type(size) is not int
-                or size < 0
-                or not isinstance(role, str)
-                or role not in object_roles.get(digest, ())
-                or not isinstance(identifier, str)
-                or not identifier
-                or reference["path"] != f"objects/{digest}"
-                or reference["version"] != 1
-                or previous_reference is not None
-                and current_reference <= previous_reference
-                or _file_digest(entries["objects"] / digest) != (digest, size)
-            ):
-                raise _reject()
-            previous_reference = (role, identifier, digest)
-        if manifest["format"] == _FORMAT_V2:
-            _verify_v2_phase_evidence(
-                manifest["cut_evidence"],
-                object_roles,
-                entries["objects"] / sqlite_digest,
-                profile_version=manifest["profile_version"],
-            )
-            if require_publication:
-                _verify_v2_publication(receipt, manifest["cut_evidence"])
-        return receipt
-    except (OSError, TypeError, ValueError, RecoveryBundleError):
-        raise _reject() from None
-
-
-def verify_recovery_bundle(receipt: RecoveryBundleReceipt) -> RecoveryBundleReceipt:
-    """Verify a receipt-bound private bundle; v2 requires a durable publication record."""
-    return _verify_recovery_bundle(receipt, require_publication=True)
-
-
-def _restore_manifest(receipt: RecoveryBundleReceipt) -> tuple[_RecoveryManifest, Path, str, int]:
-    """Return only the currently supported, receipt-verified SQLite bundle object."""
-    _verify_recovery_bundle(receipt, require_publication=True)
-    manifest = _read_manifest(receipt.bundle_path / "manifest.json", receipt)
-    if (
-        manifest["format"] != _FORMAT_V2
-        or manifest["profile_version"] != WORK_SQLITE_PROFILE_VERSION
-    ):
-        raise _reject()
-    sqlite_role = f"sqlite-v{WORK_SQLITE_PROFILE_VERSION}"
-    sqlite_objects = [object_ for object_ in manifest["objects"] if sqlite_role in object_["roles"]]
-    if len(sqlite_objects) != 1:
-        raise _reject()
-    sqlite_object = sqlite_objects[0]
-    if sqlite_object["roles"] != [sqlite_role]:
-        raise _reject()
-    # The receipt verifier already checked every object field before restoration.
-    object_path, object_digest, object_size = (
-        sqlite_object["path"],
-        sqlite_object["digest"],
-        sqlite_object["size"],
-    )
-    assert isinstance(object_path, str)
-    assert isinstance(object_digest, str)
-    assert isinstance(object_size, int)
-    return manifest, receipt.bundle_path / object_path, object_digest, object_size
-
-
-def _restore_destination(
-    receipt: RecoveryBundleReceipt, destination: Path, sqlite_path: Path
-) -> Path:
-    """Accept one private, new file without ever opening configuration-owned storage."""
-    if not isinstance(destination, Path) or receipt.source_database is None:
-        raise _reject()
-    try:
-        from cli_agent_orchestrator import constants
-
-        configured_database = Path(constants.DATABASE_FILE).resolve(strict=False)
-    except (ImportError, OSError, TypeError, ValueError):
-        raise _reject() from None
-    destination = destination.absolute()
-    try:
-        destination.lstat()
-    except FileNotFoundError:
-        pass
-    else:
-        raise _reject()
-    parent = destination.parent
-    _private_directory(parent)
-    resolved_destination = destination.resolve(strict=False)
-    for protected in (
-        receipt.bundle_path,
-        receipt.source_database,
-        sqlite_path,
-        configured_database,
-    ):
-        resolved_protected = protected.resolve()
-        if resolved_destination == resolved_protected:
-            raise _reject()
-        try:
-            resolved_destination.relative_to(resolved_protected)
-        except ValueError:
-            continue
-        raise _reject()
-    return destination
-
-
-def _restore_reference_closure(
-    connection: sqlite3.Connection, manifest: _RecoveryManifest, inventory: WorkStoreInventory
-) -> None:
-    """Prove that every portable external object is named by the copied SQLite rows."""
-    _scan_exportable_database(connection, inventory)
-    expected: Counter[tuple[str, str, str, int]] = Counter()
-    expected_memory: Counter[tuple[str, str]] = Counter()
-
-    for role, query in (
-        (
-            "result-content",
-            "SELECT id,content_hash,immutable_location,byte_length FROM work_results",
-        ),
-        (
-            "worktree-evidence",
-            "SELECT id,content_hash,immutable_location,byte_length FROM work_worktree_evidence",
-        ),
-        (
-            "delivery-content",
-            "SELECT attempt_id || ':' || generation,content_hash,content_ref,byte_length "
-            "FROM work_delivery_content_refs",
-        ),
-        (
-            "executable-content",
-            "SELECT content_hash,content_hash,immutable_location,byte_length "
-            "FROM work_executable_contents",
-        ),
-    ):
-        for identifier, digest, location, size in connection.execute(query):
-            entry = (role, identifier, digest, size)
-            if (
-                not isinstance(identifier, str)
-                or not identifier
-                or not _is_digest(digest)
-                or location != digest
-                or type(size) is not int
-                or size < 0
-                or role == "executable-content"
-                and not 1 <= size <= _MAX_EXECUTABLE_CONTENT_BYTES
-                or expected[entry]
-            ):
-                raise _reject()
-            expected[entry] += 1
-
-    for identifier, stored_path in connection.execute("SELECT id,file_path FROM memory_metadata"):
-        memory_entry = ("memory-content", identifier)
-        if (
-            not isinstance(identifier, str)
-            or not identifier
-            or not isinstance(stored_path, str)
-            or not stored_path
-            or expected_memory[memory_entry]
-        ):
-            raise _reject()
-        expected_memory[memory_entry] += 1
-
-    actual: Counter[tuple[str, str, str, int]] = Counter()
-    actual_memory: Counter[tuple[str, str]] = Counter()
-    reference_roles: set[tuple[str, str]] = set()
-    used_object_roles: set[tuple[str, str]] = set()
-    for reference in manifest["references"]:
-        role = reference["role"]
-        identifier = reference["identifier"]
-        digest = reference["digest"]
-        size = reference["size"]
-        address = (role, identifier)
-        if address in reference_roles:
-            raise _reject()
-        reference_roles.add(address)
-        if role == "memory-content":
-            actual_memory[address] += 1
-        elif role in {
-            "result-content",
-            "worktree-evidence",
-            "delivery-content",
-            "executable-content",
-        }:
-            entry = (role, identifier, digest, size)
-            if actual[entry]:
-                raise _reject()
-            actual[entry] += 1
-        else:
-            raise _reject()
-        used_object_roles.add((digest, role))
-    if actual != expected or actual_memory != expected_memory:
-        raise _reject()
-
-    sqlite_role = f"sqlite-v{WORK_SQLITE_PROFILE_VERSION}"
-    for object_ in manifest["objects"]:
-        digest = object_["digest"]
-        roles = object_["roles"]
-        for role in roles:
-            if role != sqlite_role and (digest, role) not in used_object_roles:
-                raise _reject()
-
-
-def _inspect_restore_sqlite(
-    sqlite_path: Path, source_identity: ManagedInboxStoreIdentity, manifest: _RecoveryManifest
-) -> None:
-    with (
-        closing(_open_readonly_database(sqlite_path)) as _owned_connection,
-        _owned_connection as connection,
-    ):
-        inventory = inspect_offline_work_store(connection)
-        portable_inventory = inspect_portable_work_store(
-            connection, expected_source_identity=source_identity
-        )
-        if inventory != portable_inventory:
-            raise _reject()
-        _restore_reference_closure(connection, manifest, portable_inventory)
-
-
-def _copy_restore_sqlite(source: Path, destination: Path, digest: str, size: int) -> None:
-    """Copy the descriptor actually verified, rather than trusting a checked pathname."""
-    _private_regular_file(source)
-    source_descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
-    destination_descriptor = None
-    try:
-        if not stat.S_ISREG(os.fstat(source_descriptor).st_mode):
-            raise _reject()
-        destination_descriptor = os.open(
-            destination, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC
-        )
         observed = hashlib.sha256()
-        observed_size = 0
-        with (
-            os.fdopen(source_descriptor, "rb", closefd=False) as input_file,
-            os.fdopen(destination_descriptor, "wb", closefd=False) as output_file,
-        ):
-            while block := input_file.read(1024 * 1024):
-                observed.update(block)
-                observed_size += len(block)
-                output_file.write(block)
-            output_file.flush()
-            os.fsync(output_file.fileno())
-        if (observed.hexdigest(), observed_size) != (digest, size):
-            raise _reject()
-    finally:
-        if destination_descriptor is not None:
+        copied_size = 0
+        try:
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            with (
+                os.fdopen(descriptor, "rb", closefd=False) as source,
+                os.fdopen(destination_descriptor, "wb", closefd=False) as output,
+            ):
+                while block := source.read(1024 * 1024):
+                    copied_size += len(block)
+                    observed.update(block)
+                    output.write(block)
+                output.flush()
+                os.fsync(output.fileno())
+            if (observed.hexdigest(), copied_size) != (digest, size):
+                raise _reject()
+            after = os.fstat(descriptor)
+            if (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            ) != identity:
+                raise _reject()
+            try:
+                os.link(temporary, target, follow_symlinks=False)
+            except FileExistsError:
+                if _file_hash(target, scan_text=False)[:2] != (digest, size):
+                    raise _reject()
+            os.unlink(temporary)
+        finally:
             os.close(destination_descriptor)
-        os.close(source_descriptor)
-
-
-def _fsync_private_file(path: Path) -> None:
-    _private_regular_file(path)
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-    try:
-        os.fsync(descriptor)
+            temporary.unlink(missing_ok=True)
+        expected.setdefault(digest, {"digest": digest, "size": size, "roles": []})
+        roles = expected[digest]["roles"]
+        if reference.role not in roles:
+            roles.append(reference.role)
+        return {
+            "role": reference.role,
+            "identifier": reference.identifier,
+            "digest": digest,
+            "size": size,
+            "relative_path": reference.relative_memory_path,
+        }
     finally:
         os.close(descriptor)
 
 
-def _restore_receipt(
-    receipt: RecoveryBundleReceipt,
-    source_identity: ManagedInboxStoreIdentity,
-    sqlite_digest: str,
-    sqlite_size: int,
-) -> str:
-    """Bind the staged transform without hashing the SQLite file it changes."""
-    evidence = {
-        "version": 1,
-        "manifest_digest": receipt.manifest_digest,
-        "manifest_size": receipt.manifest_size,
-        "sqlite_digest": sqlite_digest,
-        "sqlite_size": sqlite_size,
-        "source_identity": {
-            "store_identity": source_identity.store_identity,
-            "store_uuid": source_identity.store_uuid,
-        },
-        "transformations": {
-            "execution_state": RECOVERY_STATE_BLOCKED_RESTORE,
-            "reconcile_states": ["acknowledged", "running", "sent"],
-        },
+def _endpoint_fingerprint(target: DatabaseTarget) -> str:
+    return _digest_bytes(_json_bytes([target.host, target.port, target.database, target.schema]))
+
+
+def _verify_closed_relations(connection, target: DatabaseTarget, tables: tuple[str, ...]) -> None:
+    """Reject relations or sequences outside the reviewed main-store catalog."""
+    relations = {
+        row[0]
+        for row in connection.execute(
+            """SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname=%s AND c.relkind IN ('r','p','v','m','f')""",
+            (target.schema,),
+        ).fetchall()
     }
-    return hashlib.sha256(_canonical_json(evidence)).hexdigest()
+    if relations != set(tables):
+        raise SchemaMismatch("PostgreSQL schema contains unreviewed relations")
+
+    owned_sequences = {
+        row[0]
+        for row in connection.execute(
+            """SELECT s.relname FROM pg_class t JOIN pg_namespace n ON n.oid=t.relnamespace
+            JOIN pg_attribute a ON a.attrelid=t.oid
+            JOIN pg_depend d ON d.refobjid=t.oid AND d.refobjsubid=a.attnum
+                AND d.deptype IN ('a','i')
+            JOIN pg_class s ON s.oid=d.objid AND s.relkind='S'
+            WHERE n.nspname=%s AND t.relname=ANY(%s)""",
+            (target.schema, list(tables)),
+        ).fetchall()
+    }
+    sequences = {
+        row[0]
+        for row in connection.execute(
+            """SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname=%s AND c.relkind='S'""",
+            (target.schema,),
+        ).fetchall()
+    }
+    if sequences != owned_sequences:
+        raise SchemaMismatch("PostgreSQL schema contains unreviewed sequences")
 
 
-def restore_recovery_bundle(receipt: RecoveryBundleReceipt, destination: Path) -> None:
-    """Restore one v2 bundle into a blocked, provenance-only SQLite copy.
+def _verify_closed_routines(
+    connection, target: DatabaseTarget, expected_routines: list[dict[str, Any]]
+) -> None:
+    """Reject standalone schema routines that are absent from the table catalog."""
 
-    This is an internal recovery operation: it never adopts the historical inbox
-    identity, opens neither configured operator storage nor providers, and has
-    no public transport surface.
-    """
-    staging: Path | None = None
-    published = False
-    try:
-        manifest, sqlite_path, sqlite_digest, sqlite_size = _restore_manifest(receipt)
-        assert receipt.source_database is not None  # The v2 publication verifier required it.
-        _source_inventory, source_identity = _verified_source_inventory(receipt.source_database)
-        destination = _restore_destination(receipt, destination, sqlite_path)
-        _inspect_restore_sqlite(sqlite_path, source_identity, manifest)
+    def identity_key(name, arguments, kind):
+        normalized_arguments = tuple(tuple(argument) for argument in (arguments or ()))
+        return name, normalized_arguments, kind
 
-        descriptor, stage_name = tempfile.mkstemp(
-            prefix=".recovery-restore-", dir=destination.parent
-        )
-        staging = Path(stage_name)
-        try:
-            os.fchmod(descriptor, 0o600)
-        finally:
-            os.close(descriptor)
-        _copy_restore_sqlite(sqlite_path, staging, sqlite_digest, sqlite_size)
+    expected = {
+        identity_key(routine["name"], routine["identity_arguments"], routine["kind"])
+        for routine in expected_routines
+    }
+    actual = {
+        identity_key(row[0], row[1], row[2])
+        for row in connection.execute(
+            """SELECT p.proname,
+            (SELECT jsonb_agg(jsonb_build_array(type_namespace.nspname,type_catalog.typname)
+                    ORDER BY argument.ordinal)
+             FROM unnest(p.proargtypes::oid[]) WITH ORDINALITY AS argument(type_oid,ordinal)
+             JOIN pg_catalog.pg_type type_catalog ON type_catalog.oid=argument.type_oid
+             JOIN pg_catalog.pg_namespace type_namespace
+                ON type_namespace.oid=type_catalog.typnamespace
+            ) AS identity_arguments,
+            p.prokind
+            FROM pg_catalog.pg_proc p
+            JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+            WHERE n.nspname=%s
+            ORDER BY p.proname, p.prokind""",
+            (target.schema,),
+        ).fetchall()
+    }
+    if actual != expected:
+        raise SchemaMismatch("PostgreSQL schema contains unreviewed routines")
 
-        WorkRepository(staging)._block_portable_restore_copy(
-            source_inbox_context=source_identity,
-            installation_uuid=uuid.uuid4().hex,
-            bundle_digest=receipt.manifest_digest,
-            restore_receipt=_restore_receipt(receipt, source_identity, sqlite_digest, sqlite_size),
-        )
-        _inspect_restore_sqlite(staging, source_identity, manifest)
-        _fsync_private_file(staging)
 
-        os.link(staging, destination, follow_symlinks=False)
-        published = True
-        _fsync_directory(destination.parent)
-        staging.unlink()
-        staging = None
-        _fsync_directory(destination.parent)
-    except Exception:
-        raise _reject() from None
-    finally:
-        if staging is not None and not published and (staging.exists() or staging.is_symlink()):
-            staging.unlink()
+def _verify_closed_types(connection, target: DatabaseTarget, tables: tuple[str, ...]) -> None:
+    """Reject standalone user-defined types outside reviewed table row types."""
+    expected: set[int] = set()
+    for row in connection.execute(
+        """SELECT t.oid, t.typarray FROM pg_catalog.pg_type t
+        JOIN pg_catalog.pg_class c ON c.oid=t.typrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname=%s AND c.relname=ANY(%s) AND c.relkind IN ('r','p','v','m','f')""",
+        (target.schema, list(tables)),
+    ).fetchall():
+        expected.add(row[0])
+        if row[1]:
+            expected.add(row[1])
+    actual = {
+        row[0]
+        for row in connection.execute(
+            """SELECT t.oid FROM pg_catalog.pg_type t
+            JOIN pg_catalog.pg_namespace n ON n.oid=t.typnamespace
+            WHERE n.nspname=%s""",
+            (target.schema,),
+        ).fetchall()
+    }
+    if actual != expected:
+        raise SchemaMismatch("PostgreSQL schema contains unreviewed types")
+
+
+def _verify_closed_schema_auxiliaries(connection, target: DatabaseTarget) -> None:
+    """Reject schema-scoped PostgreSQL objects without a reviewed migration owner."""
+    row = connection.execute(
+        """WITH target_namespace AS (
+                SELECT oid FROM pg_catalog.pg_namespace WHERE nspname=%s
+            ), auxiliary_namespaces(namespace_oid) AS (
+                SELECT oprnamespace FROM pg_catalog.pg_operator
+                UNION ALL SELECT opcnamespace FROM pg_catalog.pg_opclass
+                UNION ALL SELECT opfnamespace FROM pg_catalog.pg_opfamily
+                UNION ALL SELECT collnamespace FROM pg_catalog.pg_collation
+                UNION ALL SELECT connamespace FROM pg_catalog.pg_conversion
+                UNION ALL SELECT cfgnamespace FROM pg_catalog.pg_ts_config
+                UNION ALL SELECT dictnamespace FROM pg_catalog.pg_ts_dict
+                UNION ALL SELECT prsnamespace FROM pg_catalog.pg_ts_parser
+                UNION ALL SELECT tmplnamespace FROM pg_catalog.pg_ts_template
+            )
+            SELECT 1 FROM auxiliary_namespaces a
+            JOIN target_namespace n ON n.oid=a.namespace_oid
+            LIMIT 1""",
+        (target.schema,),
+    ).fetchone()
+    if row is not None:
+        raise SchemaMismatch("PostgreSQL schema contains unreviewed auxiliary objects")
+
+
+def _verify_closed_statistics(connection, target: DatabaseTarget) -> None:
+    """No current component migration owns extended-statistics objects."""
+    row = connection.execute(
+        """SELECT 1 FROM pg_catalog.pg_statistic_ext s
+        JOIN pg_catalog.pg_namespace n ON n.oid=s.stxnamespace
+        WHERE n.nspname=%s LIMIT 1""",
+        (target.schema,),
+    ).fetchone()
+    if row is not None:
+        raise SchemaMismatch("PostgreSQL schema contains unreviewed statistics")
+
+
+def _database_inventory(
+    target: DatabaseTarget,
+    source: RecoveryCaptureSource,
+    *,
+    excluded_capture_id: str | None = None,
+    connection=None,
+) -> dict[str, Any]:
+    histories = _complete_histories("main")
+    tables = _owned_tables("main")
+    connection_context = (
+        connect(target, readonly=True) if connection is None else nullcontext(connection)
+    )
+    with connection_context as connection:
+        verify_runtime_role(connection)
+        _verify_closed_relations(connection, target, tables)
+        for history in histories:
+            verify_component(connection, history)
+        catalog = catalog_manifest(connection, tables)
+        _verify_closed_routines(connection, target, catalog["routines"])
+        _verify_closed_types(connection, target, tables)
+        _verify_closed_schema_auxiliaries(connection, target)
+        _verify_closed_statistics(connection, target)
+        _scan_exportable_rows(connection, tables)
+        rows: dict[str, dict[str, object]] = {}
+        for table in tables:
+            count, digest = _row_digest(
+                connection,
+                target,
+                table,
+                memory_root=source.memory_root,
+                excluded_capture_id=excluded_capture_id,
+            )
+            rows[table] = {"count": count, "sha256": digest}
+        sequences = _sequence_inventory(connection, target, tables)
+        context = connection.execute(
+            "SELECT store_uuid,store_identity FROM work_inbox_store_context WHERE singleton=1"
+        ).fetchone()
+        recovery = connection.execute(
+            "SELECT installation_uuid,execution_state FROM work_recovery_context WHERE singleton=1"
+        ).fetchone()
+        if context is None or recovery is None:
+            raise _reject()
+        refs = _external_refs(connection, source)
+        external = []
+        for reference in refs:
+            digest, size, _identity = _external_hash(reference)
+            if (reference.expected_digest is not None and digest != reference.expected_digest) or (
+                reference.expected_size is not None and size != reference.expected_size
+            ):
+                raise _reject()
+            external.append(
+                {
+                    "role": reference.role,
+                    "identifier": reference.identifier,
+                    "digest": digest,
+                    "size": size,
+                    "relative_path": reference.relative_memory_path,
+                }
+            )
+        migrations = [
+            {
+                "component": step.component,
+                "scope": step.scope,
+                "version": step.version,
+                "checksum": step.checksum,
+            }
+            for history in histories
+            for step in history
+        ]
+    body = {
+        "schema_sha256": _digest_bytes(_json_bytes(catalog)),
+        "catalog": catalog,
+        "rows": rows,
+        "sequences": sequences,
+        "migrations": migrations,
+        "external": external,
+        "source_store_id": target.store_id,
+        "work_store_uuid": context["store_uuid"],
+        "work_store_identity": context["store_identity"],
+        "installation_uuid": recovery["installation_uuid"],
+        "execution_state": recovery["execution_state"],
+        "endpoint_sha256": _endpoint_fingerprint(target),
+    }
+    body["fingerprint"] = _digest_bytes(
+        _json_bytes({key: value for key, value in body.items() if key != "endpoint_sha256"})
+    )
+    body["profile_version"] = max(step.version for history in histories for step in history)
+    return body
+
+
+def _cut_inventory(inventory: dict[str, Any]) -> dict[str, object]:
+    return {
+        "profile_version": inventory["profile_version"],
+        "fingerprint": inventory["fingerprint"],
+    }
+
+
+def _lease_document(lease: OfflineCutLease) -> dict[str, object]:
+    return {
+        "id": lease.id,
+        "store_identity": lease.store_identity,
+        "operator_principal_id": lease.operator_principal_id,
+        "owner": lease.owner,
+        "scope": lease.scope,
+        "epoch": lease.epoch,
+        "fence": lease.fence,
+        "expires_at": lease.expires_at,
+        "revision": lease.revision,
+    }
+
+
+def _write_manifest(directory: Path, manifest: dict[str, Any]) -> tuple[str, int]:
+    payload = _json_bytes(manifest)
+    path = directory / _MANIFEST
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(payload)
+        stream.flush()
+        os.fsync(stream.fileno())
+    return _digest_bytes(payload), len(payload)
 
 
 class OfflineRecoveryCapture:
-    """Internal v1 capture service; the verifier is supplied only by server composition."""
+    """Capture a complete PostgreSQL main store while a durable Work cut is held."""
 
-    def __init__(self, authority: WorkAuthority, lease: OfflineCutLease) -> None:
+    def __init__(
+        self, authority: WorkAuthority, lease: OfflineCutLease, runner: PostgresArchiveRunner
+    ) -> None:
         if not isinstance(authority, WorkAuthority) or not isinstance(lease, OfflineCutLease):
+            raise _reject()
+        if not isinstance(runner, PostgresArchiveRunner):
             raise _reject()
         self._authority = authority
         self._lease = lease
-
-    def _verify_cut(self, *, database: Path, profile_version: int, phase: str) -> OfflineCutLease:
-        if profile_version != WORK_SQLITE_PROFILE_VERSION or phase not in {
-            "before",
-            "after",
-            "promote",
-        }:
-            raise _reject()
-        return self._authority.verify_offline_cut(self._lease, source_database=database)
+        self._runner = runner
 
     def capture(self, source: RecoveryCaptureSource, destination: Path) -> RecoveryBundleReceipt:
-        """Create and atomically publish a verified bundle, or leave no destination behind."""
         stage: Path | None = None
         published = False
+        promoted = False
         phase = "before"
+        destination_path: Path | None = None
         try:
             if not isinstance(source, RecoveryCaptureSource) or not isinstance(destination, Path):
                 raise _reject()
-            database = source.database_path.absolute()
-            capture_profile = WORK_SQLITE_PROFILE_VERSION
-            _regular_file_without_links(database)
+            target = source.database
+            if not self._authority.repository.same_store(WorkRepository(target)):
+                raise _reject()
             destination = destination.absolute()
+            destination_path = destination
             parent = destination.parent
             _private_directory(parent)
             if destination.exists() or destination.is_symlink():
                 raise _reject()
 
-            lease = self._verify_cut(
-                database=database, profile_version=capture_profile, phase="before"
-            )
-            phase = "stage"
-            inventory, source_identity = _verified_source_inventory(database)
+            checked = self._authority.verify_offline_cut(self._lease, source_database=target)
             capture_id = uuid.uuid4().hex
-            before_observation = self._authority.observe_offline_cut(
-                lease,
-                source_database=database,
-                capture_id=capture_id,
-                phase="before",
-                inventory=_inventory_evidence(inventory),
-            )
 
-            stage = Path(tempfile.mkdtemp(prefix=".recovery-bundle-", dir=parent))
+            stage = Path(tempfile.mkdtemp(prefix=".postgres-recovery-", dir=parent))
             os.chmod(stage, 0o700)
             objects = stage / "objects"
             objects.mkdir(mode=0o700)
-            copied_database = stage / ".sqlite-copy"
-            with (
-                closing(_open_readonly_database(database)) as _owned_source_connection,
-                _owned_source_connection as source_connection,
-            ):
-                with (
-                    closing(sqlite3.connect(copied_database)) as _owned_copy_connection,
-                    _owned_copy_connection as copy_connection,
-                ):
-                    source_connection.backup(copy_connection)
-            os.chmod(copied_database, 0o600)
-            compacted_database = _compact_staging_database(copied_database, stage)
-            copied_database.unlink()
-            copied_database = compacted_database
-
-            with (
-                closing(_open_readonly_database(copied_database)) as _owned_copied_connection,
-                _owned_copied_connection as copied_connection,
-            ):
-                copied_inventory = inspect_portable_work_store(
-                    copied_connection, expected_source_identity=source_identity
-                )
-                _scan_exportable_database(copied_connection, copied_inventory)
-                external = _declared_external_objects(copied_connection, source)
-
-            object_metadata: dict[str, int] = {}
-            object_roles: dict[str, set[str]] = {}
-            manifest_references: list[dict[str, object]] = []
-            executable_sources: list[tuple[Path, str, int, tuple[int, int], tuple[int, ...]]] = []
-            database_digest, database_size = _copy_file_as_object(copied_database, objects)
-            object_metadata[database_digest] = database_size
-            object_roles[database_digest] = {f"sqlite-v{capture_profile}"}
-            copied_database.unlink()
-            for object_ in external:
-                root = object_.root
-                if object_.role == "memory-content":
-                    digest, size = _copy_memory_file_as_object(root, object_.relative_path, objects)
-                elif object_.role == "executable-content":
-                    assert object_.digest is not None and object_.size is not None
-                    digest, size, root_identity, leaf_identity = _copy_executable_file_as_object(
-                        root, object_.digest, object_.size, objects
-                    )
-                    executable_sources.append((root, digest, size, root_identity, leaf_identity))
-                else:
-                    _private_directory(root.absolute())
-                    digest, size = _copy_file_as_object(
-                        root / object_.relative_path,
-                        objects,
-                        expected_digest=object_.digest,
-                        expected_size=object_.size,
-                        scan_utf8=True,
-                    )
-                previous = object_metadata.get(digest)
-                if previous is not None and previous != size:
+            dump = stage / "main.dump"
+            external_rows: dict[str, _ObjectMetadata] = {}
+            references: list[dict[str, object]] = []
+            with connect(target, readonly=True) as snapshot_connection:
+                snapshot_row = snapshot_connection.execute("SELECT pg_export_snapshot()").fetchone()
+                if snapshot_row is None or not isinstance(snapshot_row[0], str):
                     raise _reject()
-                object_metadata[digest] = size
-                object_roles.setdefault(digest, set()).add(object_.role)
-                manifest_references.append(
-                    {
-                        "digest": digest,
-                        "identifier": object_.identifier,
-                        "path": f"objects/{digest}",
-                        "role": object_.role,
-                        "size": size,
-                        "version": 1,
-                    }
+                snapshot_id = snapshot_row[0]
+                inventory = _database_inventory(
+                    target,
+                    source,
+                    excluded_capture_id=capture_id,
+                    connection=snapshot_connection,
                 )
+                before_observation = self._authority.observe_offline_cut(
+                    checked,
+                    source_database=target,
+                    capture_id=capture_id,
+                    phase="before",
+                    inventory=_cut_inventory(inventory),
+                )
+                self._runner.dump(target, dump, snapshot_id=snapshot_id)
+                os.chmod(dump, 0o600)
+                _private_file(dump)
+                dump_hash, dump_size, _ = _file_hash(dump, scan_text=False)
+                object_metadata: dict[str, _ObjectMetadata] = {
+                    dump_hash: {
+                        "digest": dump_hash,
+                        "size": dump_size,
+                        "roles": ["postgres-main"],
+                    }
+                }
+                dump_target = objects / dump_hash
+                os.replace(dump, dump_target)
+                os.chmod(dump_target, 0o600)
+                for ref in _external_refs(snapshot_connection, source):
+                    references.append(_copy_object(ref, external_rows, objects))
+            for digest, info in external_rows.items():
+                if digest in object_metadata:
+                    raise _reject()
+                # External objects are stored by digest; dump role stays isolated.
+                info["roles"] = sorted(info["roles"])
+                object_metadata[digest] = info
 
-            for root, digest, size, root_identity, leaf_identity in executable_sources:
-                _verify_executable_source(root, digest, size, root_identity, leaf_identity)
-
-            after_inventory, after_source_identity = _verified_source_inventory(database)
-            if after_inventory != inventory or after_source_identity != source_identity:
+            after = _database_inventory(target, source, excluded_capture_id=capture_id)
+            if after != inventory:
                 raise _reject()
-            lease = (
-                self._verify_cut(database=database, profile_version=capture_profile, phase="after")
-                or lease
-            )
+            checked = self._authority.verify_offline_cut(checked, source_database=target)
             after_observation = self._authority.observe_offline_cut(
-                lease,
-                source_database=database,
+                checked,
+                source_database=target,
                 capture_id=capture_id,
                 phase="after",
-                inventory=_inventory_evidence(after_inventory),
+                inventory=_cut_inventory(after),
             )
             phase = "promote"
 
-            manifest_objects = [
-                {
-                    "digest": digest,
-                    "path": f"objects/{digest}",
-                    "roles": sorted(object_roles[digest]),
-                    "size": object_metadata[digest],
-                }
-                for digest in sorted(object_metadata)
-            ]
-            manifest_references.sort(
-                key=lambda reference: (
-                    reference["role"],
-                    reference["identifier"],
-                    reference["digest"],
-                )
-            )
-            coverage = [
-                {
-                    "digest": item["digest"],
-                    "classification": "integrity-only",
-                    "roles": item["roles"],
-                }
-                for item in manifest_objects
-            ]
+            manifest: dict[str, Any] = {
+                "format": _FORMAT,
+                "format_version": 3,
+                "capture_id": capture_id,
+                "source": {
+                    "scope": "main",
+                    "store_id": target.store_id,
+                    "endpoint_sha256": inventory["endpoint_sha256"],
+                    "work_store_uuid": inventory["work_store_uuid"],
+                    "work_store_identity": inventory["work_store_identity"],
+                    "installation_uuid": inventory["installation_uuid"],
+                    "execution_state": inventory["execution_state"],
+                },
+                "cut": {
+                    "lease": _lease_document(checked),
+                    "before": before_observation,
+                    "after": after_observation,
+                },
+                "inventory": inventory,
+                "dump": {"digest": dump_hash, "size": dump_size},
+                "objects": [
+                    {"digest": dump_hash, "size": dump_size, "roles": ["postgres-main"]},
+                    *[
+                        {"digest": digest, "size": item["size"], "roles": item["roles"]}
+                        for digest, item in sorted(external_rows.items())
+                    ],
+                ],
+                "references": sorted(
+                    references, key=lambda item: (item["role"], item["identifier"])
+                ),
+            }
 
             def promote(
-                checked_lease: OfflineCutLease, promote_observation: dict
+                current_lease: OfflineCutLease, promote_observation: dict
             ) -> dict[str, object]:
-                nonlocal stage
-                assert stage is not None  # Staging was established before publication.
-                evidence = {
-                    "version": 2,
-                    "capture_id": capture_id,
-                    "lease_id": checked_lease.id,
-                    "store_identity": public_offline_store_identity(checked_lease.store_identity),
-                    "operator_principal_id": checked_lease.operator_principal_id,
-                    "owner": checked_lease.owner,
-                    "scope": checked_lease.scope,
-                    "epoch": checked_lease.epoch,
-                    "fence": checked_lease.fence,
-                    "expires_at": checked_lease.expires_at,
-                    "revision": checked_lease.revision,
-                    "phases": {
-                        "before": before_observation,
-                        "after": after_observation,
-                        "promote": promote_observation,
-                    },
-                    "coverage": coverage,
-                }
-                manifest_digest, manifest_size = _write_manifest(
-                    stage, manifest_objects, manifest_references, evidence, capture_profile
-                )
-                staged_receipt = RecoveryBundleReceipt(stage, manifest_digest, manifest_size)
-                _verify_recovery_bundle(staged_receipt, require_publication=False)
+                nonlocal promoted, stage
+                assert stage is not None
+                manifest["cut"]["lease"] = _lease_document(current_lease)
+                manifest["cut"]["promote"] = promote_observation
+                manifest_digest, manifest_size = _write_manifest(stage, manifest)
+                self._verify_directory(stage, manifest_digest, manifest_size)
                 os.replace(stage, destination)
+                promoted = True
                 stage = None
                 _fsync_directory(parent)
                 return {
@@ -1573,36 +1062,591 @@ class OfflineRecoveryCapture:
                 }
 
             published_lease = self._authority.publish_offline_cut(
-                lease,
-                source_database=database,
+                checked,
+                source_database=target,
                 capture_id=capture_id,
-                inventory=_inventory_evidence(after_inventory),
+                inventory=_cut_inventory(after),
                 publish=promote,
             )
             published = True
-            published_digest, published_size = _file_digest(destination / "manifest.json")
+            manifest_path = destination / _MANIFEST
+            manifest_digest, manifest_size, _ = _file_hash(manifest_path, scan_text=False)
             return RecoveryBundleReceipt(
                 destination,
-                manifest_digest=published_digest,
-                manifest_size=published_size,
-                source_database=database,
-                lease_id=published_lease.id,
-                publication_revision=published_lease.revision,
+                manifest_digest,
+                manifest_size,
+                target.identity,
+                target.store_id,
+                capture_id,
+                published_lease.id,
+                published_lease.revision,
             )
-        except (
-            OSError,
-            sqlite3.Error,
-            RecoveryInventoryError,
-            TypeError,
-            ValueError,
-            RecoveryBundleError,
-        ):
+        except Exception:
             try:
-                if self._lease is not None:
-                    self._authority.record_offline_cut_rejection(self._lease, phase=phase)
+                self._authority.record_offline_cut_rejection(self._lease, phase=phase)
             except Exception:
                 pass
             raise _reject() from None
         finally:
             if stage is not None and not published and (stage.exists() or stage.is_symlink()):
                 shutil.rmtree(stage)
+            if promoted and not published and destination_path is not None:
+                if destination_path.exists() and not destination_path.is_symlink():
+                    shutil.rmtree(destination_path)
+
+    @staticmethod
+    def _verify_directory(bundle: Path, expected_digest: str, expected_size: int) -> dict[str, Any]:
+        manifest_path = bundle / _MANIFEST
+        _private_directory(bundle)
+        _private_directory(bundle / "objects")
+        info = _private_file(manifest_path)
+        payload = manifest_path.read_bytes()
+        if (len(payload), _digest_bytes(payload)) != (expected_size, expected_digest):
+            raise _reject()
+        try:
+            manifest = json.loads(payload, object_pairs_hook=_strict_object)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            raise _reject() from None
+        if not isinstance(manifest, dict) or manifest.get("format") != _FORMAT:
+            raise _reject()
+        expected_files = {_MANIFEST, "objects"}
+        objects = manifest.get("objects")
+        references = manifest.get("references")
+        if not isinstance(objects, list) or not isinstance(references, list) or not objects:
+            raise _reject()
+        object_digests: set[str] = set()
+        for item in objects:
+            if (
+                not isinstance(item, dict)
+                or set(item) != {"digest", "size", "roles"}
+                or not _is_digest(item["digest"])
+                or type(item["size"]) is not int
+                or item["size"] < 0
+                or not isinstance(item["roles"], list)
+                or not item["roles"]
+                or any(role not in _OBJECT_ROLES | {"postgres-main"} for role in item["roles"])
+                or item["digest"] in object_digests
+            ):
+                raise _reject()
+            object_digests.add(item["digest"])
+            path = bundle / "objects" / item["digest"]
+            _private_file(path)
+            digest, size, _ = _file_hash(path, scan_text=False)
+            if (digest, size) != (item["digest"], item["size"]):
+                raise _reject()
+        for reference in references:
+            if (
+                not isinstance(reference, dict)
+                or set(reference) != {"role", "identifier", "digest", "size", "relative_path"}
+                or reference["role"] not in _OBJECT_ROLES
+                or not isinstance(reference["identifier"], str)
+                or not reference["identifier"]
+                or not _is_digest(reference["digest"])
+                or type(reference["size"]) is not int
+                or reference["size"] < 0
+                or reference["digest"] not in object_digests
+            ):
+                raise _reject()
+            relative = reference["relative_path"]
+            if reference["role"] == "memory-content":
+                if not isinstance(relative, str) or not _valid_relative_memory(relative):
+                    raise _reject()
+            elif relative is not None:
+                raise _reject()
+        dump = manifest.get("dump")
+        if (
+            not isinstance(dump, dict)
+            or set(dump) != {"digest", "size"}
+            or not _is_digest(dump["digest"])
+            or type(dump["size"]) is not int
+            or dump["digest"] not in object_digests
+            or not any(
+                item["digest"] == dump["digest"] and "postgres-main" in item["roles"]
+                for item in objects
+            )
+        ):
+            raise _reject()
+        source = manifest.get("source")
+        if (
+            not isinstance(source, dict)
+            or source.get("scope") != "main"
+            or not isinstance(source.get("store_id"), str)
+            or not _is_digest(source.get("endpoint_sha256"))
+            or not isinstance(source.get("work_store_uuid"), str)
+            or not isinstance(source.get("work_store_identity"), str)
+            or not isinstance(source.get("installation_uuid"), str)
+        ):
+            raise _reject()
+        _verify_cut_manifest(manifest)
+        if set(os.listdir(bundle)) != expected_files:
+            raise _reject()
+        if set(os.listdir(bundle / "objects")) != object_digests:
+            raise _reject()
+        return manifest
+
+
+def _strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate key")
+        result[key] = value
+    return result
+
+
+def _verify_cut_manifest(manifest: dict[str, Any]) -> None:
+    """Cross-check every durable cut phase against the captured inventory.
+
+    A caller may recompute a bundle's unkeyed file digest after editing JSON.
+    That must not make an internally inconsistent lease or a missing phase
+    look like a published capture receipt.
+    """
+    inventory = manifest.get("inventory")
+    source = manifest.get("source")
+    cut = manifest.get("cut")
+    capture_id = manifest.get("capture_id")
+    if (
+        not isinstance(inventory, dict)
+        or not isinstance(source, dict)
+        or not isinstance(cut, dict)
+        or set(cut) != {"lease", "before", "after", "promote"}
+        or not isinstance(capture_id, str)
+        or len(capture_id) != 32
+        or any(character not in "0123456789abcdef" for character in capture_id)
+    ):
+        raise _reject()
+    expected_inventory = {
+        "fingerprint": inventory.get("fingerprint"),
+        "profile_version": inventory.get("profile_version"),
+    }
+    if (
+        not _is_digest(expected_inventory["fingerprint"])
+        or type(expected_inventory["profile_version"]) is not int
+        or expected_inventory["profile_version"] < 1
+        or source.get("store_id") != inventory.get("source_store_id")
+        or source.get("endpoint_sha256") != inventory.get("endpoint_sha256")
+        or source.get("work_store_uuid") != inventory.get("work_store_uuid")
+        or source.get("work_store_identity") != inventory.get("work_store_identity")
+        or source.get("installation_uuid") != inventory.get("installation_uuid")
+        or source.get("execution_state") != inventory.get("execution_state")
+        or inventory.get("schema_sha256") != _digest_bytes(_json_bytes(inventory.get("catalog")))
+    ):
+        raise _reject()
+    lease = cut.get("lease")
+    lease_fields = {
+        "id",
+        "store_identity",
+        "operator_principal_id",
+        "owner",
+        "scope",
+        "epoch",
+        "fence",
+        "expires_at",
+        "revision",
+    }
+    if (
+        not isinstance(lease, dict)
+        or set(lease) != lease_fields
+        or not isinstance(lease.get("id"), str)
+        or len(lease["id"]) != 32
+        or any(character not in "0123456789abcdef" for character in lease["id"])
+        or not isinstance(lease.get("store_identity"), str)
+        or lease["store_identity"] != inventory.get("work_store_identity")
+        or not isinstance(lease.get("operator_principal_id"), str)
+        or not lease["operator_principal_id"]
+        or lease.get("owner") != "work"
+        or lease.get("scope") != "registered-work-writers"
+        or type(lease.get("epoch")) is not int
+        or lease["epoch"] < 1
+        or lease.get("fence") != lease.get("epoch")
+        or type(lease.get("expires_at")) not in {int, float}
+        or not math.isfinite(lease["expires_at"])
+        or type(lease.get("revision")) is not int
+        or lease["revision"] != 1
+    ):
+        raise _reject()
+    expected_observed_lease = {
+        key: value for key, value in lease.items() if key != "store_identity"
+    }
+    expected_observed_lease["store_identity"] = public_offline_store_identity(
+        lease["store_identity"]
+    )
+    observed_times: list[float] = []
+    for phase in ("before", "after", "promote"):
+        observation = cut.get(phase)
+        if (
+            not isinstance(observation, dict)
+            or set(observation) != {"lease", "writer_count", "inventory", "observed_at"}
+            or observation.get("lease") != expected_observed_lease
+            or observation.get("writer_count") != 0
+            or observation.get("inventory") != expected_inventory
+            or type(observation.get("observed_at")) not in {int, float}
+            or not math.isfinite(observation["observed_at"])
+        ):
+            raise _reject()
+        observed_times.append(float(observation["observed_at"]))
+    if (
+        not observed_times[0] <= observed_times[1] <= observed_times[2]
+        or observed_times[-1] >= lease["expires_at"]
+    ):
+        raise _reject()
+
+
+def _valid_relative_memory(value: str) -> bool:
+    path = PurePosixPath(value)
+    return (
+        not path.is_absolute()
+        and bool(path.parts)
+        and all(part not in {"", ".", ".."} for part in path.parts)
+    )
+
+
+def _verify_durable_publication(
+    target: DatabaseTarget,
+    receipt: RecoveryBundleReceipt,
+    manifest: dict[str, Any],
+) -> None:
+    """Bind the local bundle to the source store's durable publication ledger."""
+    if (
+        not isinstance(target, DatabaseTarget)
+        or target.scope != "main"
+        or target.identity != receipt.source_target_identity
+        or target.store_id != receipt.source_store_id
+    ):
+        raise _reject()
+
+    repository = WorkRepository(target)
+    with repository.read_snapshot() as connection:
+        stored = connection.execute(
+            "SELECT * FROM work_offline_cuts WHERE id=%s", (receipt.lease_id,)
+        ).fetchone()
+        lease = manifest["cut"]["lease"]
+        if (
+            stored is None
+            or stored["state"] != "published"
+            or stored["store_identity"] != lease["store_identity"]
+            or stored["operator_principal_id"] != lease["operator_principal_id"]
+            or stored["owner"] != lease["owner"]
+            or stored["scope"] != lease["scope"]
+            or stored["epoch"] != lease["epoch"]
+            or stored["fence"] != lease["fence"]
+            or stored["expires_at"] != lease["expires_at"]
+            or stored["revision"] != receipt.publication_revision
+            or receipt.publication_revision != lease["revision"] + 1
+            or stored["published_capture_id"] != receipt.capture_id
+            or stored["published_manifest_digest"] != receipt.manifest_digest
+            or stored["published_manifest_size"] != receipt.manifest_size
+            or stored["published_path"] != str(receipt.bundle_path.resolve())
+            or type(stored["published_at"]) not in {int, float}
+            or not math.isfinite(stored["published_at"])
+            or stored["published_at"] >= lease["expires_at"]
+        ):
+            raise _reject()
+
+        observations = connection.execute(
+            "SELECT phase,observation FROM work_offline_cut_observations "
+            "WHERE lease_id=%s AND capture_id=%s ORDER BY phase",
+            (receipt.lease_id, receipt.capture_id),
+        ).fetchall()
+        if {item["phase"] for item in observations} != {"after", "before", "promote"}:
+            raise _reject()
+        for item in observations:
+            try:
+                observed = json.loads(item["observation"], object_pairs_hook=_strict_object)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                raise _reject() from None
+            if not isinstance(observed, dict) or observed != manifest["cut"].get(item["phase"]):
+                raise _reject()
+
+
+def verify_recovery_bundle(
+    receipt: RecoveryBundleReceipt,
+    *,
+    source_target: DatabaseTarget | None = None,
+) -> RecoveryBundleReceipt:
+    """Verify bundle integrity and its source store's durable publication receipt.
+
+    The source target defaults to the configured private main target. Restore
+    callers handling an archived source may pass that exact target explicitly;
+    the supplied identity must still equal the captured source identity.
+    """
+    try:
+        if not isinstance(receipt, RecoveryBundleReceipt):
+            raise _reject()
+        manifest_path = receipt.bundle_path / _MANIFEST
+        digest, size, _ = _file_hash(manifest_path, scan_text=False)
+        if (digest, size) != (receipt.manifest_digest, receipt.manifest_size):
+            raise _reject()
+        manifest = OfflineRecoveryCapture._verify_directory(
+            receipt.bundle_path, receipt.manifest_digest, receipt.manifest_size
+        )
+        if (
+            manifest.get("format_version") != 3
+            or manifest.get("capture_id") != receipt.capture_id
+            or manifest.get("source", {}).get("store_id") != receipt.source_store_id
+            or manifest.get("cut", {}).get("lease", {}).get("id") != receipt.lease_id
+            or receipt.publication_revision
+            != manifest.get("cut", {}).get("lease", {}).get("revision", -1) + 1
+            or len(receipt.source_target_identity) != 5
+            or receipt.source_target_identity[4] != receipt.source_store_id
+            or _digest_bytes(_json_bytes(list(receipt.source_target_identity[:4])))
+            != manifest.get("source", {}).get("endpoint_sha256")
+        ):
+            raise _reject()
+        selected_source = source_target or DatabaseTarget.from_settings("main")
+        _verify_durable_publication(selected_source, receipt, manifest)
+        return receipt
+    except Exception:
+        raise _reject() from None
+
+
+def _restore_component_compatibility(manifest: dict[str, Any]) -> None:
+    actual = [
+        {
+            "component": step.component,
+            "scope": step.scope,
+            "version": step.version,
+            "checksum": step.checksum,
+        }
+        for history in _complete_histories("main")
+        for step in history
+    ]
+    if actual != manifest.get("inventory", {}).get("migrations"):
+        raise _reject()
+
+
+def _preflight_restore_target(target: DatabaseTarget, source: dict[str, Any]) -> None:
+    if (
+        target.scope != "main"
+        or target.store_id != source.get("store_id")
+        or _endpoint_fingerprint(target) == source.get("endpoint_sha256")
+    ):
+        raise _reject()
+    with connect(target.migration_target(), readonly=True) as connection:
+        present = connection.execute(
+            "SELECT 1 FROM pg_namespace WHERE nspname=%s", (target.schema,)
+        ).fetchone()
+        if present is not None:
+            raise _reject()
+
+
+def _copy_restored_objects(
+    bundle: Path, manifest: dict[str, Any], target: DatabaseTarget, home: Path
+) -> tuple[dict[str, Path], dict[str, Path]]:
+    home = home.absolute()
+    _private_directory(home)
+    repository = WorkRepository(target, filesystem_home=home)
+    roots = {
+        "result-content": repository.result_content_root,
+        "worktree-evidence": repository.result_content_root,
+        "delivery-content": repository.delivery_content_root,
+        "executable-content": repository.executable_content_root,
+        "memory-content": home / "memory",
+    }
+    used_roles = {reference["role"] for reference in manifest["references"]}
+    finals = {roots[role] for role in used_roles}
+    if any(path.exists() or path.is_symlink() for path in finals):
+        raise _reject()
+    if not finals:
+        return roots, {}
+    staged_root = Path(tempfile.mkdtemp(prefix=".recovery-objects-", dir=home))
+    stage_paths: dict[str, Path] = {}
+    try:
+        for path in finals:
+            stage_path = staged_root / hashlib.sha256(str(path).encode()).hexdigest()[:16]
+            stage_path.mkdir(mode=0o700)
+            stage_paths[str(path)] = stage_path
+        for reference in manifest["references"]:
+            digest = reference["digest"]
+            object_path = bundle / "objects" / digest
+            root = roots[reference["role"]]
+            stage_root = stage_paths[str(root)]
+            if reference["role"] == "memory-content":
+                relative = PurePosixPath(reference["relative_path"])
+                output = stage_root.joinpath(*relative.parts)
+                output.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            else:
+                output = stage_root / digest
+            if output.exists():
+                if _file_hash(output, scan_text=False)[:2] != (digest, reference["size"]):
+                    raise _reject()
+            else:
+                _copy_verified_file(object_path, output, digest, reference["size"])
+        return roots, {str(path): stage_paths[str(path)] for path in finals}
+    except Exception:
+        shutil.rmtree(staged_root, ignore_errors=True)
+        raise
+
+
+def _copy_verified_file(source: Path, destination: Path, digest: str, size: int) -> None:
+    _private_file(source)
+    descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    output = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    observed = hashlib.sha256()
+    count = 0
+    try:
+        with (
+            os.fdopen(descriptor, "rb", closefd=False) as reader,
+            os.fdopen(output, "wb", closefd=False) as writer,
+        ):
+            while block := reader.read(1024 * 1024):
+                observed.update(block)
+                count += len(block)
+                writer.write(block)
+            writer.flush()
+            os.fsync(writer.fileno())
+    finally:
+        os.close(descriptor)
+        os.close(output)
+    if (observed.hexdigest(), count) != (digest, size):
+        raise _reject()
+
+
+def restore_recovery_bundle(
+    receipt: RecoveryBundleReceipt,
+    destination: DatabaseTarget,
+    *,
+    filesystem_home: Path,
+    runner: PostgresArchiveRunner,
+    source_target: DatabaseTarget | None = None,
+) -> RecoveryRestoreReceipt:
+    """Restore and verify an isolated main target, leaving activation to caller."""
+    stage_dirs: dict[str, Path] | None = None
+    promoted_dirs: list[Path] = []
+    schema_created = False
+    restore_succeeded = False
+    try:
+        verified = verify_recovery_bundle(receipt, source_target=source_target)
+        if not isinstance(runner, PostgresArchiveRunner):
+            raise _reject()
+        manifest = OfflineRecoveryCapture._verify_directory(
+            verified.bundle_path, verified.manifest_digest, verified.manifest_size
+        )
+        _restore_component_compatibility(manifest)
+        _preflight_restore_target(destination, manifest["source"])
+        roots, stage_dirs = _copy_restored_objects(
+            verified.bundle_path, manifest, destination, filesystem_home
+        )
+        dump_path = verified.bundle_path / "objects" / manifest["dump"]["digest"]
+        runner.restore(destination, dump_path)
+        # Archive runners are required to restore atomically. Only after a
+        # successful return do we own the schema and may remove it if later
+        # validation fails. If the runner fails, a schema present at that point
+        # may have appeared after the absence preflight and belongs to another
+        # operation; never drop it based on owner identity alone.
+        restore_succeeded = True
+        with connect(destination.migration_target(), readonly=True) as connection:
+            schema_created = (
+                connection.execute(
+                    "SELECT 1 FROM pg_namespace WHERE nspname=%s", (destination.schema,)
+                ).fetchone()
+                is not None
+            )
+        if not schema_created:
+            raise _reject()
+        bootstrap_scope(destination, seed_work=False)
+        repository = WorkRepository(destination, filesystem_home=filesystem_home)
+        repository.initialize()
+        for final_path in set(roots[reference["role"]] for reference in manifest["references"]):
+            staged = stage_dirs[str(final_path)]
+            os.replace(staged, final_path)
+            promoted_dirs.append(final_path)
+            _fsync_directory(final_path.parent)
+        staged_parent = next(iter(stage_dirs.values())).parent if stage_dirs else None
+        if staged_parent is not None:
+            shutil.rmtree(staged_parent, ignore_errors=True)
+        stage_dirs = None
+
+        if manifest["references"]:
+            with connect(destination) as connection:
+                with connection.transaction():
+                    for reference in manifest["references"]:
+                        if reference["role"] != "memory-content":
+                            continue
+                        new_path = roots["memory-content"] / PurePosixPath(
+                            reference["relative_path"]
+                        )
+                        updated = connection.execute(
+                            "UPDATE memory_metadata SET file_path=%s WHERE id=%s",
+                            (str(new_path), reference["identifier"]),
+                        )
+                        if updated.rowcount != 1:
+                            raise _reject()
+
+        actual = _database_inventory(
+            destination,
+            RecoveryCaptureSource(
+                destination,
+                roots["result-content"],
+                roots["delivery-content"],
+                roots["executable-content"],
+                roots["memory-content"],
+            ),
+            excluded_capture_id=manifest["capture_id"],
+        )
+        expected = manifest["inventory"]
+        # Physical endpoint identity intentionally changes during restore; all
+        # schema, row, sequence, logical-store and external-object evidence must
+        # still match exactly.
+        actual["endpoint_sha256"] = expected["endpoint_sha256"]
+        if actual != expected:
+            raise _reject()
+
+        source_store_uuid = manifest["source"]["work_store_uuid"]
+        installation_uuid = uuid.uuid4().hex
+        restore_receipt = _digest_bytes(
+            _json_bytes(
+                {
+                    "version": 3,
+                    "bundle_digest": receipt.manifest_digest,
+                    "target_identity": list(destination.identity),
+                    "source_store_uuid": source_store_uuid,
+                }
+            )
+        )
+        bootstrap_work_store(destination)
+        context = WorkRepository(
+            destination, filesystem_home=filesystem_home
+        ).block_imported_restore(
+            source_store_uuid=uuid.UUID(source_store_uuid).hex,
+            installation_uuid=installation_uuid,
+            bundle_digest=receipt.manifest_digest,
+            restore_receipt=restore_receipt,
+        )
+        if context.execution_state != "blocked_restore":
+            raise _reject()
+        return RecoveryRestoreReceipt(
+            destination.identity,
+            manifest["source"]["store_id"],
+            receipt.manifest_digest,
+            context.installation_uuid,
+            context.execution_state,
+        )
+    except Exception:
+        if restore_succeeded:
+            _drop_created_schema(destination)
+        for path in promoted_dirs:
+            if path.exists() and not path.is_symlink():
+                shutil.rmtree(path, ignore_errors=True)
+        raise _reject() from None
+    finally:
+        if stage_dirs:
+            for stage in stage_dirs.values():
+                shutil.rmtree(stage.parent, ignore_errors=True)
+
+
+def _drop_created_schema(target: DatabaseTarget) -> None:
+    try:
+        with connect(target.migration_target()) as connection:
+            with connection.transaction():
+                owner = connection.execute(
+                    "SELECT n.nspowner=r.oid FROM pg_namespace n JOIN pg_roles r ON r.rolname=current_user WHERE n.nspname=%s",
+                    (target.schema,),
+                ).fetchone()
+                if owner is not None and owner[0]:
+                    connection.execute(
+                        sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(target.schema))
+                    )
+    except Exception:
+        # Leave a private, inactive schema for operator inspection if cleanup itself fails.
+        return

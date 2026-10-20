@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import delete, inspect, select, update
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy import delete, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from cli_agent_orchestrator.clients import database
 from cli_agent_orchestrator.clients.runtime_channel_schema import (
@@ -22,10 +22,7 @@ from cli_agent_orchestrator.runtime_channel.store import RemoteIdentityConflict
 
 
 def placement(terminal_id: str) -> dict[str, Any] | None:
-    engine = database.engine
-    if not inspect(engine).has_table(RemotePlacementModel.__tablename__):
-        return None
-    with engine.connect() as conn:
+    with database.engine.connect() as conn:
         row = (
             conn.execute(
                 select(RemotePlacementModel.__table__).where(
@@ -72,8 +69,10 @@ def record_placement(runtime_id, incarnation_id, launch_op_id, terminal):
     """Only a durable settled launch may establish central placement."""
     from cli_agent_orchestrator.runtime_channel.store import RemoteOperationStore
 
-    operation = RemoteOperationStore(database.engine).get(launch_op_id)
-    cleanup = RemoteOperationStore(database.engine).get("cleanup-" + launch_op_id)
+    target = database.main_target()
+    store = RemoteOperationStore(target)
+    operation = store.get(launch_op_id)
+    cleanup = store.get("cleanup-" + launch_op_id)
     if (
         cleanup
         and cleanup["state"] == "settled"
@@ -98,8 +97,12 @@ def record_placement(runtime_id, incarnation_id, launch_op_id, terminal):
     table = RemotePlacementModel.__table__
     with database.engine.begin() as conn:
         # The WebSocket result handler and HTTP waiter share this publication.
-        # Acquire SQLite writer ownership before checking either identity row.
-        conn.exec_driver_sql("BEGIN IMMEDIATE")
+        # Lock by logical target and terminal identity. The transaction-scoped
+        # PostgreSQL advisory lock lives until this transaction commits.
+        conn.exec_driver_sql(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+            (f"cao-remote-placement:{database.main_target().identity}:{terminal_id}",),
+        )
         if launch_was_deleted(runtime_id, incarnation_id, launch_op_id, terminal, connection=conn):
             raise RemoteIdentityConflict("Deleted remote launch cannot publish again")
         existing = (
@@ -140,7 +143,7 @@ def record_placement(runtime_id, incarnation_id, launch_op_id, terminal):
             )
         )
         conn.execute(
-            insert(table).values(
+            pg_insert(table).values(
                 terminal_id=terminal_id,
                 runtime_id=runtime_id,
                 incarnation_id=incarnation_id,
@@ -255,10 +258,10 @@ async def call_async(terminal_id, kind, payload=None, *, generation=None) -> dic
 
 
 def delete_remote(terminal_id: str) -> bool:
-    from cli_agent_orchestrator import constants
+    from cli_agent_orchestrator.clients import database
     from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
-    with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id):
+    with terminal_dispatch_lock(database.main_target(), terminal_id):
         expected = placement(terminal_id)
         if expected is None:
             return False
@@ -281,7 +284,10 @@ def remove_confirmed(
     table = RemotePlacementModel.__table__
     terminals = database.TerminalModel.__table__
     with database.engine.begin() as conn:
-        conn.exec_driver_sql("BEGIN IMMEDIATE")
+        conn.exec_driver_sql(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+            (f"cao-remote-placement:{database.main_target().identity}:{terminal_id}",),
+        )
         current = (
             conn.execute(select(table).where(table.c.terminal_id == terminal_id)).mappings().first()
         )
@@ -304,7 +310,7 @@ def remove_confirmed(
                 terminals.c.session_incarnation_id == session_incarnation_id,
             )
         )
-        # A replacement publisher must acquire the same SQLite writer ownership.
+        # A replacement publisher must acquire the same logical-target lock.
         # Forget the old volatile mapping before that replacement can commit.
         runtime_registry.forget(terminal_id)
     return True
@@ -328,8 +334,6 @@ def session_terminals(session_name: str) -> list[dict[str, Any]] | None:
 
 
 def sessions() -> list[dict[str, Any]]:
-    if not inspect(database.engine).has_table(RemotePlacementModel.__tablename__):
-        return []
     with database.engine.connect() as conn:
         names = (
             conn.execute(

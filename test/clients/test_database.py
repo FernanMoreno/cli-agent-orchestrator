@@ -1,14 +1,14 @@
 """Tests for the database client."""
 
-import sqlite3
 import tempfile
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import event, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
@@ -60,13 +60,14 @@ from cli_agent_orchestrator.clients.database import (
     update_terminal_shell_command,
     verify_terminal_turn_receipt_result,
 )
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget, connect
 from cli_agent_orchestrator.models.inbox import MessageStatus
 
 
 @pytest.fixture
 def test_db():
     """Create an in-memory test database."""
-    engine = create_engine("sqlite:///:memory:")
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     TestSession = sessionmaker(bind=engine)
     return TestSession
@@ -151,7 +152,7 @@ class TestNativeChildLifecycle:
                     return
                 injected_success = True
                 connection.exec_driver_sql(
-                    "UPDATE native_children SET state=? WHERE terminal_id=?",
+                    "UPDATE native_children SET state=%s WHERE terminal_id=%s",
                     ("succeeded", terminal_id),
                 )
 
@@ -582,7 +583,7 @@ class TestTerminalTurnReceiptLifecycle:
     def test_concurrent_terminal_removal_cannot_leave_a_turn_receipt_orphan(self, delete_mode: str):
         """A deletion racing a claim must remove the terminal and every receipt together.
 
-        A file-backed SQLite database models independent CAO processes.  The
+        A real PostgreSQL database models concurrent CAO processes. The
         database hook starts teardown immediately after the claim's parent-row
         write lock.  A correct claim serializes with teardown: whichever wins,
         the eventual state has neither terminal nor receipt.  A read-then-write
@@ -591,10 +592,7 @@ class TestTerminalTurnReceiptLifecycle:
         """
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "receipt-race.db"
-            engine = create_engine(
-                f"sqlite:///{database_path}",
-                connect_args={"check_same_thread": False, "timeout": 5},
-            )
+            engine = configured_orm_engine()
             Base.metadata.create_all(bind=engine)
             session_factory = sessionmaker(bind=engine)
             terminal_id = "gemini-delete-race"
@@ -657,10 +655,7 @@ class TestTerminalTurnReceiptLifecycle:
         """The parent claim also protects a ``result_verified -> prepared`` replacement."""
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "settled-receipt-race.db"
-            engine = create_engine(
-                f"sqlite:///{database_path}",
-                connect_args={"check_same_thread": False, "timeout": 5},
-            )
+            engine = configured_orm_engine()
             Base.metadata.create_all(bind=engine)
             session_factory = sessionmaker(bind=engine)
             terminal_id = "gemini-settled-delete-race"
@@ -1106,7 +1101,7 @@ class TestIdempotencyKey:
             assert get_idempotency_record("never-seen") is None
 
     def test_fingerprint_round_trips_through_a_real_database(self, test_db):
-        """The WRITE->READ seam, against real SQLite (review on PR #634).
+        """The WRITE->READ seam, against real PostgreSQL (review on PR #634).
 
         Both halves of this were already pinned in isolation -- the service
         asserts the fingerprint it hands to ``create_terminal``, and the
@@ -1165,7 +1160,7 @@ class TestIdempotencyKey:
         SAME key but (inevitably) DIFFERENT generated terminal_ids -- the
         second's commit fails on the idempotency_keys table's primary key,
         and BOTH of its inserts roll back together, not just the
-        conflicting one. Needs a REAL in-memory SQLite engine (not a mock):
+        conflicting one. Needs a REAL database transaction (not a mock):
         a mock has no transaction to roll back, so this is exactly the
         property a mock-based test cannot exercise."""
         with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
@@ -1506,7 +1501,7 @@ class TestGroupAndMetadata:
 class TestListSiblingsByGroupPrefix:
     """Real-DB regression tests for the #432 sibling-discovery prefix match.
 
-    Uses the in-memory-sqlite ``test_db`` fixture (not a mocked session) so
+    Uses the real ``test_db`` fixture (not a mocked session) so
     the actual JSON decode + prefix comparison across multiple rows is
     exercised, not just the query-building calls.
     """
@@ -2363,251 +2358,12 @@ class TestFlowOperations:
 class TestInitDb:
     """Tests for init_db function."""
 
-    @patch("cli_agent_orchestrator.clients.database.Base")
-    @patch("cli_agent_orchestrator.clients.database._migrate_project_aliases_schema")
-    def test_init_db(self, mock_alias_migrate, mock_base):
+    @patch("cli_agent_orchestrator.clients.database.Base.metadata.create_all")
+    def test_init_db(self, mock_create_all):
         """Test database initialization."""
         init_db()
 
-        mock_base.metadata.create_all.assert_called_once()
-
-
-class TestTerminalsSchemaMigration:
-    """Tests for terminals-table additive column migrations."""
-
-    def test_missing_terminal_columns_added_to_legacy_table(self, tmp_path, monkeypatch):
-        """A legacy terminals table gains nullable metadata columns."""
-        import sqlite3
-
-        from cli_agent_orchestrator.clients import database as db_mod
-
-        db_file = tmp_path / "legacy.db"
-        with sqlite3.connect(str(db_file)) as conn:
-            conn.execute(
-                "CREATE TABLE terminals ("
-                "id TEXT PRIMARY KEY, tmux_session TEXT NOT NULL, "
-                "tmux_window TEXT NOT NULL, provider TEXT NOT NULL, "
-                "agent_profile TEXT, allowed_tools TEXT, shell_command TEXT, "
-                "last_active TIMESTAMP)"
-            )
-            conn.execute(
-                "INSERT INTO terminals (id, tmux_session, tmux_window, provider) "
-                "VALUES ('abc12345', 'cao-s', 'w-0', 'kiro_cli')"
-            )
-            conn.commit()
-
-        # _migrate_terminals_schema reads DATABASE_FILE from constants at call time
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.constants.DATABASE_FILE", db_file, raising=False
-        )
-
-        db_mod._migrate_terminals_schema()
-
-        with sqlite3.connect(str(db_file)) as conn:
-            columns = {row[1] for row in conn.execute("PRAGMA table_info(terminals)")}
-            rows = conn.execute("SELECT id, caller_id, working_directory FROM terminals").fetchall()
-        assert "caller_id" in columns
-        assert "working_directory" in columns
-        assert rows == [("abc12345", None, None)], "existing rows must get NULL metadata values"
-
-    def test_migration_is_idempotent(self, tmp_path, monkeypatch):
-        """Running the migration twice must not fail or duplicate columns."""
-        import sqlite3
-
-        from cli_agent_orchestrator.clients import database as db_mod
-
-        db_file = tmp_path / "current.db"
-        with sqlite3.connect(str(db_file)) as conn:
-            conn.execute(
-                "CREATE TABLE terminals ("
-                "id TEXT PRIMARY KEY, tmux_session TEXT NOT NULL, "
-                "tmux_window TEXT NOT NULL, provider TEXT NOT NULL)"
-            )
-            conn.commit()
-
-        # _migrate_terminals_schema reads DATABASE_FILE from constants at call time
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.constants.DATABASE_FILE", db_file, raising=False
-        )
-
-        db_mod._migrate_terminals_schema()
-        db_mod._migrate_terminals_schema()
-
-        with sqlite3.connect(str(db_file)) as conn:
-            columns = [row[1] for row in conn.execute("PRAGMA table_info(terminals)")]
-        assert columns.count("caller_id") == 1
-        assert columns.count("working_directory") == 1
-        assert columns.count("allowed_tools") == 1
-
-    def test_group_and_metadata_columns_added_to_legacy_table(self, tmp_path, monkeypatch):
-        """#432: a pre-existing terminals table (predating group/metadata) gains both
-        columns, and existing rows get NULL rather than erroring."""
-        import sqlite3
-
-        from cli_agent_orchestrator.clients import database as db_mod
-
-        db_file = tmp_path / "pre432.db"
-        with sqlite3.connect(str(db_file)) as conn:
-            conn.execute(
-                "CREATE TABLE terminals ("
-                "id TEXT PRIMARY KEY, tmux_session TEXT NOT NULL, "
-                "tmux_window TEXT NOT NULL, provider TEXT NOT NULL, "
-                "agent_profile TEXT, allowed_tools TEXT, shell_command TEXT, "
-                "caller_id TEXT, last_active TIMESTAMP)"
-            )
-            conn.execute(
-                "INSERT INTO terminals (id, tmux_session, tmux_window, provider) "
-                "VALUES ('abc12345', 'cao-s', 'w-0', 'kiro_cli')"
-            )
-            conn.commit()
-
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.constants.DATABASE_FILE", db_file, raising=False
-        )
-
-        db_mod._migrate_terminals_schema()
-
-        with sqlite3.connect(str(db_file)) as conn:
-            columns = {row[1] for row in conn.execute("PRAGMA table_info(terminals)")}
-            rows = conn.execute('SELECT id, "group", "metadata" FROM terminals').fetchall()
-        assert {"group", "metadata"} <= columns
-        assert rows == [("abc12345", None, None)]
-
-    def test_group_and_metadata_migration_is_idempotent(self, tmp_path, monkeypatch):
-        """Running the migration twice must not fail or duplicate the new columns."""
-        import sqlite3
-
-        from cli_agent_orchestrator.clients import database as db_mod
-
-        db_file = tmp_path / "pre432_twice.db"
-        with sqlite3.connect(str(db_file)) as conn:
-            conn.execute(
-                "CREATE TABLE terminals ("
-                "id TEXT PRIMARY KEY, tmux_session TEXT NOT NULL, "
-                "tmux_window TEXT NOT NULL, provider TEXT NOT NULL)"
-            )
-            conn.commit()
-
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.constants.DATABASE_FILE", db_file, raising=False
-        )
-
-        db_mod._migrate_terminals_schema()
-        db_mod._migrate_terminals_schema()
-
-        with sqlite3.connect(str(db_file)) as conn:
-            columns = [row[1] for row in conn.execute("PRAGMA table_info(terminals)")]
-        assert columns.count("group") == 1
-        assert columns.count("metadata") == 1
-
-    def test_real_production_upgrade_seeded_rows_survive_init_db(self, tmp_path, monkeypatch):
-        """tedswinyar, PR #433 review: every other migration test here starts
-        from an empty database and only checks the resulting schema. This is
-        the actual production-upgrade case -- a DB with SEVERAL pre-#432
-        terminal rows already in it (the shape right after #284's caller_id
-        migration, no group/metadata columns yet) -- exercised through the
-        real ``init_db()`` entry point (not the internal migration helper
-        directly) and read back through the real application read path
-        (``get_terminal_metadata``, not raw SQL), so this proves the whole
-        upgrade a running server actually performs, twice for idempotency.
-        """
-        import sqlite3
-
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-
-        from cli_agent_orchestrator.clients import database as db_mod
-
-        db_file = tmp_path / "prod_upgrade.db"
-        with sqlite3.connect(str(db_file)) as conn:
-            conn.execute(
-                "CREATE TABLE terminals ("
-                "id TEXT PRIMARY KEY, tmux_session TEXT NOT NULL, "
-                "tmux_window TEXT NOT NULL, provider TEXT NOT NULL, "
-                "agent_profile TEXT, allowed_tools TEXT, shell_command TEXT, "
-                "caller_id TEXT, last_active TIMESTAMP)"
-            )
-            conn.executemany(
-                "INSERT INTO terminals "
-                "(id, tmux_session, tmux_window, provider, agent_profile, "
-                "allowed_tools, shell_command, caller_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    (
-                        "aaaa1111",
-                        "cao-sess-1",
-                        "developer-0",
-                        "kiro_cli",
-                        "developer",
-                        '["send_message", "handoff"]',
-                        "bash",
-                        None,
-                    ),
-                    (
-                        "bbbb2222",
-                        "cao-sess-1",
-                        "reviewer-0",
-                        "claude_code",
-                        "reviewer",
-                        None,
-                        None,
-                        "aaaa1111",
-                    ),
-                    (
-                        "cccc3333",
-                        "cao-sess-2",
-                        "developer-1",
-                        "codex",
-                        None,
-                        None,
-                        None,
-                        None,
-                    ),
-                ],
-            )
-            conn.commit()
-
-        # A real server binds `engine`/`SessionLocal` to DATABASE_FILE once at
-        # import time -- point BOTH at the seeded legacy file so init_db()'s
-        # create_all/migrations and the subsequent application-level reads
-        # all operate on the same DB (not the process's real one).
-        new_engine = create_engine(
-            f"sqlite:///{db_file}", connect_args={"check_same_thread": False}
-        )
-        monkeypatch.setattr(db_mod, "engine", new_engine)
-        monkeypatch.setattr(db_mod, "SessionLocal", sessionmaker(bind=new_engine))
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.constants.DATABASE_FILE", db_file, raising=False
-        )
-
-        def assert_seeded_rows_intact():
-            aaaa = db_mod.get_terminal_metadata("aaaa1111")
-            bbbb = db_mod.get_terminal_metadata("bbbb2222")
-            cccc = db_mod.get_terminal_metadata("cccc3333")
-
-            for row in (aaaa, bbbb, cccc):
-                assert row is not None
-                assert row["group"] is None, "pre-migration rows must read group as NULL"
-                assert row["metadata"] is None, "pre-migration rows must read metadata as NULL"
-
-            # Original pre-migration data must survive untouched.
-            assert aaaa["tmux_session"] == "cao-sess-1"
-            assert aaaa["agent_profile"] == "developer"
-            assert aaaa["allowed_tools"] == ["send_message", "handoff"]
-            assert bbbb["caller_id"] == "aaaa1111"
-            assert cccc["provider"] == "codex"
-
-        db_mod.init_db()
-        assert_seeded_rows_intact()
-
-        # Idempotency: a second real init_db() call (e.g. server restart)
-        # must not fail or corrupt the already-migrated rows.
-        db_mod.init_db()
-        assert_seeded_rows_intact()
-
-        with sqlite3.connect(str(db_file)) as conn:
-            columns = [row[1] for row in conn.execute("PRAGMA table_info(terminals)")]
-        assert columns.count("group") == 1
-        assert columns.count("metadata") == 1
+        mock_create_all.assert_not_called()
 
 
 class TestTerminalMetadataRoundTrip:
@@ -2617,12 +2373,11 @@ class TestTerminalMetadataRoundTrip:
         self, tmp_path, monkeypatch
     ):
         """create_terminal persists ownership metadata; reads return it."""
-        from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
 
         from cli_agent_orchestrator.clients import database as db_mod
 
-        engine = create_engine(f"sqlite:///{tmp_path / 'rt.db'}")
+        engine = configured_orm_engine()
         Base.metadata.create_all(bind=engine)
         monkeypatch.setattr(db_mod, "SessionLocal", sessionmaker(bind=engine))
 
@@ -2645,12 +2400,11 @@ class TestTerminalMetadataRoundTrip:
 
     def test_nullable_metadata_defaults_to_none(self, tmp_path, monkeypatch):
         """Operator-launched terminals without optional metadata round-trip NULL."""
-        from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
 
         from cli_agent_orchestrator.clients import database as db_mod
 
-        engine = create_engine(f"sqlite:///{tmp_path / 'rt2.db'}")
+        engine = configured_orm_engine()
         Base.metadata.create_all(bind=engine)
         monkeypatch.setattr(db_mod, "SessionLocal", sessionmaker(bind=engine))
 
@@ -2664,191 +2418,8 @@ class TestTerminalMetadataRoundTrip:
         assert fetched["working_directory"] is None
 
 
-class TestProjectAliasMigration:
-    """Tests for the project_aliases alias-only primary-key migration."""
-
-    def test_legacy_composite_pk_table_is_rebuilt(self, tmp_path, monkeypatch):
-        """A legacy table with composite PK (project_id, alias) is dropped."""
-        import sqlite3
-
-        from cli_agent_orchestrator.clients import database as db_mod
-
-        db_file = tmp_path / "legacy.db"
-        with sqlite3.connect(str(db_file)) as conn:
-            conn.execute(
-                "CREATE TABLE project_aliases ("
-                "project_id TEXT NOT NULL, alias TEXT NOT NULL, kind TEXT NOT NULL, "
-                "created_at TEXT, PRIMARY KEY (project_id, alias))"
-            )
-            conn.execute("INSERT INTO project_aliases VALUES ('p1', 'a1', 'cwd_hash', NULL)")
-            conn.commit()
-
-        monkeypatch.setattr(db_mod, "DATABASE_FILE", db_file, raising=False)
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.constants.DATABASE_FILE", db_file, raising=False
-        )
-
-        db_mod._migrate_project_aliases_schema()
-
-        with sqlite3.connect(str(db_file)) as conn:
-            exists = conn.execute(
-                "SELECT name FROM sqlite_master " "WHERE type='table' AND name='project_aliases'"
-            ).fetchone()
-        assert exists is None, "legacy table should be dropped for create_all to rebuild"
-
-    def test_alias_only_pk_table_is_left_intact(self, tmp_path, monkeypatch):
-        """A table already keyed on alias alone is not touched."""
-        import sqlite3
-
-        from cli_agent_orchestrator.clients import database as db_mod
-
-        db_file = tmp_path / "current.db"
-        with sqlite3.connect(str(db_file)) as conn:
-            conn.execute(
-                "CREATE TABLE project_aliases ("
-                "alias TEXT PRIMARY KEY, project_id TEXT NOT NULL, kind TEXT NOT NULL, "
-                "created_at TEXT)"
-            )
-            conn.execute("INSERT INTO project_aliases VALUES ('a1', 'p1', 'cwd_hash', NULL)")
-            conn.commit()
-
-        monkeypatch.setattr(db_mod, "DATABASE_FILE", db_file, raising=False)
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.constants.DATABASE_FILE", db_file, raising=False
-        )
-
-        db_mod._migrate_project_aliases_schema()
-
-        with sqlite3.connect(str(db_file)) as conn:
-            rows = conn.execute("SELECT alias, project_id FROM project_aliases").fetchall()
-        assert rows == [("a1", "p1")], "current-schema table must be left intact"
-
-
-class TestMemoryScopeNullUniquenessMigration:
-    """Partial unique index for NULL scope_id rows (issue #657).
-
-    SQLite treats NULL != NULL in a UNIQUE index, so the table-level
-    uq_memory_key_scope never fired for global/federated memories; the
-    partial index covers exactly those rows. Real SQLite throughout — the
-    NULL-distinctness being asserted is engine behavior no mock can exercise.
-    """
-
-    def _mem(self, key, file_path, scope="global", scope_id=None):
-        return MemoryMetadataModel(
-            key=key,
-            memory_type="project",
-            scope=scope,
-            scope_id=scope_id,
-            file_path=file_path,
-            tags="",
-        )
-
-    def _legacy_db(self, tmp_path, monkeypatch, dupe_paths=()):
-        """A legacy pre-#657 database: fresh schema, partial index dropped,
-        optionally seeded with duplicate global rows the old constraint let
-        in. DATABASE_FILE is pointed at it."""
-        db_file = tmp_path / "legacy.db"
-        engine = create_engine(f"sqlite:///{db_file}")
-        Base.metadata.create_all(bind=engine)
-        engine.dispose()
-        with sqlite3.connect(str(db_file)) as conn:
-            conn.execute("DROP INDEX IF EXISTS uq_memory_key_scope_null")
-            for path in dupe_paths:
-                conn.execute(
-                    "INSERT INTO memory_metadata (id, key, memory_type, scope, scope_id, "
-                    "file_path, tags, access_count) "
-                    f"VALUES ('{path}', 'd', 'project', 'global', NULL, '{path}', '', 0)"
-                )
-            conn.commit()
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.constants.DATABASE_FILE", db_file, raising=False
-        )
-        return db_file
-
-    def test_fresh_database_rejects_duplicate_global_rows(self):
-        """Two (key, global, NULL) rows must collide — the reporter's case.
-        The scoped sibling of the same key stays distinct: that is what
-        keeping scope_id nullable (not the sentinel) buys."""
-        engine = create_engine("sqlite:///:memory:")
-        Base.metadata.create_all(bind=engine)
-        with sessionmaker(bind=engine)() as s:
-            s.add(self._mem("shared", "/a.md"))
-            s.commit()
-            s.add(self._mem("shared", "/b.md"))
-            with pytest.raises(IntegrityError):
-                s.commit()
-            s.rollback()
-            s.add(self._mem("shared", "/c.md", scope="session", scope_id="t1"))
-            s.commit()  # distinct (key, scope, scope_id) — accepted
-            rows = s.query(MemoryMetadataModel).order_by(MemoryMetadataModel.scope).all()
-        assert [r.scope for r in rows] == ["global", "session"]
-
-    def test_existing_database_gains_the_index(self, tmp_path, monkeypatch):
-        """A pre-index database gets uq_memory_key_scope_null on init."""
-        db_file = self._legacy_db(tmp_path, monkeypatch)
-        db_mod._migrate_memory_scope_null_uniqueness()
-
-        with sqlite3.connect(str(db_file)) as conn:
-            names = {r[1] for r in conn.execute("PRAGMA index_list('memory_metadata')")}
-        assert "uq_memory_key_scope_null" in names
-
-    def test_duplicate_seed_skips_index_then_recovers_after_repair(
-        self, tmp_path, monkeypatch, caplog
-    ):
-        """Fail-soft path (both seeded-duplicate cases from the issue): with
-        duplicates present the index is skipped with a warning naming them
-        and pointing at cao memory repair, and rows are kept; re-running
-        after the repair creates the index."""
-        db_file = self._legacy_db(tmp_path, monkeypatch, dupe_paths=("/1.md", "/2.md"))
-        with caplog.at_level("WARNING"):
-            db_mod._migrate_memory_scope_null_uniqueness()  # skips, warns
-
-        assert any("uq_memory_key_scope_null" in r.message for r in caplog.records)
-        assert any("cao memory repair" in r.message for r in caplog.records)
-        with sqlite3.connect(str(db_file)) as conn:
-            names = {r[1] for r in conn.execute("PRAGMA index_list('memory_metadata')")}
-            rows = conn.execute("SELECT COUNT(*) FROM memory_metadata").fetchone()[0]
-        assert "uq_memory_key_scope_null" not in names
-        assert rows == 2, "duplicates must be left for `cao memory repair`, never deleted here"
-
-        # The repair the warning advertises: the reconciliation service's
-        # dedupe path clears the stale sibling, then re-invokes the migrator.
-        # The seeded rows carry key='d', so the canonical topic is 'd.md'.
-        from cli_agent_orchestrator.services.memory_reconciliation import (
-            MemoryReconciliationService,
-        )
-
-        base_dir = tmp_path / "memory"
-        topic = base_dir / "global" / "wiki" / "global" / "d.md"
-        topic.parent.mkdir(parents=True, exist_ok=True)
-        topic.write_text(
-            "# d\n"
-            "<!-- id: 11111111-1111-1111-1111-111111111111 | scope: global | "
-            "type: reference | tags:  -->\n\n"
-            "## 2026-07-15T01:00:00Z\ndurable body\n",
-            encoding="utf-8",
-        )
-        with sqlite3.connect(str(db_file)) as conn:
-            conn.execute(
-                "UPDATE memory_metadata SET file_path = ? WHERE file_path = '/1.md'",
-                (str(topic),),
-            )
-            conn.commit()
-        engine = create_engine(f"sqlite:///{db_file}")
-        try:
-            report = MemoryReconciliationService(base_dir, engine).apply()
-            assert report.counts["dedupe_metadata"] == 1
-        finally:
-            engine.dispose()
-        with sqlite3.connect(str(db_file)) as conn:
-            names = {r[1] for r in conn.execute("PRAGMA index_list('memory_metadata')")}
-            rows = conn.execute("SELECT COUNT(*) FROM memory_metadata").fetchone()[0]
-        assert rows == 1, "the canonical row survives the advertised repair"
-        assert "uq_memory_key_scope_null" in names, "repair re-attempts the index in-run"
-
-
 class TestListTerminalsInSessions:
-    """Real-SQLite tests for the batched terminal read (issue #629).
+    """Real PostgreSQL tests for the batched terminal read (issue #629).
 
     Mocked-``SessionLocal`` tests cannot cover what matters here — that the
     ``IN`` filter and the ``ORDER BY`` are actually applied by SQL — so these
@@ -2857,10 +2428,7 @@ class TestListTerminalsInSessions:
 
     @pytest.fixture
     def db(self, tmp_path, monkeypatch):
-        engine = create_engine(
-            f"sqlite:///{tmp_path / 'terminals.db'}",
-            connect_args={"check_same_thread": False},
-        )
+        engine = configured_orm_engine()
         Base.metadata.create_all(bind=engine)
         Local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         monkeypatch.setattr(
@@ -2916,8 +2484,8 @@ class TestListTerminalsInSessions:
             mock_local.assert_not_called()
 
     # ``indexed`` is not a detail — it is what makes this test discriminating.
-    # Without an index on ``tmux_session`` an UNORDERED read already scans in
-    # rowid order, so the unindexed case alone would pass with no ``ORDER BY``
+    # Without an index on ``tmux_session`` an UNORDERED read may follow
+    # physical insertion order, so the unindexed case alone could pass without ``ORDER BY``
     # at all: it pins "not ordered by id" but not "ordered at all". The indexed
     # case closes that, because the index makes an unordered probe return the
     # lower-sorting worker first. Both cases are run so a reader can see which
@@ -2940,9 +2508,8 @@ class TestListTerminalsInSessions:
         self._add(db, "f0000000", "cao-alpha", agent_profile="supervisor")
         self._add(db, "10000000", "cao-alpha", agent_profile="developer")
         if indexed:
-            with db() as s:
-                s.execute(text("CREATE INDEX ix_probe ON terminals (tmux_session, id)"))
-                s.commit()
+            with connect(DatabaseTarget.from_settings().migration_target()) as owner:
+                owner.execute("CREATE INDEX ix_probe ON terminals (tmux_session, id)")
             # Sanity: with the index, an unordered read really does put the
             # worker first — so this case is exercising the ORDER BY and not
             # asserting a no-op. Which index shapes reorder is unintuitive and
@@ -2956,6 +2523,7 @@ class TestListTerminalsInSessions:
             # reordering after the production plan stopped — leaving the real
             # assertions below vacuous while this guard still passed.
             with db() as s:
+                s.execute(text("SET LOCAL enable_seqscan=off"))
                 probe = [
                     r[0]
                     for r in s.execute(
@@ -2980,7 +2548,7 @@ class TestListTerminalsInSessions:
     def test_order_is_creation_order_not_recent_activity(self, db):
         """Activity must not reorder a session. Pins the case against ``last_active``.
 
-        ``last_active`` is the obvious-looking "cleanup" for an implicit rowid
+        ``last_active`` is the obvious-looking "cleanup" for insertion order
         order — a real, declared column instead of a storage detail — and it is
         exactly wrong. It is written only on input delivery
         (``send_input``/``send_special_key``), so the conductor, which receives
@@ -2992,7 +2560,7 @@ class TestListTerminalsInSessions:
         One keystroke to the conductor is enough to tell them apart: after it,
         ``ORDER BY last_active`` returns the worker first while creation order
         does not move. It also covers any write that re-inserts the row rather
-        than updating it in place (a delete-plus-insert reassigns rowid), which
+        than updating it in place (a delete-plus-insert receives a new sequence), which
         the source-level upsert guard cannot see.
         """
         self._add(db, "f0000000", "cao-alpha", agent_profile="supervisor")
@@ -3007,18 +2575,11 @@ class TestListTerminalsInSessions:
             assert [t["id"] for t in read] == ["f0000000", "10000000"]
             assert read[0]["agent_profile"] == "supervisor"
 
-    def test_rowid_reuse_after_deletion_does_not_reorder(self, db):
-        """Deleting the newest terminal and adding another keeps the creator first.
-
-        ``rowid`` is not ``AUTOINCREMENT``, so a deleted row's rowid can be handed
-        out again — the one property that could plausibly make insertion order an
-        unsafe key. It cannot invert a session's order, because SQLite assigns
-        ``max(rowid)+1`` over the whole table and so a new row outranks every
-        LIVE row, including all of its own session's.
-        """
+    def test_sequence_is_not_reused_after_deletion(self, db):
+        """Deleting a row leaves a sequence gap; a later row stays newest."""
         self._add(db, "f0000000", "cao-alpha", agent_profile="supervisor")
         self._add(db, "20000000", "cao-alpha", agent_profile="developer")
-        delete_terminal("20000000")  # frees the max rowid
+        delete_terminal("20000000")
         self._add(db, "10000000", "cao-alpha", agent_profile="developer")
 
         result = list_terminals_in_sessions(["cao-alpha"])
@@ -3067,9 +2628,8 @@ class TestListTerminalsInSessions:
     def test_an_upsert_would_break_the_ordering_contract(self, db):
         """Demonstrates the one operation that moves a row within its session.
 
-        ``INSERT OR REPLACE`` (and any upsert on the primary key) is a delete
-        plus an insert, so the replaced row is assigned a NEW rowid and jumps to
-        the END of its session — which would silently make a session report the
+        A delete plus insert assigns a new ``insertion_sequence`` and moves the row
+        to the END of its session — which would silently make a session report the
         wrong conductor. This is not a bug being asserted as correct: it is the
         documented limit of the ordering contract on ``TerminalModel``, pinned so
         the consequence is visible rather than folded into a comment.
@@ -3085,9 +2645,10 @@ class TestListTerminalsInSessions:
         ]
 
         with db() as s:
+            s.execute(text("DELETE FROM terminals WHERE id='f0000000'"))
             s.execute(
                 text(
-                    "INSERT OR REPLACE INTO terminals "
+                    "INSERT INTO terminals "
                     "(id, tmux_session, tmux_window, provider, agent_profile) "
                     "VALUES ('f0000000', 'cao-alpha', 'win-f0000000', 'kiro_cli', 'supervisor')"
                 )
@@ -3101,20 +2662,20 @@ class TestListTerminalsInSessions:
 
 
 def test_no_upsert_against_the_terminals_table():
-    """No code path may upsert ``terminals`` — it would silently reassign rowid.
+    """No code path may upsert ``terminals`` — it would silently reassign its sequence.
 
     The ownership contract (index 0 of a terminals read is a session's oldest
-    surviving row) rests on rowid being insertion order. A replace is a delete
-    plus an insert, so the row gets a NEW rowid and jumps to the end of its
+    surviving row) rests on ``insertion_sequence`` being insertion order. A replace is a delete
+    plus an insert, so the row gets a NEW sequence and jumps to the end of its
     session, handing the conductor slot to a worker — silently, with no test
     failing anywhere near the change. A comment on the model cannot prevent that,
     so this scans the source instead: same shape as ``test/test_no_ffi_guard.py``,
     a cheap structural guard for an invariant no unit test can express. Use an
     ``UPDATE``.
 
-    Covers the three spellings that actually reassign rowid, each required to
+    Covers the three spellings that actually reassign sequence, each required to
     name ``terminals`` directly. Deliberately does NOT cover ``Session.merge``:
-    it emits an UPDATE for an existing primary key, so the rowid — and the order
+    it emits an UPDATE for an existing primary key, so the sequence — and the order
     — survive. Verified rather than assumed.
 
     Known limitation: a docstring that spells one of these statements verbatim

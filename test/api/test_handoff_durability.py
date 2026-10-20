@@ -285,7 +285,7 @@ class TestPersistFailureLogDoesNotLeakTheCapability:
     def _sqlalchemy_error_carrying_the_job_id(self):
         from sqlalchemy.exc import OperationalError
 
-        # Same shape SQLAlchemy raises on a locked SQLite file: the statement and
+        # Same shape SQLAlchemy raises on a database write conflict: the statement and
         # the bound params (which include job_id) are part of the exception.
         return OperationalError(
             "UPDATE handoff_results SET state=? WHERE job_id=?",
@@ -342,7 +342,7 @@ class TestLookupFailureDoesNotLeakTheCapability:
     def test_lookup_failure_is_content_safe(self, client, caplog):
         from sqlalchemy.exc import OperationalError
 
-        # Same shape SQLAlchemy raises against a locked SQLite file: the bound
+        # Same shape SQLAlchemy raises against a database write conflict: the bound
         # params (which are just the job_id here) are part of the exception.
         exc = OperationalError(
             "SELECT * FROM handoff_results WHERE job_id = ?",

@@ -33,9 +33,17 @@ from cli_agent_orchestrator.services.work_service import DeliveryObservation, Wo
 
 
 def test_browser_identity_preserves_preexisting_work_provision_grants_and_receipt(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, postgres_targets
 ):
+    from cli_agent_orchestrator.clients.browser_auth_repository import BROWSER_AUTH_MIGRATIONS
+    from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
     from cli_agent_orchestrator.services.browser_auth import BrowserAuthService
+
+    # This test imports the Work service helper directly, so its module-level
+    # autouse fixture does not run. Provision the full component set first;
+    # Work v2 depends on the cross-component baseline and store identity.
+    bootstrap_scope(postgres_targets.main)
 
     # These real services register a root owner, delegated child/receiver grants,
     # immutable snapshots and a managed delivery, before any browser login.
@@ -139,28 +147,30 @@ def test_browser_identity_preserves_preexisting_work_provision_grants_and_receip
     jwt_actor = auth.principal_from_token(token)
     assert jwt_actor == actor
 
-    tables = (
-        "work_principals",
-        "work_jobs",
-        "work_grants",
-        "work_launch_provisions",
-        "work_task_received_receipts",
-        "work_transition_receipts",
-        "work_results",
-        "work_attempts",
-        "work_items",
-        "work_delivery_orders",
-        "work_dispatch_bindings",
-    )
+    table_order_by = {
+        "work_principals": "id",
+        "work_jobs": "id",
+        "work_grants": "id,revision",
+        "work_launch_provisions": "principal_id,selector,revision",
+        "work_task_received_receipts": "attempt_id,generation",
+        "work_transition_receipts": "event_id",
+        "work_results": "id",
+        "work_attempts": "id",
+        "work_items": "id",
+        "work_delivery_orders": "attempt_id,generation",
+        "work_dispatch_bindings": "attempt_id,generation",
+    }
 
     def durable_state():
         with repository.read_snapshot() as connection:
             return {
                 table: tuple(
                     tuple(row)
-                    for row in connection.execute(f"SELECT * FROM {table} ORDER BY rowid")
+                    for row in connection.execute(
+                        f"SELECT * FROM {table} ORDER BY {table_order_by[table]}"
+                    )
                 )
-                for table in tables
+                for table in table_order_by
             }
 
     durable_before = durable_state()
@@ -171,7 +181,9 @@ def test_browser_identity_preserves_preexisting_work_provision_grants_and_receip
 
     binding = {field: getattr(jwt_actor, field) for field in ("id", "issuer", "subject", "kind")}
     binding["scopes"] = sorted(jwt_actor.scopes)
-    service = BrowserAuthService(tmp_path / "browser.sqlite3", binding)
+    migrate_component(postgres_targets.auth, BROWSER_AUTH_MIGRATIONS)
+    service = BrowserAuthService(postgres_targets.auth, binding)
+    service.initialize_store()
     service.create_account("operator", "Fixture-password-484!")
     secret, _ = service.login("operator", "Fixture-password-484!", remember=True, peer="127.0.0.1")
     origin = "http://127.0.0.1:9999"

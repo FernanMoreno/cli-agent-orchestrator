@@ -84,7 +84,7 @@ WHAT THIS MODULE DOES NOT DO. It raises neither ``ReplayDivergenceError`` nor
 (unit 8 rewires the settle); it defines neither authorised-state TRANSITION — it only READS
 the two states ``workflow_journal.apply_decisions`` writes (unit 12); it
 persists no halt reason (unit 11); and it re-sanitises nothing on the ``REPLAY`` path — the
-envelope was redacted and then bounded by ``build_envelope`` before it reached SQLite (unit 2's
+envelope was redacted and then bounded by ``build_envelope`` before it reached PostgreSQL (unit 2's
 SR-1/BR-2), so this module imports neither ``secret_gate`` nor ``build_envelope`` (SR-2) and
 returns exactly what was persisted.
 """
@@ -236,7 +236,7 @@ def decide(
             confidentiality one. The message names ``step_id`` and echoes NEITHER the supplied
             value nor the stored one (SR-1): the supplied value is arbitrary caller text under
             a digest prohibition.
-        sqlite3.Error: propagated unchanged from the one ``get_step`` call, which is NOT
+        psycopg.DatabaseError: propagated unchanged from the one ``get_step`` call, which is NOT
             wrapped (BR-10/INV-4). Degrading an unreadable journal to ``EXECUTE`` would
             re-run completed work under exactly the conditions FR-1 exists to prevent, and it
             would do so under the guise of a safe default.
@@ -437,7 +437,7 @@ def decide(
         )
 
     # ---- rule 9: the stored envelope reports its own lossiness (PR #628 review, F5) ----
-    # ``build_envelope`` redacts and then bounds ``last_message`` before it reaches SQLite, so
+    # ``build_envelope`` redacts and then bounds ``last_message`` before it reaches PostgreSQL, so
     # a stored envelope's text is not necessarily the text the original call returned — and the
     # original call returned the RAW text, because the success arm of the route answers with
     # ``run_agent_step``'s own ``last_message`` and never with the envelope. ``RunStepResponse``

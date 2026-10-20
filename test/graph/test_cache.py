@@ -6,6 +6,7 @@ isolation, invalidate) and its integration through MemoryGraphProvider
 """
 
 import asyncio
+from test.postgres.orm import configured_orm_engine
 
 import pytest
 from sqlalchemy import create_engine
@@ -435,7 +436,7 @@ async def _async_view(node_id: str) -> GraphView:
 @pytest.fixture
 def db_engine(tmp_path):
     db_path = tmp_path / "test.db"
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return engine
 

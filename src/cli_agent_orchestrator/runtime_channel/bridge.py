@@ -28,6 +28,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
 import websockets
 from websockets.asyncio.client import ClientConnection, connect
 
+from cli_agent_orchestrator.clients import database
 from cli_agent_orchestrator.constants import CAO_HOME_DIR, DEFAULT_PROVIDER
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.runtime_channel.protocol import (
@@ -86,10 +87,10 @@ class Bridge:
         self._stop = asyncio.Event()
         self.incarnation_id = incarnation_id or uuid.uuid4().hex
         if store is None:
-            from cli_agent_orchestrator.clients.database import engine
+            from cli_agent_orchestrator.clients.database import main_target
             from cli_agent_orchestrator.runtime_channel.store import RemoteOperationStore
 
-            store = RemoteOperationStore(engine)
+            store = RemoteOperationStore(main_target())
         self.store = store
         self.connection_epoch: int | None = None
 
@@ -355,7 +356,6 @@ class Bridge:
         if not terminal_id:
             raise ValueError(f"{command.type.value} requires a terminal_id")
 
-        from cli_agent_orchestrator import constants
         from cli_agent_orchestrator.services.turn_recovery_service import (
             cancel_turn,
             get_turn,
@@ -406,7 +406,7 @@ class Bridge:
             if function.__name__ in {"send_input", "send_special_key", "exit_terminal_cli"}:
                 # Sends own the same flock in their existing service decorator.
                 return function(*args, **kwargs)
-            with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id):
+            with terminal_dispatch_lock(database.main_target(), terminal_id):
                 terminal_service.ensure_terminal_is_not_work_owned(terminal_id)
                 return function(*args, **kwargs)
 
@@ -706,10 +706,10 @@ async def _amain() -> None:
     loop = asyncio.get_running_loop()
     bus.set_loop(loop)
     from cli_agent_orchestrator.backends.registry import get_backend
-    from cli_agent_orchestrator.clients.database import engine
+    from cli_agent_orchestrator.clients.database import main_target
     from cli_agent_orchestrator.runtime_channel.store import RemoteOperationStore
 
-    store = RemoteOperationStore(engine)
+    store = RemoteOperationStore(main_target())
     incarnation = await asyncio.to_thread(restore_incarnation, runtime_id, store, get_backend())
     bridge = Bridge(
         server_url,

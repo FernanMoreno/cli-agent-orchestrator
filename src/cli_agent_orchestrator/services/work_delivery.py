@@ -10,6 +10,9 @@ from typing import Callable
 
 from pydantic import BaseModel, ValidationError
 
+from cli_agent_orchestrator.clients.postgres import Connection
+from cli_agent_orchestrator.clients.work_repository import WorkRepository
+from cli_agent_orchestrator.models.work_contract import WorkContractBinding
 from cli_agent_orchestrator.models.work_delivery import WorkDeliveryEnvelope
 from cli_agent_orchestrator.services.step_output_store import ArtifactRef, ImmutableResultStore
 from cli_agent_orchestrator.services.work_contract import ContractConflict, _nonsecret
@@ -19,9 +22,9 @@ from cli_agent_orchestrator.services.work_contract import ContractConflict, _non
 class DeliveryAdapter:
     payload_model: type[BaseModel]
     send: Callable
-    terminal_identity: Callable | None = None
-    validate_contract: Callable | None = None
-    terminal_target: Callable | None = None
+    terminal_identity: Callable[..., str] | None = None
+    validate_contract: Callable[..., None] | None = None
+    terminal_target: Callable[..., tuple[str, str, str]] | None = None
 
     def __post_init__(self):
         if (
@@ -81,7 +84,7 @@ def _reject_credential_fields(value):
 
 
 class WorkDeliveries:
-    def __init__(self, repository, adapters=None):
+    def __init__(self, repository: WorkRepository, adapters=None):
         if adapters is None:
             adapters = {}
         if not isinstance(adapters, Mapping) or any(
@@ -98,6 +101,17 @@ class WorkDeliveries:
         self.repository = repository
         self.adapters = MappingProxyType(dict(adapters))
         self.content = ImmutableResultStore(repository.delivery_content_root, max_bytes=65536)
+
+    def _connection(
+        self, connection: object, *, require_write_transaction: bool = False
+    ) -> Connection:
+        if not isinstance(connection, Connection):
+            raise ContractConflict("native PostgreSQL connection required")
+        if connection.target.identity != self.repository.target.identity:
+            raise ContractConflict("delivery connection belongs to another Work store")
+        if require_write_transaction and (not connection.in_transaction or connection.read_only):
+            raise ContractConflict("caller-owned write transaction required")
+        return connection
 
     @staticmethod
     def envelope(envelope, operation_kind):
@@ -152,9 +166,10 @@ class WorkDeliveries:
         except (ValidationError, TypeError, ValueError, KeyError, RecursionError):
             raise ContractConflict("invalid or unsupported delivery data") from None
 
-    def _load(self, connection, binding):
+    def _load(self, connection: Connection, binding: WorkContractBinding):
+        connection = self._connection(connection)
         row = connection.execute(
-            "SELECT * FROM work_delivery_orders WHERE attempt_id=? AND generation=?",
+            "SELECT * FROM work_delivery_orders WHERE attempt_id=%s AND generation=%s",
             (binding.attempt_id, binding.generation),
         ).fetchone()
         if row is None:
@@ -178,7 +193,9 @@ class WorkDeliveries:
         return envelope
 
     @staticmethod
-    def _opaque_envelope(envelope, reference):
+    def _opaque_envelope(
+        envelope: WorkDeliveryEnvelope, reference: ArtifactRef
+    ) -> WorkDeliveryEnvelope:
         return WorkDeliveryEnvelope(
             operation_kind=envelope.operation_kind,
             adapter_version=envelope.adapter_version,
@@ -192,7 +209,7 @@ class WorkDeliveries:
         )
 
     @staticmethod
-    def _reference(envelope):
+    def _reference(envelope: WorkDeliveryEnvelope) -> ArtifactRef:
         try:
             raw = json.loads(
                 envelope.payload_json, object_pairs_hook=_pairs, parse_constant=_invalid_constant
@@ -203,8 +220,11 @@ class WorkDeliveries:
         except (TypeError, ValueError, RecursionError):
             raise ContractConflict("delivery content reference is invalid") from None
 
-    def _restore(self, connection, binding):
+    def _restore(
+        self, connection: Connection, binding: WorkContractBinding
+    ) -> tuple[DeliveryAdapter, BaseModel]:
         """Return only this binding's verified payload after order revalidation."""
+        connection = self._connection(connection)
         envelope = self._load(connection, binding)
         if (
             envelope is None
@@ -213,7 +233,7 @@ class WorkDeliveries:
             raise ContractConflict("delivery adapter is unavailable")
         reference = self._reference(envelope)
         row = connection.execute(
-            "SELECT * FROM work_delivery_content_refs WHERE attempt_id=? AND generation=?",
+            "SELECT * FROM work_delivery_content_refs WHERE attempt_id=%s AND generation=%s",
             (binding.attempt_id, binding.generation),
         ).fetchone()
         if row is None or (
@@ -252,24 +272,41 @@ class WorkDeliveries:
         except (OSError, UnicodeError, ValidationError, ValueError, RecursionError):
             raise ContractConflict("delivery content is unavailable or invalid") from None
 
-    def _compare(self, connection, binding, envelope):
+    def _compare(
+        self,
+        connection: Connection,
+        binding: WorkContractBinding,
+        envelope: WorkDeliveryEnvelope | None,
+    ) -> None:
+        connection = self._connection(connection)
         existing = self._load(connection, binding)
         if existing is None and envelope is None:
             return
         row = connection.execute(
-            "SELECT request_hash FROM work_delivery_orders WHERE attempt_id=? AND generation=?",
+            "SELECT request_hash FROM work_delivery_orders WHERE attempt_id=%s AND generation=%s",
             (binding.attempt_id, binding.generation),
         ).fetchone()
         if (
             existing is None
             or envelope is None
+            or row is None
             or row["request_hash"] != _digest(envelope, binding.contract_hash)
         ):
             raise ContractConflict("delivery data differs from the admitted operation")
 
-    def _bind(self, connection, binding, envelope, *, request):
+    def _bind(
+        self,
+        connection: Connection,
+        binding: WorkContractBinding,
+        envelope: WorkDeliveryEnvelope | None,
+        *,
+        request: WorkDeliveryEnvelope | None,
+    ) -> None:
         if envelope is None:
             return
+        connection = self._connection(connection, require_write_transaction=True)
+        if request is None:
+            raise ContractConflict("original delivery request is required")
         if self._load(connection, binding) is not None:
             self._compare(connection, binding, request)
             return
@@ -280,7 +317,10 @@ class WorkDeliveries:
                 opaque = self._opaque_envelope(envelope, reference)
                 digest = _digest(opaque, binding.contract_hash, request_hash)
                 connection.execute(
-                    "INSERT INTO work_delivery_orders VALUES (?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO work_delivery_orders "
+                    "(attempt_id,generation,operation_kind,schema_version,adapter_version,"
+                    "contract_hash,payload_json,request_hash,delivery_hash) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (
                         binding.attempt_id,
                         binding.generation,
@@ -294,7 +334,9 @@ class WorkDeliveries:
                     ),
                 )
                 connection.execute(
-                    "INSERT INTO work_delivery_content_refs VALUES (?,?,?,?,?,?,?,?)",
+                    "INSERT INTO work_delivery_content_refs "
+                    "(attempt_id,generation,owner_principal_id,contract_hash,snapshot_id,"
+                    "content_ref,content_hash,byte_length) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                     (
                         binding.attempt_id,
                         binding.generation,
@@ -322,20 +364,24 @@ class WorkDeliveries:
         except (OSError, ValueError, RecursionError):
             raise ContractConflict("delivery content could not be persisted") from None
 
-    def _executable(self, connection, binding):
+    def _executable(self, connection: Connection, binding: WorkContractBinding) -> bool:
         try:
             self._restore(connection, binding)
             return True
         except ContractConflict:
             raise
 
-    def _terminal_identity(self, connection, binding):
+    def _terminal_identity(
+        self, connection: Connection, binding: WorkContractBinding
+    ) -> str | None:
         adapter, payload = self._restore(connection, binding)
         if adapter.terminal_identity is None:
             return None
         return adapter.terminal_identity(payload)
 
-    def _terminal_target(self, connection, binding):
+    def _terminal_target(
+        self, connection: Connection, binding: WorkContractBinding
+    ) -> tuple[str, str, str] | None:
         """Return the sealed Work terminal/session/window tuple for a new launch."""
         adapter, payload = self._restore(connection, binding)
         if adapter.terminal_target is None:

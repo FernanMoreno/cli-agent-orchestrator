@@ -1,14 +1,14 @@
-"""Phase 2 tests for MemoryService — SQLite-backed metadata (U1).
+"""Phase 2 tests for MemoryService — PostgreSQL-backed metadata (U1).
 
-Tests create a per-test SQLite DB via db_engine fixture.
+Tests use a private PostgreSQL schema via the ``db_engine`` fixture.
 """
 
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 
 import pytest
-from sqlalchemy import create_engine
 
 from cli_agent_orchestrator.clients.database import Base, MemoryMetadataModel
 from cli_agent_orchestrator.services.memory_service import MemoryService
@@ -40,9 +40,8 @@ def _run(coro):
 
 @pytest.fixture
 def db_engine(tmp_path):
-    """Create a per-test SQLite engine with memory_metadata table."""
-    db_path = tmp_path / "test.db"
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    """Create an engine for the test's private PostgreSQL schema."""
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return engine
 
@@ -54,12 +53,12 @@ def svc(tmp_path, db_engine):
 
 
 # ===========================================================================
-# U1.3 — store() inserts SQLite row
+# U1.3 — store() inserts PostgreSQL row
 # ===========================================================================
 
 
-class TestStoreInsertsSqliteRow:
-    def test_store_inserts_sqlite_row(self, svc, db_engine):
+class TestStoreInsertsPostgresRow:
+    def test_store_inserts_postgres_row(self, svc, db_engine):
         ctx = _make_ctx()
         mem = _run(
             svc.store(
@@ -72,7 +71,7 @@ class TestStoreInsertsSqliteRow:
             )
         )
 
-        # Verify SQLite row exists
+        # Verify the PostgreSQL row exists
         from sqlalchemy.orm import sessionmaker
 
         Session = sessionmaker(bind=db_engine)
@@ -86,7 +85,7 @@ class TestStoreInsertsSqliteRow:
             assert row.source_terminal_id == "term-001"
             assert row.file_path == mem.file_path
 
-    def test_store_upsert_updates_sqlite_row(self, svc, db_engine):
+    def test_store_upsert_updates_postgres_row(self, svc, db_engine):
         ctx = _make_ctx()
         _run(
             svc.store(
@@ -118,11 +117,11 @@ class TestStoreInsertsSqliteRow:
 
 
 # ===========================================================================
-# U1.4 — recall() uses SQLite query
+# U1.4 — recall() uses a PostgreSQL query
 # ===========================================================================
 
 
-class TestRecallUsesSqliteQuery:
+class TestRecallUsesPostgresQuery:
     def test_recall_by_key_match(self, svc):
         ctx = _make_ctx()
         _run(
@@ -191,12 +190,12 @@ class TestRecallUsesSqliteQuery:
 
 
 # ===========================================================================
-# U1.5 — forget() deletes SQLite row
+# U1.5 — forget() deletes PostgreSQL row
 # ===========================================================================
 
 
-class TestForgetDeletesSqliteRow:
-    def test_forget_deletes_sqlite_row(self, svc, db_engine):
+class TestForgetDeletesPostgresRow:
+    def test_forget_deletes_postgres_row(self, svc, db_engine):
         ctx = _make_ctx()
         _run(
             svc.store(
@@ -253,12 +252,12 @@ class TestTokenEstimateStored:
 
 
 # ===========================================================================
-# U1.8 — index.md stays consistent with SQLite
+# U1.8 — index.md stays consistent with PostgreSQL metadata
 # ===========================================================================
 
 
-class TestIndexConsistencyWithSqlite:
-    def test_index_regenerated_from_sqlite(self, svc):
+class TestIndexConsistencyWithPostgres:
+    def test_index_regenerated_from_postgres(self, svc):
         ctx = _make_ctx()
         _run(
             svc.store(
@@ -334,7 +333,7 @@ class TestIndexConsistencyWithSqlite:
 
 
 # ===========================================================================
-# Full roundtrip with SQLite
+# Full roundtrip with PostgreSQL
 # ===========================================================================
 
 
@@ -510,7 +509,7 @@ class TestConsolidateMergesTwoEntries:
             assert db.query(MemoryMetadataModel).filter_by(key="pref-merged").first() is not None
 
 
-class TestFullSqliteRoundtrip:
+class TestFullPostgresRoundtrip:
     def test_store_recall_forget_roundtrip(self, svc, db_engine):
         ctx = _make_ctx()
 

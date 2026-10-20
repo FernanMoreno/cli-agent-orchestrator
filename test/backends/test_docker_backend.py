@@ -69,9 +69,10 @@ def test_docker_work_maps_only_managed_tools_when_a_server_proxy_is_bound(monkey
 
     backend.preflight_work(_restriction(module, tools=("cao.work.child",)))
     backend.preflight_work(_restriction(module, tools=("cao.work.submit_result",)))
+    backend.preflight_work(_restriction(module, tools=("cao.work.message",)))
     with pytest.raises(module.UnsupportedWorkEnforcement):
         backend.preflight_work(_restriction(module, tools=("filesystem.read",)))
-    assert probes == ["probe", "probe"]
+    assert probes == ["probe", "probe", "probe"]
 
 
 def test_docker_submit_result_uses_the_separate_receiver_credential_descriptor():

@@ -1,9 +1,8 @@
 """Shared fixtures for end-to-end tests.
 
-E2E tests require:
-- The provider CLI tool installed and authenticated (for example codex,
-  claude, kiro-cli, gemini, copilot, or grok)
-- tmux available on the system
+Local E2E tests require a managed CAO server and tmux. Real-provider cases are
+disabled unless explicitly selected in the isolated auth/model manifest; the
+legacy lane currently supports Codex, Claude Code, and OpenCode only.
 
 The CAO server is started automatically by the ``cao_server`` fixture from
 ``test.fixtures.cao_server``. New tests should consume ``cao_server`` /
@@ -18,7 +17,13 @@ import os
 import shutil
 import time
 from pathlib import Path
-from test.fixtures.cao_server import CaoServer, _patch_api_base_url_for_e2e
+from test.fixtures.cao_server import (
+    CaoServer,
+    LiveProviderAuthorization,
+    _authorize_live_provider,
+    _patch_api_base_url_for_e2e,
+    _stage_live_provider_auth,
+)
 
 import pytest
 import requests
@@ -48,164 +53,174 @@ def require_tmux():
         pytest.skip("tmux not installed")
 
 
-def _cli_available(command: str) -> bool:
-    """Check if a CLI tool is on PATH."""
-    return shutil.which(command) is not None
+_LIVE_PROVIDER_PROFILE_NAMES = (
+    "developer",
+    "reviewer",
+    "code_supervisor",
+    "analysis_supervisor",
+    "data_analyst",
+    "report_generator",
+)
+
+
+def _stage_live_provider_profiles(
+    server: CaoServer,
+    authorization: LiveProviderAuthorization,
+    *,
+    profile_names: tuple[str, ...] = _LIVE_PROVIDER_PROFILE_NAMES,
+    install_opencode_profiles: bool = True,
+) -> None:
+    """Copy known E2E profiles and pin provider/model in the private store."""
+    import frontmatter
+
+    repo_root = Path(__file__).resolve().parents[2]
+    example_sources = {
+        "analysis_supervisor": repo_root / "examples" / "assign" / "analysis_supervisor.md",
+        "data_analyst": repo_root / "examples" / "assign" / "data_analyst.md",
+        "report_generator": repo_root / "examples" / "assign" / "report_generator.md",
+        "ci_developer": repo_root / "examples" / "headless-ci" / "ci_developer.md",
+    }
+    store = server.home_dir / ".aws" / "cli-agent-orchestrator" / "agent-store"
+    store.mkdir(parents=True, mode=0o700, exist_ok=True)
+    store.chmod(0o700)
+    for name in profile_names:
+        source = example_sources.get(name)
+        if source is None:
+            source = repo_root / "src" / "cli_agent_orchestrator" / "agent_store" / f"{name}.md"
+        if not source.is_file():
+            pytest.fail(f"No checked-in source profile exists for live E2E profile {name!r}")
+        post = frontmatter.loads(source.read_text(encoding="utf-8"))
+        post.metadata["provider"] = authorization.name
+        post.metadata["model"] = authorization.model
+        target = store / f"{name}.md"
+        target.write_text(frontmatter.dumps(post), encoding="utf-8")
+        target.chmod(0o600)
+
+        if authorization.name == "opencode_cli" and install_opencode_profiles:
+            response = requests.post(
+                f"{server.url}/agents/profiles/install",
+                json={"source": name, "provider": authorization.name},
+                timeout=30,
+            )
+            if response.status_code != 200:
+                pytest.fail(
+                    f"OpenCode profile installation failed for {name!r}: "
+                    f"HTTP {response.status_code}"
+                )
+
+
+def _prepare_live_provider(
+    server: CaoServer,
+    provider: str,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    opt_in_env: str = "CAO_RUN_LIVE_PROVIDER_TESTS",
+    profile_names: tuple[str, ...] = _LIVE_PROVIDER_PROFILE_NAMES,
+    install_opencode_profiles: bool = True,
+) -> LiveProviderAuthorization:
+    authorization = _authorize_live_provider(provider, opt_in_env=opt_in_env)
+    _stage_live_provider_auth(server.home_dir, authorization)
+    _stage_live_provider_profiles(
+        server,
+        authorization,
+        profile_names=profile_names,
+        install_opencode_profiles=install_opencode_profiles,
+    )
+    monkeypatch.setenv(f"CAO_TEST_LIVE_PROVIDER_MODEL_{provider.upper()}", authorization.model)
+    return authorization
+
+
+def _provider_launch_params(provider: str, params: dict[str, object]) -> dict[str, object]:
+    """Attach the manifest-selected model to a legacy session API request."""
+    result = dict(params)
+    model = os.environ.get(f"CAO_TEST_LIVE_PROVIDER_MODEL_{provider.upper()}")
+    if model:
+        result["model"] = model
+    return result
 
 
 @pytest.fixture()
-def require_codex():
-    """Skip test if codex CLI is not available."""
-    if not _cli_available("codex"):
-        pytest.skip("codex CLI not installed")
+def require_codex(
+    require_cao_server: CaoServer, monkeypatch: pytest.MonkeyPatch
+) -> LiveProviderAuthorization:
+    """Require manifest auth/model and isolate the Codex child."""
+    return _prepare_live_provider(require_cao_server, "codex", monkeypatch)
 
 
 @pytest.fixture()
-def require_claude():
-    """Skip test if claude CLI is not available."""
-    if not _cli_available("claude"):
-        pytest.skip("claude CLI not installed")
+def require_claude(
+    require_cao_server: CaoServer, monkeypatch: pytest.MonkeyPatch
+) -> LiveProviderAuthorization:
+    """Require manifest auth/model and isolate the Claude child."""
+    return _prepare_live_provider(require_cao_server, "claude_code", monkeypatch)
 
 
 @pytest.fixture()
 def require_kiro():
-    """Skip test if kiro-cli is not available."""
-    if not _cli_available("kiro-cli"):
-        pytest.skip("kiro-cli CLI not installed")
+    """Mark Kiro legacy-provider cases N/A until isolated auth is supported."""
+    pytest.skip("provider 'kiro_cli' is unsupported in the isolated live-provider lane")
 
 
 @pytest.fixture()
 def require_kimi():
-    """Skip test if kimi CLI is not available."""
-    if not _cli_available("kimi"):
-        pytest.skip("kimi CLI not installed")
+    """Mark Kimi legacy-provider cases N/A until isolated auth is supported."""
+    pytest.skip("provider 'kimi_cli' is unsupported in the isolated live-provider lane")
 
 
 @pytest.fixture()
 def require_gemini():
-    """Skip test if gemini CLI is not available.
-
-    Includes a post-test cooldown to avoid Gemini API rate limiting (429).
-    Gemini CLI has known issues with rate limit retry logic (GitHub #6986,
-    #9248) — sequential tests can exhaust the per-minute RPM quota, causing
-    the CLI to hang during initialization or task processing.
-    """
-    if not _cli_available("gemini"):
-        pytest.skip("gemini CLI not installed")
-    yield
-    # Cool down after each Gemini CLI test to stay within API rate limits.
-    # Gemini's free-tier RPM limit is low; sequential tests exhaust the quota
-    # and cause the CLI to hang in a retry loop during initialization.
-    time.sleep(15)
+    """Mark Gemini legacy-provider cases N/A until isolated auth is supported."""
+    pytest.skip("provider 'gemini_cli' is unsupported in the isolated live-provider lane")
 
 
 @pytest.fixture()
 def require_copilot():
-    """Skip test if copilot CLI is not available."""
-    if not _cli_available("copilot"):
-        pytest.skip("copilot CLI not installed")
+    """Mark Copilot legacy-provider cases N/A until isolated auth is supported."""
+    pytest.skip("provider 'copilot_cli' is unsupported in the isolated live-provider lane")
 
 
 @pytest.fixture()
-def require_opencode():
-    """Skip test if opencode binary is not available."""
-    if not _cli_available("opencode"):
-        pytest.skip("opencode CLI not installed")
+def require_opencode(
+    require_cao_server: CaoServer, monkeypatch: pytest.MonkeyPatch
+) -> LiveProviderAuthorization:
+    """Require manifest auth/model and isolate the OpenCode child."""
+    return _prepare_live_provider(require_cao_server, "opencode_cli", monkeypatch)
 
 
 @pytest.fixture()
 def require_omp():
-    """Skip test if OMP CLI is not available."""
-    if not _cli_available("omp"):
-        pytest.skip("OMP CLI not installed")
+    """Mark OMP legacy-provider cases N/A until isolated auth is supported."""
+    pytest.skip("provider 'omp' is unsupported in the isolated live-provider lane")
 
 
 @pytest.fixture()
 def require_hermes():
-    """Skip test if Hermes CLI is not available."""
-    if not _cli_available("hermes"):
-        pytest.skip("Hermes CLI not installed")
+    """Mark Hermes legacy-provider cases N/A until isolated auth is supported."""
+    pytest.skip("provider 'hermes' is unsupported in the isolated live-provider lane")
 
 
 @pytest.fixture()
 def require_cursor():
-    """Skip test if Cursor CLI (agent or cursor-agent) is not available."""
-    if _cli_available("agent") or _cli_available("cursor-agent"):
-        return
-    pytest.skip("Cursor CLI (agent / cursor-agent) not installed")
+    """Mark Cursor legacy-provider cases N/A until isolated auth is supported."""
+    pytest.skip("provider 'cursor_cli' is unsupported in the isolated live-provider lane")
 
 
 @pytest.fixture()
-def require_grok(require_cao_server: CaoServer):
-    """Skip unless the official Grok Build CLI is installed and authenticated."""
-    if not _cli_available("grok"):
-        pytest.skip("Grok Build CLI not installed; see docs/grok-cli.md for installation")
-
-    default_home = str(Path.home() / ".grok")
-    grok_home = Path(os.environ.get("GROK_HOME", default_home)).expanduser()
-    auth_source = grok_home / "auth.json"
-    if not os.environ.get("XAI_API_KEY") and not auth_source.is_file():
-        pytest.skip(
-            "Grok Build CLI is installed but not authenticated; run `grok login` "
-            "or set XAI_API_KEY before running Grok e2e tests"
-        )
-
-    # The managed e2e server deliberately redirects HOME to isolate CAO state.
-    # Mirror production's narrow auth reuse by linking only auth.json into that
-    # disposable HOME; never copy credential contents into test artifacts.
-    if auth_source.is_file():
-        isolated_grok_home = require_cao_server.home_dir / ".grok"
-        isolated_grok_home.mkdir(mode=0o700, exist_ok=True)
-        auth_link = isolated_grok_home / "auth.json"
-        if not auth_link.exists():
-            auth_link.symlink_to(auth_source)
-
-    # Orchestration e2e tests use the repository's assign example profiles.
-    # Seed copies into the same disposable CAO home so the managed server can
-    # resolve them without reading or modifying the developer's real store.
-    repo_root = Path(__file__).resolve().parents[2]
-    isolated_store = require_cao_server.home_dir / ".aws" / "cli-agent-orchestrator" / "agent-store"
-    isolated_store.mkdir(parents=True, mode=0o700, exist_ok=True)
-    for profile_name in ("analysis_supervisor", "data_analyst", "report_generator"):
-        source = repo_root / "examples" / "assign" / f"{profile_name}.md"
-        target = isolated_store / f"{profile_name}.md"
-        if not target.exists():
-            shutil.copy2(source, target)
+def require_grok():
+    """Mark Grok legacy-provider cases N/A until isolated auth is supported."""
+    pytest.skip("provider 'grok_cli' is unsupported in the isolated live-provider lane")
 
 
 @pytest.fixture()
-def require_minimax_code(require_cao_server: CaoServer):
-    """Skip unless MiniMax Code is installed and has reusable local authentication."""
-    if not _cli_available("mcode"):
-        pytest.skip("MiniMax Code CLI not installed; see docs/minimax-code.md for installation")
+def require_minimax_code():
+    """Mark MiniMax legacy-provider cases N/A until isolated auth is supported."""
+    pytest.skip("provider 'mcode' is unsupported in the isolated live-provider lane")
 
-    configured = os.environ.get("MINIMAX_DATA_DIR", "").strip()
-    source_home = Path(configured).expanduser() if configured else Path.home() / ".minimax"
-    auth_names = ("config.yaml", "local-runtime.auth.json", "cli-auth")
-    if not any((source_home / name).exists() for name in auth_names):
-        pytest.skip("MiniMax Code is installed but not authenticated; run `mcode login`")
 
-    isolated_home = require_cao_server.home_dir / ".minimax"
-    isolated_home.mkdir(mode=0o700, exist_ok=True)
-    for name in ("config.yaml", "local-runtime.auth.json"):
-        source = source_home / name
-        target = isolated_home / name
-        if source.is_file() and not target.exists():
-            shutil.copy2(source, target)
-            target.chmod(0o600)
-    source_cli_auth = source_home / "cli-auth"
-    target_cli_auth = isolated_home / "cli-auth"
-    if source_cli_auth.is_dir() and not target_cli_auth.exists():
-        shutil.copytree(source_cli_auth, target_cli_auth)
-
-    repo_root = Path(__file__).resolve().parents[2]
-    isolated_store = require_cao_server.home_dir / ".aws" / "cli-agent-orchestrator" / "agent-store"
-    isolated_store.mkdir(parents=True, mode=0o700, exist_ok=True)
-    for profile_name in ("analysis_supervisor", "data_analyst", "report_generator"):
-        source = repo_root / "examples" / "assign" / f"{profile_name}.md"
-        target = isolated_store / f"{profile_name}.md"
-        if not target.exists():
-            shutil.copy2(source, target)
+@pytest.fixture()
+def require_antigravity():
+    """Mark Antigravity cases N/A until isolated auth is supported."""
+    pytest.skip("provider 'antigravity_cli' is unsupported in the isolated live-provider lane")
 
 
 def create_terminal(
@@ -239,11 +254,14 @@ def create_terminal(
 
         resp = requests.post(
             f"{API_BASE_URL}/sessions",
-            params={
-                "provider": provider,
-                "agent_profile": agent_profile,
-                "session_name": attempt_session_name,
-            },
+            params=_provider_launch_params(
+                provider,
+                {
+                    "provider": provider,
+                    "agent_profile": agent_profile,
+                    "session_name": attempt_session_name,
+                },
+            ),
         )
         last_resp = resp
         if resp.status_code in (200, 201):
@@ -254,10 +272,9 @@ def create_terminal(
         if resp.status_code != 500 or attempt >= retries:
             break
 
-    assert last_resp is not None and last_resp.status_code in (
-        200,
-        201,
-    ), f"Session creation failed: {last_resp.status_code} {last_resp.text}"
+    if last_resp is None or last_resp.status_code not in (200, 201):
+        status = "no response" if last_resp is None else f"HTTP {last_resp.status_code}"
+        raise RuntimeError(f"Session creation failed: {status}; response body omitted")
 
 
 def get_terminal_status(terminal_id: str) -> str:
@@ -301,7 +318,9 @@ def send_handoff_message(terminal_id: str, message: str, provider: str) -> None:
         f"{API_BASE_URL}/terminals/{terminal_id}/input",
         params={"message": full_message},
     )
-    assert resp.status_code == 200, f"Send message failed: {resp.status_code} {resp.text}"
+    assert (
+        resp.status_code == 200
+    ), f"Send message failed: HTTP {resp.status_code}; response body omitted"
 
 
 def extract_output(terminal_id: str) -> str:
@@ -310,7 +329,9 @@ def extract_output(terminal_id: str) -> str:
         f"{API_BASE_URL}/terminals/{terminal_id}/output",
         params={"mode": "last"},
     )
-    assert resp.status_code == 200, f"Output extraction failed: {resp.status_code} {resp.text}"
+    assert (
+        resp.status_code == 200
+    ), f"Output extraction failed: HTTP {resp.status_code}; response body omitted"
     return resp.json().get("output", "")
 
 

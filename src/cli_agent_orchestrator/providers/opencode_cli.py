@@ -24,9 +24,11 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import tempfile
 import textwrap
+import time
 from collections import Counter
 from pathlib import Path
 from typing import List, Optional
@@ -40,8 +42,11 @@ from cli_agent_orchestrator.constants import (
 )
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
+from cli_agent_orchestrator.providers.mcp_interactions import (
+    is_bundled_cao_mcp_entry,
+    overlay_interaction_capability_file,
+)
 from cli_agent_orchestrator.services.settings_service import get_server_settings
-from cli_agent_orchestrator.utils.mcp_resolution import is_cao_mcp_server
 from cli_agent_orchestrator.utils.terminal import wait_for_shell
 
 logger = logging.getLogger(__name__)
@@ -137,9 +142,157 @@ def _find_cao_mcp_server_name(source_config: dict) -> Optional[str]:
             continue
         if config.get("enabled") is False or config.get("disabled") is True:
             continue
-        if is_cao_mcp_server(name, config):
+        if is_bundled_cao_mcp_entry(name, config):
             return name
     return None
+
+
+def _copy_private_state_file(source: Path, destination: Path) -> bool:
+    """Copy one operator state file into a new owner-only data directory."""
+    try:
+        source_fd = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise RuntimeError("OpenCode credential state cannot be read safely") from exc
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        source_stat = os.fstat(source_fd)
+        if not stat.S_ISREG(source_stat.st_mode):
+            raise RuntimeError("OpenCode credential state must be a regular file")
+        destination_fd = os.open(
+            destination,
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        os.fchmod(destination_fd, 0o600)
+        try:
+            with os.fdopen(source_fd, "rb") as reader:
+                source_fd = -1
+                with os.fdopen(destination_fd, "wb") as writer:
+                    destination_fd = -1
+                    shutil.copyfileobj(reader, writer)
+                    writer.flush()
+                    os.fsync(writer.fileno())
+        finally:
+            if destination_fd >= 0:
+                os.close(destination_fd)
+    except BaseException:
+        try:
+            destination.unlink()
+        except OSError:
+            pass
+        raise
+    finally:
+        if source_fd >= 0:
+            os.close(source_fd)
+    return True
+
+
+def _state_file_metadata(path: Path) -> tuple[int, int, int, int, int, int] | None:
+    """Capture a regular state file identity without following links."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise RuntimeError("OpenCode credential state cannot be inspected safely") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise RuntimeError("OpenCode credential state must be a regular file")
+        return (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_size,
+            metadata.st_mtime_ns,
+            metadata.st_ctime_ns,
+            metadata.st_mode,
+        )
+    finally:
+        os.close(descriptor)
+
+
+def _copy_private_state_bundle(source: Path, destination_directory: Path) -> None:
+    """Copy the persistent credential store and WAL as one stable snapshot.
+
+    The operator database may be configured with an arbitrary basename through
+    ``OPENCODE_DB``.  The child is deliberately pinned to the canonical
+    ``opencode.db`` destination, so source and WAL names must be translated
+    together rather than copied with ``Path.name``.
+
+    The ``-shm`` file is SQLite's process-local shared-memory index.  It is
+    intentionally rebuilt by the child rather than copied: its mmap-backed
+    contents cannot be made consistent by a byte copy, while the main store and
+    WAL contain the durable state needed to recover the active login.
+    """
+    source_paths = [source, Path(str(source) + "-wal")]
+    destination_paths = {
+        source: destination_directory / "opencode.db",
+        Path(str(source) + "-wal"): destination_directory / "opencode.db-wal",
+    }
+    destination_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    for attempt in range(3):
+        before: dict[Path, tuple[int, int, int, int, int, int]] = {}
+        for path in source_paths:
+            metadata = _state_file_metadata(path)
+            if metadata is not None:
+                before[path] = metadata
+        if source not in before:
+            raise RuntimeError("OpenCode credential state disappeared during isolation")
+        copied_destinations: list[Path] = []
+        stable = False
+        try:
+            for path in source_paths:
+                if path not in before:
+                    continue
+                destination = destination_paths[path]
+                if not _copy_private_state_file(path, destination):
+                    raise RuntimeError("OpenCode credential state changed during isolation")
+                copied_destinations.append(destination)
+            after = {path: _state_file_metadata(path) for path in source_paths}
+            if all(after[path] == metadata for path, metadata in before.items()) and all(
+                path in before for path, metadata in after.items() if metadata is not None
+            ):
+                stable = True
+                return
+        except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            if attempt == 2:
+                raise
+        finally:
+            if copied_destinations and not stable:
+                for destination in copied_destinations:
+                    try:
+                        destination.unlink()
+                    except FileNotFoundError:
+                        pass
+        if attempt < 2:
+            time.sleep(0.05 * (attempt + 1))
+    raise RuntimeError("OpenCode credential state changed during isolation")
+
+
+def _source_opencode_database_path(data_home: Path, environment: dict[str, str]) -> Path:
+    """Resolve OpenCode's operator credential database without following links.
+
+    OpenCode permits ``OPENCODE_DB`` to move the store outside the XDG data
+    directory.  The child is always pinned to a private destination later;
+    this helper only identifies the operator source that must be snapshotted.
+    Relative overrides retain the CLI's current-working-directory semantics,
+    while the final file identity is still validated by the no-follow copy
+    routine.
+    """
+    configured = environment.get("OPENCODE_DB", "").strip()
+    if not configured:
+        return data_home / "opencode/opencode.db"
+    try:
+        path = Path(configured).expanduser()
+    except (OSError, RuntimeError, ValueError):
+        raise RuntimeError("OpenCode credential database path is invalid") from None
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path
 
 
 def _has_current_quota_provider_error(text: str) -> bool:
@@ -170,7 +323,9 @@ def _has_current_quota_provider_error(text: str) -> bool:
 
 def resolve_opencode_runtime() -> tuple[str, dict[str, str]]:
     """Pin the server's executable and PATH for both probing and terminal launch."""
-    environment = os.environ.copy()
+    from cli_agent_orchestrator.utils.database_environment import without_database_environment
+
+    environment = without_database_environment(os.environ)
     environment["PATH"] = os.pathsep.join(
         os.path.abspath(part or ".")
         for part in environment.get("PATH", os.defpath).split(os.pathsep)
@@ -207,6 +362,33 @@ def _has_current_v2_model_refusal(text: str) -> bool:
     )
 
 
+_V2_AUTH_FAILURE_MARKERS = (
+    "this api key has expired",
+    "this api key is invalid",
+    "api key is invalid",
+    "create a new api key",
+)
+
+
+def _has_current_v2_auth_provider_error(text: str) -> bool:
+    """Recognize an OpenCode Go auth rejection in the current idle viewport.
+
+    Mini v2 renders an expired-key message without the generic provider-error
+    heading. The structural footer guard keeps quoted task text from turning
+    into an error: the message must be in the current tail immediately before
+    an OpenCode Go idle footer.
+    """
+    rows = [row.strip() for row in text.splitlines() if row.strip()]
+    if not rows:
+        return False
+    footer = rows[-1]
+    if re.search(IDLE_FOOTER_PATTERN, footer) is None or "OpenCode Go" not in footer:
+        return False
+    return any(
+        any(marker in row.lower() for marker in _V2_AUTH_FAILURE_MARKERS) for row in rows[-6:-1]
+    )
+
+
 class OpenCodeCliProvider(BaseProvider):
     """Provider for OpenCode CLI integration.
 
@@ -220,6 +402,8 @@ class OpenCodeCliProvider(BaseProvider):
         _agent_profile: Name of the installed OpenCode agent to launch
         _model: Optional model override (e.g. ``anthropic/claude-sonnet-4-6``)
     """
+
+    supports_interaction_mcp_overlay = True
 
     # Uses the same durable receipt implementation as every opted-in adapter;
     # no provider-pair or scheduler special case is required.
@@ -251,19 +435,72 @@ class OpenCodeCliProvider(BaseProvider):
         self._cli_major = 1
         self._v2_config_dir = None
         self._launch_runtime: tuple[str, dict[str, str]] | None = None
+        self._runtime_probe_complete = False
         self._owned_v2_config_dir: Path | None = None
         self._v2_data_home: Path | None = None
+        self._v2_database_path: Path | None = None
         self._v2_cao_mcp_server_name: str | None = None
+        self._interaction_preflight_ok = False
+        self._interaction_source_requested = bool(
+            isinstance(allowed_tools, list) and "@cao-mcp-server" in allowed_tools
+        )
 
     @property
     def runtime_variant(self) -> str:
         return f"opencode-v{self._cli_major}"
 
+    @property
+    def interaction_capabilities(self):
+        """Do not advertise a v2 interaction channel before strict preflight."""
+        capabilities = super().interaction_capabilities
+        if self._cli_major == 2 and (
+            not self._interaction_source_requested or not self._interaction_preflight_ok
+        ):
+            capabilities["explicit_channel"] = "unsupported"
+        return capabilities
+
+    def interaction_source_configured(self, mcp_servers) -> bool:
+        """Whether native OpenCode v2 config exposes CAO's MCP source.
+
+        OpenCode v2 does not consume the profile-level ``mcp_servers`` mapping
+        used by most adapters. Its native ``opencode.json`` is copied into a
+        private per-terminal configuration and the generated v2 agent grant is
+        checked by ``validate_v2_mcp_configuration`` during initialization.
+        Reading that native config here prevents advertising a source that the
+        child process cannot actually start; ``mcp_servers`` remains in the
+        signature for the shared provider interface.
+        """
+        if not self.supports_interaction_mcp_overlay:
+            return False
+        try:
+            self._prepare_runtime()
+            if self._cli_major != 2:
+                return False
+            from cli_agent_orchestrator.utils.opencode_config import read_config
+
+            source_config = read_config()
+            # Use the same active-server predicate as initialization.  A
+            # bundled entry that is explicitly disabled cannot receive the
+            # capability overlay or answer interaction tools.
+            return _find_cao_mcp_server_name(source_config) is not None
+        except Exception:
+            return False
+
+    def _prepare_runtime(self) -> None:
+        """Resolve and version-pin the executable exactly once per instance."""
+        if self._launch_runtime is None:
+            self._launch_runtime = resolve_opencode_runtime()
+        if not self._runtime_probe_complete:
+            self._cli_major = detect_opencode_major(self._launch_runtime)
+            self._runtime_probe_complete = True
+
     def restore_runtime_variant(self, variant: Optional[str]) -> None:
         if variant is None:
             # Legacy rows predate durable dialect storage. Probe only the
-            # executable; never initialize or launch another agent.
-            self._cli_major = detect_opencode_major()
+            # executable; never initialize or launch another agent. Cache both
+            # the resolved executable and dialect so initialize() does not
+            # synchronously probe the same CLI a second time.
+            self._prepare_runtime()
         elif variant in {"opencode-v1", "opencode-v2"}:
             self._cli_major = int(variant[-1])
         else:
@@ -385,8 +622,12 @@ class OpenCodeCliProvider(BaseProvider):
             TimeoutError: If shell or OpenCode doesn't reach IDLE/COMPLETED in time.
         """
         self._validate_native_profile()
-        self._launch_runtime = resolve_opencode_runtime()
-        self._cli_major = await asyncio.to_thread(detect_opencode_major, self._launch_runtime)
+        # ``interaction_source_configured`` may already have prepared the
+        # runtime during terminal creation.  Reuse that exact executable and
+        # version instead of probing twice (and never run the blocking probe
+        # on the event loop when creation did not need the capability path).
+        if not self._runtime_probe_complete:
+            await asyncio.to_thread(self._prepare_runtime)
         try:
             return await self._initialize_validated()
         except BaseException:
@@ -396,6 +637,8 @@ class OpenCodeCliProvider(BaseProvider):
     def _validate_native_profile(self) -> None:
         """Read the selected native profile without installing or rewriting it."""
         if not self._agent_profile:
+            if self._interaction_source_requested:
+                raise ValueError("OpenCode v2 CAO interaction requires a native agent profile")
             return
         import frontmatter
 
@@ -423,30 +666,100 @@ class OpenCodeCliProvider(BaseProvider):
             raise TimeoutError(f"Shell initialization timed out after {init_timeout}s")
 
         if self._cli_major == 2:
+            # A provider instance may be initialized more than once after a
+            # failed deferred start.  Never retain a previous preflight result
+            # across a new generated configuration.
+            self._interaction_preflight_ok = False
             from cli_agent_orchestrator.utils.opencode_config import read_config
-            from cli_agent_orchestrator.utils.opencode_v2 import write_v2_configuration
+            from cli_agent_orchestrator.utils.opencode_v2 import (
+                validate_v2_mcp_configuration,
+                write_v2_configuration,
+            )
 
             parent = CAO_HOME_DIR / "opencode-v2"
-            parent.mkdir(parents=True, exist_ok=True)
+            parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.chmod(parent, 0o700)
             self._owned_v2_config_dir = Path(tempfile.mkdtemp(prefix="terminal-", dir=parent))
             source_config = read_config()
+            native_mcp = source_config.get("mcp", {})
+            if isinstance(native_mcp, dict):
+                source_config = dict(source_config)
+                native_mcp = dict(native_mcp)
+                if isinstance(native_mcp.get("servers"), dict):
+                    native_mcp["servers"] = overlay_interaction_capability_file(
+                        native_mcp["servers"],
+                        self.interaction_capability_file,
+                        interaction_pull_flow_only=self._interaction_source_requested,
+                    )
+                else:
+                    source_servers = {
+                        key: value for key, value in native_mcp.items() if isinstance(value, dict)
+                    }
+                    overlaid = overlay_interaction_capability_file(
+                        source_servers,
+                        self.interaction_capability_file,
+                        interaction_pull_flow_only=self._interaction_source_requested,
+                    )
+                    native_mcp.update(overlaid)
+                source_config["mcp"] = native_mcp
             self._v2_cao_mcp_server_name = _find_cao_mcp_server_name(source_config)
-            source_auth = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share")))
-            source_auth = source_auth / "opencode/auth.json"
-            self._v2_config_dir = write_v2_configuration(
+            if self._interaction_source_requested and self._v2_cao_mcp_server_name is None:
+                raise ValueError("OpenCode v2 CAO MCP server is unavailable or disabled")
+            if self._interaction_source_requested and self.interaction_capability_file is None:
+                raise ValueError("OpenCode v2 CAO MCP capability is unavailable")
+            runtime_environment = dict(self._launch_runtime[1]) if self._launch_runtime else {}
+            # The resolver normally preserves OPENCODE_DB.  Merge the current
+            # environment as a defensive fallback for injected runtimes and
+            # keep XDG selection aligned with the process that will launch.
+            runtime_environment = {**dict(os.environ), **runtime_environment}
+            source_data_home_value = runtime_environment.get("XDG_DATA_HOME", "").strip()
+            source_data_home = Path(source_data_home_value or str(Path.home() / ".local/share"))
+            source_auth = source_data_home / "opencode/auth.json"
+            source_credential_db = _source_opencode_database_path(
+                source_data_home, runtime_environment
+            )
+            v2_config_dir = write_v2_configuration(
                 self._owned_v2_config_dir,
                 source_agents=OPENCODE_AGENTS_DIR,
                 source_config=source_config,
                 selected_model=self._model,
                 session_id=self.terminal_id,
                 source_auth=source_auth,
+                source_credential_db=source_credential_db,
+            )
+            self._v2_config_dir = v2_config_dir
+            validate_v2_mcp_configuration(
+                v2_config_dir,
+                agent_name=self._agent_profile,
+                server_name=(
+                    self._v2_cao_mcp_server_name if self._interaction_source_requested else None
+                ),
+            )
+            # ``server_name=None`` is intentionally a no-op: an ordinary v2
+            # terminal may carry a native MCP server without requesting CAO's
+            # explicit interaction channel.  Only a completed, requested
+            # grant validation is allowed to advertise that channel.
+            self._interaction_preflight_ok = (
+                self._interaction_source_requested and self._v2_cao_mcp_server_name is not None
             )
             self._v2_data_home = self._owned_v2_config_dir / "data"
             self._v2_data_home.mkdir(mode=0o700)
             opencode_data = self._v2_data_home / "opencode"
             opencode_data.mkdir(mode=0o700)
-            if source_auth.is_file():
-                (opencode_data / "auth.json").symlink_to(source_auth.resolve())
+            self._v2_database_path = opencode_data / "opencode.db"
+            credential_store_present = (
+                source_credential_db.is_file() or source_credential_db.is_symlink()
+            )
+            # OpenCode v2 persists the active login in opencode.db.  When that
+            # store exists it is authoritative; copying auth.json as well can
+            # make the CLI choose a stale legacy credential during migration
+            # (and may follow a harness link).  Keep auth.json only for the
+            # legacy installation that has no v2 store.
+            if not credential_store_present and (source_auth.is_file() or source_auth.is_symlink()):
+                if not _copy_private_state_file(source_auth, opencode_data / "auth.json"):
+                    raise RuntimeError("OpenCode auth state disappeared during isolation")
+            if credential_store_present:
+                _copy_private_state_bundle(source_credential_db, opencode_data)
             if self._v2_cao_mcp_server_name is not None:
                 (self._v2_data_home / "mcp-startup.log").touch(mode=0o600)
         command = self._build_launch_command()
@@ -543,6 +856,8 @@ class OpenCodeCliProvider(BaseProvider):
                     "OpenCode initial viewport probe failed for %s: %s", self.terminal_id, exc
                 )
                 observed = TerminalStatus.UNKNOWN
+            if observed == TerminalStatus.ERROR:
+                raise RuntimeError("OpenCode CLI reported an error during initial readiness")
             if observed in targets:
                 logger.info(
                     "OpenCode initial screen ready for %s: %s", self.terminal_id, observed.value
@@ -572,6 +887,10 @@ class OpenCodeCliProvider(BaseProvider):
             cmd_parts += ["mini", "--standalone"]
             if self._v2_data_home is not None:
                 env_pairs.append("XDG_DATA_HOME=" + shlex.quote(str(self._v2_data_home)))
+                private_database = self._v2_database_path or (
+                    self._v2_data_home / "opencode/opencode.db"
+                )
+                env_pairs.append("OPENCODE_DB=" + shlex.quote(str(private_database)))
         if self._agent_profile:
             cmd_parts += ["--agent", self._agent_profile]
         if self._model:
@@ -642,6 +961,8 @@ class OpenCodeCliProvider(BaseProvider):
         # until the step timeout, hiding a definitive error as a monitor lag.
         if _has_current_quota_provider_error(clean):
             return TerminalStatus.WAITING_QUOTA
+        if self._cli_major == 2 and _has_current_v2_auth_provider_error(clean):
+            return TerminalStatus.ERROR
         if re.search(PROVIDER_ERROR_PATTERN, clean, re.IGNORECASE) or (
             self._cli_major == 2 and _has_current_v2_model_refusal(clean)
         ):
@@ -743,6 +1064,8 @@ class OpenCodeCliProvider(BaseProvider):
         # ── 1. ERROR ─────────────────────────────────────────────────────
         if _has_current_quota_provider_error(joined):
             return TerminalStatus.WAITING_QUOTA
+        if self._cli_major == 2 and _has_current_v2_auth_provider_error(joined):
+            return TerminalStatus.ERROR
         if re.search(PROVIDER_ERROR_PATTERN, joined, re.IGNORECASE) or (
             self._cli_major == 2 and _has_current_v2_model_refusal(joined)
         ):
@@ -959,4 +1282,5 @@ class OpenCodeCliProvider(BaseProvider):
             self._owned_v2_config_dir = None
             self._v2_config_dir = None
             self._v2_data_home = None
+            self._v2_database_path = None
             self._v2_cao_mcp_server_name = None

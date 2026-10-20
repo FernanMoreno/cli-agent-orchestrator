@@ -41,10 +41,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
-)
 from cli_agent_orchestrator.constants import WORKFLOW_JOURNAL_RESULT_MAX_BYTES as CAP
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.models.workflow_runtime import RunState, StepState
@@ -64,6 +60,7 @@ from cli_agent_orchestrator.services.script_runner import (
     record_step_completion,
 )
 from cli_agent_orchestrator.services.secret_gate import redact_secrets
+from cli_agent_orchestrator.services.status_monitor import StatusMonitor
 from cli_agent_orchestrator.services.step_fingerprint import (
     CREATION_ONLY,
     StepCallFields,
@@ -86,18 +83,11 @@ _FAKE_AWS_KEY = "AKIA" + "IOSFODNN7EXAMPLE"  # 20 chars
 # Fixtures + harness
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
-def _journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Temp SQLite journal + an isolated process-local registry around each test."""
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
-    from cli_agent_orchestrator.clients.work_repository import WorkRepository
-
-    WorkRepository(db_path).initialize()
+def _journal():
+    """Use the isolated PostgreSQL schema and reset process-local registry state."""
     workflow_service.run_registry.clear()
     workflow_service._active_drives.clear()
-    yield db_path
+    yield
     workflow_service.run_registry.clear()
     workflow_service._active_drives.clear()
 
@@ -156,12 +146,24 @@ def _patch_terminal_layer(
     row before it executes" claim is about.
     """
 
-    def _send(terminal_id: str, prompt: str, **kwargs: Any) -> bool:
+    def _send(terminal_id: str, prompt: str, **kwargs: Any) -> int:
+        turn_sequence = agent_step.status_monitor.notify_input_sent(terminal_id, real_send=True)
         if on_send is not None:
             on_send()
-        return True
+        return turn_sequence
 
+    # Keep the real turn sequence local to this helper invocation.
+    isolated_monitor = StatusMonitor()
     return (
+        patch(f"{_AGENT_STEP}.status_monitor", new=isolated_monitor),
+        patch(
+            "cli_agent_orchestrator.services.terminal_service.status_monitor",
+            new=isolated_monitor,
+        ),
+        patch(
+            "cli_agent_orchestrator.services.remote_terminal_service.placement",
+            return_value=None,
+        ),
         patch(
             f"{_AGENT_STEP}.terminal_service.create_terminal",
             new=AsyncMock(return_value=_fake_terminal(created_id)),
@@ -199,6 +201,9 @@ def _drive(hook: Any = None, *, layer: Optional[Dict[str, Any]] = None, **step_k
         patches[6],
         patches[7],
         patches[8],
+        patches[9],
+        patches[10],
+        patches[11],
     ):
         return asyncio.run(run_agent_step(on_step_terminal_ready=hook, **step_kwargs))
 
@@ -359,9 +364,12 @@ def test_the_create_path_notifies_BEFORE_the_readiness_wait():
         patches[2],
         patches[3],
         patches[4],
+        patches[5],
         patches[6],
         patches[7],
-        patches[8],
+        patches[9],
+        patches[10],
+        patches[11],
         patch(f"{_AGENT_STEP}.wait_until_status", new=_watched_wait),
     ):
         asyncio.run(

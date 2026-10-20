@@ -121,8 +121,7 @@ def install(agent_source: str, provider: Optional[str], env_vars: tuple[str, ...
     result = install_agent(service_source, provider, parsed_env or None)
 
     if not result.success:
-        click.echo(f"Error: {result.message}", err=True)
-        return
+        raise click.ClickException(result.message)
 
     if copied_from_file:
         click.echo("✓ Copied agent from file to local store")

@@ -1,13 +1,13 @@
 """Cooperative write reservations with durable ownership and explicit stopped-writer release."""
 
 import math
-import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 from uuid import uuid4
 
+from cli_agent_orchestrator.clients.postgres import Connection
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
 
@@ -94,6 +94,16 @@ class WorkReservations:
         self._stop_verifier = stop_verifier
 
     @staticmethod
+    def _lock_path_aggregate(connection: Connection) -> None:
+        """Serialize occupied-path scans with reserve and stopped-writer release."""
+        if not connection.in_transaction:
+            raise ReservationConflict("reservation mutation requires an active transaction")
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"cao:work-path-reservations:{connection.target.store_id}",),
+        )
+
+    @staticmethod
     def _paths(checkout_root: Path, paths: Iterable[Path | str]):
         if isinstance(paths, (str, bytes)):
             raise ReservationConflict("paths must be an explicit collection")
@@ -147,7 +157,7 @@ class WorkReservations:
         _positive(generation)
         _positive(expected_attempt_revision)
         row = connection.execute(
-            "SELECT a.*,w.job_id,w.state AS work_state,j.state AS job_state FROM work_attempts a JOIN work_items w ON w.id=a.work_item_id JOIN work_jobs j ON j.id=w.job_id WHERE a.id=?",
+            "SELECT a.*,w.job_id,w.state AS work_state,j.state AS job_state FROM work_attempts a JOIN work_items w ON w.id=a.work_item_id JOIN work_jobs j ON j.id=w.job_id WHERE a.id=%s",
             (attempt_id,),
         ).fetchone()
         if (
@@ -160,7 +170,7 @@ class WorkReservations:
             raise ReservationConflict("reservation owner identity or revision changed")
         if active:
             latest = connection.execute(
-                "SELECT id FROM work_attempts WHERE work_item_id=? ORDER BY generation DESC LIMIT 1",
+                "SELECT id FROM work_attempts WHERE work_item_id=%s ORDER BY generation DESC LIMIT 1",
                 (work_item_id,),
             ).fetchone()
             if (
@@ -186,16 +196,16 @@ class WorkReservations:
         )
 
     @staticmethod
-    def _load(connection: sqlite3.Connection, reservation_id: str) -> ReservationSet:
+    def _load(connection: Connection, reservation_id: str) -> ReservationSet:
         row = connection.execute(
-            "SELECT * FROM work_reservation_sets WHERE id=?", (reservation_id,)
+            "SELECT * FROM work_reservation_sets WHERE id=%s", (reservation_id,)
         ).fetchone()
         if row is None:
             raise ReservationConflict("reservation set not found")
         paths = tuple(
             item[0]
             for item in connection.execute(
-                "SELECT resource_key FROM work_path_reservations WHERE reservation_set_id=? ORDER BY resource_key",
+                "SELECT resource_key FROM work_path_reservations WHERE reservation_set_id=%s ORDER BY resource_key",
                 (reservation_id,),
             )
         )
@@ -248,7 +258,7 @@ class WorkReservations:
 
     def _event(self, connection, value, actor_id, event_type):
         connection.execute(
-            "UPDATE work_items SET revision=revision+1 WHERE id=?", (value.work_item_id,)
+            "UPDATE work_items SET revision=revision+1 WHERE id=%s", (value.work_item_id,)
         )
         self.repository._append_event(
             connection,
@@ -309,7 +319,7 @@ class WorkReservations:
         expires_at: float,
         actor_id: str,
     ) -> ReservationSet:
-        """Caller owns verified BEGIN IMMEDIATE; this helper never commits."""
+        """Caller owns the verified transaction; this helper never commits."""
         if not connection.in_transaction:
             raise ValueError("a caller-owned transaction is required")
         _identity(actor_id)
@@ -324,8 +334,9 @@ class WorkReservations:
             active=True,
         )
         expires_at = self._expiry(expires_at, owner)
+        self._lock_path_aggregate(connection)
         existing = connection.execute(
-            "SELECT id FROM work_reservation_sets WHERE attempt_id=? AND generation=?",
+            "SELECT id FROM work_reservation_sets WHERE attempt_id=%s AND generation=%s",
             (attempt_id, generation),
         ).fetchone()
         if existing:
@@ -356,7 +367,7 @@ class WorkReservations:
                     raise ReservationConflict("path or existing inode is already reserved")
         identifier = uuid4().hex
         connection.execute(
-            "INSERT INTO work_reservation_sets(id,job_id,work_item_id,attempt_id,generation,checkout_root,expires_at,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO work_reservation_sets(id,job_id,work_item_id,attempt_id,generation,checkout_root,expires_at,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
             (
                 identifier,
                 job_id,
@@ -369,7 +380,7 @@ class WorkReservations:
             ),
         )
         connection.executemany(
-            "INSERT INTO work_path_reservations(reservation_set_id,resource_key,device,inode) VALUES (?,?,?,?)",
+            "INSERT INTO work_path_reservations(reservation_set_id,resource_key,device,inode) VALUES (%s,%s,%s,%s)",
             [(identifier, *resource) for resource in resources],
         )
         value = self._load(connection, identifier)
@@ -420,7 +431,7 @@ class WorkReservations:
             )
             expires_at = self._expiry(max(value.expires_at, self._expiry(expires_at, owner)), owner)
             changed = connection.execute(
-                "UPDATE work_reservation_sets SET expires_at=?,revision=revision+1 WHERE id=? AND generation=? AND revision=? AND state='active'",
+                "UPDATE work_reservation_sets SET expires_at=%s,revision=revision+1 WHERE id=%s AND generation=%s AND revision=%s AND state='active'",
                 (expires_at, reservation_id, generation, expected_revision),
             ).rowcount
             if changed != 1:
@@ -460,6 +471,7 @@ class WorkReservations:
             )
         with self.repository.transaction() as connection:
             self.repository._verify(connection)
+            self._lock_path_aggregate(connection)
             self._checked(
                 connection,
                 reservation_id,
@@ -469,7 +481,7 @@ class WorkReservations:
                 active=False,
             )
             changed = connection.execute(
-                "UPDATE work_reservation_sets SET state='released',revision=revision+1,stop_evidence_ref=?,released_at=? WHERE id=? AND generation=? AND revision=? AND state='active'",
+                "UPDATE work_reservation_sets SET state='released',revision=revision+1,stop_evidence_ref=%s,released_at=%s WHERE id=%s AND generation=%s AND revision=%s AND state='active'",
                 (proof.evidence_ref, time.time(), reservation_id, generation, expected_revision),
             ).rowcount
             if changed != 1:

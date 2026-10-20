@@ -12,6 +12,7 @@
 import asyncio
 import re
 from datetime import datetime, timedelta, timezone
+from test.postgres.orm import configured_orm_engine
 
 import pytest
 from sqlalchemy import create_engine
@@ -27,7 +28,7 @@ def _run(coro):
 @pytest.fixture
 def svc(tmp_path):
     db_path = tmp_path / "test.db"
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return MemoryService(base_dir=tmp_path / "memory", db_engine=engine)
 

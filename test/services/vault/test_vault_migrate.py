@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from test.fixtures.vault_factory import build_vault_fixture
+from test.postgres.orm import configured_orm_engine
 
 import pytest
 from sqlalchemy import create_engine
@@ -36,7 +37,7 @@ class _Relationships:
 
 @pytest.fixture
 def svc(tmp_path, monkeypatch):
-    engine = create_engine(f"sqlite:///{tmp_path / 'migration.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reconcile_module, "SessionLocal", Session)

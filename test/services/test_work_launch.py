@@ -16,6 +16,8 @@ from cli_agent_orchestrator.services import settings_service, terminal_service
 from cli_agent_orchestrator.services.work_admission import WorkAdmission
 from cli_agent_orchestrator.services.work_service import DeliveryUncertain
 
+pytestmark = pytest.mark.postgres
+
 
 class LaunchBackend(AdmissionOnlyBackend):
     def __init__(self):
@@ -40,8 +42,16 @@ class LaunchBackend(AdmissionOnlyBackend):
 @pytest.fixture
 def launch_context(context, isolated_memory_db, monkeypatch):
     from cli_agent_orchestrator import constants
+    from cli_agent_orchestrator.clients.interaction_repository import InteractionRepository
+    from cli_agent_orchestrator.services.interactions import service as interaction_service
+    from cli_agent_orchestrator.services.interactions.service import InteractionService
 
     monkeypatch.setattr(constants, "LOCK_DIR", context.repo.path.parent / "locks")
+    interaction_service_instance = InteractionService(
+        InteractionRepository(context.repo.target, context.repo)
+    )
+    interaction_service_instance.initialize()
+    monkeypatch.setattr(interaction_service, "_DEFAULT_SERVICE", interaction_service_instance)
     module = importlib.import_module("cli_agent_orchestrator.services.work_launch")
     providers = {}
 
@@ -187,7 +197,7 @@ async def test_registered_dispatch_waits_for_terminal_dispatch_lock_before_bindi
     monkeypatch.setattr(work_admission, "terminal_dispatch_lock", observe_dispatch_lock)
 
     def hold_terminal_lock():
-        with terminal_dispatch_lock(context.repo.path, terminal_id):
+        with terminal_dispatch_lock(context.repo.target, terminal_id):
             holder_ready.set()
             release_holder.wait(timeout=10)
 
@@ -240,7 +250,7 @@ async def test_restarted_registered_launch_delivers_exact_persisted_snapshot_wit
 
     The admitted order is persisted before the original service and delivery
     registry are discarded.  A rebuilt managed dispatcher must materialize only
-    the SQLite snapshot, including its redaction/truncation/empty semantics.
+    the PostgreSQL snapshot, including its redaction/truncation/empty semantics.
     """
     context = launch_context
     work = admit(
@@ -270,7 +280,7 @@ async def test_restarted_registered_launch_delivers_exact_persisted_snapshot_wit
     )
     module = importlib.import_module("cli_agent_orchestrator.services.work_launch")
     context.service = WorkAdmission(
-        WorkRepository(context.repo.path),
+        WorkRepository(context.repo.target, filesystem_home=context.repo.filesystem_home),
         backends={"test": context.backend},
         delivery_adapters={("launch", 1): module.launch_adapter()},
     )

@@ -1,43 +1,31 @@
-"""Journal operations finish transactions and close only their own connections."""
+"""Journal operations finish transactions and close only connections they own."""
 
-import sqlite3
-from contextlib import closing
+from __future__ import annotations
+
+from typing import Any, Callable, List
 
 import pytest
-from sqlalchemy import create_engine
 
-from cli_agent_orchestrator import constants
-from cli_agent_orchestrator.clients import database
+from cli_agent_orchestrator.clients.postgres import Connection, DatabaseError
 from cli_agent_orchestrator.services import workflow_journal as journal
+
+_PROBE_RUN = "workflow-connection-ownership-probe"
 
 
 @pytest.fixture
-def journal_database(tmp_path, monkeypatch):
-    path = tmp_path / "journal.db"
-    engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
-    monkeypatch.setattr(constants, "DATABASE_FILE", path)
-    monkeypatch.setattr(constants, "DB_DIR", path.parent)
-    monkeypatch.setattr(database, "DB_DIR", path.parent)
-    monkeypatch.setattr(database, "engine", engine)
-    monkeypatch.setattr(journal, "_MIGRATED_PATHS", set())
-    monkeypatch.setattr(journal, "_event_migrated_paths", set())
-    database.init_db()
-    with closing(journal._connect()), closing(journal._connect_event()):
-        pass
-    with closing(sqlite3.connect(path)) as connection, connection:
-        connection.execute("CREATE TABLE transaction_probe (value TEXT NOT NULL)")
-    try:
-        yield path
-    finally:
-        engine.dispose()
+def journal_database():
+    """Seed an event owner in the isolated PostgreSQL schema supplied by test/conftest.py."""
+    journal.insert_run("owned-run", "workflow", "{}", "{}", "running", "now")
+    journal.append_event("owned-run", 1, "started", event_schema_version=1, ts="now")
+    yield
 
 
-def _insert_run(**kwargs):
-    return journal.insert_run("owned-run", "workflow", "{}", "{}", "running", "now", **kwargs)
+def _insert_run():
+    return journal.insert_run("owned-insert-run", "workflow", "{}", "{}", "running", "now")
 
 
 def _append_event():
-    return journal.append_event("owned-run", 1, "started", event_schema_version=1, ts="now")
+    return journal.append_event("owned-run", 2, "step_started", event_schema_version=1, ts="now")
 
 
 @pytest.mark.parametrize(
@@ -51,67 +39,125 @@ def _append_event():
 )
 @pytest.mark.parametrize("fail_query", (False, True))
 def test_owned_operation_closes_after_transaction(
-    journal_database, monkeypatch, operation, fail_query
+    journal_database,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: Callable[[], Any],
+    fail_query: bool,
 ):
-    connect = sqlite3.connect
-    connections = []
+    """An owned connection commits or rolls back, then closes on both paths."""
+    real_connect = journal._connect
+    connections: List["TrackedConnection"] = []
 
-    class TrackedConnection(sqlite3.Connection):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self.events = []
-            self.active = False
+    class TrackedConnection:
+        def __init__(self, real: Connection):
+            self.real = real
+            self.events: List[str] = []
 
         def __enter__(self):
-            super().__enter__()
-            self.active = True
-            super().execute("INSERT INTO transaction_probe VALUES ('pending')")
+            self.real.__enter__()
+            # This marker is in the same PostgreSQL transaction as the production operation.
+            # The division-by-zero below proves the server rolls it back on the failure path.
+            self.real.execute(
+                "INSERT INTO workflow_run "
+                "(run_id, workflow_name, spec_snapshot, inputs_json, state, started_at, "
+                "tier, generation) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (_PROBE_RUN, "workflow", "{}", "{}", "running", "now", "yaml", "1"),
+            )
             return self
 
-        def execute(self, sql, parameters=()):
-            if self.active and fail_query:
-                raise sqlite3.OperationalError("injected journal query failure")
-            return super().execute(sql, parameters)
+        def execute(self, statement, params=()):
+            if fail_query:
+                # Let PostgreSQL raise a real error in this owned transaction.
+                return self.real.execute("SELECT 1 / 0")
+            return self.real.execute(statement, params)
 
-        def __exit__(self, exception_type, exception, traceback):
-            result = super().__exit__(exception_type, exception, traceback)
-            self.active = False
-            self.events.append("rollback" if exception_type else "commit")
-            return result
+        def executemany(self, statement, params):
+            return self.real.executemany(statement, params)
+
+        def __exit__(self, exc_type, exc, traceback):
+            self.events.append("rollback" if exc_type else "commit")
+            return self.real.__exit__(exc_type, exc, traceback)
 
         def close(self):
             self.events.append("close")
-            super().close()
+            self.real.close()
 
-    def tracked_connect(*args, **kwargs):
-        kwargs["factory"] = TrackedConnection
-        connection = connect(*args, **kwargs)
-        connections.append(connection)
-        return connection
+        def __getattr__(self, name):
+            return getattr(self.real, name)
 
-    monkeypatch.setattr(sqlite3, "connect", tracked_connect)
+    def tracked_connect(original):
+        def factory(*args, **kwargs):
+            tracked = TrackedConnection(original(*args, **kwargs))
+            connections.append(tracked)
+            return tracked
+
+        return factory
+
+    # _connect_event delegates to the module-global _connect at call time, so
+    # wrapping both factories would nest trackers and execute the marker twice.
+    # Tracking _connect alone observes both ordinary and event connections.
+    monkeypatch.setattr(journal, "_connect", tracked_connect(real_connect))
+
     if fail_query:
-        with pytest.raises(sqlite3.OperationalError, match="injected journal query failure"):
+        with pytest.raises(DatabaseError):
             operation()
     else:
         operation()
+
     assert len(connections) == 1
     owned = connections[0]
-    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
-        owned.execute("SELECT 1")
     assert owned.events == ["rollback" if fail_query else "commit", "close"]
-    with closing(connect(journal_database)) as verification:
-        rows = verification.execute("SELECT value FROM transaction_probe").fetchall()
-    assert rows == ([] if fail_query else [("pending",)])
+    assert owned.real.raw.closed
+
+    # Restore the normal factory before reading the marker. The owned marker committed only
+    # after success and was rolled back by PostgreSQL when the operation's query failed.
+    monkeypatch.setattr(journal, "_connect", real_connect)
+    assert (journal.get_run(_PROBE_RUN) is None) is fail_query
 
 
-def test_borrowed_run_and_event_connection_stays_open_and_uncommitted(journal_database):
-    with closing(sqlite3.connect(journal_database)) as borrowed:
-        borrowed.execute("INSERT INTO transaction_probe VALUES ('borrowed')")
-        _insert_run(connection=borrowed)
+def test_borrowed_connection_stays_open_and_uncommitted(journal_database):
+    """A caller-owned connection retains its transaction and controls rollback."""
+    borrowed = journal._connect()
+    try:
+        journal.insert_run(
+            "borrowed-run",
+            "workflow",
+            "{}",
+            "{}",
+            "running",
+            "now",
+            connection=borrowed,
+        )
         journal.delete_run_events("owned-run", conn=borrowed)
+
         assert borrowed.in_transaction
-        assert borrowed.execute("SELECT run_id FROM workflow_run").fetchall() == [("owned-run",)]
+        assert (
+            borrowed.execute(
+                "SELECT run_id FROM workflow_run WHERE run_id=%s", ("borrowed-run",)
+            ).fetchall()[0][0]
+            == "borrowed-run"
+        )
+        assert (
+            borrowed.execute(
+                "SELECT count(*) FROM workflow_run_event WHERE run_id=%s", ("owned-run",)
+            ).fetchone()[0]
+            == 0
+        )
+
         borrowed.rollback()
-        assert borrowed.execute("SELECT run_id FROM workflow_run").fetchall() == []
-        assert borrowed.execute("SELECT value FROM transaction_probe").fetchall() == []
+
+        assert (
+            borrowed.execute(
+                "SELECT run_id FROM workflow_run WHERE run_id=%s", ("borrowed-run",)
+            ).fetchone()
+            is None
+        )
+        assert (
+            borrowed.execute(
+                "SELECT count(*) FROM workflow_run_event WHERE run_id=%s", ("owned-run",)
+            ).fetchone()[0]
+            == 1
+        )
+        assert not borrowed.raw.closed
+    finally:
+        borrowed.close()

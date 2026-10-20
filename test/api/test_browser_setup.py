@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import shutil
 from pathlib import Path
 
 import jwt
@@ -13,15 +14,36 @@ from fastapi.testclient import TestClient
 from cli_agent_orchestrator.api.browser_auth_routes import configure_browser_auth, router
 from cli_agent_orchestrator.security import auth
 
+pytestmark = pytest.mark.postgres
+
+
+def install_database_config(module, root, postgres_targets):
+    """Give a deployment private copies of the fixture's three-scope credentials."""
+    targets = json.loads(postgres_targets.config_file.read_text())["targets"]
+    for target in targets.values():
+        for field in ("secret_file", "migration_secret_file"):
+            name = target.get(field)
+            if name:
+                destination = root / "cao" / name
+                shutil.copyfile(postgres_targets.home / name, destination)
+                destination.chmod(0o600)
+    module.write_database_config(root, targets)
+
 
 @pytest.fixture
-def setup_app(tmp_path, monkeypatch):
+def setup_app(tmp_path, monkeypatch, postgres_targets):
+    from cli_agent_orchestrator.clients.browser_auth_repository import BROWSER_AUTH_MIGRATIONS
+    from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
+
+    migrate_component(postgres_targets.auth, BROWSER_AUTH_MIGRATIONS)
+    monkeypatch.setenv("CAO_DATABASE_CONFIG_FILE", str(postgres_targets.config_file))
     path = Path(__file__).resolve().parents[2] / "scripts/personal_deployment.py"
     spec = importlib.util.spec_from_file_location("setup_deployment", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     root = tmp_path / "personal"
     module.initialize(root, server_port=19889, jwks_port=19890, image_id="sha256:" + "a" * 64)
+    install_database_config(module, root, postgres_targets)
     for key, value in module.environment(root).items():
         monkeypatch.setenv(key, value)
     # Explicit startup path is available before any browser policy is configured.
@@ -66,6 +88,13 @@ def create(client, token=None, **kwargs):
     )
 
 
+def assert_auth_store_uninitialized(postgres_targets):
+    from cli_agent_orchestrator.clients.browser_auth_repository import BrowserAuthRepository
+
+    repository = BrowserAuthRepository(postgres_targets.auth, installation_id=None)
+    assert repository.store_initialized() is False
+
+
 def test_owner_can_setup_in_browser_and_immediately_login(setup_app):
     client, root, module, cfg, _ = setup_app
     assert client.get("/auth/config").json()["local_setup_available"] is True
@@ -82,7 +111,9 @@ def test_owner_can_setup_in_browser_and_immediately_login(setup_app):
 @pytest.mark.parametrize(
     "kind", ["missing", "invalid", "wrong_subject", "partial_scopes", "origin"]
 )
-def test_setup_rejects_without_matching_operator_before_creating_state(setup_app, kind):
+def test_setup_rejects_without_matching_operator_before_creating_state(
+    setup_app, kind, postgres_targets
+):
     client, root, module, cfg, key = setup_app
     token = module.mint_token(root)
     headers = {}
@@ -102,7 +133,7 @@ def test_setup_rejects_without_matching_operator_before_creating_state(setup_app
     response = create(client, token, **headers)
     assert response.status_code in (401, 403)
     assert response.headers["cache-control"] == "no-store"
-    assert not (root / "browser-auth.sqlite3").exists()
+    assert_auth_store_uninitialized(postgres_targets)
     assert "browser_login" not in json.loads((root / "deployment.json").read_text())
 
 
@@ -130,7 +161,9 @@ def test_setup_retry_finishes_interrupted_publication_without_replacing_account(
     assert client.get("/auth/session").status_code == 200
 
 
-def test_first_marker_directory_sync_failure_requires_explicit_setup_retry(setup_app, monkeypatch):
+def test_first_marker_directory_sync_failure_requires_explicit_setup_retry(
+    setup_app, monkeypatch, postgres_targets
+):
     import os
     import stat
 
@@ -157,7 +190,7 @@ def test_first_marker_directory_sync_failure_requires_explicit_setup_retry(setup
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "setup_publication_uncertain"
     assert "set-cookie" not in response.headers
-    assert not (root / "browser-auth.sqlite3").exists()
+    assert_auth_store_uninitialized(postgres_targets)
     installation_id = json.loads((root / "deployment.json").read_text())["browser_login"][
         "installation_id"
     ]
@@ -166,7 +199,7 @@ def test_first_marker_directory_sync_failure_requires_explicit_setup_retry(setup
     assert configuration.json() == {"mode": "bearer", "local_setup_available": True}
     assert configuration.headers["cache-control"] == "no-store"
     assert directory_syncs == 1
-    assert not (root / "browser-auth.sqlite3").exists()
+    assert_auth_store_uninitialized(postgres_targets)
     # Read-only reconciliation never retries the creation. A new owner-authorized
     # submission can complete it using the same pending installation binding.
     retry = create(client, token)
@@ -210,7 +243,7 @@ def test_existing_disabled_account_cannot_be_reenabled_from_browser(setup_app):
     assert create(client, token).status_code == 409
 
 
-def test_invalid_body_has_no_password_echo_or_persisted_policy(setup_app):
+def test_invalid_body_has_no_password_echo_or_persisted_policy(setup_app, postgres_targets):
     client, root, module, _, _ = setup_app
     response = client.post(
         "/auth/setup",
@@ -219,7 +252,7 @@ def test_invalid_body_has_no_password_echo_or_persisted_policy(setup_app):
     )
     assert response.status_code == 422
     assert "private-value" not in response.text
-    assert not (root / "browser-auth.sqlite3").exists()
+    assert_auth_store_uninitialized(postgres_targets)
 
 
 @pytest.mark.parametrize(
@@ -231,7 +264,9 @@ def test_invalid_body_has_no_password_echo_or_persisted_policy(setup_app):
         ("invalid username", "TenChars1!"),
     ],
 )
-def test_setup_validates_credentials_before_creating_files(setup_app, username, password):
+def test_setup_validates_credentials_before_creating_files(
+    setup_app, username, password, postgres_targets
+):
     client, root, module, _, _ = setup_app
     response = client.post(
         "/auth/setup",
@@ -241,10 +276,10 @@ def test_setup_validates_credentials_before_creating_files(setup_app, username, 
     assert response.status_code == 422
     assert password not in response.text
     assert "browser_login" not in json.loads((root / "deployment.json").read_text())
-    assert not (root / "browser-auth.sqlite3").exists()
+    assert_auth_store_uninitialized(postgres_targets)
 
 
-def test_owner_binding_is_rechecked_after_account_lock(setup_app, monkeypatch):
+def test_owner_binding_is_rechecked_after_account_lock(setup_app, monkeypatch, postgres_targets):
     from cli_agent_orchestrator.services import browser_setup
 
     client, root, module, _, _ = setup_app
@@ -260,13 +295,14 @@ def test_owner_binding_is_rechecked_after_account_lock(setup_app, monkeypatch):
     monkeypatch.setattr(browser_setup, "create_first_account", changed_deployment)
     response = create(client, module.mint_token(root))
     assert response.status_code == 503
-    assert not (root / "browser-auth.sqlite3").exists()
+    assert_auth_store_uninitialized(postgres_targets)
 
 
 @pytest.mark.parametrize("tamper", ["none", "binding", "json"])
-def test_setup_reconciles_after_final_rename_directory_sync_failure(setup_app, monkeypatch, tamper):
+def test_setup_reconciles_after_final_rename_directory_sync_failure(
+    setup_app, monkeypatch, tamper, postgres_targets
+):
     import os
-    import sqlite3
     import stat
 
     from cli_agent_orchestrator.services import browser_setup
@@ -303,7 +339,9 @@ def test_setup_reconciles_after_final_rename_directory_sync_failure(setup_app, m
         after = json.loads((root / "deployment.json").read_text())
         assert after["issuer"] == before["issuer"]
         assert after["subject"] == before["subject"]
-    with sqlite3.connect(root / "browser-auth.sqlite3") as connection:
+    from cli_agent_orchestrator.clients.postgres import connect
+
+    with connect(postgres_targets.auth) as connection:
         assert connection.execute("SELECT COUNT(*) FROM browser_accounts").fetchone()[0] == 1
     configuration = client.get("/auth/config")
     if tamper != "none":

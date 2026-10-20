@@ -1,4 +1,4 @@
-"""HTTP knowledge authority uses real SQLite, durable grants and ASGI authentication."""
+"""HTTP knowledge authority uses native PostgreSQL, grants and ASGI authentication."""
 
 import asyncio
 import hashlib
@@ -12,7 +12,9 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
+from psycopg import sql
 
+from cli_agent_orchestrator.clients.postgres import Connection
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.security import auth
 from cli_agent_orchestrator.services.step_output_store import ImmutableResultStore
@@ -301,11 +303,21 @@ async def test_wrong_job_or_scope_is_denied_by_real_grant_policy(authority):
 
 
 @pytest.mark.asyncio
-async def test_commit_failure_returns_503_and_rolls_back_without_echo(authority):
-    with authority[1].transaction() as connection:
-        connection.execute(
-            "CREATE TRIGGER refuse_knowledge BEFORE INSERT ON work_knowledge_events BEGIN SELECT RAISE(ABORT,'AKIAIOSFODNN7EXAMPLE'); END"
-        )
+async def test_commit_failure_returns_503_and_rolls_back_without_echo(authority, monkeypatch):
+    original_execute = Connection.execute
+
+    def fail_event(connection, statement, params=(), *, prepare: bool | None = None):
+        if "INSERT INTO work_knowledge_events" in str(statement):
+            # Raise a real PostgreSQL error containing a secret after the record
+            # and revision writes, within the same transaction.
+            return original_execute(
+                connection, "SELECT CAST(%s AS integer)", ("AKIAIOSFODNN7EXAMPLE",)
+            )
+        if prepare is None:
+            return original_execute(connection, statement, params)
+        return original_execute(connection, statement, params, prepare=prepare)
+
+    monkeypatch.setattr(Connection, "execute", fail_event)
     async with client(authority) as http:
         response = await http.post(
             "/v1/knowledge/records/record/revisions", params=authority[5], json=authority[6]
@@ -313,6 +325,10 @@ async def test_commit_failure_returns_503_and_rolls_back_without_echo(authority)
     assert response.status_code == 503 and "AKIAIOSFODNN7EXAMPLE" not in response.text
     with authority[1].connection() as connection:
         assert connection.execute("SELECT count(*) FROM work_knowledge_records").fetchone()[0] == 0
+        assert (
+            connection.execute("SELECT count(*) FROM work_knowledge_revisions").fetchone()[0] == 0
+        )
+        assert connection.execute("SELECT count(*) FROM work_knowledge_events").fetchone()[0] == 0
 
 
 @pytest.mark.asyncio
@@ -326,7 +342,20 @@ async def test_secret_content_is_redacted_before_http_or_durable_response(author
     assert response.status_code == 201 and response.json()["redacted"]
     assert "AKIAIOSFODNN7EXAMPLE" not in response.text
     with authority[1].connection() as connection:
-        assert "AKIAIOSFODNN7EXAMPLE" not in "\n".join(connection.iterdump())
+        tables = connection.execute(
+            "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname=%s",
+            (authority[1].target.schema,),
+        ).fetchall()
+        persisted = "\n".join(
+            repr(tuple(row))
+            for table in tables
+            for row in connection.execute(
+                sql.SQL("SELECT * FROM {}.{}").format(
+                    sql.Identifier(authority[1].target.schema), sql.Identifier(table[0])
+                )
+            ).fetchall()
+        )
+        assert "AKIAIOSFODNN7EXAMPLE" not in persisted
 
 
 @pytest.mark.asyncio
@@ -451,7 +480,7 @@ async def test_sanitization_is_router_local_not_a_global_validation_change(autho
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("field", ["expected_version", "grant_revision", "revision"])
-async def test_sqlite_integer_bounds_are_rejected_at_http_boundary(authority, field):
+async def test_signed_bigint_bounds_are_rejected_at_http_boundary(authority, field):
     selectors, body = dict(authority[5]), dict(authority[6])
     if field == "expected_version":
         body[field] = 2**63

@@ -11,7 +11,7 @@ So these tests drive the ops tool's real ``requests`` call into an in-process
 ``TestClient`` over the real FastAPI app (the seam ``test/mcp_server/conftest.py``
 established for the in-session MCP tools), with the REAL ``delete_session``
 reconciliation running underneath it against the in-memory tmux backend and the
-per-test SQLite registry that ``test/services/test_session_teardown_atomic.py``
+per-test PostgreSQL registry that ``test/services/test_session_teardown_atomic.py``
 already models the teardown side effects with. What is asserted is the thing the
 coordinator cares about: the session is actually gone from the backend and the
 registry, and the tool issued exactly one destructive request.
@@ -26,12 +26,12 @@ which is what the mocked unit tests in ``test_server.py`` still cover.
 from __future__ import annotations
 
 from test.api.conftest import TestClientWithHost
+from test.postgres.orm import configured_orm_engine
 from test.services.test_session_teardown_atomic import FakeTmuxBackend
 from typing import Dict, List, Tuple
 
 import pytest
 import requests
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.api.main import app
@@ -57,11 +57,8 @@ class ListableFakeTmuxBackend(FakeTmuxBackend):
 
 @pytest.fixture
 def real_db(tmp_path, monkeypatch):
-    """Point ``clients.database`` at a fresh per-test SQLite registry."""
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'cao.db'}",
-        connect_args={"check_same_thread": False},
-    )
+    """Point ``clients.database`` at a fresh per-test PostgreSQL registry."""
+    engine = configured_orm_engine()
     database.Base.metadata.create_all(bind=engine)
     monkeypatch.setattr(
         database,

@@ -1,8 +1,7 @@
 """Tests for U1 ``list_runs`` + ``RunSummaryRow`` (issue #505, journal-list-and-indexes).
 
-Exercises the DAL list primitive against a temp SQLite DB (the same patched
-``DATABASE_FILE`` fixture pattern as ``test_script_journal_extension.py`` /
-``test_workflow_journal_resume.py``). Each test maps to a U1 business rule:
+Exercises the DAL list primitive against the isolated PostgreSQL test store.
+Each test maps to a U1 business rule:
 
 - QR-3 (total-order ordering): newest-first, ``run_id DESC`` tiebreak on a
   same-second ``started_at`` collision, deterministic across repeated calls.
@@ -11,7 +10,7 @@ Exercises the DAL list primitive against a temp SQLite DB (the same patched
   returns ``[]``.
 - LR-3 / LR-1 (empty is valid; limit/offset paging): empty table returns ``[]``;
   the limit clamp ([1, 500]) and offset paging behave.
-- ER-1 (raise, never swallow): a simulated DB error surfaces as ``sqlite3.Error``,
+- ER-1 (raise, never swallow): a simulated DB error surfaces as ``DatabaseError``,
   NOT an empty list.
 - QR-1 (parameterized only): a state value carrying SQL metacharacters binds as a
   literal — no injection, table survives.
@@ -22,27 +21,12 @@ Exercises the DAL list primitive against a temp SQLite DB (the same patched
 from __future__ import annotations
 
 import dataclasses
-import sqlite3
-from pathlib import Path
 
 import pytest
 
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
-)
+from cli_agent_orchestrator.clients.postgres import DatabaseError
 from cli_agent_orchestrator.services import workflow_journal
 from cli_agent_orchestrator.services.workflow_journal import RunSummaryRow, list_runs
-
-
-@pytest.fixture(autouse=True)
-def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Point the journal at a temp DB and create the run tables."""
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
-    yield db_path
 
 
 def _seed(run_id: str, *, state: str = "running", started_at: str, tier: str = "yaml") -> None:
@@ -127,19 +111,18 @@ def test_list_runs_limit_clamped_low_to_one():
     assert rows[0].run_id == "run-2"
 
 
-def test_list_runs_limit_clamped_high_to_five_hundred(_patched_journal):
+def test_list_runs_limit_clamped_high_to_five_hundred():
     # A limit above the cap of 500 must return at most 500 rows. Seed 501 rows
     # (via one raw connection for speed) so the clamp is observable directly on
     # the returned row count: 1000 would return all 501 if the clamp were absent.
-    with sqlite3.connect(str(_patched_journal)) as conn:
+    with workflow_journal._connect() as conn:
         conn.executemany(
             "INSERT INTO workflow_run "
             "(run_id, workflow_name, spec_snapshot, inputs_json, state, "
             " current_step_id, started_at, finished_at, tier, generation) "
-            "VALUES (?, 'wf', '{}', '{}', 'running', NULL, ?, NULL, 'yaml', '1')",
+            "VALUES (%s, 'wf', '{}', '{}', 'running', NULL, %s, NULL, 'yaml', '1')",
             [(f"run-{i:04d}", f"2026-07-27T00:00:{i % 60:02d}Z") for i in range(501)],
         )
-        conn.commit()
 
     rows = list_runs(limit=1000)
     assert len(rows) == 500
@@ -158,7 +141,7 @@ def test_list_runs_offset_paging():
 def test_list_runs_negative_offset_floored_to_zero():
     for i in range(3):
         _seed(f"run-{i}", started_at=f"2026-07-27T00:00:0{i}Z")
-    # A negative offset would be an invalid SQLite OFFSET; the floor keeps it 0.
+    # A negative offset is invalid; the floor keeps it 0.
     assert [r.run_id for r in list_runs(offset=-5)] == ["run-2", "run-1", "run-0"]
 
 
@@ -166,13 +149,13 @@ def test_list_runs_negative_offset_floored_to_zero():
 # ER-1 — raise, never swallow
 # ---------------------------------------------------------------------------
 def test_list_runs_db_error_propagates_not_swallowed(monkeypatch: pytest.MonkeyPatch):
-    # A DB failure must surface as sqlite3.Error, NOT a silent empty list — the
+    # A DB failure must surface as DatabaseError, NOT a silent empty list — the
     # deliberate opposite of the migrator's best-effort posture.
     def _boom():
-        raise sqlite3.OperationalError("simulated connect failure")
+        raise DatabaseError("simulated connect failure")
 
     monkeypatch.setattr(workflow_journal, "_connect", _boom, raising=True)
-    with pytest.raises(sqlite3.Error):
+    with pytest.raises(DatabaseError):
         list_runs()
 
 
@@ -185,11 +168,11 @@ def test_list_runs_state_metacharacters_bind_as_literal():
     # The metacharacters bind as one literal state value -> no match -> [].
     assert list_runs(state=injection) == []
     # And the table still exists (the injection did not execute).
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+    with workflow_journal._connect() as conn:
         row = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_run'"
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema=%s AND table_name='workflow_run'",
+            (conn.target.schema,),
         ).fetchone()
     assert row is not None
 

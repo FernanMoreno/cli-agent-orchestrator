@@ -13,13 +13,11 @@ frozenset) and verifies it passes the real shared validator.
 """
 
 import os
-import sqlite3
 import uuid
 from pathlib import Path
 
 import pytest
 
-from cli_agent_orchestrator.clients.database import _migrate_workflow_index
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.services import workflow_spec_service as svc
 
@@ -36,16 +34,8 @@ steps:
 
 
 @pytest.fixture
-def isolated_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point DATABASE_FILE at a throwaway DB and create the workflow_index table.
-
-    The service's ``_connect`` re-imports DATABASE_FILE from constants on each
-    call, so patching the constant is sufficient.
-    """
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_index()  # zero-arg, self-connecting, idempotent
-    return db_path
+def isolated_db():
+    """Use the per-test PostgreSQL target and its registered workflow migration."""
 
 
 @pytest.fixture
@@ -277,11 +267,9 @@ class TestIndexUpsertAndList:
             _write_spec(spec_dir, nm)
         before = [r.model_dump(exclude={"indexed_at"}) for r in svc.list_workflows(str(spec_dir))]
 
-        # Drop the derived table entirely.
-        with sqlite3.connect(str(isolated_db)) as conn:
-            conn.execute("DROP TABLE workflow_index")
-            conn.commit()
-        _migrate_workflow_index()  # recreate empty
+        # Clear the derived projection while preserving the immutable physical schema.
+        with svc._connect() as conn:
+            conn.execute("DELETE FROM workflow_index")
 
         after = [r.model_dump(exclude={"indexed_at"}) for r in svc.list_workflows(str(spec_dir))]
         assert before == after
@@ -428,7 +416,7 @@ class TestScriptTierGetWorkflow:
         self, isolated_db, spec_dir, tmp_path
     ):
         """The bare-name arm of ``get_workflow`` resolves through
-        ``_resolve_source_path`` -> a raw string pulled out of SQLite, then
+        ``_resolve_source_path`` -> a raw string pulled out of PostgreSQL, then
         ``_load_by_extension`` -> ``_read_script_spec``. If the index row's
         ``source_path`` were ever tampered/stale/out-of-policy (e.g. a scan_dir
         reconfigured after indexing, or direct DB manipulation), the bare-name
@@ -436,19 +424,16 @@ class TestScriptTierGetWorkflow:
         it via ``_safe_spec_path`` before ever calling ``open()``, so the
         escape is still caught even though the name-based path never touches
         ``_safe_spec_path`` directly on the way in."""
-        import sqlite3
-
         outside = tmp_path / "outside.py"
         outside.write_text("def main():\n    pass\n")
 
-        with sqlite3.connect(str(isolated_db)) as conn:
+        with svc._connect() as conn:
             conn.execute(
                 "INSERT INTO workflow_index "
                 "(name, source_path, mode, step_count, description, indexed_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "VALUES (%s, %s, %s, %s, %s, %s)",
                 ("tampered", str(outside), "script", None, "", "2026-01-01T00:00:00Z"),
             )
-            conn.commit()
 
         # A name-based lookup that skips rebuild would read the tampered row
         # straight from the index; rebuild itself would also drop this row

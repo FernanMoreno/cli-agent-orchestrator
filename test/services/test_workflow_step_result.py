@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_origin import WorkflowStepResultV1
 from cli_agent_orchestrator.services.work_origin import WorkOriginAuthority, WorkOrigins
@@ -140,14 +141,11 @@ def test_frozen_workflow_output_schema_rejects_invalid_output_and_schema_drift()
         validate_workflow_step_result(tampered, invalid.canonical_bytes())
 
 
-def test_private_mcp_submit_result_routes_only_a_strict_envelope_with_separate_credentials(
-    tmp_path,
-):
+def test_private_mcp_submit_result_routes_only_a_strict_envelope_with_separate_credentials():
     from types import SimpleNamespace
     from unittest.mock import Mock
 
-    repository = WorkRepository(tmp_path / "work.sqlite3")
-    repository.initialize()
+    repository = WorkRepository(DatabaseTarget.from_settings("main"))
     origins = WorkOrigins(repository)
     submit = Mock(
         return_value={
@@ -199,13 +197,12 @@ def test_private_mcp_submit_result_routes_only_a_strict_envelope_with_separate_c
     ],
 )
 def test_private_mcp_submit_result_rejects_invalid_payload_or_missing_receiver_credential(
-    tmp_path, arguments, receiver_credential
+    arguments, receiver_credential
 ):
     from types import SimpleNamespace
     from unittest.mock import Mock
 
-    repository = WorkRepository(tmp_path / "work.sqlite3")
-    repository.initialize()
+    repository = WorkRepository(DatabaseTarget.from_settings("main"))
     origins = WorkOrigins(repository)
     submit = Mock()
     origins._result_service = SimpleNamespace(submit_workflow_step_result=submit)
@@ -224,13 +221,12 @@ def test_private_mcp_submit_result_rejects_invalid_payload_or_missing_receiver_c
     submit.assert_not_called()
 
 
-def _result_submission_harness(tmp_path, *, accepted_bytes, initially_accepted=False):
+def _result_submission_harness(*, accepted_bytes, initially_accepted=False):
     from types import SimpleNamespace
 
     from cli_agent_orchestrator.services.work_service import WorkService
 
-    repository = WorkRepository(tmp_path / "workflow-result-settlement.sqlite3")
-    repository.initialize()
+    repository = WorkRepository(DatabaseTarget.from_settings("main"))
     origins = WorkOrigins(repository)
     artifacts = SimpleNamespace(publish=lambda *_args: None, read=lambda *_args: None)
     service = WorkService(repository, origins=origins, artifacts=artifacts)
@@ -323,14 +319,14 @@ def _result_submission_harness(tmp_path, *, accepted_bytes, initially_accepted=F
     return service, binding, submitted, winning, settled, accepted
 
 
-def test_losing_concurrent_different_workflow_result_is_rejected_after_finish(tmp_path):
+def test_losing_concurrent_different_workflow_result_is_rejected_after_finish():
     import threading
     from concurrent.futures import ThreadPoolExecutor
 
     from cli_agent_orchestrator.services.work_service import WorkConflict
 
     service, binding, submitted, _winning, settled, accepted = _result_submission_harness(
-        tmp_path, accepted_bytes=None
+        accepted_bytes=None
     )
     other = WorkflowStepResultV1.from_payload(
         {"schema_version": 1, "status": "completed", "output": {"answer": 99}}
@@ -374,9 +370,8 @@ def test_losing_concurrent_different_workflow_result_is_rejected_after_finish(tm
     assert accepted.canonical_bytes in {submitted.canonical_bytes(), other.canonical_bytes()}
 
 
-def test_identical_workflow_result_submission_replays_the_durable_bytes(tmp_path):
+def test_identical_workflow_result_submission_replays_the_durable_bytes():
     service, _binding, submitted, _winning, settled, _accepted = _result_submission_harness(
-        tmp_path,
         accepted_bytes=WorkflowStepResultV1.from_payload(
             {"schema_version": 1, "status": "completed", "output": {"answer": 7}}
         ).canonical_bytes(),
@@ -395,11 +390,11 @@ def test_identical_workflow_result_submission_replays_the_durable_bytes(tmp_path
     assert replay == settled
 
 
-def test_invalid_frozen_schema_result_does_not_settle_or_emit_work_events(tmp_path):
+def test_invalid_frozen_schema_result_does_not_settle_or_emit_work_events():
     from cli_agent_orchestrator.services.work_service import WorkConflict
 
     service, binding, _submitted, _winning, _settled, _accepted = _result_submission_harness(
-        tmp_path, accepted_bytes=None
+        accepted_bytes=None
     )
     schema_json = (
         '{"additionalProperties":false,"properties":{"answer":{"type":"integer"}},'
@@ -431,16 +426,13 @@ def test_invalid_frozen_schema_result_does_not_settle_or_emit_work_events(tmp_pa
         )
 
 
-def _workflow_work_state_fixture(
-    tmp_path, monkeypatch, *, work_state, attempt_state, add_current=False
-):
+def _workflow_work_state_fixture(monkeypatch, *, work_state, attempt_state, add_current=False):
     import time
     from types import SimpleNamespace
 
     from cli_agent_orchestrator.services.work_service import WorkService
 
-    repository = WorkRepository(tmp_path / "workflow-work-state.sqlite3")
-    repository.initialize()
+    repository = WorkRepository(DatabaseTarget.from_settings("main"))
     binding = SimpleNamespace(
         binding_id="workflow-binding",
         tier="yaml",
@@ -457,27 +449,27 @@ def _workflow_work_state_fixture(
     with repository.transaction() as connection:
         connection.execute(
             "INSERT INTO work_jobs (id,project_id,principal_id,allowed_providers,grant_id,created_at) "
-            "VALUES ('job','project','principal','[]','grant',?)",
+            "VALUES ('job','project','principal','[]','grant',%s)",
             (now,),
         )
         connection.execute(
             "INSERT INTO work_items "
             "(id,job_id,operation_kind,idempotency_key,request_hash,contract_id,state,"
             "accepted_result_id,created_at) VALUES "
-            "('work-item','job','agent_step','step-key',?,'contract',?,NULL,?)",
+            "('work-item','job','agent_step','step-key',%s,'contract',%s,NULL,%s)",
             ("a" * 64, work_state, now),
         )
         connection.execute(
             "INSERT INTO work_attempts "
             "(id,work_item_id,attempt_number,generation,provider,state,lease_expires_at,created_at) "
-            "VALUES ('work-attempt','work-item',1,3,'mock_cli',?,?,?)",
+            "VALUES ('work-attempt','work-item',1,3,'mock_cli',%s,%s,%s)",
             (attempt_state, now + 300, now),
         )
         if add_current:
             connection.execute(
                 "INSERT INTO work_attempts "
                 "(id,work_item_id,attempt_number,generation,provider,state,lease_expires_at,created_at) "
-                "VALUES ('new-attempt','work-item',2,4,'mock_cli','planned',?,?)",
+                "VALUES ('new-attempt','work-item',2,4,'mock_cli','planned',%s,%s)",
                 (now + 300, now),
             )
             connection.execute("UPDATE work_items SET state='queued' WHERE id='work-item'")
@@ -489,7 +481,7 @@ def _workflow_work_state_fixture(
     ):
         # This fixture stands in only for immutable binding lookup. State reads
         # must request historical proof, without reopening live grant authority,
-        # and retain the reader's exact existing SQLite transaction.
+        # and retain the reader's exact existing PostgreSQL transaction.
         assert historical is True
         assert connection is not None and connection.in_transaction
         if (attempt_id, generation, work_item_id) == (
@@ -515,10 +507,10 @@ def _workflow_work_state_fixture(
     ],
 )
 def test_workflow_work_state_reader_returns_exact_durable_states(
-    tmp_path, monkeypatch, work_state, attempt_state
+    monkeypatch, work_state, attempt_state
 ):
     service, binding = _workflow_work_state_fixture(
-        tmp_path, monkeypatch, work_state=work_state, attempt_state=attempt_state
+        monkeypatch, work_state=work_state, attempt_state=attempt_state
     )
     state = service.read_workflow_step_state(binding)
 
@@ -533,9 +525,9 @@ def test_workflow_work_state_reader_returns_exact_durable_states(
     assert state.current_attempt_state == attempt_state
 
 
-def test_workflow_work_state_reader_marks_exact_old_binding_as_superseded(tmp_path, monkeypatch):
+def test_workflow_work_state_reader_marks_exact_old_binding_as_superseded(monkeypatch):
     service, binding = _workflow_work_state_fixture(
-        tmp_path, monkeypatch, work_state="running", attempt_state="reconcile", add_current=True
+        monkeypatch, work_state="running", attempt_state="reconcile", add_current=True
     )
     state = service.read_workflow_step_state(binding)
 
@@ -546,14 +538,14 @@ def test_workflow_work_state_reader_marks_exact_old_binding_as_superseded(tmp_pa
     assert state.accepted_result_id is None
 
 
-def test_workflow_work_state_reader_can_share_caller_owned_transaction(tmp_path, monkeypatch):
+def test_workflow_work_state_reader_can_share_caller_owned_transaction(monkeypatch):
     from cli_agent_orchestrator.services.work_service import WorkConflict
 
     service, binding = _workflow_work_state_fixture(
-        tmp_path, monkeypatch, work_state="reconcile", attempt_state="reconcile"
+        monkeypatch, work_state="reconcile", attempt_state="reconcile"
     )
     with service.repository.connection() as connection:
-        with pytest.raises(WorkConflict, match="stable SQLite snapshot"):
+        with pytest.raises(WorkConflict, match="stable Work snapshot"):
             service.read_workflow_step_state(binding, connection=connection)
     with service.repository.transaction() as connection:
         state = service.read_workflow_step_state(binding, connection=connection)
@@ -650,7 +642,7 @@ def test_workflow_result_requires_live_authority_at_acceptance_but_reads_after_r
             )
         return
 
-    restarted_repository = WorkRepository(context.repo.path)
+    restarted_repository = WorkRepository(context.repo.target)
     restarted_origins = WorkOrigins(restarted_repository)
     restarted = WorkService(
         restarted_repository,

@@ -1,22 +1,22 @@
 """Durable run-journal data-access layer (issue #312, Bolt 4 / N6).
 
-A thin, parameterized-SQL data-access module over the ``workflow_run`` /
-``workflow_run_step`` tables (clients/database.py ``_migrate_workflow_run*``).
+A thin, parameterized-SQL data-access module over the native PostgreSQL
+``workflow_run`` / ``workflow_run_step`` tables installed by the immutable
+workflow component migration.
 Per Q1=B the journal is the **source of truth** for workflow run execution
 state; the Bolt-3 in-memory ``run_registry`` (``RunRecord``) becomes a cache
 rebuilt from these rows on a cold read or after a process restart.
 
 Design constraints (functional-design business-logic-model §0/§1, B4-BR-1..5):
 
-- Zero-arg, self-connecting ``sqlite3.connect(str(DATABASE_FILE))`` — mirrors the
-  shipped terminals/inbox/workflow_index helpers; no ORM, no session.
-- **Parameterized SQL only** — every value binds through ``?`` placeholders, never
+- Self-connecting to the configured main PostgreSQL store; no ORM or session.
+- **Parameterized SQL only** — every value binds through ``%s`` placeholders, never
   string interpolation (no injection surface; security-design B4-SD-1).
 - ``run_id``/``step_id`` are produced + validated by the engine (B3-BR-1, shared
   ``_validate_key_part``) BEFORE they reach this layer; the journal does NOT
   re-validate ad-hoc (project Mandated rule, B4-BR-2).
 
-Legacy lifecycle helpers raise ``sqlite3.Error`` on a DB failure; the **caller** (the engine
+Legacy lifecycle helpers raise ``DatabaseError`` on a DB failure; the **caller** (the engine
 write-through, business-logic-model §1) wraps them best-effort per B4-BR-5 — a
 dropped write never raises into the engine drive loop. The read helpers
 (``get_run``/``get_steps``) are used by the rebuild + resume read path.
@@ -42,13 +42,22 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import sqlite3
 import time
 from contextlib import closing
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from psycopg import sql as pg_sql
+
+from cli_agent_orchestrator.clients.postgres import (
+    Connection,
+    DatabaseError,
+    DatabaseTarget,
+    IntegrityError,
+    Record,
+    connect,
+)
+from cli_agent_orchestrator.constants import WORKFLOW_JOURNAL_BUSY_TIMEOUT_MS
 from cli_agent_orchestrator.services.workflow_errors import ReplayDivergenceError
 
 logger = logging.getLogger(__name__)
@@ -73,27 +82,7 @@ class WorkStepProjection:
     result_json: str
 
 
-# Database paths whose journal schema has been VERIFIED PRESENT in THIS process (issue #583).
-# Keyed on PATH, not a boolean: five test modules repoint DATABASE_FILE to a temporary
-# path mid-process, and a boolean would leave them on a schema-less database (BR-4).
-# Holds paths only — never row data, connections or credentials (SR-2).
-#
-# "VERIFIED PRESENT", NOT "THE MIGRATORS RETURNED" (PR #628 review, Copilot F2). Both
-# migrators wrap their whole body in ``except Exception`` -> ``logger.debug`` and therefore
-# RETURN NORMALLY when they fail, so "both migrators returned" establishes nothing about the
-# schema: a transient lock or a DDL failure would cache a schema-less database for the rest of
-# the process and defeat every later retry. ``_connect`` now checks the columns before it
-# records the path, which is the only claim this set can honestly make.
-_MIGRATED_PATHS: set[str] = set()
-
-# The columns the journal's own SQL reads and writes, per table (PR #628 review). Compared
-# against ``PRAGMA table_info`` before a path is cached, because a migrator's silent failure is
-# invisible at its return.
-#
-# ADDING A COLUMN TO EITHER MIGRATOR MEANS WIDENING THE MATCHING SET IN THE SAME CHANGE, and
-# ``test_workflow_journal_connection_posture.py`` asserts the two sets against what the
-# migrators actually produce on a fresh database — so a column added on one side and not the
-# other fails loudly instead of quietly dropping out of the check.
+# Required columns for the native catalog assertion helper and migration tests.
 _REQUIRED_RUN_COLUMNS = frozenset(
     {
         "run_id",
@@ -106,17 +95,7 @@ _REQUIRED_RUN_COLUMNS = frozenset(
         "finished_at",
         "tier",
         "generation",
-        # manifest-column (issue #583 Bolt 2, ADR-583-12). Registering the column here is
-        # NOT bookkeeping — it is what gives the silent-migration risk a RUNTIME mitigation.
-        # ``_migrate_workflow_run`` swallows its own failures at debug level, so a failed
-        # ALTER leaves the column absent with no signal. With the column in this set,
-        # ``_journal_schema_is_present`` answers False for such a database, ``_connect``
-        # declines to cache the schema, and the migrators therefore keep running on later
-        # connections instead of being skipped — the path self-heals. Omitting it would make
-        # the new column drop silently out of verification, which is exactly the drift the
-        # equality assertion in
-        # ``test_workflow_journal_connection_posture.py::test_the_required_column_sets_match_what_the_migrators_produce``
-        # exists to catch.
+        # Manifest column added by the workflow component migration.
         "manifest_json",
         "error",
     }
@@ -169,7 +148,7 @@ class StepRow:
 
     U1 (issue #504) additively extends the row with three nullable fields —
     ``terminal_id``, ``reprompted``, ``error_kind`` — surfacing the additive
-    columns added by ``_migrate_workflow_run_step``. All default to ``None`` so
+    columns added by the workflow component migration. All default to ``None`` so
     a pre-U1 row reads back observably identical to its pre-extension shape.
     """
 
@@ -293,128 +272,62 @@ class RunSummaryRow:
     current_step_id: Optional[str]
 
 
-def _connect() -> sqlite3.Connection:
-    """Open a connection to the shared SQLite file (self-connecting, like B2).
+def _connect(target: DatabaseTarget | None = None) -> Connection:
+    """Open the configured main PostgreSQL store in a transaction.
 
-    Ensures the ``workflow_run`` / ``workflow_run_step`` tables exist first
-    (idempotent ``CREATE TABLE IF NOT EXISTS`` via the shared migrators) so a
-    read/write here never races ``init_db()`` — a process that never went
-    through the FastAPI lifespan (e.g. a test that instantiates the app
-    without entering it as a context manager) still finds its schema.
-
-    Two properties are added by ``journal-connection-posture`` (issue #583,
-    NFR-4). The function's name, signature, return type and callers are
-    otherwise unchanged (BR-7):
-
-    - **The migrators run at most once per database path per process** (BR-3),
-      guarded by :data:`_MIGRATED_PATHS`. The path is read INSIDE this function
-      on every call — never captured at import and never cached beside the set
-      (BR-5) — so a process that repoints ``DATABASE_FILE`` mid-run still
-      migrates the new path on its next call (BR-4). The path is recorded only
-      once the REQUIRED SCHEMA IS VERIFIED PRESENT on the new connection (BR-6,
-      corrected by PR #628's review — Copilot F2).
-
-      **"Both migrators returned" was the original condition and it was the
-      bug.** Each migrator wraps its whole body in ``except Exception`` ->
-      ``logger.debug``, so it returns normally when it FAILS: returning is not
-      succeeding. One transient lock or DDL failure therefore cached a
-      schema-less database for the rest of the process and prevented every
-      later retry — the exact outcome the old comment said the ordering
-      avoided. The migrators' swallow-and-log posture is deliberately
-      UNCHANGED (other callers depend on it, and it is
-      ``business-logic-model.md``'s "Error handling" row 1, outside this
-      unit); what changed is that this function no longer takes their return
-      as evidence. It asks the database instead, with
-      :func:`_journal_schema_is_present`.
-
-      A path that fails verification is simply not cached: the connection is
-      still returned (the caller's own query is what will fail, with a real
-      SQLite error naming the real problem), and the NEXT call re-runs both
-      migrators. That is the retry the cache was destroying.
-    - **Every connection carries ``busy_timeout``** (BR-1/BR-2). It is a
-      per-connection setting rather than a database property, so it cannot be
-      memoised alongside the migration state and is set on each new connection.
-      At the current value this pragma is a runtime NO-OP: CPython's
-      ``sqlite3.connect()`` already applies a 5000 ms busy timeout via its
-      ``timeout=5.0`` default, which it implements with
-      ``sqlite3_busy_timeout``. It is set explicitly anyway for two reasons —
-      the value gets a single named home that can be revised without editing
-      this module, and the guarantee survives a future caller passing
-      ``timeout=0`` or a change to that stdlib default. It does NOT widen the
-      contention window; the per-call cost this function actually removes is
-      the migrator DDL above. WAL — which *is* a database-level property,
-      shared with every other CAO subsystem using this file — is deliberately
-      NOT set here (BR-8, ADR-583-10).
-
-    The timeout is interpolated from the module-level constant and from nothing
-    else (SR-1): SQLite accepts no bound parameter for ``PRAGMA busy_timeout``,
-    so this is this module's one interpolated statement and its source must
-    stay a trusted constant.
+    Runtime schema creation is forbidden. Startup verifies the immutable
+    workflow component migration before making workflow services available.
+    The optional target is for isolated PostgreSQL composition tests.
     """
-    from cli_agent_orchestrator.clients.database import (
-        _migrate_workflow_run,
-        _migrate_workflow_run_step,
-    )
-    from cli_agent_orchestrator.constants import (
-        DATABASE_FILE,
-        WORKFLOW_JOURNAL_BUSY_TIMEOUT_MS,
+    connection = connect(target or DatabaseTarget.from_settings("main"))
+    try:
+        connection.begin()
+        connection.execute(
+            "SELECT set_config('lock_timeout', %s, true)",
+            (f"{WORKFLOW_JOURNAL_BUSY_TIMEOUT_MS}ms",),
+        )
+    except BaseException:
+        try:
+            connection.close()
+        except BaseException:
+            pass
+        raise
+    return connection
+
+
+def _repository_uses_main_store(repository) -> bool:
+    """Compare Work and workflow by configured logical PostgreSQL identity."""
+    actual = getattr(repository, "target", None)
+    return (
+        isinstance(actual, DatabaseTarget)
+        and actual.identity == DatabaseTarget.from_settings("main").identity
     )
 
-    path = str(DATABASE_FILE)  # read at call time, never cached (BR-5)
-    needs_migration = path not in _MIGRATED_PATHS
-    if needs_migration:
-        _migrate_workflow_run()
-        _migrate_workflow_run_step()
-    conn = sqlite3.connect(path)
-    conn.execute(f"PRAGMA busy_timeout = {WORKFLOW_JOURNAL_BUSY_TIMEOUT_MS}")
-    if needs_migration:
-        # BR-6, corrected: cache the path only once the schema is VERIFIED, never merely
-        # because the two silently-failing migrators returned. Verified on the connection this
-        # call is about to hand back, so the check and the caller see the same database.
-        if _journal_schema_is_present(conn):
-            _MIGRATED_PATHS.add(path)
-        else:
-            # WARNING, not debug: this is the state in which every subsequent journal write
-            # fails, and the migrators have already logged their own cause at debug. The path
-            # only — never row data (SR-2). Repeats per connection until it is fixed, which is
-            # the intended volume for "the journal has no schema".
-            logger.warning(
-                "journal: required schema absent after migration for '%s'; "
-                "not caching the path so the next connection retries",
-                path,
-            )
-    return conn
+
+def _main_work_repository():
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+
+    return WorkRepository(DatabaseTarget.from_settings("main"))
 
 
-def _journal_schema_is_present(conn: sqlite3.Connection) -> bool:
-    """Do both journal tables carry every column this module's SQL uses?
-
-    The verification :func:`_connect` needs and the migrators cannot provide: they swallow and
-    log their own failures, so their return says nothing about the schema (PR #628 review).
-
-    TOTAL — never raises, so it cannot add a failure mode to ``_connect`` that ``_connect``
-    did not already have. A ``PRAGMA table_info`` on a missing table returns no rows rather
-    than raising, which already answers ``False``; a corrupt or unreadable database raises
-    ``sqlite3.Error`` and is ALSO ``False``, because "we could not establish that the schema is
-    there" and "the schema is not there" call for the same decision here — do not cache. The
-    caller's own query then fails with the real error, which is a better diagnostic than
-    anything this predicate could invent.
-
-    Reads only ``PRAGMA table_info`` — no row data is touched, so nothing here can log or
-    return step content (SR-2).
-    """
+def _journal_schema_is_present(conn: Connection) -> bool:
+    """Check the required run and step columns through PostgreSQL's catalog."""
     try:
         for table, required in (
             ("workflow_run", _REQUIRED_RUN_COLUMNS),
             ("workflow_run_step", _REQUIRED_STEP_COLUMNS),
         ):
-            # The table name is interpolated from a module-level literal pair and from nothing
-            # else (SR-1) — SQLite accepts no bound parameter for an identifier, the same
-            # constraint that makes the busy_timeout pragma above an interpolation.
-            present = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            present = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema=%s AND table_name=%s",
+                    (conn.target.schema, table),
+                ).fetchall()
+            }
             if not required <= present:
                 return False
-    except sqlite3.Error:
+    except DatabaseError:
         return False
     return True
 
@@ -434,12 +347,12 @@ def insert_run(
     generation: str = "1",
     manifest_json: Optional[str] = None,
     *,
-    connection: Optional[sqlite3.Connection] = None,
+    connection: Optional[Connection] = None,
 ) -> None:
     """INSERT the ``workflow_run`` row at ``start_run`` (lifecycle table, E1).
 
     A plain ``INSERT``: a re-INSERT for an already-journaled ``run_id`` raises
-    ``sqlite3.IntegrityError`` rather than silently overwriting the durable row
+    ``IntegrityError`` rather than silently overwriting the durable row
     (a resume never calls this — it only UPDATEs). The engine both pre-checks the
     journal in ``start_run`` and wraps this call best-effort, so a lost race
     logs instead of clobbering history.
@@ -457,7 +370,7 @@ def insert_run(
             "INSERT INTO workflow_run "
             "(run_id, workflow_name, spec_snapshot, inputs_json, state, "
             " current_step_id, started_at, finished_at, tier, generation, manifest_json) "
-            "VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?)",
+            "VALUES (%s, %s, %s, %s, %s, NULL, %s, NULL, %s, %s, %s)",
             (
                 run_id,
                 workflow_name,
@@ -506,7 +419,7 @@ def insert_run_with_steps(
 
     This helper opens ONE ``_connect()`` connection and does both INSERTs inside a
     SINGLE ``with conn:`` transaction (one commit). If EITHER statement raises a
-    ``sqlite3.Error`` (e.g. the step seed violates a constraint after the run row
+    ``DatabaseError`` (e.g. the step seed violates a constraint after the run row
     INSERT), the ``with conn`` block rolls the whole transaction back — NEITHER row
     is committed — and the error **propagates** to the caller. Unlike the engine's
     best-effort write-through (:func:`~workflow_service._journal_insert_run`, which
@@ -522,7 +435,7 @@ def insert_run_with_steps(
             "INSERT INTO workflow_run "
             "(run_id, workflow_name, spec_snapshot, inputs_json, state, "
             " current_step_id, started_at, finished_at, tier, generation, manifest_json) "
-            "VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?)",
+            "VALUES (%s, %s, %s, %s, %s, NULL, %s, NULL, %s, %s, %s)",
             (
                 run_id,
                 workflow_name,
@@ -536,9 +449,13 @@ def insert_run_with_steps(
             ),
         )
         conn.executemany(
-            "INSERT OR REPLACE INTO workflow_run_step "
+            "INSERT INTO workflow_run_step "
             "(run_id, step_id, state, attempts, output_json, error, updated_at) "
-            "VALUES (?, ?, ?, 0, NULL, NULL, ?)",
+            "VALUES (%s, %s, %s, 0, NULL, NULL, %s) "
+            "ON CONFLICT(run_id,step_id) DO UPDATE SET "
+            "state=EXCLUDED.state,attempts=EXCLUDED.attempts,output_json=NULL,error=NULL, "
+            "updated_at=EXCLUDED.updated_at,call_fingerprint=NULL,terminal_id=NULL, "
+            "reprompted=NULL,error_kind=NULL,result_json=NULL",
             [(run_id, step_id, step_state, updated_at) for step_id, step_state in steps],
         )
 
@@ -549,28 +466,33 @@ def compare_and_set_run_manifest(
     """Replace a run manifest only when it still equals the contender's snapshot.
 
     The memory filler is the sole concurrent manifest writer. A false return is
-    a normal lost race, distinct from a SQLite exception, which callers must
+    a normal lost race, distinct from a database exception, which callers must
     surface as a failed persistence rather than overwrite the winner.
     """
     with closing(_connect()) as owned_connection, owned_connection as conn:
         cursor = conn.execute(
-            "UPDATE workflow_run SET manifest_json = ? " "WHERE run_id = ? AND manifest_json = ?",
+            "UPDATE workflow_run SET manifest_json = %s "
+            "WHERE run_id = %s AND manifest_json = %s",
             (manifest_json, run_id, expected_manifest_json),
         )
-        return cursor.rowcount == 1
+        return int(cursor.rowcount) == 1
 
 
 def insert_steps(run_id: str, steps: Sequence[Tuple[str, str]], updated_at: str) -> None:
     """INSERT one ``workflow_run_step`` row per ``(step_id, state)`` (E2).
 
     Called once at ``start_run`` to seed every spec step (typically ``pending``).
-    ``INSERT OR REPLACE`` so a re-seed is idempotent.
+    Native ``ON CONFLICT`` reset so a re-seed is idempotent.
     """
     with closing(_connect()) as owned_connection, owned_connection as conn:
         conn.executemany(
-            "INSERT OR REPLACE INTO workflow_run_step "
+            "INSERT INTO workflow_run_step "
             "(run_id, step_id, state, attempts, output_json, error, updated_at) "
-            "VALUES (?, ?, ?, 0, NULL, NULL, ?)",
+            "VALUES (%s, %s, %s, 0, NULL, NULL, %s) "
+            "ON CONFLICT(run_id,step_id) DO UPDATE SET "
+            "state=EXCLUDED.state,attempts=EXCLUDED.attempts,output_json=NULL,error=NULL, "
+            "updated_at=EXCLUDED.updated_at,call_fingerprint=NULL,terminal_id=NULL, "
+            "reprompted=NULL,error_kind=NULL,result_json=NULL",
             [(run_id, step_id, state, updated_at) for step_id, state in steps],
         )
 
@@ -597,9 +519,9 @@ def update_step(
     with closing(_connect()) as owned_connection, owned_connection as conn:
         conn.execute(
             "UPDATE workflow_run_step "
-            "SET state = ?, attempts = ?, output_json = ?, error = ?, "
-            "error_kind = ?, updated_at = ? "
-            "WHERE run_id = ? AND step_id = ?",
+            "SET state = %s, attempts = %s, output_json = %s, error = %s, "
+            "error_kind = %s, updated_at = %s "
+            "WHERE run_id = %s AND step_id = %s",
             (state, attempts, output_json, error, error_kind, updated_at, run_id, step_id),
         )
 
@@ -641,14 +563,13 @@ def mark_work_pending(
     ):
         raise ValueError("managed workflow step identity is invalid")
     with closing(_connect()) as owned_connection, owned_connection as conn:
-        conn.execute("BEGIN IMMEDIATE")
         run = conn.execute(
-            "SELECT state,tier,generation,current_step_id FROM workflow_run WHERE run_id=?",
+            "SELECT state,tier,generation,current_step_id FROM workflow_run WHERE run_id=%s FOR UPDATE",
             (run_id,),
         ).fetchone()
         step = conn.execute(
             "SELECT state,attempts,call_fingerprint FROM workflow_run_step "
-            "WHERE run_id=? AND step_id=?",
+            "WHERE run_id=%s AND step_id=%s FOR UPDATE",
             (run_id, step_id),
         ).fetchone()
         if (
@@ -668,8 +589,8 @@ def mark_work_pending(
                     raise ValueError("managed workflow pending step fingerprint changed")
                 if step[2] is None:
                     conn.execute(
-                        "UPDATE workflow_run_step SET call_fingerprint=? WHERE run_id=? "
-                        "AND step_id=? AND state='work_pending' AND attempts=? "
+                        "UPDATE workflow_run_step SET call_fingerprint=%s WHERE run_id=%s "
+                        "AND step_id=%s AND state='work_pending' AND attempts=%s "
                         "AND call_fingerprint IS NULL",
                         (call_fingerprint, run_id, step_id, step_attempt),
                     )
@@ -681,9 +602,9 @@ def mark_work_pending(
         if call_fingerprint is not None and step[2] not in (None, call_fingerprint):
             raise ValueError("managed workflow step fingerprint changed")
         conn.execute(
-            "UPDATE workflow_run_step SET state='work_pending', attempts=?, error=?, "
-            "error_kind=NULL, updated_at=?,call_fingerprint=COALESCE(call_fingerprint,?) "
-            "WHERE run_id=? AND step_id=?",
+            "UPDATE workflow_run_step SET state='work_pending', attempts=%s, error=%s, "
+            "error_kind=NULL, updated_at=%s,call_fingerprint=COALESCE(call_fingerprint,%s) "
+            "WHERE run_id=%s AND step_id=%s",
             (
                 step_attempt,
                 "awaiting_authenticated_work_result",
@@ -694,7 +615,7 @@ def mark_work_pending(
             ),
         )
         conn.execute(
-            "UPDATE workflow_run SET current_step_id=? WHERE run_id=?",
+            "UPDATE workflow_run SET current_step_id=%s WHERE run_id=%s",
             (step_id, run_id),
         )
 
@@ -805,7 +726,6 @@ def begin_managed_work_step(
     incrementing again, including after Work admission has advanced its attempt.
     """
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.constants import DATABASE_FILE
 
     if (
         not isinstance(run_id, str)
@@ -831,8 +751,8 @@ def begin_managed_work_step(
         if (
             not isinstance(origin_repository, WorkRepository)
             or not isinstance(service_repository, WorkRepository)
-            or Path(origin_repository.path).resolve() != Path(DATABASE_FILE).resolve()
-            or Path(service_repository.path).resolve() != Path(DATABASE_FILE).resolve()
+            or not _repository_uses_main_store(origin_repository)
+            or not _repository_uses_main_store(service_repository)
         ):
             raise ValueError("managed retry readers must use the configured Work repository")
 
@@ -843,11 +763,9 @@ def begin_managed_work_step(
     )
 
     with closing(_connect()) as owned_connection, owned_connection as connection:
-        connection.row_factory = sqlite3.Row
-        connection.execute("BEGIN IMMEDIATE")
         WorkRepository._verify(connection)
         run = connection.execute(
-            "SELECT state,tier,generation,current_step_id FROM workflow_run WHERE run_id=?",
+            "SELECT state,tier,generation,current_step_id FROM workflow_run WHERE run_id=%s FOR UPDATE",
             (run_id,),
         ).fetchone()
         if run is None:
@@ -865,7 +783,7 @@ def begin_managed_work_step(
 
         step = connection.execute(
             "SELECT state,attempts,call_fingerprint,error,error_kind FROM workflow_run_step "
-            "WHERE run_id=? AND step_id=?",
+            "WHERE run_id=%s AND step_id=%s",
             (run_id, step_id),
         ).fetchone()
         if step is not None and step[0] == "work_pending":
@@ -1000,18 +918,18 @@ def begin_managed_work_step(
                 raise ValueError("managed retry requires the exact current failed Work attempt")
 
             run_cas = connection.execute(
-                "UPDATE workflow_run SET current_step_id=? WHERE run_id=? AND state='running' "
-                "AND tier=? AND generation=? AND current_step_id=?",
+                "UPDATE workflow_run SET current_step_id=%s WHERE run_id=%s AND state='running' "
+                "AND tier=%s AND generation=%s AND current_step_id=%s",
                 (step_id, run_id, run_tier, generation, step_id),
             )
             if run_cas.rowcount != 1:
                 raise ValueError("managed retry workflow run changed before it was claimed")
             next_attempt = prior_attempt + 1
             step_cas = connection.execute(
-                "UPDATE workflow_run_step SET state='work_pending',attempts=?,"
+                "UPDATE workflow_run_step SET state='work_pending',attempts=%s,"
                 "output_json=NULL,result_json=NULL,error='awaiting_authenticated_work_result',"
-                "error_kind=NULL,updated_at=?,call_fingerprint=? "
-                "WHERE run_id=? AND step_id=? AND state='failed' AND attempts=? "
+                "error_kind=NULL,updated_at=%s,call_fingerprint=%s "
+                "WHERE run_id=%s AND step_id=%s AND state='failed' AND attempts=%s "
                 "AND error='managed Work attempt failed' AND error_kind='managed_work_failed'",
                 (
                     next_attempt,
@@ -1040,8 +958,8 @@ def begin_managed_work_step(
             step_attempt = 1
 
         run_cas = connection.execute(
-            "UPDATE workflow_run SET current_step_id=? WHERE run_id=? AND state='running' "
-            "AND tier='script' AND generation=? AND current_step_id IS ?",
+            "UPDATE workflow_run SET current_step_id=%s WHERE run_id=%s AND state='running' "
+            "AND tier='script' AND generation=%s AND current_step_id IS NOT DISTINCT FROM %s",
             (step_id, run_id, generation, run[3]),
         )
         if run_cas.rowcount != 1:
@@ -1052,7 +970,7 @@ def begin_managed_work_step(
                 "INSERT INTO workflow_run_step "
                 "(run_id,step_id,state,attempts,output_json,error,updated_at,"
                 "call_fingerprint,error_kind,result_json) "
-                "VALUES (?,?,'work_pending',?,NULL,?,?,?,NULL,NULL)",
+                "VALUES (%s,%s,'work_pending',%s,NULL,%s,%s,%s,NULL,NULL)",
                 (
                     run_id,
                     step_id,
@@ -1064,11 +982,11 @@ def begin_managed_work_step(
             )
         else:
             step_cas = connection.execute(
-                "UPDATE workflow_run_step SET state='work_pending',attempts=?,"
+                "UPDATE workflow_run_step SET state='work_pending',attempts=%s,"
                 "output_json=NULL,error='awaiting_authenticated_work_result',"
-                "error_kind=NULL,updated_at=?,call_fingerprint=?,result_json=NULL "
-                "WHERE run_id=? AND step_id=? AND state=? AND attempts=? "
-                "AND call_fingerprint IS ?",
+                "error_kind=NULL,updated_at=%s,call_fingerprint=%s,result_json=NULL "
+                "WHERE run_id=%s AND step_id=%s AND state=%s AND attempts=%s "
+                "AND call_fingerprint IS NOT DISTINCT FROM %s",
                 (
                     step_attempt,
                     updated_at,
@@ -1105,13 +1023,9 @@ def project_work_result(
     journal identity raises without replacing durable state.
     """
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.constants import DATABASE_FILE
     from cli_agent_orchestrator.models.work_origin import WorkflowStepResultV1
 
-    if (
-        not isinstance(repository, WorkRepository)
-        or Path(repository.path).resolve() != Path(DATABASE_FILE).resolve()
-    ):
+    if not isinstance(repository, WorkRepository) or not _repository_uses_main_store(repository):
         raise WorkflowProjectionConflict(
             "workflow journal and Work projection must use the configured database"
         )
@@ -1202,10 +1116,30 @@ def project_work_result(
         "delivery_id,delivery_hash"
     )
 
+    def return_if_projected(connection) -> bool:
+        prior_projection = connection.execute(
+            "SELECT accepted_result_id,content_hash FROM work_workflow_step_projections "
+            "WHERE binding_id=%s",
+            (binding_id,),
+        ).fetchone()
+        if prior_projection is None:
+            return False
+        if (
+            prior_projection["accepted_result_id"] != result_id
+            or prior_projection["content_hash"] != content_hash
+        ):
+            raise WorkflowProjectionConflict(
+                "workflow binding already projects a different accepted Work result"
+            )
+        from cli_agent_orchestrator.services.workflow_continuation_driver import enqueue_projected
+
+        enqueue_projected(connection, binding, result_id, content_hash)
+        return True
+
     with repository.transaction() as connection:
         repository._verify(connection)
         stored_binding = connection.execute(
-            f"SELECT {binding_columns} FROM work_workflow_step_bindings WHERE binding_id=?",
+            f"SELECT {binding_columns} FROM work_workflow_step_bindings WHERE binding_id=%s",
             (binding_id,),
         ).fetchone()
         if stored_binding is None or any(
@@ -1213,36 +1147,19 @@ def project_work_result(
         ):
             raise WorkflowProjectionConflict("workflow Work binding changed or is absent")
 
-        prior_projection = connection.execute(
-            "SELECT accepted_result_id,content_hash FROM work_workflow_step_projections "
-            "WHERE binding_id=?",
-            (binding_id,),
-        ).fetchone()
-        if prior_projection is not None:
-            if (
-                prior_projection["accepted_result_id"] == result_id
-                and prior_projection["content_hash"] == content_hash
-            ):
-                from cli_agent_orchestrator.services.workflow_continuation_driver import (
-                    enqueue_projected,
-                )
-
-                enqueue_projected(connection, binding, result_id, content_hash)
-                return "already_projected"
-            raise WorkflowProjectionConflict(
-                "workflow binding already projects a different accepted Work result"
-            )
+        if return_if_projected(connection):
+            return "already_projected"
 
         work = connection.execute(
-            "SELECT state,accepted_result_id FROM work_items WHERE id=?",
+            "SELECT state,accepted_result_id FROM work_items WHERE id=%s",
             (expected["work_item_id"],),
         ).fetchone()
         bound_attempt = connection.execute(
-            "SELECT work_item_id,generation,state FROM work_attempts WHERE id=?",
+            "SELECT work_item_id,generation,state FROM work_attempts WHERE id=%s",
             (expected["work_attempt_id"],),
         ).fetchone()
         current_attempt = connection.execute(
-            "SELECT id,generation,state FROM work_attempts WHERE work_item_id=? "
+            "SELECT id,generation,state FROM work_attempts WHERE work_item_id=%s "
             "ORDER BY attempt_number DESC LIMIT 1",
             (expected["work_item_id"],),
         ).fetchone()
@@ -1265,11 +1182,17 @@ def project_work_result(
             )
 
         run = connection.execute(
-            "SELECT state,tier,generation,current_step_id FROM workflow_run WHERE run_id=?",
+            "SELECT state,tier,generation,current_step_id FROM workflow_run WHERE run_id=%s FOR UPDATE",
             (run_id,),
         ).fetchone()
+        # A competing projection may have committed while this transaction
+        # waited for the aggregate run lock. Recheck its exact immutable marker
+        # before interpreting the completed step as a compare-and-set conflict.
+        if return_if_projected(connection):
+            return "already_projected"
+
         step = connection.execute(
-            "SELECT state,attempts FROM workflow_run_step WHERE run_id=? AND step_id=?",
+            "SELECT state,attempts FROM workflow_run_step WHERE run_id=%s AND step_id=%s FOR UPDATE",
             (run_id, step_id),
         ).fetchone()
         if (
@@ -1283,16 +1206,16 @@ def project_work_result(
             )
 
         run_cas = connection.execute(
-            "UPDATE workflow_run SET current_step_id=? WHERE run_id=? AND state=? "
-            "AND tier=? AND generation=? AND current_step_id=?",
+            "UPDATE workflow_run SET current_step_id=%s WHERE run_id=%s AND state=%s "
+            "AND tier=%s AND generation=%s AND current_step_id=%s",
             (step_id, run_id, "running", tier, str(run_generation), step_id),
         )
         if run_cas.rowcount != 1:
             raise WorkflowProjectionConflict("workflow run compare-and-set was lost")
         step_cas = connection.execute(
-            "UPDATE workflow_run_step SET state='completed',output_json=?,result_json=?,"
-            "error=NULL,error_kind=NULL,updated_at=? WHERE run_id=? AND step_id=? "
-            "AND state='work_pending' AND attempts=?",
+            "UPDATE workflow_run_step SET state='completed',output_json=%s,result_json=%s,"
+            "error=NULL,error_kind=NULL,updated_at=%s WHERE run_id=%s AND step_id=%s "
+            "AND state='work_pending' AND attempts=%s",
             (output_json, result_json, updated_at, run_id, step_id, step_attempt),
         )
         if step_cas.rowcount != 1:
@@ -1300,7 +1223,7 @@ def project_work_result(
         connection.execute(
             "INSERT INTO work_workflow_step_projections "
             "(binding_id,schema_version,accepted_result_id,content_hash,projected_at) "
-            "VALUES (?,1,?,?,?)",
+            "VALUES (%s,1,%s,%s,%s)",
             (binding_id, result_id, content_hash, time.time()),
         )
         from cli_agent_orchestrator.services.workflow_continuation_driver import enqueue_projected
@@ -1330,12 +1253,8 @@ def project_work_failure(
     error text; ``reconcile`` and stale attempts are never projected as failures.
     """
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.constants import DATABASE_FILE
 
-    if (
-        not isinstance(repository, WorkRepository)
-        or Path(repository.path).resolve() != Path(DATABASE_FILE).resolve()
-    ):
+    if not isinstance(repository, WorkRepository) or not _repository_uses_main_store(repository):
         raise WorkflowProjectionConflict(
             "workflow journal and Work projection must use the configured database"
         )
@@ -1420,7 +1339,7 @@ def project_work_failure(
     with repository.transaction() as connection:
         repository._verify(connection)
         stored_binding = connection.execute(
-            f"SELECT {binding_columns} FROM work_workflow_step_bindings WHERE binding_id=?",
+            f"SELECT {binding_columns} FROM work_workflow_step_bindings WHERE binding_id=%s",
             (binding_id,),
         ).fetchone()
         if stored_binding is None or any(
@@ -1429,16 +1348,16 @@ def project_work_failure(
             raise WorkflowProjectionConflict("workflow Work binding changed or is absent")
 
         work = connection.execute(
-            "SELECT state,revision,accepted_result_id FROM work_items WHERE id=?",
+            "SELECT state,revision,accepted_result_id FROM work_items WHERE id=%s",
             (work_item_id,),
         ).fetchone()
         attempt = connection.execute(
             "SELECT work_item_id,generation,state,revision,cleanup_state FROM work_attempts "
-            "WHERE id=?",
+            "WHERE id=%s",
             (work_attempt_id,),
         ).fetchone()
         current_attempt = connection.execute(
-            "SELECT id,generation,state FROM work_attempts WHERE work_item_id=? "
+            "SELECT id,generation,state FROM work_attempts WHERE work_item_id=%s "
             "ORDER BY attempt_number DESC LIMIT 1",
             (work_item_id,),
         ).fetchone()
@@ -1454,18 +1373,18 @@ def project_work_failure(
             raise WorkflowProjectionConflict("durable Work failure changed before journal CAS")
 
         if connection.execute(
-            "SELECT 1 FROM work_workflow_step_projections WHERE binding_id=?",
+            "SELECT 1 FROM work_workflow_step_projections WHERE binding_id=%s",
             (binding_id,),
         ).fetchone():
             raise WorkflowProjectionConflict("workflow binding already has a successful projection")
 
         run = connection.execute(
-            "SELECT state,tier,generation,current_step_id FROM workflow_run WHERE run_id=?",
+            "SELECT state,tier,generation,current_step_id FROM workflow_run WHERE run_id=%s FOR UPDATE",
             (run_id,),
         ).fetchone()
         step = connection.execute(
             "SELECT state,attempts,output_json,result_json,error,error_kind "
-            "FROM workflow_run_step WHERE run_id=? AND step_id=?",
+            "FROM workflow_run_step WHERE run_id=%s AND step_id=%s FOR UPDATE",
             (run_id, step_id),
         ).fetchone()
         if step is not None and tuple(step) == (
@@ -1488,8 +1407,8 @@ def project_work_failure(
             )
 
         run_cas = connection.execute(
-            "UPDATE workflow_run SET current_step_id=? WHERE run_id=? AND state=? "
-            "AND tier=? AND generation=? AND current_step_id=?",
+            "UPDATE workflow_run SET current_step_id=%s WHERE run_id=%s AND state=%s "
+            "AND tier=%s AND generation=%s AND current_step_id=%s",
             (step_id, run_id, "running", tier, str(run_generation), step_id),
         )
         if run_cas.rowcount != 1:
@@ -1497,7 +1416,7 @@ def project_work_failure(
         step_cas = connection.execute(
             "UPDATE workflow_run_step SET state='failed',output_json=NULL,result_json=NULL,"
             "error='managed Work attempt failed',error_kind='managed_work_failed',"
-            "updated_at=? WHERE run_id=? AND step_id=? AND state='work_pending' AND attempts=?",
+            "updated_at=%s WHERE run_id=%s AND step_id=%s AND state='work_pending' AND attempts=%s",
             (updated_at, run_id, step_id, step_attempt),
         )
         if step_cas.rowcount != 1:
@@ -1509,7 +1428,7 @@ def update_run_current_step(run_id: str, current_step_id: Optional[str]) -> None
     """UPDATE ``workflow_run.current_step_id`` (FR-6.4 "which step is live")."""
     with closing(_connect()) as owned_connection, owned_connection as conn:
         conn.execute(
-            "UPDATE workflow_run SET current_step_id = ? WHERE run_id = ?",
+            "UPDATE workflow_run SET current_step_id = %s WHERE run_id = %s",
             (current_step_id, run_id),
         )
 
@@ -1536,7 +1455,7 @@ def update_run_state(
     """
     with closing(_connect()) as owned_connection, owned_connection as conn:
         conn.execute(
-            "UPDATE workflow_run SET state = ?, finished_at = ?, error = ? WHERE run_id = ?",
+            "UPDATE workflow_run SET state = %s, finished_at = %s, error = %s WHERE run_id = %s",
             (state, finished_at, error, run_id),
         )
 
@@ -1566,10 +1485,11 @@ def settle_run_state_if_running(run_id: str, state: str, finished_at: Optional[s
 
     with closing(_connect()) as owned_connection, owned_connection as conn:
         cursor = conn.execute(
-            "UPDATE workflow_run SET state = ?, finished_at = ? " "WHERE run_id = ? AND state = ?",
+            "UPDATE workflow_run SET state = %s, finished_at = %s "
+            "WHERE run_id = %s AND state = %s",
             (state, finished_at, run_id, RunState.RUNNING.value),
         )
-        return cursor.rowcount > 0
+        return int(cursor.rowcount) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -1622,10 +1542,9 @@ def apply_decisions(run_id: str, decisions: Mapping[str, str]) -> Dict[str, str]
     different failures and neither is redundant: validation catches operator error at
     the boundary, the transaction catches a database failure part-way through the
     writes. ``with _connect() as conn:`` commits on clean exit and rolls back on an
-    exception, which is sufficient — deliberately NOT the ``BEGIN IMMEDIATE`` unit
-    6's TD-2a considered, because this is a single-writer, human-initiated path and
-    not a two-process race (concurrent resumes of the SAME run are rejected upstream
-    with 409 before this function is reached, SC-3).
+    exception. This path does not take a global database lock: concurrent resumes
+    of the SAME run are rejected upstream with 409 before this function is reached
+    (SC-3), and the transaction keeps the decision writes atomic.
 
     **Only ``state`` moves** (BR-8/SR-9/RL-4). ``attempts``, ``result_json``,
     ``output_json``, ``error``, ``call_fingerprint`` and ``updated_at`` are untouched,
@@ -1689,7 +1608,7 @@ def apply_decisions(run_id: str, decisions: Mapping[str, str]) -> Dict[str, str]
             maps it to 400 — correct, because a mistyped ``step_id`` is a client
             error and a 500 would tell the operator to file a bug instead of fixing a
             typo.
-        sqlite3.Error: propagated unchanged from the read or the transaction, like
+        DatabaseError: propagated unchanged from the read or the transaction, like
             every other helper here (BR-3's posture). A failed transaction has
             written nothing and produced no log line.
     """
@@ -1724,7 +1643,7 @@ def apply_decisions(run_id: str, decisions: Mapping[str, str]) -> Dict[str, str]
     with closing(_connect()) as owned_connection, owned_connection as conn:
         for step_id, (_decision, state) in resolved.items():
             conn.execute(
-                "UPDATE workflow_run_step SET state = ? WHERE run_id = ? AND step_id = ?",
+                "UPDATE workflow_run_step SET state = %s WHERE run_id = %s AND step_id = %s",
                 (state, run_id, step_id),
             )
 
@@ -1781,7 +1700,7 @@ def revoke_unconsumed_decisions(run_id: str, prior_states: Mapping[str, str]) ->
         that were NOT consumed. Empty when the drive consumed everything it was granted.
 
     Raises:
-        sqlite3.Error: propagated unchanged, like every other helper here. The caller treats a
+        DatabaseError: propagated unchanged, like every other helper here. The caller treats a
             failure as best-effort: it must not mask the drive's own outcome, and the next
             resume's gate still halts on anything it cannot verify.
     """
@@ -1805,8 +1724,8 @@ def revoke_unconsumed_decisions(run_id: str, prior_states: Mapping[str, str]) ->
                 continue
             for state in authorised:
                 cursor = conn.execute(
-                    "UPDATE workflow_run_step SET state = ? "
-                    "WHERE run_id = ? AND step_id = ? AND state = ?",
+                    "UPDATE workflow_run_step SET state = %s "
+                    "WHERE run_id = %s AND step_id = %s AND state = %s",
                     (prior, run_id, step_id, state),
                 )
                 if cursor.rowcount:
@@ -1850,7 +1769,7 @@ def get_run(run_id: str) -> Optional[RunRow]:
         row = conn.execute(
             "SELECT run_id, workflow_name, spec_snapshot, inputs_json, state, "
             "current_step_id, started_at, finished_at, tier, generation, manifest_json, error "
-            "FROM workflow_run WHERE run_id = ?",
+            "FROM workflow_run WHERE run_id = %s",
             (run_id,),
         ).fetchone()
     if row is None:
@@ -1887,7 +1806,7 @@ def get_steps(run_id: str) -> List[StepRow]:
         rows = conn.execute(
             "SELECT run_id, step_id, state, attempts, output_json, error, updated_at, "
             "call_fingerprint, terminal_id, reprompted, error_kind, result_json "
-            "FROM workflow_run_step WHERE run_id = ?",
+            "FROM workflow_run_step WHERE run_id = %s",
             (run_id,),
         ).fetchall()
     return [
@@ -1928,7 +1847,7 @@ def get_step(run_id: str, step_id: str) -> Optional[StepRow]:
         row = conn.execute(
             "SELECT run_id, step_id, state, attempts, output_json, error, updated_at, "
             "call_fingerprint, terminal_id, reprompted, error_kind, result_json "
-            "FROM workflow_run_step WHERE run_id = ? AND step_id = ?",
+            "FROM workflow_run_step WHERE run_id = %s AND step_id = %s",
             (run_id, step_id),
         ).fetchone()
     if row is None:
@@ -1958,15 +1877,14 @@ def get_work_step_projection(run_id: str, step_id: str) -> Optional[WorkStepProj
     to the accepted Work result content hash.
     """
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.constants import DATABASE_FILE
     from cli_agent_orchestrator.models.work_origin import WorkflowStepResultV1
 
     if not isinstance(run_id, str) or not run_id or not isinstance(step_id, str) or not step_id:
         raise ValueError("workflow projection identity is invalid")
-    with WorkRepository(DATABASE_FILE).read_snapshot() as connection:
+    with _main_work_repository().read_snapshot() as connection:
         step = connection.execute(
             "SELECT state,attempts,output_json,result_json FROM workflow_run_step "
-            "WHERE run_id=? AND step_id=?",
+            "WHERE run_id=%s AND step_id=%s",
             (run_id, step_id),
         ).fetchone()
         if step is None:
@@ -1977,8 +1895,8 @@ def get_work_step_projection(run_id: str, step_id: str) -> Optional[WorkStepProj
             "projection.content_hash FROM work_workflow_step_bindings AS binding "
             "JOIN work_workflow_step_projections AS projection "
             "ON projection.binding_id=binding.binding_id "
-            "WHERE binding.run_id=? AND binding.step_id=? "
-            "AND binding.workflow_step_attempt=?",
+            "WHERE binding.run_id=%s AND binding.step_id=%s "
+            "AND binding.workflow_step_attempt=%s",
             (run_id, step_id, step[1]),
         ).fetchall()
     if not rows:
@@ -2033,10 +1951,10 @@ def list_runs(
     :class:`RunSummaryRow`. The projection is narrow (seven columns; no
     ``spec_snapshot`` / ``inputs_json``) so a multi-row list stays small.
 
-    - ``state`` — when not ``None``, a ``WHERE state = ?`` clause filters to that
+    - ``state`` — when not ``None``, a ``WHERE state = %s`` clause filters to that
       one RunState string. Legality of the value is validated one layer up; a
       well-formed but unmatched string simply returns ``[]`` (QR-2, LR-2). The
-      value binds through a ``?`` placeholder — never string-interpolated, so a
+      value binds through a ``%s`` placeholder — never string-interpolated, so a
       value carrying SQL metacharacters is a harmless literal (QR-1).
     - ``limit`` — clamped to ``[1, 500]`` (values ``< 1`` become ``1``, values
       ``> 500`` become ``500``); ``offset`` is floored at ``0``. The clamp bounds
@@ -2048,7 +1966,7 @@ def list_runs(
 
     An empty result (empty table or a filter that matches nothing) is a valid
     answer returned as ``[]``, never an error (LR-3). Like the sibling reads
-    (``get_run`` / ``get_steps``) this raises ``sqlite3.Error`` on a DB failure
+    (``get_run`` / ``get_steps``) this raises ``DatabaseError`` on a DB failure
     rather than swallowing it — a silently empty list would hide a broken
     database from a human who explicitly asked to list runs (ER-1).
     """
@@ -2061,9 +1979,9 @@ def list_runs(
     )
     params: List[object] = []
     if state is not None:
-        sql += " WHERE state = ?"
+        sql += " WHERE state = %s"
         params.append(state)
-    sql += " ORDER BY started_at DESC, run_id DESC LIMIT ? OFFSET ?"
+    sql += " ORDER BY started_at DESC, run_id DESC LIMIT %s OFFSET %s"
     params.extend([limit, offset])
 
     with closing(_connect()) as owned_connection, owned_connection as conn:
@@ -2132,7 +2050,7 @@ def append_step(
             "INSERT INTO workflow_run_step "
             "(run_id, step_id, state, attempts, output_json, error, updated_at, "
             " call_fingerprint) "
-            "VALUES (?, ?, ?, 0, NULL, NULL, ?, ?) "
+            "VALUES (%s, %s, %s, 0, NULL, NULL, %s, %s) "
             "ON CONFLICT(run_id, step_id) DO UPDATE SET "
             "state = excluded.state, updated_at = excluded.updated_at",
             (run_id, step_id, state, updated_at, call_fingerprint),
@@ -2253,17 +2171,17 @@ def begin_step_with_contract(
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
     with closing(_connect()) as owned_connection, owned_connection as conn:
-        conn.execute("BEGIN IMMEDIATE")
         WorkRepository._verify(conn)
         run = conn.execute(
-            "SELECT generation,state,tier FROM workflow_run WHERE run_id=?", (run_id,)
+            "SELECT generation,state,tier FROM workflow_run WHERE run_id=%s FOR UPDATE",
+            (run_id,),
         ).fetchone()
         if run is None or run != (generation, "running", "script"):
             raise ValueError("step contract requires a current running script generation")
         if attempt_number is not None:
             existing = conn.execute(
-                "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
-                "AND generation=? AND attempt_number=?",
+                "SELECT contract_json FROM work_step_contracts WHERE run_id=%s AND step_id=%s "
+                "AND generation=%s AND attempt_number=%s",
                 (run_id, step_id, generation, attempt_number),
             ).fetchone()
             if existing is None or existing[0] != payload:
@@ -2271,7 +2189,7 @@ def begin_step_with_contract(
             return attempt_number
         prior = conn.execute(
             "SELECT state,attempts,updated_at,call_fingerprint,terminal_id,error_kind "
-            "FROM workflow_run_step WHERE run_id=? AND step_id=?",
+            "FROM workflow_run_step WHERE run_id=%s AND step_id=%s FOR UPDATE",
             (run_id, step_id),
         ).fetchone()
         if expected_prior is not None:
@@ -2286,19 +2204,22 @@ def begin_step_with_contract(
             state, _attempts, _updated_at, _fingerprint, _terminal_id, error_kind = prior
             if state != "rerun_authorized" and (state, error_kind) != ("failed", "error"):
                 raise ValueError("step requires replay or an explicit recovery decision")
-        number: int = conn.execute(
+        number_row = conn.execute(
             "SELECT COALESCE(MAX(attempt_number),0)+1 FROM work_step_contracts "
-            "WHERE run_id=? AND step_id=? AND generation=?",
+            "WHERE run_id=%s AND step_id=%s AND generation=%s",
             (run_id, step_id, generation),
-        ).fetchone()[0]
+        ).fetchone()
+        if number_row is None:
+            raise ValueError("step contract attempt number aggregate returned no row")
+        number: int = number_row[0]
         conn.execute(
-            "INSERT INTO work_step_contracts VALUES (?,?,?,?,?,?)",
+            "INSERT INTO work_step_contracts VALUES (%s,%s,%s,%s,%s,%s)",
             (run_id, step_id, generation, number, payload, updated_at),
         )
         conn.execute(
             "INSERT INTO workflow_run_step "
             "(run_id,step_id,state,attempts,updated_at,call_fingerprint,terminal_id) "
-            "VALUES (?,?,'running',0,?,?,?) ON CONFLICT(run_id,step_id) DO UPDATE SET "
+            "VALUES (%s,%s,'running',0,%s,%s,%s) ON CONFLICT(run_id,step_id) DO UPDATE SET "
             "state='running',updated_at=excluded.updated_at,call_fingerprint=excluded.call_fingerprint,"
             "terminal_id=excluded.terminal_id,error_kind=NULL,error=NULL,result_json=NULL,output_json=NULL",
             (run_id, step_id, updated_at, contract["call_fingerprint"], contract["terminal_id"]),
@@ -2339,18 +2260,21 @@ def begin_yaml_step_with_contract(
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
     with closing(_connect()) as owned_connection, owned_connection as conn:
-        conn.execute("BEGIN IMMEDIATE")
         WorkRepository._verify(conn)
         run = conn.execute(
-            "SELECT generation,state,tier FROM workflow_run WHERE run_id=?", (run_id,)
+            "SELECT generation,state,tier FROM workflow_run WHERE run_id=%s FOR UPDATE",
+            (run_id,),
         ).fetchone()
         if run != (generation, "running", "yaml"):
             raise ValueError("YAML step contract requires a current running YAML generation")
-        latest = conn.execute(
+        latest_row = conn.execute(
             "SELECT COALESCE(MAX(attempt_number),0) FROM work_step_contracts "
-            "WHERE run_id=? AND step_id=? AND generation=?",
+            "WHERE run_id=%s AND step_id=%s AND generation=%s",
             (run_id, step_id, generation),
-        ).fetchone()[0]
+        ).fetchone()
+        if latest_row is None:
+            raise ValueError("YAML step contract attempt aggregate returned no row")
+        latest = latest_row[0]
         number = latest + 1 if attempt_number is None else attempt_number
         identity = hashlib.sha256(
             f"{run_id}\0{step_id}\0{generation}\0{number}".encode("utf-8")
@@ -2363,8 +2287,8 @@ def begin_yaml_step_with_contract(
         }
         payload = _serialise_step_contract(contract)
         existing = conn.execute(
-            "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
-            "AND generation=? AND attempt_number=?",
+            "SELECT contract_json FROM work_step_contracts WHERE run_id=%s AND step_id=%s "
+            "AND generation=%s AND attempt_number=%s",
             (run_id, step_id, generation, number),
         ).fetchone()
         if existing is not None:
@@ -2375,14 +2299,17 @@ def begin_yaml_step_with_contract(
             raise ValueError("YAML contract attempt number is not current")
 
         step = conn.execute(
-            "SELECT state FROM workflow_run_step WHERE run_id=? AND step_id=?", (run_id, step_id)
+            "SELECT state FROM workflow_run_step WHERE run_id=%s AND step_id=%s FOR UPDATE",
+            (run_id, step_id),
         ).fetchone()
         if latest:
             first = conn.execute(
-                "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
-                "AND generation=? ORDER BY attempt_number LIMIT 1",
+                "SELECT contract_json FROM work_step_contracts WHERE run_id=%s AND step_id=%s "
+                "AND generation=%s ORDER BY attempt_number LIMIT 1",
                 (run_id, step_id, generation),
             ).fetchone()
+            if first is None:
+                raise ValueError("YAML contract history is corrupt")
             try:
                 first_contract = json.loads(first[0])
             except (TypeError, ValueError) as error:
@@ -2396,13 +2323,13 @@ def begin_yaml_step_with_contract(
                 raise ValueError("YAML retry requires a durably failed prior attempt")
 
         conn.execute(
-            "INSERT INTO work_step_contracts VALUES (?,?,?,?,?,?)",
+            "INSERT INTO work_step_contracts VALUES (%s,%s,%s,%s,%s,%s)",
             (run_id, step_id, generation, number, payload, updated_at),
         )
         conn.execute(
             "INSERT INTO workflow_run_step "
             "(run_id,step_id,state,attempts,updated_at,call_fingerprint) "
-            "VALUES (?,?,'running',0,?,?) ON CONFLICT(run_id,step_id) DO UPDATE SET "
+            "VALUES (%s,%s,'running',0,%s,%s) ON CONFLICT(run_id,step_id) DO UPDATE SET "
             "state='running',updated_at=excluded.updated_at,call_fingerprint=excluded.call_fingerprint,"
             "error_kind=NULL,error=NULL,result_json=NULL,output_json=NULL",
             (run_id, step_id, updated_at, call_fingerprint),
@@ -2424,21 +2351,23 @@ def record_yaml_step_result(
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
     with closing(_connect()) as owned_connection, owned_connection as conn:
-        conn.execute("BEGIN IMMEDIATE")
         WorkRepository._verify(conn)
         run = conn.execute(
-            "SELECT generation,state,tier FROM workflow_run WHERE run_id=?", (run_id,)
+            "SELECT generation,state,tier FROM workflow_run WHERE run_id=%s FOR UPDATE", (run_id,)
         ).fetchone()
-        latest = conn.execute(
+        latest_row = conn.execute(
             "SELECT MAX(attempt_number) FROM work_step_contracts "
-            "WHERE run_id=? AND step_id=? AND generation=?",
+            "WHERE run_id=%s AND step_id=%s AND generation=%s",
             (run_id, step_id, generation),
-        ).fetchone()[0]
+        ).fetchone()
+        if latest_row is None:
+            raise ValueError("YAML result attempt is no longer current")
+        latest = latest_row[0]
         if run != (generation, "running", "yaml") or latest != attempt_number:
             raise ValueError("YAML result attempt is no longer current")
         changed = conn.execute(
-            "UPDATE workflow_run_step SET result_json=?,terminal_id=? "
-            "WHERE run_id=? AND step_id=? AND state='running' AND call_fingerprint=?",
+            "UPDATE workflow_run_step SET result_json=%s,terminal_id=%s "
+            "WHERE run_id=%s AND step_id=%s AND state='running' AND call_fingerprint=%s",
             (result_json, result.terminal_id, run_id, step_id, call_fingerprint),
         ).rowcount
         if changed != 1:
@@ -2461,28 +2390,30 @@ def fail_yaml_step_attempt(
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
     with closing(_connect()) as owned_connection, owned_connection as conn:
-        conn.execute("BEGIN IMMEDIATE")
         WorkRepository._verify(conn)
         run = conn.execute(
-            "SELECT generation,state,tier FROM workflow_run WHERE run_id=?", (run_id,)
+            "SELECT generation,state,tier FROM workflow_run WHERE run_id=%s FOR UPDATE", (run_id,)
         ).fetchone()
         contract = conn.execute(
-            "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
-            "AND generation=? AND attempt_number=?",
+            "SELECT contract_json FROM work_step_contracts WHERE run_id=%s AND step_id=%s "
+            "AND generation=%s AND attempt_number=%s",
             (run_id, step_id, generation, attempt_number),
         ).fetchone()
-        latest = conn.execute(
-            "SELECT MAX(attempt_number) FROM work_step_contracts WHERE run_id=? AND step_id=? "
-            "AND generation=?",
+        latest_row = conn.execute(
+            "SELECT MAX(attempt_number) FROM work_step_contracts WHERE run_id=%s AND step_id=%s "
+            "AND generation=%s",
             (run_id, step_id, generation),
-        ).fetchone()[0]
+        ).fetchone()
+        if latest_row is None:
+            raise ValueError("YAML attempt is no longer current")
+        latest = latest_row[0]
         if run != (generation, "running", "yaml") or contract is None or latest != attempt_number:
             raise ValueError("YAML attempt is no longer current")
         _serialise_step_contract(json.loads(contract[0]))
         changed = conn.execute(
-            "UPDATE workflow_run_step SET state='failed',attempts=MAX(attempts,?),updated_at=?,"
-            "error=?,error_kind=? WHERE run_id=? AND step_id=? AND state='running' "
-            "AND call_fingerprint=?",
+            "UPDATE workflow_run_step SET state='failed',attempts=GREATEST(attempts,%s),updated_at=%s,"
+            "error=%s,error_kind=%s WHERE run_id=%s AND step_id=%s AND state='running' "
+            "AND call_fingerprint=%s",
             (
                 attempt_number,
                 updated_at,
@@ -2508,25 +2439,25 @@ def assert_yaml_step_contract_current(
     """Fence a queued YAML send against a replaced or damaged contract store."""
     import json
 
-    from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    with WorkRepository(DATABASE_FILE).read_snapshot() as conn:
+    with _main_work_repository().read_snapshot() as conn:
         run = conn.execute(
-            "SELECT generation,state,tier FROM workflow_run WHERE run_id=?", (run_id,)
+            "SELECT generation,state,tier FROM workflow_run WHERE run_id=%s", (run_id,)
         ).fetchone()
         step = conn.execute(
-            "SELECT state,call_fingerprint FROM workflow_run_step WHERE run_id=? AND step_id=?",
+            "SELECT state,call_fingerprint FROM workflow_run_step WHERE run_id=%s AND step_id=%s",
             (run_id, step_id),
         ).fetchone()
-        latest = conn.execute(
-            "SELECT MAX(attempt_number) FROM work_step_contracts WHERE run_id=? AND step_id=? "
-            "AND generation=?",
+        latest_row = conn.execute(
+            "SELECT MAX(attempt_number) FROM work_step_contracts WHERE run_id=%s AND step_id=%s "
+            "AND generation=%s",
             (run_id, step_id, generation),
-        ).fetchone()[0]
+        ).fetchone()
+        if latest_row is None:
+            raise ValueError("YAML contract is no longer the current deliverable attempt")
+        latest = latest_row[0]
         row = conn.execute(
-            "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
-            "AND generation=? AND attempt_number=?",
+            "SELECT contract_json FROM work_step_contracts WHERE run_id=%s AND step_id=%s "
+            "AND generation=%s AND attempt_number=%s",
             (run_id, step_id, generation, attempt_number),
         ).fetchone()
     if row is None:
@@ -2550,13 +2481,12 @@ def assert_yaml_contract_history(
     import json
 
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.constants import DATABASE_FILE
 
-    with WorkRepository(DATABASE_FILE).read_snapshot() as conn:
-        run = conn.execute("SELECT tier FROM workflow_run WHERE run_id=?", (run_id,)).fetchone()
+    with _main_work_repository().read_snapshot() as conn:
+        run = conn.execute("SELECT tier FROM workflow_run WHERE run_id=%s", (run_id,)).fetchone()
         row = conn.execute(
-            "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
-            "AND generation=? ORDER BY attempt_number LIMIT 1",
+            "SELECT contract_json FROM work_step_contracts WHERE run_id=%s AND step_id=%s "
+            "AND generation=%s ORDER BY attempt_number LIMIT 1",
             (run_id, step_id, generation),
         ).fetchone()
     if run is None or run[0] != "yaml" or row is None:
@@ -2594,9 +2524,10 @@ def begin_yaml_replay_contract(
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
     with closing(_connect()) as owned_connection, owned_connection as conn:
-        conn.execute("BEGIN IMMEDIATE")
         WorkRepository._verify(conn)
-        source = conn.execute("SELECT tier FROM workflow_run WHERE run_id=?", (run_id,)).fetchone()
+        source = conn.execute(
+            "SELECT tier FROM workflow_run WHERE run_id=%s FOR UPDATE", (run_id,)
+        ).fetchone()
         if source is None or source[0] != "yaml":
             raise ValueError("YAML replay contract requires a YAML source run")
         identity = hashlib.sha256(
@@ -2610,8 +2541,8 @@ def begin_yaml_replay_contract(
         }
         payload = _serialise_step_contract(contract)
         existing = conn.execute(
-            "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
-            "AND generation=? AND attempt_number=1",
+            "SELECT contract_json FROM work_step_contracts WHERE run_id=%s AND step_id=%s "
+            "AND generation=%s AND attempt_number=1",
             (run_id, step_id, generation),
         ).fetchone()
         if existing is not None:
@@ -2619,7 +2550,7 @@ def begin_yaml_replay_contract(
                 raise ValueError("YAML replay contract does not match immutable evidence")
             return 1
         conn.execute(
-            "INSERT INTO work_step_contracts VALUES (?,?,?,?,?,?)",
+            "INSERT INTO work_step_contracts VALUES (%s,%s,%s,%s,%s,%s)",
             (run_id, step_id, generation, 1, payload, updated_at),
         )
     return 1
@@ -2636,13 +2567,12 @@ def assert_yaml_replay_contract_current(
     import json
 
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.constants import DATABASE_FILE
 
-    with WorkRepository(DATABASE_FILE).read_snapshot() as conn:
-        source = conn.execute("SELECT tier FROM workflow_run WHERE run_id=?", (run_id,)).fetchone()
+    with _main_work_repository().read_snapshot() as conn:
+        source = conn.execute("SELECT tier FROM workflow_run WHERE run_id=%s", (run_id,)).fetchone()
         row = conn.execute(
-            "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
-            "AND generation=? AND attempt_number=1",
+            "SELECT contract_json FROM work_step_contracts WHERE run_id=%s AND step_id=%s "
+            "AND generation=%s AND attempt_number=1",
             (run_id, step_id, generation),
         ).fetchone()
     if source is None or source[0] != "yaml" or row is None:
@@ -2669,20 +2599,22 @@ def assert_step_contract_current(
     mutable settlement count is deliberately not used as an attempt revision.
     """
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.constants import DATABASE_FILE
 
-    with WorkRepository(DATABASE_FILE).read_snapshot() as connection:
+    with _main_work_repository().read_snapshot() as connection:
         run = connection.execute(
-            "SELECT generation,state,tier FROM workflow_run WHERE run_id=?", (run_id,)
+            "SELECT generation,state,tier FROM workflow_run WHERE run_id=%s", (run_id,)
         ).fetchone()
         step = connection.execute(
-            "SELECT state,terminal_id,call_fingerprint FROM workflow_run_step WHERE run_id=? AND step_id=?",
+            "SELECT state,terminal_id,call_fingerprint FROM workflow_run_step WHERE run_id=%s AND step_id=%s",
             (run_id, step_id),
         ).fetchone()
-        latest = connection.execute(
-            "SELECT max(attempt_number) FROM work_step_contracts WHERE run_id=? AND step_id=? AND generation=?",
+        latest_row = connection.execute(
+            "SELECT max(attempt_number) FROM work_step_contracts WHERE run_id=%s AND step_id=%s AND generation=%s",
             (run_id, step_id, generation),
-        ).fetchone()[0]
+        ).fetchone()
+        if latest_row is None:
+            raise ValueError("step contract is no longer the current deliverable attempt")
+        latest = latest_row[0]
         if (
             run is None
             or tuple(run) != (generation, "running", "script")
@@ -2700,15 +2632,14 @@ def get_step_contract(
     import json
 
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.constants import DATABASE_FILE
 
     # Recovery must not return a purportedly immutable contract from a store
     # whose migration ledger or immutability triggers no longer verify. This
     # read-only snapshot changes no state and never resolves mutable launch data.
-    with WorkRepository(DATABASE_FILE).read_snapshot() as conn:
+    with _main_work_repository().read_snapshot() as conn:
         row = conn.execute(
-            "SELECT contract_json FROM work_step_contracts WHERE run_id=? AND step_id=? "
-            "AND generation=? AND attempt_number=?",
+            "SELECT contract_json FROM work_step_contracts WHERE run_id=%s AND step_id=%s "
+            "AND generation=%s AND attempt_number=%s",
             (run_id, step_id, generation, attempt_number),
         ).fetchone()
     return json.loads(row[0]) if row is not None else None
@@ -2754,7 +2685,7 @@ def begin_step(run_id: str, step_id: str, updated_at: str, call_fingerprint: str
     test pins the literal equal to ``StepState.RUNNING.value`` from the test
     file's own import, so a rename on either side fails loudly.
 
-    Raises ``sqlite3.Error`` on a DB failure and swallows nothing (BR-3): the
+    Raises ``DatabaseError`` on a DB failure and swallows nothing (BR-3): the
     best-effort posture belongs to the caller (``record_step_completion``), so a
     journal failure degrades resumability and never fails a running step (INV-4).
     """
@@ -2763,7 +2694,7 @@ def begin_step(run_id: str, step_id: str, updated_at: str, call_fingerprint: str
             "INSERT INTO workflow_run_step "
             "(run_id, step_id, state, attempts, output_json, error, updated_at, "
             " call_fingerprint) "
-            "VALUES (?, ?, 'running', 0, NULL, NULL, ?, ?) "
+            "VALUES (%s, %s, 'running', 0, NULL, NULL, %s, %s) "
             "ON CONFLICT(run_id, step_id) DO UPDATE SET "
             "state = excluded.state, "
             "error_kind = NULL, "
@@ -2806,31 +2737,12 @@ def settle_step(
     "because a silent no-op is indistinguishable from a broken guard when
     reading logs after an incident". A single ``INSERT ... ON CONFLICT DO
     UPDATE`` cannot report which branch it took (``cursor.rowcount`` is 1 either
-    way), so the branch is detected by a primary-key ``SELECT`` on the same
-    connection, immediately before the upsert. ``RETURNING`` would detect it in
-    one statement but appears nowhere in ``src/`` and needs SQLite 3.35+, which
-    is not verified at the project's CI floor (TD-2).
-
-    **The scope of that detection, stated precisely rather than overclaimed.**
-    The ``SELECT`` and the upsert share one connection and one ``with`` block,
-    but NOT one transaction: with the stdlib's legacy transaction control
-    (``isolation_level=""``) an implicit ``BEGIN`` fires at the first DML
-    statement, so a plain ``SELECT`` runs in autocommit and opens no read
-    transaction — verified on CPython 3.12.9 / SQLite 3.47.1, where a second
-    connection can insert the same key between the two statements without
-    blocking. So the returned ``bool`` is an accurate report of what this process
-    saw a moment before its write, and it can under-report (``False`` while
-    another process created the row in that gap, leaving this statement to take
-    the conflict path). It never mis-reports ``True``: nothing in ``src/`` deletes
-    a ``workflow_run_step`` row.
-
-    That residual is bounded and deliberate. **BR-1 does not depend on it** — the
-    settle itself is one statement and stays atomic whatever the read said — and
-    the value feeds a diagnostic warning, not a control-flow decision, so the
-    worst case is one missing log line in a race between two processes settling
-    the SAME step. Making it exact would need an explicit ``BEGIN IMMEDIATE``
-    around both statements, which no other helper in this module takes and which
-    would widen the write lock across a read for a log line.
+    way), so the branch is detected by a primary-key ``SELECT`` followed by the
+    upsert in one native transaction. The read does not lock an absent key, so
+    concurrent inserts can still make this diagnostic report ``False`` while
+    the upsert takes its conflict branch. It never mis-reports ``True``: no
+    application path deletes a ``workflow_run_step`` row. The return value feeds
+    a diagnostic warning, not control flow; the settlement itself remains atomic.
 
     **It is an UPSERT, not an UPDATE** (BR-4). The no-prior-row case is live
     today — ``script_runner.record_step_completion`` already defends against a
@@ -2872,14 +2784,14 @@ def settle_step(
     Legacy callers omit it and retain NULL; successful settlement clears a prior
     failure kind even if a caller accidentally supplies a stale one.
 
-    Raises ``sqlite3.Error`` on a DB failure and swallows nothing (BR-3).
+    Raises ``DatabaseError`` on a DB failure and swallows nothing (BR-3).
     """
     if state in {"completed", "completed_unvalidated", "skipped"}:
         error_kind = None
     with closing(_connect()) as owned_connection, owned_connection as conn:
         existed = (
             conn.execute(
-                "SELECT 1 FROM workflow_run_step WHERE run_id = ? AND step_id = ?",
+                "SELECT 1 FROM workflow_run_step WHERE run_id = %s AND step_id = %s",
                 (run_id, step_id),
             ).fetchone()
             is not None
@@ -2888,7 +2800,7 @@ def settle_step(
             "INSERT INTO workflow_run_step "
             "(run_id, step_id, state, attempts, output_json, error, updated_at, "
             " result_json, error_kind) "
-            "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?) "
+            "VALUES (%s, %s, %s, 1, %s, %s, %s, %s, %s) "
             "ON CONFLICT(run_id, step_id) DO UPDATE SET "
             "state = excluded.state, "
             "attempts = workflow_run_step.attempts + 1, "
@@ -2897,7 +2809,7 @@ def settle_step(
             "updated_at = excluded.updated_at, "
             "result_json = excluded.result_json, "
             "error_kind = excluded.error_kind "
-            "WHERE workflow_run_step.state IS NOT 'work_pending'",
+            "WHERE workflow_run_step.state IS DISTINCT FROM 'work_pending'",
             (run_id, step_id, state, output_json, error, updated_at, result_json, error_kind),
         ).rowcount
         if changed != 1:
@@ -2950,7 +2862,7 @@ def lookup_replay(run_id: str, step_id: str, call_fingerprint: str) -> Optional[
 # ---------------------------------------------------------------------------
 # U1 additions (issue #504, event-log substrate) — additive only. The durable
 # append-only ``workflow_run_event`` table, the ``workflow_run_seq`` high-water
-# table, and their read/write DAL. These helpers raise ``sqlite3.Error`` on a DB
+# table, and their read/write DAL. These helpers raise ``DatabaseError`` on a DB
 # failure exactly like the write family above; the CALLER (U2's emission path)
 # wraps them best-effort — a dropped event/high-water write never raises into the
 # drive loop (BR-2). U1 adds no new swallow policy of its own.
@@ -2982,36 +2894,14 @@ _EVENT_COLUMNS: Tuple[str, ...] = (
     "which_guard_fired",
 )
 
-# Memoization set: the (process, db-path) keys whose event/seq migrators have
-# already run. Guards ``_connect_event`` so the migrators fire at most once per
-# db path per process — NOT once per append (NFR-PERF-1, BR-7).
-_event_migrated_paths: Set[str] = set()
 
+def _connect_event(target: DatabaseTarget | None = None) -> Connection:
+    """Open the configured main-store connection for workflow events.
 
-def _connect_event() -> sqlite3.Connection:
-    """Open a connection for the event tables, migrating at most once (NFR-PERF-1).
-
-    Unlike ``_connect`` (which re-runs its migrators on every call and is left
-    untouched to preserve the #505 seam and its documented per-call cost), this
-    helper runs ``_migrate_workflow_run_event`` + ``_migrate_workflow_run_seq``
-    only the first time it sees a given ``DATABASE_FILE`` in this process, keyed
-    through the module-level ``_event_migrated_paths`` set. Emitting N events for
-    a run therefore runs the event migrator ≤ 1 time (BR-7); the memoization is
-    what makes NFR-PERF-1-T pass. The migrators are imported lazily inside the
-    function (mirrors ``_connect``'s lazy import) to avoid an import cycle.
+    Event and sequence tables are part of the checked workflow component schema;
+    runtime callers never create or memoize those tables.
     """
-    from cli_agent_orchestrator.clients.database import (
-        _migrate_workflow_run_event,
-        _migrate_workflow_run_seq,
-    )
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    path = str(DATABASE_FILE)
-    if path not in _event_migrated_paths:
-        _migrate_workflow_run_event()
-        _migrate_workflow_run_seq()
-        _event_migrated_paths.add(path)
-    return sqlite3.connect(path)
+    return _connect(target)
 
 
 # ---------------------------------------------------------------------------
@@ -3046,7 +2936,7 @@ def append_event(
 
     ``seq`` is allocated once per emission by the caller's in-memory counter
     (never recomputed here, BR-1), so a re-INSERT for an already-present
-    ``(run_id, seq)`` raises ``sqlite3.IntegrityError`` — that indicates a bug
+    ``(run_id, seq)`` raises ``IntegrityError`` — that indicates a bug
     and the best-effort caller swallows it (logged), never a silent overwrite
     (BR-10). ``run_id``/``seq``/``event_type``/``event_schema_version``/``ts``
     are required; the rest are optional and stored where applicable. Parameterized
@@ -3075,7 +2965,7 @@ def append_event(
         iteration,
         which_guard_fired,
     )
-    placeholders = ", ".join("?" for _ in _EVENT_COLUMNS)
+    placeholders = ", ".join("%s" for _ in _EVENT_COLUMNS)
     with closing(_connect_event()) as owned_connection, owned_connection as conn:
         conn.execute(
             f"INSERT INTO workflow_run_event ({', '.join(_EVENT_COLUMNS)}) "
@@ -3095,9 +2985,9 @@ def persist_high_water(run_id: str, seq: int) -> None:
     """
     with closing(_connect_event()) as owned_connection, owned_connection as conn:
         conn.execute(
-            "INSERT INTO workflow_run_seq (run_id, high_water) VALUES (?, ?) "
+            "INSERT INTO workflow_run_seq (run_id, high_water) VALUES (%s, %s) "
             "ON CONFLICT(run_id) DO UPDATE SET "
-            "high_water = max(high_water, excluded.high_water)",
+            "high_water = GREATEST(workflow_run_seq.high_water, excluded.high_water)",
             (run_id, seq),
         )
 
@@ -3106,7 +2996,7 @@ def persist_high_water(run_id: str, seq: int) -> None:
 # Event reads (rebuild + replay read path). Answerable from the durable tables
 # alone with no ``run_registry`` dependency (journal-authoritative, BR-8).
 # ---------------------------------------------------------------------------
-def _event_row(row: Sequence) -> EventRow:
+def _event_row(row: Sequence[Any] | Record) -> EventRow:
     """Build an ``EventRow`` from a raw ``_EVENT_COLUMNS``-ordered result row."""
     return EventRow(
         run_id=row[0],
@@ -3140,13 +3030,13 @@ def read_events(run_id: str, after_seq: Optional[int] = None) -> List[EventRow]:
     durable analogue of the in-memory ``event_log_service`` after-id replay cursor
     (FR-5.2), so a disconnected follower resumes without gaps or duplicates.
     """
-    select = f"SELECT {', '.join(_EVENT_COLUMNS)} FROM workflow_run_event WHERE run_id = ?"
+    select = f"SELECT {', '.join(_EVENT_COLUMNS)} FROM workflow_run_event WHERE run_id = %s"
     with closing(_connect_event()) as owned_connection, owned_connection as conn:
         if after_seq is None:
             rows = conn.execute(f"{select} ORDER BY seq", (run_id,)).fetchall()
         else:
             rows = conn.execute(
-                f"{select} AND seq > ? ORDER BY seq", (run_id, after_seq)
+                f"{select} AND seq > %s ORDER BY seq", (run_id, after_seq)
             ).fetchall()
     return [_event_row(r) for r in rows]
 
@@ -3161,28 +3051,16 @@ def _is_terminal_run(run_id: str) -> bool:
     raising into the read path: a gap is an assertion about lost data, so the
     quiet answer is the safe default when the run's state cannot be established.
 
-    Uses the MEMOIZED ``_connect_event`` rather than ``_connect`` (PR #526
-    review): this runs on every ``read_events_with_gaps`` call, which the SSE
-    follow arm invokes 4x/second per follower, and ``_connect`` re-runs
-    ``_migrate_workflow_run`` + ``_migrate_workflow_run_step`` on EVERY call.
-    ``_connect_event`` migrates the event/seq tables at most once per process per
-    DB path, so the poll no longer pays two migrations per tick.
-
-    The table-coverage difference is not a behaviour change here. ``_connect``
-    would CREATE an absent ``workflow_run`` table and then read no row -> False;
-    ``_connect_event`` does not create it, so an absent table raises
-    ``sqlite3.Error``, which the except-arm below also answers False. Both paths
-    reach the identical answer, and the only path that produces a True (a real
-    stored run row) requires ``insert_run`` to have run through ``_connect``
-    already.
+    Uses the configured PostgreSQL main store. The workflow migration is
+    verified at bootstrap; runtime reads never create or migrate tables.
     """
     try:
         with closing(_connect_event()) as owned_connection, owned_connection as conn:
             row = conn.execute(
-                "SELECT state FROM workflow_run WHERE run_id = ?",
+                "SELECT state FROM workflow_run WHERE run_id = %s",
                 (run_id,),
             ).fetchone()
-    except sqlite3.Error as e:
+    except DatabaseError as e:
         logger.debug(f"trailing-gap state read failed for run '{run_id}': {e}")
         return False
     return row is not None and str(row[0]) in _TERMINAL_RUN_STATES
@@ -3324,11 +3202,11 @@ def persisted_high_water(run_id: str) -> int:
     try:
         with closing(_connect_event()) as owned_connection, owned_connection as conn:
             row = conn.execute(
-                "SELECT high_water FROM workflow_run_seq WHERE run_id = ?",
+                "SELECT high_water FROM workflow_run_seq WHERE run_id = %s",
                 (run_id,),
             ).fetchone()
         return int(row[0]) if row is not None else 0
-    except sqlite3.Error as e:
+    except DatabaseError as e:
         logger.debug(f"persisted_high_water read failed for run '{run_id}': {e}")
         return 0
 
@@ -3344,11 +3222,11 @@ def max_event_seq(run_id: str) -> int:
     try:
         with closing(_connect_event()) as owned_connection, owned_connection as conn:
             row = conn.execute(
-                "SELECT COALESCE(MAX(seq), 0) FROM workflow_run_event WHERE run_id = ?",
+                "SELECT COALESCE(MAX(seq), 0) FROM workflow_run_event WHERE run_id = %s",
                 (run_id,),
             ).fetchone()
         return int(row[0]) if row is not None else 0
-    except sqlite3.Error as e:
+    except DatabaseError as e:
         logger.debug(f"max_event_seq read failed for run '{run_id}': {e}")
         return 0
 
@@ -3366,8 +3244,8 @@ def list_run_ids_by_age() -> List[Tuple[str, str]]:
     just the two fields the sweep needs). Ordered by ``started_at`` descending so a
     "keep the most-recent N" slice is a simple ``rows[N:]`` (the sweep's count
     bound). ``run_id`` is the tie-break so the order is deterministic when two runs
-    share a ``started_at``. Uses the same self-connecting ``_connect`` as the other
-    ``workflow_run`` reads (run-table only; no event-table migration needed).
+    share a ``started_at``. Uses the configured PostgreSQL main store as the other
+    ``workflow_run`` reads.
     """
     with closing(_connect()) as owned_connection, owned_connection as conn:
         rows = conn.execute(
@@ -3379,10 +3257,10 @@ def list_run_ids_by_age() -> List[Tuple[str, str]]:
 # ---------------------------------------------------------------------------
 # Per-run deletion cascade (FR-11 / NFR-SEC-5, Algorithm 5).
 # ---------------------------------------------------------------------------
-_DELETE_EVENTS_SQL = "DELETE FROM workflow_run_event WHERE run_id = ?"
+_DELETE_EVENTS_SQL = "DELETE FROM workflow_run_event WHERE run_id = %s"
 
 
-def delete_run_events(run_id: str, conn: Optional[sqlite3.Connection] = None) -> None:
+def delete_run_events(run_id: str, conn: Optional[Connection] = None) -> None:
     """DELETE every ``workflow_run_event`` row for a run (append-only table cleared).
 
     ``conn`` lets a caller that already holds a connection run this statement
@@ -3400,64 +3278,102 @@ def delete_run_events(run_id: str, conn: Optional[sqlite3.Connection] = None) ->
 
 
 class WorkflowRunAuthorityReferencedError(ValueError):
-    """Immutable Work authority requires the referenced workflow audit row."""
+    """Durable Work/workflow records still reference this workflow run."""
 
 
 def delete_run(run_id: str) -> None:
     """Remove a run and all rows this substrate owns, in one connection (FR-11).
 
     Deletes the ``workflow_run`` row, its ``workflow_run_step`` rows, its
-    ``workflow_run_event`` rows, and its ``workflow_run_seq`` row — an
-    application-layer cascade (the substrate enforces no DB foreign keys).
+    ``workflow_run_event`` rows, and its ``workflow_run_seq`` row. PostgreSQL
+    foreign keys protect durable Work/workflow references.
     Deleting an unknown run id is a well-defined no-op that raises nothing
     (BR-12). Retained-output removal via ``output_ref`` is U7's concern; U1
     deletes only the rows it owns. Parameterized SQL only (BR-9).
 
-    The cascade spans the run/step tables as well as the event/seq tables, so
-    the ``workflow_run`` / ``workflow_run_step`` migrators are ensured first
-    (idempotent ``CREATE TABLE IF NOT EXISTS``, exactly as ``_connect`` does) —
-    otherwise deleting an unknown id on a cold DB, before any ``insert_run``,
-    would fault on a missing table rather than being the BR-12 no-op.
+    The verified workflow component migration is installed at bootstrap. A row
+    lock serializes deletion against new foreign-key references; unsupported or
+    immutable child records make the operation fail before any rows are touched.
     """
-    from cli_agent_orchestrator.clients.database import (
-        _migrate_workflow_run,
-        _migrate_workflow_run_step,
-    )
-
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
     with closing(_connect_event()) as owned_connection, owned_connection as conn:
-        # Work audit rows are immutable. Refuse removal before touching any
-        # diagnostic/private rows rather than leave a globally invalid store.
-        for table_row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'work_%'"
+        if (
+            conn.execute(
+                "SELECT 1 FROM workflow_run WHERE run_id=%s FOR UPDATE", (run_id,)
+            ).fetchone()
+            is None
         ):
-            table = table_row[0]
-            quoted = '"' + table.replace('"', '""') + '"'
-            for foreign_key in conn.execute("PRAGMA foreign_key_list(" + quoted + ")"):
-                if foreign_key[2] == "workflow_run" and foreign_key[4] == "run_id":
-                    column = '"' + foreign_key[3].replace('"', '""') + '"'
-                    if conn.execute(
-                        "SELECT 1 FROM " + quoted + " WHERE " + column + "=? LIMIT 1", (run_id,)
-                    ).fetchone():
-                        raise WorkflowRunAuthorityReferencedError(
-                            "workflow run retains immutable Work authority"
-                        )
+            return
+
+        # Preserve the old Work-authority guard while using PostgreSQL's declared
+        # foreign keys as the source of truth. Identifiers come from pg_catalog
+        # and are still quoted as identifiers; only the row value is bound.
+        referencing_columns = conn.execute(
+            """SELECT child.relname, child_column.attname
+               FROM pg_constraint AS fk
+               JOIN pg_class AS parent ON parent.oid=fk.confrelid
+               JOIN pg_namespace AS parent_schema ON parent_schema.oid=parent.relnamespace
+               JOIN pg_class AS child ON child.oid=fk.conrelid
+               JOIN pg_namespace AS child_schema ON child_schema.oid=child.relnamespace
+               JOIN pg_attribute AS parent_column
+                 ON parent_column.attrelid=parent.oid AND parent_column.attnum=fk.confkey[1]
+               JOIN pg_attribute AS child_column
+                 ON child_column.attrelid=child.oid AND child_column.attnum=fk.conkey[1]
+               WHERE fk.contype='f' AND array_length(fk.confkey,1)=1
+                 AND parent_schema.nspname=%s AND parent.relname='workflow_run'
+                 AND parent_column.attname='run_id' AND child_schema.nspname=%s
+               ORDER BY child.relname, child_column.attname""",
+            (conn.target.schema, conn.target.schema),
+        ).fetchall()
+        # These references are intentionally removed by this operation after the
+        # private-snapshot refcount is updated. All other durable references must
+        # remain attached to their audit run (including Work, Beads, and
+        # continuation records).
+        cleanup_tables = {
+            "workflow_run_plan_snapshot",
+            "workflow_scoped_run",
+            "workflow_plan_step_alias",
+        }
+        for table_row in referencing_columns:
+            table, column = table_row[0], table_row[1]
+            if table in cleanup_tables:
+                continue
+            referenced = conn.execute(
+                pg_sql.SQL("SELECT 1 FROM {}.{} WHERE {}=%s LIMIT 1").format(
+                    pg_sql.Identifier(conn.target.schema),
+                    pg_sql.Identifier(table),
+                    pg_sql.Identifier(column),
+                ),
+                (run_id,),
+            ).fetchone()
+            if referenced is not None:
+                raise WorkflowRunAuthorityReferencedError(
+                    "workflow run retains durable Work/workflow references"
+                )
+
         # The event delete goes through the shared helper (DRY, one definition of
         # "clear a run's events"); the connection is threaded in so all four
         # statements stay in ONE transaction.
         delete_run_events(run_id, conn)
         if conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_run_plan_snapshot'"
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema=%s AND table_name='workflow_run_plan_snapshot'",
+            (conn.target.schema,),
         ).fetchone():
             from cli_agent_orchestrator.services.private_plan_snapshot import release_run_reference
 
             release_run_reference(run_id, conn=conn)
             for table in ("workflow_plan_step_alias", "workflow_scoped_run"):
                 if conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+                    "SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema=%s AND table_name=%s",
+                    (conn.target.schema, table),
                 ).fetchone():
-                    conn.execute("DELETE FROM " + table + " WHERE run_id=?", (run_id,))
-        conn.execute("DELETE FROM workflow_run_seq WHERE run_id = ?", (run_id,))
-        conn.execute("DELETE FROM workflow_run_step WHERE run_id = ?", (run_id,))
-        conn.execute("DELETE FROM workflow_run WHERE run_id = ?", (run_id,))
+                    conn.execute(
+                        pg_sql.SQL("DELETE FROM {}.{} WHERE run_id=%s").format(
+                            pg_sql.Identifier(conn.target.schema), pg_sql.Identifier(table)
+                        ),
+                        (run_id,),
+                    )
+        conn.execute("DELETE FROM workflow_run_seq WHERE run_id = %s", (run_id,))
+        conn.execute("DELETE FROM workflow_run_step WHERE run_id = %s", (run_id,))
+        conn.execute("DELETE FROM workflow_run WHERE run_id = %s", (run_id,))

@@ -2,7 +2,7 @@
 
 The core service behind the four authoring CLI verbs (validate / list / get /
 delete) and their ``/workflows`` HTTP endpoints. Spec YAML files on disk are the
-single source of truth (B2-BR-2); the ``workflow_index`` SQLite table is a
+single source of truth (B2-BR-2); the ``workflow_index`` PostgreSQL table is a
 **derived, droppable** projection rebuilt byte-identically from the files alone
 (B2-BR-3).
 
@@ -40,6 +40,7 @@ from typing import Dict, List, Optional, Union, cast
 
 import yaml
 
+from cli_agent_orchestrator.clients.postgres import Connection, DatabaseTarget, connect
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.constants import (
     WORKFLOW_INPUT_TYPES,
@@ -364,32 +365,32 @@ def validate_only(path: str, base_dir: Optional[str] = None) -> ValidationResult
 # ---------------------------------------------------------------------------
 # Index machinery (derived, droppable — B2-BR-2/B2-BR-3)
 # ---------------------------------------------------------------------------
-def _connect():
-    """Open a short-lived SQLite connection to the shared DB file."""
-    import sqlite3
+def _connect(target: DatabaseTarget | None = None) -> Connection:
+    """Open an explicit transaction against the configured main PostgreSQL store."""
+    connection = connect(target or DatabaseTarget.from_settings("main"))
+    try:
+        connection.begin()
+    except BaseException:
+        try:
+            connection.close()
+        except BaseException:
+            pass
+        raise
+    return connection
 
-    from cli_agent_orchestrator.constants import DATABASE_FILE
 
-    return sqlite3.connect(str(DATABASE_FILE))
+_INDEX_UPSERT_SQL = (
+    "INSERT INTO workflow_index "
+    "(name, source_path, mode, step_count, description, indexed_at) "
+    "VALUES (%s, %s, %s, %s, %s, %s) "
+    "ON CONFLICT(name) DO UPDATE SET "
+    "source_path=excluded.source_path, mode=excluded.mode, "
+    "step_count=excluded.step_count, description=excluded.description, "
+    "indexed_at=excluded.indexed_at"
+)
 
 
-def upsert_index(spec: Union[WorkflowSpec, ScriptSpec], source_path: str) -> None:
-    """Idempotently materialize a spec into ``workflow_index`` (C2, FR-2.3).
-
-    Keyed by ``name`` (ON CONFLICT DO UPDATE) so re-authoring the same spec
-    updates the row in place rather than duplicating. ``source_path`` MUST
-    already be the resolved, contained realpath ``str`` a caller got back
-    from ``_safe_spec_path`` — this function stores it as-is, with NO
-    re-derivation (no ``os.path.realpath`` re-run, no wrapping/unwrapping),
-    which would re-introduce an unchecked path string into the value later
-    read back by ``_resolve_source_path`` and fed to a filesystem sink.
-    ``indexed_at`` is derived bookkeeping (ISO-8601 Z), never an ordering key
-    (B2-BR-3 orders by ``name``).
-
-    A ``ScriptSpec`` (U5, A2) indexes with ``mode="script"`` and
-    ``step_count=None`` — step count is run-time-determined and unknowable at
-    index time (BR-4). A ``WorkflowSpec`` keeps the unchanged YAML behavior.
-    """
+def _index_row(spec: Union[WorkflowSpec, ScriptSpec], source_path: str) -> WorkflowIndexRow:
     if isinstance(spec, ScriptSpec):
         mode = "script"
         step_count: Optional[int] = None
@@ -398,7 +399,7 @@ def upsert_index(spec: Union[WorkflowSpec, ScriptSpec], source_path: str) -> Non
         mode = spec.mode
         step_count = len(spec.steps)
         description = spec.description
-    row = WorkflowIndexRow(
+    return WorkflowIndexRow(
         name=spec.name,
         source_path=source_path,
         mode=mode,
@@ -406,25 +407,26 @@ def upsert_index(spec: Union[WorkflowSpec, ScriptSpec], source_path: str) -> Non
         description=description,
         indexed_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
+
+
+def _write_index_row(conn: Connection, row: WorkflowIndexRow) -> None:
+    conn.execute(
+        _INDEX_UPSERT_SQL,
+        (row.name, row.source_path, row.mode, row.step_count, row.description, row.indexed_at),
+    )
+
+
+def upsert_index(spec: Union[WorkflowSpec, ScriptSpec], source_path: str) -> None:
+    """Idempotently materialize a spec into ``workflow_index`` (C2, FR-2.3).
+
+    The source path must already be the resolved, contained realpath produced
+    by ``_safe_spec_path`` and is stored unchanged. A ``ScriptSpec`` uses
+    ``mode='script'`` and a NULL step count because its steps are determined at
+    run time.
+    """
+    row = _index_row(spec, source_path)
     with closing(_connect()) as _owned_conn, _owned_conn as conn:
-        conn.execute(
-            "INSERT INTO workflow_index "
-            "(name, source_path, mode, step_count, description, indexed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(name) DO UPDATE SET "
-            "source_path=excluded.source_path, mode=excluded.mode, "
-            "step_count=excluded.step_count, description=excluded.description, "
-            "indexed_at=excluded.indexed_at",
-            (
-                row.name,
-                row.source_path,
-                row.mode,
-                row.step_count,
-                row.description,
-                row.indexed_at,
-            ),
-        )
-        conn.commit()
+        _write_index_row(conn, row)
 
 
 def rebuild_index_from_files(scan_dir: Optional[str] = None) -> int:
@@ -450,10 +452,7 @@ def _rebuild_index_from_files(scan_dir: Optional[str] = None) -> int:
         glob.glob(os.path.join(safe_dir, "*.yaml")) + glob.glob(os.path.join(safe_dir, "*.yml"))
     )
     py_paths = sorted(glob.glob(os.path.join(safe_dir, "*.py")))
-    with closing(_connect()) as _owned_conn, _owned_conn as conn:
-        conn.execute("DELETE FROM workflow_index")
-        conn.commit()
-    rows = 0
+    index_rows: list[WorkflowIndexRow] = []
     for path in yaml_paths:
         try:
             # Bind containment to the SAME dir we globbed from (not WORKFLOW_SPEC_DIR)
@@ -466,8 +465,7 @@ def _rebuild_index_from_files(scan_dir: Optional[str] = None) -> int:
         except (ValueError, FileNotFoundError) as e:
             logger.warning("rebuild: skipping unparseable spec %s: %s", path, e)
             continue
-        upsert_index(spec, real_path)
-        rows += 1
+        index_rows.append(_index_row(spec, real_path))
     for path in py_paths:
         stem = _stem_of(path)
         try:
@@ -485,9 +483,24 @@ def _rebuild_index_from_files(scan_dir: Optional[str] = None) -> int:
         except (ValueError, OSError, UnicodeDecodeError) as e:
             logger.warning("rebuild: skipping unreadable script spec %s: %s", path, e)
             continue
-        upsert_index(script_spec, real_path)
-        rows += 1
-    return rows
+        index_rows.append(_index_row(script_spec, real_path))
+    with closing(_connect()) as _owned_conn, _owned_conn as conn:
+        conn.execute("DELETE FROM workflow_index")
+        conn.executemany(
+            _INDEX_UPSERT_SQL,
+            [
+                (
+                    row.name,
+                    row.source_path,
+                    row.mode,
+                    row.step_count,
+                    row.description,
+                    row.indexed_at,
+                )
+                for row in index_rows
+            ],
+        )
+    return len(index_rows)
 
 
 def list_workflows(scan_dir: Optional[str] = None) -> List[WorkflowIndexRow]:
@@ -533,7 +546,7 @@ def _resolve_source_path(name: str, scan_dir: Optional[str] = None) -> str:
     rebuild_index_from_files(scan_dir)
     with closing(_connect()) as _owned_conn, _owned_conn as conn:
         row = conn.execute(
-            "SELECT source_path FROM workflow_index WHERE name = ?", (name,)
+            "SELECT source_path FROM workflow_index WHERE name = %s", (name,)
         ).fetchone()
     if row is None:
         raise KeyError(name)
@@ -668,7 +681,7 @@ def _read_script_spec(path: str, stem: str, base_dir: Optional[str] = None) -> S
     ONLY entry that opens a ``.py`` spec file, and it must stay safe no matter
     which caller reaches it. Some callers (``get_workflow``'s bare-name arm,
     via ``_resolve_source_path``) hand back a plain string pulled from the
-    SQLite index rather than an already-validated path, so re-validating HERE
+    PostgreSQL index rather than an already-validated path, so re-validating HERE
     — not trusting the caller to have done it — is what keeps every ``.py``
     open() sink covered by the resolve-then-contain check regardless of call
     site.
@@ -680,7 +693,7 @@ def _read_script_spec(path: str, stem: str, base_dir: Optional[str] = None) -> S
     # Read behind the guarded helper: the containment SafeAccessCheck is
     # colocated with the open() sink inside ``_read_contained_spec_bytes`` (never
     # trust the caller to have validated ``path`` — the bare-name arm hands back
-    # a raw string read out of SQLite). This is the ONLY entry that opens a
+    # a raw string read out of PostgreSQL). This is the ONLY entry that opens a
     # ``.py`` spec file.
     real_path, raw = _read_contained_spec_bytes(path, base_dir)
     if len(raw) > WORKFLOW_MAX_SPEC_BYTES:
@@ -765,7 +778,7 @@ def _load_by_extension(real_path: str, scan_dir: Optional[str]) -> Union[Workflo
         stem = _stem_of(real_path)
         _check_tier_collision(stem, safe_dir)  # -> TierCollisionError (409)
         # ``real_path`` may still be an UNVALIDATED string here (the bare-name
-        # arm hands back whatever ``_resolve_source_path`` read out of SQLite);
+        # arm hands back whatever ``_resolve_source_path`` read out of PostgreSQL);
         # ``_read_script_spec`` re-validates it against ``scan_dir`` itself
         # before opening — never trust this call site's naming.
         return _read_script_spec(real_path, stem, base_dir=scan_dir)
@@ -1101,7 +1114,7 @@ def _delete_workflow(name: str, scan_dir: Optional[str] = None) -> None:
     row removal is bookkeeping (rebuild would also drop it). An unknown name
     raises ``KeyError`` -> 404; a repeat delete of an already-removed name is a
     404, not a silent success (the unknown name is surfaced, not masked).
-    ``_resolve_source_path`` returns a raw string pulled out of SQLite — the
+    ``_resolve_source_path`` returns a raw string pulled out of PostgreSQL — the
     SAME shape of value ``_read_script_spec`` re-validates before its own
     sink — so this function re-validates it through ``_safe_spec_path`` too
     before ``os.remove``, rather than trusting the index row is still
@@ -1115,11 +1128,9 @@ def _delete_workflow(name: str, scan_dir: Optional[str] = None) -> None:
         # The index row pointed at a now-missing file. Drop the stale row and
         # surface the unknown name rather than masking it as success.
         with closing(_connect()) as _owned_conn, _owned_conn as conn:
-            conn.execute("DELETE FROM workflow_index WHERE name = ?", (name,))
-            conn.commit()
+            conn.execute("DELETE FROM workflow_index WHERE name = %s", (name,))
         raise KeyError(name)
     except OSError as e:
         raise ValueError(f"could not delete workflow '{name}': {e}") from e
     with closing(_connect()) as _owned_conn, _owned_conn as conn:
-        conn.execute("DELETE FROM workflow_index WHERE name = ?", (name,))
-        conn.commit()
+        conn.execute("DELETE FROM workflow_index WHERE name = %s", (name,))

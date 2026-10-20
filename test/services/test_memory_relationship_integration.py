@@ -24,9 +24,9 @@ Scenarios:
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.clients import database as db_mod
@@ -45,7 +45,7 @@ from cli_agent_orchestrator.services.memory_relationship_service import (
 @pytest.fixture
 def db_engine(tmp_path):
     db_path = tmp_path / "test.db"
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return engine
 
@@ -775,20 +775,12 @@ def test_stale_flag_and_filter(bound, db_engine):
 def test_rank_then_created_handles_null_and_naive_created_at():
     """FR-3.1/FR-3.2: the sort key never raises on a NULL or naive ``created_at``.
 
-    Why this is asserted on the sort FUNCTION and not through a DB round-trip:
-    ``DATABASE_URL`` is SQLite-only (constants.py) and SQLite does not persist
-    timezone offsets, so every ``created_at`` READ BACK from the DB is naive —
-    including on the ``DateTime(timezone=True)`` column. A DB-level test can
-    therefore never produce the naive/aware mix, and asserting there would pass
-    whether or not the fix is present (a vacuous test).
-
-    The mix IS reachable at the function boundary: ``_utcnow`` stamps an AWARE
-    value, so a row object still holding its Python-side default (not yet
-    refreshed from the DB) sorts aware, while a NULL row falls back to the
-    sentinel and any DB-loaded row is naive. Pre-fix the key was
-    ``r.created_at or datetime.min`` — a NAIVE sentinel — so mixing it with an
-    aware value raised ``TypeError: can't compare offset-naive and offset-aware
-    datetimes``. Both sides are now normalised to tz-aware UTC.
+    The function-level assertion pins mixed naive/aware inputs directly.
+    PostgreSQL normalizes stored timestamps according to the column type, so a
+    database round-trip alone is not a reliable way to construct every Python
+    datetime shape accepted at this boundary. ``_utcnow`` can supply an aware
+    value before refresh while callers or older rows can supply naive values.
+    The sort key normalizes both to UTC before comparing them.
 
     Equal ranks force the datetime comparison; with distinct ranks the tuple's
     first element decides and ``created_at`` is never compared.
@@ -817,12 +809,9 @@ def test_rank_then_created_handles_null_and_naive_created_at():
 
 
 def test_active_targets_orders_by_rank_then_created_at(bound, db_engine):
-    """FR-3.1 through the real DB path: a NULL ``created_at`` row alongside a
-    populated one sorts without raising, and the NULL row comes first.
-
-    This is the end-to-end companion to the function-level test above. On SQLite
-    both values read back naive, so this cannot reproduce the naive/aware
-    TypeError — it guards the NULL-fallback ordering itself.
+    """FR-3.1 through the real PostgreSQL path: a NULL ``created_at`` row alongside a
+    populated one sorts without raising, and the NULL row comes first. This
+    complements the function-level check with the actual persisted query path.
     """
     for k in ("src", "t-null", "t-populated"):
         _seed_memory(db_engine, k)

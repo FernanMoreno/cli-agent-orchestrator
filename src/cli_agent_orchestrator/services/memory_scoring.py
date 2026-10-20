@@ -3,7 +3,7 @@
 Pure functions only. No I/O, no SQL, no clock dependency beyond ``datetime.now``
 which is injectable via ``now=`` for deterministic tests. Callers (recall path
 in ``MemoryService``) feed in already-normalised BM25 values, ``updated_at``,
-and ``access_count``; this module does NOT compute BM25 or read from SQLite.
+and ``access_count``; this module does NOT compute BM25 or read database rows.
 
 Composite formula:
 

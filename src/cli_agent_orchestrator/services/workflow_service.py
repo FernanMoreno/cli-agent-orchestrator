@@ -145,6 +145,38 @@ class ResumeCorruptError(ValueError):
     """
 
 
+_WORK_CATALOG_INTEGRITY_ERRORS = frozenset(
+    {
+        "PostgreSQL component tables are missing",
+        "PostgreSQL component references an unsupported routine definition",
+        "PostgreSQL trigger references an unsupported routine",
+        "PostgreSQL component migration history mismatch",
+        "PostgreSQL component schema fingerprint mismatch",
+    }
+)
+
+
+def is_work_catalog_integrity_mismatch(error: BaseException) -> bool:
+    """Return whether a Work schema mismatch wraps a recognized catalog failure.
+
+    WorkRepository also uses ``SchemaMismatch`` for runtime-role, logical-target,
+    and store-identity failures. YAML resume only treats exact catalog failures
+    from the reviewed PostgreSQL verifier as corrupt history.
+    """
+    from cli_agent_orchestrator.clients.postgres.migrations import (
+        SchemaMismatch as PostgresSchemaMismatch,
+    )
+    from cli_agent_orchestrator.clients.work_repository import SchemaMismatch
+
+    if not isinstance(error, SchemaMismatch):
+        return False
+    catalog_error = error.__cause__
+    return (
+        isinstance(catalog_error, PostgresSchemaMismatch)
+        and str(catalog_error) in _WORK_CATALOG_INTEGRITY_ERRORS
+    )
+
+
 class StaleGenerationError(ValueError):
     """A script ``run-step`` call carried an old generation (A3, ADR-9 -> 409).
 
@@ -388,7 +420,7 @@ def _journal_run_state(record: RunRecord) -> None:
 async def _ajournal(fn: Any, *args: Any, **kwargs: Any) -> None:
     """Run a sync best-effort journal helper off the event loop.
 
-    The journal helpers do blocking sqlite3 I/O; from async engine code they must
+    The journal helpers do blocking database I/O; from async engine code they must
     not stall the loop. ``to_thread`` is awaited sequentially at each call site,
     so write ordering is preserved; the no-raise promise holds because the
     try/except lives inside the sync helper itself. Sync callers (the
@@ -427,7 +459,7 @@ def _yaml_attempt_recorder(
     The closure owns only the identity returned by the durable journal.  It does
     not cache effective fields or terminal state: both arrive from
     ``run_agent_step`` immediately before terminal allocation and are reread
-    from SQLite by ``guard_delivery`` before each external send.
+    from the database by ``guard_delivery`` before each external send.
     """
     identity: Optional[tuple[int, str, dict]] = None
 
@@ -928,7 +960,7 @@ async def _run_step(record: RunRecord, step: WorkflowStep) -> None:
     st = record.step_states[step.id]
     st.state = StepState.RUNNING
     # Journal write-through (§1): record the step RUNNING + the live current step.
-    # Awaited sequentially off the loop (blocking sqlite must not stall the engine).
+    # Awaited sequentially off the loop (blocking database work must not stall the engine).
     await _ajournal(_journal_step, record, step.id)
     await _ajournal(_journal_current_step, record)
     # U2 emission (BR-1, after the in-memory RUNNING mutation): the step went live.
@@ -1829,32 +1861,27 @@ def update_run_generation(run_id: str, generation: str, *, expected_generation=N
     happens to make its next call. Best-effort is deliberately NOT applied here
     (unlike the ``_journal_*`` write-through helpers above): a failed generation
     persist must be visible to the caller, since a silently-unpersisted bump
-    would let an orphan's old-generation calls through — this raises
-    ``sqlite3.Error`` on a DB failure, matching ``workflow_journal``'s documented
+    would let an orphan's old-generation calls through — this raises the native
+    database error on a DB failure, matching ``workflow_journal``'s documented
     write-helper contract (module docstring), and the caller (U4/U5, out of
     scope for U3) decides whether to retry or abort the resume/cancel.
     """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    with closing(sqlite3.connect(str(DATABASE_FILE))) as _owned_conn, _owned_conn as conn:
+    with closing(workflow_journal._connect()) as _owned_conn, _owned_conn as conn:
         if expected_generation is None:
             expected_generation = conn.execute(
-                "SELECT generation FROM workflow_run WHERE run_id=?", (run_id,)
+                "SELECT generation FROM workflow_run WHERE run_id=%s FOR UPDATE", (run_id,)
             ).fetchone()
             expected_generation = expected_generation[0] if expected_generation else None
         changed = conn.execute(
-            "UPDATE workflow_run SET generation = ? WHERE run_id = ? AND generation = ?",
+            "UPDATE workflow_run SET generation = %s WHERE run_id = %s AND generation = %s",
             (generation, run_id, expected_generation),
         )
         if changed.rowcount != 1:
             raise ValueError("generation_changed")
-        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='workflow_driver'").fetchone():
-            conn.execute(
-                "UPDATE workflow_driver SET run_generation=?,revision=revision+1 WHERE run_id=?",
-                (generation, run_id),
-            )
+        conn.execute(
+            "UPDATE workflow_driver SET run_generation=%s,revision=revision+1 WHERE run_id=%s",
+            (generation, run_id),
+        )
 
 
 def _is_resumable_for_tier(row: workflow_journal.RunRow) -> bool:
@@ -1987,11 +2014,19 @@ async def _resume_from_last_completed_impl(
         row = None
     if row is None:
         raise KeyError(f"unknown run_id '{run_id}'")
+    from cli_agent_orchestrator.clients.work_repository import SchemaMismatch
     from cli_agent_orchestrator.services.work_workflow_plans import WorkWorkflowPlans
 
-    is_scoped = await asyncio.to_thread(
-        WorkWorkflowPlans.requires_scoped_validation, run_id, getattr(row, "manifest_json", None)
-    )
+    try:
+        is_scoped = await asyncio.to_thread(
+            WorkWorkflowPlans.requires_scoped_validation,
+            run_id,
+            getattr(row, "manifest_json", None),
+        )
+    except SchemaMismatch as error:
+        if not is_work_catalog_integrity_mismatch(error):
+            raise
+        raise ResumeCorruptError(f"run '{run_id}' YAML contract store is corrupt") from error
     if is_scoped:
         if type(scoped_plan_owner) is not WorkWorkflowPlans or scoped_principal is None:
             raise ResumeNotAllowedError("scoped resume requires its authoritative plan owner")

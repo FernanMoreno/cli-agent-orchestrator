@@ -41,6 +41,7 @@ import time
 import uuid
 from pathlib import Path
 from test.e2e.conftest import (
+    _provider_launch_params,
     cleanup_terminal,
     create_terminal,
     extract_output,
@@ -120,12 +121,15 @@ def _create_terminal_with_tools(
 
         resp = requests.post(
             f"{API_BASE_URL}/sessions",
-            params={
-                "provider": provider,
-                "agent_profile": agent_profile,
-                "session_name": attempt_session_name,
-                "allowed_tools": allowed_tools,
-            },
+            params=_provider_launch_params(
+                provider,
+                {
+                    "provider": provider,
+                    "agent_profile": agent_profile,
+                    "session_name": attempt_session_name,
+                    "allowed_tools": allowed_tools,
+                },
+            ),
         )
         last_resp = resp
         if resp.status_code in (200, 201):
@@ -138,7 +142,7 @@ def _create_terminal_with_tools(
     assert last_resp is not None and last_resp.status_code in (
         200,
         201,
-    ), f"Session creation failed: {last_resp.status_code} {last_resp.text}"
+    ), f"Session creation failed: HTTP {last_resp.status_code}; response body omitted"
 
 
 def _wait_for_ready(terminal_id: str, timeout: float = 90.0):
@@ -290,13 +294,13 @@ def _grok_restricted_diagnostics(
                 "new_child_terminals": child_terminals,
                 "pane_processes": processes,
                 "pane_evidence": pane_evidence,
-                "pane_capture_error": pane.stderr[-512:],
+                "pane_stderr_bytes": len(pane.stderr),
             },
             indent=2,
             default=str,
         )
     except Exception as exc:  # diagnostics must never mask the security assertion
-        return f"<failed to collect Grok diagnostics: {type(exc).__name__}: {exc}>"
+        return f"<failed to collect Grok diagnostics: {type(exc).__name__}>"
 
 
 def _run_restricted_tool_test(provider: str, agent_profile: str, allowed_tools: str):
@@ -328,7 +332,9 @@ def _run_restricted_tool_test(provider: str, agent_profile: str, allowed_tools: 
         # process from being mistaken for this terminal's execution.
         marker_file, bash_task = _new_bash_probe()
         terminals = requests.get(f"{API_BASE_URL}/sessions/{actual_session}/terminals", timeout=10)
-        assert terminals.ok, f"Could not list pre-input terminals: {terminals.text}"
+        assert (
+            terminals.ok
+        ), f"Could not list pre-input terminals: HTTP {terminals.status_code}; response body omitted"
         terminals_before = {item["id"] for item in terminals.json()}
 
         # Send the bash task. For restricted agents, they may:

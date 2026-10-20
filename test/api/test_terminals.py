@@ -759,6 +759,7 @@ class TestWebSocketLocalhostRestriction:
         ws = MagicMock()
         ws.client = MagicMock(host="127.0.0.1")
         ws.headers = {}
+        ws.query_params = {}
         ws.accept = AsyncMock()
         ws.close = AsyncMock()
 
@@ -1137,6 +1138,7 @@ class TestWebSocketSubprocessTerm:
         ws = MagicMock()
         ws.client = MagicMock(host="127.0.0.1")
         ws.headers = {}
+        ws.query_params = {}
         ws.accept = AsyncMock()
         ws.close = AsyncMock()
 
@@ -1188,6 +1190,7 @@ class TestWebSocketSubprocessTerm:
         ws = MagicMock()
         ws.client = MagicMock(host="127.0.0.1")
         ws.headers = {}
+        ws.query_params = {}
         ws.accept = AsyncMock()
         ws.close = AsyncMock()
 
@@ -1228,6 +1231,7 @@ class TestWebSocketSubprocessTerm:
         ws = MagicMock()
         ws.client = MagicMock(host="127.0.0.1")
         ws.headers = {}
+        ws.query_params = {}
         ws.accept = AsyncMock()
         ws.close = AsyncMock()
 

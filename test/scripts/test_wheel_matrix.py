@@ -952,6 +952,67 @@ class TestConfigurationInvariants:
             import tomli as tomllib  # type: ignore[no-redef]
         return tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
+    @pytest.mark.offline_database
+    def test_distribution_jobs_build_web_and_all_mcp_app_assets_before_packaging(self):
+        """The wheel and sdist must contain the generated Web and MCP Apps resources.
+
+        These output directories are ignored in a clean checkout. Hatch's artifact globs
+        include them only if each packaging job builds them before invoking its packager.
+        """
+        import json
+
+        workflow = _publish_workflow()
+        app_package = json.loads(
+            (REPO_ROOT / "cao_mcp_apps" / "package.json").read_text(encoding="utf-8")
+        )
+        build_all = app_package["scripts"]["build:all"]
+        assert all(
+            f"npm run build:{view}" in build_all
+            for view in ("dashboard", "agent", "events", "graph")
+        ), "build:all must emit each of the four MCP Apps HTML views"
+
+        artifacts = self._pyproject()["tool"]["hatch"]["build"]["artifacts"]
+        assert "src/cli_agent_orchestrator/web_ui/**" in artifacts
+        assert "src/cli_agent_orchestrator/ext_apps/apps_static/**" in artifacts
+
+        for job_name in ("build-wheels", "build-sdist"):
+            steps = workflow["jobs"][job_name]["steps"]
+            apps_build = next(
+                (step for step in steps if step.get("name") == "Build MCP Apps"), None
+            )
+            assert apps_build is not None, f"{job_name} does not build MCP Apps before packaging"
+            web_build = next(step for step in steps if step.get("name") == "Build Web UI")
+
+            setup_node = next(
+                step for step in steps if step.get("uses", "").startswith("actions/setup-node@")
+            )
+            cache_paths = set(setup_node["with"]["cache-dependency-path"].splitlines())
+            assert {"web/package-lock.json", "cao_mcp_apps/package-lock.json"} <= cache_paths
+
+            assert apps_build["working-directory"] == "cao_mcp_apps"
+            assert "npm ci" in apps_build["run"]
+            assert "npm run build:all" in apps_build["run"]
+            assert web_build["working-directory"] == "web"
+            assert "npm ci" in web_build["run"]
+            assert "npm run build" in web_build["run"]
+
+            if job_name == "build-wheels":
+                package_step = next(
+                    index
+                    for index, step in enumerate(steps)
+                    if step.get("uses", "").startswith("pypa/cibuildwheel@")
+                )
+            else:
+                package_step = next(
+                    index
+                    for index, step in enumerate(steps)
+                    if step.get("name") == "Build sdist"
+                    and "uv build --sdist" in step.get("run", "")
+                )
+            assert steps.index(setup_node) < steps.index(apps_build)
+            assert steps.index(setup_node) < steps.index(web_build)
+            assert max(steps.index(apps_build), steps.index(web_build)) < package_step
+
     def test_binary_stem_agrees_across_every_place_it_is_declared(self):
         """Five copies of one name. A drift makes the artifacts glob match nothing —
         and hatchling treats that as a SILENT no-op (defect D1's failure mode)."""

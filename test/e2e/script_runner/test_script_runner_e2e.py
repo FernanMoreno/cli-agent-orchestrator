@@ -1,8 +1,9 @@
-"""End-to-end OS-touching proofs for U4 ScriptRunner (issue #312, Bolt 3, C1).
+"""End-to-end proofs for approved U4 ScriptRunner child-process behavior.
 
-These exercise the REAL ``asyncio.create_subprocess_exec`` path — the unit
-suite (``test/services/test_script_runner.py``) mocks the subprocess, so these
-are the practical proofs the code-generation test plan calls for:
+These exercise the REAL prepare/review/approve/start routes and
+``asyncio.create_subprocess_exec`` path — the unit suite
+(``test/services/test_script_runner.py``) mocks the subprocess, so these are
+the practical proofs the code-generation test plan calls for:
 
 - M1 fan-out shape: a real script that prints a ``CAO_WORKFLOW_OUTPUT:`` sentinel
   completes with the parsed output (loop/conditional/fan-out M1 shapes reduce to
@@ -13,95 +14,89 @@ are the practical proofs the code-generation test plan calls for:
 - real hang-then-reap: a real ``time.sleep`` child is reaped at the wall-clock
   bound and returns ``FAILED, kind=timeout`` within the bound + grace.
 
-Excluded from the default matrix (``-m 'not e2e'``). They do NOT require a
-running CAO server — the scripts here do not call back over run-step; they
-exercise the spawn/drain/reap lifecycle only. A script that DID call run-step
-would need the server, which is why the M1 fan-out proof keeps its script
-self-contained. Run with: ``uv run pytest -m e2e test/e2e/test_script_runner_e2e.py``.
+Excluded from the default matrix (``-m 'not e2e'``). A local HTTP peer stands
+in for the provider's ``/terminals/run-step`` route, while the scripts remain
+real subprocesses. Run with:
+``uv run pytest -m e2e test/e2e/script_runner/test_script_runner_e2e.py``.
 """
 
 from __future__ import annotations
+
+from test.e2e.prepared_script_helpers import run_prepared_script
+from test.integration.test_work_dispatch import context  # noqa: F401
 
 import pytest
 
 from cli_agent_orchestrator.models.workflow_runtime import RunState
 from cli_agent_orchestrator.services import script_runner, workflow_journal
-from cli_agent_orchestrator.services.script_runner import run_script_workflow
 
-pytestmark = [pytest.mark.e2e, pytest.mark.asyncio]
-
-
-class _RealSpec:
-    """Duck-typed ScriptSpec whose source is written to a real temp file to exec."""
-
-    def __init__(self, tmp_path, source: str, name: str = "e2e-wf"):
-        self.path = str(tmp_path / f"{name}.py")
-        with open(self.path, "w", encoding="utf-8") as fh:
-            fh.write(source)
-        self.source = source
-        self.name = name
-        self.content_hash = "e2e"
+pytestmark = [pytest.mark.e2e, pytest.mark.asyncio, pytest.mark.postgres]
 
 
 @pytest.fixture(autouse=True)
-def _temp_db(tmp_path, monkeypatch):
-    from cli_agent_orchestrator.clients.database import (
-        _migrate_workflow_run,
-        _migrate_workflow_run_step,
-    )
+def _reset_workflow_state():
     from cli_agent_orchestrator.services import workflow_service
 
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.constants.DATABASE_FILE", tmp_path / "wf.db", raising=True
-    )
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
     workflow_service.run_registry.clear()
     workflow_service._active_drives.clear()
     yield
 
 
-async def test_real_spawn_completes_with_sentinel(tmp_path):
+async def test_real_spawn_completes_with_sentinel(context, tmp_path, monkeypatch):
     """M1: a real Python process prints a sentinel and exits 0 -> COMPLETED."""
-    spec = _RealSpec(
+    result = await run_prepared_script(
+        context,
         tmp_path,
+        monkeypatch,
         source='import json\nprint("CAO_WORKFLOW_OUTPUT:" + json.dumps({"ok": True}))\n',
+        run_id="e2e-ok",
     )
-    result = await run_script_workflow(spec, {}, "e2e-ok")
     assert result.state == RunState.COMPLETED
     assert result.output == {"ok": True}
 
 
-async def test_real_chatty_child_over_1mib_no_deadlock(tmp_path):
+async def test_real_chatty_child_over_1mib_no_deadlock(context, tmp_path, monkeypatch):
     """M2: a real child writing > 1 MiB to stdout drains without deadlock."""
-    spec = _RealSpec(
+    result = await run_prepared_script(
+        context,
         tmp_path,
+        monkeypatch,
         source=(
             "import sys, json\n"
             "sys.stdout.write('x' * (1024 * 1024 + 4096))\n"
             "print()\n"
             'print("CAO_WORKFLOW_OUTPUT:" + json.dumps({"drained": True}))\n'
         ),
+        run_id="e2e-chatty",
     )
-    result = await run_script_workflow(spec, {}, "e2e-chatty")
     assert result.state == RunState.COMPLETED
     assert result.output == {"drained": True}
 
 
-async def test_real_hang_is_reaped_within_bound(tmp_path, monkeypatch):
+async def test_real_hang_is_reaped_within_bound(context, tmp_path, monkeypatch):
     """A real sleeping child is reaped at the wall-clock bound -> FAILED,kind=timeout."""
     monkeypatch.setattr(script_runner, "WORKFLOW_SCRIPT_TIMEOUT", 0.5)
     monkeypatch.setattr(script_runner, "WORKFLOW_SCRIPT_TERM_GRACE", 0.5)
-    spec = _RealSpec(tmp_path, source="import time\ntime.sleep(30)\n")
-    result = await run_script_workflow(spec, {}, "e2e-hang")
+    result = await run_prepared_script(
+        context,
+        tmp_path,
+        monkeypatch,
+        source="import time\ntime.sleep(30)\n",
+        run_id="e2e-hang",
+    )
     assert result.state == RunState.FAILED
     assert result.kind == "timeout"
 
 
-async def test_real_nonzero_exit_is_failed(tmp_path):
+async def test_real_nonzero_exit_is_failed(context, tmp_path, monkeypatch):
     """A real nonzero script persists stderr after the child process exits."""
-    spec = _RealSpec(tmp_path, source='import sys\nsys.stderr.write("boom\\n")\nsys.exit(3)\n')
-    result = await run_script_workflow(spec, {}, "e2e-crash")
+    result = await run_prepared_script(
+        context,
+        tmp_path,
+        monkeypatch,
+        source='import sys\nsys.stderr.write("boom\\n")\nsys.exit(3)\n',
+        run_id="e2e-crash",
+    )
     assert result.state == RunState.FAILED
     assert result.kind == "error"
     row = workflow_journal.get_run("e2e-crash")

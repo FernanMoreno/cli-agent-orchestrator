@@ -8,7 +8,7 @@ import asyncio
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from cli_agent_orchestrator.constants import (
     CAO_PYTE_STATUS,
@@ -218,6 +218,10 @@ class StatusMonitor:
         # stopped for PYTE_QUIESCENCE_DELAY_S) — never mid-burst, which is what
         # keeps status flap-free.
         self._screens: Dict[str, Tuple["pyte.Screen", "pyte.Stream"]] = {}
+        # Exact manual-only provider observations retained only long enough to
+        # reconcile a provider-proven dialog closure. The screen text itself is
+        # never stored here; these pins contain fingerprints and source IDs only.
+        self._native_observation_pins: Dict[str, dict[str, Any]] = {}
         self._bursting: Dict[str, bool] = {}
         # Pending quiescence-detect timer handle per terminal (loop.call_later).
         self._quiesce_handle: Dict[str, asyncio.TimerHandle] = {}
@@ -345,11 +349,10 @@ class StatusMonitor:
           _schedule_screen_detection.
         """
         provider = provider_manager.get_provider(terminal_id)
-        use_screen = (
-            CAO_PYTE_STATUS
-            and provider is not None
-            and getattr(provider, "supports_screen_detection", False)
+        screen_capable = provider is not None and getattr(
+            provider, "supports_screen_detection", False
         )
+        use_screen = CAO_PYTE_STATUS and screen_capable
         state_buffer_max = get_server_settings()["state_buffer_max"]
 
         with self._lock:
@@ -395,7 +398,10 @@ class StatusMonitor:
             # snapshotted: a ready verdict from an older snapshot must not close a
             # turn whose work arrived while the detector ran (round 9).
             started_at_read = self._turn_started.get(terminal_id, False)
-            if use_screen:
+            # Keep a bounded rendered viewport for provider-native manual
+            # observations even when raw-buffer status detection is selected.
+            # The native observer consumes only a digest of this screen.
+            if screen_capable:
                 self._feed_screen_locked(terminal_id, chunk)
 
         if not use_screen:
@@ -870,30 +876,39 @@ class StatusMonitor:
         self, terminal_id: str, provider: Optional["BaseProvider"]
     ) -> TerminalStatus:
         """Detect status from the terminal's composited pyte screen."""
+        detected, _lines = self._detect_screen_snapshot(terminal_id, provider)
+        return detected
+
+    def _detect_screen_snapshot(
+        self, terminal_id: str, provider: Optional["BaseProvider"]
+    ) -> Tuple[TerminalStatus, Optional[List[str]]]:
+        """Detect status and return the exact bounded viewport used for it."""
         rendered, buffer = self._screen_lines(terminal_id)
         fallback_buffer: Optional[str] = None if rendered is not None else buffer
         lines: List[str] = rendered or []
         if fallback_buffer is not None:
             if provider is None:
-                return TerminalStatus.UNKNOWN
+                return TerminalStatus.UNKNOWN, None
             try:
-                return self._gate_terminal_completion(
+                detected = self._gate_terminal_completion(
                     terminal_id, provider, provider.get_status(fallback_buffer)
                 )
+                return detected, None
             except Exception:
                 logger.exception("Error detecting fallback status for %s", terminal_id)
-                return TerminalStatus.UNKNOWN
+                return TerminalStatus.UNKNOWN, None
         if not lines or provider is None:
-            return TerminalStatus.UNKNOWN
+            return TerminalStatus.UNKNOWN, lines
         try:
-            return self._gate_terminal_completion(
+            detected = self._gate_terminal_completion(
                 terminal_id, provider, provider.get_status_from_screen(lines)
             )
+            return detected, lines
         except Exception:
             # Full traceback: screen detectors are new and can trip on
             # unexpected TUI frames; the stack makes such regressions debuggable.
             logger.exception(f"Error detecting screen status for {terminal_id}")
-            return TerminalStatus.UNKNOWN
+            return TerminalStatus.UNKNOWN, lines
 
     def _schedule_screen_detection(self, terminal_id: str, provider) -> None:
         """Edge-debounce detection on the pyte screen.
@@ -943,6 +958,219 @@ class StatusMonitor:
             self._midburst_processing_probe(terminal_id, provider)
 
         self._arm_quiesce_timer(loop, terminal_id, self._on_screen_quiescent, provider)
+
+    def _observe_native_interaction(
+        self,
+        terminal_id: str,
+        provider,
+        detected: TerminalStatus,
+        visible_screen: Optional[List[str]],
+    ) -> None:
+        """Persist bounded manual-only signals from one settled provider screen.
+
+        This path deliberately accepts only the provider's structured status
+        hook and the rendered viewport. It never parses terminal prose or
+        invents response choices. Closure reconciles only the exact previously
+        observed dialog after a concrete provider status says it is gone.
+        """
+        if not visible_screen:
+            return
+        try:
+            from cli_agent_orchestrator.services import remote_terminal_service as remote
+
+            if remote.placement(terminal_id):
+                # The remote runtime owns its terminal screen and ledger call;
+                # a local monitor must not substitute its view or state.
+                return
+            from cli_agent_orchestrator.services import terminal_service
+
+            metadata = terminal_service.get_terminal_metadata(terminal_id)
+            if not metadata:
+                return
+            incarnation_id = metadata.get("session_incarnation_id")
+            if not isinstance(incarnation_id, str) or not incarnation_id:
+                return
+            service = terminal_service._interaction_service()
+            source = service.source_status(terminal_id, incarnation_id)
+            if source.state != "current" or type(source.current_generation) is not int:
+                return
+        except Exception:
+            logger.debug(
+                "Could not verify interaction source while observing native dialog for %s",
+                terminal_id,
+                exc_info=True,
+            )
+            return
+
+        if detected == TerminalStatus.WAITING_USER_ANSWER:
+            try:
+                observation = provider.observe_native_interaction(detected, visible_screen)
+                if (
+                    observation is None
+                    or getattr(observation, "observation", None) != "manual_signal"
+                ):
+                    return
+                receipt = service.observe_native(
+                    terminal_id,
+                    incarnation_id,
+                    source.current_generation,
+                    observation,
+                )
+                with self._lock:
+                    existing_pin = self._native_observation_pins.get(terminal_id)
+                if (
+                    existing_pin is not None
+                    and existing_pin.get("incarnation_id") == incarnation_id
+                    and existing_pin.get("observation_id") == receipt.observation_id
+                    and existing_pin.get("dialog_fingerprint") == observation.dialog_fingerprint
+                    and existing_pin.get("provider_evidence_version") == observation.dialog_version
+                    and existing_pin.get("target") == observation.exact_target
+                ):
+                    # A repeated exact viewport during authorized WebSocket
+                    # typing reuses the original notice and pin. Do not create
+                    # a new question for each key frame or reset its generation.
+                    existing_pin["turn_generation"] = receipt.turn_generation
+                    existing_pin["screen_fingerprint"] = observation.source_fingerprint
+                    existing_pin["closure_candidate_fingerprint"] = None
+                    existing_pin["closure_observations"] = 0
+                    with self._lock:
+                        self._native_observation_pins[terminal_id] = existing_pin
+                    return
+                pin = {
+                    "incarnation_id": incarnation_id,
+                    "turn_generation": receipt.turn_generation or source.current_generation,
+                    "observation_id": receipt.observation_id,
+                    "dialog_fingerprint": observation.dialog_fingerprint,
+                    "screen_fingerprint": observation.source_fingerprint,
+                    "provider_evidence_version": observation.dialog_version,
+                    "target": observation.exact_target,
+                    "recovery_only": receipt.replayed,
+                    "closure_candidate_fingerprint": None,
+                    "closure_observations": 0,
+                }
+                with self._lock:
+                    self._native_observation_pins[terminal_id] = pin
+            except Exception:
+                logger.debug(
+                    "Could not record bounded native dialog notice for %s",
+                    terminal_id,
+                    exc_info=True,
+                )
+            return
+
+        with self._lock:
+            current_pin = self._native_observation_pins.get(terminal_id)
+        if current_pin is None:
+            try:
+                from cli_agent_orchestrator.services.interactions.models import (
+                    NativeObservationPin,
+                )
+
+                restored = service.latest_unresolved_native_observation(terminal_id, incarnation_id)
+            except Exception:
+                logger.debug(
+                    "Could not restore durable native dialog pin for %s",
+                    terminal_id,
+                    exc_info=True,
+                )
+                return
+            expected_target = (
+                terminal_id,
+                metadata.get("tmux_session"),
+                metadata.get("tmux_window"),
+            )
+            if (
+                not isinstance(restored, NativeObservationPin)
+                or restored.terminal_id != terminal_id
+                or restored.incarnation_id != incarnation_id
+                or restored.exact_target != expected_target
+            ):
+                return
+            current_pin = {
+                "incarnation_id": restored.incarnation_id,
+                "turn_generation": restored.turn_generation,
+                "observation_id": restored.observation_id,
+                "dialog_fingerprint": restored.dialog_fingerprint,
+                "screen_fingerprint": restored.dialog_fingerprint,
+                "provider_evidence_version": restored.provider_evidence_version,
+                "target": restored.exact_target,
+                "recovery_only": True,
+                "closure_candidate_fingerprint": None,
+                "closure_observations": 0,
+            }
+            with self._lock:
+                self._native_observation_pins[terminal_id] = current_pin
+        if detected == TerminalStatus.UNKNOWN:
+            # Keep the durable pin for a later concrete provider status. An
+            # unknown screen is not evidence that the exact dialog closed.
+            return
+        expected_target = (
+            terminal_id,
+            metadata.get("tmux_session"),
+            metadata.get("tmux_window"),
+        )
+        if (
+            current_pin.get("incarnation_id") != incarnation_id
+            or current_pin.get("target") != expected_target
+        ):
+            with self._lock:
+                if self._native_observation_pins.get(terminal_id) == current_pin:
+                    self._native_observation_pins.pop(terminal_id, None)
+            return
+        from cli_agent_orchestrator.providers.mcp_interactions import (
+            native_screen_fingerprint,
+        )
+
+        current_screen_fingerprint = native_screen_fingerprint(visible_screen)
+        original_screen_fingerprint = current_pin.get("screen_fingerprint")
+        if (
+            current_screen_fingerprint is None
+            or current_screen_fingerprint == original_screen_fingerprint
+        ):
+            # A coarse provider status transition can be transient while the
+            # original dialog remains on screen. Require a changed stable
+            # viewport, and reset any prior closure candidate if the old
+            # dialog is visible again.
+            current_pin["closure_candidate_fingerprint"] = None
+            current_pin["closure_observations"] = 0
+            with self._lock:
+                self._native_observation_pins[terminal_id] = current_pin
+            return
+
+        if current_pin.get("closure_candidate_fingerprint") == current_screen_fingerprint:
+            current_pin["closure_observations"] = (
+                int(current_pin.get("closure_observations", 0)) + 1
+            )
+        else:
+            current_pin["closure_candidate_fingerprint"] = current_screen_fingerprint
+            current_pin["closure_observations"] = 1
+        if current_pin["closure_observations"] < 2:
+            with self._lock:
+                self._native_observation_pins[terminal_id] = current_pin
+            return
+        try:
+            service.reconcile_native_observation(
+                terminal_id,
+                incarnation_id,
+                current_pin["turn_generation"],
+                observation_id=current_pin["observation_id"],
+                dialog_fingerprint=current_pin["dialog_fingerprint"],
+                provider_evidence_version=current_pin["provider_evidence_version"],
+                allow_resume=not current_pin.get("recovery_only", False),
+            )
+        except Exception:
+            # Stale/replaced/unavailable evidence is not proof of an answer.
+            # Leave the durable row to its existing stale/expiry lifecycle and
+            # drop the process-local pin so no later unrelated screen can close it.
+            logger.debug(
+                "Exact native dialog closure was not reconciled for %s",
+                terminal_id,
+                exc_info=True,
+            )
+        finally:
+            with self._lock:
+                if self._native_observation_pins.get(terminal_id) == current_pin:
+                    self._native_observation_pins.pop(terminal_id, None)
 
     def _midburst_processing_probe(self, terminal_id: str, provider) -> None:
         """Catch a busy turn whose TUI never goes quiet.
@@ -1019,7 +1247,9 @@ class StatusMonitor:
 
         async def _detect_and_apply() -> None:
             turn, started = self._observation_pin(terminal_id)
-            detected = await asyncio.to_thread(self._detect_screen, terminal_id, provider)
+            detected, visible_screen = await asyncio.to_thread(
+                self._detect_screen_snapshot, terminal_id, provider
+            )
             self._apply_detection(
                 terminal_id,
                 detected,
@@ -1027,17 +1257,26 @@ class StatusMonitor:
                 observed_turn=turn,
                 observed_started=started,
             )
+            await asyncio.to_thread(
+                self._observe_native_interaction,
+                terminal_id,
+                provider,
+                detected,
+                visible_screen,
+            )
 
         loop = self._loop or self._running_loop()
         if loop is None:
             turn, started = self._observation_pin(terminal_id)
+            detected, visible_screen = self._detect_screen_snapshot(terminal_id, provider)
             self._apply_detection(
                 terminal_id,
-                self._detect_screen(terminal_id, provider),
+                detected,
                 provider=provider,
                 observed_turn=turn,
                 observed_started=started,
             )
+            self._observe_native_interaction(terminal_id, provider, detected, visible_screen)
         else:
             self._spawn_tracked(loop, _detect_and_apply())
 
@@ -1199,6 +1438,9 @@ class StatusMonitor:
 
         async def _detect_and_apply() -> None:
             detected = await asyncio.to_thread(self._detect_status, terminal_id, buffer)
+            visible_screen, _current_buffer = await asyncio.to_thread(
+                self._screen_lines, terminal_id
+            )
             self._apply_detection(
                 terminal_id,
                 detected,
@@ -1207,16 +1449,28 @@ class StatusMonitor:
                 buffer_epoch=epoch,
                 observed_started=started_at_read,
             )
+            await asyncio.to_thread(
+                self._observe_native_interaction,
+                terminal_id,
+                quiesce_provider,
+                detected,
+                visible_screen,
+            )
 
         loop = self._loop or self._running_loop()
         if loop is None:
+            detected = self._detect_status(terminal_id, buffer)
+            visible_screen, _current_buffer = self._screen_lines(terminal_id)
             self._apply_detection(
                 terminal_id,
-                self._detect_status(terminal_id, buffer),
+                detected,
                 cleared_buffer_turn=cleared_turn,
                 work_evidence=self._work_evidence(quiesce_provider, evidence_buffer),
                 buffer_epoch=epoch,
                 observed_started=started_at_read,
+            )
+            self._observe_native_interaction(
+                terminal_id, quiesce_provider, detected, visible_screen
             )
         else:
             self._spawn_tracked(loop, _detect_and_apply())
@@ -1346,6 +1600,87 @@ class StatusMonitor:
                 processing_evidence=False,
             )
         return turn
+
+    def notify_input_in_flight(self, terminal_id: str, turn_sequence: int) -> bool:
+        """Publish an assumed in-flight boundary for an already-open turn.
+
+        ``send_input`` opens and clears the turn before it performs blocking
+        transport I/O. Its caller uses the returned sequence here after that I/O
+        succeeds. This boundary never opens another turn or counts as observed
+        work. A completion already recorded for this sequence wins, and a delayed
+        caller from an older send cannot alter a newer turn.
+
+        Returns False for a malformed or stale sequence and True when the
+        sequence still identifies the current turn, including when its status is
+        already processing or completed.
+        """
+        if type(turn_sequence) is not int or turn_sequence < 1:
+            return False
+
+        from cli_agent_orchestrator.services import remote_terminal_service as remote
+
+        try:
+            remote_placement = remote.placement(terminal_id)
+        except Exception:  # noqa: BLE001 - uncertain placement must not authorize observation
+            logger.exception(
+                "Could not verify remote placement before observing terminal %s", terminal_id
+            )
+            return False
+
+        if remote_placement:
+            try:
+                projection = remote.terminal_projection(terminal_id)
+            except Exception:  # noqa: BLE001 - uncertain projection must fail closed
+                logger.exception(
+                    "Could not read remote turn projection before observing terminal %s",
+                    terminal_id,
+                )
+                return False
+            if not isinstance(projection, dict):
+                return False
+
+            projected_turn = projection.get("turn_sequence")
+            projected_done = projection.get("turn_completed")
+            if (
+                type(projected_turn) is not int
+                or projected_turn != turn_sequence
+                or type(projected_done) is not int
+                or not 0 <= projected_done <= projected_turn
+            ):
+                return False
+            # Remote monitors own their turn generation and status. The local
+            # monitor acknowledges only that the peer projection still names
+            # this exact dispatch; it must not synthesize local counters,
+            # captures, buffers, or status events.
+            return True
+
+        with self._lock:
+            if self._turn.get(terminal_id, 0) != turn_sequence:
+                return False
+            if self._turn_done.get(terminal_id, 0) >= turn_sequence:
+                return True
+
+            current = self._last_status.get(terminal_id)
+            if current not in {
+                None,
+                TerminalStatus.UNKNOWN,
+                TerminalStatus.IDLE,
+                TerminalStatus.COMPLETED,
+            }:
+                return True
+            changed = self._apply_detection_locked(
+                terminal_id,
+                TerminalStatus.PROCESSING,
+                observed=False,
+                processing_evidence=False,
+            )
+
+        if changed:
+            bus.publish(
+                f"terminal.{terminal_id}.status", {"status": TerminalStatus.PROCESSING.value}
+            )
+            logger.info(f"Terminal {terminal_id} status changed: {TerminalStatus.PROCESSING.value}")
+        return True
 
     def clear_rolling_buffer(
         self, terminal_id: str, provider=None, turn: Optional[int] = None
@@ -1487,6 +1822,7 @@ class StatusMonitor:
             self._buffers.pop(terminal_id, None)
             self._buffer_epochs.pop(terminal_id, None)
             self._last_status.pop(terminal_id, None)
+            self._native_observation_pins.pop(terminal_id, None)
             self._processing_generation.pop(terminal_id, None)
             self._allow_processing_revert.pop(terminal_id, None)
             self._midburst_probe_at.pop(terminal_id, None)
@@ -1530,6 +1866,7 @@ class StatusMonitor:
             self._buffers[terminal_id] = ""
             self._evidence_mark.pop(terminal_id, None)
             self._last_status.pop(terminal_id, None)
+            self._native_observation_pins.pop(terminal_id, None)
             self._processing_generation.pop(terminal_id, None)
             self._allow_processing_revert.pop(terminal_id, None)
             self._midburst_probe_at.pop(terminal_id, None)

@@ -7,6 +7,7 @@ run against a real service in tmp dirs for the end-to-end CLI path.
 
 import asyncio
 import tarfile
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -27,9 +28,7 @@ def runner():
 
 
 def _real_svc(tmp_path):
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'cli.db'}", connect_args={"check_same_thread": False}
-    )
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return MemoryService(base_dir=tmp_path / "memory", db_engine=engine)
 

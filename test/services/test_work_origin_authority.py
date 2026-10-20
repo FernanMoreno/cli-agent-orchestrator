@@ -1,8 +1,7 @@
-"""T093 stage 2 origin-subject authority uses real SQLite grants and history."""
+"""T093 stage 2 origin-subject authority uses native PostgreSQL grants and history."""
 
 import importlib
 import importlib.util
-import sqlite3
 import time
 
 import pytest
@@ -11,6 +10,15 @@ from pydantic import ValidationError
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.security import auth
 from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
+
+pytestmark = pytest.mark.postgres
+
+
+@pytest.fixture(autouse=True)
+def _provision_work_postgres_schema(postgres_targets):
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
+
+    bootstrap_scope(postgres_targets.main)
 
 
 def origin_module():
@@ -54,10 +62,13 @@ def root_grant(repository, root, owner, subject, *, name):
 
 
 def setup(tmp_path):
-    repository = WorkRepository(tmp_path / "origin-authority.sqlite3")
+    repository = WorkRepository(tmp_path / "origin-authority")
     repository.initialize()
-    repository_module = importlib.import_module("cli_agent_orchestrator.clients.work_repository")
-    assert repository_module.SCHEMA_VERSION >= 23, "T019 v23 requires verified schema"
+    with repository.read_snapshot() as connection:
+        assert connection.execute(
+            "SELECT to_regclass('work_origin_subjects') IS NOT NULL, "
+            "to_regclass('work_origin_authorizations') IS NOT NULL"
+        ).fetchone() == (True, True)
     module = origin_module()
     owner = auth._verified_principal("https://issuer.test", "owner", [auth.SCOPE_ADMIN], "jwt")
     subject = auth._verified_principal(
@@ -71,7 +82,7 @@ def setup(tmp_path):
 
 def issuer_setup(tmp_path):
     """Two durable admins deliberately receive separate jobs for the same subject."""
-    repository = WorkRepository(tmp_path / "issuer-authority.sqlite3")
+    repository = WorkRepository(tmp_path / "issuer-authority")
     repository.initialize()
     module = origin_module()
     first_owner = auth._verified_principal(
@@ -221,7 +232,7 @@ def test_incoherent_issuer_history_cannot_resolve_or_bypass_direct_delegate(tmp_
             """INSERT INTO work_origin_authorizations
                (subject_id,origin_kind,revision,schema_version,state,issuer_id,subject_revision,
                 job_id,grant_id,grant_revision,actions,expires_at,created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (
                 subject.id,
                 "child",
@@ -602,4 +613,4 @@ def test_origin_models_reject_bool_versions_unknown_actions_and_extra_fields(tmp
             }
         )
     with pytest.raises(module.OriginDenied):
-        module.WorkOriginAuthority(WorkRepository(tmp_path / "empty.sqlite3"))._actions({"unknown"})
+        module.WorkOriginAuthority(WorkRepository(tmp_path / "empty"))._actions({"unknown"})

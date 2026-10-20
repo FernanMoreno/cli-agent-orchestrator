@@ -1,6 +1,7 @@
 """A whole assignment, not just terminal creation, owns response-loss retries."""
 
 import asyncio
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -13,9 +14,7 @@ from cli_agent_orchestrator.models.terminal import Terminal
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'assign.sqlite'}", connect_args={"check_same_thread": False}
-    )
+    engine = configured_orm_engine()
     db.Base.metadata.create_all(engine)
     monkeypatch.setattr(db, "SessionLocal", sessionmaker(bind=engine))
     db.create_terminal("1234abcd", "cao-parent", "0", "codex", "developer")

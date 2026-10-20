@@ -169,7 +169,7 @@ class TestRedeliverDroppedMessageHelper:
             started = ts.redeliver_dropped_message("t1", "Analyze the logs", 1)
         assert started is False
         box.assert_called_once_with("t1", "Analyze the logs")
-        key.assert_called_once_with("t1", "Enter")
+        key.assert_called_once_with("t1", "Enter", same_turn=True)
         send.assert_not_called()
 
     def test_gate_on_probe_capable_still_full_resends_when_box_empty(self):
@@ -222,7 +222,7 @@ class TestRedeliverDroppedMessageHelper:
                 "t1", "Analyze the logs", 1, provider, full_resend_requires_probe=True
             )
         assert started is False
-        key.assert_called_once_with("t1", "Enter")
+        key.assert_called_once_with("t1", "Enter", same_turn=True)
         send.assert_not_called()
 
     def test_gate_off_default_keeps_deferred_init_behavior(self):
@@ -295,7 +295,7 @@ class TestConfirmWorkerStartedOrResubmit:
                 "t1", "Analyze the logs", None, "sup", None
             )
         assert ok is True
-        key.assert_called_once_with("t1", "Enter")
+        key.assert_called_once_with("t1", "Enter", same_turn=True)
         send.assert_not_called()
 
     async def test_full_redeliver_when_box_empty(self):

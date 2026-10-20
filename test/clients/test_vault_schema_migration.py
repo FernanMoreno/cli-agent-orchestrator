@@ -1,14 +1,19 @@
-"""U2 schema migration tests for the vault source discriminator."""
+"""Native vault schema, immutable migration proof and source-kind isolation.
+
+Historical database layouts are not part of the active PostgreSQL schema contract.
+Runtime PostgreSQL verification never rebuilds a caller's tables.
+"""
 
 import ast
 import inspect
-import sqlite3
 import textwrap
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import inspect as inspect_schema
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
@@ -19,59 +24,138 @@ from cli_agent_orchestrator.clients.database import (
     VaultExclusionModel,
     VaultNoteModel,
 )
+from cli_agent_orchestrator.clients.postgres import connect
+from cli_agent_orchestrator.clients.postgres.migrations import SchemaMismatch
+from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
 
 
 @pytest.fixture
-def isolated_db(tmp_path, monkeypatch):
-    db_path = tmp_path / "vault-schema.db"
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
+def isolated_db(isolated_memory_db, monkeypatch):
+    engine = configured_orm_engine()
     monkeypatch.setattr(db_mod, "engine", engine)
     monkeypatch.setattr(db_mod, "SessionLocal", sessionmaker(bind=engine))
-    yield db_path, engine
-    engine.dispose()
+    try:
+        yield isolated_memory_db, engine
+    finally:
+        engine.dispose()
 
 
-def _secondary_indexes(db_path: Path) -> set[str]:
-    with sqlite3.connect(db_path) as conn:
-        return {
-            row[1]
-            for row in conn.execute("PRAGMA index_list(memory_metadata)")
-            if row[1] in {"idx_memory_scope", "idx_memory_updated", "idx_memory_type"}
-        }
+def test_fresh_native_vault_schema_and_indexes(isolated_db):
+    target, engine = isolated_db
+    db_mod.init_db()
+    metadata = inspect_schema(engine)
+    assert {"vault_note", "vault_exclusion", "vault_migration_receipt"} <= set(
+        metadata.get_table_names(schema=target.schema)
+    )
+    columns = {
+        row["name"]: row for row in metadata.get_columns("memory_metadata", schema=target.schema)
+    }
+    assert columns["source_kind"]["nullable"] is False
+    assert columns["related_keys"]["nullable"] is True
+    assert {"idx_memory_scope", "idx_memory_updated", "idx_memory_type"} <= {
+        row["name"] for row in metadata.get_indexes("memory_metadata", schema=target.schema)
+    }
 
 
-def _create_legacy_memory_metadata(db_path: Path, *, related_keys: str | None = None) -> None:
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("""
-            CREATE TABLE memory_metadata (
-                id VARCHAR NOT NULL PRIMARY KEY,
-                key VARCHAR NOT NULL,
-                memory_type VARCHAR NOT NULL,
-                scope VARCHAR NOT NULL,
-                scope_id VARCHAR,
-                file_path VARCHAR NOT NULL,
-                tags VARCHAR NOT NULL,
-                source_provider VARCHAR,
-                source_terminal_id VARCHAR,
-                token_estimate INTEGER,
-                created_at DATETIME,
-                updated_at DATETIME,
-                access_count INTEGER NOT NULL DEFAULT 0,
-                last_accessed_at DATETIME,
-                last_compiled_at DATETIME,
-                related_keys TEXT,
-                CONSTRAINT uq_memory_key_scope UNIQUE (key, scope, scope_id)
+@pytest.mark.parametrize("scope_id", [None, "project-id"])
+def test_native_source_kind_uniqueness_preserves_distinct_backends(isolated_db, scope_id):
+    _, engine = isolated_db
+
+    def insert(kind):
+        with sessionmaker(bind=engine)() as session:
+            session.add(
+                MemoryMetadataModel(
+                    id=str(uuid.uuid4()),
+                    key="same",
+                    memory_type="project",
+                    scope="global" if scope_id is None else "project",
+                    scope_id=scope_id,
+                    source_kind=kind,
+                    file_path=f"/{kind}.md",
+                    tags="",
+                )
             )
-            """)
-        conn.execute(
-            """
-            INSERT INTO memory_metadata (
-                id, key, memory_type, scope, scope_id, file_path, tags, related_keys
-            ) VALUES (?, 'legacy', 'project', 'global', NULL, '/legacy.md', '', ?)
-            """,
-            (str(uuid.uuid4()), related_keys),
+            session.commit()
+
+    insert("native")
+    insert("vault")
+    with pytest.raises(IntegrityError):
+        insert("native")
+    with pytest.raises(IntegrityError):
+        insert("vault")
+    with sessionmaker(bind=engine)() as session:
+        assert session.query(MemoryMetadataModel).count() == 2
+
+
+def test_explicit_bootstrap_preserves_max_valid_related_keys_and_metadata(isolated_db):
+    target, engine = isolated_db
+    content = "x" * 1023
+    with sessionmaker(bind=engine)() as session:
+        session.add(
+            MemoryMetadataModel(
+                id="survivor",
+                key="survivor",
+                memory_type="project",
+                scope="global",
+                scope_id=None,
+                file_path="/survivor.md",
+                tags="",
+                related_keys=content,
+            )
         )
+        session.commit()
+    bootstrap_scope(target)
+    bootstrap_scope(target)
+    with sessionmaker(bind=engine)() as session:
+        row = session.get(MemoryMetadataModel, "survivor")
+        assert row.related_keys == content and row.source_kind == "native"
+
+
+def test_fresh_native_schema_rejects_related_keys_over_legacy_limit(isolated_db):
+    _, engine = isolated_db
+    session = sessionmaker(bind=engine)()
+    try:
+        session.add(
+            MemoryMetadataModel(
+                id="oversized-related-keys",
+                key="oversized-related-keys",
+                memory_type="project",
+                scope="global",
+                scope_id=None,
+                file_path="/oversized.md",
+                tags="",
+                related_keys="x" * 1024,
+            )
+        )
+        with pytest.raises(IntegrityError, match="ck_related_keys_length"):
+            session.commit()
+        session.rollback()
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("table", ["vault_note", "vault_exclusion", "vault_migration_receipt"])
+def test_native_vault_tables_have_declared_nullable_provenance(isolated_db, table):
+    target, engine = isolated_db
+    model = db_mod.Base.metadata.tables[table]
+    columns = {
+        row["name"]: row for row in inspect_schema(engine).get_columns(table, schema=target.schema)
+    }
+    assert set(columns) == set(model.columns.keys())
+    for column in model.columns:
+        assert columns[column.name]["nullable"] == column.nullable
+
+
+def test_runtime_rejects_damaged_vault_schema_without_repair(isolated_db):
+    target, engine = isolated_db
+    with connect(target.migration_target()) as owner:
+        owner.execute("ALTER TABLE vault_note DROP COLUMN vault_relpath CASCADE")
+    with pytest.raises(SchemaMismatch):
+        db_mod.init_db()
+    assert "vault_relpath" not in {
+        row["name"]
+        for row in inspect_schema(engine).get_columns("vault_note", schema=target.schema)
+    }
 
 
 def _insert(engine, *, key: str, source_kind: str) -> None:
@@ -91,71 +175,8 @@ def _insert(engine, *, key: str, source_kind: str) -> None:
         session.commit()
 
 
-def test_fresh_database_has_vault_schema_and_secondary_indexes(isolated_db):
-    db_path, _ = isolated_db
-
-    db_mod.init_db()
-
-    with sqlite3.connect(db_path) as conn:
-        columns = {row[1]: row for row in conn.execute("PRAGMA table_info(memory_metadata)")}
-        vault_note_columns = {row[1]: row for row in conn.execute("PRAGMA table_info(vault_note)")}
-        vault_exclusion_columns = {
-            row[1]: row for row in conn.execute("PRAGMA table_info(vault_exclusion)")
-        }
-        tables = {
-            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
-    assert columns["source_kind"][3] == 1
-    assert columns["source_kind"][4] == "'native'"
-    assert vault_note_columns["scope"][3] == 1
-    assert vault_note_columns["scope_id"][3] == 1
-    assert vault_note_columns["key_source"][3] == 0
-    assert vault_note_columns["key_source_reason"][3] == 0
-    assert vault_exclusion_columns["key_source"][3] == 0
-    assert vault_exclusion_columns["key_source_reason"][3] == 0
-    assert {"vault_note", "vault_finding", "vault_note_alias"} <= tables
-    assert _secondary_indexes(db_path) == {
-        "idx_memory_scope",
-        "idx_memory_updated",
-        "idx_memory_type",
-    }
-
-
-def test_legacy_database_rebuilds_once_preserves_rows_and_indexes(isolated_db, monkeypatch):
-    db_path, _ = isolated_db
-    _create_legacy_memory_metadata(db_path)
-    rebuilds = 0
-    original_info = db_mod.logger.info
-
-    def count_rebuilds(message, *args, **kwargs):
-        nonlocal rebuilds
-        if message == "Migration: widened memory_metadata identity with source_kind":
-            rebuilds += 1
-        return original_info(message, *args, **kwargs)
-
-    monkeypatch.setattr(db_mod.logger, "info", count_rebuilds)
-
-    db_mod.init_db()
-    db_mod.init_db()
-
-    with sqlite3.connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT key, source_kind FROM memory_metadata WHERE key = 'legacy'"
-        ).fetchone()
-        columns = {row[1]: row for row in conn.execute("PRAGMA table_info(memory_metadata)")}
-    assert row == ("legacy", "native")
-    assert columns["source_kind"][3] == 1
-    assert columns["source_kind"][4] == "'native'"
-    assert rebuilds == 1
-    assert _secondary_indexes(db_path) == {
-        "idx_memory_scope",
-        "idx_memory_updated",
-        "idx_memory_type",
-    }
-
-
 def test_widened_constraint_allows_backends_but_rejects_native_duplicates(isolated_db):
-    _, engine = isolated_db
+    target, engine = isolated_db
     db_mod.init_db()
 
     _insert(engine, key="shared", source_kind="native")
@@ -165,93 +186,8 @@ def test_widened_constraint_allows_backends_but_rejects_native_duplicates(isolat
         _insert(engine, key="shared", source_kind="native")
 
 
-def test_global_native_duplicate_remains_rejected_after_widening(isolated_db):
-    _, engine = isolated_db
-    db_mod.init_db()
-
-    with sessionmaker(bind=engine)() as session:
-        session.add(
-            MemoryMetadataModel(
-                id=str(uuid.uuid4()),
-                key="global-shared",
-                memory_type="project",
-                scope="global",
-                scope_id=None,
-                source_kind="native",
-                file_path="/global-shared.md",
-                tags="",
-            )
-        )
-        session.commit()
-
-    with pytest.raises(IntegrityError):
-        with sessionmaker(bind=engine)() as session:
-            session.add(
-                MemoryMetadataModel(
-                    id=str(uuid.uuid4()),
-                    key="global-shared",
-                    memory_type="project",
-                    scope="global",
-                    scope_id=None,
-                    source_kind="native",
-                    file_path="/global-shared-duplicate.md",
-                    tags="",
-                )
-            )
-            session.commit()
-
-
-def test_global_native_and_vault_rows_remain_distinct_after_null_scope_fix(isolated_db):
-    _, engine = isolated_db
-    db_mod.init_db()
-
-    with sessionmaker(bind=engine)() as session:
-        for source_kind in ("native", "vault"):
-            session.add(
-                MemoryMetadataModel(
-                    id=str(uuid.uuid4()),
-                    key="global-shared",
-                    memory_type="project",
-                    scope="global",
-                    scope_id=None,
-                    source_kind=source_kind,
-                    file_path=f"/{source_kind}-global-shared.md",
-                    tags="",
-                )
-            )
-        session.commit()
-
-    with sessionmaker(bind=engine)() as session:
-        rows = session.query(MemoryMetadataModel).filter_by(key="global-shared").all()
-    assert {row.source_kind for row in rows} == {"native", "vault"}
-
-
-def test_rebuild_omits_related_keys_check_and_preserves_overlong_value(isolated_db):
-    db_path, _ = isolated_db
-    overlong = "x" * 2048
-    _create_legacy_memory_metadata(db_path, related_keys=overlong)
-
-    db_mod.init_db()
-
-    with sqlite3.connect(db_path) as conn:
-        columns = {row[1]: row for row in conn.execute("PRAGMA table_info(memory_metadata)")}
-        ddl = conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'memory_metadata'"
-        ).fetchone()[0]
-        stored = conn.execute(
-            "SELECT related_keys FROM memory_metadata WHERE key = 'legacy'"
-        ).fetchone()[0]
-    # Existing databases omit the fresh-install CHECK so legacy overlong values
-    # survive; fresh databases retain the model-level CHECK.
-    assert "source_kind" in columns
-    assert columns["source_kind"][3] == 1
-    assert columns["source_kind"][4] == "'native'"
-    assert "ck_related_keys_length" not in ddl
-    assert stored == overlong
-
-
 def test_vault_note_global_identity_uses_non_null_scope_id_sentinel(isolated_db):
-    _, engine = isolated_db
+    target, engine = isolated_db
     db_mod.init_db()
 
     with sessionmaker(bind=engine)() as session:
@@ -286,331 +222,6 @@ def test_vault_note_global_identity_uses_non_null_scope_id_sentinel(isolated_db)
             session.commit()
 
 
-def test_vault_exclusion_migration_backfills_excluded_notes_idempotently(isolated_db):
-    db_path, engine = isolated_db
-    VaultNoteModel.__table__.create(engine)
-    with sessionmaker(bind=engine)() as session:
-        session.add(
-            VaultNoteModel(
-                note_uid="forgotten",
-                vault_id="primary",
-                scope="project",
-                scope_id="demo",
-                cao_key="private-plan",
-                vault_relpath="Projects/Private.md",
-                managed=False,
-                content_sha256="abc123",
-                status="excluded",
-                key_source="collision",
-                key_source_reason="path-reuse",
-            )
-        )
-        session.commit()
-
-    db_mod.init_db()
-    db_mod.init_db()
-
-    with sqlite3.connect(db_path) as conn:
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(vault_exclusion)")}
-    with sessionmaker(bind=engine)() as session:
-        rows = session.query(VaultExclusionModel).all()
-
-    assert columns == {
-        "vault_id",
-        "scope",
-        "scope_id",
-        "cao_key",
-        "last_known_relpath",
-        "content_sha256",
-        "key_source",
-        "key_source_reason",
-        "created_at",
-    }
-    assert [
-        (
-            row.vault_id,
-            row.scope,
-            row.scope_id,
-            row.cao_key,
-            row.last_known_relpath,
-            row.content_sha256,
-            row.key_source,
-            row.key_source_reason,
-        )
-        for row in rows
-    ] == [
-        (
-            "primary",
-            "project",
-            "demo",
-            "private-plan",
-            "Projects/Private.md",
-            "abc123",
-            "collision",
-            "path-reuse",
-        )
-    ]
-
-
-def test_vault_exclusion_helper_fallback_ddl_has_nullable_provenance_columns(isolated_db):
-    db_path, _ = isolated_db
-
-    db_mod._migrate_vault_exclusions()
-
-    with sqlite3.connect(db_path) as conn:
-        columns = {row[1]: row for row in conn.execute("PRAGMA table_info(vault_exclusion)")}
-
-    assert set(columns) == {
-        "vault_id",
-        "scope",
-        "scope_id",
-        "cao_key",
-        "last_known_relpath",
-        "content_sha256",
-        "key_source",
-        "key_source_reason",
-        "created_at",
-    }
-    assert columns["key_source"][3] == 0
-    assert columns["key_source_reason"][3] == 0
-
-
-def test_fresh_database_has_exact_vault_migration_receipt_schema(isolated_db):
-    db_path, engine = isolated_db
-
-    db_mod.init_db()
-
-    with sqlite3.connect(db_path) as conn:
-        columns = {
-            row[1]: row for row in conn.execute("PRAGMA table_info(vault_migration_receipt)")
-        }
-        tables = {
-            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
-
-    assert "vault_migration_receipt" in tables
-    assert set(columns) == {
-        "receipt_id",
-        "scope",
-        "scope_id",
-        "cao_key",
-        "native_relpath",
-        "native_snapshot_sha256",
-        "vault_id",
-        "managed_relpath",
-        "vault_note_uid",
-        "published_content_sha256",
-        "superseded_edges",
-        "status",
-        "created_at",
-    }
-    assert columns["receipt_id"][5] == 1
-    assert columns["scope_id"][3] == 1
-    assert columns["scope_id"][4] == "''"
-    assert columns["status"][3] == 1
-
-    with sessionmaker(bind=engine)() as session:
-        session.add(
-            db_mod.VaultMigrationReceiptModel(
-                receipt_id="receipt",
-                scope="global",
-                scope_id=VAULT_NOTE_SCOPE_ID_SENTINEL,
-                cao_key="migrated",
-                native_relpath="global/wiki/global/migrated.md",
-                native_snapshot_sha256="a" * 64,
-                vault_id="primary",
-                managed_relpath="CAO/migrated.md",
-                vault_note_uid="note",
-                published_content_sha256="b" * 64,
-                superseded_edges="[]",
-                status="active",
-            )
-        )
-        session.commit()
-
-
-def test_legacy_database_adds_vault_migration_receipt_idempotently(isolated_db):
-    db_path, _ = isolated_db
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("CREATE TABLE unrelated_legacy_state (id TEXT PRIMARY KEY)")
-
-    db_mod.init_db()
-    db_mod.init_db()
-
-    with sqlite3.connect(db_path) as conn:
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(vault_migration_receipt)")}
-        unrelated = conn.execute(
-            "SELECT sql FROM sqlite_master " "WHERE type='table' AND name='unrelated_legacy_state'"
-        ).fetchone()
-
-    assert columns == {
-        "receipt_id",
-        "scope",
-        "scope_id",
-        "cao_key",
-        "native_relpath",
-        "native_snapshot_sha256",
-        "vault_id",
-        "managed_relpath",
-        "vault_note_uid",
-        "published_content_sha256",
-        "superseded_edges",
-        "status",
-        "created_at",
-    }
-    assert unrelated is not None
-
-
-def test_legacy_vault_provenance_columns_are_nullable_lossless_and_idempotent(isolated_db):
-    db_path, _ = isolated_db
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("""
-            CREATE TABLE vault_note (
-                note_uid VARCHAR NOT NULL PRIMARY KEY,
-                vault_id VARCHAR NOT NULL,
-                scope VARCHAR NOT NULL,
-                scope_id VARCHAR NOT NULL DEFAULT '',
-                cao_key VARCHAR NOT NULL,
-                vault_relpath VARCHAR NOT NULL,
-                managed BOOLEAN NOT NULL,
-                content_sha256 VARCHAR,
-                frontmatter_sha256 VARCHAR,
-                size_bytes INTEGER,
-                mtime_ns INTEGER,
-                status VARCHAR NOT NULL,
-                last_reconciled_at DATETIME
-            )
-            """)
-        conn.execute("""
-            CREATE TABLE vault_exclusion (
-                vault_id VARCHAR NOT NULL,
-                scope VARCHAR NOT NULL,
-                scope_id VARCHAR NOT NULL DEFAULT '',
-                cao_key VARCHAR NOT NULL,
-                last_known_relpath VARCHAR NOT NULL,
-                content_sha256 VARCHAR,
-                created_at DATETIME NOT NULL,
-                key_source VARCHAR,
-                PRIMARY KEY (vault_id, scope, scope_id, cao_key)
-            )
-            """)
-        conn.execute(
-            "INSERT INTO vault_note "
-            "(note_uid, vault_id, scope, scope_id, cao_key, vault_relpath, managed, status) "
-            "VALUES ('legacy-note', 'vault', 'global', '', 'legacy', 'Mapped/Legacy.md', 0, "
-            "'indexed')"
-        )
-        conn.execute(
-            "INSERT INTO vault_exclusion "
-            "(vault_id, scope, scope_id, cao_key, last_known_relpath, created_at) "
-            "VALUES ('vault', 'global', '', 'forgotten', 'Mapped/Forgotten.md', "
-            "CURRENT_TIMESTAMP)"
-        )
-
-    db_mod.init_db()
-    db_mod.init_db()
-
-    with sqlite3.connect(db_path) as conn:
-        note_columns = {row[1]: row for row in conn.execute("PRAGMA table_info(vault_note)")}
-        exclusion_columns = {
-            row[1]: row for row in conn.execute("PRAGMA table_info(vault_exclusion)")
-        }
-        note = conn.execute(
-            "SELECT note_uid, cao_key, status, key_source, key_source_reason FROM vault_note"
-        ).fetchone()
-        exclusion = conn.execute(
-            "SELECT cao_key, last_known_relpath, key_source, key_source_reason "
-            "FROM vault_exclusion"
-        ).fetchone()
-
-    assert note_columns["key_source"][3:] == (0, None, 0)
-    assert note_columns["key_source_reason"][3:] == (0, None, 0)
-    assert exclusion_columns["key_source"][3:] == (0, None, 0)
-    assert exclusion_columns["key_source_reason"][3:] == (0, None, 0)
-    assert note == ("legacy-note", "legacy", "indexed", None, None)
-    assert exclusion == ("forgotten", "Mapped/Forgotten.md", None, None)
-
-
-def test_vault_key_provenance_migration_is_a_noop_without_vault_tables(isolated_db):
-    db_path, _ = isolated_db
-
-    db_mod._migrate_vault_key_provenance()
-
-    with sqlite3.connect(db_path) as conn:
-        tables = {
-            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        }
-
-    assert "vault_note" not in tables
-    assert "vault_exclusion" not in tables
-
-
-@pytest.mark.parametrize(
-    ("table", "legacy_schema"),
-    [
-        (
-            "vault_note",
-            """
-            CREATE TABLE vault_note (
-                note_uid VARCHAR NOT NULL PRIMARY KEY,
-                vault_id VARCHAR NOT NULL
-            )
-            """,
-        ),
-        (
-            "vault_exclusion",
-            """
-            CREATE TABLE vault_exclusion (
-                vault_id VARCHAR NOT NULL PRIMARY KEY,
-                scope VARCHAR NOT NULL
-            )
-            """,
-        ),
-    ],
-)
-def test_vault_key_provenance_migration_upgrades_only_existing_legacy_table(
-    isolated_db, table, legacy_schema
-):
-    db_path, _ = isolated_db
-    absent_table = "vault_exclusion" if table == "vault_note" else "vault_note"
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(legacy_schema)
-
-    db_mod._migrate_vault_key_provenance()
-    db_mod._migrate_vault_key_provenance()
-
-    with sqlite3.connect(db_path) as conn:
-        tables = {
-            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        }
-        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
-
-    assert {"key_source", "key_source_reason"} <= columns
-    assert absent_table not in tables
-
-
-def test_source_kind_migration_failure_propagates(isolated_db):
-    db_path, _ = isolated_db
-    _create_legacy_memory_metadata(db_path)
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("CREATE TABLE memory_metadata_new (id TEXT)")
-
-    with pytest.raises(sqlite3.OperationalError, match="already exists"):
-        db_mod.init_db()
-
-    with sqlite3.connect(db_path) as conn:
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_metadata)")}
-    assert "source_kind" not in columns
-
-
-def test_source_kind_migration_ignores_database_without_memory_metadata(isolated_db):
-    db_path, _ = isolated_db
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("CREATE TABLE workflow_only (id TEXT PRIMARY KEY)")
-
-    db_mod._migrate_memory_source_kind()
-
-
 def _has_source_kind_equality(owner) -> bool:
     tree = ast.parse(textwrap.dedent(inspect.getsource(owner)))
     for node in ast.walk(tree):
@@ -635,8 +246,10 @@ def test_all_key_and_scope_queries_filter_source_kind():
         wiki_lint,
     )
 
+    # `_upsert_metadata` is a write-only INSERT .. ON CONFLICT operation on
+    # this source tree, so it has no read predicate for this AST oracle. The
+    # PostgreSQL regression below exercises its source-kind conflict identity.
     query_owners = (
-        memory_service.MemoryService._upsert_metadata,
         memory_service.MemoryService._delete_metadata,
         memory_service.MemoryService.compact,
         memory_service.MemoryService._candidate_keys_for_topic,
@@ -646,6 +259,7 @@ def test_all_key_and_scope_queries_filter_source_kind():
         memory_reconciliation.MemoryReconciliationService._repair_metadata,
         memory_relationship_service.MemoryRelationshipService._assert_endpoint_exists,
         memory_relationship_service.MemoryRelationshipService._source_updated_map,
+        memory_service.MemoryService._assert_no_cross_tier_collision,
         wiki_healer._row_exists,
         wiki_healer._delete_row,
         wiki_healer._heal_contradiction,
@@ -662,6 +276,140 @@ def test_all_key_and_scope_queries_filter_source_kind():
     assert 'getattr(m, "source_kind", "native")' in inspect.getsource(
         memory_service.MemoryService._identity
     )
+
+
+@pytest.mark.parametrize("scope_id", [None, "project-id"])
+def test_core_upsert_keeps_source_kind_identities_independent(isolated_db, tmp_path, scope_id):
+    from cli_agent_orchestrator.services.memory_service import MemoryService
+
+    _, engine = isolated_db
+    service = MemoryService(base_dir=tmp_path / "metadata-source-kind")
+    key = "shared-source-kind-" + uuid.uuid4().hex
+    scope = "global" if scope_id is None else "project"
+    kinds = ("native", "vault")
+    first_compile = datetime(2024, 2, 3, tzinfo=timezone.utc)
+    second_compile = datetime(2025, 4, 5, tzinfo=timezone.utc)
+    access_time = datetime(2023, 6, 7, tzinfo=timezone.utc)
+
+    def read_rows(session):
+        return {
+            row.source_kind: row
+            for row in session.query(MemoryMetadataModel)
+            .filter_by(key=key, scope=scope, scope_id=scope_id)
+            .all()
+        }
+
+    for kind in kinds:
+        source_kind_option = {} if kind == "native" else {"source_kind": kind}
+        service._upsert_metadata(
+            key,
+            "project",
+            scope,
+            scope_id,
+            f"/{kind}-initial.md",
+            f"{kind}-initial-tags",
+            f"{kind}-initial-provider",
+            f"{kind}-initial-terminal",
+            10,
+            last_compiled_at=first_compile,
+            related_keys=f"{kind}-related",
+            **source_kind_option,
+        )
+
+    with sessionmaker(bind=engine)() as session:
+        rows = read_rows(session)
+        assert set(rows) == set(kinds)
+        assert len(rows) == 2
+        saved_identity = {}
+        for kind, row in rows.items():
+            assert row.file_path == f"/{kind}-initial.md"
+            assert row.tags == f"{kind}-initial-tags"
+            assert row.token_estimate == 10
+            assert row.source_provider == f"{kind}-initial-provider"
+            assert row.source_terminal_id == f"{kind}-initial-terminal"
+            assert row.created_at is not None and row.updated_at is not None
+            assert row.access_count == 0 and row.last_accessed_at is None
+            assert row.last_compiled_at == first_compile
+            assert row.related_keys == f"{kind}-related"
+            saved_identity[kind] = (row.id, row.created_at)
+            row.access_count = 20 if kind == "native" else 30
+            row.last_accessed_at = access_time
+        session.commit()
+
+    for kind in kinds:
+        service._upsert_metadata(
+            key,
+            "project",
+            scope,
+            scope_id,
+            f"/{kind}-preserved.md",
+            f"{kind}-preserved-tags",
+            "ignored-provider",
+            "ignored-terminal",
+            11,
+            preserve_provenance=True,
+            source_kind=kind,
+        )
+
+    with sessionmaker(bind=engine)() as session:
+        rows = read_rows(session)
+        assert set(rows) == set(kinds)
+        for kind, row in rows.items():
+            assert (row.id, row.created_at) == saved_identity[kind]
+            assert row.file_path == f"/{kind}-preserved.md"
+            assert row.tags == f"{kind}-preserved-tags"
+            assert row.token_estimate == 11
+            assert row.source_provider == f"{kind}-initial-provider"
+            assert row.source_terminal_id == f"{kind}-initial-terminal"
+            assert row.last_compiled_at == first_compile
+            assert row.related_keys == f"{kind}-related"
+            assert row.updated_at > first_compile
+            assert row.access_count == (20 if kind == "native" else 30)
+            assert row.last_accessed_at == access_time
+
+    for kind in kinds:
+        service._upsert_metadata(
+            key,
+            "project",
+            scope,
+            scope_id,
+            f"/{kind}-compiled.md",
+            f"{kind}-compiled-tags",
+            f"{kind}-latest-provider",
+            f"{kind}-latest-terminal",
+            12,
+            last_compiled_at=second_compile,
+            related_keys="",
+            source_kind=kind,
+        )
+
+    with sessionmaker(bind=engine)() as session:
+        rows = read_rows(session)
+        assert set(rows) == set(kinds)
+        for kind, row in rows.items():
+            assert (row.id, row.created_at) == saved_identity[kind]
+            assert row.file_path == f"/{kind}-compiled.md"
+            assert row.tags == f"{kind}-compiled-tags"
+            assert row.token_estimate == 12
+            assert row.source_provider == f"{kind}-latest-provider"
+            assert row.source_terminal_id == f"{kind}-latest-terminal"
+            assert row.updated_at == second_compile
+            assert row.last_compiled_at == second_compile
+            assert row.related_keys == ""
+            assert row.access_count == (20 if kind == "native" else 30)
+            assert row.last_accessed_at == access_time
+
+    for target_source_kind, other_source_kind in (
+        ("native", "vault"),
+        ("vault", "native"),
+    ):
+        with pytest.raises(ValueError, match=f"already exists in the {other_source_kind} store"):
+            service._assert_no_cross_tier_collision(
+                key,
+                scope,
+                scope_id,
+                target_source_kind=target_source_kind,
+            )
 
 
 def test_binding_aware_query_helpers_default_to_native_without_call_site_changes():

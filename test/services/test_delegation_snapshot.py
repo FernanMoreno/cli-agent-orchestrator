@@ -3,20 +3,32 @@
 import hashlib
 import importlib
 import multiprocessing
-import sqlite3
 import time
-from test.clients.test_work_repository import (
-    legacy_admit,
-    legacy_v21_store,
-    migrate_legacy_v21_store,
-)
 
 import pytest
 
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.security.auth import local_operator_principal
 from cli_agent_orchestrator.services.knowledge_policy import KnowledgeAccessDenied, KnowledgePolicy
 from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
+
+pytestmark = pytest.mark.postgres
+
+
+@pytest.fixture(autouse=True)
+def snapshot_database(postgres_targets):
+    bootstrap_scope(postgres_targets.main)
+
+
+def _seed_legacy_lineage(repo, job, **arguments):
+    """Seed persisted legacy rows through the trusted repository boundary.
+
+    This exercises ancestry validation against rows in the verified PostgreSQL store.
+    """
+    with repo.transaction() as connection:
+        return repo._admit_work(connection, job_id=job["id"], **arguments)
 
 
 def setup(tmp_path, monkeypatch, *, legacy=False, **limits):
@@ -24,10 +36,8 @@ def setup(tmp_path, monkeypatch, *, legacy=False, **limits):
     monkeypatch.delenv("AUTH0_DOMAIN", raising=False)
     monkeypatch.delenv("CAO_AUTH_JWKS_URI", raising=False)
     actor = local_operator_principal()
-    path = tmp_path / "snapshots.sqlite3"
-    repo = legacy_v21_store(path) if legacy else WorkRepository(path)
-    if not legacy:
-        repo.initialize()
+    repo = WorkRepository(DatabaseTarget.from_settings())
+    repo.initialize()
     job = repo.create_job(
         project_id="project", principal_id=actor.id, allowed_providers=["mock_cli"], grant_id="root"
     )
@@ -97,10 +107,19 @@ def test_changed_request_binding_conflicts_without_resolving_again(tmp_path, mon
 
 def test_event_failure_rolls_back_snapshot_and_delivers_nothing(tmp_path, monkeypatch):
     module, repo, store, args = setup(tmp_path, monkeypatch)
-    with repo.transaction() as connection:
-        connection.execute(
-            "CREATE TRIGGER fail_snapshot BEFORE INSERT ON work_events WHEN NEW.event_type='snapshot.frozen' BEGIN SELECT RAISE(ABORT,'event unavailable'); END"
-        )
+    from cli_agent_orchestrator.clients.postgres import Connection
+
+    original_execute = Connection.execute
+
+    def fail_event(connection, statement, params=(), *, prepare: bool | None = None):
+        if "INSERT INTO work_events" in str(statement) and "snapshot.frozen" in params:
+            # Fail on the actual caller transaction; PostgreSQL must roll it back.
+            return original_execute(connection, "SELECT 1/0")
+        if prepare is None:
+            return original_execute(connection, statement, params)
+        return original_execute(connection, statement, params, prepare=prepare)
+
+    monkeypatch.setattr(Connection, "execute", fail_event)
     with pytest.raises(module.SnapshotUnavailable):
         store.freeze(**args, resolver=lambda c, p: module.ResolvedSnapshot("must not escape"))
     with repo.connection() as connection:
@@ -154,7 +173,7 @@ def test_grandchildren_inherit_snapshot_through_distinct_contracts(tmp_path, mon
     parent_id = None
     descendants = []
     for contract_id in ("contract", "child-contract", "grandchild-contract"):
-        work = legacy_admit(
+        work = _seed_legacy_lineage(
             repo,
             {"id": args["job_id"]},
             operation_kind="launch",
@@ -168,13 +187,12 @@ def test_grandchildren_inherit_snapshot_through_distinct_contracts(tmp_path, mon
         )
         parent_id = work["id"]
         descendants.append(work)
-    migrate_legacy_v21_store(repo)
     for parent in descendants:
         assert store.child_snapshot(args["principal"], parent["id"]) == snapshot
     # Missing origin or a forged cycle must not turn same-job bytes into ancestry.
     with repo.transaction() as connection:
         connection.execute(
-            "UPDATE work_items SET parent_work_item_id=? WHERE id=?",
+            "UPDATE work_items SET parent_work_item_id=%s WHERE id=%s",
             (descendants[2]["id"], descendants[1]["id"]),
         )
     with pytest.raises(module.SnapshotConflict):
@@ -232,7 +250,7 @@ def test_process_siblings_resolve_once_and_share_committed_winner(tmp_path, monk
     processes = [
         context.Process(
             target=_race,
-            args=(repo.path, args["principal"], args["job_id"], barrier, counter, queue),
+            args=(repo.target, args["principal"], args["job_id"], barrier, counter, queue),
         )
         for _ in range(3)
     ]
@@ -339,7 +357,7 @@ def test_internal_snapshot_loader_requires_transaction_and_validates_hash(tmp_pa
     snapshot = store.freeze(**args, resolver=lambda c, p: module.ResolvedSnapshot("stored"))
     with repo.connection() as connection:
         row = connection.execute(
-            "SELECT * FROM work_delegation_snapshots WHERE id=?", (snapshot.id,)
+            "SELECT * FROM work_delegation_snapshots WHERE id=%s", (snapshot.id,)
         ).fetchone()
         with pytest.raises(module.SnapshotUnavailable, match="transaction"):
             module.DelegationSnapshots._load_authorized(connection, row)
@@ -376,7 +394,7 @@ def test_internal_snapshot_loader_rejects_withdrawn_sources(tmp_path, monkeypatc
     )
     with repo.read_snapshot() as connection:
         row = connection.execute(
-            "SELECT * FROM work_delegation_snapshots WHERE id=?", (snapshot.id,)
+            "SELECT * FROM work_delegation_snapshots WHERE id=%s", (snapshot.id,)
         ).fetchone()
         with pytest.raises(module.SnapshotUnavailable, match="withdrawn"):
             module.DelegationSnapshots._load_authorized(connection, row)

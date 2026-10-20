@@ -13,7 +13,7 @@ test had to be bolted onto Bolt 1B's Definition of Done at ``delivery-planning``
 scenario owned by nobody does not get written.
 
 WHAT THIS PROVES, AND WHAT IT DOES NOT. Every link in the chain here is the real shipped code: the real
-journal on a temporary database, the real manifest envelope, the real ``frozen_run_memory``, the real
+journal on the isolated PostgreSQL target, the real manifest envelope, the real ``frozen_run_memory``, the real
 ``inject_memory_context``. Two boundaries are stubbed — the provider process, and what memory resolution
 returns.
 
@@ -63,25 +63,8 @@ EXAMPLE_SECRET = "AKIAIOSFODNN7EXAMPLE"
 
 
 @pytest.fixture(autouse=True)
-def isolated_state(tmp_path, monkeypatch):
-    """A temp database, and the injection guard cleared.
-
-    Both are explicit rather than assumed. ``_memory_injected_terminals`` is MODULE-LEVEL state and this
-    scenario injects more than once; ``DATABASE_FILE`` is repointed on every module that reads it,
-    because the journal's own ``_MIGRATED_PATHS`` comment records that five test modules repoint it
-    mid-process. The suite also runs with random ordering, so nothing here may depend on another test
-    having left a clean process behind.
-    """
-    from cli_agent_orchestrator import constants
-    from cli_agent_orchestrator.clients import database as database_client
-
-    path = tmp_path / "cao.db"
-    monkeypatch.setattr(constants, "DATABASE_FILE", path)
-    monkeypatch.setattr(database_client, "DATABASE_FILE", path, raising=False)
-    monkeypatch.setattr(workflow_journal, "DATABASE_FILE", path, raising=False)
-    monkeypatch.setattr(approval_store, "DATABASE_FILE", path, raising=False)
-    database_client.init_db()
-
+def isolated_state():
+    """Clear the in-process injection guard around the shared isolated PostgreSQL fixture."""
     with terminal_service._memory_injected_lock:
         terminal_service._memory_injected_terminals.clear()
     yield

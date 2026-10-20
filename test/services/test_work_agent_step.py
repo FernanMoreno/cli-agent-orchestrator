@@ -16,6 +16,8 @@ from cli_agent_orchestrator.services import settings_service, terminal_service
 from cli_agent_orchestrator.services.work_admission import WorkAdmission
 from cli_agent_orchestrator.services.work_service import DeliveryUncertain
 
+pytestmark = pytest.mark.postgres
+
 
 class AgentStepBackend(AdmissionOnlyBackend):
     def __init__(self):
@@ -45,6 +47,14 @@ def _adapter():
 @pytest.fixture
 def agent_step_context(context, isolated_memory_db, monkeypatch):
     providers, scoped_backends = {}, []
+    from cli_agent_orchestrator.services.interactions import service as interaction_services
+
+    # This module uses a fresh explicit PostgreSQL schema for every test and is
+    # marked ``postgres``, so the ordinary-test autouse fixture does not clear
+    # the process singleton. A default InteractionService retained from the
+    # preceding test would still target its already-dropped schema.
+    with interaction_services._DEFAULT_SERVICE_LOCK:
+        interaction_services._DEFAULT_SERVICE = None
 
     class UnscopedBackend:
         def __getattr__(self, name):
@@ -92,7 +102,12 @@ def agent_step_context(context, isolated_memory_db, monkeypatch):
     )
     context.scoped_backends = scoped_backends
     context.providers = providers
-    return context
+    try:
+        yield context
+    finally:
+        # Clear the service before postgres_targets drops this test's schema.
+        with interaction_services._DEFAULT_SERVICE_LOCK:
+            interaction_services._DEFAULT_SERVICE = None
 
 
 def agent_step_envelope(**overrides):

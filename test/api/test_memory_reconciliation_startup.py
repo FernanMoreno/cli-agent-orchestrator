@@ -5,15 +5,15 @@ import logging
 import uuid
 from contextlib import ExitStack
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.api.main import _reconcile_memory_at_startup, app, lifespan
 from cli_agent_orchestrator.clients import database as db_module
-from cli_agent_orchestrator.clients.database import Base, MemoryMetadataModel
+from cli_agent_orchestrator.clients.database import MemoryMetadataModel
 from cli_agent_orchestrator.plugins import PluginRegistry
 from cli_agent_orchestrator.services import memory_reconciliation
 from cli_agent_orchestrator.services.memory_reconciliation import (
@@ -98,8 +98,17 @@ def test_unexpected_reconciliation_failure_logs_and_returns(caplog) -> None:
 
 @pytest.mark.asyncio
 async def test_lifespan_repairs_replacement_database_and_second_startup_is_noop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    isolated_memory_db,
+    postgres_targets,
 ) -> None:
+    from test.postgres.fixtures import make_orm_engine
+
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
+
     base = tmp_path / "memory"
     expected = {
         ("global-topic", "global", None),
@@ -110,93 +119,133 @@ async def test_lifespan_repairs_replacement_database_and_second_startup_is_noop(
     for key, scope, scope_id in expected:
         _write_topic(base, scope, scope_id, key)
 
-    replacement_engine = create_engine(
-        f"sqlite:///{tmp_path / 'replacement.db'}",
-        connect_args={"check_same_thread": False},
-    )
-    sessions = sessionmaker(autocommit=False, autoflush=False, bind=replacement_engine)
-    monkeypatch.setattr(db_module, "SessionLocal", sessions)
-    monkeypatch.setattr(memory_reconciliation, "MEMORY_BASE_DIR", base)
+    old_engine = make_orm_engine(isolated_memory_db)
+    replacement_engine = None
+    try:
+        old_sessions = sessionmaker(autocommit=False, autoflush=False, bind=old_engine)
+        sentinel = MemoryMetadataModel(
+            id=str(uuid.uuid4()),
+            key="prior-target-only",
+            memory_type="reference",
+            scope="global",
+            scope_id=None,
+            file_path="/prior-target/sentinel.md",
+            tags="preserve",
+        )
+        with old_sessions() as db:
+            db.add(sentinel)
+            db.commit()
+            db.refresh(sentinel)
+            sentinel_before = {
+                column.key: getattr(sentinel, column.key)
+                for column in MemoryMetadataModel.__table__.columns
+            }
 
-    def initialize_replacement() -> None:
-        Base.metadata.create_all(bind=replacement_engine)
+        replacement_target = postgres_targets.main
 
-    forbidden = {
-        "lint": AsyncMock(side_effect=AssertionError("full lint called")),
-        "compile": AsyncMock(side_effect=AssertionError("compiler called")),
-        "related": AsyncMock(side_effect=AssertionError("model linking called")),
-        "network": MagicMock(side_effect=AssertionError("network called")),
-    }
-    with ExitStack() as stack:
-        stack.enter_context(patch("cli_agent_orchestrator.api.main.setup_logging"))
-        stack.enter_context(
-            patch(
-                "cli_agent_orchestrator.api.main.init_db",
-                side_effect=initialize_replacement,
-            )
-        )
-        stack.enter_context(
-            patch(
-                "cli_agent_orchestrator.services.settings_service.is_memory_enabled",
-                return_value=True,
-            )
-        )
-        stack.enter_context(patch("cli_agent_orchestrator.api.main.cleanup_old_data"))
-        stack.enter_context(
-            patch(
-                "cli_agent_orchestrator.api.main.cleanup_expired_memories",
-                new=AsyncMock(side_effect=_quick_task),
-            )
-        )
-        for name in (
-            "flow_daemon",
-            "opencode_inbox_delivery_daemon",
-            "inbox_reconciliation_daemon",
-        ):
-            stack.enter_context(patch(f"cli_agent_orchestrator.api.main.{name}", _quick_task))
-        for name in ("status_monitor.run", "log_writer.run", "inbox_service.run"):
-            stack.enter_context(patch(f"cli_agent_orchestrator.api.main.{name}", new=AsyncMock()))
-        stack.enter_context(patch("cli_agent_orchestrator.api.main.bus.set_loop"))
-        stack.enter_context(
-            patch("cli_agent_orchestrator.api.main.get_backend", return_value=MagicMock())
-        )
-        stack.enter_context(patch.object(PluginRegistry, "load", new=AsyncMock()))
-        stack.enter_context(patch.object(PluginRegistry, "teardown", new=AsyncMock()))
-        stack.enter_context(
-            patch(
-                "cli_agent_orchestrator.services.wiki_lint.run_lint",
-                new=forbidden["lint"],
-            )
-        )
-        stack.enter_context(
-            patch(
-                "cli_agent_orchestrator.services.wiki_compiler.compile",
-                new=forbidden["compile"],
-            )
-        )
-        stack.enter_context(
-            patch(
-                "cli_agent_orchestrator.services.wiki_compiler.find_related",
-                new=forbidden["related"],
-            )
-        )
-        stack.enter_context(patch("requests.get", new=forbidden["network"]))
-        with caplog.at_level(logging.INFO, logger="cli_agent_orchestrator.api.main"):
-            async with lifespan(app):
-                pass
-            async with lifespan(app):
-                pass
+        def target_for_configured_home(cls, scope="main", home=None):
+            del cls, home
+            return postgres_targets[scope]
 
-    with sessions() as db:
-        rows = db.query(MemoryMetadataModel).all()
-        assert {(row.key, row.scope, row.scope_id) for row in rows} == expected
-    global_index = (base / "global" / "wiki" / "index.md").read_text(encoding="utf-8")
-    assert "[global-topic](global/global-topic.md)" in global_index
-    assert "[session-topic](session/session-one/session-topic.md)" in global_index
-    assert "[agent-topic](agent/code_supervisor/agent-topic.md)" in global_index
-    project_index = (base / "project-one" / "wiki" / "index.md").read_text(encoding="utf-8")
-    assert "[project-topic](project/project-topic.md)" in project_index
-    assert "repaired=4" in caplog.text
-    assert "unchanged=4" in caplog.text
-    for blocked in forbidden.values():
-        blocked.assert_not_called()
+        monkeypatch.setattr(
+            DatabaseTarget,
+            "from_settings",
+            classmethod(target_for_configured_home),
+        )
+        replacement_engine = configured_orm_engine()
+        assert replacement_target.identity != isolated_memory_db.identity
+        assert DatabaseTarget.from_settings().identity == replacement_target.identity
+        bootstrap_scope(replacement_target)
+        sessions = sessionmaker(autocommit=False, autoflush=False, bind=replacement_engine)
+        monkeypatch.setattr(db_module, "engine", replacement_engine)
+        monkeypatch.setattr(db_module, "SessionLocal", sessions)
+        monkeypatch.setattr(memory_reconciliation, "MEMORY_BASE_DIR", base)
+
+        forbidden = {
+            "lint": AsyncMock(side_effect=AssertionError("full lint called")),
+            "compile": AsyncMock(side_effect=AssertionError("compiler called")),
+            "related": AsyncMock(side_effect=AssertionError("model linking called")),
+            "network": MagicMock(side_effect=AssertionError("network called")),
+        }
+        with ExitStack() as stack:
+            stack.enter_context(patch("cli_agent_orchestrator.api.main.setup_logging"))
+            stack.enter_context(
+                patch(
+                    "cli_agent_orchestrator.services.settings_service.is_memory_enabled",
+                    return_value=True,
+                )
+            )
+            stack.enter_context(patch("cli_agent_orchestrator.api.main.cleanup_old_data"))
+            stack.enter_context(
+                patch(
+                    "cli_agent_orchestrator.api.main.cleanup_expired_memories",
+                    new=AsyncMock(side_effect=_quick_task),
+                )
+            )
+            for name in (
+                "flow_daemon",
+                "opencode_inbox_delivery_daemon",
+                "inbox_reconciliation_daemon",
+            ):
+                stack.enter_context(patch(f"cli_agent_orchestrator.api.main.{name}", _quick_task))
+            for name in ("status_monitor.run", "log_writer.run", "inbox_service.run"):
+                stack.enter_context(
+                    patch(f"cli_agent_orchestrator.api.main.{name}", new=AsyncMock())
+                )
+            stack.enter_context(patch("cli_agent_orchestrator.api.main.bus.set_loop"))
+            stack.enter_context(
+                patch("cli_agent_orchestrator.api.main.get_backend", return_value=MagicMock())
+            )
+            stack.enter_context(patch.object(PluginRegistry, "load", new=AsyncMock()))
+            stack.enter_context(patch.object(PluginRegistry, "teardown", new=AsyncMock()))
+            stack.enter_context(
+                patch(
+                    "cli_agent_orchestrator.services.wiki_lint.run_lint",
+                    new=forbidden["lint"],
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "cli_agent_orchestrator.services.wiki_compiler.compile",
+                    new=forbidden["compile"],
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "cli_agent_orchestrator.services.wiki_compiler.find_related",
+                    new=forbidden["related"],
+                )
+            )
+            stack.enter_context(patch("requests.get", new=forbidden["network"]))
+            with caplog.at_level(logging.INFO, logger="cli_agent_orchestrator.api.main"):
+                async with lifespan(app):
+                    pass
+                async with lifespan(app):
+                    pass
+
+        with sessions() as db:
+            rows = db.query(MemoryMetadataModel).all()
+            assert len(rows) == len(expected)
+            assert {(row.key, row.scope, row.scope_id) for row in rows} == expected
+        with old_sessions() as db:
+            sentinel_after = db.get(MemoryMetadataModel, sentinel.id)
+            assert sentinel_after is not None
+            assert {
+                column.key: getattr(sentinel_after, column.key)
+                for column in MemoryMetadataModel.__table__.columns
+            } == sentinel_before
+
+        global_index = (base / "global" / "wiki" / "index.md").read_text(encoding="utf-8")
+        assert "[global-topic](global/global-topic.md)" in global_index
+        assert "[session-topic](session/session-one/session-topic.md)" in global_index
+        assert "[agent-topic](agent/code_supervisor/agent-topic.md)" in global_index
+        project_index = (base / "project-one" / "wiki" / "index.md").read_text(encoding="utf-8")
+        assert "[project-topic](project/project-topic.md)" in project_index
+        assert "repaired=4" in caplog.text
+        assert "unchanged=4" in caplog.text
+        for blocked in forbidden.values():
+            blocked.assert_not_called()
+    finally:
+        if replacement_engine is not None:
+            replacement_engine.dispose()
+        old_engine.dispose()

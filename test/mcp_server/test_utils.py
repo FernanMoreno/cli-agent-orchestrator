@@ -11,8 +11,11 @@ import pytest
 import requests
 
 from cli_agent_orchestrator.mcp_server.utils import (
+    InteractionCapabilityUnavailable,
     get_json,
     get_terminal_record,
+    interaction_get_json,
+    interaction_post_json,
     post_body_json,
 )
 
@@ -203,3 +206,156 @@ class TestGetJsonAndPostBodyJson:
         mock_post.return_value = response
 
         assert post_body_json("/outcomes", {"a": 1}) == {}
+
+
+class TestInteractionHttpHelpers:
+    """Agent calls use a private-file capability separate from the service bearer."""
+
+    @staticmethod
+    def _ok(payload):
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = payload
+        return response
+
+    def test_agent_capability_is_read_from_private_file_not_environment_value(
+        self, tmp_path, monkeypatch
+    ):
+        token_file = tmp_path / "interaction-capability"
+        token_file.write_text("per-terminal-secret\n", encoding="ascii")
+        token_file.chmod(0o600)
+        monkeypatch.setenv("CAO_INTERACTION_CAPABILITY_FILE", str(token_file))
+        monkeypatch.setenv("CAO_INTERACTION_CAPABILITY", "caller-controlled")
+        monkeypatch.setattr(
+            "cli_agent_orchestrator.mcp_server.utils.get_local_bearer", lambda: "service-bearer"
+        )
+        from cli_agent_orchestrator.mcp_server import utils
+
+        headers = utils._interaction_headers(idempotency_key="operation-key-1234", if_match='"7"')
+        assert headers == {
+            "Authorization": "Bearer service-bearer",
+            "X-CAO-Interaction-Capability": "per-terminal-secret",
+            "Idempotency-Key": "operation-key-1234",
+            "If-Match": '"7"',
+        }
+        assert "caller-controlled" not in headers.values()
+
+    def test_agent_call_fails_without_capability_file(self, monkeypatch):
+        monkeypatch.delenv("CAO_INTERACTION_CAPABILITY_FILE", raising=False)
+        with pytest.raises(InteractionCapabilityUnavailable):
+            from cli_agent_orchestrator.mcp_server import utils
+
+            utils._interaction_headers()
+
+    def test_agent_calls_reject_a_nonlocal_api_endpoint(self, tmp_path, monkeypatch):
+        token_file = tmp_path / "interaction-capability"
+        token_file.write_text("per-terminal-secret", encoding="ascii")
+        token_file.chmod(0o600)
+        monkeypatch.setenv("CAO_INTERACTION_CAPABILITY_FILE", str(token_file))
+
+        from cli_agent_orchestrator.mcp_server import utils
+
+        monkeypatch.setattr(utils, "API_BASE_URL", "https://attacker.example/api")
+        with pytest.raises(ValueError, match="loopback API endpoint"):
+            utils.interaction_get_json("/agent/interactions")
+
+    @pytest.mark.parametrize("method", ["get", "post"])
+    def test_agent_http_calls_ignore_proxy_environment_and_redirects(
+        self, method, tmp_path, monkeypatch
+    ):
+        token_file = tmp_path / "interaction-capability"
+        token_file.write_text("per-terminal-secret", encoding="ascii")
+        token_file.chmod(0o600)
+        monkeypatch.setenv("CAO_INTERACTION_CAPABILITY_FILE", str(token_file))
+        monkeypatch.setenv("HTTP_PROXY", "http://attacker.example:8080")
+        monkeypatch.setenv("HTTPS_PROXY", "http://attacker.example:8080")
+        monkeypatch.setenv("ALL_PROXY", "http://attacker.example:8080")
+        monkeypatch.setenv("NO_PROXY", "")
+
+        from cli_agent_orchestrator.mcp_server import utils
+
+        captured = {}
+
+        def respond(session, request_method, url, **kwargs):
+            captured.update(
+                trust_env=session.trust_env,
+                method=request_method,
+                url=url,
+                kwargs=kwargs,
+            )
+            response = MagicMock()
+            response.json.return_value = {"ok": True}
+            return response
+
+        monkeypatch.setattr(requests.Session, "request", respond)
+        if method == "get":
+            assert utils.interaction_get_json("/agent/interactions") == {"ok": True}
+        else:
+            assert utils.interaction_post_json("/agent/interactions/groups", {"questions": []}) == {
+                "ok": True
+            }
+
+        assert captured["trust_env"] is False
+        assert captured["kwargs"]["allow_redirects"] is False
+        assert captured["url"].startswith("http://127.0.0.1:")
+        assert captured["url"].endswith(
+            "/agent/interactions" if method == "get" else "/agent/interactions/groups"
+        )
+        assert captured["kwargs"]["headers"]["X-CAO-Interaction-Capability"] == (
+            "per-terminal-secret"
+        )
+
+    def test_agent_call_rejects_broad_file_permissions(self, tmp_path, monkeypatch):
+        token_file = tmp_path / "interaction-capability"
+        token_file.write_text("per-terminal-secret", encoding="ascii")
+        token_file.chmod(0o644)
+        monkeypatch.setenv("CAO_INTERACTION_CAPABILITY_FILE", str(token_file))
+        from cli_agent_orchestrator.mcp_server import utils
+
+        with pytest.raises(InteractionCapabilityUnavailable):
+            utils._interaction_headers()
+
+    @patch("cli_agent_orchestrator.mcp_server.utils.get_local_bearer", return_value="service")
+    @patch("cli_agent_orchestrator.mcp_server.utils.requests.Session.request")
+    def test_interaction_post_keeps_secret_in_header_and_idempotency_in_header(
+        self, mock_request, _bearer, tmp_path, monkeypatch
+    ):
+        token_file = tmp_path / "interaction-capability"
+        token_file.write_text("terminal-capability", encoding="ascii")
+        token_file.chmod(0o600)
+        monkeypatch.setenv("CAO_INTERACTION_CAPABILITY_FILE", str(token_file))
+        mock_request.return_value = self._ok({"group_id": "g-1"})
+
+        assert interaction_post_json(
+            "/agent/interactions/groups",
+            {"questions": []},
+            idempotency_key="operation-key-1234",
+        ) == {"group_id": "g-1"}
+        method, url = mock_request.call_args.args
+        kwargs = mock_request.call_args.kwargs
+        assert method == "POST"
+        assert url.startswith("http://127.0.0.1:")
+        assert kwargs["allow_redirects"] is False
+        assert kwargs["headers"]["X-CAO-Interaction-Capability"] == "terminal-capability"
+        assert kwargs["headers"]["Idempotency-Key"] == "operation-key-1234"
+        assert "terminal-capability" not in str(kwargs["json"])
+
+    @patch("cli_agent_orchestrator.mcp_server.utils.get_local_bearer", return_value=None)
+    @patch("cli_agent_orchestrator.mcp_server.utils.requests.Session.request")
+    def test_interaction_get_forwards_filters_and_capability(
+        self, mock_request, _bearer, tmp_path, monkeypatch
+    ):
+        token_file = tmp_path / "interaction-capability"
+        token_file.write_text("terminal-capability", encoding="ascii")
+        token_file.chmod(0o600)
+        monkeypatch.setenv("CAO_INTERACTION_CAPABILITY_FILE", str(token_file))
+        mock_request.return_value = self._ok({"items": []})
+
+        assert interaction_get_json("/agent/interactions", limit=20) == {"items": []}
+        method, url = mock_request.call_args.args
+        kwargs = mock_request.call_args.kwargs
+        assert method == "GET"
+        assert url.startswith("http://127.0.0.1:")
+        assert kwargs["allow_redirects"] is False
+        assert kwargs["headers"] == {"X-CAO-Interaction-Capability": "terminal-capability"}
+        assert kwargs["params"] == {"limit": 20}

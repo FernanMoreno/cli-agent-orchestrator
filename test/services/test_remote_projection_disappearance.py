@@ -54,7 +54,6 @@ def remote_session_inventory(monkeypatch):
     """A name snapshot can outlive the terminals that produced it."""
     from unittest.mock import MagicMock
 
-    monkeypatch.setattr(remote, "inspect", lambda _: MagicMock(has_table=lambda _: True))
     connection = MagicMock()
     connection.execute.return_value.scalars.return_value.all.return_value = ["remote-test"]
     engine = MagicMock()

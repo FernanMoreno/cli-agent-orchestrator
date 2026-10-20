@@ -331,7 +331,7 @@ def archive_worktree(
         )
         chain, job = authority._chain(connection, grant_id, expected_grant_revision)
         attempt = connection.execute(
-            "SELECT provider,terminal_id FROM work_attempts WHERE id=?", (attempt_id,)
+            "SELECT provider,terminal_id FROM work_attempts WHERE id=%s", (attempt_id,)
         ).fetchone()
         if attempt["terminal_id"] != terminal_id:
             raise WorktreeError("archive terminal does not match the durable attempt binding")
@@ -398,11 +398,11 @@ def archive_worktree(
             verify(connection)
             identifier = hashlib.sha256(f"{attempt_id}:{ref.content_hash}".encode()).hexdigest()
             prior = connection.execute(
-                "SELECT id FROM work_worktree_evidence WHERE id=?", (identifier,)
+                "SELECT id FROM work_worktree_evidence WHERE id=%s", (identifier,)
             ).fetchone()
             if not prior:
                 connection.execute(
-                    "INSERT INTO work_worktree_evidence VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO work_worktree_evidence VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (
                         identifier,
                         job_id,
@@ -421,7 +421,7 @@ def archive_worktree(
                     ),
                 )
                 connection.execute(
-                    "UPDATE work_items SET revision=revision+1 WHERE id=?", (work_item_id,)
+                    "UPDATE work_items SET revision=revision+1 WHERE id=%s", (work_item_id,)
                 )
                 repository._append_event(
                     connection,

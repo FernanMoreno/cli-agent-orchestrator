@@ -11,34 +11,41 @@ Two carry the unit's load:
 """
 
 import importlib
-import sqlite3
 
 import pytest
 
 from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.clients import database as database_client
+from cli_agent_orchestrator.clients.postgres import OperationalError, connect
+from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
+from cli_agent_orchestrator.clients.private_plan_postgres_schema import PRIVATE_PLAN_MIGRATIONS
+from cli_agent_orchestrator.clients.workflows_postgres_schema import WORKFLOW_MIGRATIONS
 from cli_agent_orchestrator.services import approval_store
+
+pytestmark = pytest.mark.postgres
 
 
 @pytest.fixture()
-def db_path(tmp_path, monkeypatch):
-    """Repoint ``DATABASE_FILE`` at a temporary database, WITHOUT running ``init_db``.
-
-    This is the condition that made migrator-on-connect necessary rather than optional: the journal's own
-    ``_MIGRATED_PATHS`` comment records that five test modules do exactly this, so a unit relying on the FastAPI
-    lifespan would find no table here.
-    """
-    path = tmp_path / "cao.db"
-    monkeypatch.setattr(constants, "DATABASE_FILE", path)
-    monkeypatch.setattr(database_client, "DATABASE_FILE", path, raising=False)
-    importlib.reload(approval_store)
-    monkeypatch.setattr(approval_store, "DATABASE_FILE", path, raising=False)
-    return path
+def db_path(postgres_targets):
+    """Provision a real PG store explicitly; runtime never creates tables."""
+    target = postgres_targets.main
+    migrate_component(target, WORKFLOW_MIGRATIONS)
+    migrate_component(target, PRIVATE_PLAN_MIGRATIONS)
+    return target
 
 
-def _columns(path):
-    with sqlite3.connect(str(path)) as conn:
-        return {row[1]: row for row in conn.execute("PRAGMA table_info(workflow_plan_approval)")}
+def _columns(target):
+    with connect(target, readonly=True) as conn:
+        return {
+            row["name"]: row
+            for row in conn.execute(
+                """SELECT a.attname AS name,a.attnotnull AS required,
+            EXISTS(SELECT 1 FROM pg_constraint k WHERE k.conrelid=c.oid AND k.contype='p' AND a.attnum=ANY(k.conkey)) AS primary_key
+            FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE n.nspname=%s AND c.relname='workflow_plan_approval' AND a.attnum>0 AND NOT a.attisdropped""",
+                (target.schema,),
+            ).fetchall()
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +94,7 @@ def test_a_store_fault_is_unknown_not_absent(db_path, monkeypatch):
     """
 
     def unreadable_store(*_args, **_kwargs):
-        raise sqlite3.OperationalError("database is locked")
+        raise OperationalError("database is locked")
 
     monkeypatch.setattr(approval_store, "_connect", unreadable_store)
 
@@ -112,21 +119,21 @@ def test_the_table_exists_on_a_fresh_database_with_its_three_columns(db_path):
     cols = _columns(db_path)
     assert set(cols) == {"plan_id", "approved_at", "approved_by"}
     assert (
-        cols["plan_id"][5] == 1
+        cols["plan_id"]["primary_key"] is True
     ), "plan_id must be the PRIMARY KEY — one approval per plan, enforced by the DB"
-    assert cols["approved_at"][3] == 1, "approved_at is NOT NULL"
-    assert cols["approved_by"][3] == 1, "approved_by is NOT NULL"
+    assert cols["approved_at"]["required"] is True, "approved_at is NOT NULL"
+    assert cols["approved_by"]["required"] is True, "approved_by is NOT NULL"
 
 
 def test_the_migration_is_idempotent(db_path):
-    database_client._migrate_workflow_plan_approval()
-    database_client._migrate_workflow_plan_approval()
+    migrate_component(db_path, PRIVATE_PLAN_MIGRATIONS)
+    migrate_component(db_path, PRIVATE_PLAN_MIGRATIONS)
     assert set(_columns(db_path)) == {"plan_id", "approved_at", "approved_by"}
 
 
 def test_it_works_against_a_repointed_database_without_init_db(db_path):
     """The condition that made migrator-on-connect necessary. ``init_db`` is never called in this module."""
-    assert not db_path.exists() or "workflow_plan_approval" not in str(_columns(db_path))
+    assert set(_columns(db_path)) == {"plan_id", "approved_at", "approved_by"}
     approval_store.grant("plan-v1:fresh", "stan")
     assert approval_store.is_approved("plan-v1:fresh") is True
 
@@ -196,4 +203,34 @@ def test_the_module_offers_no_update_delete_or_replacing_upsert():
     assert "UPDATE workflow_plan_approval" not in code
     assert "DELETE FROM workflow_plan_approval" not in code
     assert "INSERT OR REPLACE" not in code
-    assert "ON CONFLICT" not in code, "an upsert that replaces would defeat write-once"
+    assert "DO UPDATE" not in code, "a replacing upsert would defeat write-once"
+    assert "ON CONFLICT (plan_id) DO NOTHING" in code
+
+
+def test_database_enforces_immutable_approval(db_path):
+    from cli_agent_orchestrator.clients.postgres import IntegrityError
+
+    approval_store.grant("plan-v1:fixed", "original")
+    with connect(db_path) as connection:
+        for statement in (
+            "UPDATE workflow_plan_approval SET approved_by='replacement'",
+            "DELETE FROM workflow_plan_approval",
+        ):
+            with pytest.raises(IntegrityError):
+                connection.execute(statement)
+    assert approval_store.get_approval("plan-v1:fixed").approved_by == "original"
+
+
+def test_concurrent_grants_preserve_one_original_record(db_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        list(
+            executor.map(
+                lambda actor: approval_store.grant("plan-v1:race", actor), ["a", "b", "c", "d"]
+            )
+        )
+    first = approval_store.get_approval("plan-v1:race")
+    assert first.approved_by in {"a", "b", "c", "d"}
+    approval_store.grant("plan-v1:race", "later")
+    assert approval_store.get_approval("plan-v1:race") == first

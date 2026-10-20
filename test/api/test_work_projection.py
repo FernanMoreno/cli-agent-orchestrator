@@ -21,7 +21,7 @@ def work_contract_v1():
 
 @pytest.fixture
 def projected_work(tmp_path, monkeypatch):
-    path = tmp_path / "work.sqlite3"
+    path = tmp_path / "work.db"
     monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", path)
     principal = auth._verified_principal(
         "https://issuer.test/", "projection-owner", [auth.SCOPE_READ], "jwt"
@@ -120,12 +120,12 @@ def test_api_projects_each_shared_work_transition_target(client, projected_work,
         # the authenticated HTTP read exercises the public state projection.
         with repository.transaction() as connection:
             connection.execute(
-                "UPDATE work_items SET state=?, revision=revision+1 WHERE id=?",
+                "UPDATE work_items SET state=%s, revision=revision+1 WHERE id=%s",
                 (edge["from"], work["id"]),
             )
         with repository.transaction() as connection:
             cursor = connection.execute(
-                "UPDATE work_items SET state=?, revision=revision+1 WHERE id=? AND state=?",
+                "UPDATE work_items SET state=%s, revision=revision+1 WHERE id=%s AND state=%s",
                 (target, work["id"], edge["from"]),
             )
             assert cursor.rowcount == 1

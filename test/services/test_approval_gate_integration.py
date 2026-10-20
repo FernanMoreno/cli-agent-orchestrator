@@ -179,8 +179,7 @@ def test_the_resume_endpoint_answers_503_when_the_approval_store_is_unreadable(m
     tell the operator to approve a plan that may already be approved, against a fault approval could not
     even be read. The two must be distinguishable at the transport, because a caller branches on it.
     """
-    import sqlite3
-
+    import psycopg
     from fastapi.testclient import TestClient
 
     from cli_agent_orchestrator.api.main import app
@@ -189,7 +188,7 @@ def test_the_resume_endpoint_answers_503_when_the_approval_store_is_unreadable(m
     before = workflow_journal.get_run("run-503")
 
     def unreadable_store(*_args, **_kwargs):
-        raise sqlite3.OperationalError("database is locked")
+        raise psycopg.OperationalError("PostgreSQL unavailable")
 
     # Break only the approval store's connection; the run row was already written and the journal
     # keeps its own connection, so the admission ladder still reaches the approval gate.
@@ -248,8 +247,7 @@ def test_both_start_arms_reach_the_same_verdict_on_the_same_inputs():
 @pytest.mark.parametrize("endpoint", ["/workflows/runs", "/workflows/runs:submit"])
 def test_unprepared_start_refuses_before_store_access_or_writing_a_run(endpoint, monkeypatch):
     """Both legacy arms require prepared scope before approval store access."""
-    import sqlite3
-
+    import psycopg
     from fastapi.testclient import TestClient
 
     from cli_agent_orchestrator.api.main import app
@@ -269,7 +267,7 @@ def test_unprepared_start_refuses_before_store_access_or_writing_a_run(endpoint,
 
     def unreadable_store():
         store_calls.append(True)
-        raise sqlite3.OperationalError("database is locked")
+        raise psycopg.OperationalError("PostgreSQL unavailable")
 
     monkeypatch.setattr(approval_store, "_connect", unreadable_store)
     response = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)).post(

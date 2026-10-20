@@ -45,6 +45,7 @@ dependencies = [
     "pydantic>=2.10.6",
     "apscheduler>=3.10.4",
     "sqlalchemy>=2.0.0",
+    "psycopg[binary]>=3.2.0,<4.0.0",
     "uvicorn[standard]>=0.24.0",
     "websockets>=14.0",
     # Upper bound: libtmux 0.53.1 rewrote `neo.parse_output` to zip a fixed
@@ -416,6 +417,8 @@ markers = [
     "e2e: marks end-to-end tests",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "live_provider: marks tests that need a real cao-server + authenticated provider CLI (gated behind CAO_RUN_LIVE_PROVIDER_TESTS=1, skipped by default)",
+    "postgres: marks tests that require an isolated native PostgreSQL target",
+    "offline_database: marks tests that validate historical database artifacts without runtime storage",
     "t097_host: host acceptance tests for the real Bubblewrap Work backend (run with T097_REQUIRE_HOST_ACCEPTANCE=1 on the approved Linux runner)"
 ]
 asyncio_mode = "strict"

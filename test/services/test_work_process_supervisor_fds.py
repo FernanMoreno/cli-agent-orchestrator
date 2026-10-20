@@ -80,11 +80,17 @@ def test_worker_standard_streams_are_detached_and_cleanup_survives_controller_fa
 import json, os, sys, time
 from pathlib import Path
 
-sys.path.insert(0, sys.argv[5])
-from cli_agent_orchestrator.services.work_process_supervisor import (
-    WorkProcessState,
-    WorkProcessSupervisor,
-)
+sys.path.insert(0, sys.argv[4])
+import cli_agent_orchestrator.services.work_process_supervisor as supervisor_module
+
+expected_supervisor_source = (
+    Path(sys.argv[4]) / 'cli_agent_orchestrator/services/work_process_supervisor.py'
+).resolve(strict=True)
+loaded_supervisor_source = Path(supervisor_module.__file__).resolve(strict=True)
+if loaded_supervisor_source != expected_supervisor_source:
+    raise RuntimeError('controller_supervisor_source_mismatch')
+WorkProcessState = supervisor_module.WorkProcessState
+WorkProcessSupervisor = supervisor_module.WorkProcessSupervisor
 
 identity_path, report, cleanup_path = map(Path, sys.argv[1:4])
 mode = sys.argv[5]

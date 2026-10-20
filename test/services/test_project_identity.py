@@ -16,6 +16,7 @@ import hashlib
 import os
 import subprocess
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from typing import Any
 from unittest.mock import patch
 
@@ -43,7 +44,7 @@ def _run(coro: Any) -> Any:
 
 
 def _make_engine(db_path: Path) -> Any:
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return engine
 

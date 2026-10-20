@@ -90,7 +90,7 @@ class DurableRuntimeConnection(RuntimeConnection):
             try:
                 row = await asyncio.shield(preparation)
             except asyncio.CancelledError:
-                # Cancellation may race the SQLite commit. Own that worker to
+                # Cancellation may race the PostgreSQL commit. Own that worker to
                 # completion before declaring this never-claimed operation unsent.
                 await preparation
                 await asyncio.shield(asyncio.to_thread(self.store.cancel_unsent, op_id))

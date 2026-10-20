@@ -7,12 +7,13 @@ returned id immutably. Child callers reuse the parent's existing snapshot.
 """
 
 import hashlib
+import json
 import re
-import sqlite3
 import time
 from dataclasses import dataclass
 from uuid import uuid4
 
+from cli_agent_orchestrator.clients.postgres import Connection, DatabaseError
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.security.auth import Principal
 from cli_agent_orchestrator.services.knowledge_policy import KnowledgeAccessDenied, KnowledgePolicy
@@ -92,11 +93,11 @@ class LegacySnapshotAbsence:
 
 
 class DelegationSnapshots:
-    """Bounded SQLite snapshots guarded by the concrete server KnowledgePolicy.
+    """Bounded PostgreSQL snapshots guarded by the concrete server KnowledgePolicy.
 
     Resolver(connection, principal) MUST be synchronous, local and bounded; it
     must not open another transaction, access a vault/network/CLI, commit, or send
-    bytes. BEGIN IMMEDIATE serializes sibling resolution through the unique
+    bytes. A transaction advisory lock serializes sibling resolution through the unique
     binding, including an empty resolution. A crashed/rolled-back transaction may
     resolve again; no content was delivered. No process-global cache is trusted.
     """
@@ -132,7 +133,7 @@ class DelegationSnapshots:
     def _check_sources(connection, scope, scope_id, refs):
         for ref in refs:
             row = connection.execute(
-                "SELECT k.scope,k.scope_id,t.record_id AS withdrawn FROM work_knowledge_revisions r JOIN work_knowledge_records k ON k.id=r.record_id LEFT JOIN work_knowledge_tombstones t ON t.record_id=r.record_id AND t.revision=r.revision WHERE r.record_id=? AND r.revision=?",
+                "SELECT k.scope,k.scope_id,t.record_id AS withdrawn FROM work_knowledge_revisions r JOIN work_knowledge_records k ON k.id=r.record_id LEFT JOIN work_knowledge_tombstones t ON t.record_id=r.record_id AND t.revision=r.revision WHERE r.record_id=%s AND r.revision=%s",
                 (ref.record_id, ref.revision),
             ).fetchone()
             if row is None or row["withdrawn"] is not None:
@@ -152,7 +153,7 @@ class DelegationSnapshots:
         return self._load_authorized(connection, row)
 
     @staticmethod
-    def _load_authorized(connection: sqlite3.Connection, row) -> Snapshot:
+    def _load_authorized(connection: Connection, row) -> Snapshot:
         """Validate persisted evidence only; this helper grants NO authority.
 
         Trusted durable-order consumers must FIRST validate their current grant
@@ -167,7 +168,7 @@ class DelegationSnapshots:
         refs = tuple(
             SourceRevision(item[0], item[1])
             for item in connection.execute(
-                "SELECT record_id,revision FROM work_snapshot_sources WHERE snapshot_id=? ORDER BY record_id,revision",
+                "SELECT record_id,revision FROM work_snapshot_sources WHERE snapshot_id=%s ORDER BY record_id,revision",
                 (row["id"],),
             )
         )
@@ -215,8 +216,21 @@ class DelegationSnapshots:
             with self.repository.transaction() as connection:
                 self.repository._verify(connection)
                 self._authorize(connection, principal, job_id, scope, scope_id)
+                binding_lock = json.dumps(
+                    [
+                        "snapshot-binding",
+                        self.repository.target.store_id,
+                        job_id,
+                        contract_id,
+                        binding_key,
+                    ],
+                    separators=(",", ":"),
+                )
+                connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (binding_lock,)
+                )
                 existing = connection.execute(
-                    "SELECT * FROM work_delegation_snapshots WHERE job_id=? AND contract_id=? AND binding_key=?",
+                    "SELECT * FROM work_delegation_snapshots WHERE job_id=%s AND contract_id=%s AND binding_key=%s",
                     (job_id, contract_id, binding_key),
                 ).fetchone()
                 if existing:
@@ -251,7 +265,7 @@ class DelegationSnapshots:
                     )
                     identifier = uuid4().hex
                     connection.execute(
-                        "INSERT INTO work_delegation_snapshots VALUES (?,1,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "INSERT INTO work_delegation_snapshots VALUES (%s,1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                         (
                             identifier,
                             job_id,
@@ -270,14 +284,14 @@ class DelegationSnapshots:
                         ),
                     )
                     connection.executemany(
-                        "INSERT INTO work_snapshot_sources VALUES (?,?,?)",
+                        "INSERT INTO work_snapshot_sources VALUES (%s,%s,%s)",
                         [
                             (identifier, ref.record_id, ref.revision)
                             for ref in resolved.revision_refs
                         ],
                     )
                     connection.execute(
-                        "UPDATE work_jobs SET revision=revision+1 WHERE id=?", (job_id,)
+                        "UPDATE work_jobs SET revision=revision+1 WHERE id=%s", (job_id,)
                     )
                     self.repository._append_event(
                         connection,
@@ -294,12 +308,12 @@ class DelegationSnapshots:
                         connection,
                         principal,
                         connection.execute(
-                            "SELECT * FROM work_delegation_snapshots WHERE id=?", (identifier,)
+                            "SELECT * FROM work_delegation_snapshots WHERE id=%s", (identifier,)
                         ).fetchone(),
                     )
             # Context manager COMMIT has completed before content can reach caller.
             return result
-        except sqlite3.Error:
+        except DatabaseError:
             raise SnapshotUnavailable("required snapshot could not be persisted") from None
 
     def read(self, principal: Principal, snapshot_id: str) -> Snapshot:
@@ -309,7 +323,7 @@ class DelegationSnapshots:
                 connection,
                 principal,
                 connection.execute(
-                    "SELECT * FROM work_delegation_snapshots WHERE id=?", (snapshot_id,)
+                    "SELECT * FROM work_delegation_snapshots WHERE id=%s", (snapshot_id,)
                 ).fetchone(),
             )
 
@@ -330,7 +344,7 @@ class DelegationSnapshots:
                 raise SnapshotConflict("snapshot ancestry contains a cycle")
             visited.add(current_id)
             current = connection.execute(
-                "SELECT job_id,contract_id,snapshot_id,parent_work_item_id FROM work_items WHERE id=?",
+                "SELECT job_id,contract_id,snapshot_id,parent_work_item_id FROM work_items WHERE id=%s",
                 (current_id,),
             ).fetchone()
             if (
@@ -350,7 +364,7 @@ class DelegationSnapshots:
         _identity(parent_work_id)
         with self.repository.read_snapshot() as connection:
             parent = connection.execute(
-                "SELECT job_id,contract_id,snapshot_id FROM work_items WHERE id=?",
+                "SELECT job_id,contract_id,snapshot_id FROM work_items WHERE id=%s",
                 (parent_work_id,),
             ).fetchone()
             if parent is None:
@@ -362,7 +376,7 @@ class DelegationSnapshots:
                 connection,
                 principal,
                 connection.execute(
-                    "SELECT * FROM work_delegation_snapshots WHERE id=?", (parent["snapshot_id"],)
+                    "SELECT * FROM work_delegation_snapshots WHERE id=%s", (parent["snapshot_id"],)
                 ).fetchone(),
             )
             self._validate_ancestry(connection, result, parent_work_id)

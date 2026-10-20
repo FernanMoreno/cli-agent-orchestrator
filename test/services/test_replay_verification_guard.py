@@ -32,7 +32,7 @@ fixture that only ``test/api/conftest.py`` provides.
   ``delivery-planning`` gate named as the single unassigned risk.
 
 THE ISOLATION REQUIREMENT IS THIS FILE'S SECURITY REQUIREMENT (SR-1). Every test points
-``constants.DATABASE_FILE`` at a ``tmp_path`` file BEFORE writing anything, and the fixture's
+the per-test PostgreSQL schema BEFORE writing anything, and the fixture's
 scope covers the DIRECT-SQL writes as well as the journal calls — deliverables 2 and 5 bypass
 the journal, so a fixture wrapping only journal calls would protect the safe writes and miss
 the two dangerous ones. This unit manufactures two row states the shipped code does not
@@ -48,12 +48,12 @@ settled with ``result_json`` ``NULL``            every later resume of that run 
 
 ``run-step-replay-branch``'s Finding 3 found real rows in the developer's own database from
 tests that were merely careless. These would be actively hostile, so every test calls
-:func:`_assert_tmp_db` — asserting it IS isolated rather than merely that a fixture was
+:func:`_assert_private_schema` — asserting it IS isolated rather than merely that a fixture was
 requested. Every ``run_id`` here is prefixed ``rvg-`` so a leak is attributable on sight.
 
 TWO MORE RULES THIS FILE KEEPS. Direct SQL appears only in fixtures; every assertion reads
 back through ``get_step`` or ``decide``, so the PRODUCTION read path is what is exercised
-(SR-2) — a test that both wrote and read by direct SQL would prove something about SQLite.
+(SR-2) — a test that both wrote and read by direct SQL would not exercise the production read path.
 And every assertion names a SPECIFIC member (BR-11/TD-7): no ``assert decision.rule is not
 None``, because this Bolt has hit that failure twice.
 
@@ -66,17 +66,11 @@ invite a later reader to "verify" it, reintroducing the second fingerprint imple
 
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import pytest
 
-import cli_agent_orchestrator.constants as constants
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
-)
+from cli_agent_orchestrator.clients.postgres import Connection, DatabaseTarget, IntegrityError
 from cli_agent_orchestrator.models.workflow import RecoveryPolicy, StepResultEnvelope
 from cli_agent_orchestrator.models.workflow_runtime import RunState, StepState
 from cli_agent_orchestrator.services import (
@@ -90,12 +84,6 @@ from cli_agent_orchestrator.services.step_fingerprint import StepCallFields, com
 from cli_agent_orchestrator.services.step_replay import ReplayVerdict, decide
 from cli_agent_orchestrator.services.step_result import parse_envelope, serialise_envelope
 from cli_agent_orchestrator.services.workflow_errors import HaltRule
-
-# CAPTURED AT IMPORT, BEFORE ANY FIXTURE CAN PATCH IT — the developer's real database path.
-# pytest imports every test module during collection, ahead of running any fixture, so this
-# is the production value. It exists so :func:`_assert_tmp_db` can assert a NEGATIVE ("we are
-# not on that file") as well as a positive, which is the assertion SR-1 actually wants.
-_PRODUCTION_DATABASE_FILE = Path(constants.DATABASE_FILE)
 
 TS = "2026-08-17T00:00:00Z"
 
@@ -145,50 +133,34 @@ POLICIES: List[Optional[RecoveryPolicy]] = [
 # ---------------------------------------------------------------------------
 # Isolation (SR-1) — the fixture, and the per-test assertion that it worked
 # ---------------------------------------------------------------------------
+pytestmark = pytest.mark.postgres
+
+
 @pytest.fixture(autouse=True)
-def _isolated_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Point the journal at a temp DB, create both #583-era tables, isolate the registry.
+def _isolated_journal(postgres_targets):
+    """Bootstrap a private PostgreSQL schema before any journal or direct SQL write."""
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
 
-    ``autouse`` so it is in place before ANY write in this module — including the direct-SQL
-    ones in :func:`_manufacture_row`, which bypass the journal entirely (SR-1/TD-2). A fixture
-    scoped to journal calls would protect the safe writes and miss the two dangerous ones.
-    """
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
+    target = postgres_targets.main
+    bootstrap_scope(target)
     workflow_service.run_registry.clear()
     workflow_service._active_drives.clear()
-    yield db_path
+    yield target
     workflow_service.run_registry.clear()
     workflow_service._active_drives.clear()
 
 
-def _assert_tmp_db(db_path: Path) -> None:
-    """Assert this test is operating on the ``tmp_path`` database. ONE LINE PER TEST (SR-1).
-
-    Requesting a fixture and BEING isolated are different facts and only the second is worth
-    relying on, so this asserts three of them: the live value is the fixture's path, it is not
-    the production path captured at import, and it really is the file the migrators created.
-    """
-    from cli_agent_orchestrator.constants import DATABASE_FILE as live
-
-    assert Path(live) == db_path, f"journal points at {live}, not the tmp_path database"
-    assert (
-        Path(live) != _PRODUCTION_DATABASE_FILE
-    ), "journal points at the developer's REAL database"
-    assert db_path.exists(), "the tmp_path database was never created"
+def _assert_private_schema(target: DatabaseTarget) -> None:
+    """Assert the journal resolves to this test's unique PostgreSQL schema."""
+    live = DatabaseTarget.from_settings("main")
+    assert live.identity == target.identity
+    assert target.scope == "main"
+    assert target.schema.startswith("t_"), "test did not receive a private PostgreSQL schema"
 
 
-def _direct_connect() -> sqlite3.Connection:
-    """A raw connection to whatever ``DATABASE_FILE`` currently names.
-
-    FIXTURES ONLY (SR-2). The path is read at call time, never captured, so it always follows
-    the active fixture rather than an import-time snapshot.
-    """
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    return sqlite3.connect(str(DATABASE_FILE))
+def _direct_connect() -> Connection:
+    """Open the configured native journal connection for deliberate row construction."""
+    return workflow_journal._connect()
 
 
 def _manufacture_row(
@@ -211,7 +183,7 @@ def _manufacture_row(
             "INSERT INTO workflow_run_step "
             "(run_id, step_id, state, attempts, output_json, error, updated_at, "
             " call_fingerprint, result_json) "
-            "VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "VALUES (%s, %s, %s, %s, NULL, NULL, %s, %s, %s)",
             (run_id, step_id, state, attempts, TS, call_fingerprint, result_json),
         )
 
@@ -225,7 +197,7 @@ def _is_mutating(sql: str) -> bool:
 
 
 class _StatementRecorder:
-    """A pass-through over a REAL ``sqlite3.Connection`` that records the SQL it forwards.
+    """A pass-through over a REAL native Connection that records the SQL it forwards.
 
     NOT A STAND-IN FOR THE DATABASE. Every call is delegated to the genuine connection, the
     genuine transaction semantics apply, and the row is read back through ``get_step``
@@ -234,7 +206,7 @@ class _StatementRecorder:
     atomicity is otherwise visible only to a process that dies mid-settle).
     """
 
-    def __init__(self, real: sqlite3.Connection) -> None:
+    def __init__(self, real: Connection) -> None:
         self._real = real
         self.statements: List[str] = []
 
@@ -297,35 +269,33 @@ class TestIsolation:
     would be worse than careless: each is a row the gate exists to halt on.
     """
 
-    def test_the_live_database_file_is_the_tmp_path_one(self, _isolated_journal):
-        _assert_tmp_db(_isolated_journal)
+    def test_the_live_database_target_is_the_private_schema(self, _isolated_journal):
+        _assert_private_schema(_isolated_journal)
 
-    def test_the_production_database_path_is_a_real_distinct_path(self, _isolated_journal):
-        """The negative in :func:`_assert_tmp_db` is only worth anything if the production
-        path it compares against is the real one. A captured value that had already been
-        patched would make every isolation assertion vacuously true."""
-        _assert_tmp_db(_isolated_journal)
-        assert _PRODUCTION_DATABASE_FILE.name == "cli-agent-orchestrator.db"
-        assert _PRODUCTION_DATABASE_FILE != _isolated_journal
-        assert _isolated_journal.parent != _PRODUCTION_DATABASE_FILE.parent
+    def test_the_target_identity_is_bound_to_the_private_schema(self, _isolated_journal):
+        """Verify the journal's configured identity resolves to this case's private schema."""
+        _assert_private_schema(_isolated_journal)
+        assert _isolated_journal.schema.startswith("t_")
+        assert _isolated_journal.identity == DatabaseTarget.from_settings("main").identity
+        assert _isolated_journal.scope == "main"
 
-    def test_a_manufactured_halting_row_lands_only_in_the_tmp_database(self, _isolated_journal):
+    def test_a_manufactured_halting_row_lands_only_in_the_private_schema(self, _isolated_journal):
         """The direct-SQL write — the one the fixture must cover and would be easiest to
-        leave outside it — is read back through the production reader on the tmp file."""
-        _assert_tmp_db(_isolated_journal)
+        leave outside it — is read back through the production reader on the test schema."""
+        _assert_private_schema(_isolated_journal)
         _manufacture_row(
             "rvg-isolation", "s1", state="completed", call_fingerprint=FP_LEGACY, result_json=None
         )
         row = workflow_journal.get_step("rvg-isolation", "s1")
         assert row is not None
         assert row.call_fingerprint == FP_LEGACY
-        assert _isolated_journal.stat().st_size > 0
+        assert workflow_journal.get_step("rvg-isolation", "s1") == row
 
     def test_the_manufactured_row_does_not_survive_into_the_next_test(self, _isolated_journal):
         """The companion of the test above, and the reason a second consecutive suite run is
-        the real proof: each test gets its own ``tmp_path``, so the row written a moment ago
+        the real proof: each test gets its own PostgreSQL schema, so the row written in another case
         is unreachable here."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         assert workflow_journal.get_step("rvg-isolation", "s1") is None
 
 
@@ -360,7 +330,7 @@ class TestGuardTwoStandingAlone:
     ):
         """Read through ``get_step`` and ``parse_envelope`` (SR-2), so the fixture is verified
         against the PRODUCTION reader before anything is concluded from it."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         self._manufacture()
 
         row = workflow_journal.get_step(self.RUN, "s1")
@@ -375,7 +345,7 @@ class TestGuardTwoStandingAlone:
         """BR-3's verification: the ``rule`` is ``ENVELOPE_ABSENT``, asserted by MEMBER and
         against each of the other three, because "a halt occurred" passes when every path
         returns the same halt (BR-11 — this Bolt has hit that twice)."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         self._manufacture()
 
         decision = decide(self.RUN, "s1", FP_CURRENT, None)
@@ -391,7 +361,7 @@ class TestGuardTwoStandingAlone:
         """Guard 2's whole job is that this row is not served and not re-run silently. Each
         of the three wrong outcomes is named, because ``verdict is DECISION_REQUIRED`` alone
         would still hold if a later edit added a fifth verdict beside it."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         self._manufacture()
 
         decision = decide(self.RUN, "s1", FP_CURRENT, None)
@@ -408,7 +378,7 @@ class TestGuardTwoStandingAlone:
         even ``idempotent`` — whose author declared re-execution safe — halts rather than
         quietly re-running a step whose recorded outcome is unreadable. A test that only
         exercised the undeclared policy would leave that ordering unpinned."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         self._manufacture()
 
         decision = decide(self.RUN, "s1", FP_CURRENT, policy)
@@ -420,7 +390,7 @@ class TestGuardTwoStandingAlone:
         """THE DISCRIMINATOR. Without it, every assertion above would still pass on a gate
         that halted on every settled row for any reason at all: the envelope is the only
         thing that differs between this row and the one above."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         _manufacture_row(
             self.RUN,
             "s-with-envelope",
@@ -459,7 +429,7 @@ class TestGuardOneStandingAlone:
     RUN = "rvg-guard1"
 
     def test_a_real_settle_leaves_the_row_settled_with_a_non_null_envelope(self, _isolated_journal):
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         on_ready, on_settled = _script_callbacks(self.RUN, "s-ok")
 
         on_ready("rvg-terminal-1", FP_CURRENT)
@@ -479,7 +449,7 @@ class TestGuardOneStandingAlone:
         step failed" (``result-envelope`` BR-1). If a FAILED step settled with no envelope,
         guard 2's signal would fire on every ordinary failure and the crash window would
         become invisible inside the noise."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         on_ready, on_settled = _script_callbacks(self.RUN, "s-failed")
 
         on_ready("rvg-terminal-2", FP_CURRENT)
@@ -498,7 +468,7 @@ class TestGuardOneStandingAlone:
         ``settle_step`` takes its INSERT branch instead of its conflict branch. It is the arm
         most likely to be forgotten, and a bare INSERT that omitted the envelope would leave
         exactly the row guard 2 halts on."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         _on_ready, on_settled = _script_callbacks(self.RUN, "s-rescued")
 
         on_settled("rvg-terminal-3", None, "rescued without a begin")
@@ -518,7 +488,7 @@ class TestGuardOneStandingAlone:
         """BR-4's claim, over EVERY arm at once. Driving one arm would prove one arm; the
         assertion is that the set of settled rows this caller can produce contains no
         NULL-envelope member."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         _on_ready_a, settle_a = _script_callbacks(f"{self.RUN}-a", "s1")
         _on_ready_b, settle_b = _script_callbacks(f"{self.RUN}-b", "s1")
         _on_ready_c, settle_c = _script_callbacks(f"{self.RUN}-c", "s1")
@@ -548,7 +518,7 @@ class TestGuardOneStandingAlone:
         what is rejected." Spied rather than trusted, because a settle path that quietly
         consulted the gate would make this whole class a second copy of
         :class:`TestGuardTwoStandingAlone` while still passing."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         decide_calls: List[tuple] = []
         read_calls: List[tuple] = []
         monkeypatch.setattr(step_replay, "decide", lambda *a, **k: decide_calls.append(a))
@@ -573,7 +543,7 @@ class TestGuardOneStandingAlone:
         This is asserted rather than left as prose because the two facts together are what
         make guard 1 legible: the primitive persists what it is given, and the caller never
         gives it None (the next test)."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         workflow_journal.begin_step(self.RUN, "s-primitive", TS, FP_CURRENT)
         workflow_journal.settle_step(
             run_id=self.RUN,
@@ -597,7 +567,7 @@ class TestGuardOneStandingAlone:
         passes a non-NULL ``result_json`` that ``parse_envelope`` accepts. Mutating
         ``record_step_completion``'s ``build_envelope(last_message or "", ...)`` into a
         conditional that skips the envelope when there is no message fails HERE."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         handed: List[Optional[str]] = []
         real_settle = workflow_journal.settle_step
 
@@ -633,21 +603,18 @@ class TestGuardOneStandingAlone:
         attempts, envelope, output and error land in ONE statement on ONE connection.
 
         NOT A MOCK OF THE DATABASE (TD-4 is intact). Every statement below is forwarded to
-        the real SQLite file and the row is read back through ``get_step`` afterwards; only
+        the real PostgreSQL schema and the row is read back through ``get_step`` afterwards; only
         the SQL TEXT is observed on the way past. There is no other way to observe a
         statement count, and a test that cannot observe it cannot defend it.
 
         MUTATION PROOF: split the settle into a state write followed by a second
         ``UPDATE ... SET result_json`` and this test fails — alone in this file.
 
-        THE INSTRUMENT IS SCOPED WITH ``monkeypatch.context()`` AND NEVER ``undo()``. The
-        function-scoped ``monkeypatch`` is the SAME object ``_isolated_journal`` used to
-        repoint ``DATABASE_FILE``, so an ``undo()`` here would silently un-isolate the rest of
-        the test and send the read below to the developer's real database — SR-1's hazard,
-        arriving through the back door of a cleanup call. A nested context undoes only its own
-        patch, and the ``_assert_tmp_db`` at the end is what proves it.
+        THE INSTRUMENT IS SCOPED WITH ``monkeypatch.context()`` AND NEVER ``undo()``. A nested
+        context undoes only the temporary connection recorder; the PostgreSQL target remains
+        configured for the final production read.
         """
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         on_ready, on_settled = _script_callbacks(self.RUN, "s-atomic")
         on_ready("rvg-terminal-7", FP_CURRENT)
 
@@ -676,7 +643,7 @@ class TestGuardOneStandingAlone:
 
         # Still isolated after the instrument came off (see the docstring), and the write
         # really landed — the shape assertion above is not standing in for it.
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         row = workflow_journal.get_step(self.RUN, "s-atomic")
         assert row is not None
         assert row.state == StepState.COMPLETED.value
@@ -713,10 +680,10 @@ class TestTheCrashWindowIsClosed:
     def test_a_real_abort_during_the_settle_leaves_the_row_exactly_as_begin_left_it(
         self, _isolated_journal
     ):
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         before = self._begin("s-abort-state")
 
-        with pytest.raises(sqlite3.IntegrityError) as excinfo:
+        with pytest.raises(IntegrityError) as excinfo:
             workflow_journal.settle_step(
                 run_id=self.RUN,
                 step_id="s-abort-state",
@@ -728,7 +695,7 @@ class TestTheCrashWindowIsClosed:
                 error="an error that must not land either",
             )
 
-        assert "NOT NULL" in str(excinfo.value)
+        assert excinfo.value.sqlstate == "23502"
         after = workflow_journal.get_step(self.RUN, "s-abort-state")
         assert after is not None
         # All four fields BR-5 names, as they were before the settle.
@@ -744,10 +711,10 @@ class TestTheCrashWindowIsClosed:
     ):
         """The same property through a second real constraint, so the proof does not rest on
         ``state`` alone. ``updated_at`` is the column every arm of the settle writes."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         before = self._begin("s-abort-updated-at")
 
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(IntegrityError):
             workflow_journal.settle_step(
                 run_id=self.RUN,
                 step_id="s-abort-updated-at",
@@ -767,10 +734,10 @@ class TestTheCrashWindowIsClosed:
         """The INSERT branch's abort. ``settle_step`` is an upsert, so a settle with no prior
         row would MINT one — and an aborted mint must leave nothing rather than a row with
         some columns filled in."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         assert workflow_journal.get_step(self.RUN, "s-abort-insert") is None
 
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(IntegrityError):
             workflow_journal.settle_step(
                 run_id=self.RUN,
                 step_id="s-abort-insert",
@@ -790,14 +757,14 @@ class TestTheCrashWindowIsClosed:
         settled AND carries an envelope; after an induced abort it is ``running`` and carries
         none. Asserting the exact PAIR set is what a future half-settled state would break —
         each half asserted separately could be individually "corrected"."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         on_ready_ok, settle_ok = _script_callbacks(f"{self.RUN}-ok", "s1")
         on_ready_ok("rvg-terminal-ok", FP_CURRENT)
         settle_ok("rvg-terminal-ok", None, "settled for real")
 
         on_ready_bad, _settle_bad = _script_callbacks(f"{self.RUN}-bad", "s1")
         on_ready_bad("rvg-terminal-bad", FP_CURRENT)
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(IntegrityError):
             workflow_journal.settle_step(
                 run_id=f"{self.RUN}-bad",
                 step_id="s1",
@@ -873,7 +840,7 @@ class TestTheUpgradeWindow:
     def test_the_stored_row_reads_back_as_legacy_through_the_production_reader(
         self, _isolated_journal
     ):
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         self._manufacture_legacy()
 
         row = workflow_journal.get_step(self.RUN, "s1")
@@ -888,7 +855,7 @@ class TestTheUpgradeWindow:
     def test_idempotent_executes_across_the_upgrade_window(self, _isolated_journal):
         """Rule 4: an author who declared re-execution safe is not punished by the scheme
         upgrade."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         self._manufacture_legacy()
 
         decision = decide(self.RUN, "s1", FP_CURRENT, RecoveryPolicy.IDEMPOTENT)
@@ -902,7 +869,7 @@ class TestTheUpgradeWindow:
         """Rule 4 again. ``RECONCILE`` is indistinguishable from ``IDEMPOTENT`` at this gate
         today (``replay-gate`` BR-11 defers the reconciliation operation), and asserting it
         separately is what would notice if that stopped being true."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         self._manufacture_legacy()
 
         decision = decide(self.RUN, "s1", FP_CURRENT, RecoveryPolicy.RECONCILE)
@@ -916,7 +883,7 @@ class TestTheUpgradeWindow:
         asserted by MEMBER, and against ``ENVELOPE_ABSENT`` in particular — the envelope here
         is readable, so a halt reported as ``ENVELOPE_ABSENT`` would mean rules 3 and 5 had
         been transposed."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         self._manufacture_legacy()
 
         decision = decide(self.RUN, "s1", FP_CURRENT, RecoveryPolicy.MANUAL)
@@ -932,7 +899,7 @@ class TestTheUpgradeWindow:
         """Rule 5 for the undeclared case. ``None`` is NOT a default that falls through to
         the catch-all here: rule 5 catches it first, which is why the two halting routes must both be
         asserted rather than one standing in for the other."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         self._manufacture_legacy()
 
         decision = decide(self.RUN, "s1", FP_CURRENT, None)
@@ -951,7 +918,7 @@ class TestTheUpgradeWindow:
         changed": someone could plausibly update it. This one cannot be satisfied that way,
         because ``DIVERGED`` is what it forbids for every route at once. It is the end-to-end
         proof of ``replay-gate`` BR-4's provenance-before-equality ordering."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         self._manufacture_legacy()
 
         verdicts = {policy: decide(self.RUN, "s1", FP_CURRENT, policy) for policy in POLICIES}
@@ -967,7 +934,7 @@ class TestTheUpgradeWindow:
         """The companion prohibition: an unverifiable fingerprint must never be served as a
         verified match either (FR-6). Between this and the test above, the only outcomes left
         for a legacy row are the four in BR-7's table."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         self._manufacture_legacy()
 
         for policy in POLICIES:
@@ -979,7 +946,7 @@ class TestTheUpgradeWindow:
         """THE DISCRIMINATOR for the whole class. Every assertion above would also pass on a
         gate that halted on every settled row regardless of scheme; the ONLY difference here
         is the stored fingerprint's prefix."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         _manufacture_row(
             self.RUN,
             "s-current-scheme",
@@ -998,7 +965,7 @@ class TestTheUpgradeWindow:
         """FR-12 diagnosability: an operator reading the halt must be able to tell "recorded
         under narrower rules" from "never recorded". ``legacy`` and ``absent`` route
         identically and stay DISTINCT FACTS in ``reason``, so this asserts the word."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_private_schema(_isolated_journal)
         self._manufacture_legacy()
         _manufacture_row(
             self.RUN,

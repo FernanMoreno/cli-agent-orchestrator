@@ -22,6 +22,8 @@ echo the VALUE, so a secret passed as a value cannot leak into an error string.
 
 from typing import Dict, Mapping
 
+from cli_agent_orchestrator.utils.database_environment import is_database_env_key
+
 # Prefixes reserved for provider-managed env; forwarding them is rejected so an
 # operator cannot clobber the provider's own auth/config vars. Mirrored in
 # ``TmuxClient._merge_extra_env`` server-side.
@@ -155,6 +157,8 @@ def _is_valid_env_key(key: str) -> bool:
 
 
 def _uses_blocked_prefix(key: str) -> bool:
+    if is_database_env_key(key):
+        return True
     if key in FORWARDED_ENV_PREFIX_ALLOWLIST:
         return False
     return any(key.startswith(p) for p in FORWARDED_ENV_BLOCKED_PREFIXES)

@@ -2,10 +2,22 @@
 
 import io
 import tarfile
+from test.postgres.orm import configured_orm_engine
 
+import frontmatter
 import pytest
 
 from cli_agent_orchestrator.services.memory_archive.tar_reader import extracted_bundle
+
+
+def _current_archive(path, body):
+    topic = frontmatter.dumps(
+        frontmatter.Post(body, type="reference", title="note", tags="portable")
+    ).encode()
+    with tarfile.open(path, "w:gz") as archive:
+        member = tarfile.TarInfo("note.md")
+        member.size = len(topic)
+        archive.addfile(member, io.BytesIO(topic))
 
 
 @pytest.mark.parametrize("kind", ["traversal", "symlink", "duplicate", "oversize"])
@@ -40,81 +52,8 @@ def test_transport_extracts_exact_regular_bytes_to_private_disposable_root(tmp_p
     assert not remembered.exists()
 
 
-def _native_archive(path, *, tamper=False, scope="global"):
-    import json
-
-    from cli_agent_orchestrator.services.memory_archive.legacy_format import (
-        DUMP_ROW_REQUIRED_KEYS,
-        compute_content_hash,
-    )
-
-    row = dict.fromkeys(DUMP_ROW_REQUIRED_KEYS, None)
-    row.update(
-        id=1,
-        key="note",
-        memory_type="reference",
-        scope=scope,
-        scope_id=None,
-        tags="portable",
-        access_count=0,
-        created_at="2026-10-02T00:00:00Z",
-        updated_at="2026-10-02T00:00:00Z",
-    )
-    wiki = {"note": b"# note\n\n## 2026-10-02T00:00:00Z\n\nA portable fact.\n"}
-    manifest = {
-        "format_version": 1,
-        "project_id": "project",
-        "id_kind": "override",
-        "created_at": "2026-10-02T00:00:00Z",
-        "exported_by": "cao",
-        "scope_set": [scope],
-        "n_wiki_files": 1,
-        "n_metadata_rows": 1,
-        "content_hash": "sha256:" + "0" * 64,
-    }
-    manifest["content_hash"] = compute_content_hash(
-        manifest=manifest, dump_rows=[row], index_md=b"", wiki_files=wiki
-    )
-    if tamper:
-        wiki["note"] += b"changed"
-    members = {
-        "manifest.json": json.dumps(manifest).encode(),
-        "sqlite-dump.json": json.dumps([row]).encode(),
-        "wiki/note.md": wiki["note"],
-    }
-    with tarfile.open(path, "w:gz") as archive:
-        for name, value in members.items():
-            info = tarfile.TarInfo(name)
-            info.size = len(value)
-            archive.addfile(info, io.BytesIO(value))
-
-
-def test_native_v1_validated_and_converted_without_sqlite_authority(tmp_path):
-    from cli_agent_orchestrator.services.memory_archive.legacy_reader import as_current_bundle
-
-    path = tmp_path / "native.tar.gz"
-    _native_archive(path)
-    with extracted_bundle(path) as original, as_current_bundle(original) as converted:
-        text = (converted / "note.md").read_text()
-        assert "A portable fact." in text and "type: reference" in text
-        assert not (converted / "sqlite-dump.json").exists()
-
-
-@pytest.mark.parametrize("tamper,scope", [(True, "global"), (False, "agent"), (False, "session")])
-def test_native_v1_hash_and_private_scope_invalid_before_materialization(tmp_path, tamper, scope):
-    from cli_agent_orchestrator.services.memory_archive.legacy_reader import as_current_bundle
-
-    path = tmp_path / "native.tar.gz"
-    _native_archive(path, tamper=tamper, scope=scope)
-    with pytest.raises(ValueError):
-        with extracted_bundle(path) as original, as_current_bundle(original):
-            pytest.fail("invalid native material was yielded")
-
-
 def test_current_export_tar_roundtrip_uses_actual_store_and_preserves_content(tmp_path):
     import asyncio
-
-    from sqlalchemy import create_engine
 
     from cli_agent_orchestrator.clients.database import Base
     from cli_agent_orchestrator.services.memory_archive.okf import (
@@ -124,7 +63,7 @@ def test_current_export_tar_roundtrip_uses_actual_store_and_preserves_content(tm
     from cli_agent_orchestrator.services.memory_service import MemoryService
 
     def service(name):
-        engine = create_engine(f"sqlite:///{tmp_path/(name+'.sqlite')}")
+        engine = configured_orm_engine()
         Base.metadata.create_all(engine)
         return MemoryService(base_dir=tmp_path / name, db_engine=engine), engine
 
@@ -148,19 +87,17 @@ def test_current_export_tar_roundtrip_uses_actual_store_and_preserves_content(tm
         second_engine.dispose()
 
 
-def test_native_v1_import_uses_actual_current_store_and_target_identity(tmp_path):
-    from sqlalchemy import create_engine
-
+def test_current_tar_import_uses_actual_current_store(tmp_path):
     from cli_agent_orchestrator.clients.database import Base
     from cli_agent_orchestrator.services.memory_archive.okf import OkfArchiveBackend
     from cli_agent_orchestrator.services.memory_service import MemoryService
 
-    engine = create_engine(f"sqlite:///{tmp_path/'native.sqlite'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     try:
         service = MemoryService(base_dir=tmp_path / "memory", db_engine=engine)
-        archive = tmp_path / "native.tar.gz"
-        _native_archive(archive)
+        archive = tmp_path / "current.tar.gz"
+        _current_archive(archive, "A portable fact.")
         report = OkfArchiveBackend(service).import_bundle(archive, "global", "skip", False)
         assert report.imported == 1 and report.rejected == 0
         assert "A portable fact." in service.get_wiki_path("global", None, "note").read_text()

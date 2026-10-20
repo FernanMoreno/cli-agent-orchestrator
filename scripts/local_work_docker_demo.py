@@ -17,17 +17,22 @@ import re
 import shlex
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Mapping
+from typing import TYPE_CHECKING, Iterator, Mapping
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
+
+if TYPE_CHECKING:
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 
 
 def _base64url_integer(value: int) -> str:
@@ -375,10 +380,272 @@ def _write_private_environment(path: Path, values: Mapping[str, str]) -> None:
     os.chmod(path, 0o600)
 
 
-def run_demo(*, requested_port: int = 0) -> int:
+def _read_private_json(path: Path) -> dict:
+    """Read one owner-only JSON file without following a symlink."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+            metadata = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_mode & 0o077
+                or metadata.st_uid != os.geteuid()
+            ):
+                raise ValueError("demo database configuration and secrets must be private")
+            value = json.load(stream)
+        if not isinstance(value, dict):
+            raise ValueError("invalid demo database configuration")
+        return value
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("cannot read private demo database configuration or secret") from error
+
+
+def _write_private_json(path: Path, value: dict) -> None:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    parent = path.parent.lstat()
+    if not stat.S_ISDIR(parent.st_mode) or parent.st_mode & 0o077 or parent.st_uid != os.geteuid():
+        raise ValueError("demo database configuration and secrets must stay in private directories")
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        json.dump(value, stream, sort_keys=True, separators=(",", ":"))
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def _copy_private_database_config(
+    source: Path, profile_home: Path
+) -> tuple[Path, dict[str, DatabaseTarget]]:
+    """Copy explicit demo targets and credentials into the temporary private profile."""
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+
+    source_path = Path(source).expanduser().absolute()
+    configuration = _read_private_json(source_path)
+    if type(configuration.get("version")) is not int or configuration.get("version") != 1:
+        raise ValueError("unsupported demo database configuration version")
+    if configuration.keys() - {"version", "targets", "managed"}:
+        raise ValueError("demo database configuration has unsupported fields")
+    raw_targets = configuration.get("targets")
+    scopes = ("main", "auth", "peer")
+    if not isinstance(raw_targets, dict) or set(raw_targets) != set(scopes):
+        raise ValueError("demo database configuration must define main, auth, and peer targets")
+
+    home = Path(profile_home)
+    home_info = home.lstat()
+    if (
+        not stat.S_ISDIR(home_info.st_mode)
+        or home_info.st_mode & 0o077
+        or home_info.st_uid != os.geteuid()
+    ):
+        raise ValueError("temporary demo profile must be a private owner-only directory")
+
+    postgres_dir = home / "postgres"
+    postgres_dir.mkdir(mode=0o700)
+    secrets_dir = postgres_dir / "secrets"
+    secrets_dir.mkdir(mode=0o700)
+    copied_targets: dict[str, dict] = {}
+    targets: dict[str, DatabaseTarget] = {}
+    allowed_fields = {
+        "host",
+        "port",
+        "database",
+        "user",
+        "schema",
+        "store_id",
+        "secret_file",
+        "sslmode",
+        "migration_user",
+        "migration_secret_file",
+    }
+    required_fields = allowed_fields - {"sslmode"}
+    for scope in scopes:
+        raw_target = raw_targets[scope]
+        if not isinstance(raw_target, dict):
+            raise ValueError("invalid demo database target")
+        if (
+            raw_target.keys() - allowed_fields
+            or required_fields - raw_target.keys()
+            or "password" in raw_target
+            or "connection_string" in raw_target
+            or "dsn" in raw_target
+        ):
+            raise ValueError("demo database target has unsupported or missing fields")
+        if raw_target["user"] == raw_target["migration_user"]:
+            raise ValueError("demo database runtime and migration roles must be separate")
+
+        target_values = dict(raw_target)
+        for role in ("runtime", "owner"):
+            field = "secret_file" if role == "runtime" else "migration_secret_file"
+            original_name = target_values[field]
+            if not isinstance(original_name, str) or not original_name:
+                raise ValueError("demo database target is missing a credential file")
+            original_path = Path(original_name).expanduser()
+            if not original_path.is_absolute():
+                original_path = source_path.parent / original_path
+            secret = _read_private_json(original_path.absolute())
+            password = secret.get("password")
+            if set(secret) != {"password"} or not isinstance(password, str) or not password:
+                raise ValueError("demo database credential file has an invalid shape")
+            copied_secret = secrets_dir / f"{scope}-{role}.json"
+            _write_private_json(copied_secret, {"password": password})
+            relative_secret = copied_secret.relative_to(home).as_posix()
+            target_values[field] = relative_secret
+
+        copied_targets[scope] = dict(target_values)
+        target_values["secret_file"] = home / target_values["secret_file"]
+        target_values["migration_secret_file"] = home / target_values["migration_secret_file"]
+        targets[scope] = DatabaseTarget(**target_values, scope=scope, home=home)
+
+    namespace_keys = {
+        (target.host, target.port, target.database, target.schema) for target in targets.values()
+    }
+    if len(namespace_keys) != len(scopes):
+        raise ValueError("demo database scopes must use distinct PostgreSQL schemas")
+    if len({target.store_id for target in targets.values()}) != len(scopes):
+        raise ValueError("demo database scopes must use distinct store identities")
+    if len({target.user for target in targets.values()}) != len(scopes):
+        raise ValueError("demo database scopes must use separate runtime roles")
+
+    config_path = home / "database-config.json"
+    _write_private_json(config_path, {"version": 1, "targets": copied_targets})
+    return config_path, targets
+
+
+def _require_clean_demo_namespaces(targets: Mapping[str, DatabaseTarget]) -> None:
+    """Refuse existing PostgreSQL schemas; the demo never adopts or clears data."""
+    from cli_agent_orchestrator.clients.postgres import connect
+
+    for scope in ("main", "auth", "peer"):
+        target = targets[scope]
+        if not target.migration_user or not target.migration_secret_file:
+            raise ValueError("demo database migration and runtime roles must be separate")
+        if target.user == target.migration_user:
+            raise ValueError("demo database migration and runtime roles must be separate")
+        with connect(target.migration_target(), readonly=True) as connection:
+            current_role = connection.execute("SELECT current_user").fetchone()
+            if current_role is None or current_role[0] != target.migration_user:
+                raise ValueError("demo database migration credential does not match its owner role")
+            runtime_role = connection.execute(
+                """SELECT rolsuper,rolbypassrls,rolcreaterole,rolcreatedb,rolreplication
+                    FROM pg_roles WHERE rolname=%s""",
+                (target.user,),
+            ).fetchone()
+            if runtime_role is None or any(runtime_role):
+                raise ValueError("demo database runtime role is missing or privileged")
+            namespace = connection.execute(
+                """SELECT r.rolname AS owner,
+                    EXISTS (SELECT 1 FROM pg_catalog.aclexplode(
+                        COALESCE(n.nspacl, pg_catalog.acldefault('n', n.nspowner))) acl
+                        WHERE acl.privilege_type='CREATE' AND acl.grantee<>n.nspowner)
+                        AS untrusted_create,
+                    pg_catalog.has_schema_privilege(%s, n.nspname, 'CREATE') AS runtime_create,
+                    EXISTS (SELECT 1 FROM pg_depend d
+                        WHERE d.refclassid='pg_namespace'::regclass
+                          AND d.refobjid=n.oid AND d.deptype='n') AS has_objects
+                    FROM pg_namespace n JOIN pg_roles r ON r.oid=n.nspowner
+                    WHERE n.nspname=%s""",
+                (target.user, target.schema),
+            ).fetchone()
+            if namespace is not None and (
+                namespace["owner"] != target.migration_user
+                or namespace["untrusted_create"]
+                or namespace["runtime_create"]
+                or namespace["has_objects"]
+            ):
+                raise ValueError(
+                    f"demo {scope} PostgreSQL schema must be empty and owned by its migration role"
+                )
+
+
+def _bootstrap_demo_database(targets: Mapping[str, DatabaseTarget]) -> None:
+    """Apply controlled component migrations using only the explicit owner targets."""
+    from cli_agent_orchestrator.clients.postgres import connect
+    from cli_agent_orchestrator.clients.postgres.migrations import verify_runtime_role
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
+
+    for scope in ("main", "auth", "peer"):
+        target = targets[scope]
+        bootstrap_scope(target, seed_work=scope == "main")
+        with connect(target, readonly=True) as connection:
+            verify_runtime_role(connection)
+
+
+def _database_namespaces(path: Path) -> set[tuple[str, int, str, str]]:
+    configuration = _read_private_json(path)
+    raw_targets = configuration.get("targets")
+    scopes = ("main", "auth", "peer")
+    if type(configuration.get("version")) is not int or configuration.get("version") != 1:
+        raise ValueError("unsupported demo database configuration version")
+    if not isinstance(raw_targets, dict) or set(raw_targets) != set(scopes):
+        raise ValueError("demo database configuration must define main, auth, and peer targets")
+    namespaces = set()
+    for scope in scopes:
+        target = raw_targets[scope]
+        if not isinstance(target, dict):
+            raise ValueError("invalid demo database target")
+        host, port, database, schema = (
+            target.get("host"),
+            target.get("port"),
+            target.get("database"),
+            target.get("schema"),
+        )
+        if (
+            not isinstance(host, str)
+            or type(port) is not int
+            or not isinstance(database, str)
+            or not isinstance(schema, str)
+        ):
+            raise ValueError("invalid demo database namespace")
+        namespaces.add((host, port, database, schema))
+    if len(namespaces) != len(scopes):
+        raise ValueError("demo database scopes must use distinct PostgreSQL schemas")
+    return namespaces
+
+
+def _reject_inherited_database_config_overlap(selected: Path) -> None:
+    inherited = os.environ.get("CAO_DATABASE_CONFIG_FILE")
+    if not inherited:
+        return
+    inherited_path = Path(inherited).expanduser().absolute()
+    try:
+        if os.path.samefile(selected, inherited_path):
+            raise ValueError(
+                "the demo database config must be separate from the inherited CAO profile"
+            )
+    except FileNotFoundError:
+        return
+    if _database_namespaces(selected) & _database_namespaces(inherited_path):
+        raise ValueError(
+            "the demo database schemas must be separate from the inherited CAO profile"
+        )
+
+
+@contextmanager
+def _temporary_environment(values: Mapping[str, str]) -> Iterator[None]:
+    missing = object()
+    previous = {key: os.environ.get(key, missing) for key in values}
+    try:
+        os.environ.update(values)
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is missing:
+                os.environ.pop(key, None)
+            elif isinstance(value, str):
+                os.environ[key] = value
+
+
+def run_demo(*, requested_port: int = 0, database_config: Path | None = None) -> int:
     repository_root = Path(__file__).resolve().parents[1]
     if requested_port and not 1 <= requested_port <= 65535:
         raise ValueError("API port must be between 1 and 65535")
+    if database_config is None:
+        raise ValueError("pass an explicit dedicated database config with --database-config")
+    selected_database_config = Path(database_config).expanduser().absolute()
+    _reject_inherited_database_config_overlap(selected_database_config)
 
     docker_host = (
         os.environ.get("CAO_T019_DOCKER_HOST")
@@ -397,6 +664,9 @@ def run_demo(*, requested_port: int = 0) -> int:
         home.mkdir(mode=0o700)
         checkout_root = temporary_root / "checkout"
         checkout_root.mkdir(mode=0o700)
+        private_config_path, database_targets = _copy_private_database_config(
+            selected_database_config, home
+        )
         image_id = _build_local_rootfs(repository_root, docker_host=docker_host)
         api_port = requested_port or _free_loopback_port()
         if requested_port:
@@ -415,6 +685,7 @@ def run_demo(*, requested_port: int = 0) -> int:
                 {
                     "CAO_AUTH_LOCAL_TOKEN": issuer.token,
                     "CAO_HOME_DIR": str(home),
+                    "CAO_DATABASE_CONFIG_FILE": str(private_config_path),
                     "CAO_API_HOST": "127.0.0.1",
                     "CAO_API_PORT": str(api_port),
                     "CAO_ENABLE_PUBLIC_WORK_INGRESS": "true",
@@ -426,30 +697,38 @@ def run_demo(*, requested_port: int = 0) -> int:
             )
             for key in ("DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"):
                 environment.pop(key, None)
-            os.environ.update(environment)
 
             worker_path = temporary_root / "cao-local-demo-worker"
             worker_bytes = _compile_demo_worker(repository_root, worker_path)
 
             from cli_agent_orchestrator.clients.work_repository import WorkRepository
-            from cli_agent_orchestrator.constants import DATABASE_FILE, DB_DIR
             from cli_agent_orchestrator.security import auth
 
-            DB_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
-            repository = WorkRepository(DATABASE_FILE)
-            repository.initialize()
-            principal = auth.principal_from_token(issuer.token)
-            reference = provision_local_static_work(
-                repository,
-                principal,
-                selection="local-docker",
-                project_id="local-docker-demo",
-                checkout_root=checkout_root,
-                worker_bytes=worker_bytes,
-            )
+            with _temporary_environment(
+                {
+                    **issuer.auth_environment(),
+                    "CAO_AUTH_LOCAL_TOKEN": issuer.token,
+                    "CAO_HOME_DIR": str(home),
+                    "CAO_DATABASE_CONFIG_FILE": str(private_config_path),
+                }
+            ):
+                _require_clean_demo_namespaces(database_targets)
+                _bootstrap_demo_database(database_targets)
+                repository = WorkRepository(database_targets["main"], filesystem_home=home)
+                repository.initialize()
+                principal = auth.principal_from_token(issuer.token)
+                reference = provision_local_static_work(
+                    repository,
+                    principal,
+                    selection="local-docker",
+                    project_id="local-docker-demo",
+                    checkout_root=checkout_root,
+                    worker_bytes=worker_bytes,
+                )
 
             client_environment = {
                 "CAO_HOME_DIR": str(home),
+                "CAO_DATABASE_CONFIG_FILE": str(private_config_path),
                 "CAO_API_HOST": "127.0.0.1",
                 "CAO_API_PORT": str(api_port),
                 "CAO_AUTH_JWKS_URI": issuer.jwks_uri,
@@ -490,8 +769,9 @@ def run_demo(*, requested_port: int = 0) -> int:
                 f"  source {shlex.quote(str(client_env_path))}\n"
                 f"  {launch_command}\n"
                 "This runs the bundled static worker; it does not launch a model provider.\n"
-                "The bearer, issuer key, database, and client env are temporary and are "
-                "deleted when this server stops.",
+                "The bearer, issuer key, private database configuration, and client env are "
+                "temporary and are deleted when this server stops. PostgreSQL schemas and "
+                "Work data remain in the selected database service.",
                 file=sys.stderr,
                 flush=True,
             )
@@ -523,9 +803,15 @@ def main(argv: list[str] | None = None) -> int:
         default=0,
         help="loopback API port; defaults to an available ephemeral port",
     )
+    parser.add_argument(
+        "--database-config",
+        type=Path,
+        required=True,
+        help="private config with dedicated empty PostgreSQL schemas for main, auth, and peer",
+    )
     args = parser.parse_args(argv)
     try:
-        return run_demo(requested_port=args.api_port)
+        return run_demo(requested_port=args.api_port, database_config=args.database_config)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         print(f"Local Docker Work demo failed closed: {error}", file=sys.stderr)
         return 2

@@ -1,16 +1,17 @@
 """Tests for the OKF import backend (#345 Unit 3 — design tests 1/5/6/7/8/9/10/11/12/13).
 
 Bundles are written by hand (import treats them as untrusted input) or
-produced by the Unit-2 exporter for the round-trip test. All service
-fixtures use a tmp base_dir + injected SQLite engine, mirroring the
-export test file.
+produced by the Unit-2 exporter for the round-trip test. Service
+fixtures use a private PostgreSQL schema and a temporary wiki directory.
 """
 
 import asyncio
+import io
+import tarfile
 from datetime import datetime, timezone
+from test.postgres.orm import configured_orm_engine
 
 import pytest
-from sqlalchemy import create_engine
 
 from cli_agent_orchestrator.clients.database import Base, MemoryMetadataModel
 from cli_agent_orchestrator.services.memory_archive.okf import OkfArchiveBackend
@@ -22,8 +23,7 @@ def _run(coro):
 
 
 def _make_svc(tmp_path, name):
-    db_path = tmp_path / f"{name}.db"
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return MemoryService(base_dir=tmp_path / f"{name}-memory", db_engine=engine)
 
@@ -169,7 +169,7 @@ class TestConflictMatrix:
             )
         )
 
-    def test_skip_leaves_file_and_sqlite_untouched(self, svc, backend, bundle, existing):
+    def test_skip_leaves_file_and_metadata_untouched(self, svc, backend, bundle, existing):
         _write_topic(bundle, "clash", "imported body")
         before = _stored_text(svc, "clash")
         row_before_id = _metadata_row(svc, "clash").id
@@ -323,9 +323,9 @@ class TestFrontmatterHandling:
 
 
 class TestStorePathIntegrity:
-    """Design test 9: SQLite rows + index.md entries exist post-import."""
+    """Design test 9: PostgreSQL metadata rows + index.md entries exist post-import."""
 
-    def test_sqlite_and_index_updated(self, svc, backend, bundle):
+    def test_postgres_metadata_and_index_updated(self, svc, backend, bundle):
         _write_topic(bundle, "stored-topic", "body", fm_type="user")
         report = backend.import_bundle(bundle, "global", "skip", False)
         assert report.imported == 1
@@ -334,6 +334,70 @@ class TestStorePathIntegrity:
         assert row.memory_type == "user"
         index = svc.get_index_path("global", None).read_text(encoding="utf-8")
         assert "[stored-topic](global/stored-topic.md)" in index
+
+
+@pytest.mark.parametrize("source_kind", ["directory", "tar"])
+def test_retired_sqlite_dump_is_rejected_before_scope_resolution_or_writes(
+    tmp_path, svc, backend, bundle, monkeypatch, source_kind
+):
+    _run(svc.store(content="existing fact", scope="global", key="existing"))
+    existing_path = svc.get_wiki_path("global", None, "existing")
+    existing_text = existing_path.read_bytes()
+    index_path = svc.get_index_path("global", None)
+    index_text = index_path.read_bytes()
+    with svc._get_db_session() as db:
+        existing_rows = [(row.key, row.id) for row in db.query(MemoryMetadataModel).all()]
+    before_paths = sorted(
+        path.relative_to(svc.base_dir).as_posix() for path in svc.base_dir.rglob("*")
+    )
+
+    marker = b"[]"
+    topic = b"---\ntype: reference\n---\n\n# untrusted\n\nmust not import\n"
+    if source_kind == "directory":
+        source = bundle
+        (source / "sqlite-dump.json").write_bytes(marker)
+        (source / "untrusted.md").write_bytes(topic)
+        source_before = {
+            path.relative_to(source).as_posix(): path.read_bytes()
+            for path in source.rglob("*")
+            if path.is_file()
+        }
+    else:
+        source = tmp_path / "legacy.tar.gz"
+        with tarfile.open(source, "w:gz") as archive:
+            for name, payload in (("sqlite-dump.json", marker), ("untrusted.md", topic)):
+                member = tarfile.TarInfo(name)
+                member.size = len(payload)
+                archive.addfile(member, io.BytesIO(payload))
+        source_before = source.read_bytes()
+
+    monkeypatch.setattr(
+        svc,
+        "resolve_scope_id",
+        lambda *args, **kwargs: pytest.fail(
+            "target scope resolved before legacy archive rejection"
+        ),
+    )
+    with pytest.raises(ValueError, match="^Legacy memory archive format is not supported$"):
+        backend.import_bundle(source, "global", "skip", False)
+
+    if source_kind == "directory":
+        assert {
+            path.relative_to(source).as_posix(): path.read_bytes()
+            for path in source.rglob("*")
+            if path.is_file()
+        } == source_before
+    else:
+        assert source.read_bytes() == source_before
+    assert existing_path.read_bytes() == existing_text
+    assert index_path.read_bytes() == index_text
+    with svc._get_db_session() as db:
+        assert [(row.key, row.id) for row in db.query(MemoryMetadataModel).all()] == existing_rows
+    assert (
+        sorted(path.relative_to(svc.base_dir).as_posix() for path in svc.base_dir.rglob("*"))
+        == before_paths
+    )
+    assert not svc.get_wiki_path("global", None, "untrusted").exists()
 
 
 class TestTimestampPreservation:

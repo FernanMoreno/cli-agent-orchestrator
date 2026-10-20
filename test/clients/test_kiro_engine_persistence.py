@@ -1,5 +1,7 @@
 """Kiro engine persistence and legacy restoration coverage."""
 
+from test.postgres.orm import configured_orm_engine
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -7,7 +9,7 @@ from cli_agent_orchestrator.clients import database as db_mod
 
 
 def test_engine_round_trip_and_legacy_kiro_default(tmp_path, monkeypatch):
-    engine = create_engine(f"sqlite:///{tmp_path / 'terminals.db'}")
+    engine = configured_orm_engine()
     db_mod.Base.metadata.create_all(bind=engine)
     monkeypatch.setattr(db_mod, "SessionLocal", sessionmaker(bind=engine))
 
@@ -27,7 +29,7 @@ def test_engine_round_trip_and_legacy_kiro_default(tmp_path, monkeypatch):
 
 
 def test_non_kiro_terminal_has_no_engine(tmp_path, monkeypatch):
-    engine = create_engine(f"sqlite:///{tmp_path / 'terminals.db'}")
+    engine = configured_orm_engine()
     db_mod.Base.metadata.create_all(bind=engine)
     monkeypatch.setattr(db_mod, "SessionLocal", sessionmaker(bind=engine))
 

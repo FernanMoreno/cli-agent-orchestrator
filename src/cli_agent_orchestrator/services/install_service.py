@@ -56,6 +56,7 @@ from cli_agent_orchestrator.utils.opencode_config import (
     translate_mcp_server_config,
     upsert_agent_tools,
     upsert_mcp_server,
+    validate_mcp_tool_profile_installation,
 )
 from cli_agent_orchestrator.utils.opencode_permissions import cao_tools_to_opencode_permission
 from cli_agent_orchestrator.utils.path_validation import (
@@ -610,6 +611,11 @@ def install_agent(
             profile, provider=provider, persisted=True, normalize_existing=True
         )
         log_delivery_findings(plugin_mcp, agent_name=profile.name)
+
+        if provider == ProviderType.OPENCODE_CLI.value:
+            for config in (profile.mcpServers or {}).values():
+                if isinstance(config, dict):
+                    validate_mcp_tool_profile_installation(config)
 
         # Record the provider we actually installed for into the LOCAL store
         # copy, so later provider resolution on this node is deterministic.

@@ -5,7 +5,6 @@ import json
 import os
 import shutil
 import socket
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -15,7 +14,7 @@ from pathlib import Path
 import pytest
 import requests
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 WRAPPER = r"""
 import asyncio
@@ -23,7 +22,6 @@ import os
 from pathlib import Path
 from cli_agent_orchestrator import constants
 constants.LOCAL_PEER_DIR = Path(os.environ["TEST_PEER_REGISTRY"])
-constants.LOCAL_PEER_REGISTRY_FILE = constants.LOCAL_PEER_DIR / "registry.sqlite3"
 from cli_agent_orchestrator.api.main import app
 from cli_agent_orchestrator.services import local_peer_service, local_peer_auth
 from cli_agent_orchestrator.clients import database
@@ -66,7 +64,68 @@ def _wait(predicate, seconds=90):
     raise AssertionError(f"local acceptance deadline expired; last={last!r}")
 
 
-def test_two_real_local_profiles_terminal_receipts_and_authorization(tmp_path):
+def _runtime_target_config(target, *, secret_file: str | None = None) -> dict[str, object]:
+    return {
+        "host": target.host,
+        "port": target.port,
+        "database": target.database,
+        "user": target.user,
+        "schema": target.schema,
+        "store_id": target.store_id,
+        "secret_file": secret_file or target.secret_file.name,
+        "sslmode": target.sslmode,
+    }
+
+
+@pytest.fixture
+def two_local_peer_profiles(tmp_path, postgres_service):
+    """Two profile stores with one deliberately shared, user-wide peer store."""
+    from contextlib import ExitStack
+    from test.postgres.fixtures import isolated_live_targets
+
+    stack = ExitStack()
+    try:
+        homes = [tmp_path / "profile-0", tmp_path / "profile-1"]
+        profiles = [
+            stack.enter_context(isolated_live_targets(home, service=postgres_service))
+            for home in homes
+        ]
+
+        # Local pairing challenges and grants belong to each profile's main
+        # store. Only the peer registry is shared across profiles on this OS
+        # user, matching the installed database-config contract.
+        shared_peer_secret = homes[1] / "peer-shared-runtime.json"
+        shutil.copyfile(profiles[0].peer.secret_file, shared_peer_secret)
+        os.chmod(shared_peer_secret, 0o600)
+        second_config = {
+            "version": 1,
+            "targets": {
+                "main": _runtime_target_config(profiles[1].main),
+                "auth": _runtime_target_config(profiles[1].auth),
+                "peer": _runtime_target_config(
+                    profiles[0].peer, secret_file=shared_peer_secret.name
+                ),
+            },
+        }
+        profiles[1].config_file.write_text(json.dumps(second_config, indent=2))
+        os.chmod(profiles[1].config_file, 0o600)
+        yield profiles
+    finally:
+        stack.close()
+
+
+def test_two_real_local_profiles_terminal_receipts_and_authorization(
+    tmp_path, two_local_peer_profiles
+):
+    from cli_agent_orchestrator.clients.postgres import connect
+    from cli_agent_orchestrator.services.local_peers.host_identity import current_host_identity
+
+    # The child servers use separate profile stores and the same user-wide
+    # peer registry. They still own separate profile homes, tmux targets and
+    # agent processes.
+    profile_targets = two_local_peer_profiles
+    peer_target = profile_targets[0].peer
+    initiator_target = profile_targets[0].main
     project = tmp_path / "project"
     project.mkdir()
     shared_file = project / "shared.txt"
@@ -74,6 +133,7 @@ def test_two_real_local_profiles_terminal_receipts_and_authorization(tmp_path):
     project_hash_before = hashlib.sha256(shared_file.read_bytes()).hexdigest()
     socket_dir = Path(tempfile.mkdtemp(prefix="cao15-tmux-"))
     registry = tmp_path / "registry"
+    host = current_host_identity(registry)
     processes = []
     logs = []
     urls = []
@@ -94,7 +154,7 @@ def test_two_real_local_profiles_terminal_receipts_and_authorization(tmp_path):
     )
     try:
         for index in range(2):
-            home = tmp_path / f"profile-{index}"
+            home = profile_targets[index].home
             store = home / "agent-store"
             store.mkdir(parents=True)
             (store / "local-mock.md").write_text(
@@ -103,6 +163,7 @@ def test_two_real_local_profiles_terminal_receipts_and_authorization(tmp_path):
             child_env = dict(
                 env,
                 CAO_HOME_DIR=str(home),
+                CAO_DATABASE_CONFIG_FILE=str(profile_targets[index].config_file),
                 CAO_API_PORT=str(_port()),
                 CAO_API_HOST="127.0.0.1",
                 CAO_INSTANCE_NAME=f"local-acceptance-{index}",
@@ -191,10 +252,11 @@ def test_two_real_local_profiles_terminal_receipts_and_authorization(tmp_path):
                 assert (
                     blocked.status_code == 202 and blocked.json().get("error") == "project_busy"
                 ), blocked.text
-                with sqlite3.connect(registry / "registry.sqlite3") as connection:
+                with connect(peer_target) as connection:
                     lease = connection.execute(
-                        "SELECT task_id,state FROM local_project_write_leases WHERE project_id=?",
-                        (challenge["project_id"],),
+                        """SELECT task_id,state FROM local_project_write_leases
+                           WHERE host_id=%s AND owner_uid=%s AND project_id=%s""",
+                        (host.host_id, host.owner_uid, challenge["project_id"]),
                     ).fetchone()
                 assert lease[0] == task_id and lease[1] != "released"
                 response = requests.post(
@@ -222,11 +284,12 @@ def test_two_real_local_profiles_terminal_receipts_and_authorization(tmp_path):
             assert (
                 snapshot.status_code == 200 and snapshot.json()["state"] == "available"
             ), snapshot.text
-        with sqlite3.connect(registry / "registry.sqlite3") as connection:
+        with connect(peer_target) as connection:
             assert (
                 connection.execute(
-                    "SELECT state FROM local_project_write_leases WHERE project_id=?",
-                    (challenge["project_id"],),
+                    """SELECT state FROM local_project_write_leases
+                       WHERE host_id=%s AND owner_uid=%s AND project_id=%s""",
+                    (host.host_id, host.owner_uid, challenge["project_id"]),
                 ).fetchone()[0]
                 == "released"
             )
@@ -267,9 +330,10 @@ def test_two_real_local_profiles_terminal_receipts_and_authorization(tmp_path):
             offline_task.status_code == 503
             and offline_task.json()["detail"]["kind"] == "peer_unavailable"
         ), offline_task.text
-        with sqlite3.connect(tmp_path / "profile-0/db/cli-agent-orchestrator.db") as connection:
+        with connect(initiator_target) as connection:
             offline_task_id = connection.execute(
-                "SELECT task_id FROM local_peer_tasks WHERE operation_key='acceptance-offline'"
+                "SELECT task_id FROM local_peer_tasks WHERE operation_key=%s",
+                ("acceptance-offline",),
             ).fetchone()[0]
         offline_status = requests.get(
             task_url + f"/{offline_task_id}",

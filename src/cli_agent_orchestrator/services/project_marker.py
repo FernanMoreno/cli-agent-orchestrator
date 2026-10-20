@@ -13,6 +13,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from cli_agent_orchestrator.clients import database
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 
 
 def enabled() -> bool:
@@ -92,7 +93,9 @@ def resolve(cwd: Path) -> str | None:
         info = root.stat()
         if not stat.S_ISDIR(info.st_mode):
             return None
-        with terminal_dispatch_lock(constants.DATABASE_FILE, "memory-project-marker"):
+        with terminal_dispatch_lock(
+            DatabaseTarget.from_settings(scope="main"), "memory-project-marker"
+        ):
             directory = root / ".cao"
             if directory.exists() and (directory.is_symlink() or not directory.is_dir()):
                 return None

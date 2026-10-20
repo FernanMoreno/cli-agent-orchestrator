@@ -1,4 +1,4 @@
-"""Verified SQLite persistence for durable work, independent of terminal lifetime.
+"""Verified PostgreSQL persistence for durable work, independent of terminal lifetime.
 
 The schema is additive. An incomplete or newer schema is not silently repaired:
 new admissions must fail closed until the operator restores a verified store.
@@ -7,88 +7,38 @@ new admissions must fail closed until the operator restores a verified store.
 import hashlib
 import json
 import math
-import os
 import re
-import sqlite3
-import stat
 import time
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator, Mapping, TypedDict, cast
 from uuid import UUID, uuid4
 
-from cli_agent_orchestrator.clients.knowledge_access_schema import KNOWLEDGE_ACCESS_SCHEMA
-from cli_agent_orchestrator.clients.knowledge_schema import (
-    KNOWLEDGE_CURSOR_SCHEMA,
-    KNOWLEDGE_SCHEMA,
+from cli_agent_orchestrator.clients.postgres import (
+    Connection,
+    DatabaseError,
+    DatabaseTarget,
+    Record,
+    connect,
 )
-from cli_agent_orchestrator.clients.memory_access_schema import MEMORY_ACCESS_SCHEMA
-from cli_agent_orchestrator.clients.step_contract_schema import STEP_CONTRACT_SCHEMA
-from cli_agent_orchestrator.clients.work_attempt_credential_schema import (
-    WORK_ATTEMPT_CREDENTIAL_SCHEMA,
+from cli_agent_orchestrator.clients.postgres.migrations import (
+    SchemaMismatch as PostgresSchemaMismatch,
 )
-from cli_agent_orchestrator.clients.work_authority_schema import AUTHORITY_SCHEMA
-from cli_agent_orchestrator.clients.work_bubblewrap_identity_schema import (
-    BUBBLEWRAP_IDENTITY_SCHEMA,
+from cli_agent_orchestrator.clients.postgres.migrations import (
+    verify_component,
+    verify_runtime_role,
 )
-from cli_agent_orchestrator.clients.work_bubblewrap_setup_intent_schema import (
-    BUBBLEWRAP_RELEASE_CLAIM_SCHEMA,
-    BUBBLEWRAP_SETUP_INTENT_SCHEMA,
-)
-from cli_agent_orchestrator.clients.work_decisions_schema import DECISIONS_SCHEMA
-from cli_agent_orchestrator.clients.work_delivery_schema import (
-    DELIVERY_CONTENT_SCHEMA,
-    DELIVERY_SCHEMA,
-)
-from cli_agent_orchestrator.clients.work_dispatch_schema import (
-    DISPATCH_SCHEMA,
-    DISPATCH_V2_EVIDENCE_SCHEMA,
-)
-from cli_agent_orchestrator.clients.work_executable_content_schema import EXECUTABLE_CONTENT_SCHEMA
-from cli_agent_orchestrator.clients.work_inbox_schema import (
-    INBOX_SCHEMA,
-    INBOX_STORE_CONTEXT_SCHEMA,
-    ManagedInboxStoreIdentity,
-)
-from cli_agent_orchestrator.clients.work_mcp_proxy_schema import (
-    WORK_MCP_PROXY_EFFECT_SCHEMA,
-    WORK_MCP_PROXY_ISSUE_RECOVERY_SCHEMA,
-    WORK_MCP_PROXY_ISSUE_SCHEMA,
-)
-from cli_agent_orchestrator.clients.work_origin_schema import (
-    LAUNCH_ORIGIN_SCHEMA,
-    LINEAGE_INTEGRITY_SCHEMA,
-    LINEAGE_ORIGIN_SCHEMA,
-    ORIGIN_AUTHORITY_SCHEMA,
-    ORIGIN_SCHEMA,
-    TASK_RECEIVED_RECEIPT_SCHEMA,
-    WORK_TASK_RECEIVER_ACCEPTANCE_SCHEMA,
-    WORKFLOW_STEP_SCHEMA,
-)
-from cli_agent_orchestrator.clients.work_process_identity_schema import (
-    PROCESS_IDENTITY_SCHEMA,
+from cli_agent_orchestrator.clients.work_inbox_schema import ManagedInboxStoreIdentity
+from cli_agent_orchestrator.clients.work_postgres_schema import (
+    WORK_POSTGRES_MIGRATIONS,
+    WORK_TABLES,
 )
 from cli_agent_orchestrator.clients.work_recovery_schema import (
-    OFFLINE_CUT_OBSERVATION_SCHEMA,
-    OFFLINE_CUT_REJECTION_SCHEMA,
-    OFFLINE_CUT_SCHEMA,
-    RECOVERY_CONTEXT_SCHEMA,
     RECOVERY_CONTEXT_VERSION,
     RECOVERY_STATE_BLOCKED_RESTORE,
     RECOVERY_STATE_NORMAL,
-    WORK_WRITER_REGISTRY_SCHEMA,
     RecoveryStoreContext,
 )
-from cli_agent_orchestrator.clients.work_reservations_schema import RESERVATIONS_SCHEMA
-from cli_agent_orchestrator.clients.work_scheduler_schema import (
-    SCHEDULER_FAIRNESS_SCHEMA,
-    SCHEDULER_SCHEMA,
-)
-from cli_agent_orchestrator.clients.work_snapshot_schema import SNAPSHOT_SCHEMA
-from cli_agent_orchestrator.clients.work_task_receiver_credential_schema import (
-    WORK_TASK_RECEIVER_CREDENTIAL_SCHEMA,
-)
-from cli_agent_orchestrator.clients.worktree_evidence_schema import WORKTREE_EVIDENCE_SCHEMA
 from cli_agent_orchestrator.services.work_reducer import (
     TransitionConflict,
     TransitionEvidence,
@@ -233,7 +183,7 @@ def _validate_process_identity_v3(
     return cast(ProcessIdentityV3, {**payload, "identity_sha256": expected_digest}), expected_digest
 
 
-def _read_stored_process_identity(row: sqlite3.Row) -> tuple[ProcessIdentityV3, str]:
+def _read_stored_process_identity(row: Record) -> tuple[ProcessIdentityV3, str]:
     """Decode one immutable row and recheck its exact shape and both digests."""
     try:
         value = json.loads(row["identity_json"])
@@ -272,7 +222,7 @@ _BUBBLEWRAP_IDENTITY_FIELDS = frozenset(
 def _validate_bubblewrap_identity(
     value: Mapping[str, object],
 ) -> tuple[BubblewrapProcessIdentity, str]:
-    """Accept the exact Bwrap shape; argv and executable bytes never enter SQLite."""
+    """Accept the exact Bwrap shape; argv and executable bytes never enter storage."""
     if not isinstance(value, Mapping) or set(value) != _BUBBLEWRAP_IDENTITY_FIELDS:
         raise ValueError("Bubblewrap process identity has an incomplete or unknown field set")
     payload = {key: value[key] for key in _BUBBLEWRAP_IDENTITY_FIELDS if key != "identity_sha256"}
@@ -320,7 +270,7 @@ def _validate_bubblewrap_identity(
     return cast(BubblewrapProcessIdentity, {**payload, "identity_sha256": digest}), digest
 
 
-def _read_stored_bubblewrap_identity(row: sqlite3.Row) -> tuple[BubblewrapProcessIdentity, str]:
+def _read_stored_bubblewrap_identity(row: Record) -> tuple[BubblewrapProcessIdentity, str]:
     try:
         identity, digest = _validate_bubblewrap_identity(json.loads(row["identity_json"]))
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -339,26 +289,11 @@ def _requires_managed_lineage(*, operation_kind: str, parent_work_item_id: str |
     return parent_work_item_id is not None or operation_kind in {"child", "handoff"}
 
 
-def _store_identity(value: Path | str) -> str:
-    try:
-        path = Path(value).resolve(strict=False)
-    except (TypeError, OSError, RuntimeError) as error:
-        raise ValueError("invalid inbox store identity") from error
-    if not path.is_absolute():
-        raise ValueError("inbox store identity must resolve absolutely")
-    return str(path)
-
-
-def _connection_store_identity(connection: sqlite3.Connection) -> str:
-    """Return the canonical main SQLite file for this exact live connection."""
-    rows = connection.execute("PRAGMA database_list").fetchall()
-    main = next((row[2] for row in rows if row[1] == "main"), None)
-    if not main:
-        raise SchemaMismatch("managed inbox requires a file-backed work store")
-    try:
-        return _store_identity(main)
-    except ValueError as error:
-        raise SchemaMismatch("work store identity cannot be resolved") from error
+def _connection_store_identity(connection: Connection) -> str:
+    """Return the configured logical PostgreSQL store ID, never a filesystem path."""
+    if not isinstance(connection, Connection):
+        raise SchemaMismatch("Work runtime requires a native PostgreSQL connection")
+    return connection.target.store_id
 
 
 def _store_uuid(value) -> str:
@@ -373,13 +308,13 @@ def _store_uuid(value) -> str:
     return value
 
 
-def _read_stored_inbox_context(connection: sqlite3.Connection) -> ManagedInboxStoreIdentity:
-    """Read canonical v16 provenance without treating it as this file's identity."""
+def _read_stored_inbox_context(connection: Connection) -> ManagedInboxStoreIdentity:
+    """Read canonical inbox provenance without treating it as a filesystem path."""
     try:
         rows = connection.execute(
             "SELECT singleton,store_identity,store_uuid FROM work_inbox_store_context"
         ).fetchall()
-    except sqlite3.DatabaseError as error:
+    except DatabaseError as error:
         raise SchemaMismatch("managed inbox store context is absent") from error
     if len(rows) != 1:
         raise SchemaMismatch("managed inbox store context is absent or contradictory")
@@ -391,8 +326,11 @@ def _read_stored_inbox_context(connection: sqlite3.Connection) -> ManagedInboxSt
     if singleton != 1:
         raise SchemaMismatch("managed inbox store context is absent or contradictory")
     try:
+        parsed_identity = UUID(stored_identity)
+        if str(parsed_identity) != stored_identity:
+            raise ValueError("PostgreSQL store identity is not canonical")
         context = ManagedInboxStoreIdentity(
-            store_identity=_store_identity(stored_identity),
+            store_identity=stored_identity,
             store_uuid=_store_uuid(stored_uuid),
         )
     except ValueError as error:
@@ -400,8 +338,8 @@ def _read_stored_inbox_context(connection: sqlite3.Connection) -> ManagedInboxSt
     return context
 
 
-def _stored_inbox_context(connection: sqlite3.Connection) -> ManagedInboxStoreIdentity:
-    """Read the v16 context and prove it names this connection's actual file."""
+def _stored_inbox_context(connection: Connection) -> ManagedInboxStoreIdentity:
+    """Read the v16 context and prove it names this connection's configured store."""
     context = _read_stored_inbox_context(connection)
     if context.store_identity != _connection_store_identity(connection):
         raise SchemaMismatch("managed inbox store context names another file")
@@ -430,7 +368,27 @@ def _recovery_digest(value, label: str) -> str:
     return value
 
 
-def _stored_recovery_context(connection: sqlite3.Connection) -> RecoveryStoreContext:
+def _verify_managed_inbox_context_rows(rows, identity: str, expected_uuid: str) -> None:
+    if (
+        len(rows) != 1
+        or rows[0]["singleton"] != 1
+        or rows[0]["store_identity"] != identity
+        or rows[0]["store_uuid"] != expected_uuid
+    ):
+        raise SchemaMismatch("managed inbox context is absent or names another PostgreSQL store")
+
+
+def _verify_work_store_control_rows(rows, identity: str, expected_uuid: str) -> None:
+    if (
+        len(rows) != 1
+        or rows[0]["singleton"] != 1
+        or rows[0]["store_identity"] != identity
+        or rows[0]["store_uuid"] != expected_uuid
+    ):
+        raise SchemaMismatch("Work store control identity is absent or contradictory")
+
+
+def _stored_recovery_context(connection: Connection) -> RecoveryStoreContext:
     """Read the v24 singleton; its presence never itself authorizes execution."""
     try:
         rows = connection.execute(
@@ -438,8 +396,13 @@ def _stored_recovery_context(connection: sqlite3.Connection) -> RecoveryStoreCon
             "source_installation_uuid,bundle_digest,restore_receipt,created_at "
             "FROM work_recovery_context"
         ).fetchall()
-    except sqlite3.DatabaseError as error:
+    except DatabaseError as error:
         raise SchemaMismatch("recovery context is absent") from error
+    return _stored_recovery_context_rows(rows)
+
+
+def _stored_recovery_context_rows(rows) -> RecoveryStoreContext:
+    """Validate already-read recovery rows using the canonical native rules."""
     if len(rows) != 1:
         raise SchemaMismatch("recovery context is absent or contradictory")
     try:
@@ -492,248 +455,151 @@ def _stored_recovery_context(connection: sqlite3.Connection) -> RecoveryStoreCon
     )
 
 
-SCHEMA_VERSION = 39
-_SCHEMA = (
-    """CREATE TABLE work_migrations (
-        version INTEGER PRIMARY KEY, checksum TEXT NOT NULL,
-        applied_at REAL NOT NULL, verification_result TEXT NOT NULL
-    )""",
-    """CREATE TABLE work_jobs (
-        id TEXT PRIMARY KEY, schema_version INTEGER NOT NULL DEFAULT 1 CHECK(schema_version=1),
-        project_id TEXT NOT NULL, principal_id TEXT NOT NULL,
-        allowed_providers TEXT NOT NULL, grant_id TEXT NOT NULL,
-        budget TEXT NOT NULL DEFAULT '{}', priority INTEGER NOT NULL DEFAULT 0,
-        state TEXT NOT NULL DEFAULT 'planning' CHECK(state IN ('planning','running','waiting','completed','failed','revoked')),
-        revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0), created_at REAL NOT NULL
-    )""",
-    """CREATE TABLE work_items (
-        id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES work_jobs(id),
-        parent_work_item_id TEXT, operation_kind TEXT NOT NULL,
-        idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL,
-        contract_id TEXT NOT NULL, snapshot_id TEXT,
-        state TEXT NOT NULL DEFAULT 'queued' CHECK(state IN ('queued','running','waiting_children','succeeded','failed','reconcile','cancelled')),
-        revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
-        accepted_result_id TEXT REFERENCES work_results(id),
-        created_at REAL NOT NULL, UNIQUE(job_id,id),
-        FOREIGN KEY(job_id,parent_work_item_id) REFERENCES work_items(job_id,id)
-    )""",
-    "CREATE UNIQUE INDEX work_items_idempotency ON work_items(job_id,operation_kind,idempotency_key)",
-    """CREATE TABLE work_attempts (
-        id TEXT PRIMARY KEY, work_item_id TEXT NOT NULL REFERENCES work_items(id),
-        attempt_number INTEGER NOT NULL CHECK(attempt_number>0),
-        generation INTEGER NOT NULL CHECK(generation>0), provider TEXT NOT NULL,
-        terminal_id TEXT, state TEXT NOT NULL DEFAULT 'planned'
-            CHECK(state IN ('planned','sent','acknowledged','running','finished','failed','reconcile','cancelled')),
-        revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
-        lease_expires_at REAL NOT NULL, result_id TEXT REFERENCES work_results(id),
-        reconcile_reason TEXT, cleanup_state TEXT NOT NULL DEFAULT 'not_requested',
-        created_at REAL NOT NULL,
-        UNIQUE(work_item_id,attempt_number), UNIQUE(work_item_id,generation)
-    )""",
-    """CREATE TABLE work_results (
-        id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL REFERENCES work_attempts(id),
-        schema_version INTEGER NOT NULL DEFAULT 1 CHECK(schema_version=1),
-        content_hash TEXT NOT NULL, immutable_location TEXT NOT NULL,
-        byte_length INTEGER NOT NULL CHECK(byte_length>=0),
-        validation_state TEXT NOT NULL CHECK(validation_state IN ('verified','rejected')),
-        validator_id TEXT NOT NULL, validation_evidence TEXT NOT NULL,
-        created_at REAL NOT NULL
-    )""",
-    """CREATE TABLE work_event_sequences (
-        job_id TEXT PRIMARY KEY REFERENCES work_jobs(id),
-        high_water INTEGER NOT NULL DEFAULT 0 CHECK(high_water>=0),
-        retained_after INTEGER NOT NULL DEFAULT 0 CHECK(retained_after>=0)
-    )""",
-    """CREATE TABLE work_events (
-        event_id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES work_jobs(id),
-        work_item_id TEXT REFERENCES work_items(id), attempt_id TEXT REFERENCES work_attempts(id),
-        sequence INTEGER NOT NULL CHECK(sequence>0), event_type TEXT NOT NULL,
-        schema_version INTEGER NOT NULL DEFAULT 1 CHECK(schema_version=1),
-        actor_id TEXT NOT NULL, occurred_at REAL NOT NULL, metadata TEXT NOT NULL DEFAULT '{}',
-        UNIQUE(job_id,sequence)
-    )""",
-    """CREATE TABLE work_transition_receipts (
-        event_id TEXT PRIMARY KEY, request_hash TEXT NOT NULL,
-        work_item_id TEXT NOT NULL REFERENCES work_items(id)
-    )""",
-)
-SCHEMA_CHECKSUM = hashlib.sha256(";\n".join(_SCHEMA).encode()).hexdigest()
-_MIGRATIONS = {
-    1: _SCHEMA,
-    2: AUTHORITY_SCHEMA,
-    3: RESERVATIONS_SCHEMA,
-    4: STEP_CONTRACT_SCHEMA,
-    5: SCHEDULER_SCHEMA,
-    6: WORKTREE_EVIDENCE_SCHEMA,
-    7: KNOWLEDGE_SCHEMA,
-    8: SCHEDULER_FAIRNESS_SCHEMA,
-    9: SNAPSHOT_SCHEMA,
-    10: DISPATCH_SCHEMA,
-    11: DELIVERY_SCHEMA,
-    12: KNOWLEDGE_ACCESS_SCHEMA,
-    13: MEMORY_ACCESS_SCHEMA,
-    14: DELIVERY_CONTENT_SCHEMA,
-    15: INBOX_SCHEMA,
-    16: INBOX_STORE_CONTEXT_SCHEMA,
-    17: KNOWLEDGE_CURSOR_SCHEMA,
-    18: DECISIONS_SCHEMA,
-    19: ORIGIN_SCHEMA,
-    20: ORIGIN_AUTHORITY_SCHEMA,
-    21: LAUNCH_ORIGIN_SCHEMA,
-    22: LINEAGE_ORIGIN_SCHEMA,
-    23: LINEAGE_INTEGRITY_SCHEMA,
-    24: RECOVERY_CONTEXT_SCHEMA,
-    25: TASK_RECEIVED_RECEIPT_SCHEMA,
-    26: (
-        *OFFLINE_CUT_SCHEMA,
-        *OFFLINE_CUT_OBSERVATION_SCHEMA,
-        *OFFLINE_CUT_REJECTION_SCHEMA,
-        *WORK_WRITER_REGISTRY_SCHEMA,
-    ),
-    27: PROCESS_IDENTITY_SCHEMA,
-    28: DISPATCH_V2_EVIDENCE_SCHEMA,
-    29: EXECUTABLE_CONTENT_SCHEMA,
-    30: BUBBLEWRAP_IDENTITY_SCHEMA,
-    31: BUBBLEWRAP_SETUP_INTENT_SCHEMA,
-    32: BUBBLEWRAP_RELEASE_CLAIM_SCHEMA,
-    33: WORK_MCP_PROXY_ISSUE_SCHEMA,
-    34: WORK_MCP_PROXY_EFFECT_SCHEMA,
-    35: WORK_MCP_PROXY_ISSUE_RECOVERY_SCHEMA,
-    36: WORK_ATTEMPT_CREDENTIAL_SCHEMA,
-    37: WORK_TASK_RECEIVER_ACCEPTANCE_SCHEMA,
-    38: WORK_TASK_RECEIVER_CREDENTIAL_SCHEMA,
-    39: WORKFLOW_STEP_SCHEMA,
-}
-_CHECKSUMS = {
-    version: hashlib.sha256(";\n".join(statements).encode()).hexdigest()
-    for version, statements in _MIGRATIONS.items()
-}
-
-
-def _schema_objects(connection: sqlite3.Connection) -> dict[str, str]:
-    return dict(
-        connection.execute(
-            "SELECT name,sql FROM sqlite_master WHERE substr(name,1,5)='work_' AND sql IS NOT NULL"
-        ).fetchall()
-    )
-
-
-def _expected_schemas() -> dict[int, dict[str, str]]:
-    schemas = {}
-    with closing(sqlite3.connect(":memory:")) as owned_connection, owned_connection as connection:
-        for version, statements in _MIGRATIONS.items():
-            for statement in statements:
-                connection.execute(statement)
-            schemas[version] = _schema_objects(connection)
-    return schemas
-
-
-_EXPECTED_SCHEMAS = _expected_schemas()
+# Native Work schema version, recorded in the PostgreSQL migration ledger.
+SCHEMA_VERSION = 3
 
 
 class WorkRepository:
-    def __init__(self, path: Path | str):
-        self.path = Path(path)
+    def __init__(
+        self,
+        target: DatabaseTarget | Path | str | None = None,
+        *,
+        filesystem_home: Path | str | None = None,
+    ):
+        """Bind Work data to the configured main PostgreSQL target.
+
+        A legacy path argument is retained only to locate file-backed artifacts;
+        it is never used as a database connection string or store identity.
+        """
+        if isinstance(target, DatabaseTarget):
+            self.target = target
+            inferred_home = target.home
+            artifact_path = Path(inferred_home or ".") / "cli-agent-orchestrator.db"
+        else:
+            from cli_agent_orchestrator.constants import CAO_HOME_DIR
+
+            self.target = DatabaseTarget.from_settings(scope="main")
+            if target is not None:
+                artifact_path = Path(target).resolve()
+                inferred_home = artifact_path.parent
+            else:
+                inferred_home = CAO_HOME_DIR
+                artifact_path = Path(inferred_home) / "cli-agent-orchestrator.db"
+        self.filesystem_home = Path(
+            filesystem_home or inferred_home or self.target.home or "."
+        ).resolve()
+        self._artifact_path = self.filesystem_home / artifact_path.name
+
+    @property
+    def path(self) -> Path:
+        """Compatibility artifact namespace; this path is not a database."""
+        return self._artifact_path
+
+    def same_store(self, other: object) -> bool:
+        return isinstance(other, WorkRepository) and self.target.identity == other.target.identity
+
+    @property
+    def result_content_root(self) -> Path:
+        """Private result payload root retained under the former profile name."""
+        return self.path.with_name(f"{self.path.name}.result-content")
 
     @property
     def delivery_content_root(self) -> Path:
-        """The private, content-addressed payload root paired with this SQLite store."""
+        """Private content-addressed delivery payloads in the profile filesystem."""
         return self.path.with_name(f"{self.path.name}.delivery-content")
 
     @property
     def executable_content_root(self) -> Path:
-        """The private static executable namespace paired with this SQLite store."""
+        """Private static executable files in the profile filesystem."""
         return self.path.with_name(f"{self.path.name}.executable-content")
 
     @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(str(self.path), timeout=10, isolation_level=None)
+    def connection(self) -> Iterator[Connection]:
+        connection = connect(self.target)
         try:
-            connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA foreign_keys=ON")
-            connection.execute("PRAGMA synchronous=FULL")
+            self._verify(connection)
             yield connection
         finally:
             connection.close()
 
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
+    def transaction(self) -> Iterator[Connection]:
         with self.connection() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            try:
+            with connection.transaction():
+                self._lock_store_for_write(connection)
                 yield connection
-                connection.commit()
-            except BaseException:
-                connection.rollback()
-                raise
 
     @contextmanager
-    def read_snapshot(self) -> Iterator[sqlite3.Connection]:
-        """Read a verified existing store; queries never create or migrate a database."""
-        connection = sqlite3.connect(
-            self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10, isolation_level=None
-        )
-        connection.row_factory = sqlite3.Row
+    def _audit_connection(self) -> Iterator[Connection]:
+        """Open the direct connection used by the default audited writer."""
+        connection = connect(self.target)
         try:
-            connection.execute("BEGIN")
-            self._verify(connection, version=SCHEMA_VERSION)
+            yield connection
+        finally:
+            connection.close()
+
+    @contextmanager
+    def audited_write_transaction(self) -> Iterator[Connection]:
+        """Verify an audit writer only after it holds the Work store fence.
+
+        Unlike the general transaction context, this path deliberately opens
+        its connection through a private seam so the mandatory full
+        verification happens once, inside the transaction and after the store
+        identity lock. The default seam owns a direct connection; the private
+        legacy-memory repository may provide a bounded lease. It is intended
+        for standalone audit appends that must commit before or after an
+        external operation.
+        """
+        with self._audit_connection() as connection:
+            with connection.transaction():
+                self._lock_store_for_write(connection)
+                self._verify(connection)
+                yield connection
+
+    @contextmanager
+    def read_snapshot(self) -> Iterator[Connection]:
+        """Read one verified PostgreSQL snapshot under REPEATABLE READ READ ONLY."""
+        connection = connect(self.target, readonly=True)
+        try:
+            self._verify(connection)
             yield connection
         finally:
             connection.close()
 
     def initialize(self) -> None:
-        """Verify installed history, then apply additive migrations atomically."""
-        with self.transaction() as connection:
-            present = _schema_objects(connection)
-            installed = 0
-            if present:
-                if present.get("work_migrations") != _EXPECTED_SCHEMAS[1]["work_migrations"]:
-                    raise SchemaMismatch("work migration ledger is missing or modified")
-                row = connection.execute("SELECT max(version) FROM work_migrations").fetchone()
-                installed = row[0]
-                if installed not in _MIGRATIONS:
-                    raise SchemaMismatch("unknown or empty work migration history")
-                self._verify(connection, version=installed)
-            for version in range(installed + 1, SCHEMA_VERSION + 1):
-                for statement in _MIGRATIONS[version]:
-                    connection.execute(statement)
-                if version == 16:
-                    self._initialize_inbox_store_context(connection)
-                if version == 24:
-                    self._initialize_recovery_context(connection)
-                connection.execute(
-                    "INSERT INTO work_migrations VALUES (?,?,?,?)",
-                    (version, _CHECKSUMS[version], time.time(), "verified"),
-                )
-                self._verify(connection, version=version)
-            self._verify(connection, version=SCHEMA_VERSION)
+        """Verify the complete installed Work component without mutating schema/data."""
+        with self.read_snapshot():
+            return
 
     @staticmethod
-    def _expire_offline_cut(connection: sqlite3.Connection) -> None:
+    def _lock_store_for_write(connection: Connection) -> None:
+        row = connection.execute(
+            "SELECT store_identity,store_uuid FROM work_store_control "
+            "WHERE singleton=1 FOR SHARE"
+        ).fetchone()
+        if row is None or row["store_identity"] != connection.target.store_id:
+            raise SchemaMismatch("Work store control identity is absent or contradictory")
+
+    @staticmethod
+    def _expire_offline_cut(connection: Connection) -> None:
         connection.execute(
             "UPDATE work_offline_cuts SET state='expired',revision=revision+1 "
-            "WHERE state='live' AND expires_at<=?",
+            "WHERE state='live' AND expires_at<=%s",
             (time.time(),),
         )
 
     @staticmethod
-    def _registered_writer_count(connection: sqlite3.Connection) -> int:
-        return int(
-            connection.execute(
-                "SELECT count(*) FROM work_registered_writers WHERE state='active'"
-            ).fetchone()[0]
-        )
+    def _registered_writer_count(connection: Connection) -> int:
+        row = connection.execute(
+            "SELECT count(*) FROM work_registered_writers WHERE state='active'"
+        ).fetchone()
+        if row is None:
+            raise WorkConflict("registered Work writer count is unavailable")
+        return int(row[0])
 
     @classmethod
-    def _assert_offline_cut_allows_writer(cls, connection: sqlite3.Connection) -> None:
+    def _assert_offline_cut_allows_writer(cls, connection: Connection) -> None:
         """Registered Work writers are denied while a durable cut is live."""
-        if (
-            connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_registered_writers'"
-            ).fetchone()
-            is None
-        ):
-            return  # Historical readers have no v26 cut state to interpret.
         cls._expire_offline_cut(connection)
         if (
             connection.execute(
@@ -744,38 +610,38 @@ class WorkRepository:
             raise WorkConflict("registered Work writer is fenced by offline cut")
 
     @classmethod
-    def _register_writer_effect(cls, connection: sqlite3.Connection, *, writer_id: str) -> None:
+    def _register_writer_effect(cls, connection: Connection, *, writer_id: str) -> None:
         """Durably register one actual Work effect before its external boundary."""
         if not connection.in_transaction:
             raise ValueError("writer registration requires caller transaction")
         _identity(writer_id, "writer_id")
         cls._assert_offline_cut_allows_writer(connection)
         row = connection.execute(
-            "SELECT state FROM work_registered_writers WHERE writer_id=?", (writer_id,)
+            "SELECT state FROM work_registered_writers WHERE writer_id=%s", (writer_id,)
         ).fetchone()
         if row is None:
             connection.execute(
                 "INSERT INTO work_registered_writers "
-                "(writer_id,owner,scope,state,revision,registered_at) VALUES (?,?,?,?,?,?)",
+                "(writer_id,owner,scope,state,revision,registered_at) VALUES (%s,%s,%s,%s,%s,%s)",
                 (writer_id, "work", "registered-work-writers", "active", 1, time.time()),
             )
         elif row["state"] != "active":
             raise WorkConflict("released Work writer cannot resume an effect")
 
     @staticmethod
-    def _release_writer_effect(connection: sqlite3.Connection, *, writer_id: str) -> None:
+    def _release_writer_effect(connection: Connection, *, writer_id: str) -> None:
         if not connection.in_transaction:
             raise ValueError("writer release requires caller transaction")
         changed = connection.execute(
-            "UPDATE work_registered_writers SET state='released',revision=revision+1,released_at=? "
-            "WHERE writer_id=? AND state='active'",
+            "UPDATE work_registered_writers SET state='released',revision=revision+1,released_at=%s "
+            "WHERE writer_id=%s AND state='active'",
             (time.time(), writer_id),
         )
         if changed.rowcount != 1:
             raise WorkConflict("registered Work writer is absent or already released")
 
     def _acquire_offline_cut(
-        self, connection: sqlite3.Connection, *, operator_principal_id: str, ttl: float
+        self, connection: Connection, *, operator_principal_id: str, ttl: float
     ):
         """Create the one live server-owned cut after proving all registered writers stopped."""
         if not connection.in_transaction:
@@ -790,9 +656,12 @@ class WorkRepository:
         self._expire_offline_cut(connection)
         if self._registered_writer_count(connection):
             raise WorkConflict("registered Work writer is active")
-        epoch = connection.execute(
+        epoch_row = connection.execute(
             "SELECT coalesce(max(epoch),0)+1 FROM work_offline_cuts"
-        ).fetchone()[0]
+        ).fetchone()
+        if epoch_row is None:
+            raise WorkConflict("offline cut epoch is unavailable")
+        epoch = epoch_row[0]
         now = time.time()
         lease = {
             "id": uuid4().hex,
@@ -809,16 +678,28 @@ class WorkRepository:
         connection.execute(
             "INSERT INTO work_offline_cuts "
             "(id,store_identity,operator_principal_id,owner,scope,epoch,fence,expires_at,revision,state,created_at) "
-            "VALUES (:id,:store_identity,:operator_principal_id,:owner,:scope,:epoch,:fence,:expires_at,:revision,:state,:created_at)",
-            {**lease, "created_at": now},
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                lease["id"],
+                lease["store_identity"],
+                lease["operator_principal_id"],
+                lease["owner"],
+                lease["scope"],
+                lease["epoch"],
+                lease["fence"],
+                lease["expires_at"],
+                lease["revision"],
+                lease["state"],
+                now,
+            ),
         )
         return lease
 
-    def _verify_offline_cut(self, connection: sqlite3.Connection, lease: dict) -> dict:
+    def _verify_offline_cut(self, connection: Connection, lease: dict) -> dict:
         """Fence capture and publication against expiry, revocation and new writers."""
         self._expire_offline_cut(connection)
         row = connection.execute(
-            "SELECT * FROM work_offline_cuts WHERE id=?", (lease.get("id"),)
+            "SELECT * FROM work_offline_cuts WHERE id=%s", (lease.get("id"),)
         ).fetchone()
         if (
             row is None
@@ -844,11 +725,11 @@ class WorkRepository:
             raise WorkConflict("offline cut writer fence changed")
         return dict(row)
 
-    def _revoke_offline_cut(self, connection: sqlite3.Connection, lease: dict) -> None:
+    def _revoke_offline_cut(self, connection: Connection, lease: dict) -> None:
         row = self._verify_offline_cut(connection, lease)
         changed = connection.execute(
-            "UPDATE work_offline_cuts SET state='revoked',revision=revision+1,revoked_at=? "
-            "WHERE id=? AND state='live' AND revision=?",
+            "UPDATE work_offline_cuts SET state='revoked',revision=revision+1,revoked_at=%s "
+            "WHERE id=%s AND state='live' AND revision=%s",
             (time.time(), row["id"], row["revision"]),
         )
         if changed.rowcount != 1:
@@ -856,7 +737,7 @@ class WorkRepository:
 
     def _publish_offline_cut(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         lease: dict,
         *,
         bundle_path: Path,
@@ -881,8 +762,8 @@ class WorkRepository:
             raise WorkConflict("offline cut publication is invalid")
         changed = connection.execute(
             "UPDATE work_offline_cuts SET state='published',revision=revision+1,"
-            "published_path=?,published_capture_id=?,published_manifest_digest=?,published_manifest_size=?,published_at=? "
-            "WHERE id=? AND state='live' AND revision=?",
+            "published_path=%s,published_capture_id=%s,published_manifest_digest=%s,published_manifest_size=%s,published_at=%s "
+            "WHERE id=%s AND state='live' AND revision=%s",
             (
                 str(bundle_path),
                 capture_id,
@@ -895,15 +776,16 @@ class WorkRepository:
         )
         if changed.rowcount != 1:
             raise WorkConflict("offline cut publication lost its fence")
-        return dict(
-            connection.execute(
-                "SELECT * FROM work_offline_cuts WHERE id=?", (row["id"],)
-            ).fetchone()
-        )
+        published = connection.execute(
+            "SELECT * FROM work_offline_cuts WHERE id=%s", (row["id"],)
+        ).fetchone()
+        if published is None:
+            raise WorkConflict("offline cut publication readback is absent")
+        return dict(published)
 
     def _observe_offline_cut(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         lease: dict,
         *,
         capture_id: str,
@@ -920,83 +802,30 @@ class WorkRepository:
         ):
             raise WorkConflict("offline cut observation is invalid")
         connection.execute(
-            "INSERT INTO work_offline_cut_observations(lease_id,capture_id,phase,observation) VALUES (?,?,?,?)",
+            "INSERT INTO work_offline_cut_observations(lease_id,capture_id,phase,observation) VALUES (%s,%s,%s,%s)",
             (row["id"], capture_id, phase, observation),
         )
-        return dict(
-            connection.execute(
-                "SELECT lease_id,capture_id,phase,observation FROM work_offline_cut_observations "
-                "WHERE lease_id=? AND capture_id=? AND phase=?",
-                (row["id"], capture_id, phase),
-            ).fetchone()
-        )
+        recorded = connection.execute(
+            "SELECT lease_id,capture_id,phase,observation FROM work_offline_cut_observations "
+            "WHERE lease_id=%s AND capture_id=%s AND phase=%s",
+            (row["id"], capture_id, phase),
+        ).fetchone()
+        if recorded is None:
+            raise WorkConflict("offline cut observation readback is absent")
+        return dict(recorded)
 
     @staticmethod
-    def _record_offline_cut_rejection(
-        connection: sqlite3.Connection, *, lease_id: str, phase: str
-    ) -> None:
+    def _record_offline_cut_rejection(connection: Connection, *, lease_id: str, phase: str) -> None:
         if phase not in {"before", "after", "promote", "stage"}:
             raise ValueError("invalid offline cut rejection phase")
         connection.execute(
-            "INSERT INTO work_offline_cut_rejections VALUES (?,?,?,?,?)",
+            "INSERT INTO work_offline_cut_rejections VALUES (%s,%s,%s,%s,%s)",
             (uuid4().hex, lease_id, phase, "capture_rejected", time.time()),
         )
 
-    @staticmethod
-    def _verify_v15_inbox_bridge_context(connection, store_identity: str) -> None:
-        """Carry v15 rows forward literally only when they name this same file."""
-        paired = connection.execute(
-            "SELECT store_identity FROM work_inbox_store_identity WHERE singleton=1"
-        ).fetchone()
-        if paired is not None and paired["store_identity"] != store_identity:
-            raise SchemaMismatch("v15 managed inbox store identity is contradictory")
-        inconsistent = connection.execute(
-            "SELECT 1 FROM work_inbox_bindings WHERE store_identity<>? LIMIT 1",
-            (store_identity,),
-        ).fetchone()
-        if inconsistent is not None:
-            raise SchemaMismatch("v15 managed inbox bridge names another file")
-
-    def _initialize_inbox_store_context(self, connection) -> None:
-        """Create the one non-secret UUID during migration, never admission."""
-        store_identity = _connection_store_identity(connection)
-        self._verify_v15_inbox_bridge_context(connection, store_identity)
-        existing = connection.execute(
-            "SELECT singleton,store_identity,store_uuid FROM work_inbox_store_context"
-        ).fetchall()
-        if not existing:
-            connection.execute(
-                "INSERT INTO work_inbox_store_context VALUES (1,?,?,?)",
-                (uuid4().hex, store_identity, time.time()),
-            )
-        # A concurrent initializer cannot enter this transaction. If a recovered
-        # partial store has a winner, validate and retain it instead of regenerating.
-        _stored_inbox_context(connection)
-
-    @staticmethod
-    def _initialize_recovery_context(connection) -> None:
-        """Install the one normal v24 context inside the migration transaction."""
-        existing = connection.execute("SELECT singleton FROM work_recovery_context").fetchall()
-        if existing:
-            raise SchemaMismatch("recovery migration context is contradictory")
-        connection.execute(
-            "INSERT INTO work_recovery_context VALUES (?,?,?,?,?,?,?,?)",
-            (
-                1,
-                RECOVERY_CONTEXT_VERSION,
-                RECOVERY_STATE_NORMAL,
-                uuid4().hex,
-                None,
-                None,
-                None,
-                time.time(),
-            ),
-        )
-        _stored_recovery_context(connection)
-
     def _block_recovery_for_restore(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         *,
         installation_uuid: str,
         bundle_digest: str,
@@ -1016,9 +845,9 @@ class WorkRepository:
         if installation_uuid == context.installation_uuid:
             raise SchemaMismatch("restored context must have a new installation UUID")
         updated = connection.execute(
-            "UPDATE work_recovery_context SET execution_state=?,installation_uuid=?,"
-            "source_installation_uuid=?,bundle_digest=?,restore_receipt=? "
-            "WHERE singleton=1 AND execution_state=?",
+            "UPDATE work_recovery_context SET execution_state=%s,installation_uuid=%s,"
+            "source_installation_uuid=%s,bundle_digest=%s,restore_receipt=%s "
+            "WHERE singleton=1 AND execution_state=%s",
             (
                 RECOVERY_STATE_BLOCKED_RESTORE,
                 installation_uuid,
@@ -1032,51 +861,7 @@ class WorkRepository:
             raise SchemaMismatch("recovery context transition was not applied")
         return _stored_recovery_context(connection)
 
-    @staticmethod
-    def _verify_portable_restore_copy(
-        connection: sqlite3.Connection, *, source_inbox_context: ManagedInboxStoreIdentity
-    ) -> RecoveryStoreContext:
-        """Verify a v26 copy while retaining, rather than adopting, inbox provenance.
-
-        This is deliberately not a mode of ``_verify``: ordinary repositories
-        must continue to require that their inbox context names their live file.
-        The restore owner supplies the identity/UUID already verified from the
-        source manifest, so the copied database can only retain that provenance.
-        """
-        try:
-            expected_context = ManagedInboxStoreIdentity(
-                store_identity=_store_identity(source_inbox_context.store_identity),
-                store_uuid=_store_uuid(source_inbox_context.store_uuid),
-            )
-        except (AttributeError, ValueError) as error:
-            raise SchemaMismatch("portable restore inbox provenance is invalid") from error
-        expected = _EXPECTED_SCHEMAS[SCHEMA_VERSION]
-        if _schema_objects(connection) != expected:
-            raise SchemaMismatch("work schema is incomplete, incompatible or modified")
-        records = connection.execute(
-            "SELECT version,checksum,verification_result FROM work_migrations ORDER BY version"
-        ).fetchall()
-        if [tuple(row) for row in records] != [
-            (number, _CHECKSUMS[number], "verified") for number in range(1, SCHEMA_VERSION + 1)
-        ]:
-            raise SchemaMismatch("work migration ledger is incompatible or modified")
-        historical_context = _read_stored_inbox_context(connection)
-        if historical_context != expected_context:
-            raise SchemaMismatch("portable restore inbox provenance differs from the source")
-        if historical_context.store_identity == _connection_store_identity(connection):
-            raise SchemaMismatch("portable restore requires a path-distinct copied store")
-        WorkRepository._verify_v15_inbox_bridge_context(
-            connection, historical_context.store_identity
-        )
-        context = _stored_recovery_context(connection)
-        for table, sql in expected.items():
-            if not sql.startswith("CREATE TABLE"):
-                continue
-            if connection.execute(f"PRAGMA foreign_key_check({table})").fetchone():
-                raise SchemaMismatch("work store contains invalid references")
-        return context
-
-    def _reconcile_portable_restore_attempts(self, connection: sqlite3.Connection) -> None:
+    def _reconcile_portable_restore_attempts(self, connection: Connection) -> None:
         """Convert only uncertain copied delivery history to durable reconciliation."""
         attempts = connection.execute(
             "SELECT id FROM work_attempts "
@@ -1085,7 +870,7 @@ class WorkRepository:
         ).fetchall()
         for row in attempts:
             attempt = connection.execute(
-                "SELECT * FROM work_attempts WHERE id=?", (row["id"],)
+                "SELECT * FROM work_attempts WHERE id=%s", (row["id"],)
             ).fetchone()
             if attempt is None:
                 raise SchemaMismatch("portable restore attempt disappeared")
@@ -1110,38 +895,55 @@ class WorkRepository:
             except WorkConflict as error:
                 raise SchemaMismatch("portable restore attempt cannot be reconciled") from error
 
-    def _block_portable_restore_copy(
+    def block_imported_restore(
         self,
         *,
-        source_inbox_context: ManagedInboxStoreIdentity,
+        source_store_uuid: str,
         installation_uuid: str,
         bundle_digest: str,
         restore_receipt: str,
     ) -> RecoveryStoreContext:
-        """Atomically block and reconcile an already-verified path-distinct v26 copy.
+        """Block a native imported store after offline source validation.
 
-        The stored inbox path/UUID and v15 bridge are immutable source
-        provenance.  They are validated against the supplied source context but
-        never rewritten to make the staging path operational.
+        `source_store_uuid` is the canonical logical UUID from the verified
+        legacy bundle. It contains no filesystem path; the importer must have
+        configured the destination target with that same logical identity and
+        imported the immutable inbox context before calling this method.
         """
+        try:
+            source_store_uuid = _store_uuid(source_store_uuid)
+            logical_uuid = UUID(self.target.store_id).hex
+            installation_uuid = _recovery_context_uuid(installation_uuid, "installation UUID")
+            bundle_digest = _recovery_digest(bundle_digest, "bundle digest")
+            restore_receipt = _recovery_digest(restore_receipt, "restore receipt")
+        except ValueError as error:
+            raise SchemaMismatch("recovery restore provenance is invalid") from error
+        if source_store_uuid != logical_uuid:
+            raise SchemaMismatch("imported Work store UUID differs from configured target")
         with self.transaction() as connection:
-            context = self._verify_portable_restore_copy(
-                connection, source_inbox_context=source_inbox_context
+            self._verify(connection)
+            # Exclusive control-row locking fences every WorkRepository writer
+            # that holds the shared row lock for its transaction.
+            control = connection.execute(
+                "SELECT singleton FROM work_store_control WHERE singleton=1 FOR UPDATE"
+            ).fetchone()
+            if control is None:
+                raise SchemaMismatch("Work store control identity is absent")
+            expected_inbox = ManagedInboxStoreIdentity(
+                store_identity=self.target.store_id,
+                store_uuid=logical_uuid,
             )
+            if _stored_inbox_context(connection) != expected_inbox:
+                raise SchemaMismatch("imported Work inbox context differs from configured target")
+            context = _stored_recovery_context(connection)
             if context.execution_state != RECOVERY_STATE_NORMAL:
                 raise SchemaMismatch("recovery context is not eligible for restore blocking")
-            try:
-                installation_uuid = _recovery_context_uuid(installation_uuid, "installation UUID")
-                bundle_digest = _recovery_digest(bundle_digest, "bundle digest")
-                restore_receipt = _recovery_digest(restore_receipt, "restore receipt")
-            except ValueError as error:
-                raise SchemaMismatch("recovery restore metadata is invalid") from error
             if installation_uuid == context.installation_uuid:
                 raise SchemaMismatch("restored context must have a new installation UUID")
             updated = connection.execute(
-                "UPDATE work_recovery_context SET execution_state=?,installation_uuid=?,"
-                "source_installation_uuid=?,bundle_digest=?,restore_receipt=? "
-                "WHERE singleton=1 AND execution_state=?",
+                "UPDATE work_recovery_context SET execution_state=%s,installation_uuid=%s,"
+                "source_installation_uuid=%s,bundle_digest=%s,restore_receipt=%s "
+                "WHERE singleton=1 AND execution_state=%s",
                 (
                     RECOVERY_STATE_BLOCKED_RESTORE,
                     installation_uuid,
@@ -1153,10 +955,18 @@ class WorkRepository:
             )
             if updated.rowcount != 1:
                 raise SchemaMismatch("recovery context transition was not applied")
+            # A live source lease copied in the bundle belongs to a different
+            # physical database even when the logical Work UUID is preserved.
+            # Keep its history, but never let the restored target inherit it.
+            connection.execute(
+                "UPDATE work_offline_cuts SET state='revoked',revision=revision+1,revoked_at=%s "
+                "WHERE state='live'",
+                (time.time(),),
+            )
             self._reconcile_portable_restore_attempts(connection)
             return _stored_recovery_context(connection)
 
-    def assert_execution_allowed(self, connection: sqlite3.Connection) -> RecoveryStoreContext:
+    def assert_execution_allowed(self, connection: Connection) -> RecoveryStoreContext:
         """Fail closed unless this verified installation remains explicitly normal."""
         self._verify(connection)
         context = _stored_recovery_context(connection)
@@ -1169,15 +979,10 @@ class WorkRepository:
     ) -> ManagedInboxStoreIdentity:
         """Validate this repository connection against server configuration and pin."""
         context = _stored_inbox_context(connection)
-        try:
-            from cli_agent_orchestrator import constants
-
-            configured = _store_identity(constants.DATABASE_FILE)
-        except (ImportError, ValueError) as error:
-            raise WorkConflict("managed inbox configured database is unavailable") from error
         if (
-            context.store_identity != _store_identity(self.path)
-            or context.store_identity != configured
+            not isinstance(connection, Connection)
+            or connection.target.identity != self.target.identity
+            or context.store_identity != self.target.store_id
         ):
             raise WorkConflict("managed inbox configured database differs from work store")
         if expected is not None:
@@ -1204,7 +1009,7 @@ class WorkRepository:
     ):
         """Assign identity in the same transaction as the first sent transition."""
         _identity(terminal_id, "terminal_id")
-        row = connection.execute("SELECT * FROM work_attempts WHERE id=?", (attempt_id,)).fetchone()
+        row = self._lock_attempt_for_write(connection, attempt_id)
         if (
             row is None
             or row["generation"] != generation
@@ -1214,17 +1019,22 @@ class WorkRepository:
             raise WorkConflict("terminal assignment requires the planned dispatch winner")
         if (
             connection.execute(
-                "SELECT id FROM work_attempts WHERE terminal_id=? AND id<>?",
+                "SELECT id FROM work_attempts WHERE terminal_id=%s AND id<>%s",
                 (terminal_id, attempt_id),
             ).fetchone()
             is not None
         ):
             raise WorkConflict("terminal identity is already assigned to another attempt")
-        connection.execute(
-            "UPDATE work_attempts SET terminal_id=? WHERE id=?", (terminal_id, attempt_id)
+        updated = connection.execute(
+            "UPDATE work_attempts SET terminal_id=%s "
+            "WHERE id=%s AND generation=%s AND revision=%s AND state='planned' "
+            "AND terminal_id IS NOT DISTINCT FROM %s",
+            (terminal_id, attempt_id, generation, row["revision"], row["terminal_id"]),
         )
+        if updated.rowcount != 1:
+            raise WorkConflict("terminal assignment changed before dispatch binding")
         job_id = connection.execute(
-            "SELECT job_id FROM work_items WHERE id=?", (row["work_item_id"],)
+            "SELECT job_id FROM work_items WHERE id=%s", (row["work_item_id"],)
         ).fetchone()[0]
         self._append_event(
             connection,
@@ -1259,7 +1069,7 @@ class WorkRepository:
         with self.transaction() as connection:
             self._verify(connection)
             connection.execute(
-                "INSERT INTO work_jobs (id,project_id,principal_id,allowed_providers,grant_id,budget,priority,created_at) VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO work_jobs (id,project_id,principal_id,allowed_providers,grant_id,budget,priority,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
                     identifier,
                     project_id,
@@ -1271,7 +1081,9 @@ class WorkRepository:
                     now,
                 ),
             )
-            connection.execute("INSERT INTO work_event_sequences(job_id) VALUES (?)", (identifier,))
+            connection.execute(
+                "INSERT INTO work_event_sequences(job_id) VALUES (%s)", (identifier,)
+            )
             self._append_event(
                 connection, job_id=identifier, event_type="job.created", actor_id=principal_id
             )
@@ -1298,7 +1110,7 @@ class WorkRepository:
         with self.transaction() as connection:
             self._verify(connection)
             attempt = connection.execute(
-                "SELECT generation,state FROM work_attempts WHERE id=?", (attempt_id,)
+                "SELECT generation,state FROM work_attempts WHERE id=%s", (attempt_id,)
             ).fetchone()
             if attempt is None:
                 raise WorkConflict("process identity attempt does not exist")
@@ -1308,7 +1120,7 @@ class WorkRepository:
                 raise WorkConflict("process identity can only be stored for an active attempt")
             existing = connection.execute(
                 "SELECT generation,protocol_version,identity_json,identity_sha256 "
-                "FROM work_process_identities WHERE attempt_id=?",
+                "FROM work_process_identities WHERE attempt_id=%s",
                 (attempt_id,),
             ).fetchone()
             if existing is not None:
@@ -1322,7 +1134,7 @@ class WorkRepository:
             connection.execute(
                 "INSERT INTO work_process_identities "
                 "(attempt_id,generation,protocol_version,identity_json,identity_sha256,created_at) "
-                "VALUES (?,?,?,?,?,?)",
+                "VALUES (%s,%s,%s,%s,%s,%s)",
                 (attempt_id, generation, 3, identity_json, digest, time.time()),
             )
 
@@ -1338,7 +1150,7 @@ class WorkRepository:
 
         with self.read_snapshot() as connection:
             attempt = connection.execute(
-                "SELECT generation FROM work_attempts WHERE id=?", (attempt_id,)
+                "SELECT generation FROM work_attempts WHERE id=%s", (attempt_id,)
             ).fetchone()
             if attempt is None:
                 raise WorkConflict("process identity attempt does not exist")
@@ -1346,7 +1158,7 @@ class WorkRepository:
                 raise WorkConflict("process identity generation does not match the attempt")
             row = connection.execute(
                 "SELECT generation,protocol_version,identity_json,identity_sha256 "
-                "FROM work_process_identities WHERE attempt_id=?",
+                "FROM work_process_identities WHERE attempt_id=%s",
                 (attempt_id,),
             ).fetchone()
             if row is None:
@@ -1372,7 +1184,7 @@ class WorkRepository:
 
     @staticmethod
     def _persist_bubblewrap_process_identity(
-        connection: sqlite3.Connection,
+        connection: Connection,
         attempt_id: str,
         generation: int,
         identity: Mapping[str, object],
@@ -1381,7 +1193,7 @@ class WorkRepository:
         if not connection.in_transaction:
             raise ValueError("caller-owned transaction required")
         attempt = connection.execute(
-            "SELECT generation,state FROM work_attempts WHERE id=?", (attempt_id,)
+            "SELECT generation,state FROM work_attempts WHERE id=%s", (attempt_id,)
         ).fetchone()
         if attempt is None or attempt["generation"] != generation:
             raise WorkConflict("Bubblewrap process identity attempt or generation changed")
@@ -1389,7 +1201,7 @@ class WorkRepository:
             raise WorkConflict("Bubblewrap process identity requires an active attempt")
         existing = connection.execute(
             "SELECT generation,protocol_version,identity_json,identity_sha256 "
-            "FROM work_bubblewrap_process_identities WHERE attempt_id=?",
+            "FROM work_bubblewrap_process_identities WHERE attempt_id=%s",
             (attempt_id,),
         ).fetchone()
         if existing is not None:
@@ -1402,26 +1214,26 @@ class WorkRepository:
         connection.execute(
             "INSERT INTO work_bubblewrap_process_identities "
             "(attempt_id,generation,protocol_version,identity_json,identity_sha256,created_at) "
-            "VALUES (?,?,?,?,?,?)",
+            "VALUES (%s,%s,%s,%s,%s,%s)",
             (attempt_id, generation, 1, _json(identity), digest, time.time()),
         )
 
     def read_bubblewrap_process_identity(
         self, attempt_id: str, generation: int
     ) -> BubblewrapProcessIdentity | None:
-        """Load and verify the Bwrap identity through a closed SQLite snapshot."""
+        """Load and verify the Bwrap identity through a closed native snapshot."""
         _identity(attempt_id, "attempt_id")
         if type(generation) is not int or generation <= 0:
             raise ValueError("Bubblewrap process identity generation is invalid")
         with self.read_snapshot() as connection:
             attempt = connection.execute(
-                "SELECT generation FROM work_attempts WHERE id=?", (attempt_id,)
+                "SELECT generation FROM work_attempts WHERE id=%s", (attempt_id,)
             ).fetchone()
             if attempt is None or attempt["generation"] != generation:
                 raise WorkConflict("Bubblewrap process identity attempt or generation changed")
             row = connection.execute(
                 "SELECT generation,protocol_version,identity_json,identity_sha256 "
-                "FROM work_bubblewrap_process_identities WHERE attempt_id=?",
+                "FROM work_bubblewrap_process_identities WHERE attempt_id=%s",
                 (attempt_id,),
             ).fetchone()
             if row is None:
@@ -1433,55 +1245,46 @@ class WorkRepository:
 
     @contextmanager
     def cleanup_owner_lock(self, attempt_id: str, generation: int) -> Iterator[None]:
-        """Exclude another live cleanup owner without holding a SQLite transaction.
-
-        The lock file may remain after a crash. The kernel releases its flock
-        when the last inherited open-file description closes, so an ordinary
-        owner exit permits pending cleanup to resume. A surviving forked child
-        can delay recovery; the lock remains held and cleanup fails closed.
-        """
+        """Exclude another cleanup owner with a target-scoped PG session lock."""
         _identity(attempt_id, "attempt_id")
         if type(generation) is not int or generation <= 0:
             raise WorkConflict("cleanup owner generation is invalid")
+        lock_material = json.dumps(
+            ["work-cleanup-v1", self.target.identity, attempt_id, generation],
+            separators=(",", ":"),
+        ).encode("utf-8")
+        unsigned_key = int.from_bytes(hashlib.sha256(lock_material).digest()[:8], "big")
+        lock_key = unsigned_key - (1 << 64) if unsigned_key >= (1 << 63) else unsigned_key
+        connection: Connection | None = None
         try:
-            import fcntl
-        except ImportError as exc:
-            raise WorkConflict("cleanup owner lock is unavailable: fcntl is missing") from exc
-
-        digest = hashlib.sha256(f"{attempt_id}\0{generation}".encode("utf-8")).hexdigest()
-        database = self.path.resolve()
-        lock_path = database.with_name(f"{database.name}.cleanup-{digest}.lock")
-        descriptor = None
-        locked = False
-        try:
-            descriptor = os.open(
-                lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600
-            )
-            info = os.fstat(descriptor)
-            if (
-                not stat.S_ISREG(info.st_mode)
-                or info.st_uid != os.geteuid()
-                or stat.S_IMODE(info.st_mode) & 0o077
-            ):
-                raise WorkConflict("cleanup owner lock file is not private")
-            try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                locked = True
-            except BlockingIOError as exc:
-                raise WorkConflict("cleanup is owned by another worker") from exc
-        except OSError as exc:
-            raise WorkConflict(f"cleanup owner lock is unavailable: {exc}") from exc
-        finally:
-            if descriptor is not None and not locked:
-                os.close(descriptor)
+            connection = connect(self.target)
+            acquired = connection.execute("SELECT pg_try_advisory_lock(%s)", (lock_key,)).fetchone()
+            if acquired is None or not acquired[0]:
+                if connection is not None:
+                    try:
+                        connection.close()
+                    except DatabaseError as close_error:
+                        raise WorkConflict("cleanup owner lock is unavailable") from close_error
+                raise WorkConflict("cleanup is owned by another worker")
+        except DatabaseError as exc:
+            if connection is not None:
+                try:
+                    connection.close()
+                except DatabaseError:
+                    pass
+            raise WorkConflict("cleanup owner lock is unavailable") from exc
+        assert connection is not None
         try:
             yield
         finally:
-            os.close(descriptor)
+            try:
+                connection.execute("SELECT pg_advisory_unlock(%s)", (lock_key,))
+            finally:
+                connection.close()
 
     @staticmethod
-    def _job(connection: sqlite3.Connection, job_id: str) -> dict:
-        row = connection.execute("SELECT * FROM work_jobs WHERE id=?", (job_id,)).fetchone()
+    def _job(connection: Connection, job_id: str) -> dict:
+        row = connection.execute("SELECT * FROM work_jobs WHERE id=%s", (job_id,)).fetchone()
         if row is None:
             raise KeyError("job not found")
         result = dict(row)
@@ -1489,20 +1292,84 @@ class WorkRepository:
             result[field] = json.loads(result[field])
         return result
 
+    @staticmethod
+    def _lock_job_for_write(connection: Connection, job_id: str) -> None:
+        """Take the parent lock before any Work child row or event-sequence lock."""
+        if not connection.in_transaction:
+            raise ValueError("caller-owned transaction required")
+        row = connection.execute(
+            "SELECT id FROM work_jobs WHERE id=%s FOR UPDATE", (job_id,)
+        ).fetchone()
+        if row is None:
+            raise WorkConflict("work job disappeared before its write lock")
+
+    def _lock_work_item_for_write(self, connection: Connection, work_item_id: str) -> dict:
+        """Lock job then item, and return the current item after waiting."""
+        identity = connection.execute(
+            "SELECT job_id FROM work_items WHERE id=%s", (work_item_id,)
+        ).fetchone()
+        if identity is None:
+            raise KeyError("work item not found")
+        job_id = identity["job_id"]
+        self._lock_job_for_write(connection, job_id)
+        item = connection.execute(
+            "SELECT * FROM work_items WHERE id=%s FOR UPDATE", (work_item_id,)
+        ).fetchone()
+        if item is None or item["job_id"] != job_id:
+            raise WorkConflict("work item identity changed before its write lock")
+        return dict(item)
+
+    def _lock_attempt_for_write(self, connection: Connection, attempt_id: str) -> Record | None:
+        """Lock the FK parent chain before locking an attempt row.
+
+        Event and receipt inserts reference the job row. A writer that first
+        locks an attempt and later inserts such a row can deadlock with a
+        lifecycle path that already holds the job lock and needs the attempt.
+        The relationship is immutable, so use an unlocked identity read to find
+        the parent, then acquire locks in job→item→attempt order and reread the
+        attempt after any wait.
+        """
+        if not connection.in_transaction:
+            raise ValueError("caller-owned transaction required")
+        identity = connection.execute(
+            "SELECT work_attempts.work_item_id,work_items.job_id "
+            "FROM work_attempts JOIN work_items ON work_items.id=work_attempts.work_item_id "
+            "WHERE work_attempts.id=%s",
+            (attempt_id,),
+        ).fetchone()
+        if identity is None:
+            return None
+        work_item_id = identity["work_item_id"]
+        job_id = identity["job_id"]
+        self._lock_job_for_write(connection, job_id)
+        item = connection.execute(
+            "SELECT job_id FROM work_items WHERE id=%s FOR UPDATE", (work_item_id,)
+        ).fetchone()
+        if item is None or item["job_id"] != job_id:
+            raise WorkConflict("attempt parent identity changed before its write lock")
+        attempt = connection.execute(
+            "SELECT * FROM work_attempts WHERE id=%s FOR UPDATE", (attempt_id,)
+        ).fetchone()
+        if attempt is None:
+            return None
+        if attempt["work_item_id"] != work_item_id:
+            raise WorkConflict("attempt item identity changed before its write lock")
+        return attempt
+
     def get_job(self, job_id: str) -> dict:
         with self.connection() as connection:
             return self._job(connection, job_id)
 
     @staticmethod
-    def _work(connection: sqlite3.Connection, work_item_id: str) -> dict:
-        row = connection.execute("SELECT * FROM work_items WHERE id=?", (work_item_id,)).fetchone()
+    def _work(connection: Connection, work_item_id: str) -> dict:
+        row = connection.execute("SELECT * FROM work_items WHERE id=%s", (work_item_id,)).fetchone()
         if row is None:
             raise KeyError("work item not found")
         result = dict(row)
         result["attempts"] = [
             dict(attempt)
             for attempt in connection.execute(
-                "SELECT * FROM work_attempts WHERE work_item_id=? ORDER BY attempt_number",
+                "SELECT * FROM work_attempts WHERE work_item_id=%s ORDER BY attempt_number",
                 (work_item_id,),
             )
         ]
@@ -1534,8 +1401,8 @@ class WorkRepository:
                 operation_kind=operation_kind, parent_work_item_id=parent_work_item_id
             ):
                 existing = connection.execute(
-                    "SELECT id FROM work_items WHERE job_id=? AND operation_kind=? "
-                    "AND idempotency_key=?",
+                    "SELECT id FROM work_items WHERE job_id=%s AND operation_kind=%s "
+                    "AND idempotency_key=%s",
                     (job_id, operation_kind, idempotency_key),
                 ).fetchone()
                 if existing is None:
@@ -1572,7 +1439,7 @@ class WorkRepository:
 
     def _admit_work(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         *,
         job_id: str,
         operation_kind: str,
@@ -1614,11 +1481,16 @@ class WorkRepository:
             or lease_seconds <= 0
         ):
             raise ValueError("lease_seconds must be finite and positive")
+        job_row = connection.execute(
+            "SELECT id FROM work_jobs WHERE id=%s FOR UPDATE", (job_id,)
+        ).fetchone()
+        if job_row is None:
+            raise KeyError("job not found")
         job = self._job(connection, job_id)
         if provider not in job["allowed_providers"]:
             raise WorkConflict("provider not allowed by job")
         row = connection.execute(
-            "SELECT id FROM work_items WHERE job_id=? AND operation_kind=? AND idempotency_key=?",
+            "SELECT id FROM work_items WHERE job_id=%s AND operation_kind=%s AND idempotency_key=%s",
             (job_id, operation_kind, idempotency_key),
         ).fetchone()
         if row is not None:
@@ -1639,7 +1511,7 @@ class WorkRepository:
         self._assert_offline_cut_allows_writer(connection)
         if parent_work_item_id is not None:
             parent = connection.execute(
-                "SELECT job_id,state FROM work_items WHERE id=?", (parent_work_item_id,)
+                "SELECT job_id,state FROM work_items WHERE id=%s", (parent_work_item_id,)
             ).fetchone()
             if (
                 parent is None
@@ -1649,7 +1521,7 @@ class WorkRepository:
                 raise WorkConflict("parent must be active in the same job")
         identifier, attempt_id, now = uuid4().hex, uuid4().hex, time.time()
         connection.execute(
-            "INSERT INTO work_items (id,job_id,parent_work_item_id,operation_kind,idempotency_key,request_hash,contract_id,snapshot_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO work_items (id,job_id,parent_work_item_id,operation_kind,idempotency_key,request_hash,contract_id,snapshot_id,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (
                 identifier,
                 job_id,
@@ -1663,7 +1535,7 @@ class WorkRepository:
             ),
         )
         connection.execute(
-            "INSERT INTO work_attempts (id,work_item_id,attempt_number,generation,provider,lease_expires_at,created_at) VALUES (?,?,1,1,?,?,?)",
+            "INSERT INTO work_attempts (id,work_item_id,attempt_number,generation,provider,lease_expires_at,created_at) VALUES (%s,%s,1,1,%s,%s,%s)",
             (attempt_id, identifier, provider, now + lease_seconds, now),
         )
         self._append_event(
@@ -1678,7 +1550,7 @@ class WorkRepository:
 
     @staticmethod
     def _append_event(
-        connection: sqlite3.Connection,
+        connection: Connection,
         *,
         job_id: str,
         event_type: str,
@@ -1690,8 +1562,14 @@ class WorkRepository:
     ) -> dict:
         event_id = event_id or uuid4().hex
         payload = _json(metadata or {})
+        head = connection.execute(
+            "SELECT high_water FROM work_event_sequences WHERE job_id=%s FOR UPDATE",
+            (job_id,),
+        ).fetchone()
+        if head is None:
+            raise KeyError("job event sequence not found")
         previous = connection.execute(
-            "SELECT * FROM work_events WHERE event_id=?", (event_id,)
+            "SELECT * FROM work_events WHERE event_id=%s", (event_id,)
         ).fetchone()
         if previous:
             expected = (job_id, event_type, actor_id, work_item_id, attempt_id, payload)
@@ -1710,15 +1588,15 @@ class WorkRepository:
                 raise WorkConflict("event_id reused with different data")
             return dict(previous)
         connection.execute(
-            "UPDATE work_event_sequences SET high_water=high_water+1 WHERE job_id=?", (job_id,)
+            "UPDATE work_event_sequences SET high_water=high_water+1 WHERE job_id=%s", (job_id,)
         )
         sequence = connection.execute(
-            "SELECT high_water FROM work_event_sequences WHERE job_id=?", (job_id,)
+            "SELECT high_water FROM work_event_sequences WHERE job_id=%s", (job_id,)
         ).fetchone()
         if sequence is None:
-            raise KeyError("job event sequence not found")
+            raise WorkConflict("job event sequence disappeared during append")
         connection.execute(
-            "INSERT INTO work_events (event_id,job_id,work_item_id,attempt_id,sequence,event_type,actor_id,occurred_at,metadata) VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO work_events (event_id,job_id,work_item_id,attempt_id,sequence,event_type,actor_id,occurred_at,metadata) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (
                 event_id,
                 job_id,
@@ -1731,9 +1609,12 @@ class WorkRepository:
                 payload,
             ),
         )
-        return dict(
-            connection.execute("SELECT * FROM work_events WHERE event_id=?", (event_id,)).fetchone()
-        )
+        appended = connection.execute(
+            "SELECT * FROM work_events WHERE event_id=%s", (event_id,)
+        ).fetchone()
+        if appended is None:
+            raise WorkConflict("appended Work event readback is absent")
+        return dict(appended)
 
     def read_events(self, job_id: str, *, after_sequence: int = 0, limit: int = 100) -> dict:
         with self.connection() as connection:
@@ -1750,14 +1631,14 @@ class WorkRepository:
         ):
             raise ValueError("invalid event cursor or limit")
         head = connection.execute(
-            "SELECT * FROM work_event_sequences WHERE job_id=?", (job_id,)
+            "SELECT * FROM work_event_sequences WHERE job_id=%s", (job_id,)
         ).fetchone()
         if head is None:
             raise KeyError("job not found")
         if after_sequence > head["high_water"]:
             raise WorkConflict("cursor exceeds job high water")
         rows = connection.execute(
-            "SELECT * FROM work_events WHERE job_id=? AND sequence>? ORDER BY sequence LIMIT ?",
+            "SELECT * FROM work_events WHERE job_id=%s AND sequence>%s ORDER BY sequence LIMIT %s",
             (job_id, after_sequence, limit),
         ).fetchall()
         events = [dict(row) for row in rows]
@@ -1784,17 +1665,18 @@ class WorkRepository:
         with self.transaction() as connection:
             self._verify(connection)
             head = connection.execute(
-                "SELECT * FROM work_event_sequences WHERE job_id=?", (job_id,)
+                "SELECT * FROM work_event_sequences WHERE job_id=%s", (job_id,)
             ).fetchone()
             if head is None:
                 raise KeyError("job not found")
             if through_sequence > head["high_water"]:
                 raise WorkConflict("retention exceeds job high water")
             connection.execute(
-                "DELETE FROM work_events WHERE job_id=? AND sequence<=?", (job_id, through_sequence)
+                "DELETE FROM work_events WHERE job_id=%s AND sequence<=%s",
+                (job_id, through_sequence),
             )
             connection.execute(
-                "UPDATE work_event_sequences SET retained_after=max(retained_after,?) WHERE job_id=?",
+                "UPDATE work_event_sequences SET retained_after=GREATEST(retained_after,%s) WHERE job_id=%s",
                 (through_sequence, job_id),
             )
 
@@ -1827,7 +1709,7 @@ class WorkRepository:
 
     def _task_received_receipt_replay(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         *,
         attempt_id: str,
         generation: int,
@@ -1851,7 +1733,7 @@ class WorkRepository:
         ):
             raise WorkConflict("task receipt hash is invalid")
         receipt = connection.execute(
-            "SELECT * FROM work_task_received_receipts WHERE attempt_id=? AND generation=?",
+            "SELECT * FROM work_task_received_receipts WHERE attempt_id=%s AND generation=%s",
             (attempt_id, generation),
         ).fetchone()
         if receipt is not None:
@@ -1859,7 +1741,7 @@ class WorkRepository:
                 raise WorkConflict("task receipt contradicts durable receipt history")
             return self._work(connection, receipt["work_item_id"])
         nonce_owner = connection.execute(
-            "SELECT attempt_id,generation FROM work_task_received_receipts WHERE nonce=?", (nonce,)
+            "SELECT attempt_id,generation FROM work_task_received_receipts WHERE nonce=%s", (nonce,)
         ).fetchone()
         if nonce_owner is not None:
             raise WorkConflict("task receipt nonce is already bound to another attempt")
@@ -1867,7 +1749,7 @@ class WorkRepository:
 
     def _record_task_received_receipt(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         *,
         attempt_id: str,
         generation: int,
@@ -1926,8 +1808,8 @@ class WorkRepository:
         ):
             raise WorkConflict("task receipt delivery hash is invalid")
         origin = connection.execute(
-            "SELECT * FROM work_child_origin_bindings WHERE child_attempt_id=? "
-            "AND child_generation=?",
+            "SELECT * FROM work_child_origin_bindings WHERE child_attempt_id=%s "
+            "AND child_generation=%s",
             (attempt_id, generation),
         ).fetchone()
         if origin is None:
@@ -1956,9 +1838,7 @@ class WorkRepository:
         )
         if actual_origin != expected_origin:
             raise WorkConflict("task receipt does not match its managed delivery")
-        attempt = connection.execute(
-            "SELECT * FROM work_attempts WHERE id=?", (attempt_id,)
-        ).fetchone()
+        attempt = self._lock_attempt_for_write(connection, attempt_id)
         if attempt is None:
             raise WorkConflict("task receipt attempt disappeared")
         work = self._work(connection, attempt["work_item_id"])
@@ -1994,7 +1874,7 @@ class WorkRepository:
                 receiver_subject_id,receiver_subject_revision,receiver_authorization_kind,
                 receiver_authorization_revision,receiver_grant_id,receiver_grant_revision,
                 delivery_id,delivery_hash,nonce,receipt_hash,received_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (
                 attempt_id,
                 generation,
@@ -2030,7 +1910,7 @@ class WorkRepository:
 
     def _record_workflow_step_receiver_credential(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         *,
         binding_id: str,
         attempt_id: str,
@@ -2107,7 +1987,7 @@ class WorkRepository:
         ):
             raise WorkConflict("workflow receiver credential expiry is invalid")
         binding = connection.execute(
-            "SELECT * FROM work_workflow_step_bindings WHERE binding_id=?",
+            "SELECT * FROM work_workflow_step_bindings WHERE binding_id=%s",
             (binding_id,),
         ).fetchone()
         if binding is None or (
@@ -2138,12 +2018,12 @@ class WorkRepository:
             raise WorkConflict("workflow receiver credential differs from its immutable binding")
         attempt = connection.execute(
             "SELECT state,revision,lease_expires_at,work_item_id FROM work_attempts "
-            "WHERE id=? AND generation=?",
+            "WHERE id=%s AND generation=%s",
             (attempt_id, generation),
         ).fetchone()
         issued = connection.execute(
             "SELECT installation_uuid,attempt_revision,lease_expires_at,expires_at "
-            "FROM work_attempt_credentials WHERE attempt_id=? AND generation=?",
+            "FROM work_attempt_credentials WHERE attempt_id=%s AND generation=%s",
             (attempt_id, generation),
         ).fetchone()
         if (
@@ -2165,7 +2045,7 @@ class WorkRepository:
             "receiver_subject_id,receiver_subject_revision,receiver_authorization_revision,"
             "receiver_grant_id,receiver_grant_revision,installation_uuid,attempt_revision,"
             "lease_expires_at,expires_at,delivery_id,delivery_hash,credential_sha256,issued_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (
                 binding_id,
                 attempt_id,
@@ -2191,7 +2071,7 @@ class WorkRepository:
 
     def _record_workflow_step_receiver_acceptance(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         *,
         binding_id: str,
         attempt_id: str,
@@ -2244,7 +2124,7 @@ class WorkRepository:
         ):
             raise WorkConflict("workflow receiver acceptance timestamp is invalid")
         binding = connection.execute(
-            "SELECT * FROM work_workflow_step_bindings WHERE binding_id=?",
+            "SELECT * FROM work_workflow_step_bindings WHERE binding_id=%s",
             (binding_id,),
         ).fetchone()
         if binding is None or (
@@ -2266,7 +2146,7 @@ class WorkRepository:
         ):
             raise WorkConflict("workflow receiver acceptance differs from its immutable binding")
         attempt = connection.execute(
-            "SELECT state,work_item_id FROM work_attempts WHERE id=? AND generation=?",
+            "SELECT state,work_item_id FROM work_attempts WHERE id=%s AND generation=%s",
             (attempt_id, generation),
         ).fetchone()
         if (
@@ -2277,7 +2157,7 @@ class WorkRepository:
             raise WorkConflict("workflow receiver acceptance requires the bound sent attempt")
         prior = connection.execute(
             "SELECT * FROM work_workflow_step_receiver_acceptances "
-            "WHERE attempt_id=? AND generation=?",
+            "WHERE attempt_id=%s AND generation=%s",
             (attempt_id, generation),
         ).fetchone()
         expected = (
@@ -2308,7 +2188,7 @@ class WorkRepository:
             "INSERT INTO work_workflow_step_receiver_acceptances "
             "(binding_id,attempt_id,generation,receiver_subject_id,receiver_subject_revision,"
             "receiver_authorization_kind,receiver_authorization_revision,delivery_id,delivery_hash,"
-            "acceptance_sha256,accepted_at,schema_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "acceptance_sha256,accepted_at,schema_version) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (
                 binding_id,
                 attempt_id,
@@ -2324,16 +2204,17 @@ class WorkRepository:
                 schema_version,
             ),
         )
-        return dict(
-            connection.execute(
-                "SELECT * FROM work_workflow_step_receiver_acceptances "
-                "WHERE attempt_id=? AND generation=?",
-                (attempt_id, generation),
-            ).fetchone()
-        )
+        recorded = connection.execute(
+            "SELECT * FROM work_workflow_step_receiver_acceptances "
+            "WHERE attempt_id=%s AND generation=%s",
+            (attempt_id, generation),
+        ).fetchone()
+        if recorded is None:
+            raise WorkConflict("workflow receiver acceptance readback is absent")
+        return dict(recorded)
 
     def _workflow_step_task_received_receipt(
-        self, connection: sqlite3.Connection, attempt_id: str, generation: int
+        self, connection: Connection, attempt_id: str, generation: int
     ) -> dict | None:
         if not connection.in_transaction:
             raise WorkConflict("workflow task receipt reads require a stable transaction")
@@ -2342,7 +2223,7 @@ class WorkRepository:
             raise WorkConflict("workflow task receipt generation is invalid")
         row = connection.execute(
             "SELECT * FROM work_workflow_step_task_received_receipts "
-            "WHERE attempt_id=? AND generation=?",
+            "WHERE attempt_id=%s AND generation=%s",
             (attempt_id, generation),
         ).fetchone()
         if row is None:
@@ -2356,7 +2237,7 @@ class WorkRepository:
             ):
                 raise WorkConflict("workflow task receipt digest is corrupt")
         binding = connection.execute(
-            "SELECT * FROM work_workflow_step_bindings WHERE binding_id=?",
+            "SELECT * FROM work_workflow_step_bindings WHERE binding_id=%s",
             (row["binding_id"],),
         ).fetchone()
         if binding is None or (
@@ -2389,7 +2270,7 @@ class WorkRepository:
 
     def _record_workflow_step_task_received_receipt(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         *,
         binding_id: str,
         attempt_id: str,
@@ -2468,6 +2349,9 @@ class WorkRepository:
             delivery_id,
             delivery_hash,
         )
+        attempt = self._lock_attempt_for_write(connection, attempt_id)
+        if attempt is None or attempt["generation"] != generation:
+            raise WorkConflict("workflow task receipt attempt disappeared or changed")
         prior = self._workflow_step_task_received_receipt(connection, attempt_id, generation)
         if prior is not None:
             if (
@@ -2492,16 +2376,12 @@ class WorkRepository:
                 raise WorkConflict("workflow task receipt contradicts immutable receipt history")
             return self._work(connection, work_item_id)
         binding = connection.execute(
-            "SELECT * FROM work_workflow_step_bindings WHERE binding_id=?",
+            "SELECT * FROM work_workflow_step_bindings WHERE binding_id=%s",
             (binding_id,),
         ).fetchone()
         acceptance = connection.execute(
             "SELECT * FROM work_workflow_step_receiver_acceptances "
-            "WHERE attempt_id=? AND generation=?",
-            (attempt_id, generation),
-        ).fetchone()
-        attempt = connection.execute(
-            "SELECT * FROM work_attempts WHERE id=? AND generation=?",
+            "WHERE attempt_id=%s AND generation=%s",
             (attempt_id, generation),
         ).fetchone()
         if (
@@ -2556,7 +2436,7 @@ class WorkRepository:
             "(binding_id,attempt_id,generation,schema_version,work_item_id,job_id,attempt_revision,"
             "receiver_subject_id,receiver_subject_revision,receiver_authorization_kind,"
             "receiver_authorization_revision,receiver_grant_id,receiver_grant_revision,delivery_id,"
-            "delivery_hash,nonce,receipt_hash,received_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "delivery_hash,nonce,receipt_hash,received_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (
                 binding_id,
                 attempt_id,
@@ -2632,7 +2512,7 @@ class WorkRepository:
 
     def _reconcile_cancelled_descendants(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         *,
         work_item_id: str,
         attempt_id: str,
@@ -2640,10 +2520,8 @@ class WorkRepository:
         actor_id: str,
     ) -> dict:
         """Validate a cancelled root and reuse the caller-owned cascade transaction."""
+        attempt = self._lock_attempt_for_write(connection, attempt_id)
         work = self._work(connection, work_item_id)
-        attempt = connection.execute(
-            "SELECT * FROM work_attempts WHERE id=?", (attempt_id,)
-        ).fetchone()
         if (
             attempt is None
             or attempt["work_item_id"] != work_item_id
@@ -2658,10 +2536,10 @@ class WorkRepository:
 
     def _commit_checked_transition(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         *,
         work: dict,
-        attempt: sqlite3.Row,
+        attempt: Record,
         next_work: str,
         next_attempt: str,
         actor_id: str,
@@ -2674,14 +2552,27 @@ class WorkRepository:
         """Persist one already-validated work/attempt transition and its receipt."""
         if not connection.in_transaction:
             raise ValueError("caller-owned transaction required")
-        connection.execute(
-            "UPDATE work_attempts SET state=?,revision=revision+1 WHERE id=?",
-            (next_attempt, attempt["id"]),
+        attempt_update = connection.execute(
+            "UPDATE work_attempts SET state=%s,revision=revision+1 "
+            "WHERE id=%s AND work_item_id=%s AND generation=%s AND revision=%s AND state=%s",
+            (
+                next_attempt,
+                attempt["id"],
+                attempt["work_item_id"],
+                attempt["generation"],
+                attempt["revision"],
+                attempt["state"],
+            ),
         )
-        connection.execute(
-            "UPDATE work_items SET state=?,revision=revision+1 WHERE id=?",
-            (next_work, work["id"]),
+        if attempt_update.rowcount != 1:
+            raise WorkConflict("attempt changed before transition commit")
+        work_update = connection.execute(
+            "UPDATE work_items SET state=%s,revision=revision+1 "
+            "WHERE id=%s AND job_id=%s AND revision=%s AND state=%s",
+            (next_work, work["id"], work["job_id"], work["revision"], work["state"]),
         )
+        if work_update.rowcount != 1:
+            raise WorkConflict("work item changed before transition commit")
         if after_state_change is not None:
             after_state_change()
         self._append_event(
@@ -2695,13 +2586,13 @@ class WorkRepository:
             metadata=event_metadata,
         )
         connection.execute(
-            "INSERT INTO work_transition_receipts VALUES (?,?,?)",
+            "INSERT INTO work_transition_receipts VALUES (%s,%s,%s)",
             (event_id, fingerprint, work["id"]),
         )
 
     def _transition_attempt(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         *,
         attempt_id: str,
         generation: int,
@@ -2736,7 +2627,7 @@ class WorkRepository:
             ).encode()
         ).hexdigest()
         receipt = connection.execute(
-            "SELECT * FROM work_transition_receipts WHERE event_id=?", (event_id,)
+            "SELECT * FROM work_transition_receipts WHERE event_id=%s", (event_id,)
         ).fetchone()
         if receipt:
             if receipt["request_hash"] != fingerprint:
@@ -2750,11 +2641,27 @@ class WorkRepository:
                     actor_id=actor_id,
                 )
             return self._work(connection, receipt["work_item_id"])
-        attempt = connection.execute(
-            "SELECT * FROM work_attempts WHERE id=?", (attempt_id,)
-        ).fetchone()
+        attempt = self._lock_attempt_for_write(connection, attempt_id)
         if attempt is None:
             raise KeyError("attempt not found")
+        # A same-event writer may have completed while this transaction waited
+        # for the parent job lock. Recheck idempotency after waiting before
+        # comparing the now-advanced attempt revision and state.
+        receipt = connection.execute(
+            "SELECT * FROM work_transition_receipts WHERE event_id=%s", (event_id,)
+        ).fetchone()
+        if receipt is not None:
+            if receipt["request_hash"] != fingerprint:
+                raise WorkConflict("event_id reused with a different transition")
+            if target == "cancelled":
+                return self._reconcile_cancelled_descendants(
+                    connection,
+                    work_item_id=receipt["work_item_id"],
+                    attempt_id=attempt_id,
+                    generation=generation,
+                    actor_id=actor_id,
+                )
+            return self._work(connection, receipt["work_item_id"])
         work = self._work(connection, attempt["work_item_id"])
         if generation != attempt["generation"] or work["attempts"][-1]["id"] != attempt_id:
             raise WorkConflict("stale attempt generation")
@@ -2786,7 +2693,7 @@ class WorkRepository:
         if target == "finished":
             # The result must have been persisted and validated first, not just hashed.
             result = connection.execute(
-                "SELECT * FROM work_results WHERE id=? AND attempt_id=? AND validation_state='verified'",
+                "SELECT * FROM work_results WHERE id=%s AND attempt_id=%s AND validation_state='verified'",
                 (attempt["result_id"], attempt_id),
             ).fetchone()
             if result is None:
@@ -2794,7 +2701,7 @@ class WorkRepository:
             if work["accepted_result_id"] not in (None, result["id"]):
                 raise WorkConflict("a different result was already accepted")
             pending_child = connection.execute(
-                "SELECT id FROM work_items WHERE parent_work_item_id=? AND state!='succeeded' LIMIT 1",
+                "SELECT id FROM work_items WHERE parent_work_item_id=%s AND state!='succeeded' LIMIT 1",
                 (work["id"],),
             ).fetchone()
             if pending_child:
@@ -2805,17 +2712,17 @@ class WorkRepository:
         def after_state_change() -> None:
             if target == "failed" and attempt["state"] != "planned":
                 connection.execute(
-                    "UPDATE work_attempts SET cleanup_state='complete' WHERE id=?",
+                    "UPDATE work_attempts SET cleanup_state='complete' WHERE id=%s",
                     (attempt_id,),
                 )
             if target == "finished":
                 connection.execute(
-                    "UPDATE work_items SET accepted_result_id=? WHERE id=?",
+                    "UPDATE work_items SET accepted_result_id=%s WHERE id=%s",
                     (attempt["result_id"], work["id"]),
                 )
             if target == "sent" and job["state"] == "planning":
                 connection.execute(
-                    "UPDATE work_jobs SET state='running',revision=revision+1 WHERE id=?",
+                    "UPDATE work_jobs SET state='running',revision=revision+1 WHERE id=%s",
                     (job["id"],),
                 )
             if attempt["state"] == "sent" and target == "running":
@@ -2855,7 +2762,7 @@ class WorkRepository:
         return self._work(connection, work["id"])
 
     def _cancel_descendants(
-        self, connection: sqlite3.Connection, *, work_item_id: str, actor_id: str
+        self, connection: Connection, *, work_item_id: str, actor_id: str
     ) -> None:
         """Cancel every live descendant in the caller's already-owned transaction.
 
@@ -2868,7 +2775,7 @@ class WorkRepository:
         """
         descendants = connection.execute(
             """WITH RECURSIVE descendants(id, path) AS (
-                SELECT id, id FROM work_items WHERE parent_work_item_id=?
+                SELECT id, id FROM work_items WHERE parent_work_item_id=%s
                 UNION ALL
                 SELECT child.id, descendants.path || '/' || child.id
                 FROM work_items AS child
@@ -2881,7 +2788,12 @@ class WorkRepository:
             work = self._work(connection, row["id"])
             if work["state"] in {"succeeded", "failed", "cancelled"}:
                 continue
-            attempt = work["attempts"][-1]
+            attempt = self._lock_attempt_for_write(connection, work["attempts"][-1]["id"])
+            if attempt is None:
+                raise WorkConflict("live descendant attempt disappeared before cancellation")
+            work = self._work(connection, row["id"])
+            if work["attempts"][-1]["id"] != attempt["id"]:
+                raise WorkConflict("live descendant changed before cancellation")
             evidence = TransitionEvidence(
                 generation=attempt["generation"], expected_generation=attempt["generation"]
             )
@@ -2929,7 +2841,7 @@ class WorkRepository:
         validator_id: str,
         validation_evidence: dict,
         actor_id: str,
-        before_register: Callable[[sqlite3.Connection], None] | None = None,
+        before_register: Callable[[Connection], None] | None = None,
     ) -> dict:
         """Retain service-verified artifact evidence before claiming success.
 
@@ -2952,7 +2864,7 @@ class WorkRepository:
         with self.transaction() as connection:
             self._verify(connection)
             attempt = connection.execute(
-                "SELECT * FROM work_attempts WHERE id=?", (attempt_id,)
+                "SELECT * FROM work_attempts WHERE id=%s", (attempt_id,)
             ).fetchone()
             if attempt is None:
                 raise KeyError("attempt not found")
@@ -2960,8 +2872,12 @@ class WorkRepository:
                 raise WorkConflict("stale result generation")
             if before_register is not None:
                 before_register(connection)
+            attempt = self._lock_attempt_for_write(connection, attempt_id)
+            if attempt is None or attempt["generation"] != generation:
+                raise WorkConflict("result attempt changed before its write lock")
+            work = self._work(connection, attempt["work_item_id"])
             previous = connection.execute(
-                "SELECT * FROM work_results WHERE id=?", (identifier,)
+                "SELECT * FROM work_results WHERE id=%s", (identifier,)
             ).fetchone()
             if previous:
                 if (
@@ -2971,9 +2887,8 @@ class WorkRepository:
                 ) != (byte_length, validator_id, encoded_evidence):
                     raise WorkConflict("result evidence is immutable")
                 return dict(previous)
-            work = self._work(connection, attempt["work_item_id"])
             connection.execute(
-                "INSERT INTO work_results (id,attempt_id,content_hash,immutable_location,byte_length,validation_state,validator_id,validation_evidence,created_at) VALUES (?,?,?,?,?,'verified',?,?,?)",
+                "INSERT INTO work_results (id,attempt_id,content_hash,immutable_location,byte_length,validation_state,validator_id,validation_evidence,created_at) VALUES (%s,%s,%s,%s,%s,'verified',%s,%s,%s)",
                 (
                     identifier,
                     attempt_id,
@@ -2991,13 +2906,27 @@ class WorkRepository:
                 and work["state"] not in {"succeeded", "failed", "cancelled"}
                 and attempt["result_id"] is None
             ):
-                connection.execute(
-                    "UPDATE work_attempts SET result_id=?,revision=revision+1 WHERE id=?",
-                    (identifier, attempt_id),
+                attempt_update = connection.execute(
+                    "UPDATE work_attempts SET result_id=%s,revision=revision+1 "
+                    "WHERE id=%s AND generation=%s AND revision=%s AND state=%s "
+                    "AND result_id IS NULL",
+                    (
+                        identifier,
+                        attempt_id,
+                        attempt["generation"],
+                        attempt["revision"],
+                        attempt["state"],
+                    ),
                 )
-            connection.execute(
-                "UPDATE work_items SET revision=revision+1 WHERE id=?", (work["id"],)
+                if attempt_update.rowcount != 1:
+                    raise WorkConflict("result attempt changed before result attachment")
+            work_update = connection.execute(
+                "UPDATE work_items SET revision=revision+1 "
+                "WHERE id=%s AND job_id=%s AND revision=%s AND state=%s",
+                (work["id"], work["job_id"], work["revision"], work["state"]),
             )
+            if work_update.rowcount != 1:
+                raise WorkConflict("result work item changed before result registration")
             self._append_event(
                 connection,
                 job_id=work["job_id"],
@@ -3007,16 +2936,17 @@ class WorkRepository:
                 actor_id=actor_id,
                 metadata={"result_id": identifier},
             )
-            return dict(
-                connection.execute(
-                    "SELECT * FROM work_results WHERE id=?", (identifier,)
-                ).fetchone()
-            )
+            recorded = connection.execute(
+                "SELECT * FROM work_results WHERE id=%s", (identifier,)
+            ).fetchone()
+            if recorded is None:
+                raise WorkConflict("registered result readback is absent")
+            return dict(recorded)
 
     def get_result(self, result_id: str) -> dict:
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT * FROM work_results WHERE id=?", (result_id,)
+                "SELECT * FROM work_results WHERE id=%s", (result_id,)
             ).fetchone()
             if row is None:
                 raise KeyError("result not found")
@@ -3049,9 +2979,7 @@ class WorkRepository:
         _identity(actor_id, "actor_id")
         with self.transaction() as connection:
             self._verify(connection)
-            attempt = connection.execute(
-                "SELECT * FROM work_attempts WHERE id=?", (attempt_id,)
-            ).fetchone()
+            attempt = self._lock_attempt_for_write(connection, attempt_id)
             if attempt is None:
                 raise KeyError("attempt not found")
             work = self._work(connection, attempt["work_item_id"])
@@ -3067,13 +2995,26 @@ class WorkRepository:
             job = self._job(connection, work["job_id"])
             if job["state"] in {"revoked", "completed", "failed"}:
                 raise WorkConflict("job no longer permits renewal")
-            connection.execute(
-                "UPDATE work_attempts SET lease_expires_at=?,revision=revision+1 WHERE id=?",
-                (max(attempt["lease_expires_at"], now + lease_seconds), attempt_id),
+            attempt_update = connection.execute(
+                "UPDATE work_attempts SET lease_expires_at=%s,revision=revision+1 "
+                "WHERE id=%s AND generation=%s AND revision=%s AND state=%s",
+                (
+                    max(attempt["lease_expires_at"], now + lease_seconds),
+                    attempt_id,
+                    attempt["generation"],
+                    attempt["revision"],
+                    attempt["state"],
+                ),
             )
-            connection.execute(
-                "UPDATE work_items SET revision=revision+1 WHERE id=?", (work["id"],)
+            if attempt_update.rowcount != 1:
+                raise WorkConflict("attempt changed before lease renewal")
+            work_update = connection.execute(
+                "UPDATE work_items SET revision=revision+1 "
+                "WHERE id=%s AND job_id=%s AND revision=%s AND state=%s",
+                (work["id"], work["job_id"], work["revision"], work["state"]),
             )
+            if work_update.rowcount != 1:
+                raise WorkConflict("work item changed before lease renewal")
             self._append_event(
                 connection,
                 job_id=work["job_id"],
@@ -3105,6 +3046,7 @@ class WorkRepository:
         with self.transaction() as connection:
             self._verify(connection)
             self._assert_offline_cut_allows_writer(connection)
+            self._lock_work_item_for_write(connection, work_item_id)
             work = self._work(connection, work_item_id)
             prior = work["attempts"][-1]
             job = self._job(connection, work["job_id"])
@@ -3126,7 +3068,7 @@ class WorkRepository:
             next_state = transition(work["state"], "queued", evidence=evidence).value
             attempt_id, now = uuid4().hex, time.time()
             connection.execute(
-                "INSERT INTO work_attempts (id,work_item_id,attempt_number,generation,provider,lease_expires_at,created_at) VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO work_attempts (id,work_item_id,attempt_number,generation,provider,lease_expires_at,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s)",
                 (
                     attempt_id,
                     work_item_id,
@@ -3137,10 +3079,13 @@ class WorkRepository:
                     now,
                 ),
             )
-            connection.execute(
-                "UPDATE work_items SET state=?,revision=revision+1 WHERE id=?",
-                (next_state, work_item_id),
+            updated = connection.execute(
+                "UPDATE work_items SET state=%s,revision=revision+1 "
+                "WHERE id=%s AND job_id=%s AND revision=%s AND state=%s",
+                (next_state, work_item_id, work["job_id"], work["revision"], work["state"]),
             )
+            if updated.rowcount != 1:
+                raise WorkConflict("work item changed before retry commit")
             self._append_event(
                 connection,
                 job_id=work["job_id"],
@@ -3157,7 +3102,7 @@ class WorkRepository:
         """Expiry is evidence of uncertainty, not proof an external process stopped."""
         with self.connection() as connection:
             restriction = (
-                " AND work_item_id IN (SELECT id FROM work_items WHERE parent_work_item_id=?)"
+                " AND work_item_id IN (SELECT id FROM work_items WHERE parent_work_item_id=%s)"
                 if parent_work_item_id is not None
                 else ""
             )
@@ -3169,7 +3114,7 @@ class WorkRepository:
             attempts = [
                 dict(row)
                 for row in connection.execute(
-                    "SELECT * FROM work_attempts WHERE lease_expires_at<=? AND state IN ('planned','sent','acknowledged','running')"
+                    "SELECT * FROM work_attempts WHERE lease_expires_at<=%s AND state IN ('planned','sent','acknowledged','running')"
                     + restriction,
                     parameters,
                 )
@@ -3199,7 +3144,7 @@ class WorkRepository:
             connection.execute("BEGIN")
             self._work(connection, work_item_id)
             identities = connection.execute(
-                "SELECT id FROM work_items WHERE parent_work_item_id=? ORDER BY created_at,id",
+                "SELECT id FROM work_items WHERE parent_work_item_id=%s ORDER BY created_at,id",
                 (work_item_id,),
             ).fetchall()
             return [self._work(connection, row["id"]) for row in identities]
@@ -3207,7 +3152,7 @@ class WorkRepository:
     def get_attempt(self, attempt_id: str) -> dict:
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT * FROM work_attempts WHERE id=?", (attempt_id,)
+                "SELECT * FROM work_attempts WHERE id=%s", (attempt_id,)
             ).fetchone()
             if row is None:
                 raise KeyError("attempt not found")
@@ -3218,7 +3163,7 @@ class WorkRepository:
         if type(generation) is not int or generation <= 0:
             raise WorkConflict("invalid inbox binding generation")
         row = connection.execute(
-            "SELECT * FROM work_inbox_bindings WHERE attempt_id=? AND generation=?",
+            "SELECT * FROM work_inbox_bindings WHERE attempt_id=%s AND generation=%s",
             (attempt_id, generation),
         ).fetchone()
         return row
@@ -3238,14 +3183,21 @@ class WorkRepository:
             self._verify(connection)
             context = self._validate_managed_inbox_store_context(connection, expected=store_context)
             dispatch = connection.execute(
-                "SELECT * FROM work_dispatch_bindings WHERE attempt_id=? AND generation=?",
+                "SELECT * FROM work_dispatch_bindings WHERE attempt_id=%s AND generation=%s",
                 (attempt_id, generation),
             ).fetchone()
             if dispatch is None:
                 raise WorkConflict("managed inbox requires an admitted dispatch binding")
+            attempt = self._lock_attempt_for_write(connection, attempt_id)
+            if (
+                attempt is None
+                or attempt["generation"] != generation
+                or attempt["work_item_id"] != dispatch["work_item_id"]
+            ):
+                raise WorkConflict("managed inbox dispatch attempt changed before binding")
             current = self._inbox_binding(connection, attempt_id=attempt_id, generation=generation)
             by_inbox = connection.execute(
-                "SELECT * FROM work_inbox_bindings WHERE inbox_id=?", (inbox_id,)
+                "SELECT * FROM work_inbox_bindings WHERE inbox_id=%s", (inbox_id,)
             ).fetchone()
             if current is not None:
                 if (
@@ -3261,13 +3213,13 @@ class WorkRepository:
             ).fetchone()
             if paired is None:
                 connection.execute(
-                    "INSERT INTO work_inbox_store_identity VALUES (1,?,?)",
+                    "INSERT INTO work_inbox_store_identity VALUES (1,%s,%s)",
                     (context.store_identity, time.time()),
                 )
             elif paired["store_identity"] != context.store_identity:
                 raise WorkConflict("managed inbox store identity changed")
             connection.execute(
-                "INSERT INTO work_inbox_bindings VALUES (?,?,?,?,?)",
+                "INSERT INTO work_inbox_bindings VALUES (%s,%s,%s,%s,%s)",
                 (inbox_id, attempt_id, generation, context.store_identity, time.time()),
             )
             self._append_event(
@@ -3341,16 +3293,14 @@ class WorkRepository:
             raise WorkConflict("cleanup revision is invalid")
         with self.transaction() as connection:
             self._verify(connection)
-            attempt = connection.execute(
-                "SELECT * FROM work_attempts WHERE id=?", (attempt_id,)
-            ).fetchone()
+            attempt = self._lock_attempt_for_write(connection, attempt_id)
             if attempt is None:
                 raise WorkConflict("cleanup attempt does not exist")
             work = self._work(connection, attempt["work_item_id"])
             latest = work["attempts"][-1]
             reservation = connection.execute(
                 "SELECT job_id,work_item_id,generation,state "
-                "FROM work_scheduler_requests WHERE attempt_id=?",
+                "FROM work_scheduler_requests WHERE attempt_id=%s",
                 (attempt_id,),
             ).fetchone()
             if (
@@ -3371,13 +3321,27 @@ class WorkRepository:
                 return work
             if attempt["cleanup_state"] not in {"not_requested", "failed"}:
                 raise WorkConflict("cleanup state cannot be claimed")
-            connection.execute(
-                "UPDATE work_attempts SET cleanup_state='pending',revision=revision+1 WHERE id=?",
-                (attempt_id,),
+            attempt_update = connection.execute(
+                "UPDATE work_attempts SET cleanup_state='pending',revision=revision+1 "
+                "WHERE id=%s AND generation=%s AND revision=%s AND state=%s "
+                "AND cleanup_state=%s",
+                (
+                    attempt_id,
+                    attempt["generation"],
+                    attempt["revision"],
+                    attempt["state"],
+                    attempt["cleanup_state"],
+                ),
             )
-            connection.execute(
-                "UPDATE work_items SET revision=revision+1 WHERE id=?", (work["id"],)
+            if attempt_update.rowcount != 1:
+                raise WorkConflict("cleanup attempt changed before claim")
+            work_update = connection.execute(
+                "UPDATE work_items SET revision=revision+1 "
+                "WHERE id=%s AND job_id=%s AND revision=%s AND state=%s",
+                (work["id"], work["job_id"], work["revision"], work["state"]),
             )
+            if work_update.rowcount != 1:
+                raise WorkConflict("cleanup work item changed before claim")
             self._append_event(
                 connection,
                 job_id=work["job_id"],
@@ -3400,9 +3364,7 @@ class WorkRepository:
         }
         with self.transaction() as connection:
             self._verify(connection)
-            attempt = connection.execute(
-                "SELECT * FROM work_attempts WHERE id=?", (attempt_id,)
-            ).fetchone()
+            attempt = self._lock_attempt_for_write(connection, attempt_id)
             if attempt is None:
                 raise KeyError("attempt not found")
             if attempt["generation"] != generation or attempt["revision"] != expected_revision:
@@ -3412,13 +3374,28 @@ class WorkRepository:
             if state not in allowed.get(attempt["cleanup_state"], set()):
                 raise WorkConflict("cleanup state changed or transition is invalid")
             work = self._work(connection, attempt["work_item_id"])
-            connection.execute(
-                "UPDATE work_attempts SET cleanup_state=?,revision=revision+1 WHERE id=?",
-                (state, attempt_id),
+            attempt_update = connection.execute(
+                "UPDATE work_attempts SET cleanup_state=%s,revision=revision+1 "
+                "WHERE id=%s AND generation=%s AND revision=%s AND state=%s "
+                "AND cleanup_state=%s",
+                (
+                    state,
+                    attempt_id,
+                    attempt["generation"],
+                    attempt["revision"],
+                    attempt["state"],
+                    attempt["cleanup_state"],
+                ),
             )
-            connection.execute(
-                "UPDATE work_items SET revision=revision+1 WHERE id=?", (work["id"],)
+            if attempt_update.rowcount != 1:
+                raise WorkConflict("cleanup attempt changed before observation")
+            work_update = connection.execute(
+                "UPDATE work_items SET revision=revision+1 "
+                "WHERE id=%s AND job_id=%s AND revision=%s AND state=%s",
+                (work["id"], work["job_id"], work["revision"], work["state"]),
             )
+            if work_update.rowcount != 1:
+                raise WorkConflict("cleanup work item changed before observation")
             self._append_event(
                 connection,
                 job_id=work["job_id"],
@@ -3429,33 +3406,176 @@ class WorkRepository:
             )
             return self._work(connection, work["id"])
 
+    @classmethod
+    def _verify(cls, connection: Connection, *, version: int | None = None) -> None:
+        """Verify complete native schema, configured identity, and runtime role."""
+        if not isinstance(connection, Connection):
+            raise SchemaMismatch("WorkRepository requires a native PostgreSQL connection")
+        if version not in {None, SCHEMA_VERSION}:
+            raise SchemaMismatch("legacy Work schema versions are import-only")
+        try:
+            verify_component(connection, WORK_POSTGRES_MIGRATIONS)
+            verify_runtime_role(connection)
+        except PostgresSchemaMismatch as error:
+            raise SchemaMismatch(str(error)) from error
+
+        identity = connection.target.store_id
+        try:
+            parsed_uuid = UUID(identity)
+        except (ValueError, TypeError) as error:
+            raise SchemaMismatch("configured Work logical identity is invalid") from error
+        expected_uuid = parsed_uuid.hex
+        cls._verify_store_context(connection, identity, expected_uuid)
+
     @staticmethod
-    def _verify(connection: sqlite3.Connection, *, version: int | None = None) -> None:
-        if version is None:
-            version = SCHEMA_VERSION
-        expected = _EXPECTED_SCHEMAS[version]
-        if _schema_objects(connection) != expected:
-            raise SchemaMismatch("work schema is incomplete, incompatible or modified")
-        records = connection.execute(
-            "SELECT version,checksum,verification_result FROM work_migrations ORDER BY version"
+    def _verify_store_context(connection: Connection, identity: str, expected_uuid: str) -> None:
+        """Validate the ordered private context tail after common Work checks."""
+        inbox = connection.execute(
+            "SELECT singleton,store_identity,store_uuid FROM work_inbox_store_context"
         ).fetchall()
-        if [tuple(row) for row in records] != [
-            (number, _CHECKSUMS[number], "verified") for number in range(1, version + 1)
-        ]:
-            raise SchemaMismatch("work migration ledger is incompatible or modified")
-        if version >= 16:
-            _stored_inbox_context(connection)
-        if version >= 24:
-            _stored_recovery_context(connection)
-        for table, sql in expected.items():
-            if not sql.startswith("CREATE TABLE"):
-                continue
-            if connection.execute(f"PRAGMA foreign_key_check({table})").fetchone():
-                raise SchemaMismatch("work store contains invalid references")
+        _verify_managed_inbox_context_rows(inbox, identity, expected_uuid)
+        control = connection.execute(
+            "SELECT singleton,store_identity,store_uuid FROM work_store_control"
+        ).fetchall()
+        _verify_work_store_control_rows(control, identity, expected_uuid)
+        _stored_recovery_context(connection)
+
+    @staticmethod
+    def _verify_batched_store_context(
+        rows, identity: str, expected_uuid: str
+    ) -> RecoveryStoreContext:
+        """Apply existing ordered validators to a typed/tagged batch result."""
+        buckets: dict[str, list[Record]] = {
+            "inbox": [],
+            "control": [],
+            "recovery": [],
+        }
+        for row in rows:
+            kind = row["context_kind"]
+            if kind not in buckets:
+                raise SchemaMismatch("Work verification returned an unknown context row")
+            buckets[kind].append(row)
+
+        _verify_managed_inbox_context_rows(buckets["inbox"], identity, expected_uuid)
+        _verify_work_store_control_rows(buckets["control"], identity, expected_uuid)
+        recovery_fields = (
+            "singleton",
+            "context_version",
+            "execution_state",
+            "installation_uuid",
+            "source_installation_uuid",
+            "bundle_digest",
+            "restore_receipt",
+            "created_at",
+        )
+        recovery_rows = [
+            tuple(row[name] for name in recovery_fields) for row in buckets["recovery"]
+        ]
+        return _stored_recovery_context_rows(recovery_rows)
 
 
 def initialize_work_store() -> None:
-    """Use the same SQLite path as the existing durable workflow journals."""
-    from cli_agent_orchestrator.constants import DATABASE_FILE
+    """Verify the configured native main Work component; never bootstrap it."""
+    WorkRepository().initialize()
 
-    WorkRepository(DATABASE_FILE).initialize()
+
+def bootstrap_work_store(target: DatabaseTarget) -> None:
+    """Seed a fresh Work store using explicit migration credentials.
+
+    Existing imported stores must carry their verified context rows. A store
+    with business data but missing immutable identity/recovery context is
+    rejected rather than silently adopting the current installation.
+    """
+    from cli_agent_orchestrator.clients.postgres import connect
+
+    try:
+        logical_uuid = UUID(target.store_id).hex
+    except (ValueError, TypeError) as error:
+        raise SchemaMismatch("configured Work logical identity is invalid") from error
+    migration_target = target.migration_target()
+    with connect(migration_target) as connection:
+        with connection.transaction():
+            verify_component(connection, WORK_POSTGRES_MIGRATIONS)
+            control = connection.execute(
+                "SELECT singleton,store_identity,store_uuid FROM work_store_control"
+            ).fetchall()
+            inbox = connection.execute(
+                "SELECT singleton,store_identity,store_uuid FROM work_inbox_store_context"
+            ).fetchall()
+            recovery = connection.execute(
+                "SELECT singleton,context_version,execution_state,installation_uuid "
+                "FROM work_recovery_context"
+            ).fetchall()
+            if control and (
+                len(control) != 1
+                or control[0]["singleton"] != 1
+                or control[0]["store_identity"] != target.store_id
+                or control[0]["store_uuid"] != logical_uuid
+            ):
+                raise SchemaMismatch("Work store control identity is contradictory")
+            if inbox and (
+                len(inbox) != 1
+                or inbox[0]["singleton"] != 1
+                or inbox[0]["store_identity"] != target.store_id
+                or inbox[0]["store_uuid"] != logical_uuid
+            ):
+                raise SchemaMismatch("managed inbox identity is contradictory")
+            if recovery and (
+                len(recovery) != 1
+                or recovery[0]["singleton"] != 1
+                or recovery[0]["context_version"] != RECOVERY_CONTEXT_VERSION
+                or recovery[0]["execution_state"] != RECOVERY_STATE_NORMAL
+                or not recovery[0]["installation_uuid"]
+            ):
+                raise SchemaMismatch("Work recovery identity is contradictory")
+
+            # Do not adopt legacy business rows if the native store's immutable
+            # identity envelope was not imported explicitly.
+            business_tables = tuple(
+                table
+                for table in WORK_TABLES
+                if table
+                not in {
+                    "work_store_control",
+                    "work_inbox_store_context",
+                    "work_recovery_context",
+                }
+            )
+            exists = any(
+                connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None
+                for table in business_tables
+            )
+            # ``work_store_control`` is new native coordination state and is
+            # deliberately absent from a valid imported legacy Work catalog.
+            # The two historical identity contexts, however, must be preserved
+            # by the importer before this runtime fence can be seeded.
+            if exists and (not inbox or not recovery):
+                raise SchemaMismatch("Work data is missing its imported identity envelope")
+
+            now = time.time()
+            if not inbox:
+                connection.execute(
+                    "INSERT INTO work_inbox_store_context "
+                    "(singleton,store_uuid,store_identity,created_at) VALUES (1,%s,%s,%s)",
+                    (logical_uuid, target.store_id, now),
+                )
+            if not recovery:
+                connection.execute(
+                    "INSERT INTO work_recovery_context "
+                    "(singleton,context_version,execution_state,installation_uuid,"
+                    "source_installation_uuid,bundle_digest,restore_receipt,created_at) "
+                    "VALUES (1,%s,%s,%s,NULL,NULL,NULL,%s)",
+                    (
+                        RECOVERY_CONTEXT_VERSION,
+                        RECOVERY_STATE_NORMAL,
+                        uuid4().hex,
+                        now,
+                    ),
+                )
+            if not control:
+                connection.execute(
+                    "INSERT INTO work_store_control "
+                    "(singleton,store_identity,store_uuid,revision,created_at) "
+                    "VALUES (1,%s,%s,1,%s)",
+                    (target.store_id, logical_uuid, now),
+                )

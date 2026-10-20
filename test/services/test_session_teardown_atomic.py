@@ -6,7 +6,7 @@ These exercise the REAL ``delete_session`` reconciliation logic against:
   cause the two stores to drift — ``kill_window`` dropping the last window (and
   thus the whole session), ``kill_session`` racing tmux's own reaping, and
   ``kill_session`` failing outright,
-* a REAL SQLite registry (``clients.database`` with a per-test engine), so
+* a REAL PostgreSQL registry (``clients.database`` with a per-test engine), so
   ``list_terminals_by_session`` / ``delete_terminals_by_ids`` /
   ``db_delete_terminal`` run their production SQL, and
 * a ``FakeRuntime`` recording the non-row side effects (FIFO reader, status
@@ -27,11 +27,11 @@ mocking the race away.
 
 import threading
 import time
+from test.postgres.orm import configured_orm_engine
 from typing import Dict, List, Set
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
@@ -296,13 +296,9 @@ def runtime(monkeypatch):
 
 @pytest.fixture
 def real_db(tmp_path, monkeypatch):
-    """Point ``clients.database`` at a fresh per-test SQLite registry."""
-    monkeypatch.setattr(constants, "DATABASE_FILE", tmp_path / "cao.db")
+    """Point ``clients.database`` at a fresh per-test PostgreSQL registry."""
     monkeypatch.setattr(constants, "LOCK_DIR", tmp_path / "locks")
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'cao.db'}",
-        connect_args={"check_same_thread": False},
-    )
+    engine = configured_orm_engine()
     database.Base.metadata.create_all(bind=engine)
     monkeypatch.setattr(
         database,
@@ -1231,7 +1227,9 @@ def test_no_plugin_code_runs_inside_the_lifecycle_lock(real_db, runtime, monkeyp
 
         async def dispatch(self, event_type, event):
             try:
-                with work_terminal.terminal_dispatch_lock(constants.DATABASE_FILE, "t1"):
+                with work_terminal.terminal_dispatch_lock(
+                    work_terminal.DatabaseTarget.from_settings(scope="main"), "t1"
+                ):
                     dispatch_lock_free.append(True)
             except work_terminal.TerminalDispatchLockError:
                 dispatch_lock_free.append(False)
@@ -1280,13 +1278,8 @@ class RecordingRegistry:
 
 
 def _db_locked(*_args, **_kwargs):
-    """Raise the SQLite error the tail sweep realistically hits.
-
-    ``clients/database.py`` builds its engine with neither ``busy_timeout`` nor
-    WAL, so with several concurrent writers (status monitor, inbox, other
-    terminals) a write can exhaust sqlite3's default 5s timeout and raise.
-    """
-    raise OperationalError("DELETE FROM terminals", {}, Exception("database is locked"))
+    """Raise a database write failure while the tail sweep runs."""
+    raise OperationalError("DELETE FROM terminals", {}, Exception("database write failed"))
 
 
 def test_tail_sweep_failure_does_not_lose_the_plugin_events(real_db, runtime, monkeypatch):
@@ -1323,7 +1316,7 @@ def test_tail_sweep_failure_does_not_lose_the_plugin_events(real_db, runtime, mo
     assert runtime.is_fully_gone("t2")
     # ... but the tail error is not swallowed silently either.
     assert [e["step"] for e in result["errors"]] == ["delete_terminals_by_ids"]
-    assert "database is locked" in result["errors"][0]["error"]
+    assert "database write failed" in result["errors"][0]["error"]
 
 
 def test_clear_session_env_failure_does_not_lose_the_plugin_events(real_db, runtime, monkeypatch):
@@ -1404,10 +1397,8 @@ def _create_in_thread_kw(**kwargs):
 def test_row_write_failure_kills_the_session_it_just_created(real_db, runtime, monkeypatch):
     """new_session=True: a mid-closure failure must not orphan the tmux session.
 
-    The registry write is the LAST step of the locked critical section, and it is
-    the one that realistically fails: ``clients/database.py`` builds its engine
-    with neither ``busy_timeout`` nor WAL, so a concurrent writer makes
-    "database is locked" an ordinary outcome rather than a pathological one.
+    The registry write is the LAST step of the locked critical section and can
+    fail. The outer cleanup must still run when that native database write fails.
 
     The regression this catches: the closure returns its
     ``(window_name, session_created, window_created)`` tuple only on FULL
@@ -1422,7 +1413,7 @@ def test_row_write_failure_kills_the_session_it_just_created(real_db, runtime, m
     set_backend(backend)
     monkeypatch.setattr(terminal_service, "db_create_terminal", _db_locked)
 
-    with pytest.raises(OperationalError, match="database is locked"):
+    with pytest.raises(OperationalError, match="database write failed"):
         _create_in_thread_kw(
             session_name="cao-rollback",
             new_session=True,
@@ -1458,7 +1449,7 @@ def test_row_write_failure_kills_only_the_window_it_added(real_db, runtime, monk
     _seed(backend, "cao-existing", [("t-peer", "w-peer")], runtime)
     monkeypatch.setattr(terminal_service, "db_create_terminal", _db_locked)
 
-    with pytest.raises(OperationalError, match="database is locked"):
+    with pytest.raises(OperationalError, match="database write failed"):
         _create_in_thread_kw(session_name="cao-existing", new_session=False)
 
     # The added window is gone...

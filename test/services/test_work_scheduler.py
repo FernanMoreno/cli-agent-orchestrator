@@ -2,9 +2,9 @@
 
 import importlib
 import multiprocessing
-import sqlite3
 import time
 
+import psycopg
 import pytest
 
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
@@ -13,7 +13,7 @@ from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 
 def setup(tmp_path, *, capacity=2, max_queue=20, budgets=(10, 10), priorities=(0, 0)):
     module = importlib.import_module("cli_agent_orchestrator.services.work_scheduler")
-    repo = WorkRepository(tmp_path / "scheduler.sqlite3")
+    repo = WorkRepository(tmp_path / "scheduler-artifacts")
     repo.initialize()
     scheduler = module.WorkScheduler(repo)
     scheduler.configure(
@@ -188,6 +188,28 @@ def test_global_queue_bound_and_frozen_request_idempotency(tmp_path):
         enqueue(scheduler, work(repo, jobs[1], "b"))
 
 
+def test_equal_timestamp_requests_follow_durable_queue_sequence(tmp_path, monkeypatch):
+    module, repo, scheduler, jobs = setup(tmp_path, capacity=1)
+    first = work(repo, jobs[0], "first")
+    second = work(repo, jobs[0], "second")
+    fixed_time = time.time()
+    monkeypatch.setattr(module.time, "time", lambda: fixed_time)
+    queued_first = enqueue(scheduler, first)
+    queued_second = enqueue(scheduler, second)
+    assert queued_first.queued_at == queued_second.queued_at
+    with repo.read_snapshot() as connection:
+        sequence_first = connection.execute(
+            "SELECT queue_sequence FROM work_scheduler_requests WHERE id=%s",
+            (queued_first.id,),
+        ).fetchone()[0]
+        sequence_second = connection.execute(
+            "SELECT queue_sequence FROM work_scheduler_requests WHERE id=%s",
+            (queued_second.id,),
+        ).fetchone()[0]
+    assert sequence_first < sequence_second
+    assert scheduler.claim_next(actor_id="owner").id == queued_first.id
+
+
 @pytest.mark.parametrize("budget", [None, True, -1, "2", 1.5])
 def test_missing_or_noninteger_budget_never_authorizes(tmp_path, budget):
     module, repo, scheduler, jobs = setup(tmp_path, budgets=(budget,), priorities=(0,))
@@ -348,9 +370,9 @@ def test_enqueue_frontier_is_frozen_in_durable_request(tmp_path):
     _, repo, scheduler, jobs = setup(tmp_path)
     item = enqueue(scheduler, work(repo, jobs[0], "one"))
     with repo.transaction() as connection:
-        with pytest.raises(sqlite3.IntegrityError, match="frontier"):
+        with pytest.raises(psycopg.errors.CheckViolation, match="frontier"):
             connection.execute(
-                "UPDATE work_scheduler_requests SET enqueue_frontier=99 WHERE id=?", (item.id,)
+                "UPDATE work_scheduler_requests SET enqueue_frontier=99 WHERE id=%s", (item.id,)
             )
 
 
@@ -366,7 +388,7 @@ def test_dependencies_same_job_cycle_detection_and_readiness(tmp_path):
     assert scheduler.claim_next(actor_id="owner") is None
     # Fixture models an already accepted prerequisite; scheduler never authors this state.
     with repo.transaction() as connection:
-        connection.execute("UPDATE work_items SET state='succeeded' WHERE id=?", (b["id"],))
+        connection.execute("UPDATE work_items SET state='succeeded' WHERE id=%s", (b["id"],))
     assert scheduler.claim_next(actor_id="owner").work_item_id == a["id"]
 
 
@@ -403,16 +425,19 @@ def test_expired_or_terminal_attempt_keeps_slot_until_server_proof(tmp_path, mon
     assert scheduler.get_by_attempt(item["attempts"][0]["id"]).state == "held"
 
 
-def test_failed_claim_event_rolls_back_capacity_and_budget(tmp_path):
+def test_failed_claim_event_rolls_back_capacity_and_budget(tmp_path, monkeypatch):
     _, repo, scheduler, jobs = setup(tmp_path)
     item = work(repo, jobs[0], "a")
     enqueue(scheduler, item)
-    with repo.transaction() as connection:
-        connection.execute(
-            "CREATE TRIGGER reject_claim BEFORE INSERT ON work_events "
-            "WHEN NEW.event_type='scheduler.claimed' BEGIN SELECT RAISE(ABORT,'test'); END"
-        )
-    with pytest.raises(sqlite3.IntegrityError):
+    append_event = repo._append_event
+
+    def fail_after_claim(connection, **arguments):
+        append_event(connection, **arguments)
+        if arguments["event_type"] == "scheduler.claimed":
+            connection.execute("SELECT 1 / 0")
+
+    monkeypatch.setattr(repo, "_append_event", fail_after_claim)
+    with pytest.raises(psycopg.errors.DivisionByZero):
         scheduler.claim_next(actor_id="owner")
     assert scheduler.get_by_attempt(item["attempts"][0]["id"]).state == "queued"
 
@@ -464,7 +489,7 @@ def test_release_rechecks_revision_after_stop_verification(tmp_path):
     def verify(owner):
         with repo.transaction() as connection:
             connection.execute(
-                "UPDATE work_attempts SET revision=revision+1 WHERE id=?", (owner.attempt_id,)
+                "UPDATE work_attempts SET revision=revision+1 WHERE id=%s", (owner.attempt_id,)
             )
         return module.StoppedWriter(owner.attempt_id, owner.generation, owner.revision, "exit")
 
@@ -529,10 +554,10 @@ def test_cancelled_queued_request_drains_backpressure_without_refunding_held(tmp
     assert scheduler.claim_next(actor_id="owner") is None
     assert scheduler.get_by_attempt(holder["attempts"][0]["id"]).state == "held"
     assert repo.read_events(jobs[0]["id"])["events"][-1]["event_type"] == "scheduler.withdrawn"
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(psycopg.errors.CheckViolation):
         with repo.transaction() as connection:
             connection.execute(
-                "UPDATE work_scheduler_requests SET revision=3 WHERE id=?", (queued.id,)
+                "UPDATE work_scheduler_requests SET revision=3 WHERE id=%s", (queued.id,)
             )
     terminal(repo, holder)
     with pytest.raises(module.SchedulerConflict):
@@ -614,6 +639,50 @@ def test_ten_processes_never_exceed_two_slots(tmp_path):
     try:
         outcomes = [output.get(timeout=25) for _ in processes]
         assert sorted(outcomes) == ["held"] * 2 + ["waiting"] * 8
+        for process in processes:
+            process.join(10)
+            assert process.exitcode == 0
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(5)
+
+
+def _configure_process(path, barrier, output):
+    module = importlib.import_module("cli_agent_orchestrator.services.work_scheduler")
+    try:
+        barrier.wait(15)
+        revision = module.WorkScheduler(WorkRepository(path)).configure(
+            capacity=2, max_queue=20, aging_seconds=10, expected_policy_revision=1
+        )
+        output.put(("configured", revision))
+    except module.SchedulerConflict:
+        output.put(("stale", None))
+    except BaseException as error:
+        output.put(("error", repr(error)))
+
+
+def test_concurrent_policy_cas_has_one_winner(tmp_path):
+    _, repo, _, _ = setup(tmp_path)
+    ctx = multiprocessing.get_context("fork")
+    barrier, output = ctx.Barrier(2), ctx.Queue()
+    processes = [
+        ctx.Process(target=_configure_process, args=(repo.path, barrier, output)) for _ in range(2)
+    ]
+    for process in processes:
+        process.start()
+    try:
+        results = [output.get(timeout=20) for _ in processes]
+        assert sorted(kind for kind, _ in results) == ["configured", "stale"]
+        assert all(revision in {None, 2} for _, revision in results)
+        with repo.read_snapshot() as connection:
+            assert (
+                connection.execute(
+                    "SELECT revision FROM work_scheduler_policy WHERE singleton=1"
+                ).fetchone()[0]
+                == 2
+            )
         for process in processes:
             process.join(10)
             assert process.exitcode == 0

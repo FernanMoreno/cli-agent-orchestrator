@@ -2,7 +2,7 @@
 
 This is the real-HTTP sibling of ``test/api/test_workflow_lifecycle_integration.py``.
 That module drives the REAL assembled ASGI app in-process via Starlette's
-``TestClient`` (persistent-portal loop + real temp SQLite journal + real YAML/script
+``TestClient`` (persistent-portal loop + real PostgreSQL journal + real YAML/script
 engine) and is the fast, load-bearing, per-assertion coverage. It STAYS. But it
 carries a DISCLOSED limitation, stated in its own docstring: the in-process transport
 "CANNOT prove true cross-OS-process durability ... nor the real ``cao`` CLI /
@@ -136,8 +136,8 @@ _SCRIPT_LONG = "import time\ntime.sleep(120)\n"
 # Real-HTTP helpers -- every call crosses the process boundary over a socket.
 # ---------------------------------------------------------------------------
 def _spec_dir(server: CaoServer) -> Path:
-    """Resolve specs alongside this server's private DB, independent of parent env."""
-    return server.db_path.parent.parent / "workflows"
+    """Resolve specs under this server's private CAO home, independent of parent env."""
+    return server.home_dir / ".aws" / "cli-agent-orchestrator" / "workflows"
 
 
 def _write_script_spec(server: CaoServer, source: str, name: str) -> str:

@@ -34,7 +34,7 @@ import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Callable, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, TypeGuard, cast
 
 import jwt
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -487,7 +487,7 @@ class Principal:
 _PRINCIPAL_FACTORY_SEAL = object()
 
 
-def is_verified_principal(value: object) -> bool:
+def is_verified_principal(value: object) -> TypeGuard[Principal]:
     """Return whether an identity came from this module's validated factories.
 
     ``Principal`` deliberately has no public constructor, but Python callers can

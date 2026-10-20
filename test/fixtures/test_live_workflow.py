@@ -2,10 +2,13 @@
 
 import json
 from pathlib import Path
+from test.fixtures import cao_server
 from test.fixtures import live_workflow as fixture
 from types import SimpleNamespace
 
 import pytest
+
+pytestmark = pytest.mark.offline_database
 
 
 @pytest.fixture
@@ -16,7 +19,22 @@ def subscription(tmp_path, monkeypatch):
     monkeypatch.setenv("CAO_RUN_LIVE_PROVIDER_TESTS", "1")
     monkeypatch.setenv("CAO_LIVE_WORKFLOW_PROVIDER", "codex")
     monkeypatch.setenv("CAO_REAL_PROVIDER_E2E_AUTH_HOME", str(auth.parent.parent))
+    monkeypatch.setenv(
+        "CAO_REAL_PROVIDER_E2E_PROVIDERS",
+        json.dumps(
+            {
+                "codex": {
+                    "model": "gpt-reviewed-test",
+                    "binary": "codex",
+                    "auth_env": [],
+                    "auth_files": [".codex/auth.json"],
+                    "capabilities": [],
+                }
+            }
+        ),
+    )
     monkeypatch.setattr(fixture.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(cao_server.shutil, "which", lambda name: f"/bin/{name}")
     monkeypatch.setattr(fixture.subprocess, "run", lambda *args, **kwargs: None)
     return auth
 
@@ -35,8 +53,13 @@ def test_subscription_only_and_isolated_config(subscription, tmp_path, monkeypat
     original = subscription.read_bytes()
     run = fixture.live_workflow_server.__wrapped__(tmp_path)
     next(run)
-    assert captured["OPENAI_API_KEY"] == ""
+    assert "OPENAI_API_KEY" not in captured
     assert captured["CODEX_HOME"].startswith(str(tmp_path))
+    profile = (
+        tmp_path / "live-workflow-home/.aws/cli-agent-orchestrator/agent-store/live-workflow.md"
+    ).read_text()
+    assert "provider: codex" in profile
+    assert "model: gpt-reviewed-test" in profile
     assert Path(captured["TMUX_TMPDIR"]).is_dir()
     run.close()
     assert stopped == [True]

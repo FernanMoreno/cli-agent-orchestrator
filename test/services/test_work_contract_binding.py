@@ -1,17 +1,15 @@
 """Attempt bindings preserve exact server-resolved orders, not cached authorization."""
 
 import importlib
-import sqlite3
 import time
-from test.clients.test_work_repository import (
-    legacy_admit,
-    legacy_v21_store,
-    migrate_legacy_v21_store,
-)
+from dataclasses import replace
+from uuid import uuid4
 
+import psycopg
 import pytest
 from pydantic import ValidationError
 
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.security import auth
 from cli_agent_orchestrator.services.delegation_snapshot import (
@@ -23,51 +21,56 @@ from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuth
 
 
 @pytest.mark.parametrize("payload", ['{"schema_version":1}', '{"schema_version":1,"id":null}'])
-def test_dispatch_ddl_rejects_missing_contract_identity(payload):
-    from cli_agent_orchestrator.clients.work_dispatch_schema import DISPATCH_SCHEMA
-
-    with sqlite3.connect(":memory:") as connection:
-        for statement in DISPATCH_SCHEMA:
-            connection.execute(statement)
-        with pytest.raises(sqlite3.IntegrityError):
+def test_dispatch_ddl_rejects_missing_contract_identity(tmp_path, payload):
+    _, _, repo, actor, job, _, grant, item, contract = context(tmp_path)
+    attempt = item["attempts"][0]
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with repo.transaction() as connection:
             connection.execute(
-                "INSERT INTO work_dispatch_bindings VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO work_dispatch_bindings "
+                "(attempt_id,generation,job_id,work_item_id,principal_id,grant_id,grant_revision,"
+                "contract_id,contract_json,contract_hash,snapshot_id,created_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
-                    "attempt",
-                    1,
-                    "job",
-                    "work",
-                    "actor",
-                    "grant",
-                    1,
-                    "contract",
+                    attempt["id"],
+                    attempt["generation"],
+                    job["id"],
+                    item["id"],
+                    actor.id,
+                    grant.id,
+                    grant.revision,
+                    contract.id,
                     payload,
                     "a" * 64,
-                    "snapshot",
+                    contract.snapshot.id,
                     time.time(),
                 ),
             )
 
 
-def test_v28_companion_ddl_rejects_missing_contract_version():
-    from cli_agent_orchestrator.clients.work_dispatch_schema import DISPATCH_V2_EVIDENCE_SCHEMA
-
-    with sqlite3.connect(":memory:") as connection:
-        connection.execute(DISPATCH_V2_EVIDENCE_SCHEMA[0])
-        with pytest.raises(sqlite3.IntegrityError):
+def test_v28_companion_ddl_rejects_missing_contract_version(tmp_path):
+    data = context(tmp_path)
+    _, _, repo, _, _, _, _, _, _ = data
+    binding = bind(data)
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with repo.transaction() as connection:
             connection.execute(
-                "INSERT INTO work_dispatch_v2_evidence VALUES (?,?,?,?)",
-                ("attempt", 1, '{"id":"contract"}', "a" * 64),
+                "INSERT INTO work_dispatch_v2_evidence "
+                "(attempt_id,generation,contract_json,contract_hash) VALUES (%s,%s,%s,%s)",
+                (binding.attempt_id, binding.generation, '{"id":"contract"}', "a" * 64),
             )
 
 
-def context(tmp_path, *, legacy=False):
+def context(tmp_path, *, legacy=False, grant_tools=None):
     models = importlib.import_module("cli_agent_orchestrator.models.work_contract")
     module = importlib.import_module("cli_agent_orchestrator.services.work_contract")
-    path = tmp_path / "binding.db"
-    repo = legacy_v21_store(path) if legacy else WorkRepository(path)
-    if not legacy:
-        repo.initialize()
+    target = DatabaseTarget.from_settings(scope="main")
+    repo = WorkRepository(target, filesystem_home=tmp_path)
+    repo.initialize()
+    if legacy:
+        # Represent rows imported from the legacy ledger using today's native
+        # schema. Native PostgreSQL migration contracts cover the installed DDL.
+        repo.__dict__["_legacy_lineage_fixture"] = True
     actor = auth._verified_principal("https://issuer.test", "owner", [auth.SCOPE_ADMIN], "jwt")
     job = repo.create_job(
         project_id="project", principal_id=actor.id, allowed_providers=["mock_cli"], grant_id="root"
@@ -78,7 +81,7 @@ def context(tmp_path, *, legacy=False):
         job_id=job["id"],
         providers={"mock_cli"},
         permissions=Permissions(
-            tools={"knowledge.read", "Read"},
+            tools=set(grant_tools) if grant_tools is not None else {"knowledge.read", "Read"},
             paths={str(tmp_path)},
             commands={"/bin/alpha", "/bin/beta"},
         ),
@@ -125,6 +128,25 @@ def context(tmp_path, *, legacy=False):
     return models, module, repo, actor, job, authority, grant, item, contract
 
 
+def legacy_admit(repo, job, **overrides):
+    """Seed an imported legacy-lineage row in the current PostgreSQL schema."""
+    if repo.__dict__.get("_legacy_lineage_fixture") is not True:
+        raise AssertionError("legacy row seeding is limited to explicit test fixtures")
+    request = {
+        "operation_kind": "launch",
+        "idempotency_key": "request-1",
+        "request_hash": "a" * 64,
+        "contract_id": "contract",
+        "snapshot_id": "snapshot",
+        "provider": "mock_cli",
+        "actor_id": "operator",
+    }
+    request.update(overrides)
+    with repo.transaction() as connection:
+        repo._verify(connection)
+        return repo._admit_work(connection, job_id=job["id"], **request)
+
+
 def test_existing_compares_frozen_order_without_granting_live_authority(tmp_path):
     data = context(tmp_path)
     _, module, repo, actor, _, _, grant, item, contract = data
@@ -140,7 +162,7 @@ def test_existing_compares_frozen_order_without_granting_live_authority(tmp_path
     )
     with repo.transaction() as connection:
         connection.execute(
-            "UPDATE work_attempts SET state='finished' WHERE id=?", (arguments["attempt_id"],)
+            "UPDATE work_attempts SET state='finished' WHERE id=%s", (arguments["attempt_id"],)
         )
         assert manager._existing(connection, **arguments) == binding
         assert manager._existing(connection, **dict(arguments, attempt_id="missing")) is None
@@ -198,9 +220,9 @@ def test_v2_binding_roundtrips_exact_executable_evidence_and_rejects_digest_chan
     assert first.contract == v2
     assert first.contract_hash == v2.canonical_hash()
     assert bind(data, contract=v2) == first
-    restored = module.WorkContracts(WorkRepository(repo.path)).revalidate_order(
-        first.attempt_id, generation=1
-    )
+    restored = module.WorkContracts(
+        WorkRepository(repo.target, filesystem_home=repo.filesystem_home)
+    ).revalidate_order(first.attempt_id, generation=1)
     assert restored.contract.executable_identities == identities
     changed = v2.model_copy(
         update={
@@ -216,7 +238,7 @@ def test_v2_binding_roundtrips_exact_executable_evidence_and_rejects_digest_chan
         bind(data, contract=changed)
     with repo.read_snapshot() as connection:
         row = connection.execute(
-            "SELECT contract_json,contract_hash FROM work_dispatch_v2_evidence WHERE attempt_id=?",
+            "SELECT contract_json,contract_hash FROM work_dispatch_v2_evidence WHERE attempt_id=%s",
             (item["attempts"][0]["id"],),
         ).fetchone()
         assert tuple(row) == (v2.canonical_json(), v2.canonical_hash())
@@ -236,18 +258,32 @@ def test_binding_roundtrip_hash_and_immutable_retry(tmp_path):
     first = bind(data)
     assert first.contract_hash == contract.canonical_hash()
     assert bind(data) == first
-    restored = module.WorkContracts(WorkRepository(repo.path)).revalidate_order(
-        first.attempt_id, generation=1
-    )
+    restored = module.WorkContracts(
+        WorkRepository(repo.target, filesystem_home=repo.filesystem_home)
+    ).revalidate_order(first.attempt_id, generation=1)
     assert restored == first
     assert restored.contract.model.status == "unknown"
     assert restored.contract.snapshot.delivered_hash == contract.snapshot.delivered_hash
     changed = contract.model_copy(update={"backend": "another_backend"})
     with pytest.raises(module.ContractConflict):
         bind(data, contract=changed)
-    with repo.transaction() as connection:
-        with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with repo.transaction() as connection:
             connection.execute("DELETE FROM work_dispatch_bindings")
+
+
+def test_contract_transaction_requires_same_native_store(tmp_path):
+    _, module, repo, *_ = context(tmp_path)
+    other = WorkRepository(
+        replace(repo.target, store_id=str(uuid4())), filesystem_home=repo.filesystem_home
+    )
+    manager = module.WorkContracts(other)
+    with repo.transaction() as connection:
+        with pytest.raises(module.ContractConflict, match="another store"):
+            manager._transaction(connection)
+    with repo.connection() as connection:
+        with pytest.raises(module.ContractConflict, match="caller-owned transaction"):
+            manager._transaction(connection)
 
 
 def test_contract_is_strict_frozen_closed_and_hash_is_canonical(tmp_path):
@@ -357,7 +393,7 @@ def test_revalidation_rejects_replaced_attempt(tmp_path):
     first = bind(data)
     with repo.transaction() as connection:
         connection.execute(
-            "INSERT INTO work_attempts(id,work_item_id,attempt_number,generation,provider,lease_expires_at,created_at) VALUES ('replacement',?,2,2,'mock_cli',?,?)",
+            "INSERT INTO work_attempts(id,work_item_id,attempt_number,generation,provider,lease_expires_at,created_at) VALUES ('replacement',%s,2,2,'mock_cli',%s,%s)",
             (item["id"], time.time() + 300, time.time()),
         )
     with pytest.raises(ValueError):
@@ -385,7 +421,6 @@ def test_descendants_keep_parent_snapshot_with_their_own_contracts(tmp_path):
         )
         descendants.append((child, child_contract))
         ancestor = child
-    migrate_legacy_v21_store(repo)
     bind(data)
     manager = module.WorkContracts(repo)
     for child, child_contract in descendants:
@@ -401,7 +436,7 @@ def test_descendants_keep_parent_snapshot_with_their_own_contracts(tmp_path):
         assert manager.revalidate_order(binding.attempt_id, generation=1) == binding
         assert binding.contract.snapshot == contract.snapshot
     with repo.transaction() as connection:
-        connection.execute("UPDATE work_items SET snapshot_id=NULL WHERE id=?", (data[7]["id"],))
+        connection.execute("UPDATE work_items SET snapshot_id=NULL WHERE id=%s", (data[7]["id"],))
     with pytest.raises(module.ContractConflict):
         manager.revalidate_order(binding.attempt_id, generation=1)
 
@@ -435,13 +470,12 @@ def test_snapshot_from_nonancestor_or_broken_ancestry_is_rejected(tmp_path, ance
         provider="mock_cli",
         actor_id=actor.id,
     )
-    migrate_legacy_v21_store(repo)
     with repo.transaction() as connection:
         if ancestry == "broken_snapshot":
-            connection.execute("UPDATE work_items SET snapshot_id=NULL WHERE id=?", (parent_id,))
+            connection.execute("UPDATE work_items SET snapshot_id=NULL WHERE id=%s", (parent_id,))
         elif ancestry == "cycle":
             connection.execute(
-                "UPDATE work_items SET parent_work_item_id=? WHERE id=?", (child["id"], parent_id)
+                "UPDATE work_items SET parent_work_item_id=%s WHERE id=%s", (child["id"], parent_id)
             )
     with pytest.raises(module.ContractConflict):
         module.WorkContracts(repo).bind(
@@ -481,6 +515,7 @@ def test_process_agent_step_checkout_metadata_does_not_grant_workspace_access(
 ):
     models = importlib.import_module("cli_agent_orchestrator.models.work_contract")
     module = importlib.import_module("cli_agent_orchestrator.services.work_contract")
+    _, _, repo, *_ = context(tmp_path)
     contract = models.EffectiveWorkContractV2(
         id="contract",
         operation_kind="agent_step",
@@ -505,9 +540,11 @@ def test_process_agent_step_checkout_metadata_does_not_grant_workspace_access(
 
     if grant_checkout_path:
         with pytest.raises(module.ContractConflict, match="cannot grant workspace"):
-            module.WorkContracts._relationships(sqlite3.connect(":memory:"), attempt, contract)
+            with repo.read_snapshot() as connection:
+                module.WorkContracts._relationships(connection, attempt, contract)
     else:
-        module.WorkContracts._relationships(sqlite3.connect(":memory:"), attempt, contract)
+        with repo.read_snapshot() as connection:
+            module.WorkContracts._relationships(connection, attempt, contract)
 
 
 def _v2_payload(**changes):

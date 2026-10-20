@@ -329,7 +329,7 @@ def archive_context(repo, tmp_path, monkeypatch):
     monkeypatch.delenv("AUTH0_DOMAIN", raising=False)
     monkeypatch.delenv("CAO_AUTH_JWKS_URI", raising=False)
     actor = local_operator_principal()
-    db = WorkRepository(tmp_path / "work.sqlite3")
+    db = WorkRepository()
     db.initialize()
     path = Path(create_worktree(str(repo), "archived"))
     job = db.create_job(
@@ -359,7 +359,7 @@ def archive_context(repo, tmp_path, monkeypatch):
     # Trusted fixture arrangement; production binding belongs to dispatch T017.
     with db.transaction() as connection:
         connection.execute(
-            "UPDATE work_attempts SET terminal_id='archived' WHERE id=?", (attempt["id"],)
+            "UPDATE work_attempts SET terminal_id='archived' WHERE id=%s", (attempt["id"],)
         )
     db.transition_attempt(
         attempt_id=attempt["id"],
@@ -442,7 +442,7 @@ def test_archive_requires_exact_durable_terminal_binding(
     service, db, path, args = archive_context(repo, tmp_path, monkeypatch)
     with db.transaction() as connection:
         connection.execute(
-            "UPDATE work_attempts SET terminal_id=? WHERE id=?",
+            "UPDATE work_attempts SET terminal_id=%s WHERE id=%s",
             (terminal_binding, args["attempt_id"]),
         )
     with pytest.raises(service.WorktreeError, match="terminal"):
@@ -475,15 +475,16 @@ def test_revocation_during_stop_check_prevents_file_read(repo, tmp_path, monkeyp
 
 
 def test_archive_event_failure_leaves_no_reference_and_preserves_files(repo, tmp_path, monkeypatch):
-    import sqlite3
+    from cli_agent_orchestrator.clients.postgres import DatabaseError
 
     service, db, path, args = archive_context(repo, tmp_path, monkeypatch)
     (path / "scratch.txt").write_text("retained")
-    with db.transaction() as connection:
-        connection.execute(
-            "CREATE TRIGGER fail_archive BEFORE INSERT ON work_events WHEN NEW.event_type='worktree.archived' BEGIN SELECT RAISE(ABORT,'no archive event'); END"
-        )
-    with pytest.raises(sqlite3.IntegrityError, match="no archive event"):
+
+    def refuse_event(connection, **kwargs):
+        connection.execute("SELECT 1/0")
+
+    monkeypatch.setattr(db, "_append_event", refuse_event)
+    with pytest.raises(DatabaseError):
         service.archive_worktree(**args)
     assert (path / "scratch.txt").read_text() == "retained"
     with db.connection() as connection:

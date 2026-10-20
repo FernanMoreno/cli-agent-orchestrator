@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
@@ -54,6 +55,7 @@ class LocalPeerAssignmentRequest(AssignmentRequest):
 
 
 _jobs: set[asyncio.Task] = set()
+logger = logging.getLogger(__name__)
 
 
 def _finished(task):
@@ -191,6 +193,7 @@ async def _assign_owned(parent_id, payload, *, owner, registry):
             fence_parent=True,
             expected_parent_incarnation_id=parent.get("session_incarnation_id"),
             expected_parent_generation=payload.generation,
+            assignment_id=identity,
         )
         result = {
             "assignment_id": identity,
@@ -208,7 +211,25 @@ async def _assign_owned(parent_id, payload, *, owner, registry):
             "error_kind": "assignment_reconcile_required",
             "message": "Assignment outcome requires inspection; the task will not be repeated.",
         }
-    return await asyncio.to_thread(_finish, identity, result)
+    finished = await asyncio.to_thread(_finish, identity, result)
+    if result.get("success") is True and terminal.session_incarnation_id:
+        try:
+            await asyncio.to_thread(
+                terminal_service.bind_validated_assignment_owner,
+                terminal.id,
+                terminal.session_incarnation_id,
+                identity,
+            )
+        except Exception:
+            # Ownership inheritance is fail-closed. The submitted task stays
+            # valid if the interaction ledger is unavailable; its source
+            # remains unowned and cannot be answered through this binding.
+            logger.warning(
+                "Could not bind interaction source to submitted assignment %s",
+                identity,
+                exc_info=True,
+            )
+    return finished
 
 
 async def assign_fresh(payload: FreshAssignmentRequest, *, owner: str, registry) -> dict[str, Any]:

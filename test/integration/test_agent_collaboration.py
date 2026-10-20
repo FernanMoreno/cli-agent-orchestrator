@@ -1,4 +1,4 @@
-"""Local admission composition with real HTTP, SQLite and isolated runtime.
+"""Local admission composition with real HTTP and isolated PostgreSQL runtime.
 
 No model is called: refused launch paths must fail before creating tmux objects.
 Native provider collaboration is a separate opt-in acceptance runner.
@@ -10,6 +10,8 @@ from test.fixtures.cao_server import _pick_free_port, _start_cao_server
 
 import pytest
 import requests
+
+from cli_agent_orchestrator.clients.postgres import connect
 
 
 @pytest.mark.skipif(
@@ -53,6 +55,16 @@ def test_registered_project_admission_rejects_escape_over_real_http(tmp_path):
             assert "registered project" in response.text
         assert requests.get(server.url + "/sessions", timeout=10).json() == []
         assert not list(sockets.rglob("default")), "refused launch created a tmux server"
-        assert server.db_path.is_file(), "the real application database was not initialized"
+        assert server.database_config_path.is_file(), "the server PostgreSQL config is missing"
+        targets = (
+            server.database_targets.main,
+            server.database_targets.auth,
+            server.database_targets.peer,
+        )
+        assert len({target.identity for target in targets}) == 3
+        for target in targets:
+            with connect(target, readonly=True) as connection:
+                identity = connection.execute("SELECT store_id FROM _cao_store_identity").fetchone()
+            assert identity is not None and identity["store_id"] == target.store_id
     finally:
         server.stop()

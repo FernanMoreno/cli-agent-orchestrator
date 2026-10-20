@@ -1,6 +1,7 @@
 """Durable external writes never replay an uncertain create."""
 
 from concurrent.futures import ThreadPoolExecutor
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import patch
 
 import pytest
@@ -14,9 +15,7 @@ from cli_agent_orchestrator.services import beads_service as service
 
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'metadata.sqlite'}", connect_args={"check_same_thread": False}
-    )
+    engine = configured_orm_engine()
     db.Base.metadata.create_all(engine)
     monkeypatch.setattr(db, "SessionLocal", sessionmaker(bind=engine))
     monkeypatch.setattr("cli_agent_orchestrator.constants.LOCK_DIR", tmp_path / "locks")

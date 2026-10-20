@@ -1,25 +1,28 @@
 """Ordinary terminal mutation routes must honor durable Work terminal ownership."""
 
+import hashlib
 import json
 import os
-import sqlite3
 import subprocess
 import sys
 import threading
 import time
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.backends.work_backend import WorkBackendView
 from cli_agent_orchestrator.clients import database
+from cli_agent_orchestrator.clients.postgres import DatabaseError, connect
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.services import terminal_service
 from cli_agent_orchestrator.services.work_admission import WorkAdmission
+
+pytestmark = pytest.mark.postgres
 
 
 class BackendSpy:
@@ -38,26 +41,70 @@ class BackendSpy:
 
 
 def _insert_work_attempt(repository, *, job_id, terminal_id, attempt_id="attempt-1"):
+    """Create a real ledger attempt and bind it to the requested terminal."""
     now = time.time()
     with repository.transaction() as connection:
         connection.execute(
             "INSERT INTO work_jobs "
             "(id,project_id,principal_id,allowed_providers,grant_id,created_at) "
-            "VALUES (?,?,?,?,?,?)",
+            "VALUES (%s,%s,%s,%s,%s,%s)",
             (job_id, "project", "principal", '["mock_cli"]', "grant", now),
         )
-        connection.execute(
-            "INSERT INTO work_items "
-            "(id,job_id,operation_kind,idempotency_key,request_hash,contract_id,created_at) "
-            "VALUES (?,?,?,?,?,?,?)",
-            ("item-1", job_id, "launch", "request-1", "hash", "contract", now),
+        connection.execute("INSERT INTO work_event_sequences(job_id) VALUES (%s)", (job_id,))
+        repository._append_event(
+            connection,
+            job_id=job_id,
+            event_type="job.created",
+            actor_id="principal",
         )
+    work = repository.admit_work(
+        job_id=job_id,
+        operation_kind="launch",
+        idempotency_key=f"terminal-fence-{attempt_id}",
+        request_hash=hashlib.sha256(attempt_id.encode()).hexdigest(),
+        contract_id="terminal-fence-contract",
+        snapshot_id=None,
+        provider="mock_cli",
+        actor_id="principal",
+    )
+    durable_attempt_id = work["attempts"][0]["id"]
+    with repository.transaction() as connection:
         connection.execute(
-            "INSERT INTO work_attempts "
-            "(id,work_item_id,attempt_number,generation,provider,terminal_id,state,"
-            "lease_expires_at,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-            (attempt_id, "item-1", 1, 1, "mock_cli", terminal_id, "planned", now + 60, now),
+            "UPDATE work_attempts SET terminal_id=%s WHERE id=%s",
+            (terminal_id, durable_attempt_id),
         )
+    return durable_attempt_id
+
+
+def _revoke_attempt_read(repository):
+    """Remove runtime SELECT on the exact target without changing its catalog."""
+    from psycopg import sql
+
+    target = repository.target
+    with connect(target.migration_target()) as connection, connection.transaction():
+        connection.execute(
+            sql.SQL("REVOKE SELECT ON {}.{} FROM {}").format(
+                sql.Identifier(target.schema),
+                sql.Identifier("work_attempts"),
+                sql.Identifier(target.user),
+            )
+        )
+        privilege = connection.execute(
+            "SELECT has_table_privilege(%s,%s,'SELECT')",
+            (target.user, f'"{target.schema}"."work_attempts"'),
+        ).fetchone()
+        assert privilege is not None and not privilege[0]
+
+
+def _point_main_at_unavailable_target(monkeypatch, isolated_api_database):
+    """Point main at an unavailable target to exercise a real connection failure."""
+    targets = isolated_api_database.targets
+    configuration = json.loads(targets.config_file.read_text(encoding="utf-8"))
+    configuration["targets"]["main"]["database"] = f"missing_{uuid4().hex}"
+    path = targets.home / "database-config-unavailable-main.json"
+    path.write_text(json.dumps(configuration), encoding="utf-8")
+    path.chmod(0o600)
+    monkeypatch.setenv("CAO_DATABASE_CONFIG_FILE", str(path))
 
 
 def _insert_terminal(terminal_id, session_name="missing-tmux-session"):
@@ -70,20 +117,26 @@ def _insert_terminal(terminal_id, session_name="missing-tmux-session"):
 
 
 @pytest.fixture
-def isolated_api_database(tmp_path, monkeypatch):
-    path = tmp_path / "cao.sqlite3"
-    repository = WorkRepository(path)
+def isolated_api_database(monkeypatch, postgres_targets):
+    from test.postgres.fixtures import make_orm_engine
+
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
+
+    target = postgres_targets.main
+    bootstrap_scope(target)
+    repository = WorkRepository(target, filesystem_home=postgres_targets.home)
     repository.initialize()
-    engine = create_engine(f"sqlite:///{path}")
-    database.Base.metadata.create_all(engine)
-    monkeypatch.setattr(constants, "DATABASE_FILE", path)
-    monkeypatch.setattr(constants, "LOCK_DIR", tmp_path / "locks")
+    database.engine.dispose()
+    engine = make_orm_engine(target)
+    monkeypatch.setattr(database, "engine", engine)
     monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=engine))
     backend = BackendSpy()
     monkeypatch.setattr(terminal_service, "get_backend", lambda: backend)
     monkeypatch.setattr(terminal_service, "inject_memory_context", lambda message, *_args: message)
-    yield SimpleNamespace(repository=repository, backend=backend)
-    engine.dispose()
+    try:
+        yield SimpleNamespace(repository=repository, backend=backend, targets=postgres_targets)
+    finally:
+        engine.dispose()
 
 
 def test_work_owned_input_and_key_are_rejected_before_backend_effect(client, isolated_api_database):
@@ -169,8 +222,7 @@ def test_ordinary_delete_fails_closed_when_work_store_cannot_be_verified(
 ):
     terminal_id = "abcd1234"
     _insert_terminal(terminal_id)
-    with isolated_api_database.repository.transaction() as connection:
-        connection.execute("UPDATE work_migrations SET checksum='bad' WHERE version=1")
+    _revoke_attempt_read(isolated_api_database.repository)
     teardown_calls = []
     snapshot_calls = []
     monkeypatch.setattr(
@@ -213,7 +265,7 @@ def test_ordinary_delete_holds_dispatch_lock_through_row_delete_then_emits_plugi
 
     def delete_row(*_args, **_kwargs):
         def probe():
-            with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id):
+            with terminal_dispatch_lock(isolated_api_database.repository.target, terminal_id):
                 acquired.set()
 
         thread = threading.Thread(target=probe, daemon=True)
@@ -223,7 +275,7 @@ def test_ordinary_delete_holds_dispatch_lock_through_row_delete_then_emits_plugi
         return True
 
     def plugin_callback(*_args):
-        with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id):
+        with terminal_dispatch_lock(isolated_api_database.repository.target, terminal_id):
             observed.append(("plugin_lock_released", True))
 
     monkeypatch.setattr(terminal_service, "delete_terminal_row", delete_row)
@@ -250,8 +302,7 @@ def test_ordinary_exit_maps_work_ownership_failure_before_transport(
             isolated_api_database.repository, job_id="job-1", terminal_id=terminal_id
         )
     else:
-        with isolated_api_database.repository.transaction() as connection:
-            connection.execute("UPDATE work_migrations SET checksum='bad' WHERE version=1")
+        _revoke_attempt_read(isolated_api_database.repository)
     monkeypatch.setattr(
         terminal_service.provider_manager,
         "get_provider",
@@ -281,8 +332,7 @@ def test_session_delete_rejects_uncertain_work_terminal_before_snapshot_or_kill(
         expected_error = terminal_service.WorkOwnedTerminalError
         expected_status = 403
     else:
-        with isolated_api_database.repository.transaction() as connection:
-            connection.execute("UPDATE work_migrations SET checksum='bad' WHERE version=1")
+        _revoke_attempt_read(isolated_api_database.repository)
         expected_error = terminal_service.WorkOwnershipStoreUnavailableError
         expected_status = 503
     snapshot_calls = []
@@ -329,8 +379,7 @@ async def test_flow_recycle_rejects_uncertain_work_terminal_before_fifo_or_kill(
         )
         expected_error = terminal_service.WorkOwnedTerminalError
     else:
-        with isolated_api_database.repository.transaction() as connection:
-            connection.execute("UPDATE work_migrations SET checksum='bad' WHERE version=1")
+        _revoke_attempt_read(isolated_api_database.repository)
         expected_error = terminal_service.WorkOwnershipStoreUnavailableError
     effects = []
     monkeypatch.setattr(flow_service, "db_get_flow", lambda _name: flow)
@@ -400,11 +449,10 @@ async def test_flow_preflight_rejects_work_before_script_or_last_run(
         )
         expected_error = terminal_service.WorkOwnedTerminalError
     elif ownership == "store_corrupt":
-        with isolated_api_database.repository.transaction() as connection:
-            connection.execute("UPDATE work_migrations SET checksum='bad' WHERE version=1")
+        _revoke_attempt_read(isolated_api_database.repository)
         expected_error = terminal_service.WorkOwnershipStoreUnavailableError
     else:
-        monkeypatch.setattr(constants, "DATABASE_FILE", tmp_path / "absent-work.db")
+        _point_main_at_unavailable_target(monkeypatch, isolated_api_database)
         expected_error = terminal_service.WorkOwnershipStoreUnavailableError
 
     effects = []
@@ -456,7 +504,7 @@ def test_manual_flow_run_maps_work_ownership_failures(client, monkeypatch, error
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("store_change", ["removed", "replaced"])
+@pytest.mark.parametrize("store_change", ["unreadable", "unavailable"])
 async def test_flow_recycle_reverifies_work_store_after_script_even_without_rows(
     tmp_path, isolated_api_database, monkeypatch, store_change
 ):
@@ -484,10 +532,10 @@ async def test_flow_recycle_reverifies_work_store_after_script_even_without_rows
 
     def change_store(*_args, **_kwargs):
         effects.append("script")
-        constants.DATABASE_FILE.unlink()
-        if store_change == "replaced":
-            with sqlite3.connect(constants.DATABASE_FILE) as connection:
-                connection.execute("CREATE TABLE unrelated (id TEXT)")
+        if store_change == "unreadable":
+            _revoke_attempt_read(isolated_api_database.repository)
+        else:
+            _point_main_at_unavailable_target(monkeypatch, isolated_api_database)
         return SimpleNamespace(returncode=0, stdout='{"execute": true, "output": {}}', stderr="")
 
     async def unexpected_create(**_kwargs):
@@ -553,7 +601,7 @@ def test_flow_preflight_enumeration_failure_maps_to_503_before_script_or_last_ru
     effects = []
 
     def unreadable_rows(_name):
-        raise sqlite3.DatabaseError("terminal table unreadable")
+        raise DatabaseError("terminal table unreadable")
 
     monkeypatch.setattr(flow_service, "db_get_flow", lambda _name: flow)
     monkeypatch.setattr(flow_service, "list_terminals_by_session", unreadable_rows)
@@ -604,7 +652,7 @@ async def test_flow_recycle_enumeration_failure_stops_before_runtime_effects(
         nonlocal enumerations
         enumerations += 1
         if enumerations == 3:
-            raise sqlite3.DatabaseError("terminal table unreadable")
+            raise DatabaseError("terminal table unreadable")
         return []
 
     async def unexpected_create(**_kwargs):
@@ -705,11 +753,10 @@ def test_ordinary_transport_rechecks_work_ownership_immediately_before_effect(
 
 @pytest.mark.parametrize("effect", ["input", "key"])
 def test_ordinary_send_holds_terminal_dispatch_lock_from_guard_through_transport(
-    effect, tmp_path, isolated_api_database, monkeypatch
+    effect, isolated_api_database, monkeypatch
 ):
     from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
-    monkeypatch.setattr(constants, "LOCK_DIR", tmp_path / "locks")
     terminal_id = "abcd1234"
     _insert_terminal(terminal_id)
     transport_returned = threading.Event()
@@ -723,7 +770,7 @@ def test_ordinary_send_holds_terminal_dispatch_lock_from_guard_through_transport
 
         def probe():
             started.set()
-            with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id):
+            with terminal_dispatch_lock(isolated_api_database.repository.target, terminal_id):
                 probe_results[label] = transport_returned.is_set()
                 acquired.set()
 
@@ -832,7 +879,9 @@ def test_ordinary_send_releases_terminal_dispatch_lock_before_plugin_callback(
 def test_managed_input_rejects_a_session_window_mismatch_before_service_side_effects(
     isolated_api_database, monkeypatch
 ):
-    _insert_work_attempt(isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234")
+    attempt_id = _insert_work_attempt(
+        isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234"
+    )
     _insert_terminal("abcd1234")
     side_effects = []
 
@@ -840,7 +889,7 @@ def test_managed_input_rejects_a_session_window_mismatch_before_service_side_eff
         with isolated_api_database.repository.read_snapshot() as connection:
             WorkAdmission._check_terminal_effect_target(
                 connection,
-                attempt_id="attempt-1",
+                attempt_id=attempt_id,
                 bound_terminal_id="abcd1234",
                 effect=effect,
                 terminal_id=terminal_id,
@@ -897,7 +946,9 @@ def test_managed_input_rejects_a_session_window_mismatch_before_service_side_eff
 def test_managed_special_key_rejects_a_session_window_mismatch_before_notify(
     isolated_api_database, monkeypatch
 ):
-    _insert_work_attempt(isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234")
+    attempt_id = _insert_work_attempt(
+        isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234"
+    )
     _insert_terminal("abcd1234")
     side_effects = []
 
@@ -905,7 +956,7 @@ def test_managed_special_key_rejects_a_session_window_mismatch_before_notify(
         with isolated_api_database.repository.read_snapshot() as connection:
             WorkAdmission._check_terminal_effect_target(
                 connection,
-                attempt_id="attempt-1",
+                attempt_id=attempt_id,
                 bound_terminal_id="abcd1234",
                 effect=effect,
                 terminal_id=terminal_id,
@@ -947,7 +998,9 @@ def test_managed_special_key_rejects_a_session_window_mismatch_before_notify(
 def test_managed_input_revalidates_immediately_before_receipt_claim(
     isolated_api_database, monkeypatch
 ):
-    _insert_work_attempt(isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234")
+    attempt_id = _insert_work_attempt(
+        isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234"
+    )
     _insert_terminal("abcd1234")
     effects = []
     guard_calls = 0
@@ -960,7 +1013,7 @@ def test_managed_input_revalidates_immediately_before_receipt_claim(
         with isolated_api_database.repository.read_snapshot() as connection:
             WorkAdmission._check_terminal_effect_target(
                 connection,
-                attempt_id="attempt-1",
+                attempt_id=attempt_id,
                 bound_terminal_id="abcd1234",
                 effect=effect,
                 terminal_id=terminal_id,
@@ -1023,7 +1076,9 @@ def test_managed_input_revalidates_immediately_before_receipt_claim(
 def test_managed_special_key_revalidates_immediately_before_monitor_notify(
     isolated_api_database, monkeypatch
 ):
-    _insert_work_attempt(isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234")
+    attempt_id = _insert_work_attempt(
+        isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234"
+    )
     _insert_terminal("abcd1234")
     effects = []
     guard_calls = 0
@@ -1036,7 +1091,7 @@ def test_managed_special_key_revalidates_immediately_before_monitor_notify(
         with isolated_api_database.repository.read_snapshot() as connection:
             WorkAdmission._check_terminal_effect_target(
                 connection,
-                attempt_id="attempt-1",
+                attempt_id=attempt_id,
                 bound_terminal_id="abcd1234",
                 effect=effect,
                 terminal_id=terminal_id,
@@ -1075,25 +1130,10 @@ def test_managed_special_key_revalidates_immediately_before_monitor_notify(
     assert isolated_api_database.backend.effects == []
 
 
-def test_work_terminal_fence_survives_service_process_restart(tmp_path):
-    """A fresh service process reads ownership from the same durable SQLite store."""
-    from sqlalchemy import create_engine
-
-    home = tmp_path / "server-home"
-    database_path = home / ".aws" / "cli-agent-orchestrator" / "db" / "cli-agent-orchestrator.db"
-    database_path.parent.mkdir(parents=True)
-    repository = WorkRepository(database_path)
-    repository.initialize()
-    engine = create_engine(f"sqlite:///{database_path}")
-    database.Base.metadata.create_all(engine)
-    _insert_work_attempt(repository, job_id="job-1", terminal_id="abcd1234")
-    with sqlite3.connect(database_path) as connection:
-        connection.execute(
-            "INSERT INTO terminals (id,tmux_session,tmux_window,provider) " "VALUES (?,?,?,?)",
-            ("abcd1234", "missing-session", "missing-window", "mock_cli"),
-        )
-    engine.dispose()
-
+def test_work_terminal_fence_survives_service_process_restart(isolated_api_database):
+    """A fresh service process reads ownership from the same configured PostgreSQL target."""
+    _insert_work_attempt(isolated_api_database.repository, job_id="job-1", terminal_id="abcd1234")
+    _insert_terminal("abcd1234", "missing-session")
     child_script = """
 import asyncio
 import json
@@ -1143,8 +1183,6 @@ print(json.dumps({
 }))
     """
     child_env = os.environ.copy()
-    child_env["HOME"] = str(home)
-    child_env["CAO_HOME_DIR"] = str(home / ".aws" / "cli-agent-orchestrator")
     child_env.pop("AUTH0_DOMAIN", None)
     child_env.pop("AUTH0_AUDIENCE", None)
     child_env.pop("CAO_AUTH_JWKS_URI", None)

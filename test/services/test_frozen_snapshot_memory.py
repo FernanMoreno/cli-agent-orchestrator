@@ -1,12 +1,12 @@
 """Security contract for explicit frozen-snapshot memory references."""
 
 import time
+from uuid import uuid4
 
 import pytest
 
-from cli_agent_orchestrator.clients.work_dispatch_schema import DISPATCH_SCHEMA
+from cli_agent_orchestrator.clients.postgres import connect
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
-from cli_agent_orchestrator.clients.work_snapshot_schema import SNAPSHOT_SCHEMA
 from cli_agent_orchestrator.models.work_contract import (
     ContractPermissions,
     ContractResources,
@@ -187,8 +187,10 @@ def test_terminal_treats_a_snapshot_shaped_string_as_content_not_a_reference(mon
 
 
 def _bound_snapshot(tmp_path, *, content="<cao-memory>FROZEN</cao-memory>"):
-    """Create a real policy, durable order and snapshot binding in temporary SQLite."""
-    repository = WorkRepository(tmp_path / "snapshot-adapter.sqlite3")
+    """Create a real policy, durable order and snapshot binding in isolated PostgreSQL."""
+    label = uuid4().hex
+    contract_id = "contract-a-" + label
+    repository = WorkRepository()
     repository.initialize()
     principal = auth._verified_principal(
         "https://issuer.test", "owner-a", [auth.SCOPE_ADMIN], "jwt"
@@ -197,7 +199,7 @@ def _bound_snapshot(tmp_path, *, content="<cao-memory>FROZEN</cao-memory>"):
         project_id="project-a",
         principal_id=principal.id,
         allowed_providers=["mock_cli"],
-        grant_id="root-a",
+        grant_id="root-a-" + label,
     )
     authority = WorkAuthority(repository)
     grant = authority.issue_root(
@@ -213,7 +215,7 @@ def _bound_snapshot(tmp_path, *, content="<cao-memory>FROZEN</cao-memory>"):
     snapshot = snapshots.freeze(
         principal=principal,
         job_id=job["id"],
-        contract_id="contract-a",
+        contract_id=contract_id,
         binding_key="destination-a",
         request_hash="a" * 64,
         scope="project",
@@ -222,18 +224,20 @@ def _bound_snapshot(tmp_path, *, content="<cao-memory>FROZEN</cao-memory>"):
     )
     destination = tmp_path / "destination-a"
     destination.mkdir()
-    item = repository.admit_work(
-        job_id=job["id"],
-        operation_kind="launch",
-        idempotency_key="work-a",
-        request_hash="b" * 64,
-        contract_id="contract-a",
-        snapshot_id=snapshot.id,
-        provider="mock_cli",
-        actor_id=principal.id,
-    )
+    with repository.transaction() as connection:
+        item = repository._admit_work(
+            connection,
+            job_id=job["id"],
+            operation_kind="launch",
+            idempotency_key="work-a",
+            request_hash="b" * 64,
+            contract_id=contract_id,
+            snapshot_id=snapshot.id,
+            provider="mock_cli",
+            actor_id=principal.id,
+        )
     contract = EffectiveWorkContract(
-        id="contract-a",
+        id=contract_id,
         operation_kind="launch",
         provider="mock_cli",
         backend="test-backend",
@@ -256,12 +260,6 @@ def _bound_snapshot(tmp_path, *, content="<cao-memory>FROZEN</cao-memory>"):
         contract=contract,
     )
     return repository, principal, job, grant, snapshots, snapshot, authority, contracts, binding
-
-
-def _trigger(schema, name):
-    return next(
-        statement for statement in schema if statement.startswith(f"CREATE TRIGGER {name} ")
-    )
 
 
 def test_real_order_bound_reader_delivers_only_its_authorized_snapshot(tmp_path):
@@ -322,7 +320,7 @@ def test_bound_reader_refuses_foreign_job_contract_or_destination_snapshot(tmp_p
     other_destination = snapshots.freeze(
         principal=principal,
         job_id=job["id"],
-        contract_id="contract-a",
+        contract_id=binding.contract.id,
         binding_key="destination-other",
         request_hash="d" * 64,
         scope="project",
@@ -356,16 +354,19 @@ def test_missing_corrupt_or_revoked_snapshot_fails_closed_without_legacy_fallbac
     ), "explicit references need a reader bound to a durable work order"
     reader = reader_type(contracts, binding)
 
-    with repository.transaction() as connection:
-        connection.execute("DROP TRIGGER work_delegation_snapshots_immutable_update")
+    with connect(repository.target.migration_target()) as connection:
         connection.execute(
-            "UPDATE work_delegation_snapshots SET content=? WHERE id=?",
-            (b"CORRUPT SECRET", snapshot.id),
+            "ALTER TABLE work_delegation_snapshots DISABLE TRIGGER work_delegation_snapshots_immutable_update"
         )
-        connection.execute(
-            "CREATE TRIGGER work_delegation_snapshots_immutable_update BEFORE UPDATE ON "
-            "work_delegation_snapshots BEGIN SELECT RAISE(ABORT,'delegation snapshot history is immutable'); END"
-        )
+        try:
+            connection.execute(
+                "UPDATE work_delegation_snapshots SET content=%s WHERE id=%s",
+                (b"CORRUPT SECRET", snapshot.id),
+            )
+        finally:
+            connection.execute(
+                "ALTER TABLE work_delegation_snapshots ENABLE TRIGGER work_delegation_snapshots_immutable_update"
+            )
     with pytest.raises(frozen_run_memory.FrozenSnapshotMemoryUnavailable) as raised:
         _resolve("<cao-memory>LEGACY</cao-memory>", snapshot_id=snapshot.id, snapshot_reader=reader)
     assert "CORRUPT SECRET" not in str(raised.value)
@@ -376,23 +377,11 @@ def test_missing_corrupt_or_revoked_snapshot_fails_closed_without_legacy_fallbac
         missing_path
     )
     reader = reader_type(contracts, binding)
-    with repository.transaction() as connection:
-        for name in (
-            "work_snapshot_sources_immutable_delete",
-            "work_dispatch_bindings_immutable_delete",
-            "work_delegation_snapshots_immutable_delete",
-        ):
-            connection.execute(f"DROP TRIGGER {name}")
-        connection.execute("DELETE FROM work_snapshot_sources WHERE snapshot_id=?", (snapshot.id,))
-        connection.execute("DELETE FROM work_dispatch_bindings WHERE snapshot_id=?", (snapshot.id,))
-        connection.execute("DELETE FROM work_delegation_snapshots WHERE id=?", (snapshot.id,))
-        connection.execute(_trigger(SNAPSHOT_SCHEMA, "work_snapshot_sources_immutable_delete"))
-        connection.execute(_trigger(DISPATCH_SCHEMA, "work_dispatch_bindings_immutable_delete"))
-        connection.execute(_trigger(SNAPSHOT_SCHEMA, "work_delegation_snapshots_immutable_delete"))
+    missing_id = uuid4().hex
     with pytest.raises(SnapshotUnavailable):
-        snapshots.read(principal, snapshot.id)
+        snapshots.read(principal, missing_id)
     with pytest.raises(frozen_run_memory.FrozenSnapshotMemoryUnavailable):
-        _resolve("<cao-memory>LEGACY</cao-memory>", snapshot_id=snapshot.id, snapshot_reader=reader)
+        _resolve("<cao-memory>LEGACY</cao-memory>", snapshot_id=missing_id, snapshot_reader=reader)
 
     revoked_path = tmp_path / "revoked"
     revoked_path.mkdir()

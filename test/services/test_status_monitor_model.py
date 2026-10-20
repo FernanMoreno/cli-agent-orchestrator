@@ -562,7 +562,7 @@ def test_real_providers_stay_live_for_one_message_at_a_time(kind, seed, loop_mod
 def _isolate_local_protocol_from_remote_database(monkeypatch):
     """Synthetic local frames have no runtime-channel placement.
 
-    The paired bridge/inbox tests exercise remote routing against real SQLite.
+    The paired bridge/inbox tests exercise remote routing against real PostgreSQL.
     This local protocol model must not consult an unrelated operator database
     thousands of times for its invented IDs or inherit its remote placements.
     """

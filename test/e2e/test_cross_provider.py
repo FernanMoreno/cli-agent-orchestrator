@@ -74,7 +74,7 @@ def _create_session(provider: str, agent_profile: str, session_name: str):
     assert resp.status_code in (
         200,
         201,
-    ), f"Session creation failed: {resp.status_code} {resp.text}"
+    ), f"Session creation failed: HTTP {resp.status_code}; response body omitted"
     data = resp.json()
     return data["id"], data["session_name"]
 
@@ -116,7 +116,7 @@ def _add_terminal_in_session(
     assert last_resp is not None and last_resp.status_code in (
         200,
         201,
-    ), f"Terminal creation failed: {last_resp.status_code} {last_resp.text}"
+    ), f"Terminal creation failed: HTTP {last_resp.status_code}; response body omitted"
     data = last_resp.json()
     return data["id"], data.get("provider", provider)
 

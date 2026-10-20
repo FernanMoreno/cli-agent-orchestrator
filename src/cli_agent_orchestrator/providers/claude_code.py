@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -12,6 +13,7 @@ import stat
 import threading
 import time
 from pathlib import Path
+from time import time as _wall_clock
 from typing import TYPE_CHECKING, Any, List, Optional
 
 if TYPE_CHECKING:
@@ -54,6 +56,7 @@ _SETTINGS_WRITE_LOCK = threading.Lock()
 # whenever initialize() already resolved it to None (no CAO profile found),
 # reintroducing the double-disk-read this sentinel exists to prevent.
 _UNSET: Any = object()
+_OAUTH_EXPIRY_SAFETY_MARGIN_SECONDS = 30.0
 
 
 # Custom exception for provider errors
@@ -245,6 +248,16 @@ _QUOTA_CANCEL_PATTERN = re.compile(r"(?i)\besc\b[^\n]{0,80}\bcancel\b")
 # used by the composited-screen processing detector, not the loose historical
 # spinner regex that can match markdown bullets.
 _QUOTA_FRESH_SPINNER_LINE_PATTERN = re.compile(r"^[ \t\xa0]*[✶✢✽✻✳·*][ \t\xa0]+\w*ing\b.*…")
+# Provider HTTP failures are rendered as a plain error line by some Claude
+# Code builds instead of the quota panel above.  Keep this line anchored and
+# bounded to the current tail so a task that merely quotes "HTTP 504" cannot
+# turn a settled response into ERROR.  Recognizing an explicit upstream error
+# prevents run-step from waiting for the full completion timeout.
+_CLAUDE_PROVIDER_ERROR_LINE_PATTERN = re.compile(
+    r"(?i)^[ \t\xa0]*(?:api\s+error|error\s+from\s+provider|gateway\s+timeout|"
+    r"upstream\s+request\s+failed)\b.*(?:\b(?:4|5)\d{2}\b|gateway\s+timeout)"
+)
+_PROVIDER_ERROR_TAIL_LINES = 15
 IDLE_PROMPT_PATTERN_LOG = r"[>❯][\s\xa0]"  # Same pattern for log files
 # New Claude Code TUI completion summary, e.g. "✻ Sautéed for 1s" /
 # "✶ Cultivated for 12s". Unlike the active spinner (PROCESSING_PATTERN, which
@@ -322,6 +335,7 @@ NEW_TUI_BOX_SPINNER_PATTERN = re.compile(r"^[ \t]*[✶✢✽✻✳·*][ \t]+\w*i
 
 
 class ClaudeCodeProvider(BaseProvider):
+    supports_interaction_mcp_overlay = True
     """Provider for Claude Code CLI tool integration."""
 
     _TAIL_HASH_LINES = 30
@@ -414,6 +428,23 @@ class ClaudeCodeProvider(BaseProvider):
                 return TerminalStatus.PROCESSING
             return TerminalStatus.WAITING_QUOTA
         return None
+
+    @staticmethod
+    def _has_current_provider_error(lines: List[str]) -> bool:
+        """Return whether the current Claude tail contains an upstream error.
+
+        A newer spinner means Claude is still retrying/recovering, so the
+        explicit error is not terminal yet.  Otherwise the line is definitive
+        and should surface as ``TerminalStatus.ERROR`` instead of a 504 wait.
+        """
+        start = max(0, len(lines) - _PROVIDER_ERROR_TAIL_LINES)
+        for index in range(len(lines) - 1, start - 1, -1):
+            if not _CLAUDE_PROVIDER_ERROR_LINE_PATTERN.search(lines[index]):
+                continue
+            if any(_QUOTA_FRESH_SPINNER_LINE_PATTERN.search(line) for line in lines[index + 1 :]):
+                return False
+            return True
+        return False
 
     @staticmethod
     def _extract_last_response_text(output: str) -> Optional[str]:
@@ -579,9 +610,10 @@ class ClaudeCodeProvider(BaseProvider):
             # can identify the current terminal for handoff/assign operations.
             # Claude Code does not automatically forward parent shell env vars
             # to MCP subprocesses, so we inject it explicitly via the env field.
-            if profile.mcpServers:
+            interaction_mcp_servers = self.interaction_mcp_servers(profile.mcpServers)
+            if interaction_mcp_servers:
                 mcp_config = {}
-                for server_name, server_config in profile.mcpServers.items():
+                for server_name, server_config in interaction_mcp_servers.items():
                     if isinstance(server_config, dict):
                         mcp_config[server_name] = dict(server_config)
                     else:
@@ -744,10 +776,31 @@ class ClaudeCodeProvider(BaseProvider):
         oauth = payload.get("claudeAiOauth")
         if not isinstance(oauth, dict):
             return False
-        return all(
+        if not all(
             isinstance(oauth.get(field), str) and oauth[field].strip()
             for field in ("accessToken", "refreshToken")
-        )
+        ):
+            return False
+
+        # A refresh token can outlive an access token.  Treating that receipt
+        # as reusable makes CAO auto-select the subscription route, after
+        # which Claude Code may wait for an interactive refresh in an isolated
+        # HOME until the task deadline.  Leaving the route for the operator
+        # produces a visible WAITING_USER_ANSWER state instead of a misleading
+        # provider timeout.  Older receipts without expiry metadata remain
+        # supported, and an explicit CLAUDE_CODE_OAUTH_TOKEN is handled by the
+        # caller as a separate operator-authenticated override.
+        expires_at = oauth.get("expiresAt")
+        if expires_at is None:
+            return True
+        if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)):
+            return False
+        expiry_ms = float(expires_at)
+        if not math.isfinite(expiry_ms):
+            return False
+        if expiry_ms < 100_000_000_000:
+            expiry_ms *= 1000.0
+        return expiry_ms > (_wall_clock() + _OAUTH_EXPIRY_SAFETY_MARGIN_SECONDS) * 1000.0
 
     async def _handle_startup_prompts(
         self, idle_gap: Optional[float] = None, outer_timeout: Optional[float] = None
@@ -1294,6 +1347,8 @@ class ClaudeCodeProvider(BaseProvider):
         quota_status = self._recent_quota_status(output.split("\n"))
         if quota_status is not None:
             return quota_status
+        if self._has_current_provider_error(output.split("\n")):
+            return TerminalStatus.ERROR
 
         # Issue #407: content-based staleness guard. The tmux sliding window
         # (-S -200) is NOT monotonically growing — Ink composer-collapse and
@@ -1594,6 +1649,8 @@ class ClaudeCodeProvider(BaseProvider):
         quota_status = self._recent_quota_status(rows)
         if quota_status is not None:
             return quota_status
+        if self._has_current_provider_error(rows):
+            return TerminalStatus.ERROR
 
         # Live spinner: "✻ <gerund>… (…)" — the boxed-prompt spinner or a bare
         # spinner line. Visible in a composited frame ⇒ genuinely working.

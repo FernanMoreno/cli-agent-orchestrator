@@ -1,8 +1,8 @@
 """U1 persistence tests (issue #511): schema shape, migrator registry placement,
 dedup for global scope, idempotent re-run, and loss-aware legacy backfill."""
 
-import sqlite3
 import uuid
+from test.postgres.orm import configured_orm_engine
 
 import pytest
 from sqlalchemy import create_engine
@@ -10,24 +10,38 @@ from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.clients import database as db_mod
 from cli_agent_orchestrator.clients.database import Base, MemoryMetadataModel
+from cli_agent_orchestrator.clients.postgres import connect
+from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
 
 
 @pytest.fixture
-def fresh_db(tmp_path, monkeypatch):
-    """A fresh sqlite file wired as both DATABASE_FILE (for the migrator's raw
-    sqlite3 connect) and SessionLocal/engine (for ORM inserts)."""
-    db_path = tmp_path / "test.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=False)
-    # database.py imports DATABASE_FILE lazily inside migrators via
-    # `from cli_agent_orchestrator.constants import DATABASE_FILE`, so patch the
-    # constants module attribute.
-    import cli_agent_orchestrator.constants as consts
+def fresh_db(isolated_memory_db):
+    engine = configured_orm_engine()
+    try:
+        yield isolated_memory_db, engine
+    finally:
+        engine.dispose()
 
-    monkeypatch.setattr(consts, "DATABASE_FILE", db_path, raising=False)
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(bind=engine)
-    monkeypatch.setattr(db_mod, "SessionLocal", sessionmaker(bind=engine))
-    return db_path, engine
+
+@pytest.fixture(autouse=True)
+def close_native_observers(monkeypatch):
+    owned = []
+    original = connect
+
+    def observer(target):
+        connection = original(target)
+        owned.append(connection)
+        return connection
+
+    monkeypatch.setattr(__import__(__name__, fromlist=["connect"]), "connect", observer)
+    yield
+    for connection in owned:
+        connection.close()
+
+
+def backfill(target):
+    with connect(target) as connection:
+        db_mod._backfill_legacy_related_keys(connection.raw)
 
 
 def _seed(engine, key, related_keys=None, scope="global", scope_id=None):
@@ -52,9 +66,15 @@ def _seed(engine, key, related_keys=None, scope="global", scope_id=None):
 
 def test_table_shape_14_columns(fresh_db):
     db_path, _ = fresh_db
-    db_mod._migrate_memory_relationships()
-    conn = sqlite3.connect(str(db_path))
-    cols = {r[1]: r[3] for r in conn.execute("PRAGMA table_info(memory_relationships)")}
+    backfill(db_path)
+    conn = connect(db_path)
+    cols = {
+        r[0]: r[1]
+        for r in conn.execute(
+            "SELECT column_name, is_nullable='NO' FROM information_schema.columns WHERE table_schema=%s AND table_name='memory_relationships'",
+            (db_path.schema,),
+        )
+    }
     expected = {
         "id",
         "scope",
@@ -81,55 +101,37 @@ def test_table_shape_14_columns(fresh_db):
 
 def test_indexes_created(fresh_db):
     db_path, _ = fresh_db
-    db_mod._migrate_memory_relationships()
-    conn = sqlite3.connect(str(db_path))
-    idx = {r[1] for r in conn.execute("PRAGMA index_list('memory_relationships')")}
+    backfill(db_path)
+    conn = connect(db_path)
+    idx = {
+        r[0]
+        for r in conn.execute(
+            "SELECT indexname FROM pg_indexes WHERE schemaname=%s AND tablename='memory_relationships'",
+            (db_path.schema,),
+        )
+    }
     assert "uq_memory_rel" in idx
     assert "idx_memory_rel_lookup" in idx
 
 
-def test_migrator_appended_last_in_registry():
-    """The migrator is registered, and appended after _migrate_workflow_run_step
-    (extend, do not reorder). Reads the init_db source to assert ordering without
-    executing every migrator."""
+def test_native_registry_declares_memory_relationships_without_runtime_ddl():
     import inspect
 
-    src = inspect.getsource(db_mod.init_db)
-    assert "_migrate_memory_relationships()" in src
-    assert src.index("_migrate_workflow_run_step()") < src.index("_migrate_memory_relationships()")
-    # Must not issue SQL against the workflow tables. Parse the two functions
-    # with ast and drop docstrings (which legitimately reference #504's
-    # workflow_run* tables in prose), then assert no remaining code mentions
-    # workflow_run while it does touch memory_relationships / memory_metadata.
-    import ast
-    import textwrap
-
-    def _code_without_docstrings(fn) -> str:
-        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
-                doc = ast.get_docstring(node, clean=False)
-                if doc and node.body and isinstance(node.body[0], ast.Expr):
-                    node.body = node.body[1:] or [ast.Pass()]
-        return ast.unparse(tree)
-
-    code = (
-        _code_without_docstrings(db_mod._migrate_memory_relationships)
-        + "\n"
-        + _code_without_docstrings(db_mod._backfill_legacy_related_keys)
-    )
-    assert "workflow_run" not in code, "migrator must not issue SQL against workflow tables"
-    assert "memory_relationships" in code
-    assert "memory_metadata" in code  # backfill reads it
+    assert "memory_relationships" in db_mod.CORE_MIGRATIONS[0].tables
+    assert "_backfill_legacy_related_keys" not in inspect.getsource(db_mod.init_db)
+    source = inspect.getsource(db_mod._backfill_legacy_related_keys)
+    assert "workflow_run" not in source
+    assert "memory_metadata" in source and "memory_relationships" in source
 
 
 def test_idempotent_rerun(fresh_db):
     db_path, _ = fresh_db
-    db_mod._migrate_memory_relationships()
-    db_mod._migrate_memory_relationships()  # no error, no duplicate table
-    conn = sqlite3.connect(str(db_path))
+    backfill(db_path)
+    backfill(db_path)  # no error, no duplicate table
+    conn = connect(db_path)
     n = conn.execute(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_relationships'"
+        "SELECT COUNT(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND c.relname='memory_relationships'",
+        (db_path.schema,),
     ).fetchone()[0]
     assert n == 1
 
@@ -145,8 +147,8 @@ def test_backfill_happy_path_preserves_rank_null_confidence(fresh_db):
     _seed_src.commit()
     _seed_src.close()
 
-    db_mod._migrate_memory_relationships()
-    conn = sqlite3.connect(str(db_path))
+    backfill(db_path)
+    conn = connect(db_path)
     rows = conn.execute(
         "SELECT target_key, rank, confidence, type, origin, status FROM memory_relationships "
         "WHERE source_key='src' ORDER BY rank"
@@ -163,8 +165,8 @@ def test_backfill_null_and_empty_yield_zero_rows(fresh_db):
     db_path, engine = fresh_db
     _seed(engine, "never", related_keys=None)  # never computed
     _seed(engine, "empty", related_keys="")  # computed-empty
-    db_mod._migrate_memory_relationships()
-    conn = sqlite3.connect(str(db_path))
+    backfill(db_path)
+    conn = connect(db_path)
     n = conn.execute("SELECT COUNT(*) FROM memory_relationships").fetchone()[0]
     assert n == 0
 
@@ -172,8 +174,8 @@ def test_backfill_null_and_empty_yield_zero_rows(fresh_db):
 def test_backfill_dangling_reported_not_activated(fresh_db):
     db_path, engine = fresh_db
     _seed(engine, "src", related_keys="ghost")  # ghost does not exist
-    db_mod._migrate_memory_relationships()
-    conn = sqlite3.connect(str(db_path))
+    backfill(db_path)
+    conn = connect(db_path)
     n = conn.execute("SELECT COUNT(*) FROM memory_relationships WHERE source_key='src'").fetchone()[
         0
     ]
@@ -184,9 +186,9 @@ def test_backfill_idempotent_per_source(fresh_db):
     db_path, engine = fresh_db
     _seed(engine, "src", related_keys="a")
     _seed(engine, "a")
-    db_mod._migrate_memory_relationships()
-    db_mod._migrate_memory_relationships()  # re-run
-    conn = sqlite3.connect(str(db_path))
+    backfill(db_path)
+    backfill(db_path)  # re-run
+    conn = connect(db_path)
     n = conn.execute(
         "SELECT COUNT(*) FROM memory_relationships WHERE source_key='src' AND target_key='a'"
     ).fetchone()[0]
@@ -199,7 +201,7 @@ def test_related_keys_column_untouched(fresh_db):
     db_path, engine = fresh_db
     _seed(engine, "src", related_keys="a")
     _seed(engine, "a")
-    db_mod._migrate_memory_relationships()
-    conn = sqlite3.connect(str(db_path))
+    backfill(db_path)
+    conn = connect(db_path)
     val = conn.execute("SELECT related_keys FROM memory_metadata WHERE key='src'").fetchone()[0]
     assert val == "a"  # unchanged

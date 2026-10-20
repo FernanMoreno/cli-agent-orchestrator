@@ -2,13 +2,13 @@
 
 import hashlib
 import multiprocessing
-import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from psycopg import sql
 
-from cli_agent_orchestrator.clients.database import _migrate_workflow_index
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget, connect
 from cli_agent_orchestrator.services import workflow_spec_service as service
 from cli_agent_orchestrator.utils import atomic_file
 
@@ -24,21 +24,18 @@ steps:
 
 
 @pytest.fixture
-def workflow(tmp_path, monkeypatch):
+def workflow(tmp_path, monkeypatch, isolated_memory_db):
     directory = tmp_path / "workflows"
     directory.mkdir()
-    database = tmp_path / "index.db"
     monkeypatch.setattr(service, "WORKFLOW_SPEC_DIR", directory)
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", database)
     monkeypatch.setattr(atomic_file, "LOCK_DIR", tmp_path / "locks")
-    _migrate_workflow_index()
     path = directory / "revision.yaml"
     path.write_text(SOURCE)
-    return path, database
+    return path
 
 
 def test_source_revision_and_update_preserve_legacy_get(client, workflow):
-    path, _ = workflow
+    path = workflow
     legacy = client.get("/workflows/revision").json()
     response = client.get("/workflows/revision/source")
     assert response.status_code == 200
@@ -61,7 +58,7 @@ def test_source_revision_and_update_preserve_legacy_get(client, workflow):
 
 
 def test_stale_editor_cannot_overwrite_winner(client, workflow):
-    path, database = workflow
+    path = workflow
     original_hash = hashlib.sha256(path.read_bytes()).hexdigest()
     first = client.put(
         "/workflows/revision",
@@ -80,14 +77,14 @@ def test_stale_editor_cannot_overwrite_winner(client, workflow):
     )
     assert second.status_code == 409
     assert "winner" in path.read_text()
-    with sqlite3.connect(database) as connection:
+    with connect(DatabaseTarget.from_settings(scope="main")) as connection:
         assert (
             connection.execute("SELECT description FROM workflow_index").fetchone()[0] == "winner"
         )
 
 
 def test_concurrent_editors_share_one_compare_and_publish_boundary(workflow):
-    path, database = workflow
+    path = workflow
     assert hasattr(service, "update_workflow"), "conditional authoring service missing"
     expected = hashlib.sha256(path.read_bytes()).hexdigest()
     barrier = threading.Barrier(2)
@@ -105,7 +102,7 @@ def test_concurrent_editors_share_one_compare_and_publish_boundary(workflow):
     winners = [result for result in results if result is not None]
     assert len(winners) == 1
     assert path.read_text() == SOURCE.replace("original", winners[0])
-    with sqlite3.connect(database) as connection:
+    with connect(DatabaseTarget.from_settings(scope="main")) as connection:
         assert (
             connection.execute("SELECT description FROM workflow_index").fetchone()[0] == winners[0]
         )
@@ -115,7 +112,7 @@ def test_concurrent_editors_share_one_compare_and_publish_boundary(workflow):
     "content", ["not: a workflow", SOURCE.replace("name: revision", "name: other")]
 )
 def test_invalid_content_preserves_file_and_index(client, workflow, content):
-    path, database = workflow
+    path = workflow
     service.rebuild_index_from_files()
     expected = hashlib.sha256(path.read_bytes()).hexdigest()
     response = client.put(
@@ -127,47 +124,73 @@ def test_invalid_content_preserves_file_and_index(client, workflow, content):
     )
     assert response.status_code == 400
     assert path.read_text() == SOURCE
-    with sqlite3.connect(database) as connection:
+    with connect(DatabaseTarget.from_settings(scope="main")) as connection:
         assert connection.execute("SELECT name,description FROM workflow_index").fetchall() == [
             ("revision", "original")
         ]
 
 
 def test_missing_revision_is_rejected_without_writing(client, workflow):
-    path, _ = workflow
+    path = workflow
     response = client.put("/workflows/revision", json={"content": SOURCE})
     assert response.status_code == 422
     assert path.read_text() == SOURCE
 
 
 def test_index_failure_preserves_canonical_publication_for_rebuild(workflow):
-    path, database = workflow
+    path = workflow
     assert hasattr(service, "update_workflow"), "conditional authoring service missing"
     service.rebuild_index_from_files()
-    with sqlite3.connect(database) as connection:
+    target = DatabaseTarget.from_settings(scope="main")
+    with connect(target.migration_target()) as connection:
         connection.execute(
-            "CREATE TRIGGER fail_changed BEFORE INSERT ON workflow_index WHEN NEW.description='changed' BEGIN SELECT RAISE(ABORT,'index unavailable'); END"
+            sql.SQL(
+                "CREATE FUNCTION {}.fail_changed_workflow_index() RETURNS trigger "
+                "LANGUAGE plpgsql AS $$ BEGIN "
+                "IF NEW.description = 'changed' THEN "
+                "RAISE EXCEPTION 'index unavailable' USING ERRCODE = 'XX000'; "
+                "END IF; RETURN NEW; END $$"
+            ).format(sql.Identifier(target.schema))
         )
-    changed = SOURCE.replace("original", "changed")
-    result = service.update_workflow(
-        "revision", changed, hashlib.sha256(path.read_bytes()).hexdigest()
-    )
-    assert result["source_hash"] == hashlib.sha256(changed.encode()).hexdigest()
-    assert path.read_text() == changed
-    with sqlite3.connect(database) as connection:
-        assert (
-            connection.execute("SELECT description FROM workflow_index").fetchone()[0] == "original"
+        connection.execute(
+            sql.SQL(
+                "CREATE TRIGGER fail_changed BEFORE INSERT ON {}.workflow_index "
+                "FOR EACH ROW EXECUTE FUNCTION {}.fail_changed_workflow_index()"
+            ).format(sql.Identifier(target.schema), sql.Identifier(target.schema))
         )
-        connection.execute("DROP TRIGGER fail_changed")
+    try:
+        changed = SOURCE.replace("original", "changed")
+        result = service.update_workflow(
+            "revision", changed, hashlib.sha256(path.read_bytes()).hexdigest()
+        )
+        assert result["source_hash"] == hashlib.sha256(changed.encode()).hexdigest()
+        assert path.read_text() == changed
+        with connect(target) as connection:
+            assert (
+                connection.execute("SELECT description FROM workflow_index").fetchone()[0]
+                == "original"
+            )
+    finally:
+        with connect(target.migration_target()) as connection:
+            connection.execute(
+                sql.SQL("DROP TRIGGER IF EXISTS fail_changed ON {}.workflow_index").format(
+                    sql.Identifier(target.schema)
+                )
+            )
+            connection.execute(
+                sql.SQL("DROP FUNCTION IF EXISTS {}.fail_changed_workflow_index()").format(
+                    sql.Identifier(target.schema)
+                )
+            )
     service.rebuild_index_from_files()
-    with sqlite3.connect(database) as connection:
+    with connect(target) as connection:
         assert (
             connection.execute("SELECT description FROM workflow_index").fetchone()[0] == "changed"
         )
 
 
 def test_source_hash_preserves_crlf_bytes(client, workflow):
-    path, _ = workflow
+    path = workflow
     raw = SOURCE.replace("\n", "\r\n").encode()
     path.write_bytes(raw)
     response = client.get("/workflows/revision/source")
@@ -186,7 +209,7 @@ def _edit_in_process(content, expected, barrier, results):
 
 
 def test_separate_processes_cannot_both_accept_the_same_source(workflow):
-    path, _ = workflow
+    path = workflow
     expected = hashlib.sha256(path.read_bytes()).hexdigest()
     context = multiprocessing.get_context("fork")
     barrier, results = context.Barrier(2), context.Queue()
@@ -218,7 +241,7 @@ def test_separate_processes_cannot_both_accept_the_same_source(workflow):
 
 
 def test_script_update_is_validated_without_execution(client, workflow):
-    yaml_path, _ = workflow
+    yaml_path = workflow
     path = yaml_path.with_suffix(".py")
     yaml_path.unlink()
     path.write_text("INPUTS = {}\n")
@@ -246,7 +269,7 @@ def test_script_update_is_validated_without_execution(client, workflow):
 
 
 def test_escaping_symlink_cannot_read_or_replace_outside_source(client, workflow):
-    path, _ = workflow
+    path = workflow
     outside = path.parent.parent / "outside.yaml"
     outside.write_text(SOURCE)
     path.unlink()
@@ -267,7 +290,7 @@ def test_read_scope_cannot_publish_edits(client, workflow, monkeypatch):
     from cli_agent_orchestrator.api.main import app
     from cli_agent_orchestrator.security.auth import get_current_scopes
 
-    path, _ = workflow
+    path = workflow
     monkeypatch.setenv("CAO_AUTH_JWKS_URI", "https://auth.invalid/jwks")
     previous = dict(app.dependency_overrides)
     app.dependency_overrides[get_current_scopes] = lambda: ["cao:read"]

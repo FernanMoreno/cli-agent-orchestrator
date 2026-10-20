@@ -7,7 +7,6 @@ import hmac
 import json
 import math
 import secrets
-import sqlite3
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, cast
@@ -15,6 +14,7 @@ from uuid import uuid4
 
 from pydantic import field_validator
 
+from cli_agent_orchestrator.clients.postgres import Connection, IntegrityError
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_origin import (
     Digest,
@@ -162,6 +162,28 @@ class WorkOriginAuthority:
         self._authority = WorkAuthority(repository)
 
     @staticmethod
+    def _lock_history(connection: Connection, *identity: str) -> None:
+        """Serialize append-only origin revision counters, including first writes."""
+        if not connection.in_transaction:
+            raise OriginDenied("origin history writes require a transaction")
+        lock_material = _canonical(
+            ["work-origin-history-v1", connection.target.identity, *identity]
+        )
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (lock_material,)
+        )
+
+    @classmethod
+    def _lock_subject_history(cls, connection: Connection, subject_id: str) -> None:
+        cls._lock_history(connection, "subject", subject_id)
+
+    @classmethod
+    def _lock_authorization_history(
+        cls, connection: Connection, subject_id: str, origin_kind: str
+    ) -> None:
+        cls._lock_history(connection, "authorization", subject_id, origin_kind)
+
+    @staticmethod
     def _revision(value: int, *, initial: bool = False) -> int:
         if type(value) is not int or value < (0 if initial else 1):
             raise OriginConflict("origin revision is invalid")
@@ -213,20 +235,18 @@ class WorkOriginAuthority:
                 "a verified principal with the required scope is required"
             ) from error
 
-    def _registered(
-        self, connection: sqlite3.Connection, principal: Principal, *, admin=False
-    ) -> None:
+    def _registered(self, connection: Connection, principal: Principal, *, admin=False) -> None:
         self._principal(principal, admin=admin)
         row = connection.execute(
-            "SELECT issuer,subject,kind FROM work_principals WHERE id=?", (principal.id,)
+            "SELECT issuer,subject,kind FROM work_principals WHERE id=%s", (principal.id,)
         ).fetchone()
         if row is None or tuple(row) != (principal.issuer, principal.subject, principal.kind):
             raise OriginDenied("verified principal is not durably registered")
 
-    def _subject(self, connection: sqlite3.Connection, subject: Principal, origin_kind: str):
+    def _subject(self, connection: Connection, subject: Principal, origin_kind: str):
         self._registered(connection, subject)
         row = connection.execute(
-            "SELECT * FROM work_origin_subjects WHERE subject_id=? ORDER BY revision DESC LIMIT 1",
+            "SELECT * FROM work_origin_subjects WHERE subject_id=%s ORDER BY revision DESC LIMIT 1",
             (subject.id,),
         ).fetchone()
         if row is None or row["origin_kind"] != origin_kind or row["state"] != "active":
@@ -258,7 +278,7 @@ class WorkOriginAuthority:
     def _current_authorization(connection, *, subject_id: str, origin_kind: str):
         return connection.execute(
             """SELECT * FROM work_origin_authorizations
-               WHERE subject_id=? AND origin_kind=? ORDER BY revision DESC LIMIT 1""",
+               WHERE subject_id=%s AND origin_kind=%s ORDER BY revision DESC LIMIT 1""",
             (subject_id, origin_kind),
         ).fetchone()
 
@@ -280,8 +300,9 @@ class WorkOriginAuthority:
             self.repository._verify(connection)
             self._registered(connection, owner, admin=True)
             self._registered(connection, verified_subject)
+            self._lock_subject_history(connection, verified_subject.id)
             prior = connection.execute(
-                "SELECT * FROM work_origin_subjects WHERE subject_id=? ORDER BY revision DESC LIMIT 1",
+                "SELECT * FROM work_origin_subjects WHERE subject_id=%s ORDER BY revision DESC LIMIT 1",
                 (verified_subject.id,),
             ).fetchone()
             if prior is None:
@@ -303,10 +324,10 @@ class WorkOriginAuthority:
                 connection.execute(
                     """INSERT INTO work_origin_subjects
                        (subject_id,revision,schema_version,origin_kind,state,issuer_id,created_at)
-                       VALUES (?,?,?,?,?,?,?)""",
+                       VALUES (%s,%s,%s,%s,%s,%s,%s)""",
                     (verified_subject.id, revision, 1, kind, "active", owner.id, time.time()),
                 )
-            except sqlite3.IntegrityError as error:
+            except IntegrityError as error:
                 raise OriginConflict("origin subject snapshot conflicts") from error
         return OriginSubjectRef(
             subject_id=verified_subject.id, kind=cast(OriginKind, kind), revision=revision
@@ -333,6 +354,16 @@ class WorkOriginAuthority:
         with self.repository.transaction() as connection:
             self.repository._verify(connection)
             self._registered(connection, owner, admin=True)
+            try:
+                # Origin history locks follow the job authority lane. `_chain`
+                # takes the same lane reentrantly before locking its grant
+                # rows, so a message revalidation that later checks this
+                # history cannot deadlock with an authorization update.
+                self._authority.lock_job_authority_lane_for_grant(connection, grant_id)
+            except (AuthorityDenied, KeyError, ValueError) as error:
+                raise OriginDenied("origin grant chain is not live") from error
+            self._lock_subject_history(connection, subject.id)
+            self._lock_authorization_history(connection, subject.id, origin_kind)
             subject_row = self._subject(connection, subject, origin_kind)
             if subject_row["issuer_id"] != owner.id:
                 raise OriginDenied("only the origin subject issuer may authorize it")
@@ -363,7 +394,7 @@ class WorkOriginAuthority:
                     """INSERT INTO work_origin_authorizations
                        (subject_id,origin_kind,revision,schema_version,state,issuer_id,subject_revision,
                         job_id,grant_id,grant_revision,actions,expires_at,created_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (
                         subject.id,
                         origin_kind,
@@ -380,7 +411,7 @@ class WorkOriginAuthority:
                         time.time(),
                     ),
                 )
-            except sqlite3.IntegrityError as error:
+            except IntegrityError as error:
                 raise OriginConflict("origin authorization snapshot conflicts") from error
             row = self._current_authorization(
                 connection, subject_id=subject.id, origin_kind=origin_kind
@@ -402,6 +433,7 @@ class WorkOriginAuthority:
             self.repository._verify(connection)
             self._registered(connection, owner, admin=True)
             self._registered(connection, subject)
+            self._lock_authorization_history(connection, subject.id, origin_kind)
             prior = self._current_authorization(
                 connection, subject_id=subject.id, origin_kind=origin_kind
             )
@@ -420,7 +452,7 @@ class WorkOriginAuthority:
                     """INSERT INTO work_origin_authorizations
                        (subject_id,origin_kind,revision,schema_version,state,issuer_id,subject_revision,
                         job_id,grant_id,grant_revision,actions,expires_at,created_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (
                         subject.id,
                         origin_kind,
@@ -437,7 +469,7 @@ class WorkOriginAuthority:
                         time.time(),
                     ),
                 )
-            except sqlite3.IntegrityError as error:
+            except IntegrityError as error:
                 raise OriginConflict("origin revocation snapshot conflicts") from error
         return OriginAuthorizationRef(
             subject_id=subject.id, origin_kind=cast(OriginKind, origin_kind), revision=revision
@@ -535,7 +567,7 @@ class WorkOrigins:
             raise OriginDenied("workflow resolver belongs to another Work runtime")
         self._workflow_origins = origins
 
-    def _bind_result_service(self, service) -> None:
+    def _bind_result_service(self, service: WorkService) -> None:
         """Bind the artifact-owning result service for this private MCP endpoint."""
         from cli_agent_orchestrator.services.work_service import WorkService
 
@@ -640,7 +672,7 @@ class WorkOrigins:
     def _credential_principal(connection, principal_id):
         """Rebuild a narrow internal principal only from durable identity rows."""
         row = connection.execute(
-            "SELECT issuer,subject,kind FROM work_principals WHERE id=?", (principal_id,)
+            "SELECT issuer,subject,kind FROM work_principals WHERE id=%s", (principal_id,)
         ).fetchone()
         if row is None:
             raise OriginDenied("attempt principal is no longer registered")
@@ -658,7 +690,7 @@ class WorkOrigins:
         """Resolve current subject and authorization refs; callers cannot supply actors."""
         subject_id = _identity(subject_id, "preprovisioned subject")
         subject = connection.execute(
-            "SELECT * FROM work_origin_subjects WHERE subject_id=? "
+            "SELECT * FROM work_origin_subjects WHERE subject_id=%s "
             "ORDER BY revision DESC LIMIT 1",
             (subject_id,),
         ).fetchone()
@@ -754,6 +786,32 @@ class WorkOrigins:
                 raise OriginDenied("managed Work proxy request is invalid")
             name = request["params"]["name"]
             arguments = request["params"]["arguments"]
+            if name == "cao.work.message":
+                from cli_agent_orchestrator.services.work_message_service import (
+                    WorkMessageService,
+                )
+
+                result = WorkMessageService(self.repository, origins=self).execute(
+                    credential, arguments
+                )
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(
+                                    result.model_dump(mode="json"),
+                                    sort_keys=True,
+                                    separators=(",", ":"),
+                                    ensure_ascii=False,
+                                    allow_nan=False,
+                                ),
+                            }
+                        ]
+                    },
+                }
             if name == "cao.work.task_received":
                 if arguments or type(receiver_credential) is not bytes:
                     raise OriginDenied("receiver acknowledgement requires its separate credential")
@@ -980,7 +1038,7 @@ class WorkOrigins:
 
     def _task_received_origin(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         *,
         attempt_ref: WorkAttemptRef,
         receiver_subject_ref: OriginSubjectRef,
@@ -991,8 +1049,8 @@ class WorkOrigins:
     ):
         """Revalidate the exact v23 lineage and its live receiver authority."""
         origin = connection.execute(
-            "SELECT * FROM work_child_origin_bindings WHERE child_attempt_id=? "
-            "AND child_generation=?",
+            "SELECT * FROM work_child_origin_bindings WHERE child_attempt_id=%s "
+            "AND child_generation=%s",
             (attempt_ref.attempt_id, attempt_ref.generation),
         ).fetchone()
         if origin is None:
@@ -1013,7 +1071,7 @@ class WorkOrigins:
         self._revalidate_integrity(connection, origin)
         self._revalidate_replay_authorizations(connection, origin)
         attempt = connection.execute(
-            "SELECT * FROM work_attempts WHERE id=?", (attempt_ref.attempt_id,)
+            "SELECT * FROM work_attempts WHERE id=%s", (attempt_ref.attempt_id,)
         ).fetchone()
         if attempt is None or (
             attempt["work_item_id"],
@@ -1064,7 +1122,7 @@ class WorkOrigins:
             delivery_hash=origin["delivery_hash"],
         )
         prior = connection.execute(
-            "SELECT * FROM work_task_receiver_acceptances " "WHERE attempt_id=? AND generation=?",
+            "SELECT * FROM work_task_receiver_acceptances " "WHERE attempt_id=%s AND generation=%s",
             (attempt_ref.attempt_id, attempt_ref.generation),
         ).fetchone()
         expected = (
@@ -1092,7 +1150,7 @@ class WorkOrigins:
                (attempt_id,generation,receiver_subject_id,receiver_subject_revision,
                 receiver_authorization_revision,delivery_id,delivery_hash,
                 acceptance_sha256,accepted_at)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (
                 attempt_ref.attempt_id,
                 attempt_ref.generation,
@@ -1104,7 +1162,7 @@ class WorkOrigins:
         return dict(
             connection.execute(
                 "SELECT * FROM work_task_receiver_acceptances "
-                "WHERE attempt_id=? AND generation=?",
+                "WHERE attempt_id=%s AND generation=%s",
                 (attempt_ref.attempt_id, attempt_ref.generation),
             ).fetchone()
         )
@@ -1162,7 +1220,7 @@ class WorkOrigins:
         )
 
     def validate_workflow_task_received_receipt(
-        self, connection: sqlite3.Connection, receipt: TaskReceivedReceiptV1, binding
+        self, connection: Connection, receipt: TaskReceivedReceiptV1, binding
     ) -> dict:
         """Validate workflow ACK proof and refs before the repository ACK CAS."""
         if not connection.in_transaction:
@@ -1182,7 +1240,7 @@ class WorkOrigins:
         ):
             raise OriginDenied("workflow task receipt differs from its immutable binding")
         live = connection.execute(
-            "SELECT state,revision FROM work_attempts WHERE id=? AND generation=?",
+            "SELECT state,revision FROM work_attempts WHERE id=%s AND generation=%s",
             (binding.work_attempt_id, binding.work_generation),
         ).fetchone()
         if live is None or live["state"] != "sent" or live["revision"] != receipt.attempt_revision:
@@ -1198,7 +1256,7 @@ class WorkOrigins:
         )
         acceptance = connection.execute(
             "SELECT * FROM work_workflow_step_receiver_acceptances "
-            "WHERE attempt_id=? AND generation=?",
+            "WHERE attempt_id=%s AND generation=%s",
             (attempt.attempt_id, attempt.generation),
         ).fetchone()
         if acceptance is None or (
@@ -1285,7 +1343,7 @@ class WorkOrigins:
                     revision=receiver.receiver_authorization_revision,
                 )
                 attempt = connection.execute(
-                    "SELECT state,revision FROM work_attempts WHERE id=? AND generation=?",
+                    "SELECT state,revision FROM work_attempts WHERE id=%s AND generation=%s",
                     (attempt_ref.attempt_id, attempt_ref.generation),
                 ).fetchone()
                 if attempt is None:
@@ -1312,7 +1370,7 @@ class WorkOrigins:
                 if attempt["state"] == "acknowledged":
                     origin = connection.execute(
                         "SELECT * FROM work_child_origin_bindings "
-                        "WHERE child_attempt_id=? AND child_generation=?",
+                        "WHERE child_attempt_id=%s AND child_generation=%s",
                         (attempt_ref.attempt_id, attempt_ref.generation),
                     ).fetchone()
                     if origin is None:
@@ -1327,12 +1385,12 @@ class WorkOrigins:
                         raise OriginDenied("receiver replay differs from its durable delivery")
                     receipt_row = connection.execute(
                         "SELECT 1 FROM work_task_received_receipts "
-                        "WHERE attempt_id=? AND generation=?",
+                        "WHERE attempt_id=%s AND generation=%s",
                         (attempt_ref.attempt_id, attempt_ref.generation),
                     ).fetchone()
                     acceptance = connection.execute(
                         "SELECT * FROM work_task_receiver_acceptances "
-                        "WHERE attempt_id=? AND generation=?",
+                        "WHERE attempt_id=%s AND generation=%s",
                         (attempt_ref.attempt_id, attempt_ref.generation),
                     ).fetchone()
                     if receipt_row is None or acceptance is None:
@@ -1406,7 +1464,7 @@ class WorkOrigins:
             )
             acceptance = connection.execute(
                 "SELECT * FROM work_workflow_step_receiver_acceptances "
-                "WHERE attempt_id=? AND generation=?",
+                "WHERE attempt_id=%s AND generation=%s",
                 (attempt_ref.attempt_id, attempt_ref.generation),
             ).fetchone()
             expected_hash = self._workflow_receiver_acceptance_hash(
@@ -1495,7 +1553,7 @@ class WorkOrigins:
             )
             prior = connection.execute(
                 "SELECT * FROM work_task_receiver_acceptances "
-                "WHERE attempt_id=? AND generation=?",
+                "WHERE attempt_id=%s AND generation=%s",
                 (attempt_ref.attempt_id, attempt_ref.generation),
             ).fetchone()
             expected = (
@@ -1523,7 +1581,7 @@ class WorkOrigins:
                    (attempt_id,generation,receiver_subject_id,receiver_subject_revision,
                     receiver_authorization_revision,delivery_id,delivery_hash,
                     acceptance_sha256,accepted_at)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (
                     attempt_ref.attempt_id,
                     attempt_ref.generation,
@@ -1532,17 +1590,18 @@ class WorkOrigins:
                     time.time(),
                 ),
             )
-            return dict(
-                connection.execute(
-                    "SELECT * FROM work_task_receiver_acceptances "
-                    "WHERE attempt_id=? AND generation=?",
-                    (attempt_ref.attempt_id, attempt_ref.generation),
-                ).fetchone()
-            )
+            created = connection.execute(
+                "SELECT * FROM work_task_receiver_acceptances "
+                "WHERE attempt_id=%s AND generation=%s",
+                (attempt_ref.attempt_id, attempt_ref.generation),
+            ).fetchone()
+            if created is None:
+                raise OriginConflict("receiver acceptance could not be read back")
+            return dict(created)
 
     def _require_receiver_acceptance(self, connection, receipt, origin) -> None:
         acceptance = connection.execute(
-            "SELECT * FROM work_task_receiver_acceptances WHERE attempt_id=? AND generation=?",
+            "SELECT * FROM work_task_receiver_acceptances WHERE attempt_id=%s AND generation=%s",
             (receipt.attempt.attempt_id, receipt.attempt.generation),
         ).fetchone()
         expected_hash = self._receiver_acceptance_hash(
@@ -1622,7 +1681,7 @@ class WorkOrigins:
             self._require_receiver_acceptance(connection, provisional, origin)
             return provisional.model_copy(update={"proof": self._seal_task_receipt(provisional)})
 
-    def validate_task_received_receipt(self, connection: sqlite3.Connection, receipt) -> dict:
+    def validate_task_received_receipt(self, connection: Connection, receipt) -> dict:
         """Validate a sealed receipt in the caller's ACK transaction."""
         if not connection.in_transaction:
             raise ValueError("caller-owned transaction required")
@@ -1737,7 +1796,7 @@ class WorkOrigins:
         """Read only the exact persisted grant pair selected by the sealed ref."""
         authorization = connection.execute(
             "SELECT grant_id,grant_revision FROM work_origin_authorizations "
-            "WHERE subject_id=? AND origin_kind=? AND revision=?",
+            "WHERE subject_id=%s AND origin_kind=%s AND revision=%s",
             (subject_id, origin_kind, revision),
         ).fetchone()
         if authorization is None:
@@ -1942,7 +2001,7 @@ class WorkOrigins:
         connection.execute(
             "INSERT INTO work_lineage_integrity "
             "(child_attempt_id,child_generation,schema_version,canonicalization_version,fingerprint) "
-            "VALUES (?,?,?,?,?)",
+            "VALUES (%s,%s,%s,%s,%s)",
             (
                 origin["child_attempt_id"],
                 origin["child_generation"],
@@ -1954,8 +2013,8 @@ class WorkOrigins:
 
     def _revalidate_integrity(self, connection, origin) -> None:
         integrity = connection.execute(
-            "SELECT * FROM work_lineage_integrity WHERE child_attempt_id=? "
-            "AND child_generation=?",
+            "SELECT * FROM work_lineage_integrity WHERE child_attempt_id=%s "
+            "AND child_generation=%s",
             (origin["child_attempt_id"], origin["child_generation"]),
         ).fetchone()
         if integrity is None or (
@@ -1997,8 +2056,8 @@ class WorkOrigins:
 
     def _replay(self, connection, admission, handoff: _ManagedLineageHandoff):
         row = connection.execute(
-            "SELECT * FROM work_child_origin_bindings WHERE requester_principal_id=? "
-            "AND parent_attempt_id=? AND parent_generation=? AND kind=? AND idempotency_key=?",
+            "SELECT * FROM work_child_origin_bindings WHERE requester_principal_id=%s "
+            "AND parent_attempt_id=%s AND parent_generation=%s AND kind=%s AND idempotency_key=%s",
             (
                 handoff.context.requester.id,
                 handoff.parent_attempt_ref.attempt_id,
@@ -2009,8 +2068,8 @@ class WorkOrigins:
         ).fetchone()
         if row is None:
             conflicting = connection.execute(
-                "SELECT id FROM work_items WHERE job_id=(SELECT job_id FROM work_items WHERE id=?) "
-                "AND operation_kind=? AND idempotency_key=?",
+                "SELECT id FROM work_items WHERE job_id=(SELECT job_id FROM work_items WHERE id=%s) "
+                "AND operation_kind=%s AND idempotency_key=%s",
                 (
                     handoff.parent_attempt_ref.work_item_id,
                     handoff.intent.contract.operation_kind,
@@ -2068,7 +2127,7 @@ class WorkOrigins:
         self._revalidate_replay_authorizations(connection, row)
         work = self.repository._work(connection, row["child_work_item_id"])
         marker = connection.execute(
-            "SELECT lineage_protocol FROM work_items WHERE id=?", (work["id"],)
+            "SELECT lineage_protocol FROM work_items WHERE id=%s", (work["id"],)
         ).fetchone()
         if marker is None or marker["lineage_protocol"] != "managed-v1":
             raise OriginConflict("managed lineage replay has no protocol marker")
@@ -2083,7 +2142,7 @@ class WorkOrigins:
         original = work["attempts"][0]
         marker = connection.execute(
             "UPDATE work_items SET lineage_protocol='managed-v1' "
-            "WHERE id=? AND lineage_protocol='legacy'",
+            "WHERE id=%s AND lineage_protocol='legacy'",
             (work["id"],),
         )
         if marker.rowcount != 1:
@@ -2092,8 +2151,8 @@ class WorkOrigins:
             handoff.context, handoff.child_subject_ref.subject_id
         )
         authorization = connection.execute(
-            "SELECT * FROM work_origin_authorizations WHERE subject_id=? AND origin_kind='child' "
-            "AND revision=?",
+            "SELECT * FROM work_origin_authorizations WHERE subject_id=%s AND origin_kind='child' "
+            "AND revision=%s",
             (handoff.child_subject_ref.subject_id, handoff.child_authorization_ref.revision),
         ).fetchone()
         if authorization is None:
@@ -2115,7 +2174,7 @@ class WorkOrigins:
             request=handoff.intent.delivery,
         )
         delivery = connection.execute(
-            "SELECT delivery_hash FROM work_delivery_orders WHERE attempt_id=? AND generation=?",
+            "SELECT delivery_hash FROM work_delivery_orders WHERE attempt_id=%s AND generation=%s",
             (binding.attempt_id, binding.generation),
         ).fetchone()
         if delivery is None:
@@ -2126,8 +2185,8 @@ class WorkOrigins:
             generation=handoff.parent_attempt_ref.generation,
         )
         receiver = connection.execute(
-            "SELECT * FROM work_origin_authorizations WHERE subject_id=? AND origin_kind='receiver' "
-            "AND revision=?",
+            "SELECT * FROM work_origin_authorizations WHERE subject_id=%s AND origin_kind='receiver' "
+            "AND revision=%s",
             (handoff.receiver_subject_ref.subject_id, handoff.receiver_authorization_ref.revision),
         ).fetchone()
         if receiver is None:
@@ -2144,7 +2203,7 @@ class WorkOrigins:
                 receiver_authorization_kind,receiver_authorization_revision,receiver_grant_id,
                 receiver_grant_revision,delivery_id,delivery_hash,request_hash,idempotency_key,
                 native_child_id,terminal_id,handoff_id,created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (
                 binding.attempt_id,
                 binding.generation,
@@ -2184,15 +2243,15 @@ class WorkOrigins:
             ),
         )
         origin = connection.execute(
-            "SELECT * FROM work_child_origin_bindings WHERE child_attempt_id=? "
-            "AND child_generation=?",
+            "SELECT * FROM work_child_origin_bindings WHERE child_attempt_id=%s "
+            "AND child_generation=%s",
             (binding.attempt_id, binding.generation),
         ).fetchone()
         if origin is None:
             raise OriginConflict("managed lineage binding disappeared during admission")
         self._persist_integrity(connection, origin)
         connection.execute(
-            "INSERT INTO work_lineage_projection_intents VALUES (?,?,?,?,?)",
+            "INSERT INTO work_lineage_projection_intents VALUES (%s,%s,%s,%s,%s)",
             (binding.attempt_id, binding.generation, 1, "planned", time.time()),
         )
         admission.scheduler._enqueue(

@@ -211,6 +211,7 @@ def _toml_string(value: Any) -> str:
 
 
 class GrokCliProvider(BaseProvider):
+    supports_interaction_mcp_overlay = True
     """Provider for the official ``grok`` interactive TUI."""
 
     # Grok's status detector normalizes terminal escapes and uses structural,
@@ -540,7 +541,9 @@ class GrokCliProvider(BaseProvider):
             )
 
         profile = self._load_profile()
-        mcp_servers = profile.mcpServers if profile is not None else None
+        mcp_servers = (
+            self.interaction_mcp_servers(profile.mcpServers) if profile is not None else None
+        )
         home = self._prepare_grok_home(mcp_servers)
 
         # CAO owns child profiles, terminal accounting, callbacks, and tool

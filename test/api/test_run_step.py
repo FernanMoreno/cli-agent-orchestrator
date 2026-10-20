@@ -18,26 +18,9 @@ _NOTIFY_TERMINAL_ENDED = "cli_agent_orchestrator.api.main._notify_elastic_termin
 
 
 @pytest.fixture
-def isolated_journal(tmp_path, monkeypatch):
-    """Point the workflow journal at a temp DB for one test (issue #583).
-
-    Any test here that drives a SCRIPT-TIER call both WRITES durable journal rows
-    (``settlement-rewire``) and READS them back before dispatch
-    (``run-step-replay-branch``), so against the developer's real database the
-    first run leaves rows that change the verdict of the next one — the test would
-    pass once and then fail on every subsequent local run. Isolation is what makes
-    the assertion about the response, not about the machine's history.
-    """
-    from cli_agent_orchestrator.clients.database import (
-        _migrate_workflow_run,
-        _migrate_workflow_run_step,
-    )
-
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.constants.DATABASE_FILE", tmp_path / "wf.db", raising=True
-    )
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
+def isolated_journal(isolated_memory_db):
+    """Use the shared per-test PostgreSQL schema for workflow journal state."""
+    return isolated_memory_db
 
 
 def _body(**overrides):

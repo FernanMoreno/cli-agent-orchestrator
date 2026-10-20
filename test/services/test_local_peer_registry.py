@@ -10,19 +10,26 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from uuid import uuid4
 
 import psutil
+import pytest
 from starlette.requests import Request
 
 from cli_agent_orchestrator.api import local_coordination_routes
 from cli_agent_orchestrator.services import local_peer_registry, local_peer_service
 from cli_agent_orchestrator.services.local_peer_identity import LocalProcessIdentity
 
+pytestmark = pytest.mark.postgres
 
-def _configure_registry(monkeypatch, tmp_path):
+
+def _configure_registry(monkeypatch, tmp_path, postgres_targets):
+    from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
+    from cli_agent_orchestrator.services.local_peer_registry import LOCAL_PEER_MIGRATIONS
+
     directory = tmp_path / "local-peers"
     monkeypatch.setattr(local_peer_registry, "LOCAL_PEER_DIR", directory)
-    monkeypatch.setattr(
-        local_peer_registry, "LOCAL_PEER_REGISTRY_FILE", directory / "registry.sqlite3"
-    )
+    target = postgres_targets.peer
+    migrate_component(target, LOCAL_PEER_MIGRATIONS)
+    monkeypatch.setattr(local_peer_registry, "_database_target", lambda: target)
+    local_peer_registry._verify_target.cache_clear()
 
 
 class _IdentityHandler(BaseHTTPRequestHandler):
@@ -56,8 +63,8 @@ def _identity(port: int, *, pid: int | None = None, started_at: float | None = N
     )
 
 
-def test_live_identity_endpoint_prevents_false_stale_prune(monkeypatch, tmp_path):
-    _configure_registry(monkeypatch, tmp_path)
+def test_live_identity_endpoint_prevents_false_stale_prune(monkeypatch, tmp_path, postgres_targets):
+    _configure_registry(monkeypatch, tmp_path, postgres_targets)
     handler = type(
         "IdentityHandler",
         (_IdentityHandler,),
@@ -75,10 +82,13 @@ def test_live_identity_endpoint_prevents_false_stale_prune(monkeypatch, tmp_path
         try:
             connection.execute(
                 "UPDATE local_peer_processes SET process_started_at = process_started_at + 5 "
-                "WHERE instance_id = ?",
-                (identity.instance_id,),
+                "WHERE host_id=%s AND owner_uid=%s AND instance_id=%s",
+                (
+                    local_peer_registry._host_scope().host_id,
+                    local_peer_registry._host_scope().owner_uid,
+                    identity.instance_id,
+                ),
             )
-            connection.commit()
         finally:
             connection.close()
         monkeypatch.setattr(local_peer_registry, "_process_is_same_live_instance", lambda *_: False)
@@ -93,8 +103,8 @@ def test_live_identity_endpoint_prevents_false_stale_prune(monkeypatch, tmp_path
         thread.join(timeout=2)
 
 
-def test_local_identity_repairs_a_missing_registry_row(monkeypatch, tmp_path):
-    _configure_registry(monkeypatch, tmp_path)
+def test_local_identity_repairs_a_missing_registry_row(monkeypatch, tmp_path, postgres_targets):
+    _configure_registry(monkeypatch, tmp_path, postgres_targets)
     identity = _identity(19888)
     monkeypatch.setattr(local_peer_service, "current_process_identity", lambda: identity)
 
@@ -106,8 +116,10 @@ def test_local_identity_repairs_a_missing_registry_row(monkeypatch, tmp_path):
     assert record.process_generation == identity.process_generation
 
 
-def test_identity_route_returns_registered_identity_for_loopback_request(monkeypatch, tmp_path):
-    _configure_registry(monkeypatch, tmp_path)
+def test_identity_route_returns_registered_identity_for_loopback_request(
+    monkeypatch, tmp_path, postgres_targets
+):
+    _configure_registry(monkeypatch, tmp_path, postgres_targets)
     identity = _identity(19889)
     monkeypatch.setattr(local_peer_service, "current_process_identity", lambda: identity)
     request = Request(
@@ -133,3 +145,74 @@ def test_identity_route_returns_registered_identity_for_loopback_request(monkeyp
     record = local_peer_registry.get_instance(identity.instance_id)
     assert record is not None
     assert record.process_generation == identity.process_generation
+
+
+def test_stale_remote_host_rows_are_never_checked_or_pruned(
+    monkeypatch, tmp_path, postgres_targets
+):
+    _configure_registry(monkeypatch, tmp_path, postgres_targets)
+    host = local_peer_registry._host_scope()
+    remote_host = str(uuid4())
+    with local_peer_registry._connect() as connection:
+        connection.execute(
+            """INSERT INTO local_peer_processes
+               (host_id,owner_uid,instance_id,process_generation,pid,process_started_at,
+                display_name,loopback_host,loopback_port,started_at,last_seen)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (
+                remote_host,
+                host.owner_uid,
+                "remote-profile",
+                str(uuid4()),
+                99999999,
+                1.0,
+                "remote",
+                "127.0.0.1",
+                19888,
+                1.0,
+                1.0,
+            ),
+        )
+
+    assert local_peer_registry.list_instances() == []
+
+    with local_peer_registry._connect() as connection:
+        row = connection.execute(
+            "SELECT host_id FROM local_peer_processes WHERE instance_id=%s",
+            ("remote-profile",),
+        ).fetchone()
+    assert row is not None and row["host_id"] == remote_host
+
+
+def test_peer_process_ids_and_owner_uids_preserve_64_bit_values(
+    monkeypatch, tmp_path, postgres_targets
+):
+    _configure_registry(monkeypatch, tmp_path, postgres_targets)
+    host = local_peer_registry._host_scope()
+    instance_id = str(uuid4())
+    large = 1 << 40
+    with local_peer_registry._connect() as connection:
+        connection.execute(
+            """INSERT INTO local_peer_processes
+               (host_id,owner_uid,instance_id,process_generation,pid,process_started_at,
+                display_name,loopback_host,loopback_port,started_at,last_seen)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (
+                host.host_id,
+                large,
+                instance_id,
+                str(uuid4()),
+                large,
+                1.0,
+                "wide integer test",
+                "127.0.0.1",
+                19888,
+                1.0,
+                1.0,
+            ),
+        )
+        row = connection.execute(
+            "SELECT owner_uid,pid FROM local_peer_processes WHERE instance_id=%s",
+            (instance_id,),
+        ).fetchone()
+    assert row == (large, large)

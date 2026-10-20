@@ -24,6 +24,7 @@ retry policy (FR-5.3); the HTTP handler maps it to an ``HTTPException``.
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from typing import Callable, Literal, Optional
 
 from cli_agent_orchestrator.clients.database import (
@@ -90,6 +91,324 @@ _PROMPT_REDELIVER_MAX = 3
 # ready+completion budget.  Lease expiry never kills a child; it changes only
 # the durable receipt to ``reconcile``.
 _NATIVE_CHILD_LEASE_MARGIN = 30.0
+
+
+def _interaction_service():
+    """Resolve the shared ledger lazily; kept as a narrow composition-test seam."""
+    return terminal_service._interaction_service()
+
+
+async def _interaction_wait_snapshot(terminal_id: str):
+    """Pin one current registered source turn after the task was dispatched."""
+    try:
+        metadata = await asyncio.to_thread(terminal_service.get_terminal_metadata, terminal_id)
+    except Exception as exc:  # noqa: BLE001 - never guess after a known terminal read fails
+        logger.exception("Could not inspect interaction source for %s", terminal_id)
+        raise StepExecutionError(
+            f"terminal {terminal_id} interaction source could not be verified",
+            kind="reconcile",
+            terminal_id=terminal_id,
+            action="inspect",
+            delivery_may_have_occurred=True,
+        ) from exc
+    service = _interaction_service()
+    incarnation_id = metadata.get("session_incarnation_id") if metadata else None
+    try:
+        source = await asyncio.to_thread(
+            service.source_status,
+            terminal_id,
+            incarnation_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - registered sources fail closed
+        logger.exception("Could not verify interaction source for %s", terminal_id)
+        raise StepExecutionError(
+            f"terminal {terminal_id} interaction source could not be verified",
+            kind="reconcile",
+            terminal_id=terminal_id,
+            action="inspect",
+            delivery_may_have_occurred=True,
+        ) from exc
+    if source.state == "unregistered":
+        # Only a ledger-confirmed absence keeps the pre-interaction behavior.
+        # Missing metadata/incarnation while a source row exists is a mismatch,
+        # not proof that this terminal was launched through the legacy path.
+        return None
+    if source.state != "current" or type(source.current_generation) is not int:
+        raise StepExecutionError(
+            f"terminal {terminal_id} interaction source is {source.state}; "
+            "the existing task cannot safely continue",
+            kind="reconcile",
+            terminal_id=terminal_id,
+            action="inspect",
+            delivery_may_have_occurred=True,
+        )
+    return service, incarnation_id, source.current_generation
+
+
+async def _interaction_wait_call(
+    service,
+    terminal_id: str,
+    incarnation_id: str,
+    generation: int,
+    *,
+    timeout_seconds: float,
+    cancel_event: Optional["asyncio.Event"],
+):
+    """Await a bounded ledger poll while preserving prompt cancellation."""
+    wait_task = asyncio.create_task(
+        service.wait_for_required(
+            terminal_id,
+            incarnation_id,
+            timeout_seconds=timeout_seconds,
+            expected_generation=generation,
+        )
+    )
+    if cancel_event is None:
+        return await wait_task
+
+    cancel_task = asyncio.create_task(cancel_event.wait())
+    try:
+        done, _pending = await asyncio.wait(
+            {wait_task, cancel_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if cancel_task in done and cancel_event.is_set():
+            wait_task.cancel()
+            await asyncio.gather(wait_task, return_exceptions=True)
+            raise StepCancelledError(terminal_id=terminal_id)
+        return await wait_task
+    finally:
+        cancel_task.cancel()
+        await asyncio.gather(cancel_task, return_exceptions=True)
+
+
+async def _wait_for_required_interaction(
+    terminal_id: str,
+    source_snapshot,
+    *,
+    deadline: float,
+    cancel_event: Optional["asyncio.Event"],
+) -> tuple[float, bool]:
+    """Wait for required questions without resending the task.
+
+    Only elapsed time spent behind a live human dependency is removed from the
+    agent's active timeout. Question expiry and any independent Work lease keep
+    running on wall time.
+    """
+    if source_snapshot is None:
+        return deadline, False
+    service, incarnation_id, generation = source_snapshot
+    result = await _interaction_wait_call(
+        service,
+        terminal_id,
+        incarnation_id,
+        generation,
+        timeout_seconds=0,
+        cancel_event=cancel_event,
+    )
+    waited = False
+    while result.state == "waiting":
+        waited = True
+        pause_started = time.monotonic()
+        result = await _interaction_wait_call(
+            service,
+            terminal_id,
+            incarnation_id,
+            generation,
+            timeout_seconds=30,
+            cancel_event=cancel_event,
+        )
+        deadline += time.monotonic() - pause_started
+
+    if result.state == "released":
+        return deadline, waited
+    if result.state == "stale":
+        raise StepExecutionError(
+            f"terminal {terminal_id} interaction source changed while its task was waiting",
+            kind="reconcile",
+            terminal_id=terminal_id,
+            action="inspect",
+            delivery_may_have_occurred=True,
+        )
+    raise StepExecutionError(
+        f"terminal {terminal_id} required interaction ended as {result.state}; "
+        "the existing task needs reconciliation",
+        kind="reconcile",
+        terminal_id=terminal_id,
+        action="wait_for_interaction",
+        delivery_may_have_occurred=True,
+    )
+
+
+async def _pause_timeout_for_native_wait(
+    terminal_id: str,
+    *,
+    source_snapshot,
+    deadline: float,
+    cancel_event: Optional["asyncio.Event"],
+    expected_native_identity: tuple[str, str] | None = None,
+) -> tuple[float, bool, int | None, str | None, tuple[str, str] | None]:
+    """Pause active time only for an exact registered native manual notice.
+
+    Provider status alone is not enough to pause: old or unregistered terminals
+    can remain in ``WAITING_USER_ANSWER`` indefinitely. The ledger notice pins
+    the source incarnation and generation and is released only by exact native
+    closure evidence, expiry, cancellation, or source invalidation.
+    """
+    if source_snapshot is None:
+        return deadline, False, None, None, expected_native_identity
+
+    service, incarnation_id, generation = source_snapshot
+    native_identity = expected_native_identity
+
+    async def wait_once(timeout_seconds: float):
+        nonlocal native_identity
+        if native_identity is not None:
+            wait_coroutine = service.wait_for_native_manual(
+                terminal_id,
+                incarnation_id,
+                timeout_seconds=timeout_seconds,
+                expected_generation=generation,
+                expected_question_id=native_identity[0],
+                expected_observation_id=native_identity[1],
+            )
+        else:
+            wait_coroutine = service.wait_for_native_manual(
+                terminal_id,
+                incarnation_id,
+                timeout_seconds=timeout_seconds,
+                expected_generation=generation,
+            )
+        wait_task = asyncio.create_task(wait_coroutine)
+        if cancel_event is None:
+            result = await wait_task
+        else:
+            cancel_task = asyncio.create_task(cancel_event.wait())
+            try:
+                done, _pending = await asyncio.wait(
+                    {wait_task, cancel_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if cancel_task in done and cancel_event.is_set():
+                    wait_task.cancel()
+                    await asyncio.gather(wait_task, return_exceptions=True)
+                    raise StepCancelledError(terminal_id=terminal_id)
+                result = await wait_task
+            finally:
+                cancel_task.cancel()
+                await asyncio.gather(cancel_task, return_exceptions=True)
+
+        if native_identity is None:
+            question_id = getattr(result, "question_id", None)
+            observation_id = getattr(result, "observation_id", None)
+            if (
+                isinstance(question_id, str)
+                and question_id
+                and isinstance(observation_id, str)
+                and observation_id
+            ):
+                native_identity = (question_id, observation_id)
+        return result
+
+    # A zero-duration read distinguishes a persisted manual notice from a
+    # monitor that has not yet recorded one. The latter gets no timeout pause.
+    result = await wait_once(0)
+    waiting_lifecycles = {"manual_only", "stale"}
+    if result.state == "waiting" and result.lifecycle not in waiting_lifecycles:
+        return deadline, False, None, None, native_identity
+    if result.state == "unregistered":
+        raise StepExecutionError(
+            f"terminal {terminal_id} interaction source disappeared while waiting",
+            kind="reconcile",
+            terminal_id=terminal_id,
+            action="wait_for_interaction",
+            delivery_may_have_occurred=True,
+        )
+    if result.state == "released":
+        generation = getattr(result, "current_generation", None)
+        observation_id = getattr(result, "observation_id", None)
+        question_id = getattr(result, "question_id", None)
+        if (
+            type(generation) is not int
+            or generation < 1
+            or not isinstance(observation_id, str)
+            or not observation_id
+            or not isinstance(question_id, str)
+            or not question_id
+            or native_identity != (question_id, observation_id)
+        ):
+            raise StepExecutionError(
+                f"terminal {terminal_id} native interaction release did not prove its current generation",
+                kind="reconcile",
+                terminal_id=terminal_id,
+                action="wait_for_interaction",
+                delivery_may_have_occurred=True,
+            )
+        return deadline, True, generation, result.observation_id, native_identity
+    if result.state in {"expired", "cancelled", "stale"}:
+        raise StepExecutionError(
+            f"terminal {terminal_id} native interaction ended as {result.state}; "
+            "the existing task needs reconciliation",
+            kind="reconcile",
+            terminal_id=terminal_id,
+            action="wait_for_interaction",
+            delivery_may_have_occurred=True,
+        )
+    if result.state != "waiting" or result.lifecycle not in waiting_lifecycles:
+        raise StepExecutionError(
+            f"terminal {terminal_id} native interaction state could not be verified",
+            kind="reconcile",
+            terminal_id=terminal_id,
+            action="wait_for_interaction",
+            delivery_may_have_occurred=True,
+        )
+
+    waited = False
+    while result.state == "waiting" and result.lifecycle in waiting_lifecycles:
+        pause_started = time.monotonic()
+        result = await wait_once(min(0.25, _COMPLETION_POLL_INTERVAL))
+        deadline += time.monotonic() - pause_started
+        waited = True
+        if result.state == "waiting" and result.lifecycle is None:
+            # A persisted notice vanished without exact closure/expiry evidence.
+            # Do not infer that a human answered it.
+            raise StepExecutionError(
+                f"terminal {terminal_id} native interaction notice disappeared without closure evidence",
+                kind="reconcile",
+                terminal_id=terminal_id,
+                action="wait_for_interaction",
+                delivery_may_have_occurred=True,
+            )
+
+    if result.state == "released":
+        generation = getattr(result, "current_generation", None)
+        observation_id = getattr(result, "observation_id", None)
+        question_id = getattr(result, "question_id", None)
+        if (
+            type(generation) is not int
+            or generation < 1
+            or not isinstance(observation_id, str)
+            or not observation_id
+            or not isinstance(question_id, str)
+            or not question_id
+            or native_identity != (question_id, observation_id)
+        ):
+            raise StepExecutionError(
+                f"terminal {terminal_id} native interaction release did not prove its current generation",
+                kind="reconcile",
+                terminal_id=terminal_id,
+                action="wait_for_interaction",
+                delivery_may_have_occurred=True,
+            )
+        return deadline, waited, generation, result.observation_id, native_identity
+    raise StepExecutionError(
+        f"terminal {terminal_id} native interaction ended as {result.state}; "
+        "the existing task needs reconciliation",
+        kind="reconcile",
+        terminal_id=terminal_id,
+        action="wait_for_interaction",
+        delivery_may_have_occurred=True,
+    )
 
 
 async def _record_native_child_transition(
@@ -192,6 +511,19 @@ async def _validate_reused_terminal(
         )
 
 
+@dataclass(frozen=True)
+class CompletionWaitDiagnostics:
+    """Factual observations at deadline; never provider content or causal guesses."""
+
+    last_status: TerminalStatus
+    observed_working: bool
+    receipt_probe_errors: int
+    receipt_candidate_seen: bool
+    stable_receipt_observations: int
+    idle_extraction_attempted: bool
+    phase: Literal["completion"] = "completion"
+
+
 class StepExecutionError(Exception):
     """A step failed to complete successfully.
 
@@ -222,10 +554,17 @@ class StepExecutionError(Exception):
         terminal_id: Optional[str] = None,
         native_child_id: Optional[str] = None,
         action: Optional[
-            Literal["answer_user_prompt", "reconcile", "inspect", "wait_for_quota"]
+            Literal[
+                "answer_user_prompt",
+                "reconcile",
+                "inspect",
+                "wait_for_quota",
+                "wait_for_interaction",
+            ]
         ] = None,
         delivery_may_have_occurred: bool = False,
         provider_may_resume: bool = False,
+        wait_diagnostics: Optional[CompletionWaitDiagnostics] = None,
     ) -> None:
         super().__init__(message)
         self.kind = kind
@@ -234,6 +573,7 @@ class StepExecutionError(Exception):
         self.action = action
         self.delivery_may_have_occurred = delivery_may_have_occurred
         self.provider_may_resume = provider_may_resume
+        self.wait_diagnostics = wait_diagnostics
 
 
 class StepCancelledError(Exception):
@@ -331,17 +671,62 @@ async def _wait_for_completion(
         StepCancelledError: ``cancel_event`` fired while waiting.
     """
     deadline = time.monotonic() + timeout
+    interaction_snapshot = await _interaction_wait_snapshot(terminal_id)
+    released_native_observations: set[tuple[str, int]] = set()
+    native_wait_identity: tuple[str, str] | None = None
     observed_working = False
     consecutive_idle = 0
     redeliveries = 0
     delivery_verified = False
     post_turn_receipt_candidate: Optional[str] = None
     consecutive_post_turn_receipt = 0
+    receipt_probe_errors = 0
+    receipt_candidate_seen = False
+    idle_extraction_attempted = False
     # Seeded at entry — i.e. AFTER ``send_input`` returned — so the first
     # grace window runs from the start of this wait, not from the send. That
     # reads long, which is the conservative direction: a false "dropped"
     # verdict only costs a wait, a false "delivered" one burns the budget.
     last_send = time.monotonic()
+
+    async def await_required_interactions() -> bool:
+        nonlocal deadline
+        deadline, waited = await _wait_for_required_interaction(
+            terminal_id,
+            interaction_snapshot,
+            deadline=deadline,
+            cancel_event=cancel_event,
+        )
+        return waited
+
+    async def await_native_interaction_closure() -> bool:
+        """Reconcile native notices before settling or checking a stale turn."""
+        nonlocal deadline, interaction_snapshot, native_wait_identity
+        if interaction_snapshot is None:
+            return False
+        deadline, waited, released_generation, observation_id, native_wait_identity = (
+            await _pause_timeout_for_native_wait(
+                terminal_id,
+                source_snapshot=interaction_snapshot,
+                deadline=deadline,
+                cancel_event=cancel_event,
+                expected_native_identity=native_wait_identity,
+            )
+        )
+        if released_generation is not None:
+            service, incarnation_id, _generation = interaction_snapshot
+            interaction_snapshot = (service, incarnation_id, released_generation)
+            if observation_id is not None:
+                release_key = (observation_id, released_generation)
+                if release_key in released_native_observations:
+                    native_wait_identity = None
+                    return False
+                released_native_observations.add(release_key)
+            # The exact closure has now been consumed by this invocation. A
+            # later native notice belongs to a new wait identity and may be
+            # latched independently.
+            native_wait_identity = None
+        return waited
 
     async def observe_stable_post_turn_receipt() -> Optional[str]:
         """Settle only a twice-observed receipt from the current task viewport.
@@ -353,12 +738,14 @@ async def _wait_for_completion(
         answer must survive two reads and then pass the terminal-service CAS.
         """
         nonlocal post_turn_receipt_candidate, consecutive_post_turn_receipt
+        nonlocal receipt_probe_errors, receipt_candidate_seen
         try:
             extracted = await asyncio.to_thread(
                 terminal_service.probe_post_turn_receipt_result,
                 terminal_id,
             )
         except Exception:  # noqa: BLE001 -- a probe is never a success proof
+            receipt_probe_errors += 1
             logger.info(
                 "step on terminal %s has no verified current-turn receipt yet; "
                 "continuing to wait",
@@ -372,6 +759,7 @@ async def _wait_for_completion(
             consecutive_post_turn_receipt = 0
             return None
 
+        receipt_candidate_seen = True
         if extracted == post_turn_receipt_candidate:
             consecutive_post_turn_receipt += 1
         else:
@@ -430,18 +818,29 @@ async def _wait_for_completion(
                     terminal_service.quota_pause_may_auto_resume, terminal_id
                 ),
             )
+        # A native notice must be reconciled before *any* result branch. A fast
+        # provider can move from WAITING to PROCESSING/COMPLETED between monitor
+        # polls; exact old-dialog closure still controls whether this same task
+        # may resume after a human's direct terminal input.
+        if await await_native_interaction_closure():
+            continue
         if current == TerminalStatus.COMPLETED:
             # A completed terminal marker is transport telemetry.  Prefer the
             # current receipt viewport when one is available, because a raw
             # pipe-pane capture can be less coherent than the rendered TUI.
             settled = await observe_stable_post_turn_receipt()
             if settled is not None:
+                # Receipt proof is observed first. A required question still
+                # owns this task until its answer is returned by its MCP pull;
+                # keep the verified result in this invocation while waiting.
+                await await_required_interactions()
                 return settled
             # A first receipt observation is not enough to settle.  Keep
             # polling for its matching second view; if there was no receipt
             # candidate at all, preserve the historical completed-marker path
             # and let the normal extractor make the final decision.
             if post_turn_receipt_candidate is None:
+                await await_required_interactions()
                 return None
         elif current == TerminalStatus.IDLE:
             # A fast TUI can emit PROCESSING and return to IDLE entirely
@@ -454,6 +853,7 @@ async def _wait_for_completion(
             # this from turning an idle shell or stale viewport into success.
             settled = await observe_stable_post_turn_receipt()
             if settled is not None:
+                await await_required_interactions()
                 return settled
 
             # Post-input IDLE only counts once the agent has actually started
@@ -469,6 +869,7 @@ async def _wait_for_completion(
                     # that this turn produced a result. TUIs can render a stale
                     # idle footer while a new response is still streaming. Ask
                     # the provider extractor to prove the current turn instead.
+                    idle_extraction_attempted = True
                     try:
                         extracted = await asyncio.to_thread(
                             terminal_service.get_output, terminal_id, OutputMode.LAST
@@ -489,6 +890,7 @@ async def _wait_for_completion(
                                 terminal_id,
                                 consecutive_idle,
                             )
+                            await await_required_interactions()
                             return extracted
                         logger.info(
                             "step on terminal %s has stable post-input IDLE but the "
@@ -512,6 +914,7 @@ async def _wait_for_completion(
             # dispatch buffer may settle the task.
             settled = await observe_stable_post_turn_receipt()
             if settled is not None:
+                await await_required_interactions()
                 return settled
         else:
             # UNKNOWN or any other non-ready status: not evidence of work and not
@@ -519,6 +922,15 @@ async def _wait_for_completion(
             consecutive_idle = 0
             post_turn_receipt_candidate = None
             consecutive_post_turn_receipt = 0
+
+        # Required ledger waits are authoritative even when the MCP client did
+        # not request a blocking wait. Pinning the generation at function entry
+        # prevents an old task from following a newer turn after direct input or
+        # source replacement. A release resumes this same loop and never replays
+        # the original prompt.
+        if interaction_snapshot is not None:
+            if await await_required_interactions():
+                continue
 
         if time.monotonic() >= deadline:
             # Defensive: a terminal that flipped to ERROR right at the deadline is
@@ -547,6 +959,14 @@ async def _wait_for_completion(
                 kind="timeout",
                 terminal_id=terminal_id,
                 delivery_may_have_occurred=True,
+                wait_diagnostics=CompletionWaitDiagnostics(
+                    last_status=deadline_status,
+                    observed_working=observed_working,
+                    receipt_probe_errors=receipt_probe_errors,
+                    receipt_candidate_seen=receipt_candidate_seen,
+                    stable_receipt_observations=consecutive_post_turn_receipt,
+                    idle_extraction_attempted=idle_extraction_attempted,
+                ),
             )
 
         # Delivery verification (#562): no pickup evidence within the grace
@@ -1315,7 +1735,7 @@ async def run_agent_step(
             # A run-step prompt is always an automated unit of work, including
             # on a terminal reused by the caller. Mark it explicitly so a
             # provider trust/login dialog cannot consume the task as an answer.
-            await asyncio.to_thread(
+            turn_sequence = await asyncio.to_thread(
                 _guarded_delivery,
                 delivery_guard if has_delivery_guard else None,
                 terminal_id,
@@ -1326,7 +1746,7 @@ async def run_agent_step(
                 task_delivery=True,
             )
         else:
-            await asyncio.to_thread(
+            turn_sequence = await asyncio.to_thread(
                 _guarded_delivery,
                 delivery_guard if has_delivery_guard else None,
                 terminal_id,
@@ -1376,19 +1796,19 @@ async def run_agent_step(
 
     # ``send_input`` arms the monitor before it pastes into tmux, but it
     # deliberately leaves a previously latched ready status visible until a
-    # provider frame arrives.  That is appropriate for a general terminal
-    # dashboard, but a synchronous run-step has a stricter boundary: the
-    # ready status that existed before *this* prompt cannot complete this
-    # prompt.  Publish a post-send in-flight boundary only after the blocking
-    # send succeeded.  It prevents a cached IDLE/COMPLETED value from being
-    # accepted as this turn's result while the worker is already working.
+    # provider frame arrives. That is appropriate for a general terminal
+    # dashboard, but a synchronous run-step has a stricter boundary: the ready
+    # status that existed before this prompt cannot complete this prompt. The
+    # returned sequence applies that boundary to the turn ``send_input`` already
+    # opened. A fast completion observed during the blocking send remains
+    # authoritative. If a newer dispatch overtakes this delayed boundary, the
+    # current step must stop and request reconciliation rather than observe it.
     #
     # This is not a success signal and does not relax completion: the wait
     # below still requires a real subsequent provider transition.  If the
     # output pipe never proves that transition, an at-most-once caller retains
     # the terminal for reconciliation rather than re-sending or tearing it
     # down as if a result existed.
-    status_monitor.notify_input_sent(terminal_id, assume_processing=True)
 
     # Wait for completion — IN-PROCESS poll of status_monitor (NOT the
     # HTTP-polling wait_until_terminal_status, which would reintroduce the
@@ -1400,6 +1820,14 @@ async def run_agent_step(
     # StepExecutionError on timeout/ERROR, or StepCancelledError if cancellation
     # fires mid-wait.
     try:
+        if not status_monitor.notify_input_in_flight(terminal_id, turn_sequence):
+            raise StepExecutionError(
+                f"terminal {terminal_id} changed dispatch before this task could be observed",
+                kind="reconcile",
+                terminal_id=terminal_id,
+                action="inspect",
+                delivery_may_have_occurred=True,
+            )
         delivery_options = {"delivery_guard": delivery_guard} if has_delivery_guard else {}
         idle_completion_output = await _wait_for_completion(
             terminal_id,
@@ -1495,7 +1923,7 @@ async def run_agent_step(
 
     # Persist BEFORE teardown (issue #447): the terminal about to be destroyed
     # is the only other place this result lives, so a crash during teardown
-    # must not be able to lose it. Off the loop (sqlite I/O); best-effort — a
+    # must not be able to lose it. Off the loop (database I/O); best-effort — a
     # write failure must not turn a successful step into a reported failure.
     if job_id:
         try:

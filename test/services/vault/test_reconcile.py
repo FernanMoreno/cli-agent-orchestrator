@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from test.fixtures.vault_factory import build_vault_fixture
+from test.postgres.orm import configured_orm_engine
 
 import pytest
 from sqlalchemy import create_engine
@@ -25,7 +26,7 @@ from cli_agent_orchestrator.services.vault.scan import scan_vault
 def test_rebuild_deletes_only_vault_rows_and_groups_same_code_findings(tmp_path, monkeypatch):
     from cli_agent_orchestrator.services.vault import reconcile as module
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(module, "SessionLocal", Session)
@@ -85,7 +86,7 @@ def test_rebuild_deletes_only_vault_rows_and_groups_same_code_findings(tmp_path,
 def test_reconcile_emits_completion_note_and_secret_audits(tmp_path, monkeypatch):
     from cli_agent_orchestrator.services.vault import reconcile as module
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(module, "SessionLocal", Session)
@@ -115,7 +116,7 @@ def test_reconcile_emits_completion_note_and_secret_audits(tmp_path, monkeypatch
 def test_warn_mode_secret_still_emits_detection_audit(tmp_path, monkeypatch):
     from cli_agent_orchestrator.services.vault import reconcile as module
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(module, "SessionLocal", Session)
@@ -146,7 +147,7 @@ def test_vault_edges_use_the_relationship_service_with_vault_endpoints(tmp_path,
     from cli_agent_orchestrator.services import memory_relationship_service
     from cli_agent_orchestrator.services.vault import reconcile as module
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(module, "SessionLocal", Session)
@@ -3454,7 +3455,7 @@ def _exclude_note(db, note: VaultNoteModel) -> None:
 def _session(tmp_path, monkeypatch, module):
     from cli_agent_orchestrator.services import memory_relationship_service
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(module, "SessionLocal", Session)

@@ -27,6 +27,9 @@ from cli_agent_orchestrator.services.agui.cross_provider_sync import CrossProvid
 from cli_agent_orchestrator.services.agui.handoff_approval import AgentHandoffWithApproval
 from cli_agent_orchestrator.services.agui.run_plane import run_plane_stream
 
+# The gate exercises in-memory AG-UI constructs and docs/examples only.
+pytestmark = pytest.mark.offline_database
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 _CONSTRUCT_EXAMPLES = [
     "ag-ui-supervisor-dashboard",

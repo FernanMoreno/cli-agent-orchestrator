@@ -26,23 +26,28 @@ import math
 import os
 import re
 import shutil
+import stat
 import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from test.fixtures import owned_tmux
 from test.fixtures.cao_server import (
+    _LIVE_SERVERS,
     CaoServer,
     _fixture_health_timeout,
     _pick_free_port,
     _start_cao_server,
 )
+from test.live_provider import claude_auth_archive
 from typing import Callable, Final, Iterator, NoReturn
 
 import pytest
 import requests
 
-from cli_agent_orchestrator.constants import PROVIDERS
+from cli_agent_orchestrator.clients import tmux as tmux_client
+from cli_agent_orchestrator.constants import PROVIDERS, SESSION_PREFIX
 
 pytestmark = [
     pytest.mark.e2e,
@@ -63,6 +68,7 @@ _TEST_FILTER_ENV: Final = "CAO_REAL_PROVIDER_E2E_TEST_FILTER"
 _PAIRS_ENV: Final = "CAO_REAL_PROVIDER_E2E_PAIRS"
 _STRICT_ENV: Final = "CAO_REAL_PROVIDER_E2E_STRICT"
 _AUTH_HOME_ENV: Final = "CAO_REAL_PROVIDER_E2E_AUTH_HOME"
+_CLAUDE_ARCHIVE_ROOT_ENV: Final = "CAO_REAL_PROVIDER_E2E_CLAUDE_ARCHIVE_ROOT"
 _QUOTA_OBSERVATION_SECONDS_ENV: Final = "CAO_REAL_PROVIDER_E2E_QUOTA_OBSERVATION_SECONDS"
 _LEGACY_PARENT_ENV: Final = "CAO_REAL_PROVIDER_E2E_PARENT"
 _LEGACY_CHILD_ENV: Final = "CAO_REAL_PROVIDER_E2E_CHILD"
@@ -83,6 +89,8 @@ _MATRIX_CELL_SCENARIOS: Final = (
     "quota_continuation",
 )
 _MATRIX_EVIDENCE_SCHEMA_VERSION: Final = 1
+_CLAUDE_CREDENTIAL_LAYOUT: Final = Path(".claude") / ".credentials.json"
+_CLAUDE_ARCHIVE_SESSION_DELETE_HOMES: set[Path] = set()
 _MATRIX_EVIDENCE_STATUSES: Final = frozenset({"validated", "skipped", "failed", "not_observed"})
 _MATRIX_EVIDENCE_REASONS: Final = frozenset(
     {
@@ -131,6 +139,127 @@ class MatrixCell:
     @property
     def id(self) -> str:
         return f"{self.parent.name}->{self.child.name}"
+
+
+@dataclass(frozen=True)
+class _ClaudeArchiveWorkspace:
+    run_key: str
+    run_root: Path
+    workspace: Path
+    home: Path
+    archive_root: Path
+    run_root_identity: tuple[int, int, int, int]
+    workspace_identity: tuple[int, int, int, int]
+
+
+def _private_directory_identity(path: Path) -> tuple[int, int, int, int]:
+    try:
+        info = path.lstat()
+    except OSError:
+        raise RuntimeError("Claude archive workspace unavailable") from None
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != os.geteuid()
+        or stat.S_IMODE(info.st_mode) != 0o700
+    ):
+        raise RuntimeError("Claude archive workspace ownership or mode invalid")
+    return info.st_dev, info.st_ino, info.st_mode, info.st_uid
+
+
+def _prepare_claude_archive_workspace(
+    cell: MatrixCell,
+    auth_home: Path,
+    auth_environment: dict[str, str],
+    tmp_path: Path,
+) -> _ClaudeArchiveWorkspace | None:
+    if cell.id != "claude_code->claude_code" or _CLAUDE_ARCHIVE_ROOT_ENV not in os.environ:
+        return None
+
+    configured_root = os.environ.get(_CLAUDE_ARCHIVE_ROOT_ENV, "")
+    root = Path(configured_root) if configured_root else Path(".")
+    pytest_temp_root = tmp_path.parent.resolve()
+    if (
+        not configured_root
+        or "\x00" in configured_root
+        or not root.is_absolute()
+        or ".." in root.parts
+        or root == pytest_temp_root
+        or root.is_relative_to(pytest_temp_root)
+        or auth_environment
+        or _CLAUDE_CREDENTIAL_LAYOUT not in cell.parent.auth_files
+        or _CLAUDE_CREDENTIAL_LAYOUT not in cell.child.auth_files
+    ):
+        raise RuntimeError("Claude credential archive preflight failed")
+
+    source = auth_home / _CLAUDE_CREDENTIAL_LAYOUT
+    try:
+        source_info = source.lstat()
+    except OSError:
+        raise RuntimeError("Claude credential archive preflight failed") from None
+    if (
+        not stat.S_ISREG(source_info.st_mode)
+        or stat.S_ISLNK(source_info.st_mode)
+        or source_info.st_uid != os.geteuid()
+        or not 0 < source_info.st_size <= claude_auth_archive.MAX_CREDENTIAL_BYTES
+    ):
+        raise RuntimeError("Claude credential archive preflight failed")
+
+    try:
+        archive_root = claude_auth_archive.prepare_archive_root(root / "archives")
+        runs_root = claude_auth_archive.prepare_archive_root(root / "runs")
+        run_key = uuid.uuid4().hex
+        run_root = claude_auth_archive.prepare_archive_root(runs_root / run_key)
+        workspace = claude_auth_archive.prepare_archive_root(run_root / "workspace")
+        home = claude_auth_archive.prepare_archive_root(workspace / "home")
+        claude_auth_archive.prepare_archive_root(home / ".claude")
+        run_root_identity = _private_directory_identity(run_root)
+        workspace_identity = _private_directory_identity(workspace)
+    except (OSError, claude_auth_archive.CredentialArchiveError, RuntimeError):
+        raise RuntimeError("Claude credential archive preflight failed") from None
+
+    return _ClaudeArchiveWorkspace(
+        run_key=run_key,
+        run_root=run_root,
+        workspace=workspace,
+        home=home,
+        archive_root=archive_root,
+        run_root_identity=run_root_identity,
+        workspace_identity=workspace_identity,
+    )
+
+
+def _record_session_delete_for_archive(cao_server: CaoServer, cell: MatrixCell) -> None:
+    if cell.id == "claude_code->claude_code" and _CLAUDE_ARCHIVE_ROOT_ENV in os.environ:
+        _CLAUDE_ARCHIVE_SESSION_DELETE_HOMES.add(cao_server.home_dir)
+
+
+def _delete_session_and_record_archive_eligibility(
+    cao_server: CaoServer, session_name: str, cell: MatrixCell
+) -> None:
+    _delete_session(cao_server, session_name)
+    _record_session_delete_for_archive(cao_server, cell)
+
+
+def _remove_archived_claude_workspace(state: _ClaudeArchiveWorkspace) -> None:
+    if state.workspace.parent != state.run_root:
+        raise RuntimeError("Claude archive workspace escaped its run root")
+    if _private_directory_identity(state.run_root) != state.run_root_identity:
+        raise RuntimeError("Claude archive run root identity changed")
+    if _private_directory_identity(state.workspace) != state.workspace_identity:
+        raise RuntimeError("Claude archive workspace identity changed")
+    shutil.rmtree(state.workspace, ignore_errors=False)
+    if state.workspace.exists() or state.workspace.is_symlink():
+        raise RuntimeError("Claude archive workspace removal unconfirmed")
+
+
+def _matrix_server_auth_environment(
+    cell: MatrixCell,
+) -> tuple[dict[str, str], frozenset[str]]:
+    """Forward only selected-cell credential variables named by its manifest."""
+    allowed = frozenset((*cell.parent.auth_env, *cell.child.auth_env))
+    values = {name: os.environ[name] for name in allowed if os.environ.get(name)}
+    return values, allowed
 
 
 def _configured_auth_home() -> Path:
@@ -502,26 +631,130 @@ def _matrix_cells() -> list[pytest.ParameterSet]:
     return result
 
 
+def _registered_cao_server_for_home(home: Path) -> CaoServer | None:
+    """Return only the process owner registered for this exact fixture HOME."""
+    return next((server for server in tuple(_LIVE_SERVERS) if server.home_dir == home), None)
+
+
+def _record_fixture_cleanup_note(error: BaseException) -> None:
+    note = "live provider fixture cleanup incomplete; isolated HOME cleanup unconfirmed"
+    add_note = getattr(error, "add_note", None)
+    if callable(add_note):
+        add_note(note)
+    else:  # pragma: no cover - Python versions without BaseException.add_note
+        notes = list(getattr(error, "__notes__", ()))
+        notes.append(note)
+        error.__notes__ = notes
+
+
+def _remove_fixture_home_after_confirmed_stop(home: Path, tmp_path: Path) -> None:
+    if home.parent != tmp_path:
+        raise RuntimeError("live provider HOME escaped its private fixture root")
+    try:
+        info = home.lstat()
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise RuntimeError("live provider HOME is not a real fixture directory")
+    shutil.rmtree(home, ignore_errors=False)
+
+
 @pytest.fixture
-def live_provider_cao_server(tmp_path: Path) -> Iterator[CaoServer]:
+def live_provider_cao_server(tmp_path: Path, request: pytest.FixtureRequest) -> Iterator[CaoServer]:
     """Start one fresh, isolated CAO server for the selected matrix cell.
 
     Provider login files are copied after startup by ``_link_auth_material``.
     In particular, do not convert the access token inside a renewable OAuth
     receipt into ``CLAUDE_CODE_OAUTH_TOKEN``: those are distinct auth inputs.
     """
-    _configured_auth_home()  # Never launch a subprocess before isolation is verified.
-    home = tmp_path / "live_provider_cao_home"
+    auth_home = _configured_auth_home()  # Never launch before auth isolation is verified.
+    callspec = getattr(request.node, "callspec", None)
+    cell = getattr(callspec, "params", {}).get("cell")
+    if not isinstance(cell, MatrixCell):
+        raise RuntimeError("live provider server requires one explicitly selected matrix cell")
+    auth_environment, allowed_credentials = _matrix_server_auth_environment(cell)
+    archive_workspace = _prepare_claude_archive_workspace(
+        cell, auth_home, auth_environment, tmp_path
+    )
+    home = (
+        archive_workspace.home
+        if archive_workspace is not None
+        else tmp_path / "live_provider_cao_home"
+    )
+    _CLAUDE_ARCHIVE_SESSION_DELETE_HOMES.discard(home)
+    tmux_root: Path | None = None
     server = None
+    primary_error: BaseException | None = None
+    cleanup_error: BaseException | None = None
     try:
-        server = _start_cao_server(home, _pick_free_port(), deadline=_fixture_health_timeout())
+        tmux_root = owned_tmux.create_private_tmux_tmpdir()
+        child_environment = dict(auth_environment)
+        child_environment.update(
+            {
+                "TMUX": "",
+                "TMUX_TMPDIR": str(tmux_root),
+                "TMPDIR": str(tmux_root),
+            }
+        )
+        server = _start_cao_server(
+            home,
+            _pick_free_port(),
+            extra_env=child_environment,
+            deadline=_fixture_health_timeout(),
+            allowed_external_credentials=allowed_credentials,
+        )
         yield server
+    except GeneratorExit:
+        raise
+    except BaseException as error:
+        primary_error = error
+        raise
     finally:
-        try:
-            if server is not None:
+        session_delete_confirmed = home in _CLAUDE_ARCHIVE_SESSION_DELETE_HOMES
+        _CLAUDE_ARCHIVE_SESSION_DELETE_HOMES.discard(home)
+        if server is not None:
+            try:
                 server.stop()
-        finally:
-            shutil.rmtree(home, ignore_errors=False) if home.exists() else None
+            except BaseException as error:
+                cleanup_error = error
+
+        registered_owner = _registered_cao_server_for_home(home)
+        cleanup_confirmed = cleanup_error is None and registered_owner is None
+        if cleanup_confirmed:
+            try:
+                tmux_removed = owned_tmux.cleanup_private_tmux_root(
+                    tmux_root,
+                    home,
+                    tmux_client,
+                    owner_stopped=True,
+                )
+                if not tmux_removed:
+                    raise RuntimeError("private tmux cleanup unconfirmed")
+                if archive_workspace is None:
+                    _remove_fixture_home_after_confirmed_stop(home, tmp_path)
+                else:
+                    if server is None or not session_delete_confirmed:
+                        raise RuntimeError("Claude session deletion is unconfirmed")
+                    claude_auth_archive.archive_private_credential_copy(
+                        archive_workspace.workspace,
+                        archive_workspace.archive_root,
+                        process_stopped=True,
+                        layout="message",
+                        archive_key=archive_workspace.run_key,
+                    )
+                    _remove_archived_claude_workspace(archive_workspace)
+            except BaseException:
+                if primary_error is None:
+                    raise RuntimeError("live provider cleanup incomplete") from None
+                _record_fixture_cleanup_note(primary_error)
+        elif primary_error is not None:
+            # Keep startup/body exceptions primary; the fixed note records why
+            # the exact registered owner's HOME remains available for retry.
+            _record_fixture_cleanup_note(primary_error)
+        elif cleanup_error is not None:
+            raise cleanup_error
+        else:
+            raise RuntimeError("live provider cleanup owner remains registered")
 
 
 def _link_auth_material(cao_server: CaoServer, provider: MatrixProvider) -> None:
@@ -634,10 +867,42 @@ def _create_parent(cao_server: CaoServer, provider: str, profile: str) -> tuple[
         200,
         201,
     ), f"parent session creation returned HTTP {response.status_code}"
-    data = response.json()
-    terminal_id = data["id"]
-    _wait_for_terminal_ready(cao_server.url, terminal_id)
-    return terminal_id, data["session_name"]
+    try:
+        data = response.json()
+        if not isinstance(data, dict):
+            raise ValueError("parent_session_response_invalid")
+        terminal_id = data.get("id")
+        if not isinstance(terminal_id, str) or not terminal_id:
+            raise ValueError("parent_session_response_invalid")
+        canonical_name = _validate_created_session_name(session_name, data.get("session_name"))
+        _wait_for_terminal_ready(cao_server.url, terminal_id)
+    except BaseException as error:
+        try:
+            # The API accepts this original bare name and resolves its own
+            # canonical prefix. Never derive cleanup authority from a bad
+            # response field.
+            _delete_session(cao_server, session_name)
+        except BaseException:
+            add_note = getattr(error, "add_note", None)
+            cleanup_note = "created session cleanup by requested name unconfirmed"
+            if callable(add_note):
+                add_note(cleanup_note)
+            else:  # pragma: no cover - Python versions without BaseException.add_note
+                notes = list(getattr(error, "__notes__", ()))
+                notes.append(cleanup_note)
+                error.__notes__ = notes
+        raise
+    return terminal_id, canonical_name
+
+
+def _validate_created_session_name(requested: str, returned: object) -> str:
+    """Require the terminal API's canonical prefixed name for this request."""
+    if not isinstance(requested, str) or not requested:
+        raise ValueError("created_session_name_mismatch")
+    expected = requested if requested.startswith(SESSION_PREFIX) else f"{SESSION_PREFIX}{requested}"
+    if not isinstance(returned, str) or returned != expected:
+        raise ValueError("created_session_name_mismatch")
+    return expected
 
 
 def _create_native_child(
@@ -835,6 +1100,55 @@ def _wait_for_message_delivery(cao_server: CaoServer, receiver_id: str, message_
     pytest.fail(f"Sibling message {message_id} was never delivered")
 
 
+def _safe_step_failure(response: requests.Response) -> dict[str, object]:
+    """Retain closed deadline facts without messages, identifiers or provider text."""
+    result: dict[str, object] = {"http_status": response.status_code}
+    try:
+        payload = response.json()
+    except ValueError:
+        return result
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    if not isinstance(detail, dict):
+        return result
+    kind = detail.get("kind")
+    if isinstance(kind, str) and kind in {
+        "timeout",
+        "error",
+        "reconcile",
+        "quota_wait",
+        "contract_rejected",
+        "output_extraction_failed",
+    }:
+        result["kind"] = kind
+    diagnostics = detail.get("wait_diagnostics")
+    boolean_fields = {"observed_working", "receipt_candidate_seen", "idle_extraction_attempted"}
+    counter_fields = {"receipt_probe_errors", "stable_receipt_observations"}
+    if (
+        isinstance(diagnostics, dict)
+        and set(diagnostics) == boolean_fields | counter_fields | {"phase", "last_status"}
+        and diagnostics.get("phase") == "completion"
+        and isinstance(diagnostics.get("last_status"), str)
+        and diagnostics["last_status"]
+        in {
+            "idle",
+            "processing",
+            "completed",
+            "waiting_user_answer",
+            "unknown",
+            "error",
+            "waiting_quota",
+            "reconcile",
+        }
+        and all(type(diagnostics[name]) is bool for name in boolean_fields)
+        and all(
+            type(diagnostics[name]) is int and 0 <= diagnostics[name] <= 2**31 - 1
+            for name in counter_fields
+        )
+    ):
+        result["wait_diagnostics"] = dict(diagnostics)
+    return result
+
+
 def _run_cross_provider_step(
     cao_server: CaoServer,
     *,
@@ -871,6 +1185,7 @@ def _run_cross_provider_step(
                 "provider": provider,
                 "agent": profile,
                 "prompt": (
+                    "This task includes Unicode text: café, español y 日本語. "
                     f"Return this exact marker on its own line: {marker}. Then follow the "
                     "CAO completion-receipt instruction supplied with this task. Do not call "
                     "tools, edit files, or delegate. Apart from the marker and the required "
@@ -1066,6 +1381,8 @@ def _run_cross_provider_step(
                 record_if_owned("validated")
                 return receipt
 
+        if response.status_code != 200:
+            evidence["step_failure"] = _safe_step_failure(response)
         assert response.status_code == 200, f"run-step returned HTTP {response.status_code}"
         data = response.json()
         assert marker in data.get(
@@ -1384,7 +1701,7 @@ def test_real_provider_native_child_matrix(
             if session_name is None:
                 session_cleanup.update({"status": "skipped", "reason": "setup_not_started"})
             else:
-                _delete_session(cao_server, session_name)
+                _delete_session_and_record_archive_eligibility(cao_server, session_name, cell)
                 session_cleanup.update({"status": "validated"})
         except BaseException as cleanup_error:
             session_cleanup.update({"status": "failed", "reason": "cleanup_failed"})

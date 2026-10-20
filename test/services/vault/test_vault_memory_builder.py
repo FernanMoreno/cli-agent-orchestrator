@@ -7,6 +7,7 @@ import sys
 from dataclasses import replace
 from datetime import datetime, timezone
 from test.fixtures.vault_factory import build_vault_fixture
+from test.postgres.orm import configured_orm_engine
 from types import SimpleNamespace
 
 import pytest
@@ -48,7 +49,7 @@ def test_ordinary_vault_note_builds_memory_without_native_timestamp_heading(tmp_
     from cli_agent_orchestrator.services.vault import reader
     from cli_agent_orchestrator.services.vault import reconcile as reconcile_module
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reconcile_module, "SessionLocal", Session)
@@ -100,7 +101,7 @@ def test_reader_rejects_non_injectable_mapping_when_required(tmp_path, monkeypat
     from cli_agent_orchestrator.services.vault import reader
     from cli_agent_orchestrator.services.vault import reconcile as reconcile_module
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reconcile_module, "SessionLocal", Session)
@@ -135,7 +136,7 @@ def test_reader_refuses_stale_projection_when_mapping_index_is_disabled(tmp_path
     from cli_agent_orchestrator.services.vault import reader
     from cli_agent_orchestrator.services.vault import reconcile as reconcile_module
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reconcile_module, "SessionLocal", Session)
@@ -232,7 +233,7 @@ def test_resolve_candidates_treats_percent_and_underscore_as_literal_folder_text
     from cli_agent_orchestrator.services.vault.binding import resolve
     from cli_agent_orchestrator.services.vault.config import VaultConfig
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reconcile_module, "SessionLocal", Session)
@@ -293,7 +294,7 @@ def test_public_recall_applies_live_exclude_without_reconcile(tmp_path, monkeypa
     from cli_agent_orchestrator.services.vault import reconcile as reconcile_module
     from cli_agent_orchestrator.services.vault.config import VaultConfig
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reconcile_module, "SessionLocal", Session)
@@ -390,7 +391,7 @@ def test_metadata_recall_uses_vault_builder_not_native_wiki_parser(tmp_path, mon
     from cli_agent_orchestrator.services.vault import reconcile as reconcile_module
     from cli_agent_orchestrator.services.vault.config import VaultConfig
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reconcile_module, "SessionLocal", Session)
@@ -430,7 +431,7 @@ def test_recall_counter_uses_durable_vault_counter_table(tmp_path, monkeypatch):
     """Recall outcomes are process-independent counters, never module globals."""
     from cli_agent_orchestrator.services.vault import reader
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reader, "SessionLocal", Session)
@@ -456,7 +457,7 @@ def test_vault_memory_body_budget_marks_content_stale_and_truncated(tmp_path, mo
     from cli_agent_orchestrator.services.vault import reader
     from cli_agent_orchestrator.services.vault import reconcile as reconcile_module
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reconcile_module, "SessionLocal", Session)
@@ -568,7 +569,7 @@ def _indexed_reader_candidate(tmp_path, monkeypatch, *, run_id: str):
     from cli_agent_orchestrator.services.vault import reader
     from cli_agent_orchestrator.services.vault import reconcile as reconcile_module
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reconcile_module, "SessionLocal", Session)
@@ -980,7 +981,7 @@ def test_quarantined_note_is_not_a_recall_candidate_even_with_live_metadata(tmp_
     from cli_agent_orchestrator.services.vault import reader
     from cli_agent_orchestrator.services.vault import reconcile as reconcile_module
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reconcile_module, "SessionLocal", Session)
@@ -1029,7 +1030,7 @@ def test_resolve_candidates_never_joins_a_native_metadata_row(tmp_path, monkeypa
     """The vault source discriminator prevents same-key native disclosure."""
     from cli_agent_orchestrator.services.vault import reader
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reader, "SessionLocal", Session)
@@ -1103,7 +1104,7 @@ def test_bm25_reads_a_vault_only_scope_without_native_candidates(tmp_path, monke
     from cli_agent_orchestrator.services.vault import reader
     from cli_agent_orchestrator.services.vault import reconcile as reconcile_module
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reconcile_module, "SessionLocal", Session)
@@ -1151,7 +1152,7 @@ def test_bm25_vault_corpus_uses_all_indexed_candidates_with_one_read_each(tmp_pa
     from cli_agent_orchestrator.services.vault import reader
     from cli_agent_orchestrator.services.vault import reconcile as reconcile_module
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reconcile_module, "SessionLocal", Session)

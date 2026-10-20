@@ -21,8 +21,8 @@ test plan:
 - orphan sweep off the in-memory ``step_states`` (BR-31 5b).
 - pipe-drain no-deadlock: a chatty child (> 1 MiB) drains without deadlock.
 
-Async tests use ``@pytest.mark.asyncio``. The journal points at a temp SQLite
-DB via the patched ``DATABASE_FILE`` (same fixture idiom as the U3 tests).
+Async tests use ``@pytest.mark.asyncio``. The journal uses the per-test PostgreSQL target
+installed by the shared test fixture.
 """
 
 from __future__ import annotations
@@ -35,10 +35,6 @@ from typing import List, Optional
 
 import pytest
 
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
-)
 from cli_agent_orchestrator.models.workflow import StepState
 from cli_agent_orchestrator.models.workflow_runtime import RunState, WorkflowRunResult
 from cli_agent_orchestrator.services import script_runner, workflow_journal
@@ -69,7 +65,7 @@ from cli_agent_orchestrator.services.workflow_service import (
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
 def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Temp DB + tables; reset the shared registry/active-drives around each test."""
+    """Use the isolated PostgreSQL journal; reset settings and process-local state."""
     # These historic lifecycle tests exercise the explicit legacy compatibility
     # posture; the default-required plan security tests have separate fixtures.
     settings_path = tmp_path / "settings.json"
@@ -78,10 +74,6 @@ def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "cli_agent_orchestrator.services.settings_service.SETTINGS_FILE", settings_path
     )
     monkeypatch.delenv("CAO_WORKFLOW_REQUIRE_APPROVAL", raising=False)
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
     # Manifest freeze exercises Git baseline capture, unrelated to the mocked
     # subprocess lifecycle covered in this module. Avoid hashing the whole active
     # workspace once cross-agent task artifacts are present.
@@ -93,7 +85,7 @@ def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     workflow_service.run_registry.clear()
     workflow_service._active_drives.clear()
-    yield db_path
+    yield
     workflow_service.run_registry.clear()
     workflow_service._active_drives.clear()
 

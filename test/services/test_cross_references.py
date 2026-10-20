@@ -2,7 +2,7 @@
 
 Covers:
 - Acceptance: after a successful LLM compile + find_related round-trip, the
-  article gains a `## See Also` block and SQLite ``related_keys`` is populated.
+  article gains a `## See Also` block and PostgreSQL ``related_keys`` is populated.
 - Link injection / path traversal defences on every read and render path.
 - Fanout, dedup, cycle and depth-1 guarantees of recall expansion.
 - Length caps (parse-side truncation + fresh-DB CHECK constraint).
@@ -18,7 +18,7 @@ Covers:
 
 The compiler is stubbed; integration paths exercise ``MemoryService.store()``
 (with its deferred background compile drained explicitly) and ``recall()``
-against a per-test SQLite DB.
+against a private PostgreSQL schema.
 """
 
 from __future__ import annotations
@@ -26,10 +26,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from test.postgres.orm import configured_orm_engine
 from typing import Optional
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
@@ -73,7 +73,7 @@ def _ctx(
 @pytest.fixture
 def db_engine(tmp_path):
     db_path = tmp_path / "test.db"
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return engine
 
@@ -139,7 +139,7 @@ class TestAcceptanceSeeAlso:
     def test_see_also_added_to_article(self, svc, db_engine, stubbed_llm, monkeypatch):
         """Two stores on the same key route the update through the deferred
         LLM compile. After the background task completes, the article carries
-        a `## See Also` block referencing the candidate key AND the SQLite
+            a `## See Also` block referencing the candidate key AND the PostgreSQL
         ``related_keys`` cell is populated.
         """
         ctx = _ctx()
@@ -196,7 +196,7 @@ class TestAcceptanceSeeAlso:
 
         _run(_scenario())
 
-        # SQLite related_keys populated by the second pass.
+        # PostgreSQL related_keys populated by the second pass.
         Session = sessionmaker(bind=db_engine)
         with Session() as db:
             row = (

@@ -3,7 +3,6 @@
 import errno
 import hashlib
 import json
-import sqlite3
 import time
 from contextlib import contextmanager
 from dataclasses import replace
@@ -11,7 +10,10 @@ from test.clients.test_work_bubblewrap_process_identity import _identity
 from test.services.test_work_contract_binding import bind, context
 
 import pytest
+from psycopg import IntegrityError
+from psycopg.errors import LockNotAvailable
 
+from cli_agent_orchestrator.clients.postgres import connect
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.services.work_authority import AuthorityDenied
 from cli_agent_orchestrator.services.work_bubblewrap_composition import (
@@ -46,10 +48,10 @@ def _setup(tmp_path, *, catalog_size=4, v2=True):
     binding = bind(data, contract=v2_contract if v2 else original)
     attempt_id = item["attempts"][0]["id"]
     with repo.transaction() as connection:
-        connection.execute("UPDATE work_attempts SET state='sent' WHERE id=?", (attempt_id,))
+        connection.execute("UPDATE work_attempts SET state='sent' WHERE id=%s", (attempt_id,))
         if catalog_size is not None:
             connection.execute(
-                "INSERT INTO work_executable_contents VALUES (?,?,?,?)",
+                "INSERT INTO work_executable_contents VALUES (%s,%s,%s,%s)",
                 (digest, digest, catalog_size, time.time()),
             )
     identity = _identity()
@@ -103,7 +105,7 @@ def test_setup_intent_commits_identity_ack_and_pending_once(tmp_path):
     assert intent.record_pre_go(**kwargs) == first
     assert _counts(repo) == (1, 1)
     assert (
-        WorkBubblewrapSetupIntent(WorkRepository(repo.path)).read_historical(
+        WorkBubblewrapSetupIntent(WorkRepository(repo.target)).read_historical(
             kwargs["attempt_id"], 1
         )
         == first
@@ -115,7 +117,15 @@ def test_setup_intent_commits_identity_ack_and_pending_once(tmp_path):
             == row["ack_json"]
         )
         assert hashlib.sha256(row["ack_json"].encode()).hexdigest() == row["ack_sha256"]
-        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        unchecked = connection.execute(
+            """SELECT count(*) FROM pg_catalog.pg_constraint AS constraint_row
+               JOIN pg_catalog.pg_class AS relation ON relation.oid=constraint_row.conrelid
+               JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid=relation.relnamespace
+               WHERE namespace.nspname=%s AND constraint_row.contype='f'
+                 AND NOT constraint_row.convalidated""",
+            (repo.target.schema,),
+        ).fetchone()[0]
+        assert unchecked == 0
 
 
 def test_failed_intent_insert_rolls_back_process_identity(tmp_path):
@@ -124,13 +134,48 @@ def test_failed_intent_insert_rolls_back_process_identity(tmp_path):
 
     def insert_then_reject(connection, *args):
         original(connection, *args)
-        connection.execute(
-            "CREATE TRIGGER reject_setup_intent BEFORE INSERT ON work_bubblewrap_setup_intents "
-            "BEGIN SELECT RAISE(ABORT,'injected failure'); END"
-        )
+        execute = connection.execute
+
+        def reject_setup_insert(statement, params=()):
+            if statement.lstrip().startswith("INSERT INTO work_bubblewrap_setup_intents"):
+                raise RuntimeError("injected setup-intent insertion failure")
+            return execute(statement, params)
+
+        connection.execute = reject_setup_insert
 
     repo._persist_bubblewrap_process_identity = insert_then_reject
-    with pytest.raises(sqlite3.IntegrityError, match="injected failure"):
+    with pytest.raises(RuntimeError, match="injected setup-intent insertion failure"):
+        WorkBubblewrapSetupIntent(repo).record_pre_go(**kwargs)
+    assert _counts(repo) == (0, 0)
+
+
+def test_missing_setup_intent_readback_rolls_back_process_identity(tmp_path):
+    repo, _, kwargs = _setup(tmp_path)
+    original = repo._persist_bubblewrap_process_identity
+
+    class MissingReadback:
+        def fetchone(self):
+            return None
+
+    def hide_setup_readback(connection, *args):
+        original(connection, *args)
+        execute = connection.execute
+        inserted = False
+
+        def execute_with_missing_readback(statement, params=()):
+            nonlocal inserted
+            if statement.lstrip().startswith("INSERT INTO work_bubblewrap_setup_intents"):
+                inserted = True
+            elif inserted and statement.lstrip().startswith(
+                "SELECT * FROM work_bubblewrap_setup_intents"
+            ):
+                return MissingReadback()
+            return execute(statement, params)
+
+        connection.execute = execute_with_missing_readback
+
+    repo._persist_bubblewrap_process_identity = hide_setup_readback
+    with pytest.raises(WorkConflict, match="could not be read back"):
         WorkBubblewrapSetupIntent(repo).record_pre_go(**kwargs)
     assert _counts(repo) == (0, 0)
 
@@ -189,7 +234,7 @@ def test_setup_intent_rejects_terminal_attempt(tmp_path):
     repo, _, kwargs = _setup(tmp_path)
     with repo.transaction() as connection:
         connection.execute(
-            "UPDATE work_attempts SET state='finished' WHERE id=?", (kwargs["attempt_id"],)
+            "UPDATE work_attempts SET state='finished' WHERE id=%s", (kwargs["attempt_id"],)
         )
     with pytest.raises(ValueError):
         WorkBubblewrapSetupIntent(repo).record_pre_go(**kwargs)
@@ -202,10 +247,10 @@ def test_setup_intent_rejects_unshare_identity(tmp_path):
         connection.execute(
             "INSERT INTO work_process_identities "
             "(attempt_id,generation,protocol_version,identity_json,identity_sha256,created_at) "
-            "VALUES (?,1,3,'{}',?,?)",
+            "VALUES (%s,1,3,'{}',%s,%s)",
             (kwargs["attempt_id"], "c" * 64, time.time()),
         )
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(IntegrityError):
         WorkBubblewrapSetupIntent(repo).record_pre_go(**kwargs)
     assert _counts(repo) == (0, 0)
 
@@ -229,27 +274,27 @@ def test_setup_intent_rejects_lost_authority_before_writing(tmp_path, invalidity
                 "SELECT id,revision,principal_id FROM work_grants LIMIT 1"
             ).fetchone()
             connection.execute(
-                "INSERT INTO work_grant_revocations VALUES (?,?,?,?,?)",
+                "INSERT INTO work_grant_revocations VALUES (%s,%s,%s,%s,%s)",
                 (grant["id"], grant["revision"], grant["principal_id"], time.time(), "test"),
             )
         elif invalidity == "lease_expired":
             connection.execute(
-                "UPDATE work_attempts SET lease_expires_at=? WHERE id=?",
+                "UPDATE work_attempts SET lease_expires_at=%s WHERE id=%s",
                 (time.time() - 1, kwargs["attempt_id"]),
             )
         elif invalidity == "replaced":
             work_item_id = connection.execute(
-                "SELECT work_item_id FROM work_attempts WHERE id=?", (kwargs["attempt_id"],)
+                "SELECT work_item_id FROM work_attempts WHERE id=%s", (kwargs["attempt_id"],)
             ).fetchone()[0]
             connection.execute(
                 "INSERT INTO work_attempts "
                 "(id,work_item_id,attempt_number,generation,provider,state,lease_expires_at,created_at) "
-                "VALUES (?,?,2,2,'mock_cli','planned',?,?)",
+                "VALUES (%s,%s,2,2,'mock_cli','planned',%s,%s)",
                 ("replacement", work_item_id, time.time() + 600, time.time()),
             )
         else:
             connection.execute(
-                "UPDATE work_attempts SET revision=revision+1 WHERE id=?", (kwargs["attempt_id"],)
+                "UPDATE work_attempts SET revision=revision+1 WHERE id=%s", (kwargs["attempt_id"],)
             )
     with pytest.raises((ValueError, AuthorityDenied)):
         WorkBubblewrapSetupIntent(repo).record_pre_go(**kwargs)
@@ -272,11 +317,11 @@ def test_historical_read_survives_revocation_and_terminal_attempt(tmp_path):
             "SELECT id,revision,principal_id FROM work_grants LIMIT 1"
         ).fetchone()
         connection.execute(
-            "INSERT INTO work_grant_revocations VALUES (?,?,?,?,?)",
+            "INSERT INTO work_grant_revocations VALUES (%s,%s,%s,%s,%s)",
             (grant["id"], grant["revision"], grant["principal_id"], time.time(), "test"),
         )
         connection.execute(
-            "UPDATE work_attempts SET state='finished' WHERE id=?", (kwargs["attempt_id"],)
+            "UPDATE work_attempts SET state='finished' WHERE id=%s", (kwargs["attempt_id"],)
         )
     assert intent.read_historical(kwargs["attempt_id"], 1) == evidence
     with pytest.raises(ValueError):
@@ -294,12 +339,17 @@ def test_release_sees_committed_pending_intent_before_effect(tmp_path):
         with repo.connection() as connection:
             row = connection.execute(
                 "SELECT release_intent,ack_sha256 FROM work_bubblewrap_setup_intents "
-                "WHERE attempt_id=?",
+                "WHERE attempt_id=%s",
                 (kwargs["attempt_id"],),
             ).fetchone()
-        with sqlite3.connect(repo.path, timeout=0, isolation_level=None) as peer:
-            with pytest.raises(sqlite3.OperationalError, match="locked"):
-                peer.execute("BEGIN IMMEDIATE")
+        with pytest.raises(LockNotAvailable):
+            with connect(repo.target) as peer:
+                with peer.transaction():
+                    peer.execute("SET LOCAL lock_timeout='100ms'")
+                    peer.execute(
+                        "UPDATE work_attempts SET revision=revision+1 WHERE id=%s",
+                        (kwargs["attempt_id"],),
+                    )
         observed.append((row["release_intent"], row["ack_sha256"]))
 
     intent.release_if_current(evidence, expected_attempt_revision=1, release=release)
@@ -317,21 +367,21 @@ def test_release_withholds_effect_when_authority_changes_after_persistence(tmp_p
                 "SELECT id,revision,principal_id FROM work_grants LIMIT 1"
             ).fetchone()
             connection.execute(
-                "INSERT INTO work_grant_revocations VALUES (?,?,?,?,?)",
+                "INSERT INTO work_grant_revocations VALUES (%s,%s,%s,%s,%s)",
                 (grant["id"], grant["revision"], grant["principal_id"], time.time(), "test"),
             )
         elif invalidity == "stale_revision":
             connection.execute(
-                "UPDATE work_attempts SET revision=revision+1 WHERE id=?", (kwargs["attempt_id"],)
+                "UPDATE work_attempts SET revision=revision+1 WHERE id=%s", (kwargs["attempt_id"],)
             )
         else:
             work_item_id = connection.execute(
-                "SELECT work_item_id FROM work_attempts WHERE id=?", (kwargs["attempt_id"],)
+                "SELECT work_item_id FROM work_attempts WHERE id=%s", (kwargs["attempt_id"],)
             ).fetchone()[0]
             connection.execute(
                 "INSERT INTO work_attempts "
                 "(id,work_item_id,attempt_number,generation,provider,state,lease_expires_at,created_at) "
-                "VALUES (?,?,2,2,'mock_cli','planned',?,?)",
+                "VALUES (%s,%s,2,2,'mock_cli','planned',%s,%s)",
                 ("replacement", work_item_id, time.time() + 600, time.time()),
             )
     effects = []
@@ -380,14 +430,14 @@ def test_release_commit_failure_after_go_attempt_is_uncertain(tmp_path, monkeypa
         with original_transaction() as connection:
             yield connection
             if effects:
-                raise sqlite3.OperationalError("commit failed after GO attempt")
+                raise RuntimeError("commit failed after GO attempt")
 
     monkeypatch.setattr(repo, "transaction", fail_after_release)
     with pytest.raises(WorkBubblewrapReleaseUncertain):
         intent.release_if_current(
             evidence, expected_attempt_revision=1, release=lambda: effects.append("GO attempted")
         )
-    restarted = WorkBubblewrapSetupIntent(WorkRepository(repo.path))
+    restarted = WorkBubblewrapSetupIntent(WorkRepository(repo.target))
     with pytest.raises(WorkConflict):
         restarted.release_if_current(
             evidence, expected_attempt_revision=1, release=lambda: effects.append("retry GO")
@@ -404,7 +454,7 @@ def test_release_rechecks_wall_clock_expiry_after_final_order_validation(tmp_pat
     expiry = start + 10
     with repo.transaction() as connection:
         connection.execute(
-            "UPDATE work_attempts SET lease_expires_at=? WHERE id=?",
+            "UPDATE work_attempts SET lease_expires_at=%s WHERE id=%s",
             (expiry, kwargs["attempt_id"]),
         )
     clock = [start]
@@ -437,7 +487,7 @@ def test_release_checks_expiry_immediately_before_go(tmp_path, monkeypatch):
     expiry = start + 10
     with repo.transaction() as connection:
         connection.execute(
-            "UPDATE work_attempts SET lease_expires_at=? WHERE id=?",
+            "UPDATE work_attempts SET lease_expires_at=%s WHERE id=%s",
             (expiry, kwargs["attempt_id"]),
         )
     clock = [start]
@@ -479,7 +529,7 @@ def test_release_claim_blocks_same_evidence_after_uncertain_go(tmp_path):
         WorkBubblewrapSetupIntent(repo).release_if_current(
             evidence, expected_attempt_revision=1, release=attempted_go
         )
-    restarted = WorkBubblewrapSetupIntent(WorkRepository(repo.path))
+    restarted = WorkBubblewrapSetupIntent(WorkRepository(repo.target))
     with pytest.raises(WorkConflict):
         restarted.release_if_current(
             evidence, expected_attempt_revision=1, release=lambda: effects.append("second GO")
@@ -504,7 +554,7 @@ def test_successful_release_claim_is_one_shot(tmp_path):
     with repo.connection() as connection:
         claim = connection.execute(
             "SELECT generation,contract_hash,ack_sha256,process_identity_sha256 "
-            "FROM work_bubblewrap_release_claims WHERE attempt_id=?",
+            "FROM work_bubblewrap_release_claims WHERE attempt_id=%s",
             (kwargs["attempt_id"],),
         ).fetchone()
     assert tuple(claim) == (
@@ -539,23 +589,23 @@ def test_claim_does_not_authorize_go_after_intervening_authority_change(
                     "SELECT id,revision,principal_id FROM work_grants LIMIT 1"
                 ).fetchone()
                 connection.execute(
-                    "INSERT INTO work_grant_revocations VALUES (?,?,?,?,?)",
+                    "INSERT INTO work_grant_revocations VALUES (%s,%s,%s,%s,%s)",
                     (grant["id"], grant["revision"], grant["principal_id"], time.time(), "test"),
                 )
             elif invalidity == "stale_revision":
                 connection.execute(
-                    "UPDATE work_attempts SET revision=revision+1 WHERE id=?",
+                    "UPDATE work_attempts SET revision=revision+1 WHERE id=%s",
                     (kwargs["attempt_id"],),
                 )
             else:
                 work_item_id = connection.execute(
-                    "SELECT work_item_id FROM work_attempts WHERE id=?",
+                    "SELECT work_item_id FROM work_attempts WHERE id=%s",
                     (kwargs["attempt_id"],),
                 ).fetchone()[0]
                 connection.execute(
                     "INSERT INTO work_attempts "
                     "(id,work_item_id,attempt_number,generation,provider,state,lease_expires_at,created_at) "
-                    "VALUES (?,?,2,2,'mock_cli','planned',?,?)",
+                    "VALUES (%s,%s,2,2,'mock_cli','planned',%s,%s)",
                     ("replacement", work_item_id, time.time() + 600, time.time()),
                 )
 
@@ -569,7 +619,7 @@ def test_claim_does_not_authorize_go_after_intervening_authority_change(
     with repo.connection() as connection:
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_bubblewrap_release_claims WHERE attempt_id=?",
+                "SELECT count(*) FROM work_bubblewrap_release_claims WHERE attempt_id=%s",
                 (kwargs["attempt_id"],),
             ).fetchone()[0]
             == 1
@@ -597,7 +647,7 @@ def test_restart_after_claim_before_go_cannot_reissue(tmp_path, monkeypatch):
         WorkBubblewrapSetupIntent(repo).release_if_current(
             evidence, expected_attempt_revision=1, release=lambda: effects.append("GO")
         )
-    restarted = WorkBubblewrapSetupIntent(WorkRepository(repo.path))
+    restarted = WorkBubblewrapSetupIntent(WorkRepository(repo.target))
     with pytest.raises(WorkConflict):
         restarted.release_if_current(
             evidence, expected_attempt_revision=1, release=lambda: effects.append("retry GO")

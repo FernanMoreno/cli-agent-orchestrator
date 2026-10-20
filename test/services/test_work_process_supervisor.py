@@ -1992,7 +1992,7 @@ def test_restart_preserves_uncertain_work_and_pending_cleanup_without_redelivery
     native_work_namespaces: str,
 ) -> None:
     """A restarted service cannot replay or claim cleanup without a reattach handle."""
-    repository_path = tmp_path / "work.sqlite3"
+    repository_path = tmp_path / "work.db"
     repository = WorkRepository(repository_path)
     repository.initialize()
     job = repository.create_job(

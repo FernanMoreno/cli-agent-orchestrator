@@ -30,6 +30,7 @@ from cli_agent_orchestrator.models.work_contract import (
 from cli_agent_orchestrator.models.work_delivery import WorkDeliveryEnvelope
 from cli_agent_orchestrator.models.work_origin import ManagedLineageIntent, WorkAttemptRef
 from cli_agent_orchestrator.security import auth
+from cli_agent_orchestrator.services import work_mcp_proxy
 from cli_agent_orchestrator.services.delegation_snapshot import (
     DelegationSnapshots,
     ResolvedSnapshot,
@@ -307,7 +308,7 @@ def _provision_second_docker_selection(repository, principal, first_binding, sel
     )
     with repository.read_snapshot() as connection:
         project_id = connection.execute(
-            "SELECT project_id FROM work_jobs WHERE id=?", (first_binding.job_id,)
+            "SELECT project_id FROM work_jobs WHERE id=%s", (first_binding.job_id,)
         ).fetchone()[0]
     snapshot = DelegationSnapshots(repository, policy=policy).freeze(
         principal=principal,
@@ -390,7 +391,7 @@ def _preprovision_lineage(runtime, repository, owner, tmp_path, *, tools):
     )
     with repository.read_snapshot() as connection:
         root = connection.execute(
-            "SELECT revision,expires_at FROM work_grants WHERE id=?", ("t098-root",)
+            "SELECT revision,expires_at FROM work_grants WHERE id=%s", ("t098-root",)
         ).fetchone()
     assert root is not None
     authority = WorkAuthority(repository)
@@ -532,13 +533,13 @@ async def test_docker_backend_runs_one_bound_static_worker_and_removes_container
     with repository.read_snapshot() as connection:
         issue_states = connection.execute(
             "SELECT state FROM work_mcp_proxy_issue_events "
-            "WHERE attempt_id=? AND generation=? ORDER BY sequence",
+            "WHERE attempt_id=%s AND generation=%s ORDER BY sequence",
             (receipt.attempt_id, receipt.generation),
         ).fetchall()
         assert [row[0] for row in issue_states] == ["issued", "abandoned"]
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=? AND generation=?",
+                "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=%s AND generation=%s",
                 (receipt.attempt_id, receipt.generation),
             ).fetchone()[0]
             == 0
@@ -615,7 +616,7 @@ async def test_docker_backend_bridges_only_managed_work_mcp_without_container_ne
     with repository.read_snapshot() as connection:
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=?",
+                "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=%s",
                 (receipt.attempt_id,),
             ).fetchone()[0]
             == 1
@@ -716,7 +717,7 @@ async def test_docker_mcp_admits_only_preprovisioned_managed_child(tmp_path):
         event = connection.execute(
             "SELECT events.state FROM work_mcp_proxy_effect_events AS events "
             "JOIN work_mcp_proxy_effects AS effects USING(effect_id) "
-            "WHERE effects.attempt_id=? ORDER BY events.sequence DESC LIMIT 1",
+            "WHERE effects.attempt_id=%s ORDER BY events.sequence DESC LIMIT 1",
             (receipt.attempt_id,),
         ).fetchone()
         assert event is not None and event["state"] == "completed"
@@ -829,12 +830,12 @@ async def test_docker_mcp_commits_exact_receiver_acceptance_before_receipt(tmp_p
     with repository.read_snapshot() as connection:
         acceptance = connection.execute(
             "SELECT receiver_subject_id,delivery_id,delivery_hash "
-            "FROM work_task_receiver_acceptances WHERE attempt_id=? AND generation=1",
+            "FROM work_task_receiver_acceptances WHERE attempt_id=%s AND generation=1",
             (child_work["attempts"][0]["id"],),
         ).fetchone()
         receipt = connection.execute(
             "SELECT delivery_id,delivery_hash FROM work_task_received_receipts "
-            "WHERE attempt_id=? AND generation=1",
+            "WHERE attempt_id=%s AND generation=1",
             (child_work["attempts"][0]["id"],),
         ).fetchone()
         assert acceptance is not None and receipt is not None
@@ -851,7 +852,7 @@ async def test_docker_mcp_commits_exact_receiver_acceptance_before_receipt(tmp_p
         assert child_binding.principal_id == child.id
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=?",
+                "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=%s",
                 (child_work["attempts"][0]["id"],),
             ).fetchone()[0]
             == 1
@@ -870,11 +871,16 @@ async def test_docker_mcp_commits_exact_receiver_acceptance_before_receipt(tmp_p
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_docker_sibling_cannot_observe_or_duplicate_victim_mcp_fd(tmp_path):
+async def test_docker_sibling_cannot_observe_or_duplicate_victim_mcp_fd(tmp_path, monkeypatch):
     image_id = os.environ.get("CAO_T019_DOCKER_IMAGE_ID")
     docker_cli = os.environ.get("CAO_T019_DOCKER_CLI", "docker")
     if not image_id:
         pytest.skip("run test/integration/t019/run-docker-backend-acceptance.sh for real Docker")
+
+    # This test intentionally holds both synthetic upstream calls while it
+    # inspects their live namespaces. Keep the production five-second bound
+    # unchanged, but let this controlled barrier outlast the second launch.
+    monkeypatch.setattr(work_mcp_proxy, "_SOCKET_TIMEOUT_SECONDS", 60.0)
 
     worker_binary = _minimal_static_sibling_probe_worker(tmp_path)
     victim_mcp_entered = threading.Event()
@@ -1375,7 +1381,7 @@ asyncio.run(gateway.dispatch_registered_next())
                 with fresh_repository.read_snapshot() as connection:
                     issue_states = connection.execute(
                         "SELECT state FROM work_mcp_proxy_issue_events "
-                        "WHERE attempt_id=? AND generation=? ORDER BY sequence",
+                        "WHERE attempt_id=%s AND generation=%s ORDER BY sequence",
                         (receipt.attempt_id, receipt.generation),
                     ).fetchall()
                 if issue_states and issue_states[-1][0] == "issued":
@@ -1420,12 +1426,12 @@ asyncio.run(gateway.dispatch_registered_next())
         with fresh_repository.read_snapshot() as connection:
             issue_states = connection.execute(
                 "SELECT state FROM work_mcp_proxy_issue_events "
-                "WHERE attempt_id=? AND generation=? ORDER BY sequence",
+                "WHERE attempt_id=%s AND generation=%s ORDER BY sequence",
                 (receipt.attempt_id, receipt.generation),
             ).fetchall()
             effect_count = connection.execute(
                 "SELECT count(*) FROM work_mcp_proxy_effects "
-                "WHERE attempt_id=? AND generation=?",
+                "WHERE attempt_id=%s AND generation=%s",
                 (receipt.attempt_id, receipt.generation),
             ).fetchone()[0]
         assert [row[0] for row in issue_states] == ["issued", "abandoned"]

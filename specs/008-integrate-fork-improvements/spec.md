@@ -116,3 +116,25 @@ El usuario conserva sus flujos actuales y obtiene capacidades funcionales nuevas
 - Las alternativas se evalúan por conservación de conducta, evidencia durable, permisos, recuperación, compatibilidad, pruebas y complejidad, en ese orden.
 - Los modos opcionales se entregan funcionales con activación explícita/configurable; no se activan contra cuentas o infraestructura personal para demostrar que el código existe.
 - La integración se ejecuta por componentes y dependencias; todos pertenecen al alcance y no se descartan por ser posteriores en el orden.
+
+## Consolidación solicitada — 2026-10-12
+
+La petición posterior del usuario exige reunir el trabajo en el checkout principal
+de `main`. La comprobación debe cubrir tanto commits como cambios sin confirmar;
+la ascendencia de una rama no acredita por sí sola sus modificaciones locales.
+
+- **FR-021**: Inventariar los worktrees y las tres carpetas del Escritorio
+  indicadas por el usuario; conservar e integrar las capacidades o archivos que
+  falten en `main`, sin reemplazar versiones posteriores por copias antiguas.
+- **FR-022**: Incorporar las dos aplicaciones externas de demostración como
+  ejemplos reproducibles, con su código, contratos, pruebas y procedencia. Los
+  datos mutables se inicializan vacíos; los originales se conservan fuera del
+  repositorio. Las auditorías históricas no se presentan como aceptación actual.
+- **FR-023**: Los registros de publicación son evidencia histórica; no se
+  importan secretos, entornos, cachés ni logs privados como código de producto.
+  El cierre identifica cualquier cambio que siga existiendo exclusivamente en
+  otro worktree. Esta petición no cambia la autorización de publicación.
+- **FR-024**: Cada perfil de Bubblewrap admitido por digest debe estar ligado a
+  evidencia estática revisada de su fuente, imagen de build, toolchain, opciones
+  y rutas canónicas reproducibles. Un digest desconocido sigue rechazándose; la
+  evidencia de compilación no equivale a aceptación host ni activa el backend.

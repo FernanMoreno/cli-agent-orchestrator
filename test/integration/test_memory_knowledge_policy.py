@@ -1,12 +1,27 @@
 """Memory entrypoints retain the reviewed store's authority and audit boundary."""
 
 import time
-from test.services.test_knowledge_policy import policy_context  # noqa: F401
+from test.postgres.orm import configured_orm_engine
+from test.services.test_knowledge_policy import _policy_context
 
 import pytest
 
 from cli_agent_orchestrator.services.knowledge_revisions import KnowledgeRevisions
 from cli_agent_orchestrator.services.memory_service import MemoryService
+
+
+@pytest.fixture
+def policy_context(isolated_memory_db):
+    return lambda: _policy_context(isolated_memory_db)
+
+
+@pytest.fixture
+def database_engine(isolated_memory_db):
+    engine = configured_orm_engine()
+    try:
+        yield engine
+    finally:
+        engine.dispose()
 
 
 def proposal(service, actor):
@@ -77,16 +92,20 @@ def test_failed_audit_cannot_publish_or_return_content(policy_context):
     _, repository, actor, _, _, _, policy = policy_context()
     service = MemoryService(knowledge_policy=policy)
     proposal(service, actor)
-    with repository.transaction() as connection:
-        connection.execute(
-            "CREATE TRIGGER reject_audit BEFORE INSERT ON work_knowledge_access_audit "
-            "BEGIN SELECT RAISE(ABORT,'audit unavailable'); END"
-        )
-    import sqlite3
+    from psycopg import sql
 
-    with pytest.raises(sqlite3.IntegrityError):
+    from cli_agent_orchestrator.clients.postgres import DatabaseError, connect
+
+    with connect(repository.target.migration_target()) as connection:
+        connection.execute(
+            sql.SQL("REVOKE INSERT ON work_knowledge_access_audit FROM {}").format(
+                sql.Identifier(repository.target.user)
+            )
+        )
+
+    with pytest.raises(DatabaseError):
         service.read_revision(actor, "memory")
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(DatabaseError):
         service.propose_revision(
             actor,
             scope="project",
@@ -211,15 +230,15 @@ def test_access_audit_distinguishes_requested_record(policy_context):
 
 @pytest.mark.asyncio
 async def test_legacy_operations_use_durable_audit_in_metadata_database(
-    tmp_path, isolated_memory_db
+    tmp_path, isolated_memory_db, database_engine
 ):
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
-    service = MemoryService(base_dir=tmp_path / "wiki", db_engine=isolated_memory_db)
+    service = MemoryService(base_dir=tmp_path / "wiki", db_engine=database_engine)
     await service.store("local fact", scope="global", key="fact")
     assert await service.recall(scope="global", search_mode="metadata")
     service.get_memory_context({}, budget_chars=2000)
-    repository = WorkRepository(isolated_memory_db.url.database)
+    repository = WorkRepository(isolated_memory_db)
     with repository.connection() as connection:
         rows = connection.execute("SELECT action,phase FROM work_memory_access_audit").fetchall()
     completed = {row["action"] for row in rows if row["phase"] == "completed"}
@@ -228,37 +247,42 @@ async def test_legacy_operations_use_durable_audit_in_metadata_database(
 
 
 @pytest.mark.asyncio
-async def test_legacy_audit_failure_prevents_file_write(tmp_path, isolated_memory_db):
-    import sqlite3
+async def test_legacy_audit_failure_prevents_file_write(
+    tmp_path, isolated_memory_db, database_engine
+):
+    from psycopg import sql
 
+    from cli_agent_orchestrator.clients.postgres import connect
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.services.knowledge_policy import LegacyMemoryAuditError
 
-    repository = WorkRepository(isolated_memory_db.url.database)
+    repository = WorkRepository(isolated_memory_db)
     repository.initialize()
-    with repository.transaction() as connection:
+    with connect(repository.target.migration_target()) as connection:
         connection.execute(
-            "CREATE TRIGGER reject_legacy_audit BEFORE INSERT ON work_memory_access_audit "
-            "BEGIN SELECT RAISE(ABORT,'audit unavailable'); END"
+            sql.SQL("REVOKE INSERT ON work_memory_access_audit FROM {}").format(
+                sql.Identifier(repository.target.user)
+            )
         )
-    service = MemoryService(base_dir=tmp_path / "wiki", db_engine=isolated_memory_db)
-    with pytest.raises((sqlite3.Error, RuntimeError)):
+    service = MemoryService(base_dir=tmp_path / "wiki", db_engine=database_engine)
+    with pytest.raises(LegacyMemoryAuditError):
         await service.store("must not persist", scope="global", key="blocked")
     assert not service.base_dir.exists()
 
 
 @pytest.mark.asyncio
 async def test_graph_cache_hits_still_pass_legacy_policy_and_audit(
-    tmp_path, isolated_memory_db, monkeypatch
+    tmp_path, isolated_memory_db, database_engine, monkeypatch
 ):
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
     from cli_agent_orchestrator.graph.providers.memory import _CACHE, MemoryGraphProvider
     from cli_agent_orchestrator.security import auth
 
-    service = MemoryService(base_dir=tmp_path / "wiki", db_engine=isolated_memory_db)
+    service = MemoryService(base_dir=tmp_path / "wiki", db_engine=database_engine)
     provider = MemoryGraphProvider(memory_service=service, lint_enabled=lambda: False)
     _CACHE.clear()
     try:
-        repository = WorkRepository(isolated_memory_db.url.database)
+        repository = WorkRepository(isolated_memory_db)
         query = "SELECT count(*) FROM work_memory_access_audit WHERE action='graph' AND phase='completed'"
         first = await provider.project(scope="global")
         with repository.connection() as connection:
@@ -284,12 +308,12 @@ async def test_graph_cache_hits_still_pass_legacy_policy_and_audit(
 
 
 def test_direct_archive_backend_cannot_bypass_legacy_policy(
-    tmp_path, isolated_memory_db, monkeypatch
+    tmp_path, isolated_memory_db, database_engine, monkeypatch
 ):
     from cli_agent_orchestrator.security import auth
     from cli_agent_orchestrator.services.memory_archive.okf import OkfArchiveBackend
 
-    service = MemoryService(base_dir=tmp_path / "wiki", db_engine=isolated_memory_db)
+    service = MemoryService(base_dir=tmp_path / "wiki", db_engine=database_engine)
     monkeypatch.setattr(auth, "is_auth_enabled", lambda: True)
     with pytest.raises(PermissionError):
         OkfArchiveBackend(service).export_bundle("global", None, tmp_path / "out", False, False)
@@ -298,15 +322,15 @@ def test_direct_archive_backend_cannot_bypass_legacy_policy(
 
 @pytest.mark.asyncio
 async def test_relationship_owner_audits_and_redacts_metadata(
-    tmp_path, isolated_memory_db, monkeypatch
+    tmp_path, isolated_memory_db, database_engine, monkeypatch
 ):
     from sqlalchemy.orm import sessionmaker
 
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
     from cli_agent_orchestrator.services import memory_relationship_service as relationships
 
-    monkeypatch.setattr(relationships, "SessionLocal", sessionmaker(bind=isolated_memory_db))
-    memory = MemoryService(base_dir=tmp_path / "wiki", db_engine=isolated_memory_db)
+    monkeypatch.setattr(relationships, "SessionLocal", sessionmaker(bind=database_engine))
+    memory = MemoryService(base_dir=tmp_path / "wiki", db_engine=database_engine)
     for key in ("first", "second"):
         await memory.store("safe fact", scope="global", key=key)
     service = relationships.MemoryRelationshipService()
@@ -322,7 +346,7 @@ async def test_relationship_owner_audits_and_redacts_metadata(
     )
     assert secret not in repr(relation.attributes)
     assert service.get(relation.id).attributes == relation.attributes
-    repository = WorkRepository(isolated_memory_db.url.database)
+    repository = WorkRepository(isolated_memory_db)
     with repository.connection() as connection:
         assert (
             connection.execute(
@@ -334,14 +358,14 @@ async def test_relationship_owner_audits_and_redacts_metadata(
 
 @pytest.mark.asyncio
 async def test_memory_graph_redacts_cached_historical_metadata(
-    tmp_path, isolated_memory_db, monkeypatch
+    tmp_path, isolated_memory_db, database_engine, monkeypatch
 ):
     from unittest.mock import AsyncMock
 
     from cli_agent_orchestrator.graph.models import GraphView, Node
     from cli_agent_orchestrator.graph.providers.memory import _CACHE, MemoryGraphProvider
 
-    service = MemoryService(base_dir=tmp_path / "wiki", db_engine=isolated_memory_db)
+    service = MemoryService(base_dir=tmp_path / "wiki", db_engine=database_engine)
     provider = MemoryGraphProvider(memory_service=service, lint_enabled=lambda: False)
     secret = "sk-" + "e" * 48
     historical = GraphView(
@@ -364,20 +388,37 @@ async def test_memory_graph_redacts_cached_historical_metadata(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["recall", "graph", "forget"])
 async def test_nested_audit_failure_never_degrades_to_success(
-    tmp_path, isolated_memory_db, operation
+    tmp_path, isolated_memory_db, database_engine, operation, monkeypatch
 ):
-    from cli_agent_orchestrator.clients.work_repository import WorkRepository
     from cli_agent_orchestrator.graph.providers.memory import _CACHE, MemoryGraphProvider
     from cli_agent_orchestrator.services.knowledge_policy import LegacyMemoryAuditError
+    from cli_agent_orchestrator.services.legacy_memory_audit_repository import (
+        _PooledAuditConnection,
+    )
 
-    service = MemoryService(base_dir=tmp_path / "wiki", db_engine=isolated_memory_db)
+    service = MemoryService(base_dir=tmp_path / "wiki", db_engine=database_engine)
     await service.store("safe fact", scope="global", key="fact")
-    repository = WorkRepository(isolated_memory_db.url.database)
-    with repository.transaction() as connection:
-        connection.execute(
-            "CREATE TRIGGER reject_relationship_audit BEFORE INSERT ON work_memory_access_audit "
-            "WHEN NEW.action='relationships' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END"
-        )
+
+    original_execute = _PooledAuditConnection.execute
+    injected_actions = []
+
+    def reject_relationship_audit(connection, statement, params=(), *, prepare: bool | None = None):
+        if (
+            isinstance(statement, str)
+            and "INSERT INTO work_memory_access_audit" in statement
+            and len(params) > 2
+            and params[2] == "relationships"
+        ):
+            injected_actions.append(params[2])
+            # The pooled repository overrides Connection.execute. Inject a real
+            # PostgreSQL error through that active lease when the nested route
+            # attempts its durable relationship audit row.
+            return original_execute(connection, "SELECT 1/0")
+        if prepare is None:
+            return original_execute(connection, statement, params)
+        return original_execute(connection, statement, params, prepare=prepare)
+
+    monkeypatch.setattr(_PooledAuditConnection, "execute", reject_relationship_audit)
     _CACHE.clear()
     try:
         with pytest.raises(LegacyMemoryAuditError):
@@ -389,13 +430,14 @@ async def test_nested_audit_failure_never_degrades_to_success(
                 await MemoryGraphProvider(
                     memory_service=service, lint_enabled=lambda: False
                 ).project(scope="global")
+        assert injected_actions == ["relationships"]
     finally:
         _CACHE.clear()
 
 
 @pytest.mark.asyncio
 async def test_compaction_redacts_inputs_and_output_and_audits(
-    tmp_path, isolated_memory_db, monkeypatch
+    tmp_path, isolated_memory_db, database_engine, monkeypatch
 ):
     from pathlib import Path
     from types import SimpleNamespace
@@ -404,7 +446,7 @@ async def test_compaction_redacts_inputs_and_output_and_audits(
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
     from cli_agent_orchestrator.services import wiki_compiler
 
-    service = MemoryService(base_dir=tmp_path / "wiki", db_engine=isolated_memory_db)
+    service = MemoryService(base_dir=tmp_path / "wiki", db_engine=database_engine)
     memory = await service.store("historical-marker", scope="global", key="fact")
     path = Path(memory.file_path)
     secret = "sk-" + "f" * 48
@@ -429,7 +471,7 @@ async def test_compaction_redacts_inputs_and_output_and_audits(
     assert result == "applied"
     assert secret not in repr(compile_mock.call_args)
     assert secret not in path.read_text()
-    with WorkRepository(isolated_memory_db.url.database).connection() as connection:
+    with WorkRepository(isolated_memory_db).connection() as connection:
         assert (
             connection.execute(
                 "SELECT count(*) FROM work_memory_access_audit WHERE action='compact' AND phase='completed'"
@@ -438,13 +480,15 @@ async def test_compaction_redacts_inputs_and_output_and_audits(
         )
 
 
-def test_archive_redacts_historical_tags_before_export(tmp_path, isolated_memory_db):
+def test_archive_redacts_historical_tags_before_export(
+    tmp_path, isolated_memory_db, database_engine
+):
     import asyncio
     from pathlib import Path
 
     from cli_agent_orchestrator.services.memory_archive.okf import OkfArchiveBackend
 
-    service = MemoryService(base_dir=tmp_path / "wiki", db_engine=isolated_memory_db)
+    service = MemoryService(base_dir=tmp_path / "wiki", db_engine=database_engine)
     memory = asyncio.run(
         service.store("safe fact", scope="global", key="fact", tags="historical-marker")
     )
@@ -458,40 +502,73 @@ def test_archive_redacts_historical_tags_before_export(tmp_path, isolated_memory
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("shared", ["neither", "base", "database"])
-async def test_memory_graph_cache_isolates_persistent_owners(tmp_path, shared):
-    from sqlalchemy import create_engine
+async def test_memory_graph_cache_isolates_persistent_owners(
+    tmp_path, shared, isolated_memory_db, monkeypatch
+):
+    from contextlib import contextmanager
+    from dataclasses import replace
+    from test.postgres.fixtures import make_orm_engine
+    from uuid import uuid4
 
-    from cli_agent_orchestrator.clients import database
+    from psycopg import sql
+
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget, connect
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
     from cli_agent_orchestrator.graph.providers.memory import _CACHE, MemoryGraphProvider
     from cli_agent_orchestrator.services.memory_relationship_service import (
         MemoryRelationshipService,
     )
 
-    first_engine = create_engine(f"sqlite:///{tmp_path / 'first.db'}")
-    second_engine = (
-        first_engine
+    first_target = isolated_memory_db
+    second_target = (
+        first_target
         if shared == "database"
-        else create_engine(f"sqlite:///{tmp_path / 'second.db'}")
+        else replace(
+            first_target,
+            schema=f"{first_target.schema}_second_{uuid4().hex[:8]}",
+            store_id=str(uuid4()),
+        )
     )
-    for engine in {first_engine, second_engine}:
-        database.Base.metadata.create_all(engine)
+    if second_target != first_target:
+        bootstrap_scope(second_target)
+    first_engine = make_orm_engine(first_target)
+    second_engine = first_engine if shared == "database" else make_orm_engine(second_target)
     first_base = tmp_path / "first"
     second_base = first_base if shared == "base" else tmp_path / "second"
     first = MemoryService(base_dir=first_base, db_engine=first_engine)
     second = MemoryService(base_dir=second_base, db_engine=second_engine)
-    for service in (first, second):
-        for key in ("one", "two"):
-            await service.store("safe fact", scope="global", key=key)
+
+    @contextmanager
+    def target_settings(target):
+        # The private audit pool re-resolves its target on every checkout. Keep
+        # this test's per-facade server configuration in place during each real
+        # operation, including nested audit writes.
+        with monkeypatch.context() as instance:
+            instance.setattr(
+                DatabaseTarget,
+                "from_settings",
+                classmethod(lambda cls, *, scope="main", home=None, selected=target: selected),
+            )
+            yield
+
+    for service, target in ((first, first_target), (second, second_target)):
+        with target_settings(target):
+            for key in ("one", "two"):
+                await service.store("safe fact", scope="global", key=key)
     if shared == "base":
-        MemoryRelationshipService(memory_service=first).create(
-            "global", None, "one", "two", "relates_to", "human"
-        )
+        with target_settings(first_target):
+            MemoryRelationshipService(memory_service=first).create(
+                "global", None, "one", "two", "relates_to", "human"
+            )
     else:
-        await first.store("first owner only", scope="global", key="private")
+        with target_settings(first_target):
+            await first.store("first owner only", scope="global", key="private")
     _CACHE.clear()
     try:
-        first_view = await MemoryGraphProvider(first, lint_enabled=lambda: False).project()
-        second_view = await MemoryGraphProvider(second, lint_enabled=lambda: False).project()
+        with target_settings(first_target):
+            first_view = await MemoryGraphProvider(first, lint_enabled=lambda: False).project()
+        with target_settings(second_target):
+            second_view = await MemoryGraphProvider(second, lint_enabled=lambda: False).project()
         assert first_view.meta["cached"] is False
         assert second_view.meta["cached"] is False
         if shared == "base":
@@ -502,7 +579,8 @@ async def test_memory_graph_cache_isolates_persistent_owners(tmp_path, shared):
             assert "private" not in {node.id for node in second_view.nodes}
         # A new facade over the same persistent owner must reuse its entry.
         same_owner = MemoryService(base_dir=second_base / ".", db_engine=second_engine)
-        reused = await MemoryGraphProvider(same_owner, lint_enabled=lambda: False).project()
+        with target_settings(second_target):
+            reused = await MemoryGraphProvider(same_owner, lint_enabled=lambda: False).project()
         assert reused.meta["cached"] is True
         assert reused.nodes == second_view.nodes
         assert reused.edges == second_view.edges
@@ -510,3 +588,10 @@ async def test_memory_graph_cache_isolates_persistent_owners(tmp_path, shared):
         _CACHE.clear()
         for engine in {first_engine, second_engine}:
             engine.dispose()
+        if second_target != first_target:
+            with connect(second_target.migration_target()) as connection:
+                connection.execute(
+                    sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
+                        sql.Identifier(second_target.schema)
+                    )
+                )

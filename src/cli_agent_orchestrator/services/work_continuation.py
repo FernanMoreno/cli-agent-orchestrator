@@ -296,7 +296,7 @@ class WorkContinuations:
             "SELECT a.id,a.generation,a.state AS attempt_state,a.work_item_id,a.result_id,"
             "w.id AS work_id,w.state AS work_state,w.accepted_result_id "
             "FROM work_attempts a JOIN work_items w ON w.id=a.work_item_id "
-            "WHERE a.id=? AND a.generation=? AND w.id=?",
+            "WHERE a.id=%s AND a.generation=%s AND w.id=%s",
             (binding.attempt_id, binding.generation, binding.work_item_id),
         ).fetchone()
         if source is None:
@@ -306,7 +306,7 @@ class WorkContinuations:
             source["accepted_result_id"] is None
             or source["accepted_result_id"] != source["result_id"]
             or connection.execute(
-                "SELECT id FROM work_results WHERE id=? AND attempt_id=? "
+                "SELECT id FROM work_results WHERE id=%s AND attempt_id=%s "
                 "AND validation_state='verified' AND schema_version=1",
                 (source["accepted_result_id"], binding.attempt_id),
             ).fetchone()
@@ -321,7 +321,7 @@ class WorkContinuations:
             not completed
             and source["result_id"] is not None
             and connection.execute(
-                "SELECT id FROM work_results WHERE id=? AND attempt_id=? "
+                "SELECT id FROM work_results WHERE id=%s AND attempt_id=%s "
                 "AND validation_state='verified' AND schema_version=1",
                 (source["result_id"], binding.attempt_id),
             ).fetchone()
@@ -333,8 +333,8 @@ class WorkContinuations:
     def _artifacts(self, connection, attempt_id) -> list[dict]:
         rows = connection.execute(
             "SELECT content_hash,immutable_location,byte_length FROM work_results "
-            "WHERE attempt_id=? AND validation_state='verified' AND schema_version=1 "
-            "ORDER BY content_hash,immutable_location,byte_length LIMIT ?",
+            "WHERE attempt_id=%s AND validation_state='verified' AND schema_version=1 "
+            "ORDER BY content_hash,immutable_location,byte_length LIMIT %s",
             (attempt_id, _MAX_ARTIFACTS + 1),
         ).fetchall()
         if len(rows) > _MAX_ARTIFACTS:

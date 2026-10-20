@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-import hashlib
-import sqlite3
+import asyncio
+import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from test.integration.test_work_dispatch import context  # noqa: F401
+from threading import Barrier
 from types import SimpleNamespace
 
 import pytest
 
-from cli_agent_orchestrator import constants
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget, IntegrityError
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_origin import WorkflowStepResultV1
 from cli_agent_orchestrator.models.workflow_managed import WorkflowStepRetryAuthorization
@@ -16,89 +19,77 @@ from cli_agent_orchestrator.services import workflow_journal
 
 
 @pytest.fixture
-def projection_state(tmp_path, monkeypatch):
-    path = tmp_path / "projection.sqlite"
-    monkeypatch.setattr(constants, "DATABASE_FILE", path)
-    repository = WorkRepository(path)
-    monkeypatch.setattr(repository, "_verify", lambda _connection: None)
-    with repository.connection() as connection:
-        connection.executescript(
-            "CREATE TABLE workflow_run ("
-            "run_id TEXT PRIMARY KEY,state TEXT,tier TEXT,generation TEXT,current_step_id TEXT);"
-            "CREATE TABLE workflow_run_step ("
-            "run_id TEXT,step_id TEXT,state TEXT,attempts INTEGER,output_json TEXT,"
-            "result_json TEXT,error TEXT,error_kind TEXT,updated_at TEXT,"
-            "PRIMARY KEY(run_id,step_id));"
-            "CREATE TABLE work_workflow_step_bindings ("
-            "binding_id TEXT PRIMARY KEY,tier TEXT,run_id TEXT,run_generation INTEGER,"
-            "step_id TEXT,workflow_step_attempt INTEGER,provision_fingerprint TEXT,"
-            "work_item_id TEXT,work_attempt_id TEXT,work_generation INTEGER,"
-            "delivery_id TEXT,delivery_hash TEXT);"
-            "CREATE TABLE work_workflow_step_projections ("
-            "binding_id TEXT PRIMARY KEY,schema_version INTEGER,accepted_result_id TEXT,"
-            "content_hash TEXT,projected_at REAL);"
-            "CREATE TABLE work_items ("
-            "id TEXT PRIMARY KEY,state TEXT,revision INTEGER,accepted_result_id TEXT);"
-            "CREATE TABLE work_attempts ("
-            "id TEXT PRIMARY KEY,work_item_id TEXT,generation INTEGER,attempt_number INTEGER,"
-            "state TEXT,revision INTEGER,cleanup_state TEXT);"
-            "INSERT INTO workflow_run VALUES ('run-1','running','yaml','4','build');"
-            "INSERT INTO workflow_run_step VALUES ("
-            "'run-1','build','work_pending',2,NULL,NULL,NULL,NULL,'2026-09-29T10:00:00Z');"
-            "INSERT INTO work_workflow_step_bindings VALUES ("
-            "'binding-1','yaml','run-1',4,'build',2,'provision-hash','work-1',"
-            "'attempt-1',3,'delivery-1','delivery-hash');"
-            "INSERT INTO work_items VALUES ('work-1','succeeded',1,'result-1');"
-            "INSERT INTO work_attempts VALUES ("
-            "'attempt-1','work-1',3,1,'finished',1,'not_requested');"
-        )
-    binding = SimpleNamespace(
-        binding_id="binding-1",
-        tier="yaml",
-        run_id="run-1",
-        run_generation=4,
-        step_id="build",
-        workflow_step_attempt=2,
-        provision_fingerprint="provision-hash",
-        work_item_id="work-1",
-        work_attempt_id="attempt-1",
-        work_generation=3,
-        delivery_id="delivery-1",
-        delivery_hash="delivery-hash",
+def projection_state(context, tmp_path):
+    """Use an admitted, received Work attempt and its durable result artifact."""
+    from test.services.test_work_workflow import _provisioned_workflow
+
+    from cli_agent_orchestrator.services.step_output_store import ImmutableResultStore
+    from cli_agent_orchestrator.services.work_origin import WorkOrigins
+    from cli_agent_orchestrator.services.work_service import WorkService
+
+    workflow_origins, _authority, subject, _authorization, selector, _provision = (
+        _provisioned_workflow(context)
     )
+    admitter = workflow_origins.resolve_step_admitter(
+        subject, selector["workflow_id"], selector["spec_hash"], selector["step_id"]
+    )
+    assert admitter is not None
+    work = asyncio.run(
+        admitter(**{key: value for key, value in selector.items() if key != "principal"})
+    )
+    binding = workflow_origins.read_step_binding(
+        selector["tier"],
+        selector["run_id"],
+        selector["run_generation"],
+        selector["step_id"],
+        selector["step_attempt"],
+    )
+    assert binding is not None and binding.work_item_id == work["id"]
+
+    prepared = context.service._prepare_dispatch(registered_only=False)
+    assert prepared is not None
+    _dispatch_binding, port, sent = prepared
+    try:
+        attempt_credential = os.pread(port._attempt_credential_fd, 32, 0)
+        receiver_credential = os.pread(port._receiver_credential_fd, 32, 0)
+    finally:
+        port.close()
+    assert sent["attempts"][-1]["id"] == binding.work_attempt_id
+
+    origins = WorkOrigins(context.repo)
+    received = origins.accept_task_received_with_credentials(
+        attempt_credential=attempt_credential,
+        receiver_credential=receiver_credential,
+    )
+    assert received["attempts"][-1]["state"] == "acknowledged"
+
     result = WorkflowStepResultV1.from_payload(
         {"schema_version": 1, "status": "completed", "output": {"answer": 42}}
     )
-    accepted = SimpleNamespace(
-        binding_id="binding-1",
-        binding_fingerprint="provision-hash",
-        tier="yaml",
-        run_id="run-1",
-        run_generation=4,
-        step_id="build",
-        workflow_step_attempt=2,
-        work_item_id="work-1",
-        work_attempt_id="attempt-1",
-        work_generation=3,
-        delivery_id="delivery-1",
-        delivery_hash="delivery-hash",
-        accepted_result_id="result-1",
-        content_hash=hashlib.sha256(result.canonical_bytes()).hexdigest(),
-        byte_length=len(result.canonical_bytes()),
-        canonical_bytes=result.canonical_bytes(),
+    service = WorkService(
+        context.repo,
+        origins=origins,
+        artifacts=ImmutableResultStore(tmp_path / "result-content"),
+    )
+    service.submit_workflow_step_result(
+        attempt_credential=attempt_credential,
+        receiver_credential=receiver_credential,
         result=result,
     )
-    return repository, binding, accepted
+    accepted = service.read_accepted_workflow_result(binding)
+    assert accepted is not None
+    assert service.read_accepted_workflow_result(binding) == accepted
+    return context.repo, binding, accepted
 
 
 def _project(repository, binding, accepted):
     return workflow_journal.project_work_result(
         repository=repository,
-        run_id="run-1",
-        run_generation=4,
-        tier="yaml",
-        step_id="build",
-        step_attempt=2,
+        run_id=binding.run_id,
+        run_generation=binding.run_generation,
+        tier=binding.tier,
+        step_id=binding.step_id,
+        step_attempt=binding.workflow_step_attempt,
         binding=binding,
         accepted_result=accepted,
         updated_at="2026-09-29T10:05:00Z",
@@ -118,25 +109,27 @@ def test_projection_completes_step_and_records_marker_atomically(projection_stat
     step = _stored(
         repository,
         "SELECT state,attempts,output_json,result_json,error,error_kind "
-        "FROM workflow_run_step WHERE run_id='run-1' AND step_id='build'",
+        "FROM workflow_run_step WHERE run_id=%s AND step_id=%s",
+        (binding.run_id, binding.step_id),
     )
     marker = _stored(
         repository,
         "SELECT binding_id,schema_version,accepted_result_id,content_hash "
-        "FROM work_workflow_step_projections WHERE binding_id='binding-1'",
+        "FROM work_workflow_step_projections WHERE binding_id=%s",
+        (binding.binding_id,),
     )
     assert tuple(step) == (
         "completed",
-        2,
+        binding.workflow_step_attempt,
         '{"answer":42}',
         accepted.canonical_bytes.decode("utf-8"),
         None,
         None,
     )
     assert tuple(marker) == (
-        "binding-1",
+        binding.binding_id,
         1,
-        "result-1",
+        accepted.accepted_result_id,
         accepted.content_hash,
     )
 
@@ -146,75 +139,84 @@ def test_projection_duplicate_is_idempotent_after_run_and_work_advance(projectio
     assert _project(repository, binding, accepted) == "projected"
     with repository.transaction() as connection:
         connection.execute(
-            "UPDATE workflow_run SET generation='5',current_step_id='next' WHERE run_id='run-1'"
+            "UPDATE workflow_run SET generation=%s,current_step_id='next' WHERE run_id=%s",
+            (str(binding.run_generation + 1), binding.run_id),
         )
         connection.execute(
-            "UPDATE work_items SET state='queued',revision=2,accepted_result_id=NULL "
-            "WHERE id='work-1'"
+            "UPDATE work_items SET state='queued',revision=revision+1,accepted_result_id=NULL "
+            "WHERE id=%s",
+            (binding.work_item_id,),
         )
         connection.execute(
-            "INSERT INTO work_attempts VALUES ("
-            "'attempt-2','work-1',4,2,'planned',1,'not_requested')"
+            "INSERT INTO work_attempts "
+            "(id,work_item_id,attempt_number,generation,provider,state,revision,"
+            "lease_expires_at,cleanup_state,created_at) "
+            "VALUES (%s,%s,2,%s,'mock_cli','planned',1,%s,'not_requested',%s)",
+            (
+                f"{binding.work_attempt_id}-next",
+                binding.work_item_id,
+                binding.work_generation + 1,
+                time.time() + 300,
+                time.time(),
+            ),
         )
 
     assert _project(repository, binding, accepted) == "already_projected"
 
 
-def test_work_projection_lookup_returns_original_identity_after_run_advances(
-    projection_state, monkeypatch
-):
+def test_work_projection_lookup_returns_original_identity_after_run_advances(projection_state):
     repository, binding, accepted = projection_state
-    monkeypatch.setattr(
-        WorkRepository,
-        "_verify",
-        staticmethod(lambda _connection, version=None: None),
-    )
     assert _project(repository, binding, accepted) == "projected"
     with repository.transaction() as connection:
-        connection.execute("UPDATE workflow_run SET generation='5' WHERE run_id='run-1'")
+        connection.execute(
+            "UPDATE workflow_run SET generation=%s WHERE run_id=%s",
+            (str(binding.run_generation + 1), binding.run_id),
+        )
 
-    projection = workflow_journal.get_work_step_projection("run-1", "build")
+    projection = workflow_journal.get_work_step_projection(binding.run_id, binding.step_id)
 
     assert projection is not None
-    assert projection.binding_id == "binding-1"
-    assert projection.tier == "yaml"
-    assert projection.run_generation == 4
-    assert projection.step_attempt == 2
-    assert projection.accepted_result_id == "result-1"
+    assert projection.binding_id == binding.binding_id
+    assert projection.tier == binding.tier
+    assert projection.run_generation == binding.run_generation
+    assert projection.step_attempt == binding.workflow_step_attempt
+    assert projection.accepted_result_id == accepted.accepted_result_id
     assert projection.content_hash == accepted.content_hash
     assert projection.result_json == accepted.canonical_bytes.decode("utf-8")
 
 
-def test_work_projection_lookup_rejects_envelope_hash_mismatch(projection_state, monkeypatch):
+def test_work_projection_lookup_rejects_envelope_hash_mismatch(projection_state, postgres_service):
     repository, binding, accepted = projection_state
-    monkeypatch.setattr(
-        WorkRepository,
-        "_verify",
-        staticmethod(lambda _connection, version=None: None),
-    )
     assert _project(repository, binding, accepted) == "projected"
-    with repository.transaction() as connection:
-        connection.execute(
-            "UPDATE work_workflow_step_projections SET content_hash=? WHERE binding_id=?",
-            ("0" * 64, "binding-1"),
-        )
+    from psycopg import sql
+
+    # Simulate database-owner tampering after bypassing ordinary triggers.
+    # Runtime roles cannot mutate this append-only marker, but reads still
+    # verify its content if a privileged operator changes it.
+    with postgres_service.connect_admin(repository.target.database) as connection:
+        with connection.transaction():
+            connection.execute("SET LOCAL session_replication_role = 'replica'")
+            connection.execute(
+                sql.SQL("UPDATE {}.{} SET content_hash=%s WHERE binding_id=%s").format(
+                    sql.Identifier(repository.target.schema),
+                    sql.Identifier("work_workflow_step_projections"),
+                ),
+                ("0" * 64, binding.binding_id),
+            )
 
     with pytest.raises(
         workflow_journal.WorkflowProjectionConflict,
         match="differs from its Work marker",
     ):
-        workflow_journal.get_work_step_projection("run-1", "build")
+        workflow_journal.get_work_step_projection(binding.run_id, binding.step_id)
 
 
 def test_projection_rejects_conflicting_result_without_overwriting_marker(projection_state):
+    from dataclasses import replace
+
     repository, binding, accepted = projection_state
     assert _project(repository, binding, accepted) == "projected"
-    conflicting = SimpleNamespace(
-        **{
-            **vars(accepted),
-            "accepted_result_id": "result-2",
-        }
-    )
+    conflicting = replace(accepted, accepted_result_id=f"{accepted.accepted_result_id}-conflict")
 
     with pytest.raises(workflow_journal.WorkflowProjectionConflict, match="different"):
         _project(repository, binding, conflicting)
@@ -222,15 +224,19 @@ def test_projection_rejects_conflicting_result_without_overwriting_marker(projec
     marker = _stored(
         repository,
         "SELECT accepted_result_id,content_hash FROM work_workflow_step_projections "
-        "WHERE binding_id='binding-1'",
+        "WHERE binding_id=%s",
+        (binding.binding_id,),
     )
-    assert tuple(marker) == ("result-1", accepted.content_hash)
+    assert tuple(marker) == (accepted.accepted_result_id, accepted.content_hash)
 
 
 def test_projection_cas_loss_leaves_pending_state_and_no_marker(projection_state):
     repository, binding, accepted = projection_state
     with repository.transaction() as connection:
-        connection.execute("UPDATE workflow_run_step SET state='running' WHERE run_id='run-1'")
+        connection.execute(
+            "UPDATE workflow_run_step SET state='running' WHERE run_id=%s AND step_id=%s",
+            (binding.run_id, binding.step_id),
+        )
 
     with pytest.raises(workflow_journal.WorkflowProjectionConflict, match="compare-and-set"):
         _project(repository, binding, accepted)
@@ -238,7 +244,8 @@ def test_projection_cas_loss_leaves_pending_state_and_no_marker(projection_state
     assert (
         _stored(
             repository,
-            "SELECT state FROM workflow_run_step WHERE run_id='run-1' AND step_id='build'",
+            "SELECT state FROM workflow_run_step WHERE run_id=%s AND step_id=%s",
+            (binding.run_id, binding.step_id),
         )[0]
         == "running"
     )
@@ -251,11 +258,13 @@ def test_projection_rejects_work_that_is_no_longer_the_current_successful_attemp
     repository, binding, accepted = projection_state
     with repository.transaction() as connection:
         connection.execute(
-            "UPDATE work_items SET state='failed',revision=2,accepted_result_id=NULL "
-            "WHERE id='work-1'"
+            "UPDATE work_items SET state='failed',revision=4,accepted_result_id=NULL "
+            "WHERE id=%s",
+            (binding.work_item_id,),
         )
         connection.execute(
-            "UPDATE work_attempts SET state='failed',revision=2 WHERE id='attempt-1'"
+            "UPDATE work_attempts SET state='failed',revision=5 WHERE id=%s",
+            (binding.work_attempt_id,),
         )
 
     with pytest.raises(
@@ -267,7 +276,8 @@ def test_projection_rejects_work_that_is_no_longer_the_current_successful_attemp
     assert (
         _stored(
             repository,
-            "SELECT state FROM workflow_run_step WHERE run_id='run-1' AND step_id='build'",
+            "SELECT state FROM workflow_run_step WHERE run_id=%s AND step_id=%s",
+            (binding.run_id, binding.step_id),
         )[0]
         == "work_pending"
     )
@@ -277,7 +287,10 @@ def test_projection_rejects_work_that_is_no_longer_the_current_successful_attemp
 def test_projection_rejects_stale_run_generation(projection_state):
     repository, binding, accepted = projection_state
     with repository.transaction() as connection:
-        connection.execute("UPDATE workflow_run SET generation='5' WHERE run_id='run-1'")
+        connection.execute(
+            "UPDATE workflow_run SET generation=%s WHERE run_id=%s",
+            (str(binding.run_generation + 1), binding.run_id),
+        )
 
     with pytest.raises(workflow_journal.WorkflowProjectionConflict, match="compare-and-set"):
         _project(repository, binding, accepted)
@@ -285,29 +298,51 @@ def test_projection_rejects_stale_run_generation(projection_state):
     assert (
         _stored(
             repository,
-            "SELECT state FROM workflow_run_step WHERE run_id='run-1' AND step_id='build'",
+            "SELECT state FROM workflow_run_step WHERE run_id=%s AND step_id=%s",
+            (binding.run_id, binding.step_id),
         )[0]
         == "work_pending"
     )
     assert _stored(repository, "SELECT count(*) FROM work_workflow_step_projections")[0] == 0
 
 
-def test_projection_marker_insert_failure_rolls_back_step_completion(projection_state):
+def test_projection_marker_insert_failure_rolls_back_step_completion(projection_state, monkeypatch):
     repository, binding, accepted = projection_state
-    with repository.transaction() as connection:
-        connection.execute(
-            "CREATE TRIGGER reject_projection BEFORE INSERT ON work_workflow_step_projections "
-            "BEGIN SELECT RAISE(ABORT, 'injected marker failure'); END"
-        )
+    original_transaction = repository.transaction
+    injected = {"marker_insert": False}
 
-    with pytest.raises(sqlite3.IntegrityError, match="injected marker failure"):
+    @contextmanager
+    def fail_marker_insert():
+        with original_transaction() as connection:
+            original_execute = connection.execute
+
+            def execute(statement, parameters=(), *, prepare: bool | None = None):
+                if isinstance(statement, str) and statement.startswith(
+                    "INSERT INTO work_workflow_step_projections"
+                ):
+                    injected["marker_insert"] = True
+                    parameters = (*parameters[:2], "invalid-content-hash", *parameters[3:])
+                if prepare is None:
+                    return original_execute(statement, parameters)
+                return original_execute(statement, parameters, prepare=prepare)
+
+            connection.execute = execute
+            yield connection
+
+    # Inject a real PostgreSQL check-constraint failure without adding
+    # unregistered schema objects or weakening repository verification.
+    monkeypatch.setattr(repository, "transaction", fail_marker_insert)
+
+    with pytest.raises(IntegrityError):
         _project(repository, binding, accepted)
+    assert injected["marker_insert"] is True
 
     assert tuple(
         _stored(
             repository,
             "SELECT state,output_json,result_json FROM workflow_run_step "
-            "WHERE run_id='run-1' AND step_id='build'",
+            "WHERE run_id=%s AND step_id=%s",
+            (binding.run_id, binding.step_id),
         )
     ) == ("work_pending", None, None)
     assert _stored(repository, "SELECT count(*) FROM work_workflow_step_projections")[0] == 0
@@ -318,10 +353,12 @@ def test_work_failure_projection_records_only_exact_current_durable_failure(proj
     with repository.transaction() as connection:
         connection.execute(
             "UPDATE work_items SET state='failed',revision=4,accepted_result_id=NULL "
-            "WHERE id='work-1'"
+            "WHERE id=%s",
+            (binding.work_item_id,),
         )
         connection.execute(
-            "UPDATE work_attempts SET state='failed',revision=5 WHERE id='attempt-1'"
+            "UPDATE work_attempts SET state='failed',revision=5 WHERE id=%s",
+            (binding.work_attempt_id,),
         )
     work_state = SimpleNamespace(
         binding_id=binding.binding_id,
@@ -341,11 +378,11 @@ def test_work_failure_projection_records_only_exact_current_durable_failure(proj
 
     status = workflow_journal.project_work_failure(
         repository=repository,
-        run_id="run-1",
-        run_generation=4,
-        tier="yaml",
-        step_id="build",
-        step_attempt=2,
+        run_id=binding.run_id,
+        run_generation=binding.run_generation,
+        tier=binding.tier,
+        step_id=binding.step_id,
+        step_attempt=binding.workflow_step_attempt,
         binding=binding,
         work_state=work_state,
         updated_at="2026-09-29T10:05:00Z",
@@ -356,11 +393,12 @@ def test_work_failure_projection_records_only_exact_current_durable_failure(proj
         _stored(
             repository,
             "SELECT state,attempts,output_json,result_json,error,error_kind "
-            "FROM workflow_run_step WHERE run_id='run-1' AND step_id='build'",
+            "FROM workflow_run_step WHERE run_id=%s AND step_id=%s",
+            (binding.run_id, binding.step_id),
         )
     ) == (
         "failed",
-        2,
+        binding.workflow_step_attempt,
         None,
         None,
         "managed Work attempt failed",
@@ -371,11 +409,11 @@ def test_work_failure_projection_records_only_exact_current_durable_failure(proj
     assert (
         workflow_journal.project_work_failure(
             repository=repository,
-            run_id="run-1",
-            run_generation=4,
-            tier="yaml",
-            step_id="build",
-            step_attempt=2,
+            run_id=binding.run_id,
+            run_generation=binding.run_generation,
+            tier=binding.tier,
+            step_id=binding.step_id,
+            step_attempt=binding.workflow_step_attempt,
             binding=binding,
             work_state=work_state,
             updated_at="2026-09-29T10:06:00Z",
@@ -389,10 +427,12 @@ def test_work_failure_projection_rejects_stale_work_attempt(projection_state):
     with repository.transaction() as connection:
         connection.execute(
             "UPDATE work_items SET state='failed',revision=4,accepted_result_id=NULL "
-            "WHERE id='work-1'"
+            "WHERE id=%s",
+            (binding.work_item_id,),
         )
         connection.execute(
-            "UPDATE work_attempts SET state='failed',revision=5 WHERE id='attempt-1'"
+            "UPDATE work_attempts SET state='failed',revision=5 WHERE id=%s",
+            (binding.work_attempt_id,),
         )
     stale_state = SimpleNamespace(
         binding_id=binding.binding_id,
@@ -403,8 +443,8 @@ def test_work_failure_projection_rejects_stale_work_attempt(projection_state):
         work_revision=4,
         attempt_state="failed",
         attempt_revision=5,
-        current_attempt_id="attempt-2",
-        current_generation=4,
+        current_attempt_id=f"{binding.work_attempt_id}-next",
+        current_generation=binding.work_generation + 1,
         current_attempt_state="running",
         accepted_result_id=None,
         cleanup_state="not_requested",
@@ -416,11 +456,11 @@ def test_work_failure_projection_rejects_stale_work_attempt(projection_state):
     ):
         workflow_journal.project_work_failure(
             repository=repository,
-            run_id="run-1",
-            run_generation=4,
-            tier="yaml",
-            step_id="build",
-            step_attempt=2,
+            run_id=binding.run_id,
+            run_generation=binding.run_generation,
+            tier=binding.tier,
+            step_id=binding.step_id,
+            step_attempt=binding.workflow_step_attempt,
             binding=binding,
             work_state=stale_state,
             updated_at="2026-09-29T10:05:00Z",
@@ -429,7 +469,8 @@ def test_work_failure_projection_rejects_stale_work_attempt(projection_state):
     assert (
         _stored(
             repository,
-            "SELECT state FROM workflow_run_step WHERE run_id='run-1' AND step_id='build'",
+            "SELECT state FROM workflow_run_step WHERE run_id=%s AND step_id=%s",
+            (binding.run_id, binding.step_id),
         )[0]
         == "work_pending"
     )
@@ -440,10 +481,12 @@ def test_work_failure_projection_rechecks_current_attempt_inside_cas(projection_
     with repository.transaction() as connection:
         connection.execute(
             "UPDATE work_items SET state='failed',revision=4,accepted_result_id=NULL "
-            "WHERE id='work-1'"
+            "WHERE id=%s",
+            (binding.work_item_id,),
         )
         connection.execute(
-            "UPDATE work_attempts SET state='failed',revision=5 WHERE id='attempt-1'"
+            "UPDATE work_attempts SET state='failed',revision=5 WHERE id=%s",
+            (binding.work_attempt_id,),
         )
     proof = SimpleNamespace(
         binding_id=binding.binding_id,
@@ -461,10 +504,22 @@ def test_work_failure_projection_rechecks_current_attempt_inside_cas(projection_
         cleanup_state="not_requested",
     )
     with repository.transaction() as connection:
-        connection.execute("UPDATE work_items SET state='running',revision=6 WHERE id='work-1'")
         connection.execute(
-            "INSERT INTO work_attempts VALUES ("
-            "'attempt-2','work-1',4,2,'running',1,'not_requested')"
+            "UPDATE work_items SET state='running',revision=6 WHERE id=%s",
+            (binding.work_item_id,),
+        )
+        connection.execute(
+            "INSERT INTO work_attempts "
+            "(id,work_item_id,attempt_number,generation,provider,state,revision,"
+            "lease_expires_at,cleanup_state,created_at) "
+            "VALUES (%s,%s,2,%s,'mock_cli','running',1,%s,'not_requested',%s)",
+            (
+                f"{binding.work_attempt_id}-next",
+                binding.work_item_id,
+                binding.work_generation + 1,
+                time.time() + 300,
+                time.time(),
+            ),
         )
 
     with pytest.raises(
@@ -473,11 +528,11 @@ def test_work_failure_projection_rechecks_current_attempt_inside_cas(projection_
     ):
         workflow_journal.project_work_failure(
             repository=repository,
-            run_id="run-1",
-            run_generation=4,
-            tier="yaml",
-            step_id="build",
-            step_attempt=2,
+            run_id=binding.run_id,
+            run_generation=binding.run_generation,
+            tier=binding.tier,
+            step_id=binding.step_id,
+            step_attempt=binding.workflow_step_attempt,
             binding=binding,
             work_state=proof,
             updated_at="2026-09-29T10:05:00Z",
@@ -486,7 +541,8 @@ def test_work_failure_projection_rechecks_current_attempt_inside_cas(projection_
     assert (
         _stored(
             repository,
-            "SELECT state FROM workflow_run_step WHERE run_id='run-1' AND step_id='build'",
+            "SELECT state FROM workflow_run_step WHERE run_id=%s AND step_id=%s",
+            (binding.run_id, binding.step_id),
         )[0]
         == "work_pending"
     )
@@ -497,10 +553,12 @@ def test_concurrent_work_failure_projection_has_one_failure_and_one_replay(proje
     with repository.transaction() as connection:
         connection.execute(
             "UPDATE work_items SET state='failed',revision=4,accepted_result_id=NULL "
-            "WHERE id='work-1'"
+            "WHERE id=%s",
+            (binding.work_item_id,),
         )
         connection.execute(
-            "UPDATE work_attempts SET state='failed',revision=5 WHERE id='attempt-1'"
+            "UPDATE work_attempts SET state='failed',revision=5 WHERE id=%s",
+            (binding.work_attempt_id,),
         )
     proof = SimpleNamespace(
         binding_id=binding.binding_id,
@@ -521,11 +579,11 @@ def test_concurrent_work_failure_projection_has_one_failure_and_one_replay(proje
     def project():
         return workflow_journal.project_work_failure(
             repository=repository,
-            run_id="run-1",
-            run_generation=4,
-            tier="yaml",
-            step_id="build",
-            step_attempt=2,
+            run_id=binding.run_id,
+            run_generation=binding.run_generation,
+            tier=binding.tier,
+            step_id=binding.step_id,
+            step_attempt=binding.workflow_step_attempt,
             binding=binding,
             work_state=proof,
             updated_at="2026-09-29T10:05:00Z",
@@ -538,14 +596,58 @@ def test_concurrent_work_failure_projection_has_one_failure_and_one_replay(proje
     assert (
         _stored(
             repository,
-            "SELECT state FROM workflow_run_step WHERE run_id='run-1' AND step_id='build'",
+            "SELECT state FROM workflow_run_step WHERE run_id=%s AND step_id=%s",
+            (binding.run_id, binding.step_id),
         )[0]
         == "failed"
     )
 
 
-def test_concurrent_projection_has_one_commit_and_one_idempotent_replay(projection_state):
+def test_concurrent_projection_has_one_commit_and_one_idempotent_replay(
+    projection_state, monkeypatch
+):
     repository, binding, accepted = projection_state
+    original_transaction = repository.transaction
+    initial_marker_reads = Barrier(2)
+
+    class _InitialMarkerRead:
+        def __init__(self, cursor):
+            self.cursor = cursor
+
+        def fetchone(self):
+            row = self.cursor.fetchone()
+            assert row is None
+            initial_marker_reads.wait(timeout=10)
+            return row
+
+    @contextmanager
+    def coordinate_initial_marker_read():
+        with original_transaction() as connection:
+            original_execute = connection.execute
+            intercepted = False
+
+            def execute(statement, parameters=(), *, prepare: bool | None = None):
+                nonlocal intercepted
+                if prepare is None:
+                    result = original_execute(statement, parameters)
+                else:
+                    result = original_execute(statement, parameters, prepare=prepare)
+                if (
+                    not intercepted
+                    and isinstance(statement, str)
+                    and statement.startswith(
+                        "SELECT accepted_result_id,content_hash "
+                        "FROM work_workflow_step_projections"
+                    )
+                ):
+                    intercepted = True
+                    return _InitialMarkerRead(result)
+                return result
+
+            connection.execute = execute
+            yield connection
+
+    monkeypatch.setattr(repository, "transaction", coordinate_initial_marker_read)
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(
             pool.map(
@@ -556,16 +658,29 @@ def test_concurrent_projection_has_one_commit_and_one_idempotent_replay(projecti
 
     assert sorted(results) == ["already_projected", "projected"]
     assert _stored(repository, "SELECT count(*) FROM work_workflow_step_projections")[0] == 1
+    assert tuple(
+        _stored(
+            repository,
+            "SELECT state,attempts,result_json FROM workflow_run_step "
+            "WHERE run_id=%s AND step_id=%s",
+            (binding.run_id, binding.step_id),
+        )
+    ) == (
+        "completed",
+        binding.workflow_step_attempt,
+        accepted.canonical_bytes.decode("utf-8"),
+    )
 
 
-def test_projection_rejects_work_repository_outside_configured_database(
-    projection_state, tmp_path, monkeypatch
-):
+def test_projection_rejects_work_repository_outside_configured_database(projection_state):
+    from dataclasses import replace
+    from uuid import uuid4
+
     repository, binding, accepted = projection_state
-    monkeypatch.setattr(constants, "DATABASE_FILE", tmp_path / "different.sqlite")
+    other = WorkRepository(replace(repository.target, store_id=str(uuid4())))
 
     with pytest.raises(workflow_journal.WorkflowProjectionConflict, match="configured database"):
-        _project(repository, binding, accepted)
+        _project(other, binding, accepted)
 
 
 def test_journal_lists_only_runs_with_work_pending_steps():
@@ -698,11 +813,11 @@ def _insert_failed_managed_run(run_id, *, tier="script", generation="4", attempt
     workflow_journal.insert_steps(run_id, [("build", "failed")], now)
     with workflow_journal._connect() as connection:
         connection.execute(
-            "UPDATE workflow_run SET current_step_id='build' WHERE run_id=?", (run_id,)
+            "UPDATE workflow_run SET current_step_id='build' WHERE run_id=%s", (run_id,)
         )
         connection.execute(
-            "UPDATE workflow_run_step SET attempts=?,error='managed Work attempt failed',"
-            "error_kind='managed_work_failed',call_fingerprint=? WHERE run_id=? AND step_id='build'",
+            "UPDATE workflow_run_step SET attempts=%s,error='managed Work attempt failed',"
+            "error_kind='managed_work_failed',call_fingerprint=%s WHERE run_id=%s AND step_id='build'",
             (attempts, "1" * 64, run_id),
         )
 
@@ -735,7 +850,7 @@ def _retry_authorization(run_id, *, tier="script", generation=4, prior_attempt=2
 
 
 def _retry_dependencies(authorization, *, authorization_from_reader=None, state=None):
-    repository = WorkRepository(constants.DATABASE_FILE)
+    repository = WorkRepository(DatabaseTarget.from_settings("main"))
     binding = SimpleNamespace(
         binding_id=authorization.binding_id,
         binding_fingerprint=authorization.binding_fingerprint,
@@ -906,7 +1021,7 @@ def test_begin_managed_work_step_preserves_authorized_pending_retry_attempt():
     )
     with workflow_journal._connect() as connection:
         connection.execute(
-            "UPDATE workflow_run_step SET attempts=2,call_fingerprint=? "
+            "UPDATE workflow_run_step SET attempts=2,call_fingerprint=%s "
             "WHERE run_id='managed-authorized-retry' AND step_id='build'",
             (fingerprint,),
         )
@@ -1075,11 +1190,15 @@ def test_begin_managed_work_step_compares_retry_authorization_to_durable_record(
 
     @contextmanager
     def observe_close(connection):
+        original_close = connection.close
+
+        def observe_native_close():
+            transaction_state_before_close.setdefault(connection, connection.in_transaction)
+            original_close()
+
+        connection.close = observe_native_close
         with original_closing(connection):
-            try:
-                yield connection
-            finally:
-                transaction_state_before_close[connection] = connection.in_transaction
+            yield connection
 
     monkeypatch.setattr(workflow_journal, "closing", observe_close)
 
@@ -1091,7 +1210,9 @@ def test_begin_managed_work_step_compares_retry_authorization_to_durable_record(
     assert step.attempts == 2
     connection = dependencies[1].authorization_reads[0][1]["connection"]
     assert transaction_state_before_close[connection] is False
-    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+    from psycopg import OperationalError
+
+    with pytest.raises(OperationalError, match="closed"):
         connection.execute("SELECT 1")
 
 
@@ -1149,7 +1270,7 @@ def test_begin_managed_work_step_rejects_generic_rerun_without_fenced_authorizat
     )
     with workflow_journal._connect() as connection:
         connection.execute(
-            "UPDATE workflow_run_step SET attempts=2 WHERE run_id=? AND step_id='build'",
+            "UPDATE workflow_run_step SET attempts=2 WHERE run_id=%s AND step_id='build'",
             (run_id,),
         )
 

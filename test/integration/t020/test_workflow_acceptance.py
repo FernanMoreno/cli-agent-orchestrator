@@ -18,14 +18,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.api import main
 from cli_agent_orchestrator.backends import work_registry
 from cli_agent_orchestrator.backends.tmux_backend import TmuxBackend
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
-)
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_contract import (
     ContractPermissions,
@@ -381,7 +377,7 @@ def _binding_proof(binding):
 def _snapshot_proof(repository, snapshot_id):
     with repository.read_snapshot() as connection:
         row = connection.execute(
-            "SELECT id,source_hash,delivered_hash,content FROM work_delegation_snapshots WHERE id=?",
+            "SELECT id,source_hash,delivered_hash,content FROM work_delegation_snapshots WHERE id=%s",
             (snapshot_id,),
         ).fetchone()
     assert row is not None
@@ -392,7 +388,7 @@ def _receiver_receipt_proof(repository, attempt_id, generation):
     with repository.read_snapshot() as connection:
         row = connection.execute(
             "SELECT delivery_id,delivery_hash FROM work_workflow_step_task_received_receipts "
-            "WHERE attempt_id=? AND generation=?",
+            "WHERE attempt_id=%s AND generation=%s",
             (attempt_id, generation),
         ).fetchone()
     if row is None:
@@ -446,11 +442,7 @@ def docker_workflow_harness(tmp_path, monkeypatch):
     worker_bytes = Path(worker_path).read_bytes()
     assert hashlib.sha256(worker_bytes).hexdigest() == worker_sha256
 
-    database = tmp_path / "t020-workflow.sqlite3"
-    monkeypatch.setattr(constants, "DATABASE_FILE", database)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
-    repository = WorkRepository(database)
+    repository = WorkRepository(DatabaseTarget.from_settings("main"))
     repository.initialize()
     WorkScheduler(repository).configure(
         capacity=2, max_queue=20, aging_seconds=5, expected_policy_revision=0
@@ -538,7 +530,7 @@ async def test_yaml_docker_work_result_projects_after_restart_without_changing_f
         # over the same durable stores before projection and YAML recovery.
         _restore_api_state(client, saved, previous_override)
         workflow_service.run_registry.pop(run_id, None)
-        restarted_repository = WorkRepository(repository.path)
+        restarted_repository = WorkRepository(DatabaseTarget.from_settings("main"))
         restarted_repository.initialize()
         client2, saved2, override2, restarted_origins, restarted_runtime = _install_api_state(
             monkeypatch, principal=case["principal"]
@@ -649,7 +641,7 @@ async def test_script_run_step_returns_only_verified_work_result_after_runtime_r
         # returns a typed Work result, with no terminal delivery or new attempt.
         _restore_api_state(client, saved, previous_override)
         workflow_service.run_registry.pop(run_id, None)
-        restarted_repository = WorkRepository(repository.path)
+        restarted_repository = WorkRepository(DatabaseTarget.from_settings("main"))
         restarted_repository.initialize()
         client2, saved2, override2, origins2, runtime2 = _install_api_state(
             monkeypatch, principal=case["principal"]
@@ -786,7 +778,7 @@ async def test_no_result_stays_pending_after_restart_without_step_or_work_retry(
 
         _restore_api_state(client, saved, previous_override)
         workflow_service.run_registry.pop(run_id, None)
-        restarted_repository = WorkRepository(repository.path)
+        restarted_repository = WorkRepository(DatabaseTarget.from_settings("main"))
         restarted_repository.initialize()
         client2, saved2, override2, origins2, runtime2 = _install_api_state(
             monkeypatch, principal=case["principal"]
@@ -958,7 +950,7 @@ async def test_docker_process_failure_requires_explicit_fenced_workflow_retry(
         _restore_api_state(client, saved, override)
         primary = None
         workflow_service.run_registry.pop(run_id, None)
-        restarted_repository = WorkRepository(repository.path)
+        restarted_repository = WorkRepository(DatabaseTarget.from_settings("main"))
         restarted_repository.initialize()
         client2, saved2, override2, origins2, runtime2 = _install_api_state(
             monkeypatch, principal=case["principal"]

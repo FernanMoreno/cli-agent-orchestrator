@@ -8,7 +8,7 @@ primitives for parsers that survive a torn write.
 Hard contracts:
 
 - Log-injection bytes (Unicode line separators included) are sanitised
-  via the compiler's extended ``_sanitize_for_log``.
+  via the shared ``_sanitize_for_log`` helper.
 - ``_resolve_log_path`` is the single source of truth for path
   composition — used at write, sweep, and CLI ``--date`` parse.
 - ``os.open`` includes ``O_NOFOLLOW``/``O_CLOEXEC`` (POSIX); a post-open
@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from cli_agent_orchestrator.constants import MEMORY_BASE_DIR
-from cli_agent_orchestrator.services.wiki_compiler import _sanitize_for_log
+from cli_agent_orchestrator.services.log_sanitization import _sanitize_for_log
 
 logger = logging.getLogger(__name__)
 

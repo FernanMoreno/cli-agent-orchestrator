@@ -16,10 +16,6 @@ from pathlib import Path
 
 import pytest
 
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_index,
-    _migrate_workflow_run,
-)
 from cli_agent_orchestrator.clients.tmux import tmux_client
 from cli_agent_orchestrator.models.workflow import ScriptSpec, TierCollisionError
 from cli_agent_orchestrator.models.workflow_runtime import RunState
@@ -42,17 +38,13 @@ def legacy_tier_mode(monkeypatch):
 
 
 @pytest.fixture
-def isolated_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def isolated_db(isolated_memory_db, monkeypatch: pytest.MonkeyPatch):
     # Exercise the explicitly supported legacy mode; scoped approval has its own gates.
     monkeypatch.setattr(
         "cli_agent_orchestrator.services.settings_service.is_workflow_approval_required",
         lambda: False,
     )
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_index()
-    _migrate_workflow_run()
-    return db_path
+    return isolated_memory_db
 
 
 @pytest.fixture
@@ -492,6 +484,142 @@ class TestResumeTierDispatch:
         assert called["yaml"] is True
         assert called["script"] is False
 
+    @pytest.mark.parametrize("tier", ["yaml", "future-tier"])
+    @pytest.mark.parametrize("coordinator_present", [False, True])
+    def test_yaml_schema_mismatch_maps_to_422_before_agent(
+        self, client, monkeypatch, coordinator_present, tier
+    ):
+        """Native schema drift remains the public corrupt-history response."""
+        from unittest.mock import AsyncMock
+
+        from cli_agent_orchestrator.clients.postgres import DatabaseTarget, connect
+        from cli_agent_orchestrator.clients.work_repository import WorkRepository
+
+        if coordinator_present:
+            # Exercise the production coordinator preflight with the actual Work
+            # repository verifier. The run has no driver row, so normal YAML
+            # dispatch continues if that preflight is healthy.
+            monkeypatch.setattr(
+                client.app.state,
+                "workflow_coordinator",
+                types.SimpleNamespace(
+                    repository=WorkRepository(DatabaseTarget.from_settings("main"))
+                ),
+                raising=False,
+            )
+        else:
+            monkeypatch.setattr(client.app.state, "workflow_coordinator", None, raising=False)
+
+        workflow_journal.insert_run(
+            "yaml-schema-drift",
+            "wf",
+            "{}",
+            "{}",
+            "failed",
+            "2026-01-01T00:00:00Z",
+            tier=tier,
+        )
+        migration_target = DatabaseTarget.from_settings("main").migration_target()
+        with connect(migration_target) as connection, connection.transaction():
+            connection.execute(
+                "DROP TRIGGER work_step_contracts_immutable_update ON work_step_contracts"
+            )
+
+        called = AsyncMock()
+        monkeypatch.setattr(workflow_service, "run_agent_step", called)
+
+        response = client.post("/workflows/runs/yaml-schema-drift/resume")
+
+        assert response.status_code == 422
+        assert "YAML contract" in response.json()["detail"]
+        assert called.await_count == 0
+
+    @pytest.mark.parametrize("tier", ["script", None])
+    def test_coordinator_preflight_does_not_map_non_yaml_or_missing_runs(
+        self, client, monkeypatch, tier
+    ):
+        from cli_agent_orchestrator.clients.postgres import DatabaseTarget, connect
+        from cli_agent_orchestrator.clients.work_repository import (
+            SchemaMismatch as WorkSchemaMismatch,
+        )
+        from cli_agent_orchestrator.clients.work_repository import (
+            WorkRepository,
+        )
+
+        if tier is not None:
+            workflow_journal.insert_run(
+                "non-yaml-schema-drift",
+                "wf",
+                "{}",
+                "{}",
+                "failed",
+                "2026-01-01T00:00:00Z",
+                tier=tier,
+            )
+        monkeypatch.setattr(
+            client.app.state,
+            "workflow_coordinator",
+            types.SimpleNamespace(repository=WorkRepository(DatabaseTarget.from_settings("main"))),
+            raising=False,
+        )
+        migration_target = DatabaseTarget.from_settings("main").migration_target()
+        with connect(migration_target) as connection, connection.transaction():
+            connection.execute(
+                "DROP TRIGGER work_step_contracts_immutable_update ON work_step_contracts"
+            )
+
+        with pytest.raises(WorkSchemaMismatch, match="schema fingerprint mismatch"):
+            client.post("/workflows/runs/non-yaml-schema-drift/resume")
+
+    def test_coordinator_preflight_preserves_non_catalog_work_errors(self, client, monkeypatch):
+        from contextlib import contextmanager
+
+        from psycopg import OperationalError
+
+        from cli_agent_orchestrator.clients.postgres.migrations import (
+            SchemaMismatch as PostgresSchemaMismatch,
+        )
+        from cli_agent_orchestrator.clients.work_repository import (
+            SchemaMismatch as WorkSchemaMismatch,
+        )
+
+        workflow_journal.insert_run(
+            "yaml-schema-error-classification",
+            "wf",
+            "{}",
+            "{}",
+            "failed",
+            "2026-01-01T00:00:00Z",
+            tier="yaml",
+        )
+
+        runtime_role_error = WorkSchemaMismatch("PostgreSQL runtime role is misconfigured")
+        runtime_role_error.__cause__ = PostgresSchemaMismatch(
+            "PostgreSQL runtime role has unsafe privileges"
+        )
+        errors = (
+            WorkSchemaMismatch("PostgreSQL logical store identity mismatch"),
+            runtime_role_error,
+            OperationalError("temporary database outage"),
+        )
+
+        for error in errors:
+
+            class _FailingRepository:
+                @contextmanager
+                def read_snapshot(self):
+                    raise error
+                    yield
+
+            monkeypatch.setattr(
+                client.app.state,
+                "workflow_coordinator",
+                types.SimpleNamespace(repository=_FailingRepository()),
+                raising=False,
+            )
+            with pytest.raises(type(error), match=str(error)):
+                client.post("/workflows/runs/yaml-schema-error-classification/resume")
+
 
 class TestCancelTierDispatch:
     def test_script_tier_live_record_dispatches_to_cancel_script_run(self, client, monkeypatch):
@@ -615,21 +743,17 @@ class TestCancelTierDispatch:
 class TestCancellationLifecycle:
     """U7 (issue #505) — cancel under the async/detached, journal-authoritative
     lifecycle. These tests exercise the EXISTING cancel handler against a REAL
-    temp journal DB with an EMPTY ``run_registry``, so they FAIL if the
+    isolated PostgreSQL target with an EMPTY ``run_registry``, so they FAIL if the
     journal-fallback path (a detached / post-restart run cancelled from the
     journal alone) ever regresses. U7 adds no new cancel handler (NR-1) — this is
     the behavior lock.
     """
 
     @pytest.fixture
-    def journal_db(self, tmp_path, monkeypatch):
-        """A real temp journal DB + an EMPTY run_registry. ``workflow_journal``'s
-        ``_connect`` auto-migrates both run tables on first use, so pointing
-        ``DATABASE_FILE`` at a temp path is enough."""
-        db_path = tmp_path / "wf.db"
-        monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
+    def journal_db(self, isolated_memory_db, monkeypatch):
+        """Use the shared isolated PostgreSQL target and an EMPTY run registry."""
         monkeypatch.setattr(workflow_service, "run_registry", {})
-        return db_path
+        return isolated_memory_db
 
     def _live_yaml_record(self, run_id, state):
         """A real RunRecord (not a mock) so the live-registry YAML arm and the real

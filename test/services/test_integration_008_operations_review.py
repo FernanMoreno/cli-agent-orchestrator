@@ -1,14 +1,17 @@
-"""Independent real SQLite operational diagnostic boundaries; no effects outside fixtures."""
+"""Independent PostgreSQL operational diagnostic boundaries."""
 
 import asyncio
 import hashlib
+import json
 import time
 from test.integration.test_work_dispatch import admit, context
+from test.postgres.orm import configured_orm_engine
 
 import pytest
-from sqlalchemy import create_engine, text
+from psycopg import sql
+from sqlalchemy import text
 
-from cli_agent_orchestrator.clients.runtime_channel_schema import RemoteBase
+from cli_agent_orchestrator.clients import database
 from cli_agent_orchestrator.models.work_operations import RuntimeOperations, WorkOperations
 from cli_agent_orchestrator.runtime_channel.durable_connection import DurableRuntimeConnection
 from cli_agent_orchestrator.runtime_channel.protocol import CommandType
@@ -21,7 +24,21 @@ from cli_agent_orchestrator.services.work_projection import WorkQueries
 
 def digest(repo):
     with repo.read_snapshot() as connection:
-        return hashlib.sha256("\n".join(connection.iterdump()).encode()).hexdigest()
+        table_rows = connection.execute(
+            """SELECT tablename FROM pg_catalog.pg_tables
+               WHERE schemaname=%s ORDER BY tablename""",
+            (repo.target.schema,),
+        ).fetchall()
+        snapshot = []
+        for (table_name,) in table_rows:
+            rows = connection.execute(
+                sql.SQL("SELECT to_jsonb(row_data)::text FROM {} AS row_data").format(
+                    sql.Identifier(repo.target.schema, table_name)
+                )
+            ).fetchall()
+            snapshot.append((table_name, sorted(row[0] for row in rows)))
+        encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode()).hexdigest()
 
 
 def test_actual_expired_capacity_and_paths_remain_held_for_read_owner_then_restore(context):
@@ -32,7 +49,7 @@ def test_actual_expired_capacity_and_paths_remain_held_for_read_owner_then_resto
     attempt = context.repo.get_work(work["id"])["attempts"][-1]
     with context.repo.transaction() as connection:
         connection.execute(
-            "UPDATE work_attempts SET lease_expires_at=? WHERE id=?",
+            "UPDATE work_attempts SET lease_expires_at=%s WHERE id=%s",
             (time.time() - 30, attempt["id"]),
         )
     reader = auth._verified_principal(
@@ -69,14 +86,11 @@ def test_actual_expired_capacity_and_paths_remain_held_for_read_owner_then_resto
     assert digest(context.repo) == before
 
 
-def test_exact_same_incarnation_new_epoch_inactive_closed_and_restart_inventory(
-    tmp_path, monkeypatch
-):
+def test_exact_same_incarnation_new_epoch_inactive_closed_and_restart_inventory(monkeypatch):
     from cli_agent_orchestrator.runtime_channel import server
 
-    engine = create_engine("sqlite:///" + str(tmp_path / "operations.sqlite"))
-    RemoteBase.metadata.create_all(engine)
-    store = RemoteOperationStore(engine)
+    engine = configured_orm_engine()
+    store = RemoteOperationStore(database.main_target())
     epoch = store.activate_runtime("node-review", "inc-review")
     store.prepare(
         "old-review-operation",
@@ -128,20 +142,19 @@ def test_exact_same_incarnation_new_epoch_inactive_closed_and_restart_inventory(
     asyncio.run(probe())
     before = store.get("old-review-operation")
     engine.dispose()
-    restarted = create_engine("sqlite:///" + str(tmp_path / "operations.sqlite"))
+    restarted = configured_orm_engine()
     actual = RuntimeOperations.model_validate(
         runtime_operations(admin, restarted, RuntimeRegistry())
     )
     assert actual.nodes[0].connection_state == "disconnected"
     assert actual.nodes[0].unresolved_operation_count == 1
-    assert RemoteOperationStore(restarted).get("old-review-operation") == before
+    assert RemoteOperationStore(database.main_target()).get("old-review-operation") == before
     restarted.dispose()
 
 
-def test_inventory_pagination_and_sample_bounds_no_mutation(tmp_path):
-    engine = create_engine("sqlite:///" + str(tmp_path / "many.sqlite"))
-    RemoteBase.metadata.create_all(engine)
-    store = RemoteOperationStore(engine)
+def test_inventory_pagination_and_sample_bounds_no_mutation():
+    engine = configured_orm_engine()
+    store = RemoteOperationStore(database.main_target())
     for index in range(102):
         store.activate_runtime("runtime-" + str(index).zfill(3), "inc")
     for index in range(7):

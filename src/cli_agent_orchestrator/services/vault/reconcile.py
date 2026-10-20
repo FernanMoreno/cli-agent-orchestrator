@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from functools import wraps
 from typing import Any, Callable, Iterable, Optional, ParamSpec, TypeVar, cast
 
+from sqlalchemy.orm.attributes import flag_modified
+
 from cli_agent_orchestrator.clients.database import (
     MemoryMetadataModel,
     MemoryRelationshipModel,
@@ -1662,6 +1664,12 @@ def _upsert_metadata(db, item: _ProjectedNote) -> None:
     else:
         for key, value in values.items():
             setattr(row, key, value)
+        if db.is_modified(row, include_collections=False):
+            # ``updated_at`` is the source file's mtime for vault rows. If a
+            # different projected field changed while that mtime stayed equal,
+            # SQLAlchemy's column ``onupdate`` would otherwise replace it with
+            # wall-clock time because equal assignments are omitted from UPDATE.
+            flag_modified(row, "updated_at")
 
 
 def _group_findings(

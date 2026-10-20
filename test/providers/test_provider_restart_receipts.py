@@ -1,6 +1,6 @@
 """Every registered adapter retains the receipt input fence on reconstruction."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -64,6 +64,55 @@ def test_open_code_persisted_dialect_restores_without_executable_probe():
     assert p.paste_submit_delay == 2.0
     with pytest.raises(ValueError):
         p.restore_runtime_variant("opencode-v9")
+
+
+def test_open_code_legacy_runtime_variant_caches_executable_probe(monkeypatch):
+    from cli_agent_orchestrator.providers import opencode_cli
+
+    calls = {"resolve": 0, "detect": 0}
+
+    def resolve():
+        calls["resolve"] += 1
+        return ("/opt/bin/opencode", {"PATH": "/opt/bin:/usr/bin:/bin"})
+
+    def detect(runtime):
+        calls["detect"] += 1
+        assert runtime[0] == "/opt/bin/opencode"
+        return 2
+
+    monkeypatch.setattr(opencode_cli, "resolve_opencode_runtime", resolve)
+    monkeypatch.setattr(opencode_cli, "detect_opencode_major", detect)
+
+    provider = OpenCodeCliProvider("audit", "audit", "audit")
+    provider.restore_runtime_variant(None)
+
+    assert provider.runtime_variant == "opencode-v2"
+    assert provider._runtime_probe_complete is True
+    assert calls == {"resolve": 1, "detect": 1}
+
+
+@pytest.mark.asyncio
+async def test_open_code_legacy_runtime_variant_reuses_probe_for_initialize(monkeypatch):
+    from cli_agent_orchestrator.providers import opencode_cli
+
+    calls = {"resolve": 0, "detect": 0}
+
+    def resolve():
+        calls["resolve"] += 1
+        return ("/opt/bin/opencode", {"PATH": "/opt/bin:/usr/bin:/bin"})
+
+    def detect(runtime):
+        calls["detect"] += 1
+        return 2
+
+    monkeypatch.setattr(opencode_cli, "resolve_opencode_runtime", resolve)
+    monkeypatch.setattr(opencode_cli, "detect_opencode_major", detect)
+    provider = OpenCodeCliProvider("audit", "audit", "audit")
+    provider.restore_runtime_variant(None)
+    monkeypatch.setattr(provider, "_initialize_validated", AsyncMock(return_value=True))
+
+    assert await provider.initialize() is True
+    assert calls == {"resolve": 1, "detect": 1}
 
 
 @pytest.mark.parametrize("variant", ["code", "opencode-v2"])

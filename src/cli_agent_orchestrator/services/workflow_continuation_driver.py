@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 import time
 from pathlib import Path
 from uuid import uuid4
 
-from cli_agent_orchestrator.clients.work_continuation_schema import initialize, verify
+from cli_agent_orchestrator.clients.postgres.migrations import verify_component
+from cli_agent_orchestrator.clients.work_continuation_postgres_schema import (
+    WORKFLOW_CONTINUATION_MIGRATIONS,
+)
 
 
 class DriverRefused(ValueError):
@@ -18,19 +20,16 @@ class DriverRefused(ValueError):
 
 
 def enqueue_projected(connection, binding, result_id, content_hash):
-    if (
-        connection.execute("SELECT 1 FROM sqlite_master WHERE name='workflow_driver'").fetchone()
-        is None
-    ):
-        return
+    verify_component(connection, WORKFLOW_CONTINUATION_MIGRATIONS)
     driver = connection.execute(
-        "SELECT state FROM workflow_driver WHERE run_id=?", (binding.run_id,)
+        "SELECT state FROM workflow_driver WHERE run_id=%s", (binding.run_id,)
     ).fetchone()
     if driver is None or driver["state"] in ("stopping", "stopped"):
         return
     identity = hashlib.sha256((binding.binding_id + "\0" + result_id).encode()).hexdigest()
     connection.execute(
-        "INSERT OR IGNORE INTO workflow_continuation_outbox VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO workflow_continuation_outbox VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+        "ON CONFLICT (binding_id,accepted_result_id) DO NOTHING",
         (
             identity,
             binding.binding_id,
@@ -89,8 +88,8 @@ class WorkflowContinuationDriver:
         self.coordinator = None
         self._run_cursor = ""
         self._stop_cursor = ""
-        with self.repository.transaction() as connection:
-            initialize(connection)
+        with self.repository.read_snapshot() as connection:
+            verify_component(connection, WORKFLOW_CONTINUATION_MIGRATIONS)
         plans.continuation_driver = self
 
     def enable(self, principal, run_id, *, connection=None):
@@ -100,14 +99,15 @@ class WorkflowContinuationDriver:
             with self.repository.transaction() as conn:
                 self.enable(principal, run_id, connection=conn)
             return
+        verify_component(connection, WORKFLOW_CONTINUATION_MIGRATIONS)
         row, snapshot = self.plans._stored(connection, run_id)
         if row["principal_id"] != principal.id:
             raise DriverRefused("driver_owner_mismatch")
         run = connection.execute(
-            "SELECT generation FROM workflow_run WHERE run_id=?", (run_id,)
+            "SELECT generation FROM workflow_run WHERE run_id=%s", (run_id,)
         ).fetchone()
         connection.execute(
-            "INSERT INTO workflow_driver VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO workflow_driver VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (
                 run_id,
                 principal.id,
@@ -129,8 +129,9 @@ class WorkflowContinuationDriver:
 
     def owner(self, run_id):
         with self.repository.read_snapshot() as conn:
+            verify_component(conn, WORKFLOW_CONTINUATION_MIGRATIONS)
             row = conn.execute(
-                "SELECT owner_principal_id FROM workflow_driver WHERE run_id=?", (run_id,)
+                "SELECT owner_principal_id FROM workflow_driver WHERE run_id=%s", (run_id,)
             ).fetchone()
         if row is None:
             raise DriverRefused("driver_missing")
@@ -155,8 +156,10 @@ class WorkflowContinuationDriver:
             raise DriverRefused("driver_service_stopping")
         self.plans.validate_resume(principal, run_id)
         with self.repository.transaction() as conn:
-            verify(conn)
-            row = conn.execute("SELECT * FROM workflow_driver WHERE run_id=?", (run_id,)).fetchone()
+            verify_component(conn, WORKFLOW_CONTINUATION_MIGRATIONS)
+            row = conn.execute(
+                "SELECT * FROM workflow_driver WHERE run_id=%s", (run_id,)
+            ).fetchone()
             if row is None:
                 raise DriverRefused("driver_missing")
             if row["owner_principal_id"] != principal.id:
@@ -169,13 +172,13 @@ class WorkflowContinuationDriver:
             if not process_stopped(row["process_identity_json"]):
                 raise DriverRefused("orphan_process_reconciliation_required")
             run = conn.execute(
-                "SELECT generation,state FROM workflow_run WHERE run_id=?", (run_id,)
+                "SELECT generation,state FROM workflow_run WHERE run_id=%s", (run_id,)
             ).fetchone()
             if run is None or run["state"] in ("cancelled", "completed"):
                 raise DriverRefused("driver_terminal")
             epoch = row["epoch"] + 1
             changed = conn.execute(
-                "UPDATE workflow_driver SET owner_instance=?,epoch=?,revision=revision+1,run_generation=?,lease_expires_at=?,heartbeat_at=?,state='driving',pause_reason=NULL WHERE run_id=? AND revision=?",
+                "UPDATE workflow_driver SET owner_instance=%s,epoch=%s,revision=revision+1,run_generation=%s,lease_expires_at=%s,heartbeat_at=%s,state='driving',pause_reason=NULL WHERE run_id=%s AND revision=%s",
                 (
                     self.instance_id,
                     epoch,
@@ -191,13 +194,14 @@ class WorkflowContinuationDriver:
         self.principals[run_id] = principal
         return epoch
 
-    def assert_current(self, run_id, epoch, *, connection=None):
+    def assert_current(self, run_id, epoch, *, connection=None, lock=False):
         if connection is None:
             with self.repository.read_snapshot() as conn:
                 return self.assert_current(run_id, epoch, connection=conn)
-        verify(connection)
+        verify_component(connection, WORKFLOW_CONTINUATION_MIGRATIONS)
+        lock_clause = " FOR UPDATE" if lock else ""
         row = connection.execute(
-            "SELECT * FROM workflow_driver WHERE run_id=?", (run_id,)
+            "SELECT * FROM workflow_driver WHERE run_id=%s" + lock_clause, (run_id,)
         ).fetchone()
         if row is None:
             raise DriverRefused("driver_missing")
@@ -214,69 +218,90 @@ class WorkflowContinuationDriver:
 
     def heartbeat(self, run_id, epoch):
         with self.repository.transaction() as conn:
-            self.assert_current(run_id, epoch, connection=conn)
-            conn.execute(
-                "UPDATE workflow_driver SET lease_expires_at=?,heartbeat_at=?,revision=revision+1 WHERE run_id=? AND epoch=?",
-                (time.time() + 120, time.time(), run_id, epoch),
+            self.assert_current(run_id, epoch, connection=conn, lock=True)
+            changed = conn.execute(
+                "UPDATE workflow_driver SET lease_expires_at=%s,heartbeat_at=%s,revision=revision+1 "
+                "WHERE run_id=%s AND epoch=%s AND owner_instance=%s AND state='driving'",
+                (time.time() + 120, time.time(), run_id, epoch, self.instance_id),
             )
+            if changed.rowcount != 1:
+                raise DriverRefused("driver_fence_changed")
 
     def begin_process(self, run_id, epoch):
         with self.repository.transaction() as conn:
-            self.assert_current(run_id, epoch, connection=conn)
-            conn.execute(
-                "UPDATE workflow_driver SET process_identity_json=?,stop_evidence_ref=NULL,revision=revision+1 WHERE run_id=?",
-                ('{"allocation_pending":true}', run_id),
+            self.assert_current(run_id, epoch, connection=conn, lock=True)
+            changed = conn.execute(
+                "UPDATE workflow_driver SET process_identity_json=%s,stop_evidence_ref=NULL,revision=revision+1 "
+                "WHERE run_id=%s AND epoch=%s AND owner_instance=%s AND state='driving'",
+                ('{"allocation_pending":true}', run_id, epoch, self.instance_id),
             )
+            if changed.rowcount != 1:
+                raise DriverRefused("driver_fence_changed")
 
     def attach_process(self, run_id, epoch, pid):
         identity = json.dumps(process_identity(pid), sort_keys=True)
         with self.repository.transaction() as conn:
-            self.assert_current(run_id, epoch, connection=conn)
-            conn.execute(
-                "UPDATE workflow_driver SET process_identity_json=?,stop_evidence_ref=NULL,revision=revision+1 WHERE run_id=?",
-                (identity, run_id),
+            self.assert_current(run_id, epoch, connection=conn, lock=True)
+            changed = conn.execute(
+                "UPDATE workflow_driver SET process_identity_json=%s,stop_evidence_ref=NULL,revision=revision+1 "
+                "WHERE run_id=%s AND epoch=%s AND owner_instance=%s AND state='driving'",
+                (identity, run_id, epoch, self.instance_id),
             )
+            if changed.rowcount != 1:
+                raise DriverRefused("driver_fence_changed")
 
     def record_process_exit(self, run_id, epoch, process):
         if process.returncode is None:
             return
         with self.repository.transaction() as conn:
+            verify_component(conn, WORKFLOW_CONTINUATION_MIGRATIONS)
             row = conn.execute(
-                "SELECT epoch,owner_instance FROM workflow_driver WHERE run_id=?", (run_id,)
+                "SELECT epoch,owner_instance FROM workflow_driver WHERE run_id=%s", (run_id,)
             ).fetchone()
             if row and row["epoch"] == epoch and row["owner_instance"] == self.instance_id:
                 conn.execute(
-                    "UPDATE workflow_driver SET process_identity_json=NULL,stop_evidence_ref=?,revision=revision+1 WHERE run_id=?",
-                    ("owned-process-reaped:" + str(process.returncode), run_id),
+                    "UPDATE workflow_driver SET process_identity_json=NULL,stop_evidence_ref=%s,revision=revision+1 "
+                    "WHERE run_id=%s AND epoch=%s AND owner_instance=%s",
+                    (
+                        "owned-process-reaped:" + str(process.returncode),
+                        run_id,
+                        epoch,
+                        self.instance_id,
+                    ),
                 )
 
     def release(self, run_id, epoch, *, state="waiting", reason=None):
         with self.repository.transaction() as conn:
+            verify_component(conn, WORKFLOW_CONTINUATION_MIGRATIONS)
             conn.execute(
-                "UPDATE workflow_driver SET state=?,pause_reason=?,lease_expires_at=0,revision=revision+1 WHERE run_id=? AND epoch=? AND owner_instance=? AND state=?",
+                "UPDATE workflow_driver SET state=%s,pause_reason=%s,lease_expires_at=0,revision=revision+1 WHERE run_id=%s AND epoch=%s AND owner_instance=%s AND state=%s",
                 (state, reason, run_id, epoch, self.instance_id, "driving"),
             )
 
     def request_stop(self, principal, run_id):
         self.plans._owner(principal)
         with self.repository.transaction() as conn:
+            verify_component(conn, WORKFLOW_CONTINUATION_MIGRATIONS)
             row = conn.execute(
-                "SELECT owner_principal_id FROM workflow_driver WHERE run_id=?", (run_id,)
+                "SELECT owner_principal_id FROM workflow_driver WHERE run_id=%s", (run_id,)
             ).fetchone()
             if row is None or row[0] != principal.id:
                 raise DriverRefused("driver_owner_mismatch")
             conn.execute(
-                "UPDATE workflow_driver SET state='stopping',epoch=epoch+1,lease_expires_at=0,revision=revision+1 WHERE run_id=? AND state!='stopped'",
+                "UPDATE workflow_driver SET state='stopping',epoch=epoch+1,lease_expires_at=0,revision=revision+1 WHERE run_id=%s AND state!='stopped'",
                 (run_id,),
             )
             conn.execute(
-                "UPDATE workflow_continuation_outbox SET state='cancelled',revision=revision+1 WHERE run_id=? AND state IN ('ready','claimed','blocked')",
+                "UPDATE workflow_continuation_outbox SET state='cancelled',revision=revision+1 WHERE run_id=%s AND state IN ('ready','claimed','blocked')",
                 (run_id,),
             )
 
     def pause(self, run_id, reason, *, epoch=None):
         with self.repository.transaction() as conn:
-            row = conn.execute("SELECT * FROM workflow_driver WHERE run_id=?", (run_id,)).fetchone()
+            verify_component(conn, WORKFLOW_CONTINUATION_MIGRATIONS)
+            row = conn.execute(
+                "SELECT * FROM workflow_driver WHERE run_id=%s", (run_id,)
+            ).fetchone()
             if row is None or row["state"] in ("stopping", "stopped"):
                 return False
             if epoch is not None:
@@ -289,7 +314,7 @@ class WorkflowContinuationDriver:
                 # owner's execution stopped or that its lease may be revoked.
                 return False
             changed = conn.execute(
-                "UPDATE workflow_driver SET state='paused',pause_reason=?,lease_expires_at=0,revision=revision+1 WHERE run_id=? AND revision=?",
+                "UPDATE workflow_driver SET state='paused',pause_reason=%s,lease_expires_at=0,revision=revision+1 WHERE run_id=%s AND revision=%s",
                 (reason, run_id, row["revision"]),
             )
             return changed.rowcount == 1
@@ -377,15 +402,18 @@ class WorkflowContinuationDriver:
             await asyncio.to_thread(self.release, run_id, epoch)
 
     def _read_rows(self, query, parameters=()):
-        # Open, verify, read and close SQLite on the same worker thread. Never
-        # carry a connection across an await or weaken repository verification.
+        # Open, read, and close the native connection on the same worker thread.
+        # Never carry a connection across an await.
         with self.repository.read_snapshot() as conn:
+            verify_component(conn, WORKFLOW_CONTINUATION_MIGRATIONS)
             return conn.execute(query, parameters).fetchall()
 
     def _write(self, query, parameters=(), *, run_id=None, epoch=None):
         with self.repository.transaction() as conn:
             if run_id is not None:
-                self.assert_current(run_id, epoch, connection=conn)
+                self.assert_current(run_id, epoch, connection=conn, lock=True)
+            else:
+                verify_component(conn, WORKFLOW_CONTINUATION_MIGRATIONS)
             conn.execute(query, parameters)
 
     def _cleanup_task(self, run_id, task):
@@ -413,7 +441,7 @@ class WorkflowContinuationDriver:
         state_filter = "state='stopping'" if stopping else "state NOT IN ('stopping','stopped')"
         rows = await asyncio.to_thread(
             self._read_rows,
-            f"SELECT run_id FROM workflow_driver WHERE {state_filter} AND run_id>? ORDER BY run_id LIMIT 128",
+            f"SELECT run_id FROM workflow_driver WHERE {state_filter} AND run_id>%s ORDER BY run_id LIMIT 128",
             (getattr(self, cursor_name),),
         )
         setattr(self, cursor_name, rows[-1][0] if rows else "")
@@ -441,7 +469,7 @@ class WorkflowContinuationDriver:
             if self.coordinator:
                 rows = await asyncio.to_thread(
                     self._read_rows,
-                    "SELECT state,deadline FROM workflow_coordinator WHERE run_id=?",
+                    "SELECT state,deadline FROM workflow_coordinator WHERE run_id=%s",
                     (run_id,),
                 )
                 controller = rows[0] if rows else None
@@ -455,7 +483,7 @@ class WorkflowContinuationDriver:
                         await self.coordinator.stop(principal, run_id)
                         await asyncio.to_thread(
                             self._write,
-                            "UPDATE workflow_coordinator SET escalation_reason='deadline',revision=revision+1 WHERE run_id=?",
+                            "UPDATE workflow_coordinator SET escalation_reason='deadline',revision=revision+1 WHERE run_id=%s",
                             (run_id,),
                         )
                     except Exception:
@@ -467,7 +495,7 @@ class WorkflowContinuationDriver:
                 await asyncio.to_thread(self.projector.project_pending_for_run, run_id)
                 rows = await asyncio.to_thread(
                     self._read_rows,
-                    "SELECT * FROM workflow_continuation_outbox WHERE run_id=? AND state IN ('ready','claimed') ORDER BY created_at,id LIMIT 1",
+                    "SELECT * FROM workflow_continuation_outbox WHERE run_id=%s AND state IN ('ready','claimed') ORDER BY created_at,id LIMIT 1",
                     (run_id,),
                 )
                 event = rows[0] if rows else None
@@ -476,7 +504,7 @@ class WorkflowContinuationDriver:
                 if event is None:
                     rows = await asyncio.to_thread(
                         self._read_rows,
-                        "SELECT state FROM workflow_driver WHERE run_id=?",
+                        "SELECT state FROM workflow_driver WHERE run_id=%s",
                         (run_id,),
                     )
                     if (
@@ -500,7 +528,7 @@ class WorkflowContinuationDriver:
                 ):
                     await asyncio.to_thread(
                         self._write,
-                        "UPDATE workflow_continuation_outbox SET state='consumed',revision=revision+1 WHERE id=?",
+                        "UPDATE workflow_continuation_outbox SET state='consumed',revision=revision+1 WHERE id=%s",
                         (event["id"],),
                     )
                     continue
@@ -512,7 +540,7 @@ class WorkflowContinuationDriver:
                 epoch = await asyncio.to_thread(self.claim, principal, run_id)
                 await asyncio.to_thread(
                     self._write,
-                    "UPDATE workflow_continuation_outbox SET state='claimed',claim_epoch=?,revision=revision+1 WHERE id=? AND state IN ('ready','claimed')",
+                    "UPDATE workflow_continuation_outbox SET state='claimed',claim_epoch=%s,revision=revision+1 WHERE id=%s AND state IN ('ready','claimed')",
                     (epoch, event["id"]),
                     run_id=run_id,
                     epoch=epoch,
@@ -525,7 +553,7 @@ class WorkflowContinuationDriver:
                         result = await self.drive(principal, run_id, epoch=epoch)
                         await asyncio.to_thread(
                             self._write,
-                            "UPDATE workflow_continuation_outbox SET state='consumed',revision=revision+1 WHERE id=? AND state='claimed' AND claim_epoch=?",
+                            "UPDATE workflow_continuation_outbox SET state='consumed',revision=revision+1 WHERE id=%s AND state='claimed' AND claim_epoch=%s",
                             (event_id, epoch),
                         )
                         return result
@@ -564,9 +592,9 @@ class WorkflowContinuationDriver:
         # process-stop proof before acquiring the paused execution.
         def fence_owned():
             with self.repository.transaction() as conn:
-                verify(conn)
+                verify_component(conn, WORKFLOW_CONTINUATION_MIGRATIONS)
                 conn.execute(
-                    "UPDATE workflow_driver SET state='paused',pause_reason='service_shutdown',epoch=epoch+1,lease_expires_at=0,revision=revision+1 WHERE owner_instance=? AND state='driving'",
+                    "UPDATE workflow_driver SET state='paused',pause_reason='service_shutdown',epoch=epoch+1,lease_expires_at=0,revision=revision+1 WHERE owner_instance=%s AND state='driving'",
                     (self.instance_id,),
                 )
 
@@ -586,20 +614,22 @@ class WorkflowContinuationDriver:
 
 
 def check_effect(connection, run_id, generation=None):
-    """Same-transaction admission fence; historical result readers never use it."""
-    if (
-        connection.execute("SELECT 1 FROM sqlite_master WHERE name='workflow_driver'").fetchone()
-        is None
-    ):
-        return
-    verify(connection)
+    """Check the driver fence, locking rows only when the transaction can write.
+
+    Read-only recovery snapshots use this as an observation. Writable admission
+    and coordinator transactions retain the row locks that serialize effects.
+    """
+    verify_component(connection, WORKFLOW_CONTINUATION_MIGRATIONS)
+    lock_clause = "" if connection.read_only else " FOR UPDATE"
     controller = connection.execute(
-        "SELECT deadline FROM workflow_coordinator WHERE run_id=?", (run_id,)
+        "SELECT deadline FROM workflow_coordinator WHERE run_id=%s" + lock_clause,
+        (run_id,),
     ).fetchone()
     if controller is not None and time.time() >= controller["deadline"]:
         raise DriverRefused("coordinator_deadline")
     row = connection.execute(
-        "SELECT state,lease_expires_at,run_generation FROM workflow_driver WHERE run_id=?",
+        "SELECT state,lease_expires_at,run_generation FROM workflow_driver WHERE run_id=%s"
+        + lock_clause,
         (run_id,),
     ).fetchone()
     if row is None:

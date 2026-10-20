@@ -31,13 +31,13 @@ def project_operations(connection, principal, job, work) -> dict:
             attempt["lease_expires_at"] is not None and attempt["lease_expires_at"] <= time.time()
         )
         row = connection.execute(
-            "SELECT id,state,units,revision,stop_evidence_ref FROM work_scheduler_requests WHERE attempt_id=? AND generation=?",
+            "SELECT id,state,units,revision,stop_evidence_ref FROM work_scheduler_requests WHERE attempt_id=%s AND generation=%s",
             (attempt["id"], attempt["generation"]),
         ).fetchone()
         if row:
             capacity = dict(zip(("id", "state", "units", "revision", "stop_evidence_ref"), row))
         row = connection.execute(
-            "SELECT s.id,s.state,s.revision,s.stop_evidence_ref,count(p.resource_key) FROM work_reservation_sets s LEFT JOIN work_path_reservations p ON p.reservation_set_id=s.id WHERE s.attempt_id=? AND s.generation=? GROUP BY s.id",
+            "SELECT s.id,s.state,s.revision,s.stop_evidence_ref,count(p.resource_key) FROM work_reservation_sets s LEFT JOIN work_path_reservations p ON p.reservation_set_id=s.id WHERE s.attempt_id=%s AND s.generation=%s GROUP BY s.id",
             (attempt["id"], attempt["generation"]),
         ).fetchone()
         if row:
@@ -68,7 +68,21 @@ def project_operations(connection, principal, job, work) -> dict:
     ]
     controller = None
     tables = {
-        row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        row[0]
+        for row in connection.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema=%s AND table_type='BASE TABLE' AND table_name=ANY(%s)",
+            (
+                connection.target.schema,
+                [
+                    "workflow_scoped_run",
+                    "workflow_run",
+                    "workflow_coordinator",
+                    "workflow_run_step",
+                    "workflow_driver",
+                ],
+            ),
+        )
     }
     # The external workflow journal is optional in a standalone Work store.
     # Presence is not ownership: only a sealed scoped-run owner gets its routes.
@@ -89,7 +103,7 @@ def project_operations(connection, principal, job, work) -> dict:
             "JOIN workflow_run r ON r.run_id=b.run_id LEFT JOIN workflow_run_step s ON s.run_id=b.run_id AND s.step_id=b.step_id "
             "LEFT JOIN workflow_coordinator c ON c.run_id=b.run_id AND c.owner_principal_id=o.principal_id "
             "LEFT JOIN workflow_driver d ON d.run_id=b.run_id AND d.owner_principal_id=o.principal_id "
-            "WHERE b.work_item_id=? AND b.work_attempt_id=? AND b.work_generation=? AND o.principal_id=?",
+            "WHERE b.work_item_id=%s AND b.work_attempt_id=%s AND b.work_generation=%s AND o.principal_id=%s",
             (work["id"], attempt["id"], attempt["generation"], principal.id),
         ).fetchone()
         if row:

@@ -67,3 +67,6 @@ export CAO_WORK_DOCKER_IMAGE_ID="$image_id"
 uv run pytest -o addopts= -q -m integration \
   test/integration/t019/test_docker_backend.py \
   test/integration/t020/test_workflow_acceptance.py
+
+uv run pytest -o addopts= -q \
+  test/e2e/test_work_lifecycle.py::test_prepared_script_workflow_result_and_attempt_survive_server_restart

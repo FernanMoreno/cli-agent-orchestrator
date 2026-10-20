@@ -4,7 +4,6 @@ import hashlib
 import json
 import multiprocessing
 import os
-import sqlite3
 import subprocess
 import sys
 import threading
@@ -16,6 +15,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from cli_agent_orchestrator.clients import work_repository as work_repository_module
+from cli_agent_orchestrator.clients.postgres import DatabaseError
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.services import work_process_supervisor as supervisor_module
 from cli_agent_orchestrator.services.work_process_supervisor import (
@@ -170,7 +171,7 @@ def test_termination_proof_releases_only_matching_local_reattach_pidfds(monkeypa
 
 
 def _reconciled_held(tmp_path):
-    repository = WorkRepository(tmp_path / "cleanup.sqlite3")
+    repository = WorkRepository(tmp_path / "cleanup-store")
     repository.initialize()
     scheduler = WorkScheduler(repository)
     scheduler.configure(capacity=1, max_queue=2, aging_seconds=10, expected_policy_revision=0)
@@ -240,7 +241,7 @@ def _reconciled_held_with_issued_proxy(tmp_path):
     models, _, repository, actor, job, _, _, item, original = data
     with repository.transaction() as connection:
         connection.execute(
-            "UPDATE work_jobs SET budget=? WHERE id=?",
+            "UPDATE work_jobs SET budget=%s WHERE id=%s",
             (json.dumps({"scheduler_units": 2}), job["id"]),
         )
     contract = models.EffectiveWorkContractV2(**{**original.model_dump(), "schema_version": 2})
@@ -338,7 +339,7 @@ def test_missing_or_corrupt_identity_fails_without_supervisor_effect(tmp_path):
         connection.execute(
             "INSERT INTO work_process_identities "
             "(attempt_id,generation,protocol_version,identity_json,identity_sha256,created_at) "
-            "VALUES (?,?,?,?,?,0)",
+            "VALUES (%s,%s,%s,%s,%s,0)",
             (held.attempt_id, 1, 3, "{}", "0" * 64),
         )
     failed_again = _recover(repository, failed, supervisor)
@@ -433,13 +434,13 @@ def test_docker_cleanup_recovery_abandons_unanswered_mcp_issue_durably(tmp_path)
     with repository.read_snapshot() as connection:
         states = connection.execute(
             "SELECT state FROM work_mcp_proxy_issue_events "
-            "WHERE attempt_id=? AND generation=1 ORDER BY sequence",
+            "WHERE attempt_id=%s AND generation=1 ORDER BY sequence",
             (attempt_id,),
         ).fetchall()
         assert [row[0] for row in states] == ["issued", "abandoned"]
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=?",
+                "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=%s",
                 (attempt_id,),
             ).fetchone()[0]
             == 0
@@ -469,7 +470,7 @@ def test_verified_identity_is_reattached_and_only_termination_completes(tmp_path
         connection.execute(
             "INSERT INTO work_process_identities "
             "(attempt_id,generation,protocol_version,identity_json,identity_sha256,created_at) "
-            "VALUES (?,?,?,?,?,0)",
+            "VALUES (%s,%s,%s,%s,%s,0)",
             (
                 held.attempt_id,
                 1,
@@ -481,9 +482,11 @@ def test_verified_identity_is_reattached_and_only_termination_completes(tmp_path
     supervisor, attached = _supervisor()
 
     def terminate_without_transaction(_attempt):
-        with sqlite3.connect(repository.path, timeout=0.1, isolation_level=None) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.rollback()
+        with repository.transaction() as connection:
+            connection.execute("SET LOCAL statement_timeout = '100ms'")
+            connection.execute(
+                "UPDATE work_attempts SET revision=revision WHERE id=%s", (held.attempt_id,)
+            )
         return WorkProcessState.TERMINATED
 
     supervisor.terminate.side_effect = terminate_without_transaction
@@ -513,7 +516,7 @@ def test_concurrent_recovery_cannot_enter_cleanup_for_the_same_attempt(tmp_path)
         connection.execute(
             "INSERT INTO work_process_identities "
             "(attempt_id,generation,protocol_version,identity_json,identity_sha256,created_at) "
-            "VALUES (?,?,?,?,?,0)",
+            "VALUES (%s,%s,%s,%s,%s,0)",
             (
                 held.attempt_id,
                 1,
@@ -569,7 +572,7 @@ def test_process_exit_releases_cleanup_owner_for_pending_recovery(tmp_path):
         connection.execute(
             "INSERT INTO work_process_identities "
             "(attempt_id,generation,protocol_version,identity_json,identity_sha256,created_at) "
-            "VALUES (?,?,?,?,?,0)",
+            "VALUES (%s,%s,%s,%s,%s,0)",
             (
                 held.attempt_id,
                 1,
@@ -698,13 +701,35 @@ def test_another_process_cannot_recover_while_cleanup_owner_is_live(tmp_path):
     assert repository.get_attempt(held.attempt_id)["cleanup_state"] == "complete"
 
 
-def test_cleanup_owner_lock_fails_closed_without_fcntl(tmp_path, monkeypatch):
-    repository = WorkRepository(tmp_path / "work.sqlite3")
-    with monkeypatch.context() as missing_fcntl:
-        missing_fcntl.setitem(sys.modules, "fcntl", None)
-        with pytest.raises(WorkConflict, match="cleanup owner lock is unavailable"):
-            with repository.cleanup_owner_lock("attempt", 1):
-                pytest.fail("cleanup entered without an OS advisory lock")
+def test_cleanup_owner_lock_fails_closed_when_database_lock_is_unavailable(tmp_path, monkeypatch):
+    repository = WorkRepository(tmp_path / "work-store")
+
+    def unavailable_connection(_target):
+        raise DatabaseError("injected advisory-lock connection failure")
+
+    monkeypatch.setattr(work_repository_module, "connect", unavailable_connection)
+    with pytest.raises(WorkConflict, match="cleanup owner lock is unavailable") as error:
+        with repository.cleanup_owner_lock("attempt", 1):
+            pytest.fail("cleanup entered without a PostgreSQL advisory lock")
+    assert isinstance(error.value.__cause__, DatabaseError)
+    assert "injected advisory-lock connection failure" not in str(error.value)
+
+
+def test_cleanup_owner_lock_closes_connection_without_unlock_when_not_acquired(
+    tmp_path, monkeypatch
+):
+    repository = WorkRepository(tmp_path / "work-store")
+    connection = Mock()
+    connection.execute.return_value.fetchone.return_value = (False,)
+    monkeypatch.setattr(work_repository_module, "connect", lambda _target: connection)
+
+    with pytest.raises(WorkConflict, match="cleanup is owned by another worker"):
+        with repository.cleanup_owner_lock("attempt", 1):
+            pytest.fail("cleanup entered without an acquired PostgreSQL advisory lock")
+
+    assert connection.execute.call_count == 1
+    assert connection.execute.call_args.args[0] == "SELECT pg_try_advisory_lock(%s)"
+    connection.close.assert_called_once_with()
 
 
 @pytest.mark.parametrize(
@@ -717,7 +742,7 @@ def test_nonterminal_or_exception_remains_failed_and_reconciliable(tmp_path, out
         connection.execute(
             "INSERT INTO work_process_identities "
             "(attempt_id,generation,protocol_version,identity_json,identity_sha256,created_at) "
-            "VALUES (?,?,?,?,?,0)",
+            "VALUES (%s,%s,%s,%s,%s,0)",
             (
                 held.attempt_id,
                 1,
@@ -741,7 +766,7 @@ def test_reattach_identity_mismatch_cannot_terminate_or_complete(tmp_path):
         connection.execute(
             "INSERT INTO work_process_identities "
             "(attempt_id,generation,protocol_version,identity_json,identity_sha256,created_at) "
-            "VALUES (?,?,?,?,?,0)",
+            "VALUES (%s,%s,%s,%s,%s,0)",
             (
                 held.attempt_id,
                 1,
@@ -766,7 +791,7 @@ def test_natural_exit_after_restart_completes_without_signal_or_redelivery(tmp_p
         connection.execute(
             "INSERT INTO work_process_identities "
             "(attempt_id,generation,protocol_version,identity_json,identity_sha256,created_at) "
-            "VALUES (?,?,?,?,?,0)",
+            "VALUES (%s,%s,%s,%s,%s,0)",
             (
                 held.attempt_id,
                 1,
@@ -809,7 +834,7 @@ def test_restart_without_supervisor_observes_original_pair_only(
         connection.execute(
             "INSERT INTO work_process_identities "
             "(attempt_id,generation,protocol_version,identity_json,identity_sha256,created_at) "
-            "VALUES (?,?,?,?,?,0)",
+            "VALUES (%s,%s,%s,%s,%s,0)",
             (
                 held.attempt_id,
                 1,
@@ -853,7 +878,7 @@ def test_pending_cleanup_resumes_after_restart(tmp_path):
         connection.execute(
             "INSERT INTO work_process_identities "
             "(attempt_id,generation,protocol_version,identity_json,identity_sha256,created_at) "
-            "VALUES (?,?,?,?,?,0)",
+            "VALUES (%s,%s,%s,%s,%s,0)",
             (
                 held.attempt_id,
                 1,
@@ -880,7 +905,7 @@ def test_nonreconciled_writer_cannot_claim_or_touch_supervisor(tmp_path):
     repository, work, held = _reconciled_held(tmp_path)
     supervisor, _ = _supervisor()
     with repository.connection() as connection:
-        connection.execute("UPDATE work_items SET state='queued' WHERE id=?", (work["id"],))
+        connection.execute("UPDATE work_items SET state='queued' WHERE id=%s", (work["id"],))
     with pytest.raises(WorkConflict):
         _recover(repository, work, supervisor)
     supervisor.reattach.assert_not_called()
@@ -963,7 +988,7 @@ def test_pending_recovery_requires_held_reservation(tmp_path):
     )
     with repository.connection() as connection:
         connection.execute(
-            "UPDATE work_scheduler_requests SET state='released',stop_evidence_ref='external' WHERE id=?",
+            "UPDATE work_scheduler_requests SET state='released',stop_evidence_ref='external' WHERE id=%s",
             (held.id,),
         )
     supervisor, _ = _supervisor()

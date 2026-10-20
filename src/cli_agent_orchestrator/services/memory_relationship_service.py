@@ -171,9 +171,9 @@ def _sort_dt(value: Any) -> datetime:
        fell back to a NAIVE ``datetime.min`` while a populated row on a
        ``DateTime(timezone=True)`` column is tz-AWARE — comparing them raises
        ``TypeError: can't compare offset-naive and offset-aware datetimes``.
-    2. SQLite does not persist timezone offsets, so two POPULATED rows can also
-       disagree on awareness depending on how each was written. Normalising both
-       sides (rather than only the sentinel) closes that wider hole too.
+    2. Rows written by older store versions can disagree on timezone awareness.
+       Normalising both populated values (rather than only the sentinel) closes
+       that wider compatibility hole too.
 
     A naive value is interpreted as UTC — the only sane reading, since every
     write path stamps UTC (``_utcnow``).

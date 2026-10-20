@@ -169,6 +169,7 @@ _SURVEY_PATTERN = r"How's the CLI experience|Help us improve|\[\d\]\s*(?:Good|Fi
 
 
 class AntigravityCliProvider(BaseProvider):
+    supports_interaction_mcp_overlay = True
     """Provider for the Antigravity CLI (``agy``).
 
     Manages the lifecycle of an ``agy`` REPL session inside a tmux window:
@@ -354,7 +355,7 @@ class AntigravityCliProvider(BaseProvider):
 
             # MCP servers (cao-mcp-server etc.) → agy's shared mcp_config.json.
             if profile is not None and profile.mcpServers:
-                self._register_mcp_servers(profile.mcpServers)
+                self._register_mcp_servers(self.interaction_mcp_servers(profile.mcpServers))
 
         return shlex.join(command_parts)
 

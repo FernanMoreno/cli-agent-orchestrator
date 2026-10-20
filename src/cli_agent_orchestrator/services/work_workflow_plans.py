@@ -6,13 +6,15 @@ WorkAdmission continue to own grants, attempts, receipts and execution.
 
 import hashlib
 import json
-import sqlite3
 import time
-from contextlib import closing, nullcontext
 from dataclasses import dataclass
 from uuid import uuid4
 
+from cli_agent_orchestrator.clients.postgres import DatabaseError, DatabaseTarget
+from cli_agent_orchestrator.clients.postgres.migrations import SchemaMismatch, verify_component
+from cli_agent_orchestrator.clients.private_plan_postgres_schema import PRIVATE_PLAN_MIGRATIONS
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
+from cli_agent_orchestrator.clients.workflows_postgres_schema import WORKFLOW_MIGRATIONS
 from cli_agent_orchestrator.services import execution_manifest
 from cli_agent_orchestrator.services import plan_identifier as ids
 from cli_agent_orchestrator.services import private_plan_snapshot as private
@@ -42,13 +44,6 @@ class WorkflowPlanRefused(ValueError):
         super().__init__(kind)
 
 
-_SCHEMA = (
-    "CREATE TABLE IF NOT EXISTS workflow_prepared_plan (prepared_id TEXT PRIMARY KEY,plan_id TEXT NOT NULL REFERENCES workflow_plan_snapshot(plan_id),workflow_name TEXT NOT NULL,tier TEXT NOT NULL,source_hash TEXT NOT NULL,principal_id TEXT NOT NULL,created_at REAL NOT NULL,expires_at REAL NOT NULL,public_manifest_json TEXT NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS workflow_scoped_run (run_id TEXT PRIMARY KEY REFERENCES workflow_run(run_id) ON DELETE CASCADE,prepared_id TEXT NOT NULL REFERENCES workflow_prepared_plan(prepared_id),principal_id TEXT NOT NULL,plan_id TEXT NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS workflow_plan_step_alias (run_id TEXT NOT NULL REFERENCES workflow_run(run_id) ON DELETE CASCADE,step_id TEXT NOT NULL,target_key TEXT NOT NULL,agent_profile TEXT NOT NULL,workflow_alias TEXT NOT NULL,seed_id TEXT NOT NULL,seed_revision INTEGER NOT NULL,provision_id TEXT NOT NULL,PRIMARY KEY(run_id,step_id))",
-)
-
-
 @dataclass(frozen=True)
 class PreparedRun:
     spec: object
@@ -67,37 +62,15 @@ class WorkWorkflowPlans:
         self.origins = None
 
     def initialize(self):
-        from cli_agent_orchestrator import constants
-        from cli_agent_orchestrator.clients.database import _migrate_workflow_plan_snapshot
-        from cli_agent_orchestrator.services import workflow_journal
-
-        if (
-            self.repository.path.resolve()
-            != __import__("pathlib").Path(constants.DATABASE_FILE).resolve()
-        ):
+        """Verify the already-installed native components; runtime never migrates."""
+        if self.repository.target.identity != DatabaseTarget.from_settings("main").identity:
             raise WorkflowPlanRefused("workflow_store_mismatch", 503)
-        _migrate_workflow_plan_snapshot()
-        # Journal schema verification occurs before a borrowed write transaction.
-        with (
-            closing(workflow_journal._connect()) as _owned_connection,
-            _owned_connection as connection,
-        ):
-            pass
-        with self.repository.transaction() as connection:
-            for statement in _SCHEMA:
-                connection.execute(statement)
-            for table, fields in (
-                ("workflow_plan_snapshot", {"plan_id", "component_set_version"}),
-                (
-                    "workflow_plan_snapshot_component",
-                    {"plan_id", "component_name", "content_digest", "content"},
-                ),
-                ("workflow_run_plan_snapshot", {"run_id", "plan_id"}),
-            ):
-                if {
-                    item[1] for item in connection.execute("PRAGMA table_info(" + table + ")")
-                } != fields:
-                    raise WorkflowPlanRefused("private_plan_schema_unavailable", 503)
+        try:
+            with self.repository.read_snapshot() as connection:
+                verify_component(connection, WORKFLOW_MIGRATIONS)
+                verify_component(connection, PRIVATE_PLAN_MIGRATIONS)
+        except (DatabaseError, SchemaMismatch):
+            raise WorkflowPlanRefused("private_plan_schema_unavailable", 503) from None
 
     def _owner(self, principal):
         WorkAuthority._principal(principal)
@@ -266,7 +239,7 @@ class WorkWorkflowPlans:
                 snapshot = DelegationSnapshots._load_authorized(
                     connection,
                     connection.execute(
-                        "SELECT * FROM work_delegation_snapshots WHERE id=?", (seed.snapshot_id,)
+                        "SELECT * FROM work_delegation_snapshots WHERE id=%s", (seed.snapshot_id,)
                     ).fetchone(),
                 )
                 policy = KnowledgePolicy(
@@ -325,14 +298,13 @@ class WorkWorkflowPlans:
         )
         prepared_id = uuid4().hex
         with self.repository.transaction() as connection:
-            private._repair_write_permissions(self.repository.path)
             # Revalidate the pinned seed again in the actual publication transaction.
             for entry in policy_entries:
                 self._seed(connection, principal, entry, view["source_hash"])
             private._store_or_verify(connection, plan_id, components, checked, expected)
             now = time.time()
             connection.execute(
-                "INSERT INTO workflow_prepared_plan VALUES (?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO workflow_prepared_plan VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
                     prepared_id,
                     plan_id,
@@ -384,9 +356,8 @@ class WorkWorkflowPlans:
                 raise WorkflowPlanRefused("prepared_plan_owner_mismatch", 403)
         else:
             self._owner(principal)
-        private._verify_read_permissions(self.repository.path)
         row = connection.execute(
-            "SELECT * FROM workflow_prepared_plan WHERE prepared_id=?", (prepared_id,)
+            "SELECT * FROM workflow_prepared_plan WHERE prepared_id=%s", (prepared_id,)
         ).fetchone()
         if row is None:
             raise WorkflowPlanRefused("prepared_plan_missing", 404)
@@ -475,11 +446,11 @@ class WorkWorkflowPlans:
 
     def _stored(self, connection, run_id):
         reference = connection.execute(
-            "SELECT * FROM workflow_scoped_run WHERE run_id=?", (run_id,)
+            "SELECT * FROM workflow_scoped_run WHERE run_id=%s", (run_id,)
         ).fetchone()
         if reference is None:
             run = connection.execute(
-                "SELECT manifest_json FROM workflow_run WHERE run_id=?", (run_id,)
+                "SELECT manifest_json FROM workflow_run WHERE run_id=%s", (run_id,)
             ).fetchone()
             if (
                 run is not None
@@ -489,16 +460,15 @@ class WorkWorkflowPlans:
                 raise WorkflowPlanRefused("run_plan_attachment_missing", 409)
             return None
         row = connection.execute(
-            "SELECT * FROM workflow_prepared_plan WHERE prepared_id=?", (reference["prepared_id"],)
+            "SELECT * FROM workflow_prepared_plan WHERE prepared_id=%s", (reference["prepared_id"],)
         ).fetchone()
         if row is None or (row["plan_id"], row["principal_id"]) != (
             reference["plan_id"],
             reference["principal_id"],
         ):
             raise WorkflowPlanRefused("run_plan_integrity", 409)
-        private._verify_read_permissions(self.repository.path)
         attachment = connection.execute(
-            "SELECT plan_id FROM workflow_run_plan_snapshot WHERE run_id=?", (run_id,)
+            "SELECT plan_id FROM workflow_run_plan_snapshot WHERE run_id=%s", (run_id,)
         ).fetchone()
         if attachment is None or attachment["plan_id"] != row["plan_id"]:
             raise WorkflowPlanRefused("run_plan_attachment_missing", 409)
@@ -508,7 +478,7 @@ class WorkWorkflowPlans:
         fields = self._fields(document)
         snapshot = private._load_verified(connection, row["plan_id"], fields)
         run = connection.execute(
-            "SELECT manifest_json,spec_snapshot,tier FROM workflow_run WHERE run_id=?", (run_id,)
+            "SELECT manifest_json,spec_snapshot,tier FROM workflow_run WHERE run_id=%s", (run_id,)
         ).fetchone()
         if run is None or run["manifest_json"] != row["public_manifest_json"]:
             raise WorkflowPlanRefused("run_plan_integrity", 409)
@@ -542,20 +512,12 @@ class WorkWorkflowPlans:
         import yaml
 
         from cli_agent_orchestrator.models.workflow import ScriptSpec, WorkflowSpec
-        from cli_agent_orchestrator.services import approval_store, workflow_journal
+        from cli_agent_orchestrator.services import workflow_journal
 
+        self.initialize()
         specs._validate_name(run_id)
         if self.origins is None:
             raise WorkflowPlanRefused("scoped_runtime_unavailable", 503)
-        # Approval migration/verification is outside the borrowed transaction.
-        try:
-            with (
-                closing(approval_store._connect()) as _owned_approval_connection,
-                _owned_approval_connection as approval_connection,
-            ):
-                pass
-        except sqlite3.Error:
-            raise WorkflowPlanRefused("plan_approval_unavailable", 503) from None
         with self.repository.read_snapshot() as prior_connection:
             prior_row, _ = self._prepared(prior_connection, principal, prepared_id)
             workflow_name = prior_row["workflow_name"]
@@ -567,7 +529,7 @@ class WorkWorkflowPlans:
                     raise WorkflowPlanRefused("prepared_plan_changed", 409)
                 if (
                     connection.execute(
-                        "SELECT 1 FROM workflow_plan_approval WHERE plan_id=?", (row["plan_id"],)
+                        "SELECT 1 FROM workflow_plan_approval WHERE plan_id=%s", (row["plan_id"],)
                     ).fetchone()
                     is None
                 ):
@@ -620,13 +582,13 @@ class WorkWorkflowPlans:
                 )
                 private._attach(connection, run_id, row["plan_id"])
                 connection.execute(
-                    "INSERT INTO workflow_scoped_run VALUES (?,?,?,?)",
+                    "INSERT INTO workflow_scoped_run VALUES (%s,%s,%s,%s)",
                     (run_id, prepared_id, principal.id, row["plan_id"]),
                 )
                 if row["tier"] == "yaml":
                     for step in spec.steps:
                         connection.execute(
-                            "INSERT INTO workflow_run_step(run_id,step_id,state,attempts,updated_at) VALUES (?,?,?,0,?)",
+                            "INSERT INTO workflow_run_step(run_id,step_id,state,attempts,updated_at) VALUES (%s,%s,%s,0,%s)",
                             (run_id, step.id, "pending", now),
                         )
                 token = self.origins.create_run_capability(
@@ -687,10 +649,10 @@ class WorkWorkflowPlans:
             if not isinstance(prompt, str) or not prompt or len(prompt.encode("utf-8")) > 32768:
                 raise WorkflowPlanRefused("scope_delivery_invalid", 422)
             count = connection.execute(
-                "SELECT COUNT(*) FROM workflow_plan_step_alias WHERE run_id=?", (run_id,)
+                "SELECT COUNT(*) FROM workflow_plan_step_alias WHERE run_id=%s", (run_id,)
             ).fetchone()[0]
             prior = connection.execute(
-                "SELECT * FROM workflow_plan_step_alias WHERE run_id=? AND step_id=?",
+                "SELECT * FROM workflow_plan_step_alias WHERE run_id=%s AND step_id=%s",
                 (run_id, step_id),
             ).fetchone()
             if prior is None and count >= snapshot.decode_material("limits")["max_steps"]:
@@ -714,7 +676,9 @@ class WorkWorkflowPlans:
             ) != (target_key, request["agent"], provision.ref.id):
                 raise WorkflowPlanRefused("scope_step_binding_changed", 409)
             connection.execute(
-                "INSERT OR IGNORE INTO workflow_plan_step_alias VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO workflow_plan_step_alias "
+                "(run_id,step_id,target_key,agent_profile,workflow_alias,seed_id,seed_revision,provision_id) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (run_id,step_id) DO NOTHING",
                 (
                     run_id,
                     step_id,
@@ -737,7 +701,7 @@ class WorkWorkflowPlans:
     def alias_matches(self, connection, workflow_id, run_id):
         return (
             connection.execute(
-                "SELECT 1 FROM workflow_plan_step_alias WHERE run_id=? AND workflow_alias=?",
+                "SELECT 1 FROM workflow_plan_step_alias WHERE run_id=%s AND workflow_alias=%s",
                 (run_id, workflow_id),
             ).fetchone()
             is not None
@@ -774,7 +738,7 @@ class WorkWorkflowPlans:
         if row["principal_id"] != handoff.principal.id:
             raise WorkflowPlanRefused("run_plan_owner_mismatch", 403)
         alias = connection.execute(
-            "SELECT * FROM workflow_plan_step_alias WHERE run_id=? AND step_id=?",
+            "SELECT * FROM workflow_plan_step_alias WHERE run_id=%s AND step_id=%s",
             (handoff.run_id, handoff.step_id),
         ).fetchone()
         if alias is None or alias["provision_id"] != handoff.provision.ref.id:
@@ -804,15 +768,8 @@ class WorkWorkflowPlans:
 
     def revalidate_attempt(self, connection, attempt_id, generation, *, historical=False):
         # The caller has already revalidated this exact durable Work order/grant.
-        if (
-            connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_scoped_run'"
-            ).fetchone()
-            is None
-        ):
-            return
         binding = connection.execute(
-            "SELECT * FROM work_workflow_step_bindings WHERE work_attempt_id=? AND work_generation=?",
+            "SELECT * FROM work_workflow_step_bindings WHERE work_attempt_id=%s AND work_generation=%s",
             (attempt_id, generation),
         ).fetchone()
         if binding is None:
@@ -824,7 +781,7 @@ class WorkWorkflowPlans:
         if row["principal_id"] != binding["principal_id"]:
             raise WorkflowPlanRefused("run_plan_owner_mismatch", 403)
         alias = connection.execute(
-            "SELECT * FROM workflow_plan_step_alias WHERE run_id=? AND step_id=?",
+            "SELECT * FROM workflow_plan_step_alias WHERE run_id=%s AND step_id=%s",
             (binding["run_id"], binding["step_id"]),
         ).fetchone()
         if alias is None or alias["provision_id"] != binding["provision_id"]:
@@ -841,7 +798,7 @@ class WorkWorkflowPlans:
         if entry is None or entry["contract_hash"] != binding["contract_hash"]:
             raise WorkflowPlanRefused("scope_material_changed", 403)
         derived = connection.execute(
-            "SELECT delivery_json FROM work_workflow_step_provisions WHERE id=?",
+            "SELECT delivery_json FROM work_workflow_step_provisions WHERE id=%s",
             (binding["provision_id"],),
         ).fetchone()
         if derived is None:
@@ -855,7 +812,7 @@ class WorkWorkflowPlans:
         verify_dependency_closure(entry)
         self._validate_target(entry)
         seed = connection.execute(
-            "SELECT * FROM work_workflow_step_provisions WHERE id=?", (entry["provision_id"],)
+            "SELECT * FROM work_workflow_step_provisions WHERE id=%s", (entry["provision_id"],)
         ).fetchone()
         if (
             seed is None
@@ -891,7 +848,7 @@ class WorkWorkflowPlans:
         DelegationSnapshots._load_authorized(
             connection,
             connection.execute(
-                "SELECT * FROM work_delegation_snapshots WHERE id=?", (binding["snapshot_id"],)
+                "SELECT * FROM work_delegation_snapshots WHERE id=%s", (binding["snapshot_id"],)
             ).fetchone(),
         )
 
@@ -906,7 +863,7 @@ class WorkWorkflowPlans:
                 raise WorkflowPlanRefused("run_plan_owner_mismatch", 403)
             if (
                 connection.execute(
-                    "SELECT 1 FROM workflow_plan_approval WHERE plan_id=?", (row["plan_id"],)
+                    "SELECT 1 FROM workflow_plan_approval WHERE plan_id=%s", (row["plan_id"],)
                 ).fetchone()
                 is None
             ):
@@ -954,20 +911,17 @@ class WorkWorkflowPlans:
         """Durable private references cannot be downgraded to a legacy manifest."""
         if execution_manifest.verify_v2_public(manifest_json):
             return True
-        from contextlib import closing
-
-        from cli_agent_orchestrator.services import workflow_journal
-
-        with closing(workflow_journal._connect()) as connection:
+        repository = WorkRepository(DatabaseTarget.from_settings("main"))
+        with repository.read_snapshot() as connection:
+            try:
+                verify_component(connection, WORKFLOW_MIGRATIONS)
+                verify_component(connection, PRIVATE_PLAN_MIGRATIONS)
+            except (DatabaseError, SchemaMismatch):
+                raise WorkflowPlanRefused("run_manifest_integrity", 409) from None
             for table in ("workflow_scoped_run", "workflow_run_plan_snapshot"):
-                if (
-                    connection.execute(
-                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-                    ).fetchone()
-                    and connection.execute(
-                        "SELECT 1 FROM " + table + " WHERE run_id=? LIMIT 1", (run_id,)
-                    ).fetchone()
-                ):
+                if connection.execute(
+                    "SELECT 1 FROM " + table + " WHERE run_id=%s LIMIT 1", (run_id,)
+                ).fetchone():
                     raise WorkflowPlanRefused("run_manifest_integrity", 409)
         return False
 
@@ -1021,8 +975,8 @@ class WorkWorkflowPlans:
         with self.repository.read_snapshot() as connection:
             self.provisioning._registered(connection, principal)
             rows = connection.execute(
-                "SELECT * FROM work_workflow_step_provisions WHERE principal_id=? "
-                "AND workflow_id=? AND spec_hash=? AND state='active' ORDER BY step_id,revision DESC",
+                "SELECT * FROM work_workflow_step_provisions WHERE principal_id=%s "
+                "AND workflow_id=%s AND spec_hash=%s AND state='active' ORDER BY step_id,revision DESC",
                 (principal.id, name, view["source_hash"]),
             ).fetchall()
             seen = set()
@@ -1111,31 +1065,31 @@ class WorkWorkflowPlans:
 
         with self.repository.transaction() as connection:
             row = connection.execute(
-                "SELECT * FROM workflow_prepared_plan WHERE prepared_id=?", (prepared_id,)
+                "SELECT * FROM workflow_prepared_plan WHERE prepared_id=%s", (prepared_id,)
             ).fetchone()
             if row is None:
                 return
             if row["principal_id"] != principal.id and SCOPE_ADMIN not in principal.scopes:
                 raise WorkflowPlanRefused("prepared_plan_owner_mismatch", 403)
             if connection.execute(
-                "SELECT 1 FROM workflow_scoped_run WHERE prepared_id=? LIMIT 1", (prepared_id,)
+                "SELECT 1 FROM workflow_scoped_run WHERE prepared_id=%s LIMIT 1", (prepared_id,)
             ).fetchone():
                 raise WorkflowPlanRefused("prepared_plan_in_use", 409)
             connection.execute(
-                "DELETE FROM workflow_prepared_plan WHERE prepared_id=?", (prepared_id,)
+                "DELETE FROM workflow_prepared_plan WHERE prepared_id=%s", (prepared_id,)
             )
             if (
                 not connection.execute(
-                    "SELECT 1 FROM workflow_prepared_plan WHERE plan_id=?", (row["plan_id"],)
+                    "SELECT 1 FROM workflow_prepared_plan WHERE plan_id=%s", (row["plan_id"],)
                 ).fetchone()
                 and not connection.execute(
-                    "SELECT 1 FROM workflow_run_plan_snapshot WHERE plan_id=?", (row["plan_id"],)
+                    "SELECT 1 FROM workflow_run_plan_snapshot WHERE plan_id=%s", (row["plan_id"],)
                 ).fetchone()
             ):
                 connection.execute(
-                    "DELETE FROM workflow_plan_snapshot_component WHERE plan_id=?",
+                    "DELETE FROM workflow_plan_snapshot_component WHERE plan_id=%s",
                     (row["plan_id"],),
                 )
                 connection.execute(
-                    "DELETE FROM workflow_plan_snapshot WHERE plan_id=?", (row["plan_id"],)
+                    "DELETE FROM workflow_plan_snapshot WHERE plan_id=%s", (row["plan_id"],)
                 )

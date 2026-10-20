@@ -1,7 +1,7 @@
 """Tests for the OKF export backend (#345 Unit 2 — design tests 1/2/3/4 export side).
 
 Fixtures are built by calling ``store()`` into a tmp ``base_dir`` — the
-exporter is exercised against real wiki files, index.md, and SQLite
+exporter is exercised against real wiki files, index.md, and PostgreSQL
 metadata, never hand-written store internals (except the See-Also block,
 which only the compile pipeline writes and is appended file-side here).
 """
@@ -10,10 +10,10 @@ import asyncio
 import os
 import tarfile
 from datetime import datetime
+from test.postgres.orm import configured_orm_engine
 
 import frontmatter
 import pytest
-from sqlalchemy import create_engine
 
 from cli_agent_orchestrator.clients.database import Base
 from cli_agent_orchestrator.services.memory_archive import get_backend
@@ -32,8 +32,7 @@ def _run(coro):
 
 @pytest.fixture
 def svc(tmp_path):
-    db_path = tmp_path / "test.db"
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return MemoryService(base_dir=tmp_path / "memory", db_engine=engine)
 

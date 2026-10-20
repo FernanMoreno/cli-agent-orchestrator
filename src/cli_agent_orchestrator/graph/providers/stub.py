@@ -2,7 +2,7 @@
 
 A minimal dependency-free provider proving the provider seam is
 heterogeneous: every node kind is "stub" (never "topic"), and nothing
-here imports memory_service, wiki_lint, or SQLite. ``project()`` is
+here imports memory_service, wiki_lint, or the persistence layer. ``project()`` is
 declared async per the uniform-async contract (ADR-7) but awaits
 nothing — the async tax at zero cost.
 """

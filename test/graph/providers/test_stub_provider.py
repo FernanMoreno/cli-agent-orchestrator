@@ -51,7 +51,7 @@ class TestStubProvider:
 
     def test_stub_module_imports_no_memory_internals(self):
         """Edge 2: static assertion — stub.py's import statements reference
-        neither memory_service nor wiki_lint nor sqlite.
+        neither memory_service nor wiki_lint.
         """
         tree = ast.parse(inspect.getsource(stub_module))
         imported: list = []
@@ -61,7 +61,7 @@ class TestStubProvider:
             elif isinstance(node, ast.ImportFrom):
                 imported.append(node.module or "")
                 imported.extend(alias.name for alias in node.names)
-        forbidden = ("memory_service", "wiki_lint", "sqlite")
+        forbidden = ("memory_service", "wiki_lint")
         for name in imported:
             assert not any(f in name.lower() for f in forbidden), name
 

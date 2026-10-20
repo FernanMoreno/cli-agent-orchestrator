@@ -1,10 +1,11 @@
 """Fail-closed checks for the Work MCP proxy isolation gate."""
 
+import concurrent.futures
+import hashlib
 import json
 import os
 import platform
 import socket
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -12,10 +13,10 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from test.security.test_work_bubblewrap_bound_content import _bound_worker
 
 import pytest
 
+from cli_agent_orchestrator.clients.postgres import IntegrityError
 from cli_agent_orchestrator.services.work_docker_isolation_proof import (
     issue_docker_runtime_isolation_proof,
 )
@@ -26,11 +27,54 @@ from cli_agent_orchestrator.services.work_mcp_proxy import (
     WorkMcpProxyUncertain,
 )
 
+pytestmark = pytest.mark.postgres
+
+
+@pytest.fixture(autouse=True)
+def _provision_work_postgres_schema(postgres_targets):
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
+
+    bootstrap_scope(postgres_targets.main)
+
 
 @pytest.fixture
 def short_proxy_root():
     with tempfile.TemporaryDirectory(prefix="wp-", dir="/tmp") as directory:
         yield Path(directory)
+
+
+def _bound_worker(tmp_path, *, tools=("Read",)):
+    """Create a durable sent attempt without importing unrelated Bubblewrap tests."""
+    from test.services.test_work_contract_binding import _v2_identity, bind, context
+
+    data = context(tmp_path, grant_tools={"knowledge.read", *tools})
+    repository = data[2]
+    models, _, _, _, _, _, _, _, original = data
+    contract = models.EffectiveWorkContractV2(
+        **{
+            **original.model_dump(),
+            "schema_version": 2,
+            "permissions": original.permissions.model_copy(
+                update={"commands": ("/bin/alpha", "/bin/beta"), "tools": tuple(tools)}
+            ),
+            "executable_identities": (
+                models.ExecutableIdentity(**_v2_identity(command_token="/bin/alpha")),
+                models.ExecutableIdentity(
+                    **_v2_identity(
+                        command_token="/bin/beta",
+                        content_reference="sha256:" + "b" * 64,
+                        sha256_digest="b" * 64,
+                    )
+                ),
+            ),
+        }
+    )
+    binding = bind(data, contract=contract)
+    with repository.transaction() as connection:
+        connection.execute(
+            "UPDATE work_attempts SET state='sent' WHERE id=%s", (binding.attempt_id,)
+        )
+    return repository, binding, None, None
 
 
 def test_submit_result_mcp_request_allows_large_bounded_result_payload():
@@ -382,7 +426,7 @@ def test_bound_proxy_issue_reserves_endpoint_without_secret_and_cannot_be_reissu
     with repository.read_snapshot() as connection:
         assert connection.execute(
             "SELECT generation,attempt_revision,contract_hash FROM work_mcp_proxy_issues "
-            "WHERE attempt_id=?",
+            "WHERE attempt_id=%s",
             (binding.attempt_id,),
         ).fetchone()[:] == (1, 1, binding.contract_hash)
     proxy.close()
@@ -490,7 +534,7 @@ def test_bound_proxy_without_activated_isolation_proof_never_calls_upstream(
     proxy.close()
 
 
-def test_proxy_commits_effect_intent_before_upstream_without_holding_sqlite_writer(
+def test_proxy_commits_effect_intent_before_upstream_without_holding_store_writer(
     tmp_path, short_proxy_root
 ):
     repository, binding, _, _ = _bound_worker(tmp_path)
@@ -522,7 +566,7 @@ def test_proxy_commits_effect_intent_before_upstream_without_holding_sqlite_writ
                 connection.execute(
                     "SELECT state FROM work_mcp_proxy_effect_events "
                     "WHERE effect_id=(SELECT effect_id FROM work_mcp_proxy_effects "
-                    "WHERE attempt_id=? ORDER BY created_at DESC LIMIT 1) ORDER BY sequence DESC LIMIT 1",
+                    "WHERE attempt_id=%s ORDER BY created_at DESC LIMIT 1) ORDER BY sequence DESC LIMIT 1",
                     (binding.attempt_id,),
                 ).fetchone()[0]
                 == "intent"
@@ -563,20 +607,21 @@ def test_proxy_commits_effect_intent_before_upstream_without_holding_sqlite_writ
         ).fetchall()
         assert [row[0] for row in events] == ["intent", "completed"]
         effect = connection.execute(
-            "SELECT effect_id,request_sha256 FROM work_mcp_proxy_effects WHERE attempt_id=?",
+            "SELECT effect_id,request_sha256 FROM work_mcp_proxy_effects WHERE attempt_id=%s",
             (binding.attempt_id,),
         ).fetchone()
     assert len(effect["request_sha256"]) == 64
-    with repository.transaction() as connection:
-        with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(IntegrityError):
+        with repository.transaction() as connection:
             connection.execute(
                 "INSERT INTO work_mcp_proxy_effects "
-                "(effect_id,attempt_id,generation,request_sha256,created_at) VALUES (?,?,?,?,?)",
+                "(effect_id,attempt_id,generation,request_sha256,created_at) VALUES (%s,%s,%s,%s,%s)",
                 ("b" * 32, binding.attempt_id, 1, effect["request_sha256"], time.time()),
             )
-        with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(IntegrityError):
+        with repository.transaction() as connection:
             connection.execute(
-                "UPDATE work_mcp_proxy_effect_events SET state='uncertain' WHERE effect_id=?",
+                "UPDATE work_mcp_proxy_effect_events SET state='uncertain' WHERE effect_id=%s",
                 (effect["effect_id"],),
             )
     with pytest.raises(WorkMcpProxyRejected):
@@ -682,7 +727,7 @@ def test_proxy_serves_sequential_calls_and_does_not_replay_identical_request(
     with repository.read_snapshot() as connection:
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=?",
+                "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=%s",
                 (binding.attempt_id,),
             ).fetchone()[0]
             == 1
@@ -702,7 +747,7 @@ def test_proxy_accepts_monotonic_attempt_revision_progress_after_issue(tmp_path,
         if len(calls) == 1:
             with repository.transaction() as connection:
                 connection.execute(
-                    "UPDATE work_attempts SET state='acknowledged',revision=revision+1 WHERE id=?",
+                    "UPDATE work_attempts SET state='acknowledged',revision=revision+1 WHERE id=%s",
                     (binding.attempt_id,),
                 )
         return {"jsonrpc": "2.0", "id": request["id"], "result": {"ok": True}}
@@ -743,7 +788,7 @@ def test_proxy_accepts_monotonic_attempt_revision_progress_after_issue(tmp_path,
             assert json.loads(reader.readline())["id"] == request_id
         with repository.read_snapshot() as connection:
             row = connection.execute(
-                "SELECT state,revision FROM work_attempts WHERE id=?", (binding.attempt_id,)
+                "SELECT state,revision FROM work_attempts WHERE id=%s", (binding.attempt_id,)
             ).fetchone()
         assert tuple(row) == ("acknowledged", 2)
     finally:
@@ -825,19 +870,19 @@ def test_proxy_recovery_turns_open_intent_into_uncertain(tmp_path):
         connection.execute(
             "INSERT INTO work_mcp_proxy_issues "
             "(attempt_id,generation,attempt_revision,contract_hash,expires_at,issued_at) "
-            "VALUES (?,1,1,?,?,?)",
+            "VALUES (%s,1,1,%s,%s,%s)",
             (binding.attempt_id, binding.contract_hash, time.time() + 30, time.time()),
         )
         connection.execute(
             "INSERT INTO work_mcp_proxy_effects "
             "(effect_id,attempt_id,generation,request_sha256,created_at) "
-            "VALUES ('e' || '1' || '000000000000000000000000000000',?,1,?,?)",
+            "VALUES ('e' || '1' || '000000000000000000000000000000',%s,1,%s,%s)",
             (binding.attempt_id, "f" * 64, time.time()),
         )
         connection.execute(
             "INSERT INTO work_mcp_proxy_effect_events "
             "(effect_id,sequence,state,occurred_at) "
-            "VALUES ('e1000000000000000000000000000000',1,'intent',?)",
+            "VALUES ('e1000000000000000000000000000000',1,'intent',%s)",
             (time.time(),),
         )
     assert proxy.recover_incomplete_effects(binding.attempt_id, 1) == 1
@@ -850,7 +895,20 @@ def test_proxy_recovery_turns_open_intent_into_uncertain(tmp_path):
                 "WHERE effect_id='e1000000000000000000000000000000' ORDER BY sequence"
             )
         ] == ["intent", "uncertain"]
-    proxy.reconcile_effect("e1000000000000000000000000000000", "operator confirmed no replay")
+    effect_id = "e1000000000000000000000000000000"
+
+    def reconcile():
+        try:
+            proxy.reconcile_effect(effect_id, "operator confirmed no replay")
+        except WorkMcpProxyRejected:
+            return "already-reconciled"
+        return "reconciled"
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        assert sorted(pool.map(lambda _index: reconcile(), range(2))) == [
+            "already-reconciled",
+            "reconciled",
+        ]
     with repository.read_snapshot() as connection:
         assert (
             connection.execute(
@@ -859,3 +917,292 @@ def test_proxy_recovery_turns_open_intent_into_uncertain(tmp_path):
             ).fetchone()[0]
             == "reconciled"
         )
+
+
+def test_proxy_issue_recovery_serializes_event_sequence_and_reconciliation(tmp_path):
+    repository, binding, _, _ = _bound_worker(tmp_path)
+    proxy = WorkMcpProxy(repository)
+    with repository.transaction() as connection:
+        connection.execute(
+            "INSERT INTO work_mcp_proxy_issues "
+            "(attempt_id,generation,attempt_revision,contract_hash,expires_at,issued_at) "
+            "VALUES (%s,%s,1,%s,%s,%s)",
+            (binding.attempt_id, 1, binding.contract_hash, time.time() + 30, time.time()),
+        )
+        connection.execute(
+            "INSERT INTO work_mcp_proxy_issue_events "
+            "(attempt_id,generation,sequence,state,occurred_at) "
+            "VALUES (%s,%s,1,'issued',%s)",
+            (binding.attempt_id, 1, time.time()),
+        )
+
+    assert proxy.recover_incomplete_issues(binding.attempt_id, 1) == 1
+    assert proxy.recover_incomplete_issues(binding.attempt_id, 1) == 0
+
+    def reconcile():
+        try:
+            proxy.reconcile_issue(binding.attempt_id, 1, "operator closed unused issue")
+        except WorkMcpProxyRejected:
+            return "already-reconciled"
+        return "reconciled"
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        assert sorted(pool.map(lambda _index: reconcile(), range(2))) == [
+            "already-reconciled",
+            "reconciled",
+        ]
+    with repository.read_snapshot() as connection:
+        states = [
+            row[0]
+            for row in connection.execute(
+                "SELECT state FROM work_mcp_proxy_issue_events "
+                "WHERE attempt_id=%s AND generation=%s ORDER BY sequence",
+                (binding.attempt_id, 1),
+            )
+        ]
+    assert states == ["issued", "abandoned", "reconciled"]
+
+
+def _effect_hash(value, *, newline=False):
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode(
+        "utf-8"
+    )
+    if newline:
+        encoded += b"\n"
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _serve_message_request_and_read_effect_hashes(tmp_path, short_proxy_root, request, response):
+    repository, binding, _, _ = _bound_worker(tmp_path, tools=("Read", "cao.work.message"))
+
+    class LiveProof:
+        def require_current(self, *_args):
+            return None
+
+    proxy = WorkMcpProxy(
+        repository,
+        endpoint_root=short_proxy_root,
+        server_secret_factory=lambda: b"private",
+        upstream=lambda _request, _secret: response,
+    )
+    endpoint = proxy.create_bound_attempt(
+        attempt_id=binding.attempt_id,
+        generation=1,
+        expected_attempt_revision=1,
+        contract_hash=binding.contract_hash,
+        expires_at=time.time() + 30,
+    )
+    proxy._isolation_proof = LiveProof()
+    proxy._secret = b"private"
+    client = socket.socket(fileno=os.dup(endpoint.worker_fd))
+    response_frame = bytearray()
+    request_frame = (
+        json.dumps(request, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode(
+            "utf-8"
+        )
+        + b"\n"
+    )
+    try:
+        client.sendall(request_frame)
+        proxy.serve_once(endpoint)
+        while not response_frame.endswith(b"\n"):
+            chunk = client.recv(4096)
+            if not chunk:
+                break
+            response_frame.extend(chunk)
+    finally:
+        client.close()
+        proxy.close()
+
+    with repository.read_snapshot() as connection:
+        effect = connection.execute(
+            "SELECT effect.request_sha256,event.response_sha256 "
+            "FROM work_mcp_proxy_effects AS effect "
+            "JOIN work_mcp_proxy_effect_events AS event USING(effect_id) "
+            "WHERE effect.attempt_id=%s AND event.state='completed' "
+            "ORDER BY event.sequence DESC LIMIT 1",
+            (binding.attempt_id,),
+        ).fetchone()
+    assert effect is not None
+    audit = {"request_sha256": effect[0], "response_sha256": effect[1]}
+    return bytes(response_frame), audit
+
+
+def test_work_message_request_effect_hash_redacts_body_and_preserves_json_rpc_id(
+    tmp_path, short_proxy_root
+):
+    body = "private-message-body-for-effect-audit"
+    request = {
+        "jsonrpc": "2.0",
+        "id": "message-request-id-must-remain",
+        "method": "tools/call",
+        "params": {
+            "name": "cao.work.message",
+            "arguments": {
+                "operation": "send",
+                "receiver_work_item_id": "receiver-work-item",
+                "idempotency_key": "message-key-1",
+                "body": body,
+            },
+        },
+    }
+    response = {
+        "jsonrpc": "2.0",
+        "id": request["id"],
+        "result": {"content": [{"type": "text", "text": '{"message_id":"message-1"}'}]},
+    }
+
+    response_frame, audit = _serve_message_request_and_read_effect_hashes(
+        tmp_path, short_proxy_root, request, response
+    )
+    redacted_request = json.loads(json.dumps(request))
+    redacted_request["params"]["arguments"].pop("body")
+    without_id = json.loads(json.dumps(redacted_request))
+    without_id.pop("id")
+    raw_request_hash = _effect_hash(request)
+
+    assert json.loads(response_frame) == response
+    assert audit["request_sha256"] == _effect_hash(redacted_request)
+    assert audit["request_sha256"] != _effect_hash(without_id)
+    assert audit["request_sha256"] != raw_request_hash
+    assert audit["response_sha256"] == _effect_hash(response, newline=True)
+    serialized_audit = json.dumps(audit, sort_keys=True)
+    assert body not in serialized_audit
+    assert hashlib.sha256(body.encode("utf-8")).hexdigest() not in serialized_audit
+    assert raw_request_hash not in serialized_audit
+
+
+def test_work_message_receive_effect_hash_redacts_nested_max_size_bodies_within_response_bound(
+    tmp_path, short_proxy_root
+):
+    body = "\x01" * 4096
+    assert len(body.encode("utf-8")) == 4096
+    assert "\x00" not in body
+    messages = [
+        {
+            "message_id": f"message-{index}",
+            "sender_work_item_id": "sender-work-item",
+            "body": body,
+            "created_at": f"2026-10-17T10:00:0{index}Z",
+        }
+        for index in (1, 2)
+    ]
+    request = {
+        "jsonrpc": "2.0",
+        "id": "receive-message-request",
+        "method": "tools/call",
+        "params": {
+            "name": "cao.work.message",
+            "arguments": {"operation": "receive", "limit": 2},
+        },
+    }
+    response = {
+        "jsonrpc": "2.0",
+        "id": request["id"],
+        "result": {
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(
+                        {"messages": messages}, separators=(",", ":"), ensure_ascii=False
+                    ),
+                }
+            ]
+        },
+    }
+
+    response_frame, audit = _serve_message_request_and_read_effect_hashes(
+        tmp_path, short_proxy_root, request, response
+    )
+    decoded_response = json.loads(response_frame)
+    decoded_messages = json.loads(decoded_response["result"]["content"][0]["text"])["messages"]
+    redacted_messages = [
+        {key: value for key, value in message.items() if key != "body"} for message in messages
+    ]
+    redacted_text = json.dumps(
+        {"messages": redacted_messages},
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    redacted_response = json.loads(json.dumps(response))
+    redacted_response["result"]["content"][0]["text"] = redacted_text
+    raw_response_hash = _effect_hash(response, newline=True)
+
+    assert decoded_messages == messages
+    assert response_frame.endswith(b"\n")
+    assert len(response_frame) <= 65536
+    assert audit["request_sha256"] == _effect_hash(request)
+    assert audit["response_sha256"] == _effect_hash(redacted_response, newline=True)
+    assert audit["response_sha256"] != raw_response_hash
+    serialized_audit = json.dumps(audit, sort_keys=True)
+    assert hashlib.sha256(body.encode("utf-8")).hexdigest() not in serialized_audit
+    assert raw_response_hash not in serialized_audit
+
+
+def test_work_message_request_frame_bound_includes_newline_and_rejects_before_dispatch(
+    tmp_path, short_proxy_root
+):
+    repository, binding, _, _ = _bound_worker(tmp_path, tools=("Read", "cao.work.message"))
+    request = {
+        "jsonrpc": "2.0",
+        "id": "oversized-message-request",
+        "method": "tools/call",
+        "params": {
+            "name": "cao.work.message",
+            "arguments": {
+                "operation": "send",
+                "receiver_work_item_id": "receiver-work-item",
+                "idempotency_key": "message-key-oversized-frame",
+                "body": "",
+            },
+        },
+    }
+    base_length = len(
+        json.dumps(request, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    )
+    request["params"]["arguments"]["body"] = "x" * (16384 - base_length)
+    request_frame = (
+        json.dumps(request, separators=(",", ":"), ensure_ascii=False).encode("utf-8") + b"\n"
+    )
+    assert len(request_frame[:-1]) == 16384
+    assert len(request_frame) == 16385
+
+    calls = []
+
+    class LiveProof:
+        def require_current(self, *_args):
+            return None
+
+    proxy = WorkMcpProxy(
+        repository,
+        endpoint_root=short_proxy_root,
+        server_secret_factory=lambda: b"private",
+        upstream=lambda request, _secret: calls.append(request)
+        or {"jsonrpc": "2.0", "id": request["id"], "result": {}},
+    )
+    endpoint = proxy.create_bound_attempt(
+        attempt_id=binding.attempt_id,
+        generation=1,
+        expected_attempt_revision=1,
+        contract_hash=binding.contract_hash,
+        expires_at=time.time() + 30,
+    )
+    proxy._isolation_proof = LiveProof()
+    proxy._secret = b"private"
+    client = socket.socket(fileno=os.dup(endpoint.worker_fd))
+    try:
+        client.sendall(request_frame)
+        with pytest.raises(WorkMcpProxyRejected):
+            proxy.serve_once(endpoint)
+    finally:
+        client.close()
+        proxy.close()
+
+    with repository.read_snapshot() as connection:
+        effect_count = connection.execute(
+            "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=%s",
+            (binding.attempt_id,),
+        ).fetchone()[0]
+    assert calls == []
+    assert effect_count == 0

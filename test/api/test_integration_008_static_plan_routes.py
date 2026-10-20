@@ -5,7 +5,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 
+
+@pytest.mark.offline_database
 def test_built_ui_mount_does_not_shadow_prepared_plan_routes(tmp_path):
     package = tmp_path / "package"
     (package / "web_ui").mkdir(parents=True)

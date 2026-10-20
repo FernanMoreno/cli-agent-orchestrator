@@ -2,7 +2,7 @@
 
 Covers AC 1-6: topic nodes from the index, related_keys + contradiction
 edges, cross-scope edge filtering, empty-scope behaviour, and a SOFT
-timing assertion for NFR-1. Fixtures use a real tmp_path wiki + SQLite
+timing assertion for NFR-1. Fixtures use a real tmp_path wiki + PostgreSQL
 engine (no mocking of the memory internals); the lint LLM is stubbed.
 """
 
@@ -10,6 +10,7 @@ import asyncio
 import json
 import time
 from dataclasses import replace
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import AsyncMock
 
 import pytest
@@ -38,7 +39,7 @@ BODY = "A reasonably long article body so contradiction pairing engages." + " fi
 @pytest.fixture
 def db_engine(tmp_path):
     db_path = tmp_path / "test.db"
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return engine
 

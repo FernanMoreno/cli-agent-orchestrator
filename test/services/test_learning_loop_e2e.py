@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from typing import Any
 from unittest.mock import patch
 
@@ -60,9 +61,7 @@ def _ctx(agent: str = "transformer", session: str = "ssis-batch-1") -> dict:
 
 @pytest.fixture
 def stack(tmp_path: Path) -> Any:
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'e2e.db'}", connect_args={"check_same_thread": False}
-    )
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     mem = MemoryService(base_dir=tmp_path / "mem", db_engine=engine)
     outcomes = OutcomeService(db_engine=engine)

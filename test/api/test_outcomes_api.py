@@ -5,6 +5,7 @@ the settings seam; storage tests use a real OutcomeService on a tmp engine
 patched into the service constructor's session factory.
 """
 
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import patch
 
 import pytest
@@ -19,9 +20,7 @@ LEARNING_TARGET = "cli_agent_orchestrator.services.settings_service.is_learning_
 @pytest.fixture
 def isolated_db(tmp_path):
     """Patch the global SessionLocal used by OutcomeService to a tmp engine."""
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'outcomes.db'}", connect_args={"check_same_thread": False}
-    )
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     factory = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with patch("cli_agent_orchestrator.clients.database.SessionLocal", factory):
@@ -205,9 +204,7 @@ class TestStoreLessonMcpTool:
         from cli_agent_orchestrator.mcp_server.server import store_lesson
         from cli_agent_orchestrator.services.memory_service import MemoryService
 
-        engine = create_engine(
-            f"sqlite:///{tmp_path / 'lesson.db'}", connect_args={"check_same_thread": False}
-        )
+        engine = configured_orm_engine()
         Base.metadata.create_all(bind=engine)
         svc = MemoryService(base_dir=tmp_path / "mem", db_engine=engine)
 
@@ -326,9 +323,7 @@ class TestStoreLessonAuthorization:
         from cli_agent_orchestrator.mcp_server.server import store_lesson
         from cli_agent_orchestrator.services.memory_service import MemoryService
 
-        engine = create_engine(
-            f"sqlite:///{tmp_path / 's.db'}", connect_args={"check_same_thread": False}
-        )
+        engine = configured_orm_engine()
         Base.metadata.create_all(bind=engine)
         svc = MemoryService(base_dir=tmp_path / "mem", db_engine=engine)
 

@@ -1,6 +1,6 @@
 """Per-session-name lifecycle lock serializing session CREATE against TEARDOWN.
 
-Why this exists (#498): tmux and the terminal registry (SQLite) are two separate
+Why this exists (#498): tmux and the terminal registry (PostgreSQL) are two separate
 stores, and a session's lifecycle transitions write BOTH. Without mutual
 exclusion, a create landing inside a teardown's critical section interleaves
 arbitrarily and orphans state in one store or the other:

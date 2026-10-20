@@ -6,7 +6,6 @@ for transport authentication. Legacy file memory is restricted to the local oper
 
 import hashlib
 import json
-import sqlite3
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -14,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
+from cli_agent_orchestrator.clients.postgres import Connection, DatabaseError
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.security.auth import SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE, Principal
 from cli_agent_orchestrator.services.secret_gate import redact_secrets
@@ -63,7 +63,7 @@ def require_legacy_operator(principal=None):
 
 @dataclass(frozen=True)
 class KnowledgePolicy:
-    """Bind policy to an authenticated job/grant context and the same SQLite store.
+    """Bind policy to an authenticated job/grant context and the same PostgreSQL store.
 
     Tools are explicit grant capabilities: knowledge.read (also instructions),
     knowledge.propose, knowledge.review and knowledge.tombstone. Scope and tool
@@ -87,7 +87,7 @@ class KnowledgePolicy:
 
         connection.execute(
             "INSERT INTO work_knowledge_access_audit "
-            "(actor_id,authority_hash,action,target_hash,outcome,occurred_at) VALUES (?,?,?,?,?,?)",
+            "(actor_id,authority_hash,action,target_hash,outcome,occurred_at) VALUES (%s,%s,%s,%s,%s,%s)",
             (
                 principal.id,
                 digest([self.job_id, self.grant_id, self.expected_grant_revision]),
@@ -107,7 +107,7 @@ class KnowledgePolicy:
 
     def __call__(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         principal: Principal,
         action: str,
         scope: str,
@@ -129,9 +129,7 @@ class KnowledgePolicy:
             raise KnowledgeAccessDenied("verified knowledge authority required")
         if not connection.in_transaction:
             raise KnowledgeAccessDenied("knowledge policy requires the caller's transaction")
-        databases = connection.execute("PRAGMA database_list").fetchall()
-        main = next((row[2] for row in databases if row[1] == "main"), None)
-        if not main or Path(main).resolve() != self.repository.path.resolve():
+        if connection.target.identity != self.repository.target.identity:
             raise KnowledgeAccessDenied("knowledge transaction belongs to another authority")
         self.repository._verify(connection)
         try:
@@ -172,7 +170,7 @@ _ENCLOSING_LEGACY_AUDIT: ContextVar[tuple[WorkRepository, str, str] | None] = Co
 
 
 def join_legacy_database_audit(principal, db):
-    """Reuse a durable outer intent only for its verified SQLite transaction."""
+    """Reuse a durable outer intent only for its verified PostgreSQL transaction."""
     active = _ENCLOSING_LEGACY_AUDIT.get()
     if active is None:
         raise KnowledgeAccessDenied(
@@ -182,11 +180,10 @@ def join_legacy_database_audit(principal, db):
     require_legacy_operator(principal)
     if principal.id != actor_id:
         raise KnowledgeAccessDenied("shared legacy transaction belongs to another authority")
-    connection = db.connection().connection.driver_connection
-    databases = connection.execute("PRAGMA database_list").fetchall()
-    main = next((row[2] for row in databases if row[1] == "main"), None)
-    if not main or Path(main).resolve() != repository.path.resolve():
-        raise KnowledgeAccessDenied("shared legacy transaction belongs to another authority")
+    owned = db.connection()
+    if owned.info.get("cao_target_identity") != repository.target.identity:
+        raise KnowledgeAccessDenied("shared transaction belongs to another authority")
+    connection = Connection.borrow(owned.connection.driver_connection, repository.target)
     repository._verify(connection)
     return operation_id
 
@@ -224,12 +221,11 @@ def legacy_memory_access(repository: WorkRepository, principal: Principal, actio
 
     def append(phase):
         try:
-            with repository.transaction() as connection:
-                repository._verify(connection)
+            with repository.audited_write_transaction() as connection:
                 connection.execute(
                     "INSERT INTO work_memory_access_audit "
                     "(operation_id,actor_id,action,target_hash,phase,occurred_at) "
-                    "VALUES (?,?,?,?,?,?)",
+                    "VALUES (%s,%s,%s,%s,%s,%s)",
                     (
                         operation_id,
                         principal.id,

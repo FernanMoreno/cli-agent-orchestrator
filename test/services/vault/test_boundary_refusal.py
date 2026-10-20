@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from typing import Any
 
 from sqlalchemy import create_engine, or_
@@ -44,10 +45,7 @@ class _BoundaryState:
 def _boundary_state(tmp_path, monkeypatch, *, enabled: bool = True) -> _BoundaryState:
     monkeypatch.setattr(atomic_file, "LOCK_DIR", tmp_path / "atomic-locks")
     monkeypatch.setattr(vault_lock, "LOCK_DIR", tmp_path / "vault-locks")
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'state.db'}",
-        connect_args={"check_same_thread": False},
-    )
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(database, "SessionLocal", Session)

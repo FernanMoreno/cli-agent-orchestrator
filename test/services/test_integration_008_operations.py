@@ -3,11 +3,11 @@
 import asyncio
 import time
 from test.integration.test_work_dispatch import admit, context
+from test.postgres.orm import configured_orm_engine
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.pool import StaticPool
 
+from cli_agent_orchestrator.clients import database
 from cli_agent_orchestrator.security import auth
 from cli_agent_orchestrator.services.work_projection import WorkQueries
 from cli_agent_orchestrator.services.work_scheduler import WorkScheduler
@@ -21,7 +21,7 @@ def test_expired_hold_is_owner_actionable_without_release_or_writes(context):
     attempt = context.repo.get_work(work["id"])["attempts"][-1]
     with context.repo.transaction() as connection:
         connection.execute(
-            "UPDATE work_attempts SET lease_expires_at=? WHERE id=?",
+            "UPDATE work_attempts SET lease_expires_at=%s WHERE id=%s",
             (time.time() - 1, attempt["id"]),
         )
     before = context.repo.get_work(work["id"])
@@ -49,16 +49,12 @@ def test_operational_query_rejects_foreign_and_unverified_identity(context):
 
 
 def test_durable_node_survives_disconnect_and_restart_without_replay():
-    from cli_agent_orchestrator.clients.runtime_channel_schema import RemoteBase
     from cli_agent_orchestrator.runtime_channel.registry import RuntimeRegistry
     from cli_agent_orchestrator.runtime_channel.store import RemoteOperationStore
     from cli_agent_orchestrator.services.work_operations import runtime_operations
 
-    engine = create_engine(
-        "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
-    )
-    RemoteBase.metadata.create_all(engine)
-    store = RemoteOperationStore(engine)
+    engine = configured_orm_engine()
+    store = RemoteOperationStore(database.main_target())
     store.activate_runtime("g04-known-node", "incarnation-1")
     admin = auth._verified_principal("issuer", "operator", [auth.SCOPE_ADMIN], "jwt")
     registry = RuntimeRegistry()
@@ -112,7 +108,6 @@ def test_real_jwt_routes_enforce_owner_and_admin_boundaries(context, monkeypatch
     from fastapi.testclient import TestClient
 
     from cli_agent_orchestrator.api import work_routes
-    from cli_agent_orchestrator.clients.runtime_channel_schema import RemoteBase
     from cli_agent_orchestrator.runtime_channel import server
     from cli_agent_orchestrator.runtime_channel.registry import RuntimeRegistry
     from cli_agent_orchestrator.runtime_channel.store import RemoteOperationStore
@@ -130,11 +125,10 @@ def test_real_jwt_routes_enforce_owner_and_admin_boundaries(context, monkeypatch
         ),
     )
     monkeypatch.setattr(work_routes, "queries", lambda: WorkQueries(context.repo))
-    engine = create_engine(
-        "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
+    engine = configured_orm_engine()
+    RemoteOperationStore(database.main_target()).activate_runtime(
+        "private-node", "private-incarnation"
     )
-    RemoteBase.metadata.create_all(engine)
-    RemoteOperationStore(engine).activate_runtime("private-node", "private-incarnation")
     monkeypatch.setattr(server.database, "engine", engine)
     monkeypatch.setattr(server, "runtime_registry", RuntimeRegistry())
     application = FastAPI()
@@ -199,18 +193,14 @@ def test_foreign_scoped_controller_is_private_and_existing_resume_stays_fenced(c
 
 
 def test_known_current_incarnation_observation_preserves_old_reconcile_operation():
-    from cli_agent_orchestrator.clients.runtime_channel_schema import RemoteBase
     from cli_agent_orchestrator.runtime_channel.durable_connection import DurableRuntimeConnection
     from cli_agent_orchestrator.runtime_channel.protocol import CommandType
     from cli_agent_orchestrator.runtime_channel.registry import RuntimeRegistry
     from cli_agent_orchestrator.runtime_channel.store import RemoteOperationStore
     from cli_agent_orchestrator.services.work_operations import runtime_operations
 
-    engine = create_engine(
-        "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
-    )
-    RemoteBase.metadata.create_all(engine)
-    store = RemoteOperationStore(engine)
+    engine = configured_orm_engine()
+    store = RemoteOperationStore(database.main_target())
     store.activate_runtime("node-a", "old")
     store.prepare(
         "old-operation", "node-a", "old", CommandType.LAUNCH, {"private": "secret-not-diagnostic"}

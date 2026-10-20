@@ -10,9 +10,9 @@ import hashlib
 import logging
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 
+from cli_agent_orchestrator.clients.postgres.config import DatabaseTarget
 from cli_agent_orchestrator.models.work_origin import WorkflowStepResultV1
 from cli_agent_orchestrator.services import workflow_journal
 
@@ -39,11 +39,14 @@ class ProjectionOutcome:
     ]
 
 
-def _repository_path(repository) -> Path:
+def _repository_identity(repository) -> tuple[str, int, str, str, str]:
     try:
-        return Path(repository.path).resolve()
-    except (AttributeError, TypeError, ValueError) as error:
-        raise ValueError("workflow projection requires a durable Work repository") from error
+        target = repository.target
+        if isinstance(target, DatabaseTarget):
+            return target.identity
+    except (AttributeError, TypeError, ValueError):
+        pass
+    raise ValueError("workflow projection requires a durable PostgreSQL Work repository")
 
 
 def _required(value, field: str):
@@ -66,16 +69,16 @@ class WorkflowStepProjector:
     """Project Work results for durable ``work_pending`` steps after restart.
 
     ``repository``, ``workflow_origins`` and ``work_service`` must all belong to
-    the same durable SQLite store.  Every invocation re-reads journal state,
+    the same durable PostgreSQL target. Every invocation re-reads journal state,
     the exact immutable binding, and the accepted result; no process-local
     result cache participates in recovery.
     """
 
     def __init__(self, repository, workflow_origins, work_service):
-        path = _repository_path(repository)
+        identity = _repository_identity(repository)
         if (
-            _repository_path(getattr(workflow_origins, "repository", None)) != path
-            or _repository_path(getattr(work_service, "repository", None)) != path
+            _repository_identity(getattr(workflow_origins, "repository", None)) != identity
+            or _repository_identity(getattr(work_service, "repository", None)) != identity
         ):
             raise ValueError("workflow projector dependencies must use the same Work repository")
         if not callable(getattr(workflow_origins, "read_step_binding", None)):

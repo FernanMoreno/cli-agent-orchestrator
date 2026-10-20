@@ -1,6 +1,5 @@
 """Additive v1 knowledge authority; no legacy memory or recovery-cursor fallback."""
 
-import sqlite3
 from contextlib import contextmanager
 from typing import Annotated, Literal
 
@@ -10,6 +9,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
+from cli_agent_orchestrator.clients.postgres import DatabaseError, IntegrityError
 from cli_agent_orchestrator.clients.work_repository import SchemaMismatch, WorkRepository
 from cli_agent_orchestrator.models.memory import KnowledgeRevision, KnowledgeScope
 from cli_agent_orchestrator.security.auth import Principal, get_current_principal
@@ -108,9 +108,9 @@ class RecoveryPage(BaseModel):
 
 
 def repository() -> WorkRepository:
-    from cli_agent_orchestrator.constants import DATABASE_FILE
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 
-    return WorkRepository(DATABASE_FILE)
+    return WorkRepository(DatabaseTarget.from_settings())
 
 
 def authority(
@@ -120,7 +120,7 @@ def authority(
     store: Annotated[WorkRepository, Depends(repository)],
 ) -> MemoryService:
     # Selectors are not authority: the policy checks their live durable chain in
-    # the service's own SQLite transaction for every read and mutation.
+    # the service's own PostgreSQL transaction for every read and mutation.
     return MemoryService(knowledge_policy=KnowledgePolicy(store, job_id, grant_id, grant_revision))
 
 
@@ -234,7 +234,7 @@ def knowledge_errors():
         raise HTTPException(
             422, detail=_error("knowledge_request_invalid", "Invalid knowledge request.")
         ) from error
-    except (SchemaMismatch, sqlite3.Error) as error:
+    except (SchemaMismatch, DatabaseError) as error:
         raise HTTPException(
             503,
             detail=_error(

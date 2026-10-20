@@ -10,10 +10,10 @@ import json
 import math
 import re
 import secrets
-import sqlite3
 import time
 from typing import Callable
 
+from cli_agent_orchestrator.clients.postgres import Connection, DatabaseError
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.memory import (
     KnowledgeDecision,
@@ -45,7 +45,7 @@ class KnowledgeCursorInvalid(ValueError):
     """The opaque recovery cursor does not have a supported wire format."""
 
 
-KnowledgeAuthorizer = Callable[[sqlite3.Connection, Principal, str, KnowledgeScope, str], None]
+KnowledgeAuthorizer = Callable[[Connection, Principal, str, KnowledgeScope, str], None]
 
 
 def _enum(enum_type, value):
@@ -126,7 +126,7 @@ class KnowledgeRevisions:
     @staticmethod
     def _head(connection, record_id):
         row = connection.execute(
-            "SELECT * FROM work_knowledge_records WHERE id=?", (_identifier(record_id),)
+            "SELECT * FROM work_knowledge_records WHERE id=%s", (_identifier(record_id),)
         ).fetchone()
         if row is None:
             raise KeyError("knowledge record not found")
@@ -137,7 +137,7 @@ class KnowledgeRevisions:
         if type(expected_version) is not int or head["version"] != expected_version:
             raise KnowledgeConflict("knowledge version changed")
         updated = connection.execute(
-            "UPDATE work_knowledge_records SET version=version+1 WHERE id=? AND version=?",
+            "UPDATE work_knowledge_records SET version=version+1 WHERE id=%s AND version=%s",
             (head["id"], expected_version),
         )
         if updated.rowcount != 1:
@@ -149,7 +149,7 @@ class KnowledgeRevisions:
         row = connection.execute(
             "SELECT r.id,a.id AS attempt_id,w.id AS work_item_id,j.id AS job_id,j.project_id "
             "FROM work_results r JOIN work_attempts a ON a.id=r.attempt_id "
-            "JOIN work_items w ON w.id=a.work_item_id JOIN work_jobs j ON j.id=w.job_id WHERE r.id=?",
+            "JOIN work_items w ON w.id=a.work_item_id JOIN work_jobs j ON j.id=w.job_id WHERE r.id=%s",
             (_identifier(reference),),
         ).fetchone()
         if (
@@ -178,14 +178,14 @@ class KnowledgeRevisions:
             work_item_id, attempt_id = source["work_item_id"], source["attempt_id"]
         if attempt_id is not None:
             attempt = connection.execute(
-                "SELECT work_item_id FROM work_attempts WHERE id=?", (_identifier(attempt_id),)
+                "SELECT work_item_id FROM work_attempts WHERE id=%s", (_identifier(attempt_id),)
             ).fetchone()
             if attempt is None or (work_item_id is not None and work_item_id != attempt[0]):
                 raise ValueError("inconsistent knowledge attempt")
             work_item_id = attempt[0]
         if work_item_id is not None:
             work = connection.execute(
-                "SELECT j.id,j.project_id FROM work_items w JOIN work_jobs j ON j.id=w.job_id WHERE w.id=?",
+                "SELECT j.id,j.project_id FROM work_items w JOIN work_jobs j ON j.id=w.job_id WHERE w.id=%s",
                 (_identifier(work_item_id),),
             ).fetchone()
             if (
@@ -200,14 +200,14 @@ class KnowledgeRevisions:
     @staticmethod
     def _event(connection, record_id, version, revision, operation, principal):
         connection.execute(
-            "INSERT INTO work_knowledge_events VALUES (?,?,?,?,?,?)",
+            "INSERT INTO work_knowledge_events VALUES (%s,%s,%s,%s,%s,%s)",
             (record_id, version, revision, operation, principal.id, time.time()),
         )
 
     @staticmethod
     def _decision(connection, record_id, revision, version, decision, principal, refs=()):
         connection.execute(
-            "INSERT INTO work_knowledge_decisions VALUES (?,?,?,?,?,?)",
+            "INSERT INTO work_knowledge_decisions VALUES (%s,%s,%s,%s,%s,%s)",
             (record_id, revision, version, decision, principal.id, json.dumps(refs)),
         )
 
@@ -216,18 +216,18 @@ class KnowledgeRevisions:
         if type(revision) is not int or revision <= 0:
             raise ValueError("positive knowledge revision required")
         row = connection.execute(
-            "SELECT * FROM work_knowledge_revisions WHERE record_id=? AND revision=?",
+            "SELECT * FROM work_knowledge_revisions WHERE record_id=%s AND revision=%s",
             (head["id"], revision),
         ).fetchone()
         if row is None:
             raise KeyError("knowledge revision not found")
         decision = connection.execute(
-            "SELECT decision FROM work_knowledge_decisions WHERE record_id=? AND revision=? ORDER BY event_sequence DESC LIMIT 1",
+            "SELECT decision FROM work_knowledge_decisions WHERE record_id=%s AND revision=%s ORDER BY event_sequence DESC LIMIT 1",
             (head["id"], revision),
         ).fetchone()
         tombstone = (
             connection.execute(
-                "SELECT 1 FROM work_knowledge_tombstones WHERE record_id=? AND revision=?",
+                "SELECT 1 FROM work_knowledge_tombstones WHERE record_id=%s AND revision=%s",
                 (head["id"], revision),
             ).fetchone()
             is not None
@@ -295,6 +295,13 @@ class KnowledgeRevisions:
                 write=True,
                 target=[record_id, expected_version],
             )
+            record_lock = json.dumps(
+                ["knowledge-record", self.repository.target.store_id, record_id],
+                separators=(",", ":"),
+            )
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (record_lock,)
+            )
             work_item_id, attempt_id = self._provenance(
                 connection,
                 scope,
@@ -305,14 +312,14 @@ class KnowledgeRevisions:
                 evidence_refs,
             )
             head = connection.execute(
-                "SELECT * FROM work_knowledge_records WHERE id=?", (record_id,)
+                "SELECT * FROM work_knowledge_records WHERE id=%s", (record_id,)
             ).fetchone()
             if head is None:
                 if expected_version != 0:
                     raise KnowledgeConflict("knowledge record does not exist")
                 revision, version, supersedes = 1, 1, None
                 connection.execute(
-                    "INSERT INTO work_knowledge_records VALUES (?,?,?,?,?)",
+                    "INSERT INTO work_knowledge_records VALUES (%s,%s,%s,%s,%s)",
                     (record_id, scope.value, scope_id, revision, version),
                 )
             else:
@@ -322,11 +329,11 @@ class KnowledgeRevisions:
                 supersedes = head["head_revision"]
                 revision = supersedes + 1
                 connection.execute(
-                    "UPDATE work_knowledge_records SET head_revision=? WHERE id=?",
+                    "UPDATE work_knowledge_records SET head_revision=%s WHERE id=%s",
                     (revision, record_id),
                 )
             connection.execute(
-                "INSERT INTO work_knowledge_revisions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO work_knowledge_revisions VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
                     record_id,
                     revision,
@@ -421,7 +428,7 @@ class KnowledgeRevisions:
             version = self._cas(connection, head, expected_version)
             self._event(connection, record_id, version, revision, "tombstoned", principal)
             connection.execute(
-                "INSERT INTO work_knowledge_tombstones VALUES (?,?,?,?)",
+                "INSERT INTO work_knowledge_tombstones VALUES (%s,%s,%s,%s)",
                 (record_id, revision, version, principal.id),
             )
             return self._read(connection, self._head(connection, record_id), revision)
@@ -447,7 +454,7 @@ class KnowledgeRevisions:
         """Digest every current record head; never infer a scope cut from one row."""
         heads = connection.execute(
             "SELECT id,head_revision,version FROM work_knowledge_records "
-            "WHERE scope=? AND scope_id=? ORDER BY id COLLATE BINARY",
+            'WHERE scope=%s AND scope_id=%s ORDER BY id COLLATE "C"',
             (scope.value, scope_id),
         ).fetchall()
         payload = [
@@ -477,16 +484,16 @@ class KnowledgeRevisions:
         query = (
             "SELECT r.record_id,r.revision FROM work_knowledge_revisions r "
             "JOIN work_knowledge_records h ON h.id=r.record_id "
-            "WHERE h.scope=? AND h.scope_id=?"
+            "WHERE h.scope=%s AND h.scope_id=%s"
         )
         parameters = [scope.value, scope_id]
         if after_record_id is not None:
             query += (
-                " AND (r.record_id COLLATE BINARY>? COLLATE BINARY "
-                "OR (r.record_id=? AND r.revision>?))"
+                ' AND (r.record_id COLLATE "C">%s COLLATE "C" '
+                "OR (r.record_id=%s AND r.revision>%s))"
             )
             parameters.extend((after_record_id, after_record_id, after_revision))
-        query += " ORDER BY r.record_id COLLATE BINARY,r.revision ASC LIMIT ?"
+        query += ' ORDER BY r.record_id COLLATE "C",r.revision ASC LIMIT %s'
         parameters.append(limit + 1)
         return connection.execute(query, parameters).fetchall()
 
@@ -506,7 +513,7 @@ class KnowledgeRevisions:
     ):
         cursor = self._parse_cursor(cursor)
         row = connection.execute(
-            "SELECT * FROM work_knowledge_cursors WHERE token_hash=?",
+            "SELECT * FROM work_knowledge_cursors WHERE token_hash=%s",
             (self._cursor_hash(cursor),),
         ).fetchone()
         if row is None:
@@ -615,7 +622,7 @@ class KnowledgeRevisions:
                     "INSERT INTO work_knowledge_cursors "
                     "(token_hash,schema_version,principal_id,scope,scope_id,job_id,grant_id,grant_revision,"
                     "checkpoint,last_record_id,last_revision,limit_value,expires_at,created_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (
                         self._cursor_hash(cursor),
                         1,
@@ -636,7 +643,7 @@ class KnowledgeRevisions:
                 next_cursor = cursor
             elif cursor_row is not None:
                 connection.execute(
-                    "UPDATE work_knowledge_cursors SET last_record_id=?,last_revision=? WHERE token_hash=?",
+                    "UPDATE work_knowledge_cursors SET last_record_id=%s,last_revision=%s WHERE token_hash=%s",
                     (last_record_id, last_revision, self._cursor_hash(cursor)),
                 )
                 if has_more:
@@ -657,7 +664,7 @@ class KnowledgeRevisions:
             self._authorize(connection, principal, "instructions", scope, scope_id)
             now = time.time()
             heads = connection.execute(
-                "SELECT * FROM work_knowledge_records WHERE scope=? AND scope_id=? ORDER BY id",
+                "SELECT * FROM work_knowledge_records WHERE scope=%s AND scope_id=%s ORDER BY id",
                 (scope.value, scope_id),
             ).fetchall()
             revisions = (self._read(connection, head, head["head_revision"]) for head in heads)

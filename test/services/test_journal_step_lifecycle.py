@@ -34,24 +34,18 @@ Rule coverage, one group per rule from
   ``begin_step`` falsified, and a ``step_id`` full of SQL metacharacters is data.
 - BR-15 — ``get_step`` and ``get_steps`` both read back what settle wrote.
 
-The journal points at a temp SQLite DB via the patched ``DATABASE_FILE``,
-mirroring ``test_script_journal_extension.py``'s fixture pattern.
+The journal uses the isolated native PostgreSQL test target.
 """
 
 from __future__ import annotations
 
 import ast
 import inspect
-import sqlite3
-from pathlib import Path
 from typing import Optional
 
 import pytest
 
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
-)
+from cli_agent_orchestrator.clients.postgres import DatabaseError
 from cli_agent_orchestrator.models.workflow_runtime import StepState
 from cli_agent_orchestrator.services import workflow_journal
 from cli_agent_orchestrator.services.workflow_journal import begin_step, settle_step
@@ -63,20 +57,8 @@ FP_C = "c" * 64
 TS = "2026-08-16T00:00:00Z"
 
 
-@pytest.fixture(autouse=True)
-def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Point the journal at a temp DB and create the tables (both #583 columns included)."""
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
-    yield db_path
-
-
-def _direct_connect() -> sqlite3.Connection:
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    return sqlite3.connect(str(DATABASE_FILE))
+def _direct_connect():
+    return workflow_journal._connect()
 
 
 def _seed_run(run_id: str = "r1", *, state: str = "running", tier: str = "script"):
@@ -92,11 +74,11 @@ def _seed_run(run_id: str = "r1", *, state: str = "running", tier: str = "script
 
 
 def _raw_row(run_id: str = "r1", step_id: str = "s1"):
-    """Read the four columns under test straight from SQLite, bypassing ``StepRow``."""
+    """Read the four columns under test directly from PostgreSQL, bypassing ``StepRow``."""
     with _direct_connect() as conn:
         return conn.execute(
             "SELECT state, attempts, call_fingerprint, result_json "
-            "FROM workflow_run_step WHERE run_id = ? AND step_id = ?",
+            "FROM workflow_run_step WHERE run_id = %s AND step_id = %s",
             (run_id, step_id),
         ).fetchone()
 
@@ -105,7 +87,7 @@ def _force_state(state: str, run_id: str = "r1", step_id: str = "s1"):
     """Put a row into an arbitrary state directly, including values no enum defines."""
     with _direct_connect() as conn:
         conn.execute(
-            "UPDATE workflow_run_step SET state = ? WHERE run_id = ? AND step_id = ?",
+            "UPDATE workflow_run_step SET state = %s WHERE run_id = %s AND step_id = %s",
             (state, run_id, step_id),
         )
 
@@ -380,7 +362,7 @@ def test_a_mid_write_failure_leaves_the_row_running_with_no_envelope():
     _seed_run()
     begin_step("r1", "s1", TS, FP_A)
 
-    with pytest.raises(sqlite3.Error):
+    with pytest.raises(DatabaseError):
         _settle(state=None, result_json='{"envelope": "lost"}')  # type: ignore[arg-type]
 
     state, attempts, fingerprint, result_json = _raw_row()
@@ -395,19 +377,19 @@ def test_a_mid_write_failure_leaves_the_row_running_with_no_envelope():
 # ---------------------------------------------------------------------------
 def test_begin_step_propagates_a_db_error(monkeypatch: pytest.MonkeyPatch):
     def _boom():
-        raise sqlite3.OperationalError("simulated connect failure")
+        raise DatabaseError("simulated connect failure")
 
     monkeypatch.setattr(workflow_journal, "_connect", _boom, raising=True)
-    with pytest.raises(sqlite3.Error):
+    with pytest.raises(DatabaseError):
         begin_step("r1", "s1", TS, FP_A)
 
 
 def test_settle_step_propagates_a_db_error(monkeypatch: pytest.MonkeyPatch):
     def _boom():
-        raise sqlite3.OperationalError("simulated connect failure")
+        raise DatabaseError("simulated connect failure")
 
     monkeypatch.setattr(workflow_journal, "_connect", _boom, raising=True)
-    with pytest.raises(sqlite3.Error):
+    with pytest.raises(DatabaseError):
         _settle()
 
 
@@ -561,7 +543,7 @@ def test_append_steps_docstring_no_longer_claims_exclusivity():
 
 
 def test_a_step_id_full_of_sql_metacharacters_round_trips_as_data():
-    """SR-6: every value binds through a ``?`` placeholder, so a hostile-looking
+    """SR-6: every value binds through a ``%s`` placeholder, so a hostile-looking
     key is a harmless literal rather than a statement.
     """
     nasty = "s1'; DROP TABLE workflow_run_step; --"

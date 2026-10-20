@@ -1,7 +1,7 @@
 """U6 endpoint tests — run comparison + diagnostic bundle (issue #504, FR-8, FR-9).
 
-Covers the two U6 read-only export routes over a REAL durable journal (temp
-SQLite DB), not mocks — the point is to prove journal-authoritative,
+Covers the two U6 read-only export routes over a REAL durable journal (isolated
+PostgreSQL target), not mocks — the point is to prove journal-authoritative,
 redaction-funnelled behaviour end-to-end:
 
 - ``GET /workflows/runs/{run_id}/compare?against={other}``:
@@ -27,13 +27,11 @@ redaction-funnelled behaviour end-to-end:
     depended on ``run_registry`` (rather than ``get_run``) the cleared registry
     would 404 and the test goes RED.
 
-The journal is pointed at a temp DB via the patched ``DATABASE_FILE`` and the
-event migration memo is reset, mirroring ``test_workflow_inspection_replay.py``.
+Each test uses the shared isolated PostgreSQL target and an empty process-local
+registry, so assertions exercise the durable journal without touching user data.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
@@ -52,16 +50,11 @@ _SPEC = WorkflowSpec(
 
 
 @pytest.fixture(autouse=True)
-def _isolated_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Fresh temp journal DB + clean registry/migration memo for each test."""
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    workflow_journal._event_migrated_paths.clear()
+def _isolated_journal(isolated_memory_db, monkeypatch: pytest.MonkeyPatch):
+    """Use the shared isolated PostgreSQL target and clear the process cache."""
     # The registry is a process-global cache; start each test with it empty so a
     # prior test's live record never masks the journal-authoritative read path.
     monkeypatch.setattr(workflow_service, "run_registry", {})
-    yield db_path
-    workflow_journal._event_migrated_paths.clear()
 
 
 def _seed_run(
@@ -112,7 +105,7 @@ def _seed_step(
     if reprompted is not None:
         with workflow_journal._connect() as conn:
             conn.execute(
-                "UPDATE workflow_run_step SET reprompted = ? WHERE run_id = ? AND step_id = ?",
+                "UPDATE workflow_run_step SET reprompted = %s WHERE run_id = %s AND step_id = %s",
                 (reprompted, run_id, step_id),
             )
 

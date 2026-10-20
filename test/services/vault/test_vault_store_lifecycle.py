@@ -9,6 +9,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from test.fixtures.vault_factory import build_vault_fixture
+from test.postgres.orm import configured_orm_engine
 
 import yaml
 from sqlalchemy import create_engine
@@ -34,7 +35,7 @@ def _vault_service(tmp_path, monkeypatch):
     lock_dir = tmp_path / "locks"
     monkeypatch.setattr(atomic_file, "LOCK_DIR", lock_dir)
     monkeypatch.setattr(vault_lock, "LOCK_DIR", lock_dir)
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reconcile_module, "SessionLocal", Session)

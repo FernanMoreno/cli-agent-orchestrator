@@ -283,9 +283,9 @@ def scheme_of(stored: Optional[str]) -> Literal["v2", "legacy", "absent"]:
 
     TOTAL over its declared type (INV-3): it raises on no ``str`` — including ``""`` and
     arbitrary malformed text — and none on ``None``. The bound is the declared type and that
-    is deliberate: the only real caller reads a SQLite ``TEXT`` column, whose Python domain is
-    exactly ``str | None``, so an ``isinstance`` guard here would be a branch no caller can
-    reach.
+    is deliberate: the only real caller reads a PostgreSQL ``TEXT`` column, whose
+    Python domain is exactly ``str | None``, so an ``isinstance`` guard here would
+    be a branch no caller can reach.
 
     A LEGACY VALUE IS CLASSIFIED, NEVER COMPARED (BR-9). That routing belongs to
     ``replay-gate``; this function's contract is only that the two populations stay

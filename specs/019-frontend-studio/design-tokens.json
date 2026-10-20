@@ -1,0 +1,48 @@
+{
+  "status": "proposed",
+  "spacing": [
+    4,
+    8,
+    12,
+    16,
+    20,
+    24,
+    32,
+    48
+  ],
+  "radius": {
+    "control": 8,
+    "panel": 14
+  },
+  "font": {
+    "ui": "system-ui, sans-serif",
+    "code": "ui-monospace, monospace"
+  },
+  "motion": {
+    "fast_ms": 140,
+    "panel_ms": 200,
+    "reduced_motion": "remove nonessential transitions"
+  },
+  "themes": {
+    "dark": {
+      "background": "#101319",
+      "surface": "#181d25",
+      "raised": "#222935",
+      "text": "#eef2f6",
+      "muted": "#a0acbd",
+      "border": "#354052",
+      "accent": "#c6ef77",
+      "accent_text": "#17220b"
+    },
+    "light": {
+      "background": "#edf1f5",
+      "surface": "#ffffff",
+      "raised": "#f4f7fa",
+      "text": "#19232f",
+      "muted": "#526172",
+      "border": "#cbd4df",
+      "accent": "#28613d",
+      "accent_text": "#ffffff"
+    }
+  }
+}

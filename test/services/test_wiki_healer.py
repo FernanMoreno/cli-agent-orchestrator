@@ -20,6 +20,7 @@ import fcntl
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 
 import pytest
 from sqlalchemy import create_engine
@@ -45,7 +46,7 @@ def _run(coro):
 @pytest.fixture
 def db_engine(tmp_path):
     db_path = tmp_path / "test.db"
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return engine
 
@@ -91,7 +92,7 @@ def _row(svc, key, scope="global", scope_id=None):
 
 
 def _make_orphan(svc, key, content="orphan body", *, scope="global", scope_id=None):
-    """Create a TRUE orphan: a wiki file on disk with NO SQLite row and NO
+    """Create a TRUE orphan: a wiki file on disk with NO PostgreSQL row and NO
     index entry. This is the only input the orphan healer should ever delete —
     a key that still has a row/index line in this scope is a live memory and is
     refused by the defensive re-check (cross-project collision safety)."""
@@ -222,7 +223,7 @@ class TestOrphanFix:
     def test_orphan_applied_deletes_everything(self, svc, audit_base):
         wiki_path = _make_orphan(svc, "stale-orphan")
         assert wiki_path.exists()
-        assert _row(svc, "stale-orphan") is None  # true orphan — no SQLite row
+        assert _row(svc, "stale-orphan") is None  # true orphan — no PostgreSQL row
 
         issues = [_make_issue(issue_type="orphan_page", key="stale-orphan")]
         report = _run(heal(issues, scope="global", scope_id=None, apply=True, svc=svc))
@@ -242,7 +243,7 @@ class TestOrphanFix:
         # Cross-project collision safety: run_lint(scope="project") returns
         # orphans across ALL containers, but LintIssue carries no scope_id, so
         # the healer reconstructs the path in the CURRENT container. A key that
-        # is a LIVE memory here (SQLite row present) must NOT be deleted even
+        # is a LIVE memory here (PostgreSQL row present) must NOT be deleted even
         # though some other project flagged the same key as an orphan.
         _store(svc, "shared-key")
         wiki_path = svc.get_wiki_path("global", None, "shared-key")

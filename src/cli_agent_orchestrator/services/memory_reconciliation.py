@@ -1,7 +1,7 @@
 """Filesystem-first repair of memory metadata projections.
 
 Markdown topics are the durable authority. This module performs a bounded
-canonical-file scan and repairs only SQLite metadata and matching index lines;
+canonical-file scan and repairs only PostgreSQL metadata and matching index lines;
 it never invokes wiki lint, linking, compilation, models, or network clients.
 """
 
@@ -233,7 +233,7 @@ def _first_symlink_component(path: Path, base: Path) -> Optional[Path]:
 
 
 def discover_canonical_scope_dirs(base_dir: Path) -> tuple[tuple[str, Optional[str], Path], ...]:
-    """Discover canonical scope containers without SQLite or index seeds."""
+    """Discover canonical scope containers without metadata-row or index seeds."""
     discovered: set[tuple[str, Optional[str], Path]] = set()
     global_container = base_dir / "global"
     global_wiki = global_container / "wiki"
@@ -280,7 +280,6 @@ class MemoryReconciliationService:
         self._memory = MemoryService(base_dir=self.base_dir, db_engine=db_engine)
         self._db_engine = db_engine
         self._db_session_factory: Any = None
-        self._strict_index = False
         if db_engine is not None:
             from sqlalchemy.orm import sessionmaker
 
@@ -787,8 +786,8 @@ class MemoryReconciliationService:
             path_rows = [row for row in all_rows if self._resolved_row_path(row) == topic.file_path]
         dedupe_stale: list[_Row] = []
         if len(identity_rows) > 1:
-            # Legacy pre-#657 state: SQLite's NULL-distinctness let multiple
-            # NULL-scope_id rows share one identity. When at least one row
+            # Legacy pre-#657 nullable uniqueness semantics let multiple
+            # NULL-scope_id rows share one logical identity. When at least one row
             # anchors this canonical topic path (and no foreign identity sits
             # on it) the others are demonstrably stale, so plan a deterministic
             # dedupe keeping the path-anchored row — newest ``updated_at``
@@ -806,7 +805,7 @@ class MemoryReconciliationService:
                     topic.file_path,
                     RepairAction.CONFLICT,
                     "duplicate_database_identity",
-                    "multiple SQLite rows match the canonical identity and none is "
+                    "multiple metadata rows match the canonical identity and none is "
                     "uniquely anchored to the canonical topic path; align file_path "
                     "or remove the stray rows manually",
                     topic.identity,
@@ -816,7 +815,7 @@ class MemoryReconciliationService:
                 topic.file_path,
                 RepairAction.CONFLICT,
                 "ambiguous_database_path",
-                "SQLite maps the canonical topic path to a different identity",
+                "metadata maps the canonical topic path to a different identity",
                 topic.identity,
             )
         actions: list[RepairAction] = []
@@ -835,7 +834,7 @@ class MemoryReconciliationService:
                     topic.file_path,
                     RepairAction.CONFLICT,
                     "database_path_conflict",
-                    "SQLite identity points to a different resolved topic path",
+                    "metadata identity points to a different resolved topic path",
                     topic.identity,
                 )
             if not self._metadata_is_current(row, topic):
@@ -959,7 +958,7 @@ class MemoryReconciliationService:
                     Path(identity_rows[0].file_path or "<unknown>"),
                     RepairAction.CONFLICT,
                     "duplicate_database_identity",
-                    "multiple SQLite rows hold this NULL-scope identity and no canonical "
+                    "multiple metadata rows hold this NULL-scope identity and no canonical "
                     "topic maps to it; restore or move the canonical topic file, or "
                     "remove the stray rows manually",
                     identity,
@@ -1130,10 +1129,9 @@ class MemoryReconciliationService:
             if not path_matches:
                 raise RuntimeError("metadata duplicate lost its canonical anchor while lock held")
             # Legacy rows can mix naive, timezone-aware and NULL ``updated_at``
-            # values (SQLite stores naive datetimes), and comparing a naive
-            # value with the tz-aware ``_MIN_DT`` floor raises ``TypeError``
-            # mid-repair. Normalize through the same ``_utc()`` path planning
-            # uses so the survivor pick is well-defined on legacy data.
+            # values. Comparing a naive value with the tz-aware ``_MIN_DT`` floor
+            # raises ``TypeError`` mid-repair. Normalize through the same ``_utc()``
+            # path planning uses so the survivor pick is well-defined on old data.
             survivor = max(
                 path_matches,
                 key=lambda row: (_utc(row.updated_at) or _MIN_DT, row.id),
@@ -1203,7 +1201,8 @@ class MemoryReconciliationService:
         return self._apply()
 
     def _apply(self) -> RepairReport:
-        """Apply within the outer audit, including planning and index recovery."""
+        """Apply within the outer audit, verifying the schema before file effects."""
+        self._verify_metadata_schema()
         planned = self._plan()
         results: list[RepairRecord] = []
         groups: dict[Path, list[tuple[RepairRecord, _Candidate]]] = {}
@@ -1436,27 +1435,22 @@ class MemoryReconciliationService:
         report = RepairReport(records=tuple(results), applied=True)
         if report.counts["failed"]:
             raise MemoryReconciliationError(report)
-        # The repair path is the remediation the uq_memory_key_scope_null
-        # migrator points at (issue #657): once the duplicates are gone, the
-        # index belongs on the database in this same run rather than at the
-        # next startup.
-        self._ensure_null_scope_unique_index()
+        self._verify_metadata_schema()
         return report
 
-    def _ensure_null_scope_unique_index(self) -> None:
-        """Create ``uq_memory_key_scope_null`` if duplicates allow it.
-
-        Fail-soft for the startup path — the startup migrator re-attempts
-        this — but the explicit ``cao memory repair --apply`` invocation sets
-        ``_strict_index``, where exceptions surface to the caller because a
-        silently missing index is exactly the dead remediation path issue
-        #657's review called out.
-        """
-        from cli_agent_orchestrator.clients.database import (
-            _migrate_memory_scope_null_uniqueness,
+    def _verify_metadata_schema(self) -> None:
+        """Verify provisioned PostgreSQL constraints without runtime DDL."""
+        from cli_agent_orchestrator.clients.database import CORE_MIGRATIONS
+        from cli_agent_orchestrator.clients.postgres import connect
+        from cli_agent_orchestrator.clients.postgres.migrations import (
+            verify_component,
+            verify_runtime_role,
         )
 
-        _migrate_memory_scope_null_uniqueness(engine=self._db_engine, strict=self._strict_index)
+        repository = self._memory._legacy_repository()
+        with connect(repository.target, readonly=True) as connection:
+            verify_runtime_role(connection)
+            verify_component(connection, CORE_MIGRATIONS)
 
     def _migration_rollback_record(
         self,
@@ -1685,9 +1679,8 @@ class MemoryReconciliationService:
         """Plan by default; mutate only when explicitly requested.
 
         ``apply=True`` is the explicit ``cao memory repair --apply``
-        invocation, so the same-run index creation is strict — a failure
-        there must surface rather than be logged at debug. The startup path
-        calls ``apply()`` directly and keeps the fail-soft default.
+        invocation. The provisioned PostgreSQL schema must remain intact;
+        repair verifies it before changing content or metadata.
         """
         if receipt_id is not None:
             return self._reconcile_migration_receipt(receipt_id, apply=apply)
@@ -1697,15 +1690,11 @@ class MemoryReconciliationService:
                 records=report.records + self._migration_receipt_findings(),
                 applied=False,
             )
-        self._strict_index = True
-        try:
-            report = self.apply()
-            return RepairReport(
-                records=report.records + self._migration_receipt_findings(),
-                applied=True,
-            )
-        finally:
-            self._strict_index = False
+        report = self.apply()
+        return RepairReport(
+            records=report.records + self._migration_receipt_findings(),
+            applied=True,
+        )
 
 
 def reconcile_memory_startup() -> Optional[RepairReport]:

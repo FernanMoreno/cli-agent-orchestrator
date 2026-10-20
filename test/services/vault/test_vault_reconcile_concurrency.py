@@ -10,6 +10,7 @@ import threading
 import time
 from contextlib import contextmanager
 from test.fixtures.vault_factory import build_vault_fixture
+from test.postgres.orm import configured_orm_engine
 from types import SimpleNamespace
 
 import pytest
@@ -33,10 +34,7 @@ from cli_agent_orchestrator.services.vault.config import VaultConfig
 
 
 def _vault_service(tmp_path, monkeypatch):
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'state.db'}",
-        connect_args={"check_same_thread": False},
-    )
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reconcile_module, "SessionLocal", Session)

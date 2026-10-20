@@ -89,6 +89,8 @@ PROCESSING_LINE_PATTERN = r"^(?:[●◐◑◒◓◉◎∙]\s*)?.*\besc to cancel
 class CopilotCliProvider(BaseProvider):
     """Provider for GitHub Copilot CLI."""
 
+    supports_interaction_mcp_overlay = True
+
     # Cursor-addressed Ink redraws are not a transcript. Use the monitor's
     # rate-limited, two-observation current-pane recovery after output settles.
     supports_visible_pane_stale_probe = True
@@ -243,6 +245,10 @@ class CopilotCliProvider(BaseProvider):
                 "env": {"CAO_TERMINAL_ID": self.terminal_id},
             }
         }
+        if self.interaction_capability_file:
+            merged_servers["cao-mcp-server"]["env"][
+                "CAO_INTERACTION_CAPABILITY_FILE"
+            ] = self.interaction_capability_file
 
         # Agent Plugins: this runtime config is the only MCP configuration Copilot
         # reads, so a plugin server absent here is a plugin server Copilot never
@@ -260,7 +266,9 @@ class CopilotCliProvider(BaseProvider):
                 )
                 profile = None
 
-            for name, cfg in ((profile.mcpServers if profile else None) or {}).items():
+            for name, cfg in self.interaction_mcp_servers(
+                profile.mcpServers if profile else None
+            ).items():
                 if name in merged_servers:
                     # CAO's own in-session server is not replaceable by a plugin.
                     continue
@@ -276,6 +284,11 @@ class CopilotCliProvider(BaseProvider):
                 merged_servers[name] = entry
 
         return json.dumps({"mcpServers": merged_servers}, ensure_ascii=False)
+
+    def interaction_source_configured(self, mcp_servers) -> bool:
+        # Copilot's private runtime config always contains the server built by
+        # CAO itself; profile entries cannot replace that protected entry.
+        return self.supports_interaction_mcp_overlay
 
     def _send_enter(self) -> None:
         get_backend().send_special_key(self.session_name, self.window_name, "Enter")

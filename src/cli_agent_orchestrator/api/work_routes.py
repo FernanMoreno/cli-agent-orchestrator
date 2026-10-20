@@ -5,13 +5,16 @@ accepts only coordinates and evidence; it never accepts an actor, grant, or
 contract override from a client.
 """
 
-import sqlite3
+import asyncio
+import json
 from contextlib import contextmanager
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
+from cli_agent_orchestrator.clients.postgres import ConfigurationError, DatabaseError
 from cli_agent_orchestrator.clients.work_repository import (
     SchemaMismatch,
     WorkConflict,
@@ -27,6 +30,7 @@ from cli_agent_orchestrator.security.auth import (
     get_current_principal,
     require_any_scope,
 )
+from cli_agent_orchestrator.services.agui.work_messages import project_work_message_events
 from cli_agent_orchestrator.services.work_authority import AuthorityDenied
 from cli_agent_orchestrator.services.work_contract import ContractConflict
 from cli_agent_orchestrator.services.work_decisions import (
@@ -43,6 +47,24 @@ from cli_agent_orchestrator.services.work_projection import WorkQueries
 
 router = APIRouter(tags=["durable-work"])
 
+# A quiet stream must not issue a database query ten times per second forever.
+# Keep the first live message responsive while bounding idle load across a
+# large number of connected clients.
+_WORK_MESSAGE_MIN_POLL_SECONDS = 0.1
+_WORK_MESSAGE_MAX_POLL_SECONDS = 2.0
+
+
+def _work_message_poll_schedule(page: EventPage, current_delay: float) -> tuple[float, float]:
+    """Return ``(delay_before_next_query, delay_after_that_query)``.
+
+    A page with events or retention gaps is catch-up work and gets the latency
+    floor immediately. Empty pages sleep at the current delay first, then
+    double it for the next empty page, so the initial idle poll remains 100 ms.
+    """
+    if page.events or page.gaps:
+        return _WORK_MESSAGE_MIN_POLL_SECONDS, _WORK_MESSAGE_MIN_POLL_SECONDS
+    return current_delay, min(_WORK_MESSAGE_MAX_POLL_SECONDS, current_delay * 2)
+
 
 def query_error(status: int, code: str, message: str, required_action: str) -> HTTPException:
     return HTTPException(
@@ -57,16 +79,16 @@ def query_error(status: int, code: str, message: str, required_action: str) -> H
 
 
 def queries() -> WorkQueries:
-    from cli_agent_orchestrator.constants import DATABASE_FILE
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 
-    return WorkQueries(WorkRepository(DATABASE_FILE))
+    return WorkQueries(WorkRepository(DatabaseTarget.from_settings()))
 
 
 def repository() -> WorkRepository:
     """Construct the verified work store once per dependency resolution."""
-    from cli_agent_orchestrator.constants import DATABASE_FILE
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 
-    return WorkRepository(DATABASE_FILE)
+    return WorkRepository(DatabaseTarget.from_settings())
 
 
 def decisions(store: Annotated[WorkRepository, Depends(repository)]) -> WorkDecisions:
@@ -191,7 +213,7 @@ def decision_errors():
             "Invalid durable decision request.",
             "correct_request",
         ) from error
-    except (SchemaMismatch, sqlite3.Error) as error:
+    except (SchemaMismatch, DatabaseError) as error:
         raise decision_error(
             503,
             "work_store_unavailable",
@@ -216,7 +238,7 @@ def work_errors():
         raise query_error(
             409, "work_revision_conflict", "Cursor exceeds job history.", "refresh_cursor"
         ) from error
-    except (SchemaMismatch, sqlite3.Error) as error:
+    except (SchemaMismatch, DatabaseError, ConfigurationError) as error:
         raise query_error(
             503, "work_store_unavailable", "Verified work store unavailable.", "retry_query"
         ) from error
@@ -241,7 +263,7 @@ def proxy_effect_errors():
             "Durable effect journal unavailable.",
             "retry_query",
         ) from error
-    except (SchemaMismatch, sqlite3.Error) as error:
+    except (SchemaMismatch, DatabaseError) as error:
         raise query_error(
             503,
             "work_store_unavailable",
@@ -314,6 +336,82 @@ def get_work_events(
 ):
     with work_errors():
         return queries().events(principal, job_id, after_sequence=after_sequence, limit=limit)
+
+
+def _work_message_sse_frame(sequence: int, event_type: str, data: dict) -> str:
+    encoded = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return f"id: {sequence}\nevent: {event_type}\ndata: {encoded}\n\n"
+
+
+@router.get("/jobs/{job_id}/messages/stream")
+async def stream_work_messages(
+    job_id: Annotated[str, Path(min_length=1, max_length=512)],
+    request: Request,
+    principal: Annotated[Principal, Depends(get_current_principal)],
+    after_sequence: Annotated[int, Query(ge=0, le=2**63 - 1)] = 0,
+    last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+):
+    """Replay only body-free message events from the owner-checked Work ledger."""
+    cursor = after_sequence
+    if last_event_id is not None:
+        try:
+            cursor = int(last_event_id, 10)
+        except (TypeError, ValueError) as error:
+            raise HTTPException(status_code=422, detail="invalid Work event cursor") from error
+        if not 0 <= cursor <= 2**63 - 1:
+            raise HTTPException(status_code=422, detail="invalid Work event cursor")
+
+    def read_event_page(actor: Principal, sequence: int) -> EventPage:
+        return queries().events(actor, job_id, after_sequence=sequence, limit=100)
+
+    with work_errors():
+        initial_page = await asyncio.to_thread(read_event_page, principal, cursor)
+
+    async def event_stream():
+        position = cursor
+        page = initial_page
+        poll_delay = _WORK_MESSAGE_MIN_POLL_SECONDS
+        while not await request.is_disconnected():
+            for gap in page.gaps:
+                start = gap.get("from_sequence")
+                floor = gap.get("through_sequence")
+                if (
+                    type(start) is int
+                    and type(floor) is int
+                    and start <= floor
+                    and floor > position
+                ):
+                    yield _work_message_sse_frame(
+                        floor,
+                        "RAW",
+                        {"from_sequence": start, "through_sequence": floor},
+                    )
+                    position = floor
+
+            frames, advanced = project_work_message_events(page.events, after_sequence=position)
+            for sequence, event_type, data in frames:
+                yield _work_message_sse_frame(sequence, event_type, data)
+            position = max(position, advanced)
+            if not page.events:
+                position = max(position, page.next_cursor)
+
+            if await request.is_disconnected():
+                return
+            sleep_delay, poll_delay = _work_message_poll_schedule(page, poll_delay)
+            await asyncio.sleep(sleep_delay)
+            try:
+                with work_errors():
+                    page = await asyncio.to_thread(read_event_page, principal, position)
+            except HTTPException:
+                # Access can be revoked while a stream is open; close it without
+                # exposing job existence or attempting to change HTTP headers.
+                return
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/work-items/{work_item_id}/decisions")

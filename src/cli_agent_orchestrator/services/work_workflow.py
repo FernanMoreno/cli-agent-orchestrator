@@ -24,6 +24,7 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from cli_agent_orchestrator.services.work_admission import WorkAdmission
 
+from cli_agent_orchestrator.clients.postgres import Connection
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.models.work_contract import (
     EffectiveWorkContract,
@@ -244,8 +245,10 @@ class WorkWorkflowOrigins:
     def _read_binding(
         self, connection, predicate: str, identity: tuple, *, historical: bool = False
     ) -> WorkflowStepBinding | None:
-        if not connection.in_transaction:
-            raise WorkConflict("workflow binding reads require a stable SQLite snapshot")
+        if not isinstance(connection, Connection) or not connection.in_transaction:
+            raise WorkConflict("workflow binding reads require a caller-owned transaction")
+        if connection.target.identity != self.repository.target.identity:
+            raise WorkConflict("workflow binding transaction belongs to another store")
         self.repository._verify(connection)
         row = connection.execute(
             "SELECT * FROM work_workflow_step_bindings WHERE " + predicate,
@@ -256,7 +259,7 @@ class WorkWorkflowOrigins:
         binding = self._binding_from_row(row)
         provision = connection.execute(
             "SELECT * FROM work_workflow_step_provisions "
-            "WHERE principal_id=? AND workflow_id=? AND step_id=? AND revision=? AND id=?",
+            "WHERE principal_id=%s AND workflow_id=%s AND step_id=%s AND revision=%s AND id=%s",
             (
                 binding.principal_id,
                 binding.workflow_id,
@@ -271,16 +274,16 @@ class WorkWorkflowOrigins:
             "snapshot.delivered_hash AS snapshot_hash,binding.attempt_id,binding.generation,"
             "binding.work_item_id FROM work_dispatch_bindings AS binding "
             "JOIN work_delegation_snapshots AS snapshot ON snapshot.id=binding.snapshot_id "
-            "WHERE binding.attempt_id=? AND binding.generation=?",
+            "WHERE binding.attempt_id=%s AND binding.generation=%s",
             (binding.work_attempt_id, binding.work_generation),
         ).fetchone()
         item = connection.execute(
-            "SELECT job_id,request_hash,idempotency_key FROM work_items WHERE id=?",
+            "SELECT job_id,request_hash,idempotency_key FROM work_items WHERE id=%s",
             (binding.work_item_id,),
         ).fetchone()
         order = connection.execute(
             "SELECT delivery_hash,request_hash FROM work_delivery_orders "
-            "WHERE attempt_id=? AND generation=?",
+            "WHERE attempt_id=%s AND generation=%s",
             (binding.work_attempt_id, binding.work_generation),
         ).fetchone()
         if (
@@ -371,14 +374,14 @@ class WorkWorkflowOrigins:
         if connection is not None:
             return self._read_binding(
                 connection,
-                "work_attempt_id=? AND work_generation=? AND work_item_id=?",
+                "work_attempt_id=%s AND work_generation=%s AND work_item_id=%s",
                 (attempt_id, generation, work_item_id),
                 historical=historical,
             )
         with self.repository.read_snapshot() as snapshot:
             return self._read_binding(
                 snapshot,
-                "work_attempt_id=? AND work_generation=? AND work_item_id=?",
+                "work_attempt_id=%s AND work_generation=%s AND work_item_id=%s",
                 (attempt_id, generation, work_item_id),
                 historical=historical,
             )
@@ -405,14 +408,14 @@ class WorkWorkflowOrigins:
         if connection is not None:
             return self._read_binding(
                 connection,
-                "tier=? AND run_id=? AND run_generation=? AND step_id=? AND workflow_step_attempt=?",
+                "tier=%s AND run_id=%s AND run_generation=%s AND step_id=%s AND workflow_step_attempt=%s",
                 args,
                 historical=historical,
             )
         with self.repository.read_snapshot() as snapshot:
             return self._read_binding(
                 snapshot,
-                "tier=? AND run_id=? AND run_generation=? AND step_id=? AND workflow_step_attempt=?",
+                "tier=%s AND run_id=%s AND run_generation=%s AND step_id=%s AND workflow_step_attempt=%s",
                 args,
                 historical=historical,
             )
@@ -469,7 +472,7 @@ class WorkWorkflowOrigins:
     ):
         row = connection.execute(
             "SELECT run_id,workflow_name,spec_snapshot,state,tier,generation,current_step_id "
-            "FROM workflow_run WHERE run_id=?",
+            "FROM workflow_run WHERE run_id=%s",
             (run_id,),
         ).fetchone()
         if (
@@ -499,7 +502,7 @@ class WorkWorkflowOrigins:
             run_generation=handoff.run_generation,
         )
         step = connection.execute(
-            "SELECT state,attempts FROM workflow_run_step WHERE run_id=? AND step_id=?",
+            "SELECT state,attempts FROM workflow_run_step WHERE run_id=%s AND step_id=%s",
             (handoff.run_id, handoff.step_id),
         ).fetchone()
         if (
@@ -722,7 +725,7 @@ class WorkWorkflowOrigins:
         from cli_agent_orchestrator.services import execution_manifest
 
         row = connection.execute(
-            "SELECT manifest_json FROM workflow_run WHERE run_id=?", (run_id,)
+            "SELECT manifest_json FROM workflow_run WHERE run_id=%s", (run_id,)
         ).fetchone()
         if row is None:
             raise OriginDenied("workflow run source is unavailable")
@@ -743,7 +746,7 @@ class WorkWorkflowOrigins:
             self.repository._verify(connection)
             steps = connection.execute(
                 "SELECT DISTINCT step_id FROM work_workflow_step_provisions "
-                "WHERE principal_id=? AND workflow_id=?",
+                "WHERE principal_id=%s AND workflow_id=%s",
                 (principal.id, workflow_id),
             ).fetchall()
             for row in steps:
@@ -899,7 +902,7 @@ class WorkWorkflowOrigins:
                     self.repository._verify(connection)
                     durable = connection.execute(
                         "SELECT workflow_name,spec_snapshot,state,tier,generation FROM workflow_run "
-                        "WHERE run_id=?",
+                        "WHERE run_id=%s",
                         (run_id,),
                     ).fetchone()
                     if (
@@ -1003,7 +1006,7 @@ class WorkWorkflowOrigins:
             raise WorkConflict("Work contract binding differs from its workflow provision")
         order = connection.execute(
             "SELECT delivery_hash,request_hash FROM work_delivery_orders "
-            "WHERE attempt_id=? AND generation=?",
+            "WHERE attempt_id=%s AND generation=%s",
             (attempt["id"], attempt["generation"]),
         ).fetchone()
         if order is None or not isinstance(order["delivery_hash"], str):
@@ -1061,7 +1064,7 @@ class WorkWorkflowOrigins:
             "request_hash,idempotency_key,output_schema_json,output_schema_hash,receiver_subject_id,receiver_subject_revision,"
             "receiver_authorization_kind,receiver_authorization_revision,receiver_grant_id,receiver_grant_revision,"
             "receiver_received_action,receiver_result_action,created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (
                 binding.binding_id,
                 1,
@@ -1183,7 +1186,7 @@ class WorkWorkflowOrigins:
             with self.repository.read_snapshot() as snapshot:
                 durable = snapshot.execute(
                     "SELECT workflow_name,spec_snapshot,state,tier,generation FROM workflow_run "
-                    "WHERE run_id=?",
+                    "WHERE run_id=%s",
                     (run_id,),
                 ).fetchone()
                 if (
@@ -1341,8 +1344,10 @@ class WorkWorkflowOrigins:
         work_generation,
         allow_pending_next,
     ):
-        if not connection.in_transaction:
-            raise WorkConflict("workflow retry authorization requires a stable transaction")
+        if not isinstance(connection, Connection) or not connection.in_transaction:
+            raise WorkConflict("workflow retry authorization requires a caller-owned transaction")
+        if connection.target.identity != self.repository.target.identity:
+            raise WorkConflict("workflow retry transaction belongs to another store")
         self.repository._verify(connection)
         try:
             WorkAuthority._principal(principal)
@@ -1397,7 +1402,7 @@ class WorkWorkflowOrigins:
             run_generation=run_generation,
         )
         step = connection.execute(
-            "SELECT state,attempts FROM workflow_run_step WHERE run_id=? AND step_id=?",
+            "SELECT state,attempts FROM workflow_run_step WHERE run_id=%s AND step_id=%s",
             (run_id, step_id),
         ).fetchone()
         state_is_failed = (
@@ -1412,7 +1417,7 @@ class WorkWorkflowOrigins:
             and step["attempts"] == workflow_step_attempt + 1
         )
         run = connection.execute(
-            "SELECT current_step_id FROM workflow_run WHERE run_id=?",
+            "SELECT current_step_id FROM workflow_run WHERE run_id=%s",
             (run_id,),
         ).fetchone()
         if (
@@ -1472,7 +1477,7 @@ class WorkWorkflowOrigins:
             allow_pending_next=allow_pending_next,
         )
         row = connection.execute(
-            "SELECT * FROM work_workflow_step_retry_authorizations WHERE binding_id=?",
+            "SELECT * FROM work_workflow_step_retry_authorizations WHERE binding_id=%s",
             (binding.binding_id,),
         ).fetchone()
         if row is None:
@@ -1583,7 +1588,7 @@ class WorkWorkflowOrigins:
                 "(authorization_id,authorization_fingerprint,binding_id,binding_fingerprint,tier,run_id,"
                 "run_generation,workflow_id,spec_hash,step_id,workflow_step_attempt,principal_id,provision_id,"
                 "provision_revision,provision_fingerprint,work_item_id,work_attempt_id,work_generation,"
-                "authorized_at,schema_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "authorized_at,schema_version) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
                     authorization.authorization_id,
                     authorization.authorization_fingerprint,
@@ -1723,8 +1728,11 @@ class WorkWorkflowOrigins:
         now = time.time()
         from contextlib import nullcontext
 
-        if connection is not None and not connection.in_transaction:
-            raise OriginDenied("capability requires caller transaction")
+        if connection is not None:
+            if not isinstance(connection, Connection) or not connection.in_transaction:
+                raise OriginDenied("capability requires a caller-owned transaction")
+            if connection.target.identity != self.repository.target.identity:
+                raise OriginDenied("capability transaction belongs to another store")
         with (
             self.repository.transaction() if connection is None else nullcontext(connection)
         ) as connection:
@@ -1740,13 +1748,13 @@ class WorkWorkflowOrigins:
             )
             revision = connection.execute(
                 "SELECT COALESCE(MAX(revision),0)+1 FROM work_workflow_run_capabilities "
-                "WHERE run_id=?",
+                "WHERE run_id=%s",
                 (run_id,),
             ).fetchone()[0]
             connection.execute(
                 "INSERT INTO work_workflow_run_capabilities "
                 "(run_id,revision,schema_version,principal_id,workflow_id,tier,run_generation,spec_hash,"
-                "credential_sha256,state,issued_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "credential_sha256,state,issued_at,expires_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
                     run_id,
                     revision,
@@ -1777,17 +1785,25 @@ class WorkWorkflowOrigins:
         with self.repository.read_snapshot() as connection:
             self.repository._verify(connection)
             row = connection.execute(
-                "SELECT * FROM work_workflow_run_capabilities WHERE run_id=? AND run_generation=? "
-                "AND credential_sha256=?",
+                "SELECT * FROM work_workflow_run_capabilities WHERE run_id=%s AND run_generation=%s "
+                "AND credential_sha256=%s",
                 (run_id, run_generation, digest),
             ).fetchone()
-            latest = connection.execute(
-                "SELECT MAX(revision) FROM work_workflow_run_capabilities WHERE run_id=?",
+            latest_row = connection.execute(
+                "SELECT MAX(revision) FROM work_workflow_run_capabilities WHERE run_id=%s",
                 (run_id,),
-            ).fetchone()[0]
+            ).fetchone()
+            # An ungrouped SQL aggregate normally returns one row even when
+            # there are no matching capabilities (with MAX(revision)=NULL).
+            # Keep the missing-row case fail-closed as well, rather than
+            # assuming a driver always honors that SQL guarantee.
+            if latest_row is None:
+                raise OriginDenied("workflow run capability is absent, stale, or revoked")
+            latest = latest_row[0]
+            if row is None or latest is None:
+                raise OriginDenied("workflow run capability is absent, stale, or revoked")
             if (
-                row is None
-                or row["revision"] != latest
+                row["revision"] != latest
                 or row["state"] != "active"
                 or row["expires_at"] <= time.time()
             ):
@@ -1802,7 +1818,7 @@ class WorkWorkflowOrigins:
             )
             try:
                 identity = connection.execute(
-                    "SELECT issuer,subject,kind FROM work_principals WHERE id=?",
+                    "SELECT issuer,subject,kind FROM work_principals WHERE id=%s",
                     (row["principal_id"],),
                 ).fetchone()
                 if identity is None:

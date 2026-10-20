@@ -1,4 +1,4 @@
-"""Real SQLite pairing lifecycle: approval, identity pinning and revocation."""
+"""Real PostgreSQL pairing lifecycle: approval, identity pinning and revocation."""
 
 from __future__ import annotations
 
@@ -24,6 +24,8 @@ from cli_agent_orchestrator.services import local_peer_identity as identity
 from cli_agent_orchestrator.services import local_peer_registry as registry
 from cli_agent_orchestrator.services import local_peer_service as service
 
+pytestmark = pytest.mark.postgres
+
 
 def response(payload, status=200):
     result = requests.Response()
@@ -34,7 +36,7 @@ def response(payload, status=200):
 
 
 @pytest.fixture
-def peers(monkeypatch, tmp_path):
+def peers(monkeypatch, tmp_path, postgres_targets):
     home = tmp_path / "identity"
     monkeypatch.setattr(identity, "CAO_HOME_DIR", home)
     monkeypatch.setattr(identity, "LOCAL_PEER_INSTANCE_ID_FILE", home / "instance-id")
@@ -43,9 +45,14 @@ def peers(monkeypatch, tmp_path):
     monkeypatch.setattr(identity, "SERVER_PORT", 19889)
     monkeypatch.setattr(identity, "ALLOWED_HOSTS", ["127.0.0.1"])
     monkeypatch.setattr(registry, "LOCAL_PEER_DIR", tmp_path / "registry")
-    monkeypatch.setattr(
-        registry, "LOCAL_PEER_REGISTRY_FILE", tmp_path / "registry" / "peers.sqlite3"
-    )
+    from cli_agent_orchestrator.clients.database import core_migrations
+    from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
+    from cli_agent_orchestrator.services.local_peer_registry import LOCAL_PEER_MIGRATIONS
+
+    migrate_component(postgres_targets.main, core_migrations())
+    migrate_component(postgres_targets.peer, LOCAL_PEER_MIGRATIONS)
+    monkeypatch.setattr(registry, "_database_target", lambda: postgres_targets.peer)
+    registry._verify_target.cache_clear()
     identity.current_process_identity.cache_clear()
     identity.peer_private_key.cache_clear()
     current = identity.current_process_identity()

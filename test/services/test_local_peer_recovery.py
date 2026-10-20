@@ -13,13 +13,25 @@ from cli_agent_orchestrator.services.terminal_service import (
     delete_terminal as _real_delete_terminal,
 )
 
+pytestmark = pytest.mark.postgres
 
-def test_startup_releases_a_write_lease_without_a_task_receipt(monkeypatch, tmp_path):
-    """A crash between lease acquisition and receipt commit cannot fence a project forever."""
+
+def _configure_peer_registry(monkeypatch, tmp_path, postgres_targets):
+    from cli_agent_orchestrator.clients.database import core_migrations
+    from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
+
     monkeypatch.setattr(local_peer_registry, "LOCAL_PEER_DIR", tmp_path / "peers")
-    monkeypatch.setattr(
-        local_peer_registry, "LOCAL_PEER_REGISTRY_FILE", tmp_path / "peers" / "registry.sqlite3"
-    )
+    migrate_component(postgres_targets.main, core_migrations())
+    migrate_component(postgres_targets.peer, local_peer_registry.LOCAL_PEER_MIGRATIONS)
+    monkeypatch.setattr(local_peer_registry, "_database_target", lambda: postgres_targets.peer)
+    local_peer_registry._verify_target.cache_clear()
+
+
+def test_startup_releases_a_write_lease_without_a_task_receipt(
+    monkeypatch, tmp_path, postgres_targets
+):
+    """A crash between lease acquisition and receipt commit cannot fence a project forever."""
+    _configure_peer_registry(monkeypatch, tmp_path, postgres_targets)
     monkeypatch.setattr(
         local_peer_service,
         "current_process_identity",
@@ -38,7 +50,13 @@ def test_startup_releases_a_write_lease_without_a_task_receipt(monkeypatch, tmp_
     assert lease["state"] == "released"
 
 
-def test_status_recovers_terminal_created_before_peer_receipt_was_linked(monkeypatch):
+def test_status_recovers_terminal_created_before_peer_receipt_was_linked(
+    monkeypatch, postgres_targets
+):
+    from cli_agent_orchestrator.clients.database import core_migrations
+    from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
+
+    migrate_component(postgres_targets.main, core_migrations())
     task_id = "f" * 36
     assignment_id = "assignment-local-peer-recovery"
     terminal_id = "a1b2c3d4"
@@ -233,13 +251,10 @@ def test_pairing_invitation_compares_origin_key_from_live_identity(monkeypatch):
 
 
 @pytest.fixture
-def cancellable_peer_task(monkeypatch, tmp_path):
+def cancellable_peer_task(monkeypatch, tmp_path, postgres_targets):
     from cli_agent_orchestrator.services import terminal_service
 
-    monkeypatch.setattr(local_peer_registry, "LOCAL_PEER_DIR", tmp_path / "peers")
-    monkeypatch.setattr(
-        local_peer_registry, "LOCAL_PEER_REGISTRY_FILE", tmp_path / "peers/registry.sqlite3"
-    )
+    _configure_peer_registry(monkeypatch, tmp_path, postgres_targets)
     monkeypatch.setattr(
         local_peer_service,
         "current_process_identity",
@@ -334,32 +349,20 @@ def test_terminal_receipt_retries_release_after_cross_database_failure(
     assert local_peer_registry.project_write_lease(task["project_id"])["state"] == "released"
 
 
-def test_principal_binding_migration_is_additive_and_idempotent(tmp_path, monkeypatch):
-    from sqlalchemy import create_engine, text
+def test_local_peer_principal_binding_is_nullable_in_native_schema(postgres_targets):
+    from cli_agent_orchestrator.clients.database import core_migrations
+    from cli_agent_orchestrator.clients.postgres import connect
+    from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
 
-    db = local_peer_service.database
-    engine = create_engine(f'sqlite:///{tmp_path / "legacy.sqlite3"}')
-    monkeypatch.setattr(db, "engine", engine)
-    with engine.begin() as connection:
-        connection.execute(
-            text(
-                "CREATE TABLE local_peer_tasks (task_id TEXT PRIMARY KEY, state TEXT NOT NULL, result_json TEXT)"
-            )
-        )
-        connection.execute(
-            text("INSERT INTO local_peer_tasks VALUES (:id, :state, :result)"),
-            {"id": "old", "state": "cancelled", "result": '{"state":"cancelled"}'},
-        )
-    db._migrate_local_peer_principal()
-    db._migrate_local_peer_principal()
-    with engine.connect() as connection:
-        assert connection.execute(
-            text("SELECT task_id, state, result_json, requester_principal_id FROM local_peer_tasks")
-        ).one() == ("old", "cancelled", '{"state":"cancelled"}', None)
-        assert connection.execute(
-            text("SELECT task_id, state, result_json FROM local_peer_tasks")
-        ).one() == ("old", "cancelled", '{"state":"cancelled"}')
-    engine.dispose()
+    migrate_component(postgres_targets.main, core_migrations())
+    with connect(postgres_targets.main, readonly=True) as connection:
+        column = connection.execute(
+            """SELECT is_nullable FROM information_schema.columns
+               WHERE table_schema=%s AND table_name='local_peer_tasks'
+                 AND column_name='requester_principal_id'""",
+            (postgres_targets.main.schema,),
+        ).fetchone()
+    assert column is not None and column[0] == "YES"
 
 
 def test_outgoing_idempotency_key_retains_authenticated_principal(cancellable_peer_task):

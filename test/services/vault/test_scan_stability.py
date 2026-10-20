@@ -27,11 +27,14 @@ def test_same_size_mutation_between_read_stats_is_skipped(tmp_path, monkeypatch)
     original_fstat = scan.os.fstat
     calls = 0
     before_stat = None
+    discovery_stat = target.stat()
 
     def mutate(fd: int):
         nonlocal before_stat, calls
-        calls += 1
         result = original_fstat(fd)
+        if (result.st_dev, result.st_ino) != (discovery_stat.st_dev, discovery_stat.st_ino):
+            return result
+        calls += 1
         if calls == 1:
             before_stat = result
             original_mtime = target.stat().st_mtime_ns
@@ -40,6 +43,7 @@ def test_same_size_mutation_between_read_stats_is_skipped(tmp_path, monkeypatch)
             return result
         assert before_stat is not None
         return SimpleNamespace(
+            st_mode=before_stat.st_mode,
             st_dev=before_stat.st_dev,
             st_ino=before_stat.st_ino,
             st_size=before_stat.st_size,
@@ -50,6 +54,7 @@ def test_same_size_mutation_between_read_stats_is_skipped(tmp_path, monkeypatch)
     monkeypatch.setattr(scan.os, "fstat", mutate)
     report = scan_vault(_vault(root))
 
+    assert calls == 2
     assert report.notes[0].findings[0].code == FindingCode.UNSTABLE_SKIPPED
 
 

@@ -40,7 +40,10 @@ from cli_agent_orchestrator.services.work_provisioning import (
 )
 from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 from cli_agent_orchestrator.services.work_reservations import ReservationConflict, WorkReservations
-from cli_agent_orchestrator.services.work_scheduler import WorkScheduler
+from cli_agent_orchestrator.services.work_scheduler import (
+    SchedulerSelectionChanged,
+    WorkScheduler,
+)
 from cli_agent_orchestrator.services.work_service import WorkService
 from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
@@ -263,13 +266,13 @@ class WorkAdmission:
         window_name,
         file_path=None,
     ):
-        """Re-read the attempt and terminal registry on the same SQLite snapshot."""
+        """Re-read the attempt and terminal registry on the same PostgreSQL snapshot."""
         if not isinstance(bound_terminal_id, str) or not bound_terminal_id:
             raise WorkConflict("dispatch attempt has no durable terminal binding")
         if terminal_id != bound_terminal_id:
             raise WorkConflict("effect terminal differs from the durable attempt binding")
         actual = connection.execute(
-            "SELECT terminal_id FROM work_attempts WHERE id=?", (attempt_id,)
+            "SELECT terminal_id FROM work_attempts WHERE id=%s", (attempt_id,)
         ).fetchone()
         if actual is None or actual["terminal_id"] != bound_terminal_id:
             raise WorkConflict("durable terminal binding changed before effect")
@@ -284,15 +287,15 @@ class WorkAdmission:
             raise WorkConflict("effect window is required")
         try:
             target = connection.execute(
-                "SELECT id,tmux_session,tmux_window FROM terminals WHERE id=?",
+                "SELECT id,tmux_session,tmux_window FROM terminals WHERE id=%s",
                 (bound_terminal_id,),
             ).fetchone()
             session_owner = connection.execute(
-                "SELECT 1 FROM terminals WHERE tmux_session=? AND id<>? LIMIT 1",
+                "SELECT 1 FROM terminals WHERE tmux_session=%s AND id<>%s LIMIT 1",
                 (session_name, bound_terminal_id),
             ).fetchone()
         except Exception as error:
-            # Work and terminal rows share the configured SQLite database. An
+            # Work and terminal rows share the configured PostgreSQL target. An
             # absent/unreadable terminal table is not evidence of ownership.
             raise WorkConflict("terminal registry cannot verify the effect target") from error
         if effect == "create_session":
@@ -349,7 +352,7 @@ class WorkAdmission:
         self, connection, *, request, principal, grant_id, grant_revision, contract, delivery
     ):
         existing = connection.execute(
-            "SELECT id FROM work_items WHERE job_id=? AND operation_kind=? AND idempotency_key=?",
+            "SELECT id FROM work_items WHERE job_id=%s AND operation_kind=%s AND idempotency_key=%s",
             (request["job_id"], request["operation_kind"], request["idempotency_key"]),
         ).fetchone()
         if existing is None:
@@ -367,7 +370,7 @@ class WorkAdmission:
             contract=contract,
         )
         queued = connection.execute(
-            "SELECT id FROM work_scheduler_requests WHERE attempt_id=? AND generation=?",
+            "SELECT id FROM work_scheduler_requests WHERE attempt_id=%s AND generation=%s",
             (original["id"], original["generation"]),
         ).fetchone()
         if binding is None or queued is None:
@@ -442,13 +445,13 @@ class WorkAdmission:
     ):
         """Replay only the immutable launch origin, including cross-job key collisions."""
         row = connection.execute(
-            "SELECT * FROM work_launch_origin_bindings WHERE principal_id=? AND selector=? "
-            "AND idempotency_key=?",
+            "SELECT * FROM work_launch_origin_bindings WHERE principal_id=%s AND selector=%s "
+            "AND idempotency_key=%s",
             (principal.id, origin.ref.selector, request["idempotency_key"]),
         ).fetchone()
         if row is None:
             existing = connection.execute(
-                "SELECT id FROM work_items WHERE job_id=? AND operation_kind=? AND idempotency_key=?",
+                "SELECT id FROM work_items WHERE job_id=%s AND operation_kind=%s AND idempotency_key=%s",
                 (request["job_id"], request["operation_kind"], request["idempotency_key"]),
             ).fetchone()
             if existing is not None:
@@ -485,7 +488,7 @@ class WorkAdmission:
         work = self.repository._admit_work(connection, **request)
         original = work["attempts"][0]
         marker = connection.execute(
-            "SELECT origin_protocol FROM work_items WHERE id=?", (work["id"],)
+            "SELECT origin_protocol FROM work_items WHERE id=%s", (work["id"],)
         ).fetchone()
         binding = self.contracts._existing(
             connection,
@@ -497,7 +500,7 @@ class WorkAdmission:
             contract=contract,
         )
         queued = connection.execute(
-            "SELECT id FROM work_scheduler_requests WHERE attempt_id=? AND generation=?",
+            "SELECT id FROM work_scheduler_requests WHERE attempt_id=%s AND generation=%s",
             (original["id"], original["generation"]),
         ).fetchone()
         if marker is None or marker[0] != "launch-v1" or binding is None or queued is None:
@@ -518,8 +521,8 @@ class WorkAdmission:
     ):
         """Read one complete pre-v21 launch order; this path can never admit one."""
         existing = connection.execute(
-            "SELECT id,origin_protocol FROM work_items WHERE job_id=? AND operation_kind=? "
-            "AND idempotency_key=?",
+            "SELECT id,origin_protocol FROM work_items WHERE job_id=%s AND operation_kind=%s "
+            "AND idempotency_key=%s",
             (request["job_id"], request["operation_kind"], request["idempotency_key"]),
         ).fetchone()
         if existing is None:
@@ -531,7 +534,7 @@ class WorkAdmission:
         work = self.repository._admit_work(connection, **request)
         original = work["attempts"][0]
         origin = connection.execute(
-            "SELECT attempt_id FROM work_launch_origin_bindings WHERE attempt_id=? AND generation=?",
+            "SELECT attempt_id FROM work_launch_origin_bindings WHERE attempt_id=%s AND generation=%s",
             (original["id"], original["generation"]),
         ).fetchone()
         if origin is not None:
@@ -546,7 +549,7 @@ class WorkAdmission:
             contract=contract,
         )
         queued = connection.execute(
-            "SELECT id FROM work_scheduler_requests WHERE attempt_id=? AND generation=?",
+            "SELECT id FROM work_scheduler_requests WHERE attempt_id=%s AND generation=%s",
             (original["id"], original["generation"]),
         ).fetchone()
         if binding is None or queued is None:
@@ -557,7 +560,7 @@ class WorkAdmission:
     def _bind_launch_origin(self, connection, *, binding, origin, fingerprint, request, principal):
         """Insert the immutable companion row in the caller's final transaction."""
         work = connection.execute(
-            "SELECT origin_protocol,request_hash,idempotency_key FROM work_items WHERE id=?",
+            "SELECT origin_protocol,request_hash,idempotency_key FROM work_items WHERE id=%s",
             (binding.work_item_id,),
         ).fetchone()
         if (
@@ -572,7 +575,7 @@ class WorkAdmission:
             "(attempt_id,generation,schema_version,origin_kind,principal_id,selector,provision_id,"
             "provision_revision,provision_fingerprint,requester_principal_id,executor_principal_id,"
             "job_id,work_item_id,request_hash,idempotency_key,created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (
                 binding.attempt_id,
                 binding.generation,
@@ -598,7 +601,7 @@ class WorkAdmission:
     ):
         """Recover a reservation only while it cannot be selected for dispatch."""
         existing = connection.execute(
-            "SELECT id FROM work_items WHERE job_id=? AND operation_kind=? AND idempotency_key=?",
+            "SELECT id FROM work_items WHERE job_id=%s AND operation_kind=%s AND idempotency_key=%s",
             (request["job_id"], request["operation_kind"], request["idempotency_key"]),
         ).fetchone()
         if existing is None:
@@ -615,11 +618,11 @@ class WorkAdmission:
             contract=contract,
         )
         queued = connection.execute(
-            "SELECT id FROM work_scheduler_requests WHERE attempt_id=? AND generation=?",
+            "SELECT id FROM work_scheduler_requests WHERE attempt_id=%s AND generation=%s",
             (original["id"], original["generation"]),
         ).fetchone()
         order = connection.execute(
-            "SELECT attempt_id FROM work_delivery_orders WHERE attempt_id=? AND generation=?",
+            "SELECT attempt_id FROM work_delivery_orders WHERE attempt_id=%s AND generation=%s",
             (original["id"], original["generation"]),
         ).fetchone()
         if binding is None:
@@ -798,7 +801,7 @@ class WorkAdmission:
             if origin is not None:
                 marked = connection.execute(
                     "UPDATE work_items SET origin_protocol='launch-v1' "
-                    "WHERE id=? AND origin_protocol='legacy'",
+                    "WHERE id=%s AND origin_protocol='legacy'",
                     (work["id"],),
                 )
                 if marked.rowcount != 1:
@@ -994,7 +997,7 @@ class WorkAdmission:
             if bridge is None:
                 raise WorkConflict("managed inbox cannot enable without a durable bridge")
             attempt = connection.execute(
-                "SELECT * FROM work_attempts WHERE id=?", (attempt_id,)
+                "SELECT * FROM work_attempts WHERE id=%s", (attempt_id,)
             ).fetchone()
             if (
                 attempt is None
@@ -1021,11 +1024,47 @@ class WorkAdmission:
     def _retire_unexecutable(self, connection, request):
         """Fail only never-sent work; retiring a queue entry never releases a writer."""
         actor = "system:work-dispatcher"
-        attempt = connection.execute(
-            "SELECT * FROM work_attempts WHERE id=?", (request["attempt_id"],)
-        ).fetchone()
+        # `_eligible` may probe this candidate and roll back its savepoint before
+        # retirement. The next candidate can revalidate a grant chain in the
+        # same transaction, so reacquire the job authority lane before taking
+        # the job/item/attempt locks below.
+        WorkAuthority.lock_job_authority_lane(connection, request["job_id"])
+        # Candidate probes deliberately release authority locks. Reacquire the
+        # canonical job→item→attempt chain and refresh the request before using
+        # either revision: another dispatcher may already have claimed or
+        # retired this row since _eligible read its queued snapshot.
+        attempt = self.repository._lock_attempt_for_write(connection, request["attempt_id"])
         if attempt is None:
             raise WorkConflict("scheduler request has no attempt")
+        parent = connection.execute(
+            "SELECT job_id FROM work_items WHERE id=%s", (attempt["work_item_id"],)
+        ).fetchone()
+        current = self.scheduler._row(connection, request["id"])
+        if (
+            parent is None
+            or attempt["generation"] != request["generation"]
+            or attempt["work_item_id"] != request["work_item_id"]
+            or parent["job_id"] != request["job_id"]
+            or current["attempt_id"] != request["attempt_id"]
+            or current["generation"] != request["generation"]
+            or current["work_item_id"] != request["work_item_id"]
+            or current["job_id"] != request["job_id"]
+        ):
+            raise WorkConflict("scheduler request identity changed before retirement")
+
+        terminal_states = {"finished", "failed", "cancelled"}
+        if current["state"] == "withdrawn":
+            if attempt["state"] in terminal_states:
+                return
+            raise WorkConflict("withdrawn scheduler request still has a live attempt")
+        if current["state"] == "held":
+            # A concurrent claimant owns this slot now. Retirement must not
+            # invalidate its attempt or release capacity from a stale queue
+            # snapshot, even when live authority has since been revoked.
+            return
+        if current["state"] != "queued":
+            raise WorkConflict("scheduler request is no longer retireable")
+
         if attempt["state"] == "planned":
             self.repository._transition_attempt(
                 connection,
@@ -1040,15 +1079,20 @@ class WorkAdmission:
                     generation=attempt["generation"], expected_generation=attempt["generation"]
                 ),
             )
-            attempt = connection.execute(
-                "SELECT * FROM work_attempts WHERE id=?", (attempt["id"],)
-            ).fetchone()
-        if attempt["state"] in {"finished", "failed", "cancelled"}:
+            attempt = self.repository._lock_attempt_for_write(connection, attempt["id"])
+            if (
+                attempt is None
+                or attempt["generation"] != current["generation"]
+                or attempt["work_item_id"] != current["work_item_id"]
+                or attempt["state"] != "failed"
+            ):
+                raise WorkConflict("retired attempt identity or state changed")
+        if attempt["state"] in terminal_states:
             self.scheduler._withdraw_queued(
                 connection,
-                request["id"],
-                generation=request["generation"],
-                expected_revision=request["revision"],
+                current["id"],
+                generation=current["generation"],
+                expected_revision=current["revision"],
                 expected_attempt_revision=attempt["revision"],
                 actor_id=actor,
             )
@@ -1058,7 +1102,7 @@ class WorkAdmission:
         if not resources.write_paths:
             return None  # Backend denies all path access, never inherits grant paths.
         attempt = connection.execute(
-            "SELECT * FROM work_attempts WHERE id=?", (binding.attempt_id,)
+            "SELECT * FROM work_attempts WHERE id=%s", (binding.attempt_id,)
         ).fetchone()
         return self.reservations._reserve(
             connection,
@@ -1074,64 +1118,71 @@ class WorkAdmission:
         )
 
     def _eligible(self, connection, *, registered_only=False):
-        """Use owners' checks under savepoints; no duplicated path-conflict rules."""
+        """Probe each queued candidate without retaining its authority/path locks."""
         eligible = {}
         requests = connection.execute(
-            "SELECT * FROM work_scheduler_requests WHERE state='queued' ORDER BY queued_at,rowid"
+            "SELECT * FROM work_scheduler_requests WHERE state='queued' ORDER BY queue_sequence"
         ).fetchall()
         for request in requests:
+            binding = None
+            retire = False
+            executable = True
+            path_available = False
+            connection.execute("SAVEPOINT work_candidate_probe")
             try:
-                binding = self.contracts._revalidate_order(
-                    connection, request["attempt_id"], generation=request["generation"]
-                )
-            except (
-                AuthorityDenied,
-                GrantConflict,
-                ContractConflict,
-                SnapshotConflict,
-                SnapshotUnavailable,
-            ):
+                try:
+                    binding = self.contracts._revalidate_order(
+                        connection, request["attempt_id"], generation=request["generation"]
+                    )
+                except (
+                    AuthorityDenied,
+                    GrantConflict,
+                    ContractConflict,
+                    SnapshotConflict,
+                    SnapshotUnavailable,
+                ):
+                    retire = True
+                if binding is not None and binding.contract.backend not in self.backends:
+                    binding = None  # A missing server adapter cannot authorize substitution.
+                if binding is not None and registered_only:
+                    try:
+                        executable = self.deliveries._executable(connection, binding)
+                    except ContractConflict:
+                        logger.warning(
+                            "Registered delivery is unavailable; leaving operation queued",
+                            extra={
+                                "attempt_id": binding.attempt_id,
+                                "generation": binding.generation,
+                            },
+                        )
+                        executable = False
+                if binding is not None and executable:
+                    try:
+                        self._reserve_order(connection, binding, request)
+                    except ReservationConflict:
+                        pass
+                    else:
+                        path_available = True
+            finally:
+                connection.execute("ROLLBACK TO work_candidate_probe")
+                connection.execute("RELEASE work_candidate_probe")
+            if retire:
                 self._retire_unexecutable(connection, request)
                 continue
-            if binding.contract.backend not in self.backends:
-                continue  # A missing server adapter is not permission to substitute one.
-            if registered_only:
-                try:
-                    if not self.deliveries._executable(connection, binding):
-                        continue
-                except ContractConflict:
-                    logger.warning(
-                        "Registered delivery is unavailable; leaving operation queued",
-                        extra={"attempt_id": binding.attempt_id, "generation": binding.generation},
-                    )
-                    continue
-            connection.execute("SAVEPOINT work_path_probe")
-            try:
-                self._reserve_order(connection, binding, request)
-            except ReservationConflict:
-                continue
-            else:
+            if binding is not None and executable and path_available:
                 eligible[binding.attempt_id] = binding
-            finally:
-                connection.execute("ROLLBACK TO work_path_probe")
-                connection.execute("RELEASE work_path_probe")
         return eligible
 
     def _preview(self, *, registered_only=False):
         with self.repository.transaction() as connection:
             self.repository._verify(connection)
             eligible = self._eligible(connection, registered_only=registered_only)
-            connection.execute("SAVEPOINT work_queue_probe")
-            try:
-                selected = self.scheduler._claim_next(
-                    connection,
-                    actor_id="system:work-dispatcher",
-                    eligible_attempts=frozenset(eligible),
-                )
-                return eligible[selected.attempt_id] if selected is not None else None
-            finally:
-                connection.execute("ROLLBACK TO work_queue_probe")
-                connection.execute("RELEASE work_queue_probe")
+            selected = self.scheduler._peek_next(
+                connection,
+                actor_id="system:work-dispatcher",
+                eligible_attempts=frozenset(eligible),
+            )
+            return eligible[selected.attempt_id] if selected is not None else None
 
     def _commit_dispatch(
         self,
@@ -1144,18 +1195,49 @@ class WorkAdmission:
         with self.repository.transaction() as connection:
             self.repository._verify(connection)
             eligible = self._eligible(connection, registered_only=registered_only)
-            selected = self.scheduler._claim_next(
-                connection,
-                actor_id="system:work-dispatcher",
-                eligible_attempts=frozenset(eligible),
-            )
-            if selected is None:
-                return None
-            binding = eligible[selected.attempt_id]
+            probed_binding = eligible.get(preview.attempt_id)
+            if probed_binding is None:
+                raise _SelectionChanged()
+            try:
+                binding = self.contracts._revalidate_order(
+                    connection, preview.attempt_id, generation=preview.generation
+                )
+            except (
+                AuthorityDenied,
+                GrantConflict,
+                ContractConflict,
+                SnapshotConflict,
+                SnapshotUnavailable,
+            ) as error:
+                raise _SelectionChanged() from error
             if (binding.attempt_id, binding.generation, binding.contract_hash) != (
                 preview.attempt_id,
                 preview.generation,
                 preview.contract_hash,
+            ) or (
+                probed_binding.attempt_id,
+                probed_binding.generation,
+                probed_binding.contract_hash,
+            ) != (
+                preview.attempt_id,
+                preview.generation,
+                preview.contract_hash,
+            ):
+                raise _SelectionChanged()
+            try:
+                selected = self.scheduler._claim_next(
+                    connection,
+                    actor_id="system:work-dispatcher",
+                    eligible_attempts=frozenset(eligible),
+                    expected_selection=(preview.attempt_id, preview.generation),
+                )
+            except SchedulerSelectionChanged as error:
+                raise _SelectionChanged() from error
+            if selected is None:
+                return None
+            if (
+                selected.attempt_id != binding.attempt_id
+                or selected.generation != binding.generation
             ):
                 raise _SelectionChanged()
             request = self.scheduler._row(connection, selected.id)
@@ -1181,7 +1263,7 @@ class WorkAdmission:
                         actor_id=binding.principal_id,
                     )
             attempt = connection.execute(
-                "SELECT * FROM work_attempts WHERE id=?", (binding.attempt_id,)
+                "SELECT * FROM work_attempts WHERE id=%s", (binding.attempt_id,)
             ).fetchone()
             sent = self.repository._transition_attempt(
                 connection,
@@ -1256,7 +1338,7 @@ class WorkAdmission:
                             expected_terminal_target=preview_target,
                         )
                     else:
-                        with terminal_dispatch_lock(self.repository.path, preview_terminal_id):
+                        with terminal_dispatch_lock(self.repository.target, preview_terminal_id):
                             committed = self._commit_dispatch(
                                 preview,
                                 registered_only=True,
@@ -1297,7 +1379,7 @@ class WorkAdmission:
                 if current != binding:
                     raise WorkConflict("admitted order changed before effect")
                 actual = connection.execute(
-                    "SELECT state,revision,terminal_id FROM work_attempts WHERE id=?",
+                    "SELECT state,revision,terminal_id FROM work_attempts WHERE id=%s",
                     (binding.attempt_id,),
                 ).fetchone()
                 if (actual["state"], actual["revision"]) != ("sent", attempt["revision"]):
@@ -1435,7 +1517,7 @@ class WorkAdmission:
     async def dispatch_next_async(self, send):
         """Prepare off-loop, deliver on the caller's loop, retain uncertain ownership.
 
-        This supports async terminal/provider adapters without holding a SQLite
+        This supports async terminal/provider adapters without holding a PostgreSQL
         transaction across readiness waits. Cancellation is not proof of process
         termination and therefore never releases resources or authorizes a resend.
         """
@@ -1457,7 +1539,7 @@ class WorkAdmission:
                 snapshot = DelegationSnapshots._load_authorized(
                     connection,
                     connection.execute(
-                        "SELECT * FROM work_delegation_snapshots WHERE id=?",
+                        "SELECT * FROM work_delegation_snapshots WHERE id=%s",
                         (binding.contract.snapshot.id,),
                     ).fetchone(),
                 )

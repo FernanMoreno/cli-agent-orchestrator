@@ -180,6 +180,7 @@ TUI_STATUS_BAR_PATTERN = r"Run Everything|Composer \d"
 
 
 class CursorCliProvider(BaseProvider):
+    supports_interaction_mcp_overlay = True
     """Provider for the Cursor CLI (``agent`` / ``cursor-agent``).
 
     The provider launches Cursor with the primary ``agent`` command
@@ -428,7 +429,7 @@ class CursorCliProvider(BaseProvider):
         # operations, and keep the layout under the CAO tmp dir so
         # it is removed with the session.
         if profile is not None and profile.mcpServers:
-            plugin_dir = self._write_plugin_dir(profile.mcpServers)
+            plugin_dir = self._write_plugin_dir(self.interaction_mcp_servers(profile.mcpServers))
             command_parts.extend(["--plugin-dir", plugin_dir])
             # --approve-mcps is required to skip per-server approval
             # dialogs on first run; otherwise the REPL blocks.

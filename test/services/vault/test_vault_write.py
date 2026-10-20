@@ -984,7 +984,7 @@ def test_write_raises_partial_write_after_durable_publish(tmp_path) -> None:
         _write(fixture, refresh=fail_refresh)
 
     assert str(caught.value) == (
-        "Memory content and index were saved, but SQLite metadata could not be updated. "
+        "Memory content and index were saved, but PostgreSQL metadata could not be updated. "
         "Run `cao memory repair --apply`."
     )
     assert (

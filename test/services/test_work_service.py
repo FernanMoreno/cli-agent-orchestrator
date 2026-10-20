@@ -1,22 +1,19 @@
-"""Crash windows around external sends, using real temporary SQLite."""
+"""Crash windows around external sends on the native Work store."""
 
 import importlib
 import importlib.util
-import sqlite3
 import threading
-from test.clients.test_work_repository import (
-    admit,
-    create_job,
-    legacy_admit,
-    legacy_v21_store,
-    migrate_legacy_v21_store,
-)
+from test.clients.test_work_repository import admit, advance, create_job
 from test.fixtures.work_store import work_store_paths  # noqa: F401
 
 import pytest
+from psycopg.errors import DivisionByZero
 
+from cli_agent_orchestrator.clients.postgres import Connection
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
+
+pytestmark = pytest.mark.postgres
 
 
 def service_module():
@@ -25,10 +22,26 @@ def service_module():
     return importlib.import_module(name)
 
 
+def _fail_work_event_insert(monkeypatch):
+    """Raise a real PostgreSQL error at event persistence without changing schema."""
+    original_execute = Connection.execute
+
+    def fail_event_insert(connection, statement, params=(), *, prepare: bool | None = None):
+        if isinstance(statement, str) and statement.startswith("INSERT INTO work_events"):
+            return original_execute(connection, "SELECT 1/0")
+        if prepare is None:
+            return original_execute(connection, statement, params)
+        return original_execute(connection, statement, params, prepare=prepare)
+
+    monkeypatch.setattr(Connection, "execute", fail_event_insert)
+
+
 @pytest.fixture
-def prepared(work_store_paths):
-    store = WorkRepository(work_store_paths.database)
-    store.initialize()
+def prepared(postgres_targets, work_store_paths):
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
+
+    bootstrap_scope(postgres_targets.main)
+    store = WorkRepository(postgres_targets.main, filesystem_home=work_store_paths.database.parent)
     job = create_job(store)
     work = admit(store, job)
     proof = TransitionEvidence(
@@ -93,9 +106,14 @@ def test_intent_is_committed_before_send_without_holding_database_lock(prepared)
     calls = []
 
     def send():
-        with sqlite3.connect(store.path, timeout=0.1) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            assert connection.execute("SELECT state FROM work_attempts").fetchone()[0] == "sent"
+        from cli_agent_orchestrator.clients.postgres import connect
+
+        with connect(store.target) as connection, connection.transaction():
+            attempt = connection.execute(
+                "SELECT state FROM work_attempts WHERE id=%s FOR UPDATE NOWAIT",
+                (work["attempts"][-1]["id"],),
+            ).fetchone()
+            assert attempt is not None and attempt["state"] == "sent"
         calls.append("sent")
         return module.DeliveryObservation(task_received=True, execution_started=True)
 
@@ -109,22 +127,22 @@ def test_intent_is_committed_before_send_without_holding_database_lock(prepared)
 def test_direct_work_service_dispatch_registers_its_writer_for_the_effect(prepared):
     module = service_module()
     store, work, proof = prepared
+    from cli_agent_orchestrator.clients.postgres import connect
 
     def send():
-        with sqlite3.connect(store.path) as connection:
-            assert (
-                connection.execute(
-                    "SELECT count(*) FROM work_registered_writers WHERE state='active'"
-                ).fetchone()[0]
-                == 1
-            )
+        with connect(store.target, readonly=True) as connection:
+            active_writers = connection.execute(
+                "SELECT count(*) FROM work_registered_writers WHERE state='active'"
+            ).fetchone()[0]
+            assert active_writers == 1
         return module.DeliveryObservation()
 
     module.WorkService(store).dispatch(work["id"], send, admission=proof, actor_id="operator")
-    with sqlite3.connect(store.path) as connection:
-        assert connection.execute("SELECT state FROM work_registered_writers").fetchall() == [
-            ("released",)
-        ]
+    with connect(store.target, readonly=True) as connection:
+        assert [
+            row[0]
+            for row in connection.execute("SELECT state FROM work_registered_writers").fetchall()
+        ] == ["released"]
 
 
 def test_sent_intent_cannot_cross_a_real_offline_cut_before_writer_registration(
@@ -139,7 +157,7 @@ def test_sent_intent_cannot_cross_a_real_offline_cut_before_writer_registration(
     store, work, proof = prepared
     service = module.WorkService(store)
     operator = auth._verified_principal("https://cut.test", "sent-race", [auth.SCOPE_ADMIN], "jwt")
-    authority = WorkAuthority(WorkRepository(store.path))
+    authority = WorkAuthority(WorkRepository(store.target, filesystem_home=store.filesystem_home))
     entered_after_sent = threading.Event()
     release_registration = threading.Event()
     dispatch_result = {}
@@ -189,15 +207,12 @@ def test_sent_intent_cannot_cross_a_real_offline_cut_before_writer_registration(
     assert lease.id
 
 
-def test_persistence_failure_prevents_external_effect(prepared):
+def test_persistence_failure_prevents_external_effect(prepared, monkeypatch):
     module = service_module()
     store, work, proof = prepared
-    with sqlite3.connect(store.path) as connection:
-        connection.execute(
-            "CREATE TRIGGER fail_event BEFORE INSERT ON work_events BEGIN SELECT RAISE(ABORT,'event unavailable'); END"
-        )
+    _fail_work_event_insert(monkeypatch)
     calls = []
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(DivisionByZero):
         module.WorkService(store).dispatch(
             work["id"], lambda: calls.append("sent"), admission=proof, actor_id="operator"
         )
@@ -217,9 +232,9 @@ def test_uncertain_send_is_not_repeated_after_restart(prepared):
     with pytest.raises(module.DeliveryUncertain):
         module.WorkService(store).dispatch(work["id"], send, admission=proof, actor_id="operator")
     assert store.get_work(work["id"])["state"] == "reconcile"
-    module.WorkService(WorkRepository(store.path)).dispatch(
-        work["id"], send, admission=proof, actor_id="operator"
-    )
+    module.WorkService(
+        WorkRepository(store.target, filesystem_home=store.filesystem_home)
+    ).dispatch(work["id"], send, admission=proof, actor_id="operator")
     assert calls == ["sent"]
 
 
@@ -237,9 +252,9 @@ def test_process_death_after_intent_is_not_replayed(prepared):
             work["id"], killed_send, admission=proof, actor_id="operator"
         )
     assert store.get_work(work["id"])["attempts"][0]["state"] == "sent"
-    module.WorkService(WorkRepository(store.path)).dispatch(
-        work["id"], killed_send, admission=proof, actor_id="operator"
-    )
+    module.WorkService(
+        WorkRepository(store.target, filesystem_home=store.filesystem_home)
+    ).dispatch(work["id"], killed_send, admission=proof, actor_id="operator")
     assert calls == ["possibly sent"]
 
 
@@ -306,7 +321,9 @@ def test_settlement_persists_retrievable_result_before_success(prepared, work_st
         actor_id="operator",
     )
     assert completed["state"] == "succeeded"
-    reopened = module.WorkService(WorkRepository(store.path))
+    reopened = module.WorkService(
+        WorkRepository(store.target, filesystem_home=store.filesystem_home)
+    )
     assert reopened.read_result(work["id"], artifacts=artifacts) == b"verified output"
 
 
@@ -445,7 +462,9 @@ def test_result_validation_failure_never_accepts_result(prepared, work_store_pat
     assert store.get_work(work["id"])["accepted_result_id"] is None
 
 
-def test_result_persistence_failure_leaves_orphan_not_success(prepared, work_store_paths):
+def test_result_persistence_failure_leaves_orphan_not_success(
+    prepared, work_store_paths, monkeypatch
+):
     module = service_module()
     assert hasattr(module.WorkService, "settle_attempt"), "durable settlement missing"
     from cli_agent_orchestrator.services.step_output_store import ImmutableResultStore
@@ -453,11 +472,8 @@ def test_result_persistence_failure_leaves_orphan_not_success(prepared, work_sto
     store, work, proof = prepared
     service = module.WorkService(store)
     _running_for_settlement(module, store, work, proof)
-    with sqlite3.connect(store.path) as connection:
-        connection.execute(
-            "CREATE TRIGGER fail_event BEFORE INSERT ON work_events BEGIN SELECT RAISE(ABORT,'event unavailable'); END"
-        )
-    with pytest.raises(sqlite3.IntegrityError):
+    _fail_work_event_insert(monkeypatch)
+    with pytest.raises(DivisionByZero):
         service.settle_attempt(
             work["id"],
             generation=1,
@@ -499,19 +515,26 @@ def test_cancelled_work_retains_late_result_without_claiming_success(prepared, w
     assert len(store.referenced_artifact_hashes()) == 1
 
 
-def test_join_reports_expired_child_reconcile_instead_of_waiting_forever(work_store_paths):
+def test_join_reports_expired_child_reconcile_instead_of_waiting_forever(
+    postgres_targets, work_store_paths
+):
     module = service_module()
-    store = legacy_v21_store(work_store_paths.database)
+    from test.clients.test_work_repository import admit_descendant
+
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
+
+    bootstrap_scope(postgres_targets.main)
+    store = WorkRepository(postgres_targets.main, filesystem_home=work_store_paths.database.parent)
     job = create_job(store)
-    work = legacy_admit(store, job)
-    child = legacy_admit(store, job, idempotency_key="child", parent_work_item_id=work["id"])
-    migrate_legacy_v21_store(store)
-    from test.clients.test_work_repository import advance
+    work = admit(store, job)
+    child = admit_descendant(store, job, work)
 
     advance(store, child, event_id="child-sent")
-    with sqlite3.connect(store.path) as connection:
+    from cli_agent_orchestrator.clients.postgres import connect
+
+    with connect(store.target) as connection, connection.transaction():
         connection.execute(
-            "UPDATE work_attempts SET lease_expires_at=1 WHERE work_item_id=?", (child["id"],)
+            "UPDATE work_attempts SET lease_expires_at=1 WHERE work_item_id=%s", (child["id"],)
         )
     assert hasattr(module.WorkService, "join_children"), "durable join missing"
     joined = module.WorkService(store).join_children(

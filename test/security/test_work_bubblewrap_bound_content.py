@@ -38,7 +38,7 @@ def _bound_worker(tmp_path):
     content.publish(identity, executable)
     with repository.transaction() as connection:
         connection.execute(
-            "UPDATE work_attempts SET state='sent' WHERE id=?", (binding.attempt_id,)
+            "UPDATE work_attempts SET state='sent' WHERE id=%s", (binding.attempt_id,)
         )
     return repository, binding, content, identity
 
@@ -184,7 +184,7 @@ def test_recorded_bound_launch_withholds_release_after_post_persist_revision_cha
         evidence = original_record(self, *args, **kwargs)
         with repository.transaction() as connection:
             connection.execute(
-                "UPDATE work_attempts SET revision=revision+1 WHERE id=?",
+                "UPDATE work_attempts SET revision=revision+1 WHERE id=%s",
                 (binding.attempt_id,),
             )
         return evidence
@@ -273,14 +273,14 @@ def test_recorded_bound_launch_activates_private_proxy_only_after_ack_and_durabl
     with repository.read_snapshot() as connection:
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_mcp_proxy_issues WHERE attempt_id=?",
+                "SELECT count(*) FROM work_mcp_proxy_issues WHERE attempt_id=%s",
                 (binding.attempt_id,),
             ).fetchone()[0]
             == 1
         )
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=?",
+                "SELECT count(*) FROM work_mcp_proxy_effects WHERE attempt_id=%s",
                 (binding.attempt_id,),
             ).fetchone()[0]
             == 0

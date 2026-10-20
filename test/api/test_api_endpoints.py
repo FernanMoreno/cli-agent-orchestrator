@@ -383,7 +383,15 @@ class TestCreateSession:
             resume_session_id=None,
             group=None,
             metadata=None,
+            creation_principal=ANY,
         )
+        from cli_agent_orchestrator.security.auth import is_verified_principal
+
+        creation_principal = mock_svc.create_session.call_args.kwargs["creation_principal"]
+        assert is_verified_principal(creation_principal)
+        assert creation_principal.kind == "local_operator"
+        assert creation_principal.issuer == "urn:cao:local-operator"
+        assert "cao:write" in creation_principal.scopes
 
     def test_create_session_forwards_use_worktree_true(self, client):
         """Regression (review on PR #634): a fresh session used to have

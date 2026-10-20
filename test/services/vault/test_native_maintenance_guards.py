@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import MagicMock
 
 import pytest
@@ -47,7 +48,7 @@ def test_wiki_lint_excludes_vault_metadata_before_detectors(tmp_path: Path, monk
     base = tmp_path / "memory"
     wiki_dir = base / "global" / "wiki"
     wiki_dir.mkdir(parents=True)
-    engine = create_engine(f"sqlite:///{tmp_path / 'metadata.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
 
     with engine.begin() as connection:

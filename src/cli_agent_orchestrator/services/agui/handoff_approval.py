@@ -854,7 +854,7 @@ class AgentHandoffWithApproval(AguiConstruct):
                         effect=binding.effect,
                     )
                 except Exception as error:
-                    # WorkDecisions owns both SQLite transactions and rechecks the
+                    # WorkDecisions owns both PostgreSQL transactions and rechecks the
                     # current binding/grant during consume_effect.  No transaction
                     # can survive to the terminal call below.
                     raise DurableApprovalConflict(

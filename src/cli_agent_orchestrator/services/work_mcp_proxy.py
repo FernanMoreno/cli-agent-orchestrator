@@ -27,14 +27,14 @@ import json
 import math
 import os
 import socket
-import sqlite3
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, TypeAlias, overload
 from uuid import uuid4
 
+from cli_agent_orchestrator.clients.postgres import Connection, IntegrityError, Record
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_contract import EffectiveWorkContractV2
 from cli_agent_orchestrator.models.work_origin import MAX_WORKFLOW_STEP_RESULT_BYTES
@@ -46,10 +46,85 @@ from cli_agent_orchestrator.services.work_docker_isolation_proof import (
     WorkDockerRuntimeIsolationProof,
 )
 
+JsonScalar: TypeAlias = str | int | float | bool | None
+JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
+JsonObject: TypeAlias = dict[str, JsonValue]
+
+
 _MAX_REQUEST_BYTES = 16384
 _MAX_SUBMIT_RESULT_REQUEST_BYTES = 3 * MAX_WORKFLOW_STEP_RESULT_BYTES + 4096
 _MAX_RESPONSE_BYTES = 65536
 _SOCKET_TIMEOUT_SECONDS = 5.0
+
+
+@overload
+def _without_work_message_bodies(value: JsonScalar) -> JsonScalar: ...
+
+
+@overload
+def _without_work_message_bodies(value: list[JsonValue]) -> list[JsonValue]: ...
+
+
+@overload
+def _without_work_message_bodies(value: dict[str, JsonValue]) -> dict[str, JsonValue]: ...
+
+
+def _without_work_message_bodies(value: JsonValue) -> JsonValue:
+    """Return a JSON projection with every message body field removed."""
+    if type(value) is dict:
+        return {
+            key: _without_work_message_bodies(child)
+            for key, child in value.items()
+            if key != "body"
+        }
+    if type(value) is list:
+        return [_without_work_message_bodies(child) for child in value]
+    return value
+
+
+def _is_work_message_request(request: dict) -> bool:
+    params = request.get("params")
+    return type(params) is dict and params.get("name") == "cao.work.message"
+
+
+def _work_message_response_projection(response: JsonObject) -> JsonObject:
+    """Keep only body-free structured result data in the durable response hash."""
+    if "error" in response:
+        error = response.get("error")
+        error_projection: JsonObject = {
+            "jsonrpc": response.get("jsonrpc"),
+            "id": response.get("id"),
+        }
+        if type(error) is dict and "code" in error:
+            error_projection["error"] = {"code": error["code"]}
+        else:
+            error_projection["error"] = {}
+        return error_projection
+
+    response_projection = _without_work_message_bodies(response)
+    result = response_projection.get("result")
+    if type(result) is not dict:
+        return {"jsonrpc": response.get("jsonrpc"), "id": response.get("id"), "result": {}}
+    content = result.get("content")
+    if type(content) is list:
+        for block in content:
+            if type(block) is not dict:
+                continue
+            block_text = block.get("text")
+            if type(block_text) is not str:
+                continue
+            try:
+                nested = json.loads(block_text)
+            except (TypeError, ValueError):
+                block["text"] = "[non-json Work message result omitted]"
+            else:
+                block["text"] = json.dumps(
+                    _without_work_message_bodies(nested),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                )
+    return response_projection
 
 
 class WorkMcpProxyError(RuntimeError):
@@ -211,7 +286,7 @@ class WorkMcpProxy:
                 )
                 attempt = connection.execute(
                     "SELECT state,revision,lease_expires_at FROM work_attempts "
-                    "WHERE id=? AND generation=?",
+                    "WHERE id=%s AND generation=%s",
                     (attempt_id, generation),
                 ).fetchone()
                 if (
@@ -226,7 +301,7 @@ class WorkMcpProxy:
                 connection.execute(
                     "INSERT INTO work_mcp_proxy_issues "
                     "(attempt_id,generation,attempt_revision,contract_hash,expires_at,issued_at) "
-                    "VALUES (?,?,?,?,?,?)",
+                    "VALUES (%s,%s,%s,%s,%s,%s)",
                     (
                         attempt_id,
                         generation,
@@ -239,10 +314,10 @@ class WorkMcpProxy:
                 connection.execute(
                     "INSERT INTO work_mcp_proxy_issue_events "
                     "(attempt_id,generation,sequence,state,occurred_at) "
-                    "VALUES (?,?,1,'issued',?)",
+                    "VALUES (%s,%s,1,'issued',%s)",
                     (attempt_id, generation, now),
                 )
-        except sqlite3.IntegrityError as exc:
+        except IntegrityError as exc:
             raise WorkMcpProxyRejected("proxy endpoint has already been issued") from exc
         self._issue = (
             attempt_id,
@@ -434,7 +509,7 @@ class WorkMcpProxy:
         return WorkMcpProxy._request(bytes(chunks))
 
     def serve_once(self, endpoint: WorkMcpEndpoint) -> None:
-        """Journal one request, then call upstream without holding SQLite open."""
+        """Journal one request, then call upstream without holding a DB transaction."""
         if (
             endpoint is not self._endpoint
             or self._broker_socket is None
@@ -496,7 +571,14 @@ class WorkMcpProxy:
                     ) from exc
                 attempt_id, generation, revision, contract_hash, expires_at = self._issue
                 request_json = json.dumps(
-                    request, sort_keys=True, separators=(",", ":"), allow_nan=False
+                    (
+                        _without_work_message_bodies(request)
+                        if _is_work_message_request(request)
+                        else request
+                    ),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
                 )
                 request_sha256 = hashlib.sha256(request_json.encode("utf-8")).hexdigest()
                 with self._repository.transaction() as connection:
@@ -506,7 +588,7 @@ class WorkMcpProxy:
                     )
                     attempt = connection.execute(
                         "SELECT state,revision,lease_expires_at FROM work_attempts "
-                        "WHERE id=? AND generation=?",
+                        "WHERE id=%s AND generation=%s",
                         (attempt_id, generation),
                     ).fetchone()
                     receiver_tool = request["params"]["name"] in {
@@ -522,7 +604,7 @@ class WorkMcpProxy:
                         allowed_states.add("finished")
                     issue = connection.execute(
                         "SELECT generation,attempt_revision,contract_hash,expires_at "
-                        "FROM work_mcp_proxy_issues WHERE attempt_id=?",
+                        "FROM work_mcp_proxy_issues WHERE attempt_id=%s",
                         (attempt_id,),
                     ).fetchone()
                     if (
@@ -540,12 +622,12 @@ class WorkMcpProxy:
                     connection.execute(
                         "INSERT INTO work_mcp_proxy_effects "
                         "(effect_id,attempt_id,generation,request_sha256,created_at) "
-                        "VALUES (?,?,?,?,?)",
+                        "VALUES (%s,%s,%s,%s,%s)",
                         (effect_id, attempt_id, generation, request_sha256, time.time()),
                     )
                     connection.execute(
                         "INSERT INTO work_mcp_proxy_effect_events "
-                        "(effect_id,sequence,state,occurred_at) VALUES (?,1,'intent',?)",
+                        "(effect_id,sequence,state,occurred_at) VALUES (%s,1,'intent',%s)",
                         (effect_id, time.time()),
                     )
 
@@ -583,10 +665,24 @@ class WorkMcpProxy:
                     )
                     if len(encoded) > _MAX_RESPONSE_BYTES:
                         raise ValueError("upstream response exceeds byte bound")
+                    response_for_hash = (
+                        _work_message_response_projection(response)
+                        if _is_work_message_request(request)
+                        else response
+                    )
+                    response_hash_encoded = (
+                        json.dumps(
+                            response_for_hash,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                            allow_nan=False,
+                        ).encode("utf-8")
+                        + b"\n"
+                    )
                     self._append_effect_event(
                         effect_id,
                         "completed",
-                        response_sha256=hashlib.sha256(encoded).hexdigest(),
+                        response_sha256=hashlib.sha256(response_hash_encoded).hexdigest(),
                     )
                     effect_finalized = True
                     client.sendall(encoded)
@@ -629,18 +725,40 @@ class WorkMcpProxy:
         if self._repository is None:
             raise WorkMcpProxyUnavailable("durable proxy effect journal is unavailable")
         with self._repository.transaction() as connection:
+            effect = self._lock_effect_event(connection, effect_id)
+            if effect is None:
+                raise WorkMcpProxyRejected("unknown proxy effect")
             latest = connection.execute(
                 "SELECT sequence,state FROM work_mcp_proxy_effect_events "
-                "WHERE effect_id=? ORDER BY sequence DESC LIMIT 1",
+                "WHERE effect_id=%s ORDER BY sequence DESC LIMIT 1",
                 (effect_id,),
             ).fetchone()
+            if latest is None or latest["state"] != "intent":
+                raise WorkMcpProxyRejected("proxy effect is no longer an open intent")
             sequence = 1 if latest is None else latest["sequence"] + 1
             connection.execute(
                 "INSERT INTO work_mcp_proxy_effect_events "
                 "(effect_id,sequence,state,response_sha256,resolution_sha256,occurred_at) "
-                "VALUES (?,?,?,?,?,?)",
+                "VALUES (%s,%s,%s,%s,%s,%s)",
                 (effect_id, sequence, state, response_sha256, resolution_sha256, time.time()),
             )
+
+    @staticmethod
+    def _lock_effect_event(connection: Connection, effect_id: str) -> Record | None:
+        return connection.execute(
+            "SELECT effect_id FROM work_mcp_proxy_effects WHERE effect_id=%s FOR UPDATE",
+            (effect_id,),
+        ).fetchone()
+
+    @staticmethod
+    def _lock_issue_event(
+        connection: Connection, attempt_id: str, generation: int
+    ) -> Record | None:
+        return connection.execute(
+            "SELECT attempt_id FROM work_mcp_proxy_issues "
+            "WHERE attempt_id=%s AND generation=%s FOR UPDATE",
+            (attempt_id, generation),
+        ).fetchone()
 
     def incomplete_effect_owners(self) -> tuple[tuple[str, int], ...]:
         """Return attempt generations whose latest durable effect is still an intent."""
@@ -694,10 +812,13 @@ class WorkMcpProxy:
         if self._repository is None:
             return 0
         with self._repository.transaction() as connection:
+            issue = self._lock_issue_event(connection, attempt_id, generation)
+            if issue is None:
+                return 0
             row = connection.execute(
                 "SELECT event.sequence FROM work_mcp_proxy_issues AS issue "
                 "JOIN work_mcp_proxy_issue_events AS event USING(attempt_id,generation) "
-                "WHERE issue.attempt_id=? AND issue.generation=? AND event.state='issued' "
+                "WHERE issue.attempt_id=%s AND issue.generation=%s AND event.state='issued' "
                 "AND event.sequence=(SELECT max(latest.sequence) "
                 "FROM work_mcp_proxy_issue_events AS latest "
                 "WHERE latest.attempt_id=issue.attempt_id "
@@ -712,7 +833,7 @@ class WorkMcpProxy:
             connection.execute(
                 "INSERT INTO work_mcp_proxy_issue_events "
                 "(attempt_id,generation,sequence,state,occurred_at) "
-                "VALUES (?,?,?,'abandoned',?)",
+                "VALUES (%s,%s,%s,'abandoned',%s)",
                 (attempt_id, generation, row[0] + 1, time.time()),
             )
             return 1
@@ -736,7 +857,7 @@ class WorkMcpProxy:
                 "AND NOT EXISTS (SELECT 1 FROM work_mcp_proxy_effects AS effect "
                 "WHERE effect.attempt_id=issue.attempt_id "
                 "AND effect.generation=issue.generation) "
-                "ORDER BY issue.issued_at,issue.attempt_id LIMIT ?",
+                "ORDER BY issue.issued_at,issue.attempt_id LIMIT %s",
                 (limit,),
             ).fetchall()
         return tuple(
@@ -767,10 +888,13 @@ class WorkMcpProxy:
         if self._repository is None:
             raise WorkMcpProxyUnavailable("durable proxy issue journal is unavailable")
         with self._repository.transaction() as connection:
+            issue = self._lock_issue_event(connection, attempt_id, generation)
+            if issue is None:
+                raise WorkMcpProxyRejected("unknown proxy issue")
             latest = connection.execute(
                 "SELECT event.sequence,event.state FROM work_mcp_proxy_issues AS issue "
                 "JOIN work_mcp_proxy_issue_events AS event USING(attempt_id,generation) "
-                "WHERE issue.attempt_id=? AND issue.generation=? "
+                "WHERE issue.attempt_id=%s AND issue.generation=%s "
                 "AND event.sequence=(SELECT max(current.sequence) "
                 "FROM work_mcp_proxy_issue_events AS current "
                 "WHERE current.attempt_id=issue.attempt_id "
@@ -784,7 +908,7 @@ class WorkMcpProxy:
             connection.execute(
                 "INSERT INTO work_mcp_proxy_issue_events "
                 "(attempt_id,generation,sequence,state,resolution_sha256,occurred_at) "
-                "VALUES (?,?,?,'reconciled',?,?)",
+                "VALUES (%s,%s,%s,'reconciled',%s,%s)",
                 (
                     attempt_id,
                     generation,
@@ -810,7 +934,7 @@ class WorkMcpProxy:
                 "FROM work_mcp_proxy_effect_events AS latest "
                 "WHERE latest.effect_id=effect.effect_id) "
                 "AND event.state IN ('intent','uncertain') "
-                "ORDER BY effect.created_at,effect.effect_id LIMIT ?",
+                "ORDER BY effect.created_at,effect.effect_id LIMIT %s",
                 (limit,),
             ).fetchall()
         return tuple(
@@ -846,20 +970,28 @@ class WorkMcpProxy:
         recovered = 0
         with self._repository.transaction() as connection:
             intents = connection.execute(
-                "SELECT effect.effect_id,max(event.sequence) AS sequence "
-                "FROM work_mcp_proxy_effects AS effect "
-                "JOIN work_mcp_proxy_effect_events AS event USING(effect_id) "
-                "WHERE effect.attempt_id=? AND effect.generation=? "
-                "GROUP BY effect.effect_id "
-                "HAVING (SELECT state FROM work_mcp_proxy_effect_events "
-                "WHERE effect_id=effect.effect_id ORDER BY sequence DESC LIMIT 1)='intent'",
+                "SELECT effect.effect_id FROM work_mcp_proxy_effects AS effect "
+                "WHERE effect.attempt_id=%s AND effect.generation=%s "
+                "AND (SELECT state FROM work_mcp_proxy_effect_events "
+                "WHERE effect_id=effect.effect_id ORDER BY sequence DESC LIMIT 1)='intent' "
+                "ORDER BY effect.effect_id",
                 (attempt_id, generation),
             ).fetchall()
             for row in intents:
+                effect = self._lock_effect_event(connection, row["effect_id"])
+                if effect is None:
+                    continue
+                latest = connection.execute(
+                    "SELECT sequence,state FROM work_mcp_proxy_effect_events "
+                    "WHERE effect_id=%s ORDER BY sequence DESC LIMIT 1",
+                    (row["effect_id"],),
+                ).fetchone()
+                if latest is None or latest["state"] != "intent":
+                    continue
                 connection.execute(
                     "INSERT INTO work_mcp_proxy_effect_events "
-                    "(effect_id,sequence,state,occurred_at) VALUES (?,?,'uncertain',?)",
-                    (row["effect_id"], row["sequence"] + 1, time.time()),
+                    "(effect_id,sequence,state,occurred_at) VALUES (%s,%s,'uncertain',%s)",
+                    (row["effect_id"], latest["sequence"] + 1, time.time()),
                 )
                 recovered += 1
         return recovered
@@ -878,10 +1010,13 @@ class WorkMcpProxy:
         if self._repository is None:
             raise WorkMcpProxyUnavailable("durable proxy effect journal is unavailable")
         with self._repository.transaction() as connection:
+            effect = self._lock_effect_event(connection, effect_id)
+            if effect is None:
+                raise WorkMcpProxyRejected("unknown proxy effect")
             latest = connection.execute(
                 "SELECT event.sequence,event.state FROM work_mcp_proxy_effects AS effect "
                 "JOIN work_mcp_proxy_effect_events AS event USING(effect_id) "
-                "WHERE effect.effect_id=? AND event.sequence=(SELECT max(current.sequence) "
+                "WHERE effect.effect_id=%s AND event.sequence=(SELECT max(current.sequence) "
                 "FROM work_mcp_proxy_effect_events AS current "
                 "WHERE current.effect_id=effect.effect_id)",
                 (effect_id,),
@@ -893,7 +1028,7 @@ class WorkMcpProxy:
             connection.execute(
                 "INSERT INTO work_mcp_proxy_effect_events "
                 "(effect_id,sequence,state,resolution_sha256,occurred_at) "
-                "VALUES (?,?,'reconciled',?,?)",
+                "VALUES (%s,%s,'reconciled',%s,%s)",
                 (
                     effect_id,
                     latest[0] + 1,

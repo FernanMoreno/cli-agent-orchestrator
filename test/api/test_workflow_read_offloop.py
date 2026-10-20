@@ -1,4 +1,4 @@
-"""The four run READ endpoints must not run synchronous sqlite on the event loop.
+"""The four run READ endpoints must not run synchronous PostgreSQL calls on the event loop.
 
 PR #526 review round 3 — BLOCKING. ``get_workflow_run_endpoint``, the BATCH arm of
 ``get_workflow_run_events_endpoint``, ``compare_workflow_runs_endpoint`` and
@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from pathlib import Path
 from typing import Dict, List
 
 import pytest
@@ -49,7 +48,7 @@ _SPEC = WorkflowSpec(
 #
 # Under Starlette's TestClient the event loop does NOT run on the interpreter's main
 # thread: it runs in a portal thread named "asyncio-portal-<id>". So asserting
-# `recorded != threading.main_thread().name` is VACUOUS — a bare, on-loop sqlite
+# `recorded != threading.main_thread().name` is VACUOUS — a bare, on-loop database
 # call runs in the portal thread and sails past it. (Observed while writing these
 # tests: an unwrapped `get_run_status` recorded "asyncio-portal-10993e150" while the
 # off-loaded calls recorded "asyncio_0".)
@@ -62,14 +61,9 @@ _MAIN_THREAD_NAME = threading.main_thread().name
 
 
 @pytest.fixture(autouse=True)
-def _isolated_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Fresh temp journal DB + empty registry, mirroring the U6 endpoint tests."""
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    workflow_journal._event_migrated_paths.clear()
+def _isolated_journal(isolated_memory_db, monkeypatch: pytest.MonkeyPatch):
+    """Use the shared isolated PostgreSQL target and clear the process cache."""
     monkeypatch.setattr(workflow_service, "run_registry", {})
-    yield db_path
-    workflow_journal._event_migrated_paths.clear()
 
 
 @pytest.fixture
@@ -162,7 +156,7 @@ def _assert_all_offloop(
         for thread_name in seen[name]:
             assert thread_name != loop_name, (
                 f"{name} ran on the EVENT-LOOP thread ({thread_name}) — a "
-                f"synchronous sqlite call on the loop blocks every other task, "
+                f"synchronous database call on the loop blocks every other task, "
                 f"including the 250 ms SSE followers"
             )
             assert (
@@ -176,7 +170,7 @@ def test_inspect_route_reads_off_the_event_loop(client, monkeypatch, loop_thread
     The recorded counts are higher than this route's own two calls because
     ``workflow_service.get_run_status`` reads the journal itself on a registry cache
     miss (the cold-read fallback). That call is off-loaded too — found while writing
-    this test: left bare it recorded the PORTAL thread, i.e. it was running sqlite
+    this test: left bare it recorded the PORTAL thread, i.e. it was running synchronously
     on the loop, which the original main-thread-only assertion could not see.
 
     The counts are asserted so a change in call shape fails loudly instead of

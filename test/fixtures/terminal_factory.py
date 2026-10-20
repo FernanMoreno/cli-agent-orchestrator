@@ -10,7 +10,7 @@ Terminal creation was duplicated in two places:
 
 Both patterns share the same shape:
   1. POST /sessions with optional Authorization header
-  2. Handle provider-boot failures as pytest.skip (not fixture errors)
+  2. Fail with an HTTP status when session creation is unsuccessful
   3. Clean up on teardown via POST /exit + DELETE /sessions/<name>
 
 ``TerminalFactory`` is the single implementation for both paths. It is
@@ -18,14 +18,11 @@ intentionally *not* a pytest fixture itself — it is a helper class that the
 ``cao_terminal`` and ``cao_terminal_authed`` fixtures below wrap. Direct
 instantiation is also fine for tests that need fine-grained control.
 
-Provider skip contract
-----------------------
-Any 5xx response whose body mentions the provider name, "not installed",
-"not found", or "initialization timed out" is treated as a provider-
-unavailability skip (not a fixture failure). This matches the behaviour of
-the no-auth and authenticated e2e terminal paths, ensuring e2e tests that
-require real CLIs degrade gracefully in CI environments where those CLIs
-aren't installed.
+Failure contract
+----------------
+This factory is used for the deterministic mock provider. Any unsuccessful
+session-creation response is a fixture failure; response bodies are omitted
+because they may contain provider or user output.
 """
 
 from __future__ import annotations
@@ -42,9 +39,6 @@ import requests
 
 _DEFAULT_PROVIDER = "mock_cli"
 _DEFAULT_PROFILE = "developer"
-_SKIP_MARKERS = frozenset(
-    ["initialization timed out", "not installed", "not found", "command not found"]
-)
 _IDLE_POLL_INTERVAL = 0.5
 _IDLE_POLL_TIMEOUT = 30.0
 
@@ -105,8 +99,8 @@ class TerminalFactory:
 
         handle = TerminalFactory.create(server, token=admin_jwt, provider="mock_cli")
 
-    Provider-boot failures are surfaced as ``pytest.skip`` (with a diagnostic
-    message) rather than fixture errors, matching the existing contract.
+    Session-creation failures include the HTTP status only; response bodies
+    are omitted because they may contain provider or user output.
 
     All created terminals get a unique ``caotest-<hex>`` session name prefix so
     parallel test runs don't collide.
@@ -137,9 +131,7 @@ class TerminalFactory:
             or wrap in a pytest fixture.
 
         Raises:
-            pytest.skip.Exception: When the provider can't boot (5xx + known
-                marker in the body).
-            RuntimeError: For other non-2xx responses.
+            RuntimeError: For any non-2xx response.
         """
         session_name = f"{session_prefix}-{uuid.uuid4().hex[:12]}"
         headers: dict[str, str] = {}
@@ -157,15 +149,9 @@ class TerminalFactory:
         )
 
         if resp.status_code not in (200, 201):
-            body = resp.text
-            if resp.status_code >= 500:
-                body_lower = body.lower()
-                if any(m in body_lower for m in _SKIP_MARKERS) or provider.lower() in body_lower:
-                    pytest.skip(
-                        f"provider {provider!r} not usable on this host "
-                        f"(HTTP {resp.status_code}): {body[:200]}"
-                    )
-            raise RuntimeError(f"POST /sessions failed: {resp.status_code} {resp.text}")
+            raise RuntimeError(
+                f"POST /sessions failed: HTTP {resp.status_code}; response body omitted"
+            )
 
         data = resp.json()
         handle = TerminalHandle(

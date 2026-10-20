@@ -3,8 +3,8 @@
 Contract
 --------
 - ``cao_server`` (session-scoped): spawns a real ``cao-server`` subprocess on a
-  free localhost port, redirects ``$HOME`` to a per-session tmp dir so all
-  cao-managed paths (SQLite, logs, agent-card keys) land in isolation,
+  free localhost port, redirects ``$HOME`` to a per-session tmp dir and provisions
+  private main/auth/peer PostgreSQL targets so server state and files are isolated,
   disables optional lifespan subsystems (agent-card, A2A, OTel),
   waits for ``/health``, and yields a ``CaoServer`` dataclass with a
   ``stop()`` callable. Idempotent teardown via SIGTERM-to-process-group with
@@ -18,9 +18,9 @@ Contract
 
 - ``cao_terminal`` (function-scoped): creates a fresh terminal via
   ``POST /sessions``, yields its ``terminal_id``, and cleans up on teardown.
-  Provider/profile are parameterizable via indirect parametrization; default
-  is ``("kiro_cli", "developer")``. The test is responsible for skipping if
-  the chosen provider CLI is not on ``PATH``.
+  Provider/profile are parameterizable via indirect parametrization. The
+  default provider remains ``kiro_cli`` for compatibility, but its fixture
+  gate marks it N/A until that provider has an isolated auth manifest.
 
 Design deviations (documented for review)
 -------------------------------------------------------------------
@@ -48,8 +48,10 @@ import contextlib
 import http.server
 import importlib
 import json
+import math
 import os
 import pkgutil
+import shutil
 import signal
 import socket
 import socketserver
@@ -58,10 +60,10 @@ import sys
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Iterator, Mapping, Optional
+from typing import Any, Callable, Iterator, Mapping, NoReturn, Optional
 
 import pytest
 import requests
@@ -80,14 +82,10 @@ _HEALTH_TIMEOUT_ENV = "CAO_TEST_SERVER_HEALTH_TIMEOUT"
 
 
 def _provider_is_unavailable_response(status_code: int, body: str) -> bool:
-    """Return whether a terminal-create response proves provider unavailability.
+    """Classify legacy provider-error wording for a pure characterization test.
 
-    CAO reports a binary missing before a terminal is created as a client error
-    (``400``), while an authenticated/slow provider usually reports it as a
-    server error (``5xx``).  The shared fixture must skip both cases: neither is
-    evidence about the API contract under test.  Keep this semantic test based
-    on the response wording rather than a provider name so it covers every
-    provider and both hyphenated/underscored identifiers.
+    Selected live-provider fixtures do not use response wording to skip after
+    an authorized session POST; those failures must remain visible to the test.
     """
     if status_code < 400:
         return False
@@ -105,10 +103,338 @@ def _provider_is_unavailable_response(status_code: int, body: str) -> bool:
 _HEALTH_TIMEOUT_MIN_SECONDS = 1.0
 _HEALTH_TIMEOUT_MAX_SECONDS = 120.0
 _STOP_GRACE_SECONDS = 5.0
-_LOG_TAIL_LINES = 80
+_STOP_UNCONFIRMED_MESSAGE = "cao-server process did not stop; owned resources retained for retry"
+_STARTUP_CLEANUP_NOTE = "cao-server startup cleanup incomplete; see chained cause"
 
 _AUTH_DOMAIN = "test.local"
 _AUTH_AUDIENCE = "cao://test"
+_LIVE_PROVIDER_BINARIES = {
+    "codex": "codex",
+    "claude_code": "claude",
+    "opencode_cli": "opencode",
+}
+_LIVE_PROVIDER_OPT_IN = "CAO_RUN_LIVE_PROVIDER_TESTS"
+_LIVE_PROVIDER_MANIFEST = "CAO_REAL_PROVIDER_E2E_PROVIDERS"
+_LIVE_PROVIDER_AUTH_HOME = "CAO_REAL_PROVIDER_E2E_AUTH_HOME"
+_LIVE_PROVIDER_MAX_MANIFEST_BYTES = 64 * 1024
+_CLAUDE_OAUTH_EXPIRY_SAFETY_MARGIN_SECONDS = 30.0
+_TEST_HARNESS_ENV_NAMES = frozenset(
+    {
+        _LIVE_PROVIDER_OPT_IN,
+        _LIVE_PROVIDER_MANIFEST,
+        _LIVE_PROVIDER_AUTH_HOME,
+        "CAO_REAL_PROVIDER_E2E_TEST_FILTER",
+        "CAO_REAL_PROVIDER_E2E_PAIRS",
+        "CAO_REAL_PROVIDER_E2E_STRICT",
+        "CAO_LIVE_WORKFLOW_PROVIDER",
+        "CAO_RUN_HEADLESS_REMOTE_SMOKE",
+        "CAO_HEADLESS_REMOTE_PROVIDER",
+        "CAO_HEADLESS_REMOTE_REF",
+    }
+)
+_TEST_HARNESS_ENV_PREFIXES = ("CAO_TEST_LIVE_PROVIDER_MODEL_",)
+_EXTERNAL_CREDENTIAL_SUFFIXES = (
+    "_API_KEY",
+    "_API_TOKEN",
+    "_ACCESS_TOKEN",
+    "_AUTH_TOKEN",
+    "_OAUTH_TOKEN",
+    "_REFRESH_TOKEN",
+    "_SESSION_TOKEN",
+    "_SECRET",
+    "_SECRET_KEY",
+    "_SECRET_ACCESS_KEY",
+    "_PASSWORD",
+    "_PRIVATE_KEY",
+    "_CREDENTIAL",
+    "_CREDENTIALS",
+    "_CREDENTIALS_FILE",
+    "_TOKEN",
+    "_BASE_URL",
+    "_API_URL",
+)
+_EXTERNAL_CREDENTIAL_NAMES = frozenset(
+    {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_PROFILE",
+        "AWS_DEFAULT_PROFILE",
+        "AWS_CONFIG_FILE",
+        "AWS_SHARED_CREDENTIALS_FILE",
+        "AWS_WEB_IDENTITY_TOKEN_FILE",
+        "AWS_ROLE_ARN",
+        "AWS_ROLE_SESSION_NAME",
+        "AZURE_CONFIG_DIR",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "GOOGLE_CLOUD_KEYFILE_JSON",
+    }
+)
+_PROVIDER_CONFIG_PREFIXES = (
+    # AWS SDKs accept credential-chain and metadata selectors beyond the
+    # standard region/endpoint names, so reject ambient AWS settings as a set.
+    "AWS_",
+    "CODEX_",
+    "OPENAI_",
+    "ANTHROPIC_",
+    "CLAUDE_",
+    "OPENCODE_",
+    "GOOGLE_CLOUD_",
+    "GOOGLE_GENAI_",
+    "VERTEXAI_",
+)
+_PROVIDER_ROUTING_ENV_NAMES = frozenset(
+    {
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+        "AWS_ENDPOINT_URL",
+        "AWS_USE_FIPS_ENDPOINT",
+        "AWS_USE_DUALSTACK_ENDPOINT",
+        "AWS_STS_REGIONAL_ENDPOINTS",
+        "AWS_BEDROCK_RUNTIME_ENDPOINT",
+        "GOOGLE_CLOUD_PROJECT",
+        "GOOGLE_CLOUD_LOCATION",
+        "GOOGLE_CLOUD_REGION",
+        "GOOGLE_GENAI_USE_VERTEXAI",
+        "CLOUD_ML_REGION",
+        "VERTEXAI_PROJECT",
+        "VERTEXAI_LOCATION",
+        "GEMINI_CLI_HOME",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+    }
+)
+_PRIVATE_PROVIDER_CONFIG_ENV_NAMES = frozenset(
+    {
+        "CODEX_HOME",
+        "CLAUDE_CONFIG_DIR",
+        "OPENCODE_CONFIG",
+        "OPENCODE_CONFIG_DIR",
+        "GEMINI_CLI_HOME",
+    }
+)
+
+
+@dataclass(frozen=True)
+class LiveProviderAuthorization:
+    """One explicitly selected provider and its isolated auth-file inputs."""
+
+    name: str
+    model: str
+    binary: str
+    auth_home: Path
+    auth_files: tuple[Path, ...]
+
+
+def _live_provider_failure(message: str) -> NoReturn:
+    pytest.fail(f"Invalid {_LIVE_PROVIDER_MANIFEST} provider authorization: {message}")
+
+
+def _authorization_string(value: object, *, field_name: str, provider: str) -> str:
+    if not isinstance(value, str):
+        _live_provider_failure(f"{provider!r} field {field_name!r} must be a string")
+    result = value.strip()
+    if not result or any(character in result for character in "\x00\r\n"):
+        _live_provider_failure(f"{provider!r} field {field_name!r} must be a non-empty single line")
+    return result
+
+
+def _validate_claude_oauth_stage(auth_home: Path, auth_files: list[Path]) -> None:
+    """Reject a stale Claude OAuth stage before launching the provider.
+
+    Claude Code can leave a stale access token in an otherwise renewable
+    receipt.  In an isolated HOME the CLI then waits for its login flow until
+    CAO's task deadline expires, which looks like a provider ``504`` rather
+    than an actionable fixture error.  The live lane owns the selected auth
+    stage, so it can validate the non-secret expiry metadata without touching
+    the operator's login or attempting a refresh.
+
+    Older manifests for other providers and synthetic Claude archive fixtures
+    intentionally use different auth layouts; the guard is active only when
+    the canonical Claude credential file is explicitly selected.
+    """
+    credential = Path(".claude/.credentials.json")
+    if credential not in auth_files:
+        return
+    path = auth_home / credential
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        _live_provider_failure("provider 'claude_code' selected credential file is not valid JSON")
+    oauth = payload.get("claudeAiOauth") if isinstance(payload, dict) else None
+    if not isinstance(oauth, dict):
+        _live_provider_failure(
+            "provider 'claude_code' selected credential file has no OAuth receipt"
+        )
+    for field_name in ("accessToken", "refreshToken"):
+        value = oauth.get(field_name)
+        if not isinstance(value, str) or not value.strip():
+            _live_provider_failure(f"provider 'claude_code' OAuth receipt is missing {field_name}")
+    expires_at = oauth.get("expiresAt")
+    if expires_at is None:
+        # Claude versions predating the expiry field remain supported; the
+        # provider itself still decides whether the receipt can be used.
+        return
+    if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)):
+        _live_provider_failure("provider 'claude_code' OAuth receipt has an invalid access expiry")
+    # Claude has emitted both Unix seconds and Unix milliseconds over time.
+    expiry_ms = float(expires_at)
+    if not math.isfinite(expiry_ms):
+        _live_provider_failure("provider 'claude_code' OAuth receipt has an invalid access expiry")
+    if expiry_ms < 100_000_000_000:
+        expiry_ms *= 1000.0
+    if expiry_ms <= (time.time() + _CLAUDE_OAUTH_EXPIRY_SAFETY_MARGIN_SECONDS) * 1000.0:
+        _live_provider_failure(
+            "provider 'claude_code' selected access credential is expired; refresh the explicit auth stage"
+        )
+
+
+def _authorize_live_provider(
+    provider: str,
+    *,
+    opt_in_env: str = _LIVE_PROVIDER_OPT_IN,
+) -> LiveProviderAuthorization:
+    """Validate a selected provider before any CLI lookup or provider request.
+
+    The legacy live E2E lane accepts only the three auth-file-backed providers
+    reviewed by the current harness. It never discovers local CLIs on its own,
+    and an explicit manifest entry must choose both a model and auth files.
+    """
+    expected_binary = _LIVE_PROVIDER_BINARIES.get(provider)
+    if expected_binary is None:
+        pytest.skip(f"provider {provider!r} is unsupported in the isolated live-provider lane")
+    if os.environ.get(opt_in_env) != "1":
+        pytest.skip(f"Real provider E2E disabled; set {opt_in_env}=1 for this separate lane.")
+
+    raw_manifest = os.environ.get(_LIVE_PROVIDER_MANIFEST, "").strip()
+    if not raw_manifest:
+        _live_provider_failure(f"set {_LIVE_PROVIDER_MANIFEST} to an explicit provider manifest")
+    if len(raw_manifest.encode("utf-8")) > _LIVE_PROVIDER_MAX_MANIFEST_BYTES:
+        _live_provider_failure(
+            f"manifest must not exceed {_LIVE_PROVIDER_MAX_MANIFEST_BYTES} UTF-8 bytes"
+        )
+    try:
+        manifest = json.loads(raw_manifest)
+    except json.JSONDecodeError as error:
+        _live_provider_failure(f"manifest JSON is invalid at byte {error.pos}")
+    if not isinstance(manifest, dict):
+        _live_provider_failure("manifest must be a JSON object")
+
+    selected = manifest.get(provider)
+    if selected is None:
+        pytest.skip(f"provider {provider!r} is not selected in the explicit provider manifest")
+    if not isinstance(selected, dict):
+        _live_provider_failure(f"provider {provider!r} must map to an object")
+    allowed_fields = {
+        "model",
+        "binary",
+        "auth_env",
+        "auth_files",
+        "capabilities",
+        "exclude_reason",
+    }
+    unexpected = sorted(set(selected) - allowed_fields)
+    if unexpected:
+        _live_provider_failure(
+            f"provider {provider!r} has unsupported fields: {', '.join(unexpected)}"
+        )
+    excluded = selected.get("exclude_reason")
+    if excluded is not None:
+        reason = _authorization_string(excluded, field_name="exclude_reason", provider=provider)
+        pytest.skip(f"provider {provider!r} is explicitly excluded: {reason}")
+
+    model = _authorization_string(selected.get("model"), field_name="model", provider=provider)
+    binary = _authorization_string(selected.get("binary"), field_name="binary", provider=provider)
+    if binary != expected_binary:
+        _live_provider_failure(
+            f"provider {provider!r} must use reviewed binary {expected_binary!r}"
+        )
+
+    auth_env = selected.get("auth_env", [])
+    if not isinstance(auth_env, list) or any(not isinstance(value, str) for value in auth_env):
+        _live_provider_failure(f"provider {provider!r} auth_env must be a JSON array")
+    if auth_env:
+        _live_provider_failure(
+            f"provider {provider!r} must use isolated auth_files; inherited auth_env is disabled"
+        )
+
+    raw_auth_files = selected.get("auth_files")
+    if not isinstance(raw_auth_files, list) or not raw_auth_files:
+        _live_provider_failure(f"provider {provider!r} needs explicit auth_files")
+    auth_files: list[Path] = []
+    for value in raw_auth_files:
+        relative = _authorization_string(value, field_name="auth_files", provider=provider)
+        path = Path(relative)
+        if path.is_absolute() or ".." in path.parts or "\\" in relative:
+            _live_provider_failure(f"provider {provider!r} auth_files must be safe relative paths")
+        if path in auth_files:
+            _live_provider_failure(f"provider {provider!r} auth_files contains duplicates")
+        auth_files.append(path)
+
+    raw_auth_home = os.environ.get(_LIVE_PROVIDER_AUTH_HOME, "").strip()
+    if not raw_auth_home:
+        _live_provider_failure(f"set {_LIVE_PROVIDER_AUTH_HOME} to an isolated auth directory")
+    auth_home = Path(raw_auth_home)
+    runner_home = os.environ.get("HOME")
+    if not auth_home.is_absolute() or not auth_home.is_dir():
+        _live_provider_failure(f"{_LIVE_PROVIDER_AUTH_HOME} must be an existing absolute directory")
+    auth_home = auth_home.resolve()
+    if runner_home and auth_home == Path(runner_home).resolve():
+        _live_provider_failure(f"{_LIVE_PROVIDER_AUTH_HOME} must be outside runner HOME")
+    for relative in auth_files:
+        source = auth_home / relative
+        try:
+            resolved_source = source.resolve(strict=True)
+            resolved_source.relative_to(auth_home)
+        except (OSError, ValueError):
+            _live_provider_failure(
+                f"provider {provider!r} selected auth file is missing or escapes its auth home"
+            )
+        if not resolved_source.is_file():
+            _live_provider_failure(f"provider {provider!r} selected auth path is not a file")
+
+    if provider == "claude_code":
+        _validate_claude_oauth_stage(auth_home, auth_files)
+
+    if shutil.which(binary) is None:
+        pytest.skip(f"selected provider {provider!r} CLI {binary!r} is unavailable on PATH")
+    return LiveProviderAuthorization(
+        name=provider,
+        model=model,
+        binary=binary,
+        auth_home=auth_home,
+        auth_files=tuple(auth_files),
+    )
+
+
+def _stage_live_provider_auth(home_dir: Path, authorization: LiveProviderAuthorization) -> None:
+    """Copy only selected auth files into a disposable private provider HOME."""
+    home_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    home_dir.chmod(0o700)
+    for relative in authorization.auth_files:
+        source = authorization.auth_home / relative
+        resolved_source = source.resolve(strict=True)
+        try:
+            resolved_source.relative_to(authorization.auth_home)
+        except ValueError:
+            pytest.fail("selected auth file resolves outside its isolated auth home")
+        target = home_dir / relative
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            target.parent.resolve().relative_to(home_dir.resolve())
+        except ValueError:
+            pytest.fail("private auth destination resolves outside its isolated HOME")
+        parent = target.parent
+        while parent != home_dir.parent:
+            parent.chmod(0o700)
+            if parent == home_dir:
+                break
+            parent = parent.parent
+        if target.exists() or target.is_symlink():
+            if target.is_symlink() or target.read_bytes() != resolved_source.read_bytes():
+                pytest.fail(f"Refusing to replace existing private auth path {target}")
+            target.chmod(0o600)
+            continue
+        shutil.copyfile(resolved_source, target)
+        target.chmod(0o600)
 
 
 def _fixture_health_timeout() -> float:
@@ -153,19 +479,27 @@ class CaoServer:
         port: The TCP port the subprocess is listening on.
         home_dir: The redirected ``$HOME``. All persistent cao paths live
             under ``home_dir / ".aws" / "cli-agent-orchestrator" / ...``.
-        db_path: SQLite database (``DATABASE_FILE`` from
-            ``cli_agent_orchestrator.constants``).
-        log_path: File where the subprocess's merged stdout+stderr is
-            appended; tail it for failure diagnostics.
+        database_targets: Private PostgreSQL main/auth/peer targets used by the
+            child server. The server owns and drops them unless supplied by a
+            caller that keeps a target context alive across restarts.
+        database_config_path: Private target configuration passed to the child.
+        log_path: Private file where the subprocess's merged stdout+stderr is
+            appended; startup errors report its size without exposing content.
         stop: Idempotent teardown callable.
     """
 
     url: str
     port: int
     home_dir: Path
-    db_path: Path
+    database_targets: Any = field(repr=False, compare=False, hash=False)
+    database_config_path: Path
     log_path: Path
     stop: Callable[[], None]
+
+    @property
+    def database_target(self) -> Any:
+        """Return the main runtime-only PostgreSQL target."""
+        return self.database_targets.main
 
 
 @dataclass(frozen=True)
@@ -217,14 +551,12 @@ def _pick_free_port(host: str = "127.0.0.1") -> int:
         return int(s.getsockname()[1])
 
 
-def _tail(path: Path, lines: int = _LOG_TAIL_LINES) -> str:
-    """Return the last ``lines`` lines of ``path`` (or a placeholder)."""
+def _log_byte_count(path: Path) -> Optional[int]:
+    """Return a private log's byte count without exposing log content."""
     try:
-        return "\n".join(path.read_text(errors="replace").splitlines()[-lines:])
-    except FileNotFoundError:
-        return "<log file not created>"
-    except OSError as exc:
-        return f"<log read failed: {exc}>"
+        return path.stat().st_size
+    except OSError:
+        return None
 
 
 def _subprocess_env(
@@ -232,32 +564,124 @@ def _subprocess_env(
     port: int,
     *,
     extra: Optional[Mapping[str, str]] = None,
+    allowed_external_credentials: frozenset[str] = frozenset(),
 ) -> dict[str, str]:
     """Compose the env passed to the subprocess.
 
-    Starts from a copy of the parent env, deletes any leaked Auth0 vars (so a
-    developer's exported ``AUTH0_DOMAIN`` doesn't accidentally enable auth in
-    the no-auth variant), then applies the standard test overrides plus any
-    ``extra`` knobs.
+    Starts from a copy of the parent env, removes inherited provider
+    credentials, provider configuration/routing selectors, and operator
+    provider-home selectors, deletes any leaked
+    Auth0 vars (so a developer's exported ``AUTH0_DOMAIN`` doesn't accidentally
+    enable auth in the no-auth variant), then applies the standard test
+    overrides plus any ``extra`` knobs. Provider credential files are staged
+    separately from an explicit test manifest into this private HOME.
     """
+    explicit_extra = dict(extra or {})
+    allowlisted_provider_env = frozenset(allowed_external_credentials)
+    invalid_allowlist = sorted(
+        name
+        for name in allowlisted_provider_env
+        if not _is_external_credential_env(name) and not _is_provider_config_env(name)
+    )
+    if invalid_allowlist:
+        raise ValueError(
+            "allowed_external_credentials contains unrelated environment names: "
+            + ", ".join(invalid_allowlist)
+        )
+    explicit_credentials = {name for name in explicit_extra if _is_external_credential_env(name)}
+    unapproved_credentials = sorted(explicit_credentials - allowlisted_provider_env)
+    if unapproved_credentials:
+        raise ValueError(
+            "extra contains provider credentials without an explicit manifest allowlist: "
+            + ", ".join(unapproved_credentials)
+        )
+    explicit_provider_config = {name for name in explicit_extra if _is_provider_config_env(name)}
+    unapproved_provider_config = sorted(
+        explicit_provider_config - allowlisted_provider_env - _PRIVATE_PROVIDER_CONFIG_ENV_NAMES
+    )
+    if unapproved_provider_config:
+        raise ValueError(
+            "extra contains provider routing variables without an explicit manifest allowlist: "
+            + ", ".join(unapproved_provider_config)
+        )
+    manifest_authorized_extra = frozenset(explicit_extra) & allowlisted_provider_env
+
     env = os.environ.copy()
+    explicit_cao_home = extra.get("CAO_HOME_DIR") if extra is not None else None
     for leaked in ("AUTH0_DOMAIN", "AUTH0_AUDIENCE", "CAO_AUTH_JWKS_URI"):
         env.pop(leaked, None)
+    for name in tuple(env):
+        if _is_external_credential_env(name) or _is_provider_config_env(name):
+            env.pop(name, None)
+
+    if explicit_extra:
+        env.update(explicit_extra)
+
+    for name in tuple(env):
+        if (
+            _is_external_credential_env(name) or _is_provider_config_env(name)
+        ) and name not in manifest_authorized_extra:
+            env.pop(name, None)
+        if name in _TEST_HARNESS_ENV_NAMES or name.startswith(_TEST_HARNESS_ENV_PREFIXES):
+            env.pop(name, None)
 
     env.update(
         {
             "HOME": str(home_dir),
-            "CAO_HOME_DIR": str(home_dir / ".aws" / "cli-agent-orchestrator"),
+            "CAO_HOME_DIR": str(explicit_cao_home or home_dir / ".aws" / "cli-agent-orchestrator"),
             "CAO_API_HOST": "127.0.0.1",
-            "CAO_API_PORT": str(port),
+            # Explicit test overrides support import-time configuration fault injection.
+            # Host binding remains pinned to loopback above.
+            "CAO_API_PORT": explicit_extra.get("CAO_API_PORT", str(port)),
             "CAO_A2A_DISABLED": "true",
             "OTEL_SDK_DISABLED": "true",
             "PYTHONUNBUFFERED": "1",
+            "CODEX_HOME": str(home_dir / ".codex"),
+            "CLAUDE_CONFIG_DIR": str(home_dir / ".claude"),
+            "XDG_CONFIG_HOME": str(home_dir / ".config"),
+            "XDG_DATA_HOME": str(home_dir / ".local" / "share"),
+            "XDG_CACHE_HOME": str(home_dir / ".cache"),
+            "OPENCODE_CONFIG": "",
+            "OPENCODE_CONFIG_DIR": str(home_dir / ".config" / "opencode"),
+            "GEMINI_CLI_HOME": str(home_dir / ".gemini"),
+            "AWS_CONFIG_FILE": str(home_dir / ".aws" / "config"),
+            "AWS_SHARED_CREDENTIALS_FILE": str(home_dir / ".aws" / "credentials"),
+            # Do not let the child silently obtain the runner's instance role.
+            # A selected manifest can explicitly allow an override.
+            "AWS_EC2_METADATA_DISABLED": env.get("AWS_EC2_METADATA_DISABLED", "true"),
         }
     )
-    if extra:
-        env.update(extra)
+    # Child subprocesses run with cwd=home_dir. Relative PYTHONPATH entries
+    # would therefore resolve inside the temporary home and fall through to
+    # an installed editable checkout, which can use a different source tree
+    # and schema manifest. Pin imports to this checkout with absolute paths.
+    project_root = Path(__file__).resolve().parents[2]
+    python_paths = [str(project_root / "src"), str(project_root)]
+    for entry in env.get("PYTHONPATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        candidate = Path(entry)
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        resolved = str(candidate.resolve())
+        if resolved not in python_paths:
+            python_paths.append(resolved)
+    env["PYTHONPATH"] = os.pathsep.join(python_paths)
     return env
+
+
+def _is_external_credential_env(name: str) -> bool:
+    """Recognize environment names that can authorize or redirect a provider."""
+    if name.startswith("CAO_"):
+        return False
+    return name in _EXTERNAL_CREDENTIAL_NAMES or name.endswith(_EXTERNAL_CREDENTIAL_SUFFIXES)
+
+
+def _is_provider_config_env(name: str) -> bool:
+    """Recognize provider settings that can redirect or configure a backend."""
+    if name.startswith(_PROVIDER_CONFIG_PREFIXES):
+        return True
+    return name in _PROVIDER_ROUTING_ENV_NAMES or name.startswith("BEDROCK_")
 
 
 def _wait_for_health(
@@ -269,8 +693,9 @@ def _wait_for_health(
 ) -> None:
     """Poll ``GET {url}/health`` until 200 or ``deadline``.
 
-    Raises ``RuntimeError`` with a log tail if the subprocess dies during
-    startup or the deadline expires.
+    Raises ``RuntimeError`` with status and log size if the subprocess dies
+    during startup or the deadline expires. Raw log contents remain available
+    in the private log file for local inspection.
     """
     end = time.monotonic() + deadline
     last_error: Optional[str] = None
@@ -278,7 +703,7 @@ def _wait_for_health(
         if process.poll() is not None:
             raise RuntimeError(
                 f"cao-server exited with code {process.returncode} before "
-                f"/health became ready.\nLog tail:\n{_tail(log_path)}"
+                f"/health became ready (log_bytes={_log_byte_count(log_path)})"
             )
         try:
             # A Windows-mounted WSL worktree can briefly schedule the freshly
@@ -293,14 +718,14 @@ def _wait_for_health(
             )
             if resp.status_code == 200 and resp.json().get("status") == "ok":
                 return
-            last_error = f"status={resp.status_code} body={resp.text[:200]}"
+            last_error = f"HTTP {resp.status_code}; response body omitted"
         except (requests.ConnectionError, requests.Timeout) as exc:
             last_error = type(exc).__name__
         time.sleep(_HEALTH_POLL_INTERVAL)
 
     raise RuntimeError(
         f"cao-server at {url} did not become healthy within {deadline}s "
-        f"(last_error={last_error}).\nLog tail:\n{_tail(log_path)}"
+        f"(last_error={last_error}, log_bytes={_log_byte_count(log_path)})"
     )
 
 
@@ -312,7 +737,6 @@ def _terminate(
     """Idempotent SIGTERM-to-group → wait → SIGKILL escalation."""
     if stopped[0]:
         return
-    stopped[0] = True
 
     pid = process.pid
     if process.poll() is None:
@@ -323,8 +747,19 @@ def _terminate(
         except subprocess.TimeoutExpired:
             with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
                 os.killpg(pid, signal.SIGKILL)
-            with contextlib.suppress(subprocess.TimeoutExpired):
+            try:
                 process.wait(timeout=_STOP_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                if process.poll() is None:
+                    raise RuntimeError(_STOP_UNCONFIRMED_MESSAGE) from None
+
+    # A successful wait or an already-exited poll must confirm ownership has
+    # ended before the log, PostgreSQL target context, or runtime config is
+    # released. Keep ``stopped`` false on every unconfirmed path so a caller
+    # (including atexit cleanup) can retry later.
+    if process.poll() is None:
+        raise RuntimeError(_STOP_UNCONFIRMED_MESSAGE) from None
+    stopped[0] = True
 
     if log_handle is not None and not log_handle.closed:
         with contextlib.suppress(Exception):
@@ -461,12 +896,73 @@ def _seed_omp_e2e_state(home_dir: Path) -> None:
             shutil.copy2(examples_dir / f"{name}.md", target)
 
 
+def _runtime_only_database_targets(database_targets: Any, home_dir: Path):
+    """Strip migration-owner credentials before giving targets to a server child."""
+    from dataclasses import replace
+    from test.postgres.fixtures import PostgresTargets, _write_private
+
+    targets = tuple(database_targets[scope] for scope in ("main", "auth", "peer"))
+    if all(
+        target.migration_user is None and target.migration_secret_file is None for target in targets
+    ):
+        return database_targets, None
+
+    config_dir = home_dir / ".cao-postgres-runtime"
+    config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(config_dir, 0o700)
+    config_targets = {
+        scope: {
+            "host": target.host,
+            "port": target.port,
+            "database": target.database,
+            "user": target.user,
+            "schema": target.schema,
+            "store_id": target.store_id,
+            "secret_file": str(target.secret_file.resolve()),
+            "sslmode": target.sslmode,
+        }
+        for scope, target in zip(("main", "auth", "peer"), targets, strict=True)
+    }
+    config_path = config_dir / "database-config.json"
+    _write_private(config_path, json.dumps({"version": 1, "targets": config_targets}, indent=2))
+    runtime_targets = tuple(
+        replace(
+            target,
+            home=config_dir,
+            migration_user=None,
+            migration_secret_file=None,
+        )
+        for target in targets
+    )
+    return (
+        PostgresTargets(
+            main=runtime_targets[0],
+            auth=runtime_targets[1],
+            peer=runtime_targets[2],
+            home=config_dir,
+            config_file=config_path,
+        ),
+        config_path,
+    )
+
+
+def _remove_runtime_database_config(config_path: Path | None) -> None:
+    if config_path is None:
+        return
+    config_path.unlink(missing_ok=True)
+    with contextlib.suppress(OSError):
+        config_path.parent.rmdir()
+
+
 def _start_cao_server(
     home_dir: Path,
     port: int,
     *,
     extra_env: Optional[Mapping[str, str]] = None,
     deadline: float = _HEALTH_TIMEOUT_DEFAULT,
+    database_targets: Any | None = None,
+    postgres_service: Any | None = None,
+    allowed_external_credentials: frozenset[str] = frozenset(),
 ) -> CaoServer:
     """Spawn a cao-server subprocess and return a managed ``CaoServer``.
 
@@ -477,55 +973,135 @@ def _start_cao_server(
     home_dir.mkdir(parents=True, exist_ok=True)
     _seed_packaged_skills(home_dir)
     _seed_omp_e2e_state(home_dir)
-    log_path = home_dir / "server.log"
-    log_handle = open(log_path, "ab")  # noqa: SIM115 — handle lifetime is in stop()
+    owned_target_context = None
+    if database_targets is None:
+        from test.postgres.fixtures import isolated_live_targets
 
-    env = _subprocess_env(home_dir, port, extra=extra_env)
-    url = f"http://127.0.0.1:{port}"
+        owned_target_context = isolated_live_targets(
+            home_dir / ".cao-postgres", service=postgres_service
+        )
+        database_targets = owned_target_context.__enter__()
+    if database_targets is None:
+        if owned_target_context is not None:
+            owned_target_context.__exit__(None, None, None)
+        raise RuntimeError("PostgreSQL targets were not provisioned for the managed server")
 
-    process = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "cli_agent_orchestrator.api.main",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-        ],
-        env=env,
-        # Manifest capture must describe this disposable test workspace. Using
-        # the operator's checkout adds unrelated files and OneDrive latency to
-        # every script submit, exceeding the real HTTP fixture's five-second gate.
-        # An absent Git baseline is recorded explicitly by the production code.
-        cwd=home_dir,
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-
+    derived_config_path: Path | None = None
     try:
-        _wait_for_health(url, deadline=deadline, process=process, log_path=log_path)
-    except BaseException:
-        _terminate(process, log_handle, [False])
+        database_targets, derived_config_path = _runtime_only_database_targets(
+            database_targets, home_dir
+        )
+    except BaseException as error:
+        if owned_target_context is not None:
+            owned_target_context.__exit__(type(error), error, error.__traceback__)
         raise
 
+    log_path = home_dir / "server.log"
+    try:
+        log_handle = open(log_path, "ab")  # noqa: SIM115 — lifetime is in stop()
+    except BaseException as error:
+        if owned_target_context is not None:
+            owned_target_context.__exit__(type(error), error, error.__traceback__)
+        _remove_runtime_database_config(derived_config_path)
+        raise
+    process: subprocess.Popen[bytes] | None = None
     stopped = [False]
+    url = f"http://127.0.0.1:{port}"
+    server: CaoServer | None = None
 
-    def _stop() -> None:
-        _terminate(process, log_handle, stopped)
-        _LIVE_SERVERS.discard(server)
+    def _stop(startup_error: BaseException | None = None) -> None:
+        if stopped[0]:
+            return
+        if process is None:
+            # Popen did not produce a child, so there is no process to wait for.
+            stopped[0] = True
+            if not log_handle.closed:
+                with contextlib.suppress(Exception):
+                    log_handle.close()
+        else:
+            _terminate(process, log_handle, stopped)
 
-    db_path = home_dir / ".aws" / "cli-agent-orchestrator" / "db" / "cli-agent-orchestrator.db"
+        try:
+            if owned_target_context is not None:
+                if startup_error is None:
+                    owned_target_context.__exit__(None, None, None)
+                else:
+                    owned_target_context.__exit__(
+                        type(startup_error),
+                        startup_error,
+                        startup_error.__traceback__,
+                    )
+        finally:
+            try:
+                _remove_runtime_database_config(derived_config_path)
+            finally:
+                if server is not None:
+                    _LIVE_SERVERS.discard(server)
+
     server = CaoServer(
         url=url,
         port=port,
         home_dir=home_dir,
-        db_path=db_path,
+        database_targets=database_targets,
+        database_config_path=database_targets.config_file,
         log_path=log_path,
         stop=_stop,
     )
     _LIVE_SERVERS.add(server)
+
+    try:
+        child_extra = dict(extra_env or {})
+        # Do not let a parent function-scoped test target or inherited operator
+        # config redirect the managed subprocess away from this server's owned
+        # main/auth/peer database set.
+        child_extra["CAO_DATABASE_CONFIG_FILE"] = str(database_targets.config_file)
+        env = _subprocess_env(
+            home_dir,
+            port,
+            extra=child_extra,
+            allowed_external_credentials=allowed_external_credentials,
+        )
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "cli_agent_orchestrator.api.main",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+            ],
+            env=env,
+            # Manifest capture must describe this disposable test workspace. Using
+            # the operator's checkout adds unrelated files and OneDrive latency to
+            # every script submit, exceeding the real HTTP fixture's five-second gate.
+            # An absent Git baseline is recorded explicitly by the production code.
+            cwd=home_dir,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        _wait_for_health(url, deadline=deadline, process=process, log_path=log_path)
+    except BaseException as error:
+        # Register the cleanup owner before Popen/health checks. If SIGKILL plus
+        # the bounded wait cannot confirm exit, _stop raises and deliberately
+        # retains the log, config, target context, and this registry reference.
+        try:
+            _stop(error)
+        except BaseException as cleanup_error:
+            if cleanup_error is error:
+                raise
+            note_adder = getattr(error, "add_note", None)
+            if callable(note_adder):
+                note_adder(_STARTUP_CLEANUP_NOTE)
+            else:
+                notes = list(getattr(error, "__notes__", ()))
+                notes.append(_STARTUP_CLEANUP_NOTE)
+                error.__notes__ = notes
+            raise error from cleanup_error
+        raise
+
+    assert server is not None
     return server
 
 
@@ -573,11 +1149,15 @@ def _session_rsa_keys() -> tuple[bytes, Any]:
 
 
 @pytest.fixture(scope="session")
-def cao_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[CaoServer]:
+def cao_server(
+    tmp_path_factory: pytest.TempPathFactory, postgres_service: Any
+) -> Iterator[CaoServer]:
     """Spawn a managed cao-server subprocess for the whole session."""
     home = tmp_path_factory.mktemp("cao_home_session")
     port = _pick_free_port()
-    server = _start_cao_server(home, port, deadline=_fixture_health_timeout())
+    server = _start_cao_server(
+        home, port, deadline=_fixture_health_timeout(), postgres_service=postgres_service
+    )
     try:
         yield server
     finally:
@@ -587,6 +1167,7 @@ def cao_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[CaoServer]:
 @pytest.fixture(scope="session")
 def cao_server_with_auth(
     tmp_path_factory: pytest.TempPathFactory,
+    postgres_service: Any,
 ) -> Iterator[AuthCaoServer]:
     """Spawn a managed cao-server subprocess with Auth0 enforcement enabled.
 
@@ -607,6 +1188,7 @@ def cao_server_with_auth(
             home,
             port,
             deadline=_fixture_health_timeout(),
+            postgres_service=postgres_service,
             extra_env={
                 "AUTH0_DOMAIN": _AUTH_DOMAIN,
                 "AUTH0_AUDIENCE": _AUTH_AUDIENCE,
@@ -641,12 +1223,14 @@ def cao_terminal(
             indirect=True,
         )
 
-    Default is ``("kiro_cli", "developer")``. Tests are responsible for
-    skipping if the chosen provider CLI is not available on ``PATH``.
+    Default remains ``("kiro_cli", "developer")`` for existing callers.
+    The authorization gate runs before binary lookup or the session POST.
     """
     params = getattr(request, "param", None) or {}
     provider = params.get("provider", "kiro_cli")
     profile = params.get("agent_profile", "developer")
+    authorization = _authorize_live_provider(provider)
+    _stage_live_provider_auth(cao_server.home_dir, authorization)
     session_name = f"caotest-{uuid.uuid4().hex[:12]}"
 
     resp = requests.post(
@@ -655,21 +1239,14 @@ def cao_terminal(
             "provider": provider,
             "agent_profile": profile,
             "session_name": session_name,
+            "model": authorization.model,
         },
     )
     if resp.status_code not in (200, 201):
-        # Provider boot is fragile — CLI may be absent, unauthenticated,
-        # rate-limited, or slow to TUI-init.  A missing binary is intentionally
-        # a 400 (the request is invalid on this host), while runtime startup
-        # failures can be 5xx.  Both are environment capability failures, not a
-        # contract failure in every test using this generic fixture.
-        body = resp.text
-        if _provider_is_unavailable_response(resp.status_code, body):
-            pytest.skip(
-                f"provider {provider!r} not usable on this host "
-                f"(HTTP {resp.status_code}): {body[:200]}"
-            )
-        raise RuntimeError(f"POST /sessions failed: {resp.status_code} {body}")
+        # Authorization already established the selected provider, binary,
+        # model, and isolated credentials. A failure after POST is therefore
+        # a test failure, and the response body may contain provider output.
+        raise RuntimeError(f"POST /sessions failed: HTTP {resp.status_code}; response body omitted")
     data = resp.json()
     terminal_id = data["id"]
     actual_session = data["session_name"]

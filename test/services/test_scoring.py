@@ -9,7 +9,7 @@ Covers:
   the pre-scoring ordering on a fixture corpus (load-bearing invariant).
 
 The score function is pure; sort/integration paths are exercised through
-``MemoryService.store()`` / ``recall()`` against a per-test SQLite DB.
+``MemoryService.store()`` / ``recall()`` against isolated PostgreSQL targets.
 """
 
 from __future__ import annotations
@@ -19,10 +19,10 @@ import logging
 import math
 import time
 from datetime import datetime, timedelta, timezone
+from test.postgres.orm import configured_orm_engine
 from typing import Optional
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.clients.database import Base, MemoryMetadataModel
@@ -73,7 +73,7 @@ def _ctx(
 @pytest.fixture
 def db_engine(tmp_path):
     db_path = tmp_path / "test.db"
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return engine
 
@@ -87,8 +87,8 @@ def _stamp_updated_at(db_engine, key: str, scope: str, when: datetime) -> None:
     """Force-set ``updated_at`` for deterministic recency tests.
 
     ``MemoryService.recall`` derives ``updated_at`` from the ``## <ts>``
-    headers in the wiki markdown file (not from SQLite), so we rewrite the
-    file's last timestamp header as well as the SQLite row to keep both
+    headers in the wiki markdown file (not from PostgreSQL), so we rewrite the
+    file's last timestamp header as well as the database row to keep both
     sources consistent.
     """
     import re
@@ -409,13 +409,13 @@ class TestT2IncrementRateLimit:
         Session = sessionmaker(bind=db_engine)
         with Session() as db:
             row = db.query(MemoryMetadataModel).filter_by(key="ratelimit-2", scope="global").first()
-            row.last_accessed_at = datetime.utcnow() - timedelta(minutes=5)
+            row.last_accessed_at = datetime.now(timezone.utc) - timedelta(minutes=5)
             db.commit()
         _run(svc.recall(query="content", scope="global", terminal_context=ctx))
         assert int(_row(db_engine, "ratelimit-2").access_count or 0) == 2
 
     def test_60s_window_uses_server_now_not_client(self, svc, db_engine):
-        """The rate-limit comparison uses ``func.julianday('now')`` server-
+        """The rate-limit comparison uses PostgreSQL's server clock;
         side; a forged client clock in terminal_context cannot bypass it.
         """
         ctx = _ctx(caller_scope="global")
@@ -434,6 +434,33 @@ class TestT2IncrementRateLimit:
         _run(svc.recall(query="content", scope="global", terminal_context=ctx))
         # Even with the ignored client clock, the 60s gate still fires.
         assert int(_row(db_engine, "server-now").access_count or 0) == 1
+
+    def test_concurrent_native_updates_increment_the_same_identity_once(self, svc, db_engine):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+
+        memory = _run(
+            svc.store(
+                content="concurrent access",
+                scope="global",
+                memory_type="reference",
+                key="concurrent-access",
+                terminal_context=_ctx(caller_scope="global"),
+            )
+        )
+        start = Barrier(2)
+
+        def increment():
+            start.wait(timeout=5)
+            svc._increment_access_count([memory, memory])
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(increment) for _ in range(2)]
+            for future in futures:
+                future.result(timeout=15)
+        row = _row(db_engine, "concurrent-access")
+        assert row.access_count == 1
+        assert row.last_accessed_at.tzinfo is not None
 
     def test_usage_factor_saturates_at_one(self):
         """access_count=10000 → usage = 1.0 exactly (cap)."""
@@ -746,7 +773,7 @@ class TestT7FutureDatedTimestamp:
         )
         row = _row(db_engine, "server-ts")
         # Within last 60s.
-        delta = abs((datetime.utcnow() - row.updated_at).total_seconds())
+        delta = abs((datetime.now(timezone.utc) - row.updated_at).total_seconds())
         assert delta < 60
 
 
@@ -1027,7 +1054,7 @@ class TestUsageIdentityIsolation:
                     terminal_context=op,
                 )
             )
-        # Distinct counts per scope, set directly in SQLite.
+        # Distinct counts per scope, set directly in PostgreSQL.
         Session = sessionmaker(bind=db_engine)
         with Session() as db:
             g = db.query(MemoryMetadataModel).filter_by(key="enrich-slug", scope="global").first()

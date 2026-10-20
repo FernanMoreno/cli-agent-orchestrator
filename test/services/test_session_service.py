@@ -7,11 +7,11 @@ import os
 import shlex
 import uuid
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.backends import registry as backend_registry
@@ -696,11 +696,8 @@ class TestListSessions:
 
 @pytest.fixture
 def real_session_db(tmp_path, monkeypatch):
-    """Route terminal metadata to a per-test real SQLite database."""
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'session-ownership.db'}",
-        connect_args={"check_same_thread": False},
-    )
+    """Route terminal metadata to a per-test PostgreSQL schema."""
+    engine = configured_orm_engine()
     db_mod.Base.metadata.create_all(bind=engine)
     monkeypatch.setattr(
         db_mod,

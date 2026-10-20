@@ -1,21 +1,21 @@
-"""Admission commits authorization, immutable order and queue as one SQLite unit."""
+"""Admission commits authorization, immutable order and queue as one PostgreSQL unit."""
 
 import importlib
 import importlib.util
 import json
 import multiprocessing
 import os
-import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from psycopg import sql
 
-from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.backends.base import UnsupportedWorkEnforcement
 from cli_agent_orchestrator.backends.tmux_backend import TmuxBackend
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget, connect
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.models.work_contract import (
     ContractPermissions,
@@ -48,9 +48,9 @@ class AdmissionOnlyBackend(TmuxBackend):
         raise AssertionError("admission must never create a process")
 
 
-def _process_commit_dispatch_intent_then_die(database, committed):
+def _process_commit_dispatch_intent_then_die(target, committed):
     """Crash after durable reservation/intent and before any delivery callback."""
-    repository = WorkRepository(database)
+    repository = WorkRepository(target)
     service = coordinator(SimpleNamespace(repo=repository), AdmissionOnlyBackend())
     if service._prepare_dispatch() is None:
         os._exit(2)
@@ -58,9 +58,9 @@ def _process_commit_dispatch_intent_then_die(database, committed):
     os._exit(23)
 
 
-def _process_restart_without_redelivery(database, outcomes):
+def _process_restart_without_redelivery(target, outcomes):
     """A restarted dispatcher must not infer send permission from a durable intent."""
-    repository = WorkRepository(database)
+    repository = WorkRepository(target)
     service = coordinator(SimpleNamespace(repo=repository), AdmissionOnlyBackend())
 
     def forbidden_effect(*_):
@@ -73,10 +73,10 @@ def _process_restart_without_redelivery(database, outcomes):
 
 
 def _process_admit_after_blocked_preflight(
-    database, actor, job_id, grant_id, contract, entered, release, outcomes
+    target, actor, job_id, grant_id, contract, entered, release, outcomes
 ):
-    """Use a new SQLite client while another process changes authority."""
-    repository = WorkRepository(database)
+    """Use a new PostgreSQL client while another process changes authority."""
+    repository = WorkRepository(target)
 
     def block_preflight():
         entered.set()
@@ -101,9 +101,9 @@ def _process_admit_after_blocked_preflight(
         outcomes.put(("admitted",))
 
 
-def _process_revoke_grant(database, actor, grant_id, outcomes):
+def _process_revoke_grant(target, actor, grant_id, outcomes):
     try:
-        WorkAuthority(WorkRepository(database)).revoke(
+        WorkAuthority(WorkRepository(target)).revoke(
             actor,
             grant_id=grant_id,
             expected_grant_revision=1,
@@ -127,7 +127,8 @@ def _cleanup_process(process):
 
 @pytest.fixture
 def context(tmp_path):
-    repository = WorkRepository(tmp_path / "admission.db")
+    target = DatabaseTarget.from_settings("main")
+    repository = WorkRepository(target, filesystem_home=tmp_path)
     repository.initialize()
     WorkScheduler(repository).configure(
         capacity=2, max_queue=100, aging_seconds=10, expected_policy_revision=0
@@ -332,11 +333,6 @@ def test_v2_admission_preflight_receives_exact_executable_identity_and_replay_is
 
 @pytest.mark.parametrize("corruption", ["json", "hash", "projection", "missing"])
 def test_v2_replay_rejects_corrupt_or_missing_identity_before_preflight(context, corruption):
-    from cli_agent_orchestrator.clients.work_dispatch_schema import (
-        DISPATCH_SCHEMA,
-        DISPATCH_V2_EVIDENCE_SCHEMA,
-    )
-
     identity = ExecutableIdentity(
         command_token="/bin/alpha",
         content_reference="sha256:" + "a" * 64,
@@ -360,34 +356,51 @@ def test_v2_replay_rejects_corrupt_or_missing_identity_before_preflight(context,
     service = coordinator(context, backend)
     admit(context, service, contract=contract)
 
-    with sqlite3.connect(context.repo.path) as connection:
-        table = (
-            "work_dispatch_bindings" if corruption == "projection" else "work_dispatch_v2_evidence"
-        )
-        action = "delete" if corruption == "missing" else "update"
-        trigger = f"{table}_immutable_{action}"
-        schema = DISPATCH_SCHEMA if corruption == "projection" else DISPATCH_V2_EVIDENCE_SCHEMA
-        connection.execute(f"DROP TRIGGER {trigger}")
-        if corruption == "missing":
-            connection.execute("DELETE FROM work_dispatch_v2_evidence")
-        elif corruption == "hash":
-            connection.execute("UPDATE work_dispatch_v2_evidence SET contract_hash=?", ("f" * 64,))
-        else:
-            payload = json.loads(
-                connection.execute(f"SELECT contract_json FROM {table}").fetchone()[0]
-            )
-            if corruption == "json":
-                payload["executable_identities"][0]["sha256_digest"] = "b" * 64
-                payload["executable_identities"][0]["content_reference"] = "sha256:" + "b" * 64
-            else:
-                payload["backend"] = "changed"
+    table = "work_dispatch_bindings" if corruption == "projection" else "work_dispatch_v2_evidence"
+    action = "delete" if corruption == "missing" else "update"
+    trigger = f"{table}_immutable_{action}"
+    with connect(context.repo.target.migration_target()) as connection:
+        with connection.transaction():
             connection.execute(
-                f"UPDATE {table} SET contract_json=?",
-                (json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False),),
+                sql.SQL("ALTER TABLE {} DISABLE TRIGGER {}").format(
+                    sql.Identifier(table), sql.Identifier(trigger)
+                )
             )
-        connection.execute(
-            next(statement for statement in schema if f"CREATE TRIGGER {trigger}" in statement)
-        )
+            if corruption == "missing":
+                connection.execute("DELETE FROM work_dispatch_v2_evidence")
+            elif corruption == "hash":
+                connection.execute(
+                    "UPDATE work_dispatch_v2_evidence SET contract_hash=%s", ("f" * 64,)
+                )
+            else:
+                payload = json.loads(
+                    connection.execute(
+                        sql.SQL("SELECT contract_json FROM {} LIMIT 1").format(
+                            sql.Identifier(table)
+                        )
+                    ).fetchone()[0]
+                )
+                if corruption == "json":
+                    payload["executable_identities"][0]["sha256_digest"] = "b" * 64
+                    payload["executable_identities"][0]["content_reference"] = "sha256:" + "b" * 64
+                else:
+                    payload["backend"] = "changed"
+                connection.execute(
+                    sql.SQL("UPDATE {} SET contract_json=%s").format(sql.Identifier(table)),
+                    (
+                        json.dumps(
+                            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                        ),
+                    ),
+                )
+            connection.execute(
+                sql.SQL("ALTER TABLE {} ENABLE TRIGGER {}").format(
+                    sql.Identifier(table), sql.Identifier(trigger)
+                )
+            )
+    # The test changed row contents through the migration owner, not the
+    # installed schema or immutable-trigger baseline.
+    context.repo.initialize()
 
     with pytest.raises(ValueError):
         admit(context, service, contract=contract)
@@ -457,7 +470,7 @@ def test_identical_replay_after_lease_expiry_does_not_rebind_or_renew(context):
     work = admit(context, service)
     with context.repo.transaction() as connection:
         connection.execute(
-            "UPDATE work_attempts SET lease_expires_at=1 WHERE id=?", (work["attempts"][0]["id"],)
+            "UPDATE work_attempts SET lease_expires_at=1 WHERE id=%s", (work["attempts"][0]["id"],)
         )
     before = context.repo.read_events(context.job["id"])
     repeated = admit(context, service)
@@ -547,9 +560,8 @@ def test_public_repository_cannot_create_a_new_legacy_child_route(
     assert context.repo.read_events(context.job["id"]) == events
 
 
-def test_inbox_staging_cannot_create_a_new_child_from_a_generic_parent(context, monkeypatch):
+def test_inbox_staging_cannot_create_a_new_child_from_a_generic_parent(context):
     """A staged inbox order must not bypass the same managed lineage entrance."""
-    monkeypatch.setattr(constants, "DATABASE_FILE", context.repo.path)
     parent = admit(context, coordinator(context), key="staging-parent")
     backend = AdmissionOnlyBackend()
     backend.preflight_work = Mock()
@@ -583,7 +595,7 @@ def test_process_crash_after_committed_intent_never_credits_or_redelivers(contex
     committed, outcomes = processes.Event(), processes.Queue()
     crash = processes.Process(
         target=_process_commit_dispatch_intent_then_die,
-        args=(context.repo.path, committed),
+        args=(context.repo.target, committed),
     )
     restart = None
     try:
@@ -619,7 +631,7 @@ def test_process_crash_after_committed_intent_never_credits_or_redelivers(contex
 
         restart = processes.Process(
             target=_process_restart_without_redelivery,
-            args=(context.repo.path, outcomes),
+            args=(context.repo.target, outcomes),
         )
         restart.start()
         assert outcomes.get(timeout=20) == ("ok", True)
@@ -643,7 +655,7 @@ def test_admission_delivery_port_uses_the_shared_writer_registry_once(context):
     active_counts = []
 
     def send(_binding, _port):
-        with sqlite3.connect(context.repo.path) as connection:
+        with context.repo.read_snapshot() as connection:
             active_counts.append(
                 connection.execute(
                     "SELECT count(*) FROM work_registered_writers WHERE state='active'"
@@ -653,7 +665,7 @@ def test_admission_delivery_port_uses_the_shared_writer_registry_once(context):
 
     assert coordinator(context).dispatch_next(send) is not None
     assert active_counts == [1]
-    with sqlite3.connect(context.repo.path) as connection:
+    with context.repo.read_snapshot() as connection:
         assert connection.execute("SELECT state FROM work_registered_writers").fetchall() == [
             ("released",)
         ]
@@ -668,7 +680,7 @@ def test_process_revocation_during_preflight_leaves_no_admission(context):
     admission = processes.Process(
         target=_process_admit_after_blocked_preflight,
         args=(
-            context.repo.path,
+            context.repo.target,
             context.actor,
             context.job["id"],
             context.grant.id,
@@ -684,7 +696,7 @@ def test_process_revocation_during_preflight_leaves_no_admission(context):
         assert entered.wait(timeout=20), "admission never reached blocked preflight"
         revocation = processes.Process(
             target=_process_revoke_grant,
-            args=(context.repo.path, context.actor, context.grant.id, revocation_outcomes),
+            args=(context.repo.target, context.actor, context.grant.id, revocation_outcomes),
         )
         revocation.start()
         assert revocation_outcomes.get(timeout=20) == ("revoked",)

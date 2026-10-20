@@ -1,19 +1,11 @@
-"""End-to-end proofs for the U6 examples gallery (issue #312, Bolt 4, FR-7.1/BR-14).
+"""Run the U6 examples through real prepared-plan approval and script children.
 
-Each example script is spawned as a REAL subprocess via U4's
-``run_script_workflow`` (real ``asyncio.create_subprocess_exec``, real
-``cao_workflow``/``urllib`` transport) — no server/tmux fixture skip, per
-``test/e2e/examples/conftest.py``. Since these scripts DO call ``run_step``
-(unlike U4's own M1/M2 self-contained proofs), a minimal stdlib
-``http.server`` fake stands in for ``cao-server``'s ``/terminals/run-step``
-route: this proves the shim's REAL HTTP client behavior end-to-end (real
-socket, real JSON wire format) without requiring a live tmux-backed
-cao-server or an authenticated provider CLI, mirroring FR-6.1/BR-14's
-pass/fail (loop: N iterations recorded; conditional: the taken branch's step
-ran, the other didn't; fan-out: all shards' steps recorded with distinct
-step_ids) — each of these is asserted below via the fake server's recorded
-calls, not by re-deriving them from provider output. The raw-HTTP loop
-example makes an IDENTICAL call shape with no ``cao_workflow`` import.
+The public prepare, review, approve, and start routes run over an isolated
+PostgreSQL Work fixture. The scripts themselves are real child processes; a
+small local HTTP peer records ``/terminals/run-step`` requests so assertions
+can verify the example's actual control flow without invoking a provider CLI.
+The raw-HTTP example still ships without a ``cao_workflow`` import; a test-only
+adapter passes its run capability from the inherited descriptor to urllib.
 """
 
 from __future__ import annotations
@@ -22,13 +14,14 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from test.e2e.prepared_script_helpers import run_prepared_script
+from test.integration.test_work_dispatch import context  # noqa: F401
 
 import pytest
 
 from cli_agent_orchestrator.models.workflow_runtime import RunState
-from cli_agent_orchestrator.services.script_runner import run_script_workflow
 
-pytestmark = [pytest.mark.e2e, pytest.mark.asyncio]
+pytestmark = [pytest.mark.e2e, pytest.mark.asyncio, pytest.mark.postgres]
 
 _EXAMPLES_DIR = Path(__file__).resolve().parents[3] / "docs" / "examples"
 
@@ -41,6 +34,10 @@ class _RunStepFakeHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length)
         body = json.loads(raw.decode("utf-8"))
         self.server.recorded_calls.append(body)  # type: ignore[attr-defined]
+        capability = self.headers.get("X-CAO-Workflow-Run-Credential")
+        self.server.capability_lengths.append(  # type: ignore[attr-defined]
+            None if capability is None else len(capability)
+        )
 
         step_id = body.get("env_vars", {}).get("CAO_WORKFLOW_STEP_ID", "unknown")
         response = json.dumps(
@@ -48,6 +45,7 @@ class _RunStepFakeHandler(BaseHTTPRequestHandler):
                 "terminal_id": f"term-{step_id}",
                 "last_message": f"ack:{step_id}",
                 "status": "COMPLETED",
+                "replayed": False,
             }
         ).encode("utf-8")
         self.send_response(200)
@@ -64,6 +62,7 @@ class _RunStepFakeHandler(BaseHTTPRequestHandler):
 def fake_run_step_server():
     server = HTTPServer(("127.0.0.1", 0), _RunStepFakeHandler)
     server.recorded_calls = []  # type: ignore[attr-defined]
+    server.capability_lengths = []  # type: ignore[attr-defined]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -73,29 +72,10 @@ def fake_run_step_server():
         thread.join(timeout=5)
 
 
-class _RealSpec:
-    """Duck-typed ScriptSpec pointing at a real example file on disk."""
-
-    def __init__(self, path: Path, name: str):
-        self.path = str(path)
-        self.source = path.read_text(encoding="utf-8")
-        self.name = name
-        self.content_hash = "e2e"
-
-
 @pytest.fixture(autouse=True)
-def _temp_db(tmp_path, monkeypatch):
-    from cli_agent_orchestrator.clients.database import (
-        _migrate_workflow_run,
-        _migrate_workflow_run_step,
-    )
+def _reset_workflow_state():
     from cli_agent_orchestrator.services import workflow_service
 
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.constants.DATABASE_FILE", tmp_path / "wf.db", raising=True
-    )
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
     workflow_service.run_registry.clear()
     workflow_service._active_drives.clear()
     yield
@@ -111,53 +91,102 @@ def _api_base_url(fake_run_step_server, monkeypatch):
     return base_url
 
 
-async def test_loop_example_records_n_iterations(_api_base_url, fake_run_step_server):
-    spec = _RealSpec(_EXAMPLES_DIR / "loop_example.py", "loop-example")
+def _assert_prepared_capabilities(server, expected_calls):
+    assert len(server.capability_lengths) == expected_calls
+    assert all(32 <= length <= 256 for length in server.capability_lengths)
 
-    result = await run_script_workflow(spec, {}, "e2e-loop")
 
-    assert result.state == RunState.COMPLETED
+def _assert_completed(result):
+    failures = [
+        (step.step_id, step.state.value, step.error)
+        for step in result.steps
+        if step.error is not None
+    ]
+    assert result.state == RunState.COMPLETED, {
+        "kind": result.kind,
+        "failed_steps": failures,
+    }
+
+
+async def test_loop_example_records_n_iterations(
+    context, tmp_path, monkeypatch, _api_base_url, fake_run_step_server
+):
+    result = await run_prepared_script(
+        context,
+        tmp_path,
+        monkeypatch,
+        source=(_EXAMPLES_DIR / "loop_example.py").read_text(encoding="utf-8"),
+        run_id="e2e-loop",
+        agent_profile="reviewer",
+    )
+
+    _assert_completed(result)
     assert result.output["iterations"] == 3
     assert len(result.output["outputs"]) == 3
     step_ids = [c["env_vars"]["CAO_WORKFLOW_STEP_ID"] for c in fake_run_step_server.recorded_calls]
     assert step_ids == ["call-1", "call-2", "call-3"]
+    _assert_prepared_capabilities(fake_run_step_server, 3)
 
 
-async def test_conditional_example_runs_only_the_taken_branch(_api_base_url, fake_run_step_server):
+async def test_conditional_example_runs_only_the_taken_branch(
+    context, tmp_path, monkeypatch, _api_base_url, fake_run_step_server
+):
     """IS_URGENT is a script-level constant (no env passthrough exists for
     this — U4's spawn env is a fixed identity-only allowlist), so this test
     exercises the file's real content (IS_URGENT = True) as shipped."""
-    spec = _RealSpec(_EXAMPLES_DIR / "conditional_example.py", "conditional-example")
+    result = await run_prepared_script(
+        context,
+        tmp_path,
+        monkeypatch,
+        source=(_EXAMPLES_DIR / "conditional_example.py").read_text(encoding="utf-8"),
+        run_id="e2e-conditional",
+        agent_profile="reviewer",
+    )
 
-    result = await run_script_workflow(spec, {}, "e2e-conditional")
-
-    assert result.state == RunState.COMPLETED
+    _assert_completed(result)
     assert result.output["branch_taken"] == "urgent"
     step_ids = [c["env_vars"]["CAO_WORKFLOW_STEP_ID"] for c in fake_run_step_server.recorded_calls]
     assert step_ids == ["urgent-branch"]  # the routine branch's step never ran
+    _assert_prepared_capabilities(fake_run_step_server, 1)
 
 
 async def test_fanout_example_records_distinct_step_ids_per_shard(
-    _api_base_url, fake_run_step_server
+    context, tmp_path, monkeypatch, _api_base_url, fake_run_step_server
 ):
-    spec = _RealSpec(_EXAMPLES_DIR / "fanout_example.py", "fanout-example")
+    result = await run_prepared_script(
+        context,
+        tmp_path,
+        monkeypatch,
+        source=(_EXAMPLES_DIR / "fanout_example.py").read_text(encoding="utf-8"),
+        run_id="e2e-fanout",
+        agent_profile="reviewer",
+    )
 
-    result = await run_script_workflow(spec, {}, "e2e-fanout")
-
-    assert result.state == RunState.COMPLETED
+    _assert_completed(result)
     assert set(result.output["shards"].keys()) == {"alpha", "beta", "gamma"}
     step_ids = [c["env_vars"]["CAO_WORKFLOW_STEP_ID"] for c in fake_run_step_server.recorded_calls]
     assert sorted(step_ids) == ["shard-alpha", "shard-beta", "shard-gamma"]
     assert len(set(step_ids)) == 3  # pairwise distinct
+    _assert_prepared_capabilities(fake_run_step_server, 3)
 
 
-async def test_loop_raw_http_example_works_without_the_shim(_api_base_url, fake_run_step_server):
+async def test_loop_raw_http_example_works_without_the_shim(
+    context, tmp_path, monkeypatch, _api_base_url, fake_run_step_server
+):
     """Q2=A shim-optionality proof: same shape, zero cao_workflow import."""
-    spec = _RealSpec(_EXAMPLES_DIR / "loop_raw_http_example.py", "loop-raw-http-example")
+    original_source = (_EXAMPLES_DIR / "loop_raw_http_example.py").read_text(encoding="utf-8")
+    result = await run_prepared_script(
+        context,
+        tmp_path,
+        monkeypatch,
+        source=original_source,
+        run_id="e2e-loop-raw-http",
+        agent_profile="reviewer",
+        raw_http_capability_adapter=True,
+    )
 
-    result = await run_script_workflow(spec, {}, "e2e-loop-raw-http")
-
-    assert result.state == RunState.COMPLETED
+    _assert_completed(result)
     assert result.output["iterations"] == 3
     assert len(result.output["outputs"]) == 3
-    assert "import cao_workflow" not in spec.source
+    assert "import cao_workflow" not in original_source
+    _assert_prepared_capabilities(fake_run_step_server, 3)

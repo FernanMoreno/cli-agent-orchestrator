@@ -36,6 +36,10 @@ WAITING_PROMPT_PATTERN = (
     r"|(?:↑/↓\s*(?:to )?select.*Enter (?:to )?confirm)"
     r"|(?:type your answer and press Enter)"
 )
+CLARIFY_TITLE_PATTERN = r"(?:Hermes needs your input|cli\.tui\.clarify_title)"
+CLARIFY_HINT_PATTERN = (
+    r"(?:↑/↓\s*(?:to )?select.*Enter (?:to )?confirm" r"|cli\.tui\.hint_clarify_(?:batch|freetext))"
+)
 ERROR_PATTERN = r"^(?:Error:|ERROR:|Traceback \(most recent call last\):|hermes .*failed:)"
 USER_PREFIX_PATTERN = os.environ.get("CAO_HERMES_USER_PREFIX_REGEX", r"^●\s+")
 ASSISTANT_HEADER_PATTERN = os.environ.get(
@@ -101,6 +105,21 @@ def _has_waiting_prompt(text: str) -> bool:
         )
         return bool(clarify_context or approval_context)
     return False
+
+
+def _has_active_clarify_prompt(tail_output: str, bottom_output: str) -> bool:
+    """Recognize the provider-owned clarify modal without reading its content.
+
+    Hermes currently renders its translation keys verbatim in some CLI builds.
+    Require the modal title in the recent viewport and its active clarify hint
+    at the bottom, so an old question in scrollback cannot keep a completed turn
+    marked as waiting. This is only a wait signal; native answers stay manual.
+    """
+    title_visible = re.search(CLARIFY_TITLE_PATTERN, tail_output, re.IGNORECASE) is not None
+    active_hint_visible = (
+        re.search(CLARIFY_HINT_PATTERN, bottom_output, re.IGNORECASE | re.MULTILINE) is not None
+    )
+    return title_visible and active_hint_visible
 
 
 class HermesProvider(BaseProvider):
@@ -235,7 +254,9 @@ class HermesProvider(BaseProvider):
         if not has_response:
             has_response = self._has_extractable_response(clean_output)
 
-        if _has_waiting_prompt(bottom_output):
+        if _has_waiting_prompt(bottom_output) or _has_active_clarify_prompt(
+            tail_output, bottom_output
+        ):
             return TerminalStatus.WAITING_USER_ANSWER
 
         if re.search(ERROR_PATTERN, tail_output, re.IGNORECASE | re.MULTILINE):

@@ -18,7 +18,6 @@ import os
 import select
 import signal
 import socket
-import sqlite3
 import stat
 import struct
 import subprocess
@@ -31,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from cli_agent_orchestrator.clients.postgres import Connection
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_contract import ExecutableIdentity
 from cli_agent_orchestrator.services.work_bubblewrap_isolation_proof import (
@@ -508,8 +508,8 @@ def launch_recorded_bound_work_static_elf(
     worker_input: bytes = b"",
     process_supervisor: WorkProcessSupervisor | None = None,
     before_start: Callable[[], None] | None = None,
-    authorize_setup: Callable[[sqlite3.Connection], None] | None = None,
-    authorize_go: Callable[[sqlite3.Connection], None] | None = None,
+    authorize_setup: Callable[[Connection], None] | None = None,
+    authorize_go: Callable[[Connection], None] | None = None,
 ) -> WorkBubblewrapExecution:
     """Run the bound scratch worker only after durable setup and a fenced GO."""
     if not isinstance(repository, WorkRepository):
@@ -537,7 +537,7 @@ def launch_recorded_bound_work_static_elf(
             )
             attempt = connection.execute(
                 "SELECT state,revision,lease_expires_at FROM work_attempts "
-                "WHERE id=? AND generation=?",
+                "WHERE id=%s AND generation=%s",
                 (attempt_id, generation),
             ).fetchone()
             if (
@@ -674,8 +674,8 @@ def _launch_owned_stage(
     worker_input: bytes = b"",
     process_supervisor: WorkProcessSupervisor | None = None,
     before_start: Callable[[], None] | None = None,
-    authorize_setup: Callable[[sqlite3.Connection], None] | None = None,
-    authorize_go: Callable[[sqlite3.Connection], None] | None = None,
+    authorize_setup: Callable[[Connection], None] | None = None,
+    authorize_go: Callable[[Connection], None] | None = None,
     bwrap_path: str | os.PathLike[str],
     bwrap_sha256_digest: str,
     timeout_seconds: float,
@@ -1057,7 +1057,14 @@ def _launch_owned_stage(
 
         if supervised_attempt is not None:
             assert process_supervisor is not None
-            state = process_supervisor.wait(supervised_attempt, timeout=0)
+            # ``communicate()`` has reaped the Bubblewrap monitor, but the
+            # namespace-init pidfd can become readable a moment later under
+            # a heavily scheduled guest. Use the bounded cleanup window to
+            # prove the complete tree has exited instead of treating that
+            # short handoff as an uncertain delivery.
+            state = process_supervisor.wait(
+                supervised_attempt, timeout=_CLEANUP_TIMEOUT_SECONDS
+            )
             if state is not WorkProcessState.TERMINATED:
                 partial_stdout, partial_stderr, confirmed = cleanup_process_tree()
                 raise WorkBubblewrapCleanupUncertain(

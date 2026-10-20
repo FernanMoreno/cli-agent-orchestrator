@@ -5,13 +5,14 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.models.terminal import TerminalInputBlockedError, TerminalStatus
 from cli_agent_orchestrator.services.terminal_service import (
     exit_terminal_cli,
     get_working_directory,
     list_siblings,
     probe_post_turn_receipt_result,
     quota_pause_may_auto_resume,
+    record_direct_interaction_input,
     send_special_key,
     settle_post_turn_receipt_result,
 )
@@ -38,6 +39,32 @@ def test_minimax_code_uses_runtime_skills_with_soft_tool_enforcement():
 
 
 _TS = "cli_agent_orchestrator.services.terminal_service"
+
+
+def test_direct_interaction_input_rejects_replaced_incarnation_before_advancing():
+    with (
+        patch(
+            "cli_agent_orchestrator.services.remote_terminal_service.placement",
+            return_value=None,
+        ),
+        patch(
+            f"{_TS}.get_terminal_metadata",
+            return_value={"session_incarnation_id": "current-incarnation"},
+        ),
+        patch(f"{_TS}.ensure_terminal_is_not_work_owned") as ensure_not_work_owned,
+        patch(f"{_TS}._interaction_source_status") as source_status,
+        patch(f"{_TS}._advance_interaction_turn") as advance_turn,
+    ):
+        with pytest.raises(TerminalInputBlockedError, match="session changed") as exc_info:
+            record_direct_interaction_input(
+                "registered-terminal",
+                expected_incarnation_id="captured-old-incarnation",
+            )
+
+    assert exc_info.value.delivery_may_have_occurred is False
+    ensure_not_work_owned.assert_not_called()
+    source_status.assert_not_called()
+    advance_turn.assert_not_called()
 
 
 class TestQuotaPauseCapability:
@@ -165,6 +192,57 @@ class TestTerminalServiceWorkingDirectory:
 
 class TestSendSpecialKey:
     """Tests for send_special_key function."""
+
+    @pytest.mark.parametrize(
+        "waiting_status",
+        [TerminalStatus.WAITING_USER_ANSWER, TerminalStatus.WAITING_QUOTA],
+    )
+    def test_registered_source_blocks_generic_key_while_provider_waits(self, waiting_status):
+        backend = MagicMock()
+        with (
+            patch(
+                f"{_TS}.get_terminal_metadata",
+                return_value={
+                    "tmux_session": "session",
+                    "tmux_window": "window",
+                    "session_incarnation_id": "incarnation",
+                },
+            ),
+            patch(f"{_TS}.get_backend", return_value=backend),
+            patch(f"{_TS}.ensure_terminal_is_not_work_owned"),
+            patch(f"{_TS}._interaction_source_status", return_value=object()),
+            patch(f"{_TS}.status_monitor.get_status", return_value=waiting_status),
+        ):
+            with pytest.raises(TerminalInputBlockedError):
+                send_special_key("registered", "Enter")
+
+        backend.send_special_key.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "waiting_status",
+        [TerminalStatus.WAITING_USER_ANSWER, TerminalStatus.WAITING_QUOTA],
+    )
+    def test_unregistered_legacy_source_keeps_key_compatibility_while_waiting(self, waiting_status):
+        backend = MagicMock()
+        with (
+            patch(
+                f"{_TS}.get_terminal_metadata",
+                return_value={
+                    "tmux_session": "session",
+                    "tmux_window": "window",
+                },
+            ),
+            patch(f"{_TS}.get_backend", return_value=backend),
+            patch(f"{_TS}.ensure_terminal_is_not_work_owned"),
+            patch(f"{_TS}._interaction_source_status", return_value=None),
+            patch(f"{_TS}.status_monitor.get_status", return_value=waiting_status),
+            patch(f"{_TS}.status_monitor.notify_input_sent"),
+            patch(f"{_TS}.status_monitor.notify_input_delivered"),
+            patch(f"{_TS}.update_last_active"),
+        ):
+            assert send_special_key("legacy", "Enter") is True
+
+        backend.send_special_key.assert_called_once_with("session", "window", "Enter")
 
     @patch("cli_agent_orchestrator.services.terminal_service.update_last_active")
     @patch("cli_agent_orchestrator.backends.registry._backend")

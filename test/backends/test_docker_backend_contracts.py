@@ -488,7 +488,7 @@ def test_cleanup_cannot_claim_absence_during_daemon_outage(native):
 async def test_durable_dispatch_real_authority_and_content_with_native_transport(
     native, monkeypatch, tmp_path, bad_protocol
 ):
-    """Real SQLite/credentials/content bind setup and GO; only Docker I/O is fake."""
+    """Real database/credentials/content bind setup and GO; only Docker I/O is fake."""
     from test.integration.t098.test_work_launch_dispatch import _setup
     from test.security.test_work_bubblewrap_composition import _minimal_static_worker
 

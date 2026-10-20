@@ -18,7 +18,7 @@ Covers:
     - T9   pure-read invariant — flush attempts raise `_ReadOnlyViolation`
     - T10  partial-run `lint_run_completed: N/5` line on detector failure
 
-The compiler / LLM is stubbed; subprocess / SQLite / FS exercised with monkeypatch.
+The compiler / LLM is stubbed; subprocess / PostgreSQL / FS exercised with monkeypatch.
 """
 
 from __future__ import annotations
@@ -31,10 +31,10 @@ import os
 import re
 import subprocess
 from datetime import datetime, timedelta, timezone
+from test.postgres.orm import configured_orm_engine
 from typing import Any, List, Optional
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.clients.database import Base, MemoryMetadataModel
@@ -90,7 +90,7 @@ def _ctx(*, caller_scope: str = "global", **kw) -> dict:
 @pytest.fixture
 def db_engine(tmp_path):
     db_path = tmp_path / "test.db"
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return engine
 
@@ -166,8 +166,9 @@ class TestU72PlanCases:
         assert contras[0].key == "a" and contras[0].related_key == "b"
         assert "non-blocking" in contras[0].description.lower()
 
+    @pytest.mark.offline_database
     def test_orphan_page_detected(self, tmp_path):
-        """Wiki file present on disk but missing from index.md AND SQLite →
+        """Wiki file present on disk but missing from index.md and metadata →
         orphan_page issue.
         """
         scope_dir = tmp_path / "global"
@@ -185,6 +186,8 @@ class TestU72PlanCases:
         orphans = [i for i in issues if i.issue_type == "orphan_page"]
         assert len(orphans) == 1
         assert orphans[0].key == "lonely"
+        assert "metadata=missing" in orphans[0].description
+        assert "database" not in orphans[0].description.lower()
 
     def test_stale_claim_detected_for_missing_file(self, tmp_path):
         """Article references a path that doesn't exist under repo_root →
@@ -209,10 +212,7 @@ class TestU72PlanCases:
         # SessionLocal to use our test engine.
         from cli_agent_orchestrator.clients import database as db_mod
 
-        engine = create_engine(
-            f"sqlite:///{tmp_path}/clean.db",
-            connect_args={"check_same_thread": False},
-        )
+        engine = configured_orm_engine()
         Base.metadata.create_all(bind=engine)
         Session = sessionmaker(bind=engine)
         monkeypatch.setattr(db_mod, "SessionLocal", Session)
@@ -1032,10 +1032,7 @@ class TestT9PureRead:
         """Attempting to flush a write-bearing session raises ``_ReadOnlyViolation``."""
         from cli_agent_orchestrator.clients import database as db_mod
 
-        engine = create_engine(
-            f"sqlite:///{tmp_path}/ro.db",
-            connect_args={"check_same_thread": False},
-        )
+        engine = configured_orm_engine()
         Base.metadata.create_all(bind=engine)
         Session = sessionmaker(bind=engine)
         monkeypatch.setattr(db_mod, "SessionLocal", Session)
@@ -1059,10 +1056,7 @@ class TestT9PureRead:
         """Drive run_lint and assert no `store()`/`forget()` is invoked."""
         from cli_agent_orchestrator.clients import database as db_mod
 
-        engine = create_engine(
-            f"sqlite:///{tmp_path}/no-write.db",
-            connect_args={"check_same_thread": False},
-        )
+        engine = configured_orm_engine()
         Base.metadata.create_all(bind=engine)
         Session = sessionmaker(bind=engine)
         monkeypatch.setattr(db_mod, "SessionLocal", Session)
@@ -1099,10 +1093,7 @@ class TestT10PartialRunSummary:
         """All 5 detectors complete → summary `5/5` present."""
         from cli_agent_orchestrator.clients import database as db_mod
 
-        engine = create_engine(
-            f"sqlite:///{tmp_path}/clean.db",
-            connect_args={"check_same_thread": False},
-        )
+        engine = configured_orm_engine()
         Base.metadata.create_all(bind=engine)
         Session = sessionmaker(bind=engine)
         monkeypatch.setattr(db_mod, "SessionLocal", Session)
@@ -1124,10 +1115,7 @@ class TestT10PartialRunSummary:
         """Force one detector to raise → summary shows N/5 with N<5."""
         from cli_agent_orchestrator.clients import database as db_mod
 
-        engine = create_engine(
-            f"sqlite:///{tmp_path}/partial.db",
-            connect_args={"check_same_thread": False},
-        )
+        engine = configured_orm_engine()
         Base.metadata.create_all(bind=engine)
         Session = sessionmaker(bind=engine)
         monkeypatch.setattr(db_mod, "SessionLocal", Session)
@@ -1392,14 +1380,38 @@ class TestLintKnowledgePolicy:
 
     @pytest.mark.parametrize("phase", ["authorized", "completed"])
     def test_audit_failure_is_not_a_partial_success(self, svc, monkeypatch, phase):
+        from contextlib import contextmanager
+
         from cli_agent_orchestrator.services.knowledge_policy import LegacyMemoryAuditError
 
         repository = svc._legacy_repository()
-        with repository.transaction() as connection:
-            connection.execute(
-                "CREATE TRIGGER reject_lint_audit BEFORE INSERT ON work_memory_access_audit "
-                f"WHEN NEW.phase='{phase}' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END"
-            )
+        original_transaction = repository.audited_write_transaction
+        injected_sqlstates = []
+
+        @contextmanager
+        def transaction_with_audit_failure():
+            with original_transaction() as connection:
+                original_execute = connection.execute
+
+                def execute_with_audit_failure(statement, params=()):
+                    if (
+                        isinstance(statement, str)
+                        and "INSERT INTO work_memory_access_audit" in statement
+                        and len(params) >= 5
+                        and params[4] == phase
+                    ):
+                        failed_params = (*params[:4], "injected_failure", *params[5:])
+                        try:
+                            return original_execute(statement, failed_params)
+                        except Exception as error:
+                            injected_sqlstates.append(getattr(error, "sqlstate", None))
+                            raise
+                    return original_execute(statement, params)
+
+                monkeypatch.setattr(connection, "execute", execute_with_audit_failure)
+                yield connection
+
+        monkeypatch.setattr(repository, "audited_write_transaction", transaction_with_audit_failure)
         opened = []
         original_open = wiki_lint._open_readonly_session
 
@@ -1409,9 +1421,17 @@ class TestLintKnowledgePolicy:
 
         monkeypatch.setattr(wiki_lint, "_open_readonly_session", track_open)
         monkeypatch.setattr(wiki_lint, "_build_llm_client", lambda: None)
-        with pytest.raises(LegacyMemoryAuditError):
-            _run(run_lint("project", base_dir=svc.base_dir, db_engine=svc._db_engine))
+        with pytest.raises(LegacyMemoryAuditError) as error:
+            _run(run_lint("project", memory_service=svc))
         assert bool(opened) == (phase == "completed")
+        assert injected_sqlstates == ["23514"]
+        assert error.value.phase == phase
+        with repository.connection() as connection:
+            phases = connection.execute(
+                "SELECT phase FROM work_memory_access_audit " "WHERE operation_id=%s ORDER BY id",
+                (error.value.operation_id,),
+            ).fetchall()
+        assert [row["phase"] for row in phases] == ([] if phase == "authorized" else ["authorized"])
 
     def test_disabled_memory_never_opens_audit_or_metadata(self, svc, monkeypatch):
         monkeypatch.setattr(
@@ -1487,7 +1507,7 @@ class TestLintKnowledgePolicy:
             phases = [
                 row[0]
                 for row in connection.execute(
-                    "SELECT phase FROM work_memory_access_audit WHERE action='context' ORDER BY rowid"
+                    "SELECT phase FROM work_memory_access_audit WHERE action='context' ORDER BY id"
                 )
             ]
         assert phases == ["authorized", "completed"]

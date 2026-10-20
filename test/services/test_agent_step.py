@@ -8,6 +8,7 @@ success.
 
 import asyncio
 import threading
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -19,11 +20,14 @@ from cli_agent_orchestrator.models.terminal import (
     TerminalStatus,
 )
 from cli_agent_orchestrator.providers.kiro_capabilities import KiroPhase0KASError
+from cli_agent_orchestrator.services import agent_step
 from cli_agent_orchestrator.services.agent_step import (
     StepExecutionError,
+    _pause_timeout_for_native_wait,
     _wait_for_completion,
     run_agent_step,
 )
+from cli_agent_orchestrator.services.status_monitor import StatusMonitor
 from cli_agent_orchestrator.services.terminal_service import OutputMode
 
 _MODULE = "cli_agent_orchestrator.services.agent_step"
@@ -57,7 +61,15 @@ def _patch_terminal_layer(
         f"{_MODULE}.terminal_service.create_terminal",
         new=AsyncMock(return_value=_fake_terminal(created_id)),
     )
-    send = patch(f"{_MODULE}.terminal_service.send_input", return_value=True)
+
+    def send_input_side_effect(terminal_id, *_args, **_kwargs):
+        monitor = agent_step.status_monitor
+        turn_sequence = monitor.notify_input_sent(terminal_id, real_send=True)
+        monitor.clear_rolling_buffer(terminal_id, turn=turn_sequence)
+        monitor.notify_input_delivered(terminal_id)
+        return turn_sequence
+
+    send = patch(f"{_MODULE}.terminal_service.send_input", side_effect=send_input_side_effect)
     delete = patch(f"{_MODULE}.terminal_service.delete_terminal", return_value=True)
     get_output = patch(f"{_MODULE}.terminal_service.get_output", return_value=output)
     exit_cli = patch(f"{_MODULE}.terminal_service.exit_terminal_cli", return_value=None)
@@ -219,6 +231,169 @@ class TestHappyPath:
         assert exc_info.value.kind == "timeout"
         assert probe.call_count == 1
         settle.assert_not_called()
+
+    def test_unregistered_waiting_prompt_does_not_pause_active_timeout(self):
+        service = MagicMock()
+        deadline = 123.0
+
+        result = asyncio.run(
+            _pause_timeout_for_native_wait(
+                "legacy-terminal",
+                source_snapshot=None,
+                deadline=deadline,
+                cancel_event=None,
+            )
+        )
+
+        assert result == (deadline, False, None, None, None)
+        service.wait_for_native_manual.assert_not_called()
+
+    def test_registered_waiting_prompt_without_a_native_notice_does_not_pause(self):
+        from types import SimpleNamespace
+
+        service = MagicMock()
+        service.wait_for_native_manual = AsyncMock(
+            return_value=SimpleNamespace(state="waiting", lifecycle=None)
+        )
+        deadline = 123.0
+
+        result = asyncio.run(
+            _pause_timeout_for_native_wait(
+                "registered-terminal",
+                source_snapshot=(service, "incarnation-1", 7),
+                deadline=deadline,
+                cancel_event=None,
+            )
+        )
+
+        assert result == (deadline, False, None, None, None)
+        service.wait_for_native_manual.assert_awaited_once_with(
+            "registered-terminal",
+            "incarnation-1",
+            timeout_seconds=0,
+            expected_generation=7,
+        )
+
+    def test_only_persisted_exact_manual_notice_pauses_until_closure(self):
+        from types import SimpleNamespace
+
+        service = MagicMock()
+        service.wait_for_native_manual = AsyncMock(
+            side_effect=[
+                SimpleNamespace(
+                    state="waiting",
+                    lifecycle="manual_only",
+                    question_id="question-1",
+                    observation_id="notice-1",
+                ),
+                SimpleNamespace(
+                    state="released",
+                    lifecycle="reconciled_external",
+                    current_generation=7,
+                    question_id="question-1",
+                    observation_id="notice-1",
+                ),
+            ]
+        )
+        deadline = 123.0
+
+        result = asyncio.run(
+            _pause_timeout_for_native_wait(
+                "native-terminal",
+                source_snapshot=(service, "incarnation-1", 7),
+                deadline=deadline,
+                cancel_event=None,
+            )
+        )
+
+        assert result[0] >= deadline
+        assert result[1] is True
+        assert result[2] == 7
+        assert result[3] == "notice-1"
+        assert result[4] == ("question-1", "notice-1")
+        assert service.wait_for_native_manual.await_args_list[0].kwargs == {
+            "timeout_seconds": 0,
+            "expected_generation": 7,
+        }
+        assert service.wait_for_native_manual.await_args_list[1].kwargs == {
+            "timeout_seconds": 0.25,
+            "expected_generation": 7,
+            "expected_question_id": "question-1",
+            "expected_observation_id": "notice-1",
+        }
+
+    def test_same_generation_native_closure_is_consumed_once_before_settling(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from cli_agent_orchestrator.services import agent_step, terminal_service
+
+        service = MagicMock()
+        service.wait_for_native_manual = AsyncMock(
+            return_value=SimpleNamespace(
+                state="released",
+                lifecycle="reconciled_external",
+                current_generation=7,
+                question_id="question-1",
+                observation_id="notice-1",
+            )
+        )
+        service.wait_for_required = AsyncMock(return_value=SimpleNamespace(state="released"))
+        monkeypatch.setattr(
+            agent_step,
+            "_interaction_wait_snapshot",
+            AsyncMock(return_value=(service, "incarnation-1", 7)),
+        )
+        monkeypatch.setattr(
+            terminal_service.status_monitor,
+            "get_status",
+            lambda _terminal_id: TerminalStatus.COMPLETED,
+        )
+        monkeypatch.setattr(
+            terminal_service,
+            "probe_post_turn_receipt_result",
+            lambda _terminal_id: "verified native task result",
+        )
+        monkeypatch.setattr(
+            terminal_service,
+            "settle_post_turn_receipt_result",
+            lambda _terminal_id, result: result,
+        )
+
+        result = asyncio.run(
+            _wait_for_completion(
+                "native-terminal",
+                timeout=1,
+                prompt_redelivery=False,
+            )
+        )
+
+        assert result == "verified native task result"
+        assert service.wait_for_native_manual.await_count == 3
+        assert all(
+            call.kwargs["expected_generation"] == 7
+            for call in service.wait_for_required.await_args_list
+        )
+
+    @pytest.mark.parametrize("state", ["expired", "cancelled", "stale"])
+    def test_terminal_native_wait_outcome_requires_reconciliation(self, state):
+        from types import SimpleNamespace
+
+        service = MagicMock()
+        service.wait_for_native_manual = AsyncMock(
+            return_value=SimpleNamespace(state=state, lifecycle=state)
+        )
+
+        with pytest.raises(StepExecutionError) as exc_info:
+            asyncio.run(
+                _pause_timeout_for_native_wait(
+                    "native-terminal",
+                    source_snapshot=(service, "incarnation-1", 7),
+                    deadline=123.0,
+                    cancel_event=None,
+                )
+            )
+
+        assert exc_info.value.kind == "reconcile"
 
     def test_quota_wait_raises_immediately_without_receipt_probe_or_redelivery(self):
         """Quota is causal provider telemetry, not a generic long-running turn.
@@ -1290,6 +1465,11 @@ class TestPromptDeliveryVerification:
             status,
             patch(f"{_MODULE}._COMPLETION_POLL_INTERVAL", 0.01),
             patch(f"{_MODULE}._PROMPT_PICKUP_GRACE", 0.0),
+            # This is a legacy fake terminal, not a persisted interaction
+            # source. Keep the new ledger snapshot read out of this retry
+            # budget; source/receipt handling has separate coverage.
+            patch(f"{_MODULE}._interaction_wait_snapshot", new=AsyncMock(return_value=None)),
+            patch(f"{_MODULE}.terminal_service.probe_post_turn_receipt_result", return_value=None),
             patch(
                 f"{_MODULE}.terminal_service.redeliver_dropped_message",
                 side_effect=_raise_blocked,
@@ -1323,6 +1503,11 @@ class TestPromptDeliveryVerification:
             status,
             patch(f"{_MODULE}._COMPLETION_POLL_INTERVAL", 0.01),
             patch(f"{_MODULE}._PROMPT_PICKUP_GRACE", 0.0),
+            # This is a legacy fake terminal, not a persisted interaction
+            # source. Keep the new ledger snapshot read out of this retry
+            # budget; source/receipt handling has separate coverage.
+            patch(f"{_MODULE}._interaction_wait_snapshot", new=AsyncMock(return_value=None)),
+            patch(f"{_MODULE}.terminal_service.probe_post_turn_receipt_result", return_value=None),
             patch(
                 f"{_MODULE}.terminal_service.redeliver_dropped_message",
                 return_value=False,
@@ -1579,3 +1764,317 @@ class TestOutputExtractionTeardown:
         get_receipt.assert_called_once_with("abc12345")
         m_exit.assert_not_called()
         m_delete.assert_not_called()
+
+
+class TestSameTurnPostSendBoundary:
+    @pytest.mark.offline_database
+    def test_completion_observed_while_send_is_blocked_survives_post_send_boundary(self):
+        terminal_id = "abc12345"
+        monitor = StatusMonitor()
+        monitor._last_status[terminal_id] = TerminalStatus.IDLE
+        provider = SimpleNamespace(
+            requires_turn_receipt=False,
+            notify_status_buffer_reset=lambda _epoch: None,
+        )
+        send_entered = threading.Event()
+        release_send = threading.Event()
+        sent_turn = {}
+
+        def send_input_side_effect(*_args, **_kwargs):
+            turn = monitor.notify_input_sent(terminal_id, real_send=True)
+            monitor.clear_rolling_buffer(terminal_id, provider, turn=turn)
+            monitor.notify_input_delivered(terminal_id)
+            sent_turn["value"] = turn
+            send_entered.set()
+            if not release_send.wait(timeout=5):
+                raise AssertionError("send_input barrier was not released")
+            return turn
+
+        async def invoke():
+            task = asyncio.create_task(
+                run_agent_step("mock_cli", "developer", "fast prompt", timeout=0.2)
+            )
+            try:
+                if not await asyncio.to_thread(send_entered.wait, 5):
+                    error = task.exception() if task.done() else None
+                    raise AssertionError(
+                        "send_input did not reach the event barrier; "
+                        f"run_agent_step outcome={error!r}"
+                    ) from error
+                turn = sent_turn["value"]
+                epoch = monitor._buffer_epochs[terminal_id]
+                monitor._apply_detection(
+                    terminal_id,
+                    TerminalStatus.PROCESSING,
+                    provider=provider,
+                    cleared_buffer_turn=turn,
+                    buffer_epoch=epoch,
+                )
+                monitor._apply_detection(
+                    terminal_id,
+                    TerminalStatus.COMPLETED,
+                    provider=provider,
+                    cleared_buffer_turn=turn,
+                    buffer_epoch=epoch,
+                )
+                assert monitor._turn.get(terminal_id) == turn
+                assert monitor._turn_done.get(terminal_id) == turn
+                assert monitor._last_status[terminal_id] == TerminalStatus.COMPLETED
+            except BaseException:
+                release_send.set()
+                await asyncio.gather(task, return_exceptions=True)
+                raise
+
+            release_send.set()
+            return await task
+
+        create, send, delete, get_output, exit_cli, get_wd, wait, _status = _patch_terminal_layer()
+        with (
+            patch.object(agent_step, "status_monitor", monitor),
+            patch(
+                "cli_agent_orchestrator.services.status_monitor.provider_manager"
+            ) as provider_manager,
+            patch(
+                "cli_agent_orchestrator.services.remote_terminal_service.placement",
+                return_value=None,
+            ),
+            patch.object(agent_step.frozen_run_memory, "frozen_memory_for", return_value=None),
+            patch.object(
+                agent_step, "_interaction_wait_snapshot", new=AsyncMock(return_value=None)
+            ),
+            patch.object(
+                agent_step.terminal_service,
+                "probe_post_turn_receipt_result",
+                return_value=None,
+            ),
+            create,
+            send as mock_send,
+            delete,
+            get_output,
+            exit_cli,
+            get_wd,
+            wait,
+        ):
+            provider_manager.get_provider.return_value = provider
+            mock_send.side_effect = send_input_side_effect
+            result = asyncio.run(invoke())
+
+        assert result.status == TerminalStatus.COMPLETED
+        assert result.last_message == "the answer"
+        assert monitor._turn.get(terminal_id) == 1
+        assert monitor._turn_done.get(terminal_id) == 1
+        assert monitor._last_status[terminal_id] == TerminalStatus.COMPLETED
+
+    @pytest.mark.offline_database
+    def test_overtaken_send_requests_reconciliation_without_observing_newer_turn(self):
+        terminal_id = "abc12345"
+        monitor = StatusMonitor()
+        monitor._last_status[terminal_id] = TerminalStatus.IDLE
+        provider = SimpleNamespace(
+            requires_turn_receipt=False,
+            notify_status_buffer_reset=lambda _epoch: None,
+        )
+        sent_turn = {}
+
+        def send_input_side_effect(*_args, **_kwargs):
+            sent_turn["value"] = monitor.notify_input_sent(terminal_id, real_send=True)
+            monitor.clear_rolling_buffer(terminal_id, provider, turn=sent_turn["value"])
+            monitor.notify_input_delivered(terminal_id)
+            newer_turn = monitor.notify_input_sent(terminal_id, real_send=True)
+            monitor.clear_rolling_buffer(terminal_id, provider, turn=newer_turn)
+            monitor.notify_input_delivered(terminal_id)
+            sent_turn["newer"] = newer_turn
+            sent_turn["state"] = (
+                monitor._turn.get(terminal_id),
+                monitor._turn_done.get(terminal_id, 0),
+                monitor._turn_started.get(terminal_id),
+                monitor._buffer_epochs.get(terminal_id),
+                monitor._turn_delivered_at.get(terminal_id),
+                monitor._capture_generation.get(terminal_id),
+                monitor._last_status.get(terminal_id),
+            )
+            return sent_turn["value"]
+
+        create, send, delete, get_output, exit_cli, get_wd, wait, _status = _patch_terminal_layer()
+        completion_wait = AsyncMock(return_value=None)
+        with (
+            patch.object(agent_step, "status_monitor", monitor),
+            patch(
+                "cli_agent_orchestrator.services.remote_terminal_service.placement",
+                return_value=None,
+            ),
+            patch.object(agent_step.frozen_run_memory, "frozen_memory_for", return_value=None),
+            patch.object(
+                agent_step, "_interaction_wait_snapshot", new=AsyncMock(return_value=None)
+            ),
+            patch.object(agent_step, "_wait_for_completion", new=completion_wait),
+            create,
+            send as mock_send,
+            delete as mock_delete,
+            get_output as mock_get_output,
+            exit_cli,
+            get_wd,
+            wait,
+        ):
+            mock_send.side_effect = send_input_side_effect
+            with pytest.raises(StepExecutionError) as caught:
+                asyncio.run(run_agent_step("mock_cli", "developer", "fast prompt", timeout=0.2))
+
+        assert caught.value.kind == "reconcile"
+        assert caught.value.action == "inspect"
+        assert caught.value.delivery_may_have_occurred is True
+        assert sent_turn["newer"] == sent_turn["value"] + 1
+        assert (
+            monitor._turn.get(terminal_id),
+            monitor._turn_done.get(terminal_id, 0),
+            monitor._turn_started.get(terminal_id),
+            monitor._buffer_epochs.get(terminal_id),
+            monitor._turn_delivered_at.get(terminal_id),
+            monitor._capture_generation.get(terminal_id),
+            monitor._last_status.get(terminal_id),
+        ) == sent_turn["state"]
+        completion_wait.assert_not_awaited()
+        mock_get_output.assert_not_called()
+        mock_delete.assert_not_called()
+
+    @pytest.mark.offline_database
+    @pytest.mark.parametrize(
+        "turn_completed", [6, 7], ids=["current-in-flight", "current-completed-fast"]
+    )
+    def test_remote_current_projection_reaches_completion_wait(self, turn_completed):
+        from cli_agent_orchestrator.runtime_channel.protocol import CommandType
+        from cli_agent_orchestrator.services import remote_terminal_service, terminal_service
+
+        terminal_id = "remote-term"
+        monitor = StatusMonitor()
+        completion_wait = AsyncMock(return_value=None)
+        remote_calls = []
+        send_results = []
+        projection = {
+            "turn_sequence": 7,
+            "turn_completed": turn_completed,
+            "status": "completed" if turn_completed == 7 else "processing",
+        }
+        original_send = terminal_service.send_input.__wrapped__
+
+        def remote_call(_terminal_id, kind, _payload=None, **_kwargs):
+            remote_calls.append(kind)
+            if kind == CommandType.WORKING_DIRECTORY:
+                return {"working_directory": None}
+            if kind == CommandType.INPUT:
+                return {"turn_sequence": 7}
+            raise AssertionError(f"unexpected remote command: {kind!r}")
+
+        def actual_remote_send(*args, **kwargs):
+            result = original_send(*args, **kwargs)
+            send_results.append(result)
+            return result
+
+        with (
+            patch.object(agent_step, "status_monitor", monitor),
+            patch.object(agent_step.frozen_run_memory, "frozen_memory_for", return_value=None),
+            patch.object(
+                agent_step, "_interaction_wait_snapshot", new=AsyncMock(return_value=None)
+            ),
+            patch.object(agent_step, "_wait_for_completion", new=completion_wait),
+            patch.object(
+                terminal_service,
+                "get_terminal_metadata",
+                return_value={"id": terminal_id, "provider": "codex", "engine": None},
+            ),
+            patch.object(terminal_service, "ensure_terminal_is_not_work_owned"),
+            patch.object(terminal_service, "release_terminal_dispatch_lock"),
+            patch.object(terminal_service, "update_last_active"),
+            patch.object(terminal_service, "probe_post_turn_receipt_result", return_value=None),
+            patch.object(terminal_service, "get_output", return_value="the answer"),
+            patch.object(terminal_service, "send_input", actual_remote_send),
+            patch.object(remote_terminal_service, "placement", return_value={"runtime_id": "rt"}),
+            patch.object(remote_terminal_service, "call", side_effect=remote_call),
+            patch.object(remote_terminal_service, "terminal_projection", return_value=projection),
+        ):
+            result = asyncio.run(
+                run_agent_step(
+                    "codex",
+                    "developer",
+                    "one task",
+                    reuse_terminal_id=terminal_id,
+                    teardown=False,
+                    timeout=1,
+                )
+            )
+
+        assert send_results == [7]
+        assert CommandType.INPUT in remote_calls
+        assert completion_wait.await_count == 1
+        assert result.status == TerminalStatus.COMPLETED
+        assert result.last_message == "the answer"
+        assert monitor._turn.get(terminal_id, 0) == 0
+        assert monitor._turn_done.get(terminal_id, 0) == 0
+
+    @pytest.mark.offline_database
+    def test_remote_projection_overtaken_before_wait_requests_reconciliation(self):
+        from cli_agent_orchestrator.runtime_channel.protocol import CommandType
+        from cli_agent_orchestrator.services import remote_terminal_service, terminal_service
+
+        terminal_id = "remote-term"
+        monitor = StatusMonitor()
+        completion_wait = AsyncMock(return_value=None)
+        remote_calls = []
+        send_results = []
+        projection = {"turn_sequence": 8, "turn_completed": 7, "status": "processing"}
+        original_send = terminal_service.send_input.__wrapped__
+
+        def remote_call(_terminal_id, kind, _payload=None, **_kwargs):
+            remote_calls.append(kind)
+            if kind == CommandType.WORKING_DIRECTORY:
+                return {"working_directory": None}
+            if kind == CommandType.INPUT:
+                return {"turn_sequence": 7}
+            raise AssertionError(f"unexpected remote command: {kind!r}")
+
+        def actual_remote_send(*args, **kwargs):
+            result = original_send(*args, **kwargs)
+            send_results.append(result)
+            return result
+
+        with (
+            patch.object(agent_step, "status_monitor", monitor),
+            patch.object(agent_step.frozen_run_memory, "frozen_memory_for", return_value=None),
+            patch.object(
+                agent_step, "_interaction_wait_snapshot", new=AsyncMock(return_value=None)
+            ),
+            patch.object(agent_step, "_wait_for_completion", new=completion_wait),
+            patch.object(
+                terminal_service,
+                "get_terminal_metadata",
+                return_value={"id": terminal_id, "provider": "codex", "engine": None},
+            ),
+            patch.object(terminal_service, "ensure_terminal_is_not_work_owned"),
+            patch.object(terminal_service, "release_terminal_dispatch_lock"),
+            patch.object(terminal_service, "update_last_active"),
+            patch.object(terminal_service, "probe_post_turn_receipt_result", return_value=None),
+            patch.object(terminal_service, "send_input", actual_remote_send),
+            patch.object(remote_terminal_service, "placement", return_value={"runtime_id": "rt"}),
+            patch.object(remote_terminal_service, "call", side_effect=remote_call),
+            patch.object(remote_terminal_service, "terminal_projection", return_value=projection),
+        ):
+            with pytest.raises(StepExecutionError) as caught:
+                asyncio.run(
+                    run_agent_step(
+                        "codex",
+                        "developer",
+                        "one task",
+                        reuse_terminal_id=terminal_id,
+                        teardown=False,
+                        timeout=1,
+                    )
+                )
+
+        assert send_results == [7]
+        assert CommandType.INPUT in remote_calls
+        assert caught.value.kind == "reconcile"
+        assert caught.value.action == "inspect"
+        assert caught.value.delivery_may_have_occurred is True
+        completion_wait.assert_not_awaited()
+        assert monitor._turn.get(terminal_id, 0) == 0
+        assert monitor._turn_done.get(terminal_id, 0) == 0

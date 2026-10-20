@@ -157,3 +157,34 @@ async def test_failed_readiness_removes_only_owned_private_config(runtime, monke
     assert owner_file.read_text() == "owner configuration"
     assert list(owner_dir.parent.iterdir()) == [owner_dir]
     assert not provider._initialized
+
+
+@pytest.mark.asyncio
+async def test_error_readiness_removes_only_owned_private_config(runtime, monkeypatch):
+    _, agents = runtime
+    (agents / "reviewer.md").write_text("---\ndescription: Reviewer\n---\nReview.\n")
+    owner_dir = opencode_cli.CAO_HOME_DIR / "opencode-v2" / "native-test"
+    owner_dir.mkdir(parents=True, mode=0o700)
+    owner_file = owner_dir / "opencode.json"
+    owner_file.write_text("owner configuration")
+    provider = instance()
+    monkeypatch.setattr(
+        provider,
+        "_wait_for_initial_ready",
+        AsyncMock(
+            side_effect=RuntimeError("OpenCode CLI reported an error during initial readiness")
+        ),
+    )
+
+    class Backend:
+        def send_keys(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(opencode_cli, "get_backend", Backend)
+
+    with pytest.raises(RuntimeError, match="reported an error during initial readiness"):
+        await provider.initialize()
+
+    assert owner_file.read_text() == "owner configuration"
+    assert list(owner_dir.parent.iterdir()) == [owner_dir]
+    assert not provider._initialized

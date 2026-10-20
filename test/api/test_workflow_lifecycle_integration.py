@@ -29,8 +29,7 @@ that must be disclosed rather than papered over:
   per-request TestClient tears that task down at the first ``await`` and the run never
   advances). This exercises REAL route resolution (so a wired-but-inert route, or a
   ``GET /workflows/runs`` shadowed by the ``/workflows/{name}`` catch-all, BREAKS the
-  test), the REAL SQLite journal (a real temp DB via monkeypatched ``DATABASE_FILE`` +
-  the real migrators, exactly as the sibling api tests isolate it), the REAL YAML engine
+  test), the REAL PostgreSQL journal (the shared isolated target), the REAL YAML engine
   state machine and its journal write-throughs, and a REAL script subprocess spawned and
   reaped by the real ``script_runner``. The one leaf we stub is ``run_agent_step`` -- the
   tmux/provider substrate CI cannot supply -- with a controllable coroutine that honors
@@ -61,7 +60,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
 import time
 from test.api.conftest import TestClientWithHost
 from typing import Callable, Optional
@@ -70,6 +68,7 @@ from unittest import mock
 import pytest
 
 from cli_agent_orchestrator.api.main import app
+from cli_agent_orchestrator.clients.postgres import OperationalError
 from cli_agent_orchestrator.models.terminal import AgentStepResult, TerminalStatus
 from cli_agent_orchestrator.models.workflow import (
     ScriptSpec,
@@ -101,16 +100,11 @@ _SCRIPT_FAST = "import time\ntime.sleep(0.2)\nprint('CAO_WORKFLOW_OUTPUT: {\"don
 
 
 # ---------------------------------------------------------------------------
-# Harness: a REAL temp SQLite journal + a persistent-portal TestClient.
+# Harness: the shared isolated PostgreSQL journal + a persistent-portal TestClient.
 # ---------------------------------------------------------------------------
 @pytest.fixture
-def journal_db(monkeypatch, tmp_path):
-    """Point the journal at a REAL temp SQLite DB and run the real migrators.
-
-    Mirrors the sibling api tests' isolation (monkeypatch ``DATABASE_FILE`` + the real
-    ``_migrate_workflow_run*`` migrators). Clears the process-local registry / drive set
-    on both sides so no run leaks between tests.
-    """
+def journal_db(isolated_memory_db, monkeypatch, tmp_path):
+    """Use the shared isolated PostgreSQL target and clear process-local run state."""
     # This fixture deliberately exercises the historic explicit legacy posture.
     settings_path = tmp_path / "settings.json"
     settings_path.write_text('{"workflow":{"require_approval":false}}')
@@ -118,18 +112,10 @@ def journal_db(monkeypatch, tmp_path):
         "cli_agent_orchestrator.services.settings_service.SETTINGS_FILE", settings_path
     )
     monkeypatch.delenv("CAO_WORKFLOW_REQUIRE_APPROVAL", raising=False)
-    from cli_agent_orchestrator.clients.database import (
-        _migrate_workflow_run,
-        _migrate_workflow_run_step,
-    )
 
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
     workflow_service.run_registry.clear()
     workflow_service._active_drives.clear()
-    yield db_path
+    yield isolated_memory_db
     workflow_service.run_registry.clear()
     workflow_service._active_drives.clear()
 
@@ -462,7 +448,7 @@ def test_cg1_sanity_durable_before_ack_fails_for_absent_id(portal_client):
 
 # ===========================================================================
 # T10 (TR-1): crash-between-inserts at the COMPOSED (HTTP) layer -- MANDATED real
-# crash, not a mock return. A real sqlite3.Error is injected into the step-seed
+# crash, not a mock return. A real PostgreSQL driver error is injected into the step-seed
 # INSERT *inside* the same transaction as the run-row INSERT, so the whole
 # transaction rolls back. Asserted through the HTTP surface: the submit returns
 # 5xx AND no phantom RUNNING row is visible via GET list or GET status.
@@ -485,15 +471,15 @@ def test_tr1_crash_between_inserts_no_phantom_row(portal_client, monkeypatch):
         tier="yaml",
         generation="1",
     ):
-        # Do the REAL run-row INSERT, then raise a REAL sqlite3.Error before the step
-        # seed -- inside ONE ``with conn`` transaction, so sqlite rolls BOTH back. This
+        # Do the REAL run-row INSERT, then raise a PostgreSQL driver error before the
+        # step seed -- inside ONE transaction, so PostgreSQL rolls BOTH back. This
         # is the genuine crash-between-inserts, not a return-value mock.
         with real_connect() as conn:
             conn.execute(
                 "INSERT INTO workflow_run "
                 "(run_id, workflow_name, spec_snapshot, inputs_json, state, "
                 " current_step_id, started_at, finished_at, tier, generation) "
-                "VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?)",
+                "VALUES (%s, %s, %s, %s, %s, NULL, %s, NULL, %s, %s)",
                 (
                     run_id,
                     workflow_name,
@@ -505,7 +491,7 @@ def test_tr1_crash_between_inserts_no_phantom_row(portal_client, monkeypatch):
                     generation,
                 ),
             )
-            raise sqlite3.OperationalError("disk I/O error during step seed")
+            raise OperationalError("injected database failure during step seed")
 
     monkeypatch.setattr(workflow_journal, "insert_run_with_steps", _crashing_insert)
 

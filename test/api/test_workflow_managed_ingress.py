@@ -8,24 +8,15 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from cli_agent_orchestrator.api import main
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
-)
-from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.constants import TERMINALS_RUN_STEP_ROUTE
 from cli_agent_orchestrator.models.terminal import AgentStepResult, TerminalStatus
 from cli_agent_orchestrator.services import workflow_journal, workflow_service
 
 
 @pytest.fixture(autouse=True)
-def _isolated_journal(tmp_path, monkeypatch):
-    database = tmp_path / "workflow-managed.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", database)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
-    WorkRepository(database).initialize()
-    return database
+def _isolated_journal(isolated_memory_db):
+    """Use the shared isolated PostgreSQL target for workflow and Work state."""
+    return isolated_memory_db
 
 
 def test_work_pending_script_step_stays_fenced_after_process_restart(client):
@@ -690,7 +681,6 @@ async def test_managed_workflow_runtime_composition_binds_startup_projector(
     from cli_agent_orchestrator.services import work_launch_gateway, workflow_step_projector
 
     repository, *_rest = trusted_setup
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", repository.path)
     gateway = work_launch_gateway.build_durable_launch_gateway(
         repository, backends={"test": ProtectedFakeBackend()}
     )
@@ -722,9 +712,7 @@ async def test_managed_workflow_runtime_composition_binds_startup_projector(
         assert projector.workflow_origins is runtime._admission.workflow_origins
         assert projector.work_service is main.app.state.work_workflow_result_service
         assert projector.work_service.origins is runtime.origins
-        assert projector.work_service.artifacts.root == repository.path.with_name(
-            repository.path.name + ".result-content"
-        )
+        assert projector.work_service.artifacts.root == repository.result_content_root
         assert called == [projector]
     finally:
         for name, value in previous.items():

@@ -1,6 +1,7 @@
 """Status presentation retains live configuration warnings."""
 
 import hashlib
+from test.postgres.orm import configured_orm_engine
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -19,7 +20,7 @@ from cli_agent_orchestrator.services.vault.status import get_vault_status
 def test_status_keeps_combined_warn_inject_warning_from_live_config(tmp_path, monkeypatch):
     from cli_agent_orchestrator.services.vault import status
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(status, "SessionLocal", Session)
@@ -81,7 +82,7 @@ def test_status_surfaces_binding_warning_details(tmp_path, monkeypatch):
     from cli_agent_orchestrator.services.vault import status
     from cli_agent_orchestrator.services.vault.binding import BindingWarning
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     monkeypatch.setattr(status, "SessionLocal", sessionmaker(bind=engine))
     monkeypatch.setattr(
@@ -122,7 +123,7 @@ def test_status_surfaces_binding_warning_details(tmp_path, monkeypatch):
 def test_status_names_unmapped_writes_as_process_local(tmp_path, monkeypatch):
     from cli_agent_orchestrator.services.vault import status
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     monkeypatch.setattr(status, "SessionLocal", sessionmaker(bind=engine))
     monkeypatch.setattr(status, "unmapped_project_write_count", lambda: 3)
@@ -155,7 +156,7 @@ def test_status_names_unmapped_writes_as_process_local(tmp_path, monkeypatch):
 def test_status_reports_receipt_health_and_boundary_refusals(tmp_path, monkeypatch):
     from cli_agent_orchestrator.services.vault import status
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(status, "SessionLocal", Session)

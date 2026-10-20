@@ -2,7 +2,7 @@
 
 This is the single source of truth for *historical replay* of CAO fleet events
 in the MCP App. CAO's existing ``event_bus.py`` is live pub/sub only (no replay);
-the SQLite store holds durable domain state, not a semantic event timeline. The
+the PostgreSQL store holds durable domain state, not a semantic event timeline. The
 ``EventLog`` fills that gap: a thread-safe ``deque`` capped at 500 events with a
 24-hour TTL, expressing every row in the six-primitive vocabulary so the iframe
 can re-hydrate its governance ticker after any re-mount.

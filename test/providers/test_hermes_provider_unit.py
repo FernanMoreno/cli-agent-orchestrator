@@ -107,6 +107,25 @@ HERMES_WAITING_CLARIFY_OUTPUT = """
 ────────────────────────────────────────────────────────────────────────────────
 """
 
+HERMES_WAITING_CLARIFY_TUI_KEYS_OUTPUT = """
+● Choose an option for the report.
+
+╭─ cli.tui.clarify_title ────────────────────────╮
+│ cli.tui.clarify_question_count_one             │
+│ ▸ Which option should be used?                 │
+│   ❯ 1. Option A                                │
+│     2. Option B                                │
+│     3. cli.tui.clarify_other_type_answer       │
+╰────────────────────────────────────────────────╯
+
+  ❓ Which option should be used?  (cli.shared.duration_s)
+  cli.tui.hint_clarify_batch  (3599s)
+ ☤ local-test │ 0/256K │ [░░░░░░░░░░] 0% │ 3s │ ⏱ cli.shared.duration_s
+────────────────────────────────────────────────────────────────────────────────────────────────────
+? ❯
+────────────────────────────────────────────────────────────────────────────────────────────────────
+"""
+
 HERMES_STALE_CLARIFY_COMPLETED_OUTPUT = """
 ● Please ask a clarification question.
 
@@ -403,6 +422,13 @@ class TestHermesStatusDetection:
         provider = HermesProvider("tid", "sess", "win", None)
         assert (
             provider.get_status(HERMES_WAITING_CLARIFY_OUTPUT) == TerminalStatus.WAITING_USER_ANSWER
+        )
+
+    def test_get_status_waiting_user_answer_for_clarify_translation_key_viewport(self):
+        provider = HermesProvider("tid", "sess", "win", None)
+        assert (
+            provider.get_status(HERMES_WAITING_CLARIFY_TUI_KEYS_OUTPUT)
+            == TerminalStatus.WAITING_USER_ANSWER
         )
 
     def test_get_status_does_not_treat_stale_approval_as_waiting(self):

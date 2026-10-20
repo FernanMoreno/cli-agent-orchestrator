@@ -12,6 +12,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from cli_agent_orchestrator.clients.postgres import Connection
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_contract import (
     EffectiveWorkContract,
@@ -63,12 +64,9 @@ class WorkContracts:
         self.repository = repository
 
     def _transaction(self, connection):
-        if not connection.in_transaction:
+        if not isinstance(connection, Connection) or not connection.in_transaction:
             raise ContractConflict("caller-owned transaction required")
-        main = next(
-            (row[2] for row in connection.execute("PRAGMA database_list") if row[1] == "main"), None
-        )
-        if not main or Path(main).resolve() != self.repository.path.resolve():
+        if connection.target.identity != self.repository.target.identity:
             raise ContractConflict("contract transaction belongs to another store")
         self.repository._verify(connection)
 
@@ -127,15 +125,11 @@ class WorkContracts:
 
     @classmethod
     def _stored_contract(cls, connection, row):
-        evidence = None
-        if connection.execute(
-            "SELECT 1 FROM sqlite_schema WHERE type='table' " "AND name='work_dispatch_v2_evidence'"
-        ).fetchone():
-            evidence = connection.execute(
-                "SELECT contract_json,contract_hash FROM work_dispatch_v2_evidence "
-                "WHERE attempt_id=? AND generation=?",
-                (row["attempt_id"], row["generation"]),
-            ).fetchone()
+        evidence = connection.execute(
+            "SELECT contract_json,contract_hash FROM work_dispatch_v2_evidence "
+            "WHERE attempt_id=%s AND generation=%s",
+            (row["attempt_id"], row["generation"]),
+        ).fetchone()
         contract = cls._from_json(
             evidence["contract_json"] if evidence is not None else row["contract_json"]
         )
@@ -160,13 +154,13 @@ class WorkContracts:
         row = connection.execute(
             "SELECT a.*,w.job_id,w.contract_id,w.snapshot_id,w.operation_kind,w.state AS work_state,"
             "j.project_id,j.state AS job_state FROM work_attempts a "
-            "JOIN work_items w ON w.id=a.work_item_id JOIN work_jobs j ON j.id=w.job_id WHERE a.id=?",
+            "JOIN work_items w ON w.id=a.work_item_id JOIN work_jobs j ON j.id=w.job_id WHERE a.id=%s",
             (attempt_id,),
         ).fetchone()
         if row is None or row["generation"] != generation:
             raise ContractConflict("work attempt identity changed")
         latest = connection.execute(
-            "SELECT id FROM work_attempts WHERE work_item_id=? ORDER BY generation DESC LIMIT 1",
+            "SELECT id FROM work_attempts WHERE work_item_id=%s ORDER BY generation DESC LIMIT 1",
             (row["work_item_id"],),
         ).fetchone()[0]
         if (
@@ -192,13 +186,13 @@ class WorkContracts:
         row = connection.execute(
             "SELECT a.*,w.job_id,w.contract_id,w.snapshot_id,w.operation_kind,w.state AS work_state,"
             "j.project_id,j.state AS job_state FROM work_attempts a "
-            "JOIN work_items w ON w.id=a.work_item_id JOIN work_jobs j ON j.id=w.job_id WHERE a.id=?",
+            "JOIN work_items w ON w.id=a.work_item_id JOIN work_jobs j ON j.id=w.job_id WHERE a.id=%s",
             (attempt_id,),
         ).fetchone()
         if row is None or row["generation"] != generation:
             raise ContractConflict("work attempt identity changed")
         latest = connection.execute(
-            "SELECT id FROM work_attempts WHERE work_item_id=? ORDER BY generation DESC LIMIT 1",
+            "SELECT id FROM work_attempts WHERE work_item_id=%s ORDER BY generation DESC LIMIT 1",
             (row["work_item_id"],),
         ).fetchone()[0]
         executable = row["state"] in {"planned", "sent", "acknowledged", "running"} and row[
@@ -261,7 +255,7 @@ class WorkContracts:
             raise ContractConflict("contract paths cannot be verified") from error
         for dependency in resources.dependencies:
             row = connection.execute(
-                "SELECT job_id FROM work_items WHERE id=?", (dependency,)
+                "SELECT job_id FROM work_items WHERE id=%s", (dependency,)
             ).fetchone()
             if row is None or row[0] != attempt["job_id"] or dependency == attempt["work_item_id"]:
                 raise ContractConflict("contract dependencies must be other work in the same job")
@@ -333,7 +327,7 @@ class WorkContracts:
         expected_grant_revision,
         contract,
     ):
-        """Compose in caller's verified BEGIN IMMEDIATE; never commits or executes."""
+        """Compose in the caller's verified transaction; never commits or executes."""
         self._transaction(connection)
         WorkAuthority._principal(principal)
         _positive(expected_attempt_revision)
@@ -358,7 +352,7 @@ class WorkContracts:
             connection,
             principal,
             connection.execute(
-                "SELECT * FROM work_delegation_snapshots WHERE id=?", (contract.snapshot.id,)
+                "SELECT * FROM work_delegation_snapshots WHERE id=%s", (contract.snapshot.id,)
             ).fetchone(),
         )
         self._snapshot_relationships(connection, snapshot, attempt, contract)
@@ -375,13 +369,13 @@ class WorkContracts:
         if existing is not None:
             return existing
         other = connection.execute(
-            "SELECT contract_hash FROM work_dispatch_bindings WHERE contract_id=? LIMIT 1",
+            "SELECT contract_hash FROM work_dispatch_bindings WHERE contract_id=%s LIMIT 1",
             (contract.id,),
         ).fetchone()
         if other is not None and other[0] != digest:
             raise ContractConflict("contract identity already describes different evidence")
         connection.execute(
-            "INSERT INTO work_dispatch_bindings VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO work_dispatch_bindings VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (
                 attempt_id,
                 generation,
@@ -399,11 +393,11 @@ class WorkContracts:
         )
         if isinstance(contract, EffectiveWorkContractV2):
             connection.execute(
-                "INSERT INTO work_dispatch_v2_evidence VALUES (?,?,?,?)",
+                "INSERT INTO work_dispatch_v2_evidence VALUES (%s,%s,%s,%s)",
                 (attempt_id, generation, contract.canonical_json(), digest),
             )
         connection.execute(
-            "UPDATE work_items SET revision=revision+1 WHERE id=?", (attempt["work_item_id"],)
+            "UPDATE work_items SET revision=revision+1 WHERE id=%s", (attempt["work_item_id"],)
         )
         self.repository._append_event(
             connection,
@@ -415,7 +409,7 @@ class WorkContracts:
             metadata={"contract_id": contract.id, "contract_hash": digest},
         )
         row = connection.execute(
-            "SELECT * FROM work_dispatch_bindings WHERE attempt_id=? AND generation=?",
+            "SELECT * FROM work_dispatch_bindings WHERE attempt_id=%s AND generation=%s",
             (attempt_id, generation),
         ).fetchone()
         return self._view(row, contract)
@@ -437,7 +431,7 @@ class WorkContracts:
         _positive(grant_revision)
         contract = self._contract(contract)
         row = connection.execute(
-            "SELECT * FROM work_dispatch_bindings WHERE attempt_id=? AND generation=?",
+            "SELECT * FROM work_dispatch_bindings WHERE attempt_id=%s AND generation=%s",
             (attempt_id, generation),
         ).fetchone()
         if row is None:
@@ -496,13 +490,13 @@ class WorkContracts:
     def _revalidate_launch_origin(self, connection, *, attempt, binding, contract):
         """Fail closed for v21 launch work; legacy is an explicit parent marker."""
         item = connection.execute(
-            "SELECT origin_protocol,request_hash,idempotency_key FROM work_items WHERE id=?",
+            "SELECT origin_protocol,request_hash,idempotency_key FROM work_items WHERE id=%s",
             (attempt["work_item_id"],),
         ).fetchone()
         if item is None:
             raise ContractConflict("attempt has no durable parent work")
         origin = connection.execute(
-            "SELECT * FROM work_launch_origin_bindings WHERE attempt_id=? AND generation=?",
+            "SELECT * FROM work_launch_origin_bindings WHERE attempt_id=%s AND generation=%s",
             (attempt["id"], attempt["generation"]),
         ).fetchone()
         if item["origin_protocol"] == "legacy":
@@ -578,14 +572,14 @@ class WorkContracts:
         attempt/generation tuple carried by the binding.
         """
         item = connection.execute(
-            "SELECT lineage_protocol,request_hash,idempotency_key FROM work_items WHERE id=?",
+            "SELECT lineage_protocol,request_hash,idempotency_key FROM work_items WHERE id=%s",
             (attempt["work_item_id"],),
         ).fetchone()
         if item is None:
             raise ContractConflict("attempt has no durable lineage work")
         origin = connection.execute(
-            "SELECT * FROM work_child_origin_bindings WHERE child_attempt_id=? "
-            "AND child_generation=?",
+            "SELECT * FROM work_child_origin_bindings WHERE child_attempt_id=%s "
+            "AND child_generation=%s",
             (attempt["id"], attempt["generation"]),
         ).fetchone()
         if item["lineage_protocol"] == "legacy":
@@ -597,8 +591,8 @@ class WorkContracts:
         if origin is None:
             raise ContractConflict("managed work has no durable lineage binding")
         integrity = connection.execute(
-            "SELECT * FROM work_lineage_integrity WHERE child_attempt_id=? "
-            "AND child_generation=?",
+            "SELECT * FROM work_lineage_integrity WHERE child_attempt_id=%s "
+            "AND child_generation=%s",
             (origin["child_attempt_id"], origin["child_generation"]),
         ).fetchone()
         try:
@@ -653,7 +647,7 @@ class WorkContracts:
         }:
             raise ContractConflict("managed lineage binding does not match its child order")
         delivery = connection.execute(
-            "SELECT * FROM work_delivery_orders WHERE attempt_id=? AND generation=?",
+            "SELECT * FROM work_delivery_orders WHERE attempt_id=%s AND generation=%s",
             (attempt["id"], attempt["generation"]),
         ).fetchone()
         if delivery is None or (
@@ -680,11 +674,11 @@ class WorkContracts:
             raise ContractConflict("managed lineage delivery is invalid") from None
         parent_attempt = connection.execute(
             "SELECT a.id,a.generation,a.work_item_id,w.job_id FROM work_attempts a "
-            "JOIN work_items w ON w.id=a.work_item_id WHERE a.id=? AND a.generation=?",
+            "JOIN work_items w ON w.id=a.work_item_id WHERE a.id=%s AND a.generation=%s",
             (origin["parent_attempt_id"], origin["parent_generation"]),
         ).fetchone()
         parent_binding = connection.execute(
-            "SELECT * FROM work_dispatch_bindings WHERE attempt_id=? AND generation=?",
+            "SELECT * FROM work_dispatch_bindings WHERE attempt_id=%s AND generation=%s",
             (origin["parent_attempt_id"], origin["parent_generation"]),
         ).fetchone()
         if (
@@ -714,13 +708,13 @@ class WorkContracts:
             raise ContractConflict("managed lineage parent cannot be its child")
         cycle = connection.execute(
             "WITH RECURSIVE ancestors(work_item_id) AS ("
-            " SELECT parent_work_item_id FROM work_items WHERE id=? "
+            " SELECT parent_work_item_id FROM work_items WHERE id=%s "
             " AND parent_work_item_id IS NOT NULL"
             " UNION"
             " SELECT w.parent_work_item_id FROM work_items w "
             " JOIN ancestors a ON a.work_item_id=w.id "
             " WHERE w.parent_work_item_id IS NOT NULL"
-            ") SELECT 1 FROM ancestors WHERE work_item_id=? LIMIT 1",
+            ") SELECT 1 FROM ancestors WHERE work_item_id=%s LIMIT 1",
             (origin["parent_work_item_id"], binding["work_item_id"]),
         ).fetchone()
         if cycle is not None:
@@ -757,7 +751,7 @@ class WorkContracts:
         self._transaction(connection)
         attempt = attempt_loader(connection, attempt_id, generation)
         row = connection.execute(
-            "SELECT * FROM work_dispatch_bindings WHERE attempt_id=? AND generation=?",
+            "SELECT * FROM work_dispatch_bindings WHERE attempt_id=%s AND generation=%s",
             (attempt_id, generation),
         ).fetchone()
         if row is None:
@@ -783,7 +777,7 @@ class WorkContracts:
         snapshot = DelegationSnapshots._load_authorized(
             connection,
             connection.execute(
-                "SELECT * FROM work_delegation_snapshots WHERE id=?", (row["snapshot_id"],)
+                "SELECT * FROM work_delegation_snapshots WHERE id=%s", (row["snapshot_id"],)
             ).fetchone(),
         )
         self._snapshot_relationships(connection, snapshot, attempt, contract)

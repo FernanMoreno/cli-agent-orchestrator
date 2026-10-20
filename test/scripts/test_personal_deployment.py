@@ -1,13 +1,15 @@
-"""Personal deployment persists authority and SQLite state without demo cleanup."""
+"""Personal deployment persists authority and PostgreSQL state without cleanup."""
 
 import importlib.util
 import json
 import os
-import sqlite3
 from pathlib import Path
 
 import jwt
 import pytest
+from psycopg import sql
+
+pytestmark = pytest.mark.postgres
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts/personal_deployment.py"
 
@@ -17,6 +19,24 @@ def load_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.mark.offline_database
+def test_backup_copy_omits_stale_database_client_passfiles(tmp_path):
+    module = load_module()
+    source = tmp_path / "source"
+    cao = source / "cao"
+    stale = cao / "pg-client-interrupted"
+    stale.mkdir(parents=True, mode=0o700)
+    (stale / "pgpass").write_text("secret:must:not:be:copied", encoding="utf-8")
+    (stale / "pgpass").chmod(0o600)
+    (cao / "durable-marker").write_text("keep", encoding="utf-8")
+    destination = tmp_path / "backup"
+
+    module._copy_state(source, destination)
+
+    assert not (destination / "cao" / stale.name).exists()
+    assert (destination / "cao" / "durable-marker").read_text() == "keep"
 
 
 def test_browser_link_is_private_and_contains_short_lived_fragment(deployment):
@@ -34,11 +54,94 @@ def test_browser_link_is_private_and_contains_short_lived_fragment(deployment):
 
 
 @pytest.fixture
-def deployment(tmp_path):
+def deployment(tmp_path, postgres_targets):
     module = load_module()
     root = tmp_path / "personal"
     module.initialize(root, server_port=19889, jwks_port=19890, image_id="sha256:" + "a" * 64)
+    module.write_database_config(root, _target_configuration(postgres_targets))
+    module.bootstrap_database(root)
+    module._test_postgres_targets = postgres_targets
     return module, root
+
+
+def _target_configuration(targets):
+    result = {}
+    for scope in ("main", "auth", "peer"):
+        target = getattr(targets, scope)
+        result[scope] = {
+            "host": target.host,
+            "port": target.port,
+            "database": target.database,
+            "user": target.user,
+            "schema": target.schema,
+            "store_id": target.store_id,
+            "secret_file": str(target.secret_file),
+            "sslmode": target.sslmode,
+            "migration_user": target.migration_user,
+            "migration_secret_file": str(target.migration_secret_file),
+        }
+    return result
+
+
+def _install_real_archive_adapter(module, postgres_service, tmp_path, monkeypatch):
+    """Route the deployment helper through pg_dump/pg_restore in its owned PG container."""
+    from test.services.test_postgres_recovery_bundle import _OwnedDockerArchiveRunner
+
+    runner = _OwnedDockerArchiveRunner(postgres_service, tmp_path)
+
+    def run(_root, target, executable, _arguments, *, output=None, input_path=None):
+        if executable == "pg_dump":
+            archive = tmp_path / f"personal-{target.scope}-{os.urandom(8).hex()}.dump"
+            runner.dump(target, archive)
+            assert output is not None
+            output.write(archive.read_bytes())
+            archive.unlink()
+            return None
+        if executable == "pg_restore":
+            assert input_path is not None
+            runner.restore(target, input_path)
+            return None
+        raise AssertionError(f"unexpected PostgreSQL executable: {executable}")
+
+    monkeypatch.setattr(module, "_run_database_client", run)
+
+
+def _create_restore_targets(module, targets, postgres_service, tmp_path):
+    """Prepare physically distinct databases and a private external v1 config."""
+    config = _target_configuration(targets)
+    databases = []
+    suffix = os.urandom(5).hex()
+    with postgres_service.connect_admin() as admin:
+        for scope in ("main", "auth", "peer"):
+            target = getattr(targets, scope)
+            database = f"pr_{suffix}_{scope}"
+            admin.execute(
+                sql.SQL("CREATE DATABASE {} OWNER {}").format(
+                    sql.Identifier(database), sql.Identifier(target.migration_user)
+                )
+            )
+            admin.execute(
+                sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                    sql.Identifier(database), sql.Identifier(target.user)
+                )
+            )
+            config[scope]["database"] = database
+            databases.append(database)
+    path = tmp_path / "restore-database-config.json"
+    path.write_text(json.dumps({"version": 1, "targets": config}, sort_keys=True))
+    path.chmod(0o600)
+    return path, tuple(databases)
+
+
+def _drop_databases(postgres_service, databases):
+    with postgres_service.connect_admin() as admin:
+        for database in databases:
+            admin.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                "WHERE datname=%s AND pid<>pg_backend_pid()",
+                (database,),
+            )
+            admin.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(database)))
 
 
 def test_initialization_is_private_and_idempotent(deployment):
@@ -50,6 +153,27 @@ def test_initialization_is_private_and_idempotent(deployment):
     assert (root / "issuer.pem").stat().st_mode & 0o077 == 0
     assert module.environment(root)["CAO_HOME_DIR"] == str(root / "cao")
     assert module.environment(root)["CAO_WORK_DOCKER_LOCAL"] == "1"
+
+
+def test_verify_database_accepts_full_work_component_history(deployment):
+    """The staged v1 prefix is not treated as the installed Work history."""
+    from cli_agent_orchestrator.clients.postgres import connect
+    from cli_agent_orchestrator.clients.postgres.registry import component_migrations
+
+    module, root = deployment
+    target = module.database_target(root, "main")
+    work_histories = [
+        history for history in component_migrations("main") if history[0].component == "work"
+    ]
+    complete = max(work_histories, key=len)
+    assert len(work_histories) > 1
+    with connect(target, readonly=True) as connection:
+        installed = connection.execute(
+            "SELECT max(version) FROM _cao_schema_migrations "
+            "WHERE scope='main' AND component='work'"
+        ).fetchone()[0]
+    assert installed == complete[-1].version
+    module.verify_database(root)
 
 
 def test_token_is_signed_and_bound_to_persistent_issuer(deployment):
@@ -80,25 +204,231 @@ def test_insecure_private_key_and_non_loopback_config_fail_closed(deployment):
         module.environment(root)
 
 
-def test_backup_includes_wal_and_restore_preserves_state(deployment, tmp_path):
+def test_backup_and_restore_roundtrip_all_postgresql_scopes(
+    deployment, postgres_service, tmp_path, monkeypatch
+):
     module, root = deployment
-    database = root / "cao" / "database.db"
-    connection = sqlite3.connect(database)
-    connection.execute("PRAGMA journal_mode=WAL")
-    connection.execute("CREATE TABLE proof(value TEXT)")
-    connection.execute("INSERT INTO proof VALUES ('durable')")
-    connection.commit()
-    destination = tmp_path / "backup"
-    module.backup(root, destination)
+    targets = module._test_postgres_targets
+    _install_real_archive_adapter(module, postgres_service, tmp_path, monkeypatch)
+    # Add durable data in each scope so the archive check proves content, not just schema.
+    from cli_agent_orchestrator.clients.postgres import connect
+
+    with connect(targets.main) as connection:
+        with connection.transaction():
+            connection.execute("UPDATE work_scheduler_policy SET capacity=3 WHERE singleton=1")
+    with connect(targets.auth) as connection:
+        with connection.transaction():
+            connection.execute(
+                "INSERT INTO auth_metadata "
+                "(singleton_id,schema_version,installation_id,auth_epoch,time_high_water) "
+                "VALUES (1,1,'personal-proof',1,0) ON CONFLICT (singleton_id) DO UPDATE "
+                "SET installation_id=EXCLUDED.installation_id"
+            )
+    with connect(targets.peer) as connection:
+        with connection.transaction():
+            connection.execute(
+                "INSERT INTO local_project_write_leases "
+                "(host_id,owner_uid,project_id,task_id,owner_instance_id,state,heartbeat_at,updated_at) "
+                "VALUES ('proof-host',0,'proof-project','proof-task','proof-owner','interrupted',1,1)"
+            )
+
+    backup_path = tmp_path / "backup"
+    module.backup(root, backup_path)
+    manifest = json.loads((backup_path / "backup-manifest.json").read_text())
+    assert set(manifest["scopes"]) == {"main", "auth", "peer"}
+    assert {scope for item in manifest["dumps"] for scope in item["scopes"]} == {
+        "main",
+        "auth",
+        "peer",
+    }
+    assert not (backup_path / "cao" / "database-config.json").exists()
+    assert not (backup_path / "cao" / "postgres").exists()
+
+    destination_config, databases = _create_restore_targets(
+        module, targets, postgres_service, tmp_path
+    )
     restored = tmp_path / "restored"
-    module.restore(destination, restored)
-    with sqlite3.connect(restored / "cao" / "database.db") as reader:
-        assert reader.execute("SELECT value FROM proof").fetchone() == ("durable",)
-        reader.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-    assert module.jwks(restored) == module.jwks(root)
+    try:
+        module.restore(backup_path, restored, database_config=destination_config)
+        module.verify_database(restored)
+        restored_targets = {
+            scope: module.database_target(restored, scope) for scope in ("main", "auth", "peer")
+        }
+        with connect(restored_targets["main"]) as connection:
+            assert connection.execute(
+                "SELECT capacity FROM work_scheduler_policy WHERE singleton=1"
+            ).fetchone() == (3,)
+            assert connection.execute(
+                "SELECT execution_state FROM work_recovery_context WHERE singleton=1"
+            ).fetchone() == ("blocked_restore",)
+        with connect(restored_targets["auth"]) as connection:
+            assert connection.execute(
+                "SELECT installation_id FROM auth_metadata WHERE singleton_id=1"
+            ).fetchone() == ("personal-proof",)
+        with connect(restored_targets["peer"]) as connection:
+            assert connection.execute(
+                "SELECT task_id FROM local_project_write_leases WHERE project_id='proof-project'"
+            ).fetchone() == ("proof-task",)
+        assert module.jwks(restored) == module.jwks(root)
+    finally:
+        _drop_databases(postgres_service, databases)
     with pytest.raises(FileExistsError):
-        module.restore(destination, root)
-    connection.close()
+        module.restore(backup_path, root, database_config=destination_config)
+
+
+def test_restore_failure_after_one_committed_scope_removes_only_attempt_schemas(
+    deployment, postgres_service, tmp_path, monkeypatch
+):
+    module, root = deployment
+    _install_real_archive_adapter(module, postgres_service, tmp_path, monkeypatch)
+    backup_path = tmp_path / "backup-before-failure"
+    module.backup(root, backup_path)
+    destination_config, databases = _create_restore_targets(
+        module, module._test_postgres_targets, postgres_service, tmp_path
+    )
+    destination_targets = {
+        scope: module.database_target(root, scope, destination_config)
+        for scope in ("main", "auth", "peer")
+    }
+    from hashlib import sha256
+
+    backup_digests = {
+        path.relative_to(backup_path): sha256(path.read_bytes()).hexdigest()
+        for path in backup_path.rglob("*")
+        if path.is_file()
+    }
+    original_runner = module._run_database_client
+    restore_calls = []
+    second_group_saw_main = []
+
+    def fail_second_scope(selected_root, target, executable, arguments, **kwargs):
+        if executable == "pg_restore":
+            restore_calls.append(target.scope)
+            if len(restore_calls) == 2:
+                second_group_saw_main.append(
+                    module._target_schema_exists(destination_targets["main"])
+                )
+                raise RuntimeError("injected second-scope restore failure")
+        return original_runner(selected_root, target, executable, arguments, **kwargs)
+
+    monkeypatch.setattr(module, "_run_database_client", fail_second_scope)
+    restored = tmp_path / "unpublished-restore"
+    try:
+        with pytest.raises(RuntimeError, match="second-scope restore failure"):
+            module.restore(backup_path, restored, database_config=destination_config)
+
+        assert len(restore_calls) == 2
+        assert second_group_saw_main == [True]
+        assert not restored.exists()
+        assert not any(
+            module._target_schema_exists(target) for target in destination_targets.values()
+        )
+        assert backup_digests == {
+            path.relative_to(backup_path): sha256(path.read_bytes()).hexdigest()
+            for path in backup_path.rglob("*")
+            if path.is_file()
+        }
+    finally:
+        _drop_databases(postgres_service, databases)
+
+
+def test_restore_preflights_existing_schema_without_touching_it(
+    deployment, postgres_service, tmp_path, monkeypatch
+):
+    from cli_agent_orchestrator.clients.postgres import connect
+
+    module, root = deployment
+    _install_real_archive_adapter(module, postgres_service, tmp_path, monkeypatch)
+    backup_path = tmp_path / "backup-before-preflight"
+    module.backup(root, backup_path)
+    destination_config, databases = _create_restore_targets(
+        module, module._test_postgres_targets, postgres_service, tmp_path
+    )
+    targets = {
+        scope: module.database_target(root, scope, destination_config)
+        for scope in ("main", "auth", "peer")
+    }
+    existing = targets["peer"]
+    with connect(existing.migration_target()) as connection:
+        with connection.transaction():
+            connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(existing.schema)))
+    before = module._restore_schema_receipt(existing)
+    original_runner = module._run_database_client
+    restored_groups = []
+
+    def track_restore(*args, **kwargs):
+        restored_groups.append(args[2])
+        return original_runner(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_run_database_client", track_restore)
+    restored = tmp_path / "preflight-restore"
+    try:
+        with pytest.raises(ValueError, match="must be absent and empty"):
+            module.restore(backup_path, restored, database_config=destination_config)
+
+        assert restored_groups == []
+        assert not restored.exists()
+        assert module._restore_schema_receipt(existing) == before
+        assert not module._target_schema_exists(targets["main"])
+        assert not module._target_schema_exists(targets["auth"])
+    finally:
+        _drop_databases(postgres_service, databases)
+
+
+@pytest.mark.parametrize("drift", ["schema_oid", "owner"])
+def test_restore_compensation_refuses_replaced_or_reowned_schema(
+    deployment, postgres_service, drift
+):
+    module, root = deployment
+    target = module.database_target(root, "peer")
+    original = module._restore_schema_receipt(target)
+    assert original is not None
+
+    with postgres_service.connect_admin(target.database) as admin:
+        if drift == "schema_oid":
+            admin.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(target.schema)))
+            admin.execute(
+                sql.SQL("CREATE SCHEMA {} AUTHORIZATION {}").format(
+                    sql.Identifier(target.schema), sql.Identifier(target.migration_user)
+                )
+            )
+        else:
+            admin.execute(
+                sql.SQL("ALTER SCHEMA {} OWNER TO {}").format(
+                    sql.Identifier(target.schema), sql.Identifier(target.user)
+                )
+            )
+
+    replacement = module._restore_schema_receipt(target)
+    assert replacement is not None
+    if drift == "schema_oid":
+        assert replacement["schema_oid"] != original["schema_oid"]
+    else:
+        assert replacement["owner_oid"] != original["owner_oid"]
+
+    with pytest.raises(RuntimeError, match="schema identity changed"):
+        module._remove_restored_schema_if_unchanged(target, original)
+
+    assert module._restore_schema_receipt(target) == replacement
+
+
+def test_database_client_can_dump_external_postgres_on_host_loopback(deployment, tmp_path):
+    """The real PostgreSQL image must reach an externally published loopback target."""
+    module, root = deployment
+    target = module.database_target(root, "main")
+    assert target.host == "127.0.0.1"
+
+    archive_path = tmp_path / "external-loopback.dump"
+    with archive_path.open("wb") as archive:
+        module._run_database_client(
+            root,
+            target,
+            "pg_dump",
+            ["--format=custom", "--schema-only", "--schema", target.schema],
+            output=archive,
+        )
+
+    assert archive_path.read_bytes().startswith(b"PGDMP")
 
 
 def test_backup_refuses_running_service_and_nested_destination(deployment, tmp_path):
@@ -125,19 +455,30 @@ def test_service_is_loopback_with_restart_and_existing_credentials(deployment):
     assert "HOME" not in env
 
 
-def test_explicit_personal_scheduler_setup_survives_restart(tmp_path):
+def test_explicit_personal_scheduler_setup_survives_restart(deployment):
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
     from cli_agent_orchestrator.services.work_scheduler import WorkScheduler
 
-    module = load_module()
-    repository = WorkRepository(tmp_path / "work.sqlite3")
+    module, root = deployment
+    repository = WorkRepository(module._test_postgres_targets.main)
     repository.initialize()
-    module.configure_personal_scheduler(repository)
+    with repository.transaction() as connection:
+        connection.execute("DELETE FROM work_scheduler_policy WHERE singleton=1")
+
+    # The normal-install operation fills a missing personal default without
+    # changing the imported receipt during the earlier import-only phase.
+    module.configure_scheduler(root)
+    with repository.read_snapshot() as connection:
+        row = connection.execute(
+            "SELECT revision,capacity,max_queue FROM work_scheduler_policy WHERE singleton=1"
+        ).fetchone()
+        assert tuple(row) == (1, 1, 8)
+
     assert WorkScheduler(repository).claim_next(actor_id="personal-operator") is None
     WorkScheduler(repository).configure(
         capacity=2, max_queue=9, aging_seconds=10, expected_policy_revision=1
     )
-    module.configure_personal_scheduler(repository)
+    module.configure_scheduler(root)
     with repository.transaction() as connection:
         row = connection.execute(
             "SELECT revision,capacity,max_queue FROM work_scheduler_policy"
@@ -191,7 +532,7 @@ def test_account_create_verifies_local_identity_and_clean_link(deployment, monke
     assert policy["binding"]["scopes"] == ["cao:read", "cao:write", "cao:admin"]
     assert module.environment(root)["CAO_BROWSER_LOGIN_ROOT"] == str(root)
     assert module.write_browser_link(root).read_text() == "http://127.0.0.1:19889/\n"
-    assert (root / "browser-auth.sqlite3").stat().st_mode & 0o077 == 0
+    assert (root / "cao" / "database-config.json").stat().st_mode & 0o077 == 0
     assert "correct horse" not in (root / "deployment.json").read_text()
 
 
@@ -206,7 +547,11 @@ def test_password_confirmation_failure_leaves_login_disabled(deployment, monkeyp
         .get("browser_login", {})
         .get("enabled")
     )
-    assert not (root / "browser-auth.sqlite3").exists()
+    from cli_agent_orchestrator.clients.postgres import connect
+
+    target = module.database_target(root, "auth")
+    with connect(target, readonly=True) as connection:
+        assert connection.execute("SELECT count(*) FROM browser_accounts").fetchone() == (0,)
 
 
 def test_browser_login_config_tampering_fails_closed(deployment, monkeypatch):
@@ -221,8 +566,17 @@ def test_browser_login_config_tampering_fails_closed(deployment, monkeypatch):
         module.environment(root)
 
 
-def test_restore_client_paths_are_final_before_publish(deployment, tmp_path, monkeypatch):
+def test_restore_client_paths_are_final_before_publish(
+    deployment, postgres_service, tmp_path, monkeypatch
+):
     module, root = deployment
+    targets = module._test_postgres_targets
+    _install_real_archive_adapter(module, postgres_service, tmp_path, monkeypatch)
+    backup = tmp_path / "restore-path-backup"
+    module.backup(root, backup)
+    destination_config, databases = _create_restore_targets(
+        module, targets, postgres_service, tmp_path
+    )
     destination = tmp_path / "restored"
     original = module.os.rename
     observed = []
@@ -232,16 +586,21 @@ def test_restore_client_paths_are_final_before_publish(deployment, tmp_path, mon
         original(source, target)
 
     monkeypatch.setattr(module.os, "rename", publish)
-    module.restore(root, destination)
-    assert len(observed) == 1
-    assert str(destination / "cao") in observed[0]
-    assert ".tmp/cao" not in observed[0]
+    try:
+        module.restore(backup, destination, database_config=destination_config)
+        assert len(observed) == 1
+        assert str(destination / "cao") in observed[0]
+        assert ".tmp/cao" not in observed[0]
+    finally:
+        _drop_databases(postgres_service, databases)
 
 
 def test_reset_disable_and_restore_revoke_without_identity_change(
-    deployment, tmp_path, monkeypatch
+    deployment, postgres_service, tmp_path, monkeypatch
 ):
     module, root = deployment
+    targets = module._test_postgres_targets
+    _install_real_archive_adapter(module, postgres_service, tmp_path, monkeypatch)
     password = "correct horse battery staple"
     monkeypatch.setattr(module.getpass, "getpass", lambda prompt: password)
     module.account_create(root, username="operator")
@@ -250,34 +609,48 @@ def test_reset_disable_and_restore_revoke_without_identity_change(
     original = json.loads((root / "deployment.json").read_text())["browser_login"]["binding"]
     saved = tmp_path / "backup"
     module.backup(root, saved)
-    restored = tmp_path / "restored"
-    module.restore(saved, restored)
-    restored_service = module.browser_auth_service(restored)
-    from cli_agent_orchestrator.models.browser_auth import BrowserAuthError
-
-    with pytest.raises(BrowserAuthError):
-        restored_service.session(secret)
-    password = "replacement horse battery staple"
-    module.account_reset(root)
-    with pytest.raises(BrowserAuthError):
-        service.session(secret)
-    assert (
-        json.loads((root / "deployment.json").read_text())["browser_login"]["binding"] == original
+    destination_config, databases = _create_restore_targets(
+        module, targets, postgres_service, tmp_path
     )
-    module.account_disable(root)
-    assert "#cao_token=" in module.write_browser_link(root).read_text()
-    assert module.environment(root)["CAO_AUTH_JWKS_URI"]
-    assert module.jwks(root) == module.jwks(restored)
+    restored = tmp_path / "restored"
+    try:
+        module.restore(saved, restored, database_config=destination_config)
+        restored_service = module.browser_auth_service(restored)
+        from cli_agent_orchestrator.models.browser_auth import BrowserAuthError
+
+        with pytest.raises(BrowserAuthError):
+            restored_service.session(secret)
+        module.account_reset(root)
+        with pytest.raises(BrowserAuthError):
+            service.session(secret)
+        assert (
+            json.loads((root / "deployment.json").read_text())["browser_login"]["binding"]
+            == original
+        )
+        module.account_disable(root)
+        assert "#cao_token=" in module.write_browser_link(root).read_text()
+        assert module.environment(root)["CAO_AUTH_JWKS_URI"]
+        assert module.jwks(root) == module.jwks(restored)
+    finally:
+        _drop_databases(postgres_service, databases)
 
 
-def test_missing_browser_database_is_not_recreated_on_startup(deployment, monkeypatch):
+def test_missing_auth_schema_is_not_recreated_by_runtime_verification(deployment, postgres_service):
+    from cli_agent_orchestrator.clients.postgres.migrations import SchemaMismatch
+
     module, root = deployment
-    monkeypatch.setattr(module.getpass, "getpass", lambda prompt: "correct horse battery staple")
-    module.account_create(root, username="operator")
-    (root / "browser-auth.sqlite3").unlink()
-    with pytest.raises(ValueError, match="private"):
-        module.environment(root)
-    assert not (root / "browser-auth.sqlite3").exists()
+    target = module._test_postgres_targets.auth
+    with postgres_service.connect_admin(target.database) as admin:
+        admin.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(target.schema)))
+    with pytest.raises(SchemaMismatch):
+        module.verify_database(root)
+    with postgres_service.connect_admin(target.database) as admin:
+        assert (
+            admin.execute(
+                "SELECT 1 FROM pg_namespace WHERE nspname=%s", (target.schema,)
+            ).fetchone()
+            is None
+        )
 
 
 def test_account_reset_remains_available_with_service_lock(deployment, monkeypatch):

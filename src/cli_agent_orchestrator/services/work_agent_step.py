@@ -53,6 +53,7 @@ async def _deliver(binding, payload, snapshot, port):
 
 
 _PROCESS_AGENT_STEP_TOOLS = frozenset({"cao.work.task_received", "cao.work.submit_result"})
+_PROCESS_AGENT_STEP_MESSAGE_TOOLS = _PROCESS_AGENT_STEP_TOOLS | {"cao.work.message"}
 
 
 def _validate_process_contract(payload, contract):
@@ -63,7 +64,10 @@ def _validate_process_contract(payload, contract):
     identities = contract.executable_identities
     if len(identities) != 1 or contract.permissions.commands != (identities[0].command_token,):
         raise ValueError("process agent-step requires one exact executable mapping")
-    if contract.permissions.tools != tuple(sorted(_PROCESS_AGENT_STEP_TOOLS)):
+    if contract.permissions.tools not in {
+        tuple(sorted(_PROCESS_AGENT_STEP_TOOLS)),
+        tuple(sorted(_PROCESS_AGENT_STEP_MESSAGE_TOOLS)),
+    }:
         raise ValueError("process agent-step requires only receipt and result tools")
     if (
         contract.permissions.network

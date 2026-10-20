@@ -53,6 +53,7 @@ from cli_agent_orchestrator.constants import CAO_HOME_DIR
 from cli_agent_orchestrator.models.agent_profile import AgentProfile
 from cli_agent_orchestrator.models.terminal import TerminalInputBlockedError, TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
+from cli_agent_orchestrator.providers.mcp_interactions import CAO_INTERACTION_CAPABILITY_FILE
 from cli_agent_orchestrator.utils.agent_profiles import (
     load_agent_profile_unresolved,
 )
@@ -160,6 +161,7 @@ _TERMINAL_ID_MAX_BYTES = 512
 
 
 class GeminiCliProvider(BaseProvider):
+    supports_interaction_mcp_overlay = True
     """Run an interactive Gemini CLI session in a CAO terminal.
 
     A profile's MCP configuration is materialised in a terminal-private
@@ -486,6 +488,17 @@ class GeminiCliProvider(BaseProvider):
                 else:
                     mapped_args.append(arg)
             translated["args"] = mapped_args
+        env = translated.get("env")
+        if isinstance(env, dict):
+            capability_path = env.get(CAO_INTERACTION_CAPABILITY_FILE)
+            if isinstance(capability_path, str) and self._looks_like_absolute_path(capability_path):
+                translated_env = dict(env)
+                translated_env[CAO_INTERACTION_CAPABILITY_FILE] = self._require_container_path(
+                    capability_path,
+                    profile,
+                    f"MCP server '{server_name}' interaction capability file",
+                )
+                translated["env"] = translated_env
         return translated
 
     @staticmethod
@@ -586,7 +599,7 @@ class GeminiCliProvider(BaseProvider):
 
     def _runtime_mcp_servers(self, profile: Optional[AgentProfile]) -> dict[str, dict[str, Any]]:
         """Resolve profile MCP entries and attach process-local terminal identity."""
-        configured = profile.mcpServers if profile is not None else {}
+        configured = self.interaction_mcp_servers(profile.mcpServers) if profile is not None else {}
         configured = configured or {}
         if not isinstance(configured, dict):
             raise ProviderError("Gemini profile mcpServers must be an object")
@@ -622,7 +635,13 @@ class GeminiCliProvider(BaseProvider):
             ):
                 raise ProviderError(f"Gemini MCP server '{raw_name}' env must be a string map")
             invalid_env = [
-                key for key, value in env.items() if not _MCP_ENV_REFERENCE_PATTERN.fullmatch(value)
+                key
+                for key, value in env.items()
+                if not _MCP_ENV_REFERENCE_PATTERN.fullmatch(value)
+                and not (
+                    key == CAO_INTERACTION_CAPABILITY_FILE
+                    and self.interaction_capability_file is not None
+                )
             ]
             if invalid_env:
                 formatted_keys = ", ".join(sorted(invalid_env))

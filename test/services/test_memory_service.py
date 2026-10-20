@@ -8,6 +8,7 @@ import asyncio
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from types import SimpleNamespace
 
 import pytest
@@ -1523,15 +1524,10 @@ class TestVaultScopeAuthority:
 
 
 def _federated_engine(tmp_path: Path):
-    """Build an isolated SQLite engine so DB-row assertions are deterministic."""
-    from sqlalchemy import create_engine
-
+    """Build an isolated PostgreSQL engine so DB-row assertions are deterministic."""
     from cli_agent_orchestrator.clients.database import Base
 
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'fed.db'}",
-        connect_args={"check_same_thread": False},
-    )
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return engine
 

@@ -16,4 +16,4 @@ class WorkStorePaths:
 def work_store_paths(tmp_path: Path) -> WorkStorePaths:
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir(mode=0o700)
-    return WorkStorePaths(tmp_path / "work.sqlite3", artifacts)
+    return WorkStorePaths(tmp_path / "work.db", artifacts)

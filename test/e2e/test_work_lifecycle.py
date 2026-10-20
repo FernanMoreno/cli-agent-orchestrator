@@ -8,7 +8,6 @@ import hashlib
 import importlib
 import json
 import shutil
-import sqlite3
 import time
 import uuid
 from test.fixtures.cao_server import _pick_free_port, _start_cao_server
@@ -21,6 +20,7 @@ import pytest
 import requests
 
 from cli_agent_orchestrator.clients import database
+from cli_agent_orchestrator.clients.postgres import connect
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.models.work_contract import ContractPermissions, ContractResources
 from cli_agent_orchestrator.models.work_origin import ManagedLineageIntent, WorkAttemptRef
@@ -37,6 +37,16 @@ from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuth
 from cli_agent_orchestrator.services.work_contract import ContractConflict
 from cli_agent_orchestrator.services.work_launch import launch_adapter
 from cli_agent_orchestrator.services.work_origin import WorkOriginAuthority, WorkOrigins
+
+pytestmark = pytest.mark.postgres
+
+
+@pytest.fixture(autouse=True)
+def _install_lifecycle_postgres_schema(postgres_targets):
+    """Give the real subprocess the same fully provisioned target as test helpers."""
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
+
+    bootstrap_scope(postgres_targets.main)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -69,7 +79,7 @@ async def test_launch_restart_delivers_the_persisted_snapshot(launch_context, mo
         "MemoryService",
         lambda: pytest.fail("managed launch must not resolve live memory after restart"),
     )
-    restarted = WorkRepository(context.repo.path)
+    restarted = WorkRepository(context.repo.target, filesystem_home=context.repo.filesystem_home)
     context.service = WorkAdmission(
         restarted,
         backends={"test": context.backend},
@@ -107,11 +117,11 @@ async def test_inbox_restart_preserves_snapshot_and_does_not_replay(paired_conte
     snapshot_id = original_binding.contract.snapshot.id
     with context.repo.connection() as connection:
         persisted_snapshot = connection.execute(
-            "SELECT id,content,delivered_hash FROM work_delegation_snapshots WHERE id=?",
+            "SELECT id,content,delivered_hash FROM work_delegation_snapshots WHERE id=%s",
             (snapshot_id,),
         ).fetchone()
 
-    restarted = WorkRepository(context.repo.path)
+    restarted = WorkRepository(context.repo.target, filesystem_home=context.repo.filesystem_home)
     service = WorkAdmission(
         restarted,
         backends={"test": context.backend},
@@ -185,7 +195,7 @@ async def test_legacy_v1_inbox_order_replays_fail_closed_after_restart(paired_co
     receipt = coordinator.admit(**request)
     with context.repo.connection() as connection:
         legacy_order = connection.execute(
-            "SELECT adapter_version,payload_json FROM work_delivery_orders WHERE attempt_id=?",
+            "SELECT adapter_version,payload_json FROM work_delivery_orders WHERE attempt_id=%s",
             (receipt.attempt_id,),
         ).fetchone()
         assert legacy_order["adapter_version"] == 1
@@ -197,7 +207,7 @@ async def test_legacy_v1_inbox_order_replays_fail_closed_after_restart(paired_co
         )
     assert legacy_payload.model_dump(mode="json") == {"inbox_id": receipt.inbox_id}
 
-    restarted = WorkRepository(context.repo.path)
+    restarted = WorkRepository(context.repo.target, filesystem_home=context.repo.filesystem_home)
     service = WorkAdmission(
         restarted,
         backends={"test": context.backend},
@@ -212,7 +222,7 @@ async def test_legacy_v1_inbox_order_replays_fail_closed_after_restart(paired_co
             service.contracts.revalidate_order(receipt.attempt_id, generation=receipt.generation),
         )
         replayed_order = connection.execute(
-            "SELECT adapter_version,payload_json FROM work_delivery_orders WHERE attempt_id=?",
+            "SELECT adapter_version,payload_json FROM work_delivery_orders WHERE attempt_id=%s",
             (receipt.attempt_id,),
         ).fetchone()
     assert reopened_payload.model_dump(mode="json") == {"inbox_id": receipt.inbox_id}
@@ -232,7 +242,7 @@ async def test_legacy_v1_inbox_order_replays_fail_closed_after_restart(paired_co
     assert restarted.get_work(receipt.work_item_id)["attempts"][0]["terminal_id"] is None
     with restarted.connection() as connection:
         reopened_order = connection.execute(
-            "SELECT adapter_version,payload_json FROM work_delivery_orders WHERE attempt_id=?",
+            "SELECT adapter_version,payload_json FROM work_delivery_orders WHERE attempt_id=%s",
             (receipt.attempt_id,),
         ).fetchone()
     assert reopened_order["adapter_version"] == 1
@@ -276,14 +286,16 @@ def _wait_for_mock_echo(server, terminal_id, message, *, timeout=25.0):
 
 
 @pytest.mark.e2e
-def test_real_mock_cli_session_and_inbox_survive_server_restart(tmp_path):
+def test_real_mock_cli_session_and_inbox_survive_server_restart(tmp_path, postgres_targets):
     """Exercise legacy mock_cli session/inbox ingress across a real server restart."""
     if not shutil.which("tmux"):
         pytest.skip("real mock_cli server lifecycle requires tmux")
 
     home = tmp_path / "isolated-cao-home"
     extra_env = {"CAO_WORK_LAUNCH_MODE": "legacy"}
-    first_server = _start_cao_server(home, _pick_free_port(), extra_env=extra_env)
+    first_server = _start_cao_server(
+        home, _pick_free_port(), extra_env=extra_env, database_targets=postgres_targets
+    )
     current_server = first_server
     session_names = []
     terminal_ids = []
@@ -325,7 +337,9 @@ def test_real_mock_cli_session_and_inbox_survive_server_restart(tmp_path):
         assert [row["message"] for row in delivered.json()] == [message]
 
         current_server.stop()
-        current_server = _start_cao_server(home, _pick_free_port(), extra_env=extra_env)
+        current_server = _start_cao_server(
+            home, _pick_free_port(), extra_env=extra_env, database_targets=postgres_targets
+        )
 
         output_after_restart = _wait_for_mock_echo(current_server, receiver_id, message)
         assert output_after_restart.strip() == message
@@ -515,7 +529,7 @@ async def test_managed_lineage_restart_delivers_parent_snapshot(
         "MemoryService",
         lambda: pytest.fail("managed lineage must not resolve live memory after restart"),
     )
-    restarted = WorkRepository(context.repo.path)
+    restarted = WorkRepository(context.repo.target, filesystem_home=context.repo.filesystem_home)
     context.service = WorkAdmission(
         restarted,
         backends={"test": context.backend},
@@ -610,14 +624,18 @@ def _wait_for_mock_output_contains(server, terminal_id, *fragments, timeout=25.0
 
 
 @pytest.mark.e2e
-def test_legacy_assign_child_receipt_survives_server_restart(tmp_path, monkeypatch):
+def test_legacy_assign_child_receipt_survives_server_restart(
+    tmp_path, monkeypatch, postgres_targets
+):
     """Exercise legacy assign against real tmux/mock_cli and retain its child receipt."""
     if not shutil.which("tmux"):
         pytest.skip("real mock_cli child lifecycle requires tmux")
 
     home = tmp_path / "isolated-cao-home"
     extra_env = {"CAO_WORK_LAUNCH_MODE": "legacy"}
-    current_server = _start_cao_server(home, _pick_free_port(), extra_env=extra_env)
+    current_server = _start_cao_server(
+        home, _pick_free_port(), extra_env=extra_env, database_targets=postgres_targets
+    )
     session_name = f"lifecycle-child-{uuid.uuid4().hex[:8]}"
     try:
         parent_id = _create_legacy_mock_parent(current_server, session_name)
@@ -626,8 +644,10 @@ def test_legacy_assign_child_receipt_survives_server_restart(tmp_path, monkeypat
         monkeypatch.setenv("CAO_TERMINAL_ID", parent_id)
 
         message = f"restart child {uuid.uuid4().hex[:8]}"
-        assigned = orchestration._assign_impl("developer", message)
+        operation_key = session_name
+        assigned = orchestration._assign_impl("developer", message, operation_key=operation_key)
         assert assigned["success"] is True, assigned
+        assert assigned["operation_key"] == operation_key
         child_id = assigned["terminal_id"]
         assert child_id
 
@@ -649,7 +669,9 @@ def test_legacy_assign_child_receipt_survives_server_restart(tmp_path, monkeypat
         assert before_restart["state"] in {"sent", "running"}
 
         current_server.stop()
-        current_server = _start_cao_server(home, _pick_free_port(), extra_env=extra_env)
+        current_server = _start_cao_server(
+            home, _pick_free_port(), extra_env=extra_env, database_targets=postgres_targets
+        )
         monkeypatch.setattr(orchestration, "API_BASE_URL", current_server.url)
 
         output_after_restart = _wait_for_mock_output_contains(
@@ -668,14 +690,18 @@ def test_legacy_assign_child_receipt_survives_server_restart(tmp_path, monkeypat
 
 
 @pytest.mark.e2e
-def test_legacy_handoff_returns_output_and_settled_receipt_across_restart(tmp_path, monkeypatch):
+def test_legacy_handoff_returns_output_and_settled_receipt_across_restart(
+    tmp_path, monkeypatch, postgres_targets
+):
     """Exercise legacy run-step handoff on real tmux/mock_cli and persist its result receipt."""
     if not shutil.which("tmux"):
         pytest.skip("real mock_cli handoff lifecycle requires tmux")
 
     home = tmp_path / "isolated-cao-home"
     extra_env = {"CAO_WORK_LAUNCH_MODE": "legacy"}
-    current_server = _start_cao_server(home, _pick_free_port(), extra_env=extra_env)
+    current_server = _start_cao_server(
+        home, _pick_free_port(), extra_env=extra_env, database_targets=postgres_targets
+    )
     session_name = f"lifecycle-handoff-{uuid.uuid4().hex[:8]}"
     try:
         parent_id = _create_legacy_mock_parent(current_server, session_name)
@@ -695,7 +721,9 @@ def test_legacy_handoff_returns_output_and_settled_receipt_across_restart(tmp_pa
         assert before_restart["cleanup_completed_at"] is not None
 
         current_server.stop()
-        current_server = _start_cao_server(home, _pick_free_port(), extra_env=extra_env)
+        current_server = _start_cao_server(
+            home, _pick_free_port(), extra_env=extra_env, database_targets=postgres_targets
+        )
         monkeypatch.setattr(orchestration, "API_BASE_URL", current_server.url)
 
         response = requests.get(f"{current_server.url}/terminals/{parent_id}/children", timeout=5.0)
@@ -715,8 +743,10 @@ def test_legacy_handoff_returns_output_and_settled_receipt_across_restart(tmp_pa
 
 
 @pytest.mark.e2e
-@pytest.mark.parametrize("tier", ("yaml", "script"))
-def test_real_mock_workflow_result_and_attempt_survive_server_restart(tmp_path, tier):
+@pytest.mark.parametrize("tier", ("yaml",))
+def test_real_mock_workflow_result_and_attempt_survive_server_restart(
+    tmp_path, tier, postgres_targets
+):
     """Prove legacy workflow durability using real HTTP, tmux and mock_cli.
 
     Managed Work authority/result isolation is tested by the Docker T020 suite.
@@ -728,7 +758,9 @@ def test_real_mock_workflow_result_and_attempt_survive_server_restart(tmp_path, 
 
     home = tmp_path / "isolated-cao-home"
     extra_env = {"CAO_WORK_LAUNCH_MODE": "legacy"}
-    current_server = _start_cao_server(home, _pick_free_port(), extra_env=extra_env)
+    current_server = _start_cao_server(
+        home, _pick_free_port(), extra_env=extra_env, database_targets=postgres_targets
+    )
     run_id = f"lifecycle-{tier}-{uuid.uuid4().hex[:8]}"
     marker = f"workflow-result-{uuid.uuid4().hex}"
     spec_dir = home / ".aws" / "cli-agent-orchestrator" / "workflows"
@@ -752,10 +784,10 @@ def test_real_mock_workflow_result_and_attempt_survive_server_restart(tmp_path, 
         )
 
     def read_attempt():
-        with sqlite3.connect(current_server.db_path) as connection:
+        with connect(postgres_targets.main) as connection:
             return connection.execute(
                 "SELECT run_id,step_id,state,attempts,terminal_id,call_fingerprint,result_json "
-                "FROM workflow_run_step WHERE run_id=? AND step_id='s1'",
+                "FROM workflow_run_step WHERE run_id=%s AND step_id='s1'",
                 (run_id,),
             ).fetchone()
 
@@ -788,7 +820,9 @@ def test_real_mock_workflow_result_and_attempt_survive_server_restart(tmp_path, 
         # Recovery must read the frozen journal, even after the source changes.
         spec_file.write_text("source changed after completion\n", encoding="utf-8")
         current_server.stop()
-        current_server = _start_cao_server(home, _pick_free_port(), extra_env=extra_env)
+        current_server = _start_cao_server(
+            home, _pick_free_port(), extra_env=extra_env, database_targets=postgres_targets
+        )
         recovered = requests.get(f"{current_server.url}/workflows/runs/{run_id}/result", timeout=5)
         assert recovered.status_code == 200, recovered.text
         assert recovered.json() == before
@@ -796,3 +830,415 @@ def test_real_mock_workflow_result_and_attempt_survive_server_restart(tmp_path, 
     finally:
         with contextlib.suppress(Exception):
             current_server.stop()
+
+
+@pytest.mark.e2e
+def test_prepared_script_workflow_result_and_attempt_survive_server_restart(
+    tmp_path, postgres_targets
+):
+    """Run an approved script through the real Docker backend and recover its receipt."""
+    import os
+    import re
+    import subprocess
+    from pathlib import Path
+
+    if os.environ.get("CAO_T020_ACCEPTANCE") != "1":
+        pytest.skip("run test/integration/t020/run-docker-acceptance.sh for Docker acceptance")
+
+    image_id = os.environ.get("CAO_T020_DOCKER_IMAGE_ID", "")
+    worker_path = os.environ.get("CAO_T020_WORKER_BINARY", "")
+    worker_sha256 = os.environ.get("CAO_T020_WORKER_SHA256", "")
+    docker_host = os.environ.get("DOCKER_HOST", "")
+    configured_docker = os.environ.get("CAO_T020_DOCKER_CLI", "")
+    assert re.fullmatch(
+        r"sha256:[0-9a-f]{64}", image_id
+    ), "the T020 runner must provide an immutable local worker rootfs ID"
+    assert os.environ.get("CAO_WORK_DOCKER_LOCAL") == "1"
+    assert os.environ.get("CAO_WORK_DOCKER_IMAGE_ID") == image_id
+    assert os.environ.get("CAO_T019_DOCKER_IMAGE_ID") == image_id
+    assert docker_host.startswith("unix:///")
+    socket_path = Path(docker_host.removeprefix("unix://"))
+    assert socket_path.is_socket(), "the T020 Docker socket must be a local Unix socket"
+
+    docker_cli = shutil.which(configured_docker)
+    assert docker_cli is not None, "the configured T020 Docker CLI is unavailable"
+    worker_binary = Path(worker_path)
+    worker_bytes = worker_binary.read_bytes()
+    assert re.fullmatch(r"[0-9a-f]{64}", worker_sha256)
+    assert hashlib.sha256(worker_bytes).hexdigest() == worker_sha256
+
+    home = tmp_path / "isolated-cao-home"
+    app_home = home / ".aws" / "cli-agent-orchestrator"
+    spec_dir = app_home / "workflows"
+    spec_dir.mkdir(parents=True)
+    private_bin = home / "private-bin"
+    private_bin.mkdir(mode=0o700)
+    docker_link = private_bin / "docker"
+    docker_link.symlink_to(docker_cli)
+    child_path = os.pathsep.join((str(private_bin), os.environ.get("PATH", "")))
+    docker_config = home / ".docker"
+    docker_config.mkdir(mode=0o700)
+    docker_config_file = docker_config / "config.json"
+    docker_config_file.write_text('{"auths":{}}\n', encoding="utf-8")
+    docker_config_file.chmod(0o600)
+
+    docker_environment = os.environ.copy()
+    docker_environment["DOCKER_HOST"] = docker_host
+    docker_environment["DOCKER_CONFIG"] = str(docker_config)
+    for variable in ("DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"):
+        docker_environment.pop(variable, None)
+    rootfs_inspection = subprocess.run(
+        [docker_cli, "--host", docker_host, "image", "inspect", "--format", "{{.Id}}", image_id],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env=docker_environment,
+    )
+    assert rootfs_inspection.returncode == 0, "the pinned T020 rootfs image is unavailable"
+    assert rootfs_inspection.stdout.strip() == image_id
+
+    from test.fixtures.cao_server import (
+        _JWKSServer,
+        _pick_free_port,
+        _session_rsa_keys,
+        _start_cao_server,
+    )
+    from test.integration.t020.test_workflow_acceptance import (
+        _CONTEXT_TEXT,
+        _binding_proof,
+        _make_authority_and_provision,
+        _receiver_receipt_proof,
+        _snapshot_proof,
+    )
+
+    from authlib.jose import JsonWebToken
+
+    from cli_agent_orchestrator.services import workflow_journal
+    from cli_agent_orchestrator.services.work_scheduler import WorkScheduler
+    from cli_agent_orchestrator.services.work_workflow import WorkWorkflowOrigins
+    from cli_agent_orchestrator.services.work_workflow_plans import WorkWorkflowPlans
+
+    private_pem, public_jwk = _session_rsa_keys()
+    jwks = _JWKSServer(public_jwk)
+    jwks.start()
+    jwt = JsonWebToken(["RS256"])
+    now = int(time.time())
+
+    def mint_token(subject: str, scopes: str) -> str:
+        token = jwt.encode(
+            {"alg": "RS256", "kid": "test-kid"},
+            {
+                "iss": "https://issuer.test",
+                "aud": "cao://test",
+                "iat": now - 1,
+                "exp": now + 600,
+                "scope": scopes,
+                "sub": subject,
+            },
+            private_pem,
+        )
+        return token.decode("utf-8") if isinstance(token, bytes) else token
+
+    workflow_token = mint_token("t020-script-workflow", "cao:read cao:write")
+    approval_token = mint_token("t020-separate-approver", "cao:admin")
+    headers_for = lambda token: {  # noqa: E731 — one local header constructor
+        "Authorization": f"Bearer {token}",
+        "Host": "localhost",
+    }
+
+    extra_env = {
+        "AUTH0_DOMAIN": "",
+        "CAO_AUTH_JWKS_URI": jwks.url,
+        "CAO_AUTH_JWKS_CACHE_TTL": "0",
+        "CAO_AUTH_ISSUER": "https://issuer.test",
+        "CAO_AUTH_AUDIENCE": "cao://test",
+        "CAO_WORKFLOW_REQUIRE_APPROVAL": "1",
+        "CAO_ENABLE_PUBLIC_WORK_INGRESS": "true",
+        "CAO_WORK_DOCKER_LOCAL": "1",
+        "CAO_WORK_DOCKER_IMAGE_ID": image_id,
+        "CAO_T020_ACCEPTANCE": "1",
+        "DOCKER_HOST": docker_host,
+        "DOCKER_CONTEXT": "",
+        "DOCKER_TLS_VERIFY": "",
+        "DOCKER_CERT_PATH": "",
+        "DOCKER_CONFIG": str(docker_config),
+        "PATH": child_path,
+    }
+    current_server = None
+    try:
+        current_server = _start_cao_server(
+            home, _pick_free_port(), extra_env=extra_env, database_targets=postgres_targets
+        )
+        repository = WorkRepository(
+            current_server.database_targets.main,
+            filesystem_home=app_home,
+        )
+        repository.initialize()
+        WorkScheduler(repository).configure(
+            capacity=2, max_queue=20, aging_seconds=5, expected_policy_revision=0
+        )
+
+        run_id = f"t020-script-{uuid.uuid4().hex[:16]}"
+        workflow_id = f"t020_script_{uuid.uuid4().hex[:8]}"
+        step_id = "worker"
+        prompt = "T122 deterministic input"
+        source = (
+            "SCOPE = {'version': 1, 'targets': "
+            "{'repo': {'agents': ['developer'], 'memory': 'exact-snapshot'}}}\n"
+            "import json\n"
+            "import time\n"
+            "from cao_workflow import ShimHTTPError, emit_output, run_step\n"
+            "deadline = time.monotonic() + 180\n"
+            "while True:\n"
+            "    try:\n"
+            "        result = run_step(\n"
+            "            'scratch_worker', 'developer', 'T122 deterministic input',\n"
+            "            step_id='worker', target_key='repo', timeout=60,\n"
+            "        )\n"
+            "        break\n"
+            "    except ShimHTTPError as error:\n"
+            "        try:\n"
+            "            detail = json.loads(error.body)['detail']\n"
+            "        except (ValueError, TypeError, KeyError):\n"
+            "            raise\n"
+            "        if (error.status != 409 or not isinstance(detail, dict)\n"
+            "                or detail.get('kind') != 'work_pending'):\n"
+            "            raise\n"
+            "        if time.monotonic() >= deadline:\n"
+            "            raise\n"
+            "        time.sleep(0.25)\n"
+            "emit_output(result.output)\n"
+        )
+        source_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        spec_file = spec_dir / f"{workflow_id}.py"
+        spec_file.write_text(source, encoding="utf-8")
+
+        repo_root = tmp_path / "private-git-target"
+        from test.e2e.prepared_script_helpers import _initialize_git_target
+
+        _initialize_git_target(repo_root)
+        case = _make_authority_and_provision(
+            repository,
+            repo_root,
+            tier="script",
+            run_id=run_id,
+            workflow_id=workflow_id,
+            step_id=step_id,
+            spec_hash=source_hash,
+            worker_bytes=worker_bytes,
+            worker_sha256=worker_sha256,
+            delivery_message=prompt,
+        )
+        assert case["principal"].issuer == "https://issuer.test"
+        assert (
+            case["principal"].id
+            == auth._verified_principal(
+                "https://issuer.test", "t020-script-workflow", [auth.SCOPE_WRITE], "jwt"
+            ).id
+        )
+
+        workflow_headers = headers_for(workflow_token)
+        approval_headers = headers_for(approval_token)
+        unprepared_run_id = run_id + "-unprepared"
+        unprepared = requests.post(
+            f"{current_server.url}/workflows/runs:submit",
+            headers=workflow_headers,
+            json={"name_or_path": workflow_id, "inputs": {}, "run_id": unprepared_run_id},
+            timeout=10,
+        )
+        assert unprepared.status_code == 422, unprepared.text
+        assert unprepared.json()["detail"]["kind"] == "prepared_plan_required"
+        assert workflow_journal.get_run(unprepared_run_id) is None
+
+        prepared_response = requests.post(
+            f"{current_server.url}/workflows/plans:prepare",
+            headers=workflow_headers,
+            json={
+                "name_or_path": workflow_id,
+                "inputs": {},
+                "target_mappings": {"repo": str(repo_root)},
+                "binding_selections": {"repo": {"developer": step_id}},
+            },
+            timeout=30,
+        )
+        assert prepared_response.status_code == 201, prepared_response.text
+        prepared = prepared_response.json()
+        prepared_id = prepared["prepared_id"]
+        plan_id = prepared["plan_id"]
+
+        review = requests.get(
+            f"{current_server.url}/workflows/plans/{prepared_id}",
+            headers=workflow_headers,
+            timeout=15,
+        )
+        assert review.status_code == 200, review.text
+        assert review.json()["plan_id"] == plan_id
+
+        denied_approval = requests.post(
+            f"{current_server.url}/workflows/plans/approve",
+            headers=workflow_headers,
+            json={"plan_id": plan_id},
+            timeout=10,
+        )
+        assert denied_approval.status_code == 403, denied_approval.text
+        approved = requests.post(
+            f"{current_server.url}/workflows/plans/approve",
+            headers=approval_headers,
+            json={"plan_id": plan_id},
+            timeout=15,
+        )
+        assert approved.status_code == 200, approved.text
+        assert approved.json()["approved"] is True
+        assert approved.json()["plan_id"] == plan_id
+
+        submitted = requests.post(
+            f"{current_server.url}/workflows/runs:submit",
+            headers=workflow_headers,
+            json={
+                "name_or_path": workflow_id,
+                "inputs": {},
+                "run_id": run_id,
+                "prepared_id": prepared_id,
+                "expected_plan_id": plan_id,
+            },
+            timeout=15,
+        )
+        assert submitted.status_code == 202, submitted.text
+        assert submitted.json()["plan_id"] == plan_id
+
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            result_response = requests.get(
+                f"{current_server.url}/workflows/runs/{run_id}/result",
+                headers=workflow_headers,
+                timeout=10,
+            )
+            assert result_response.status_code == 200, result_response.text
+            result_before = result_response.json()
+            if result_before["state"] in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.25)
+        assert result_before["state"] == "completed", result_before
+        assert len(result_before["steps"]) == 1
+        assert result_before["steps"][0]["id"] == step_id
+        assert result_before["steps"][0]["state"] == "completed"
+        assert result_before["steps"][0]["attempts"] == 1
+        assert result_before["steps"][0]["output"]["value"] == "t122-deterministic"
+
+        run_before = workflow_journal.get_run(run_id)
+        step_before = workflow_journal.get_step(run_id, step_id)
+        assert run_before is not None and run_before.tier == "script"
+        assert run_before.state == "completed" and run_before.generation == "1"
+        assert run_before.manifest_json and plan_id in run_before.manifest_json
+        assert run_before.spec_snapshot is not None
+        frozen = json.loads(run_before.spec_snapshot)
+        assert frozen["source"] == source
+        assert frozen["content_hash"] == source_hash
+        assert step_before is not None and step_before.state == "completed"
+        assert step_before.attempts == 1
+
+        plans = WorkWorkflowPlans(repository)
+        plans.initialize()
+        origins = WorkWorkflowOrigins(repository, plans=plans)
+        plans.origins = origins
+        binding_before = origins.read_step_binding("script", run_id, 1, step_id, 1)
+        assert binding_before is not None and binding_before.spec_hash == source_hash
+        proof_before = _binding_proof(binding_before)
+        snapshot_before = _snapshot_proof(repository, binding_before.snapshot_id)
+        assert snapshot_before[2] == hashlib.sha256(snapshot_before[3]).hexdigest()
+        assert snapshot_before[3] == _CONTEXT_TEXT.encode("utf-8")
+        assert binding_before.snapshot_hash == snapshot_before[2]
+        receiver_receipt_before = _receiver_receipt_proof(
+            repository, binding_before.work_attempt_id, binding_before.work_generation
+        )
+        assert receiver_receipt_before is not None
+        work_before = repository.get_work(binding_before.work_item_id)
+        assert work_before["state"] == "succeeded"
+        assert work_before["accepted_result_id"]
+        assert len(work_before["attempts"]) == 1
+        assert work_before["attempts"][0]["id"] == binding_before.work_attempt_id
+        assert work_before["attempts"][0]["generation"] == binding_before.work_generation
+        assert work_before["attempts"][0]["cleanup_state"] == "not_requested"
+
+        from cli_agent_orchestrator.backends.docker_backend import DockerWorkBackend
+
+        attempt_id = binding_before.work_attempt_id
+        generation = binding_before.work_generation
+        container_name = DockerWorkBackend._container_name(attempt_id, generation)
+        attempt_image_tag = DockerWorkBackend._attempt_image_tag(attempt_id, generation)
+
+        def inspect_docker_object(*arguments):
+            return subprocess.run(
+                [docker_cli, "--host", docker_host, *arguments],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+                env=docker_environment,
+            )
+
+        assert inspect_docker_object("container", "inspect", container_name).returncode != 0
+        assert inspect_docker_object("image", "inspect", attempt_image_tag).returncode != 0
+        retained_rootfs = inspect_docker_object("image", "inspect", "--format", "{{.Id}}", image_id)
+        assert retained_rootfs.returncode == 0
+        assert retained_rootfs.stdout.strip() == image_id
+
+        spec_file.write_text(
+            source.replace("T122 deterministic input", "changed after run"), encoding="utf-8"
+        )
+        current_server.stop()
+        current_server = _start_cao_server(
+            home, _pick_free_port(), extra_env=extra_env, database_targets=postgres_targets
+        )
+        restarted_repository = WorkRepository(
+            current_server.database_targets.main,
+            filesystem_home=app_home,
+        )
+        restarted_repository.initialize()
+        restarted_plans = WorkWorkflowPlans(restarted_repository)
+        restarted_plans.initialize()
+        restarted_origins = WorkWorkflowOrigins(restarted_repository, plans=restarted_plans)
+        restarted_plans.origins = restarted_origins
+        recovered_response = requests.get(
+            f"{current_server.url}/workflows/runs/{run_id}/result",
+            headers=workflow_headers,
+            timeout=10,
+        )
+        assert recovered_response.status_code == 200, recovered_response.text
+        assert recovered_response.json() == result_before
+
+        run_after = workflow_journal.get_run(run_id)
+        step_after = workflow_journal.get_step(run_id, step_id)
+        assert run_after is not None and run_after.spec_snapshot == run_before.spec_snapshot
+        assert run_after.manifest_json == run_before.manifest_json
+        assert run_after.state == "completed" and run_after.generation == "1"
+        assert step_after is not None and step_after.state == "completed"
+        assert step_after.attempts == 1
+        recovered_binding = restarted_origins.read_step_binding("script", run_id, 1, step_id, 1)
+        assert recovered_binding is not None
+        assert _binding_proof(recovered_binding) == proof_before
+        assert (
+            _snapshot_proof(restarted_repository, recovered_binding.snapshot_id) == snapshot_before
+        )
+        assert (
+            _receiver_receipt_proof(
+                restarted_repository,
+                recovered_binding.work_attempt_id,
+                recovered_binding.work_generation,
+            )
+            == receiver_receipt_before
+        )
+        work_after = restarted_repository.get_work(binding_before.work_item_id)
+        assert work_after["state"] == "succeeded"
+        assert work_after["accepted_result_id"] == work_before["accepted_result_id"]
+        assert len(work_after["attempts"]) == 1
+        assert work_after["attempts"][0]["id"] == binding_before.work_attempt_id
+        assert work_after["attempts"][0]["generation"] == binding_before.work_generation
+        assert work_after["attempts"][0]["cleanup_state"] == "not_requested"
+        assert spec_file.read_text(encoding="utf-8") != frozen["source"]
+    finally:
+        if current_server is not None:
+            with contextlib.suppress(Exception):
+                current_server.stop()
+        jwks.stop()

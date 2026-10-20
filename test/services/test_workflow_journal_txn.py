@@ -8,7 +8,7 @@ run INSERT and the step-seed INSERT into ONE transaction (one commit).
 Each test maps to a business rule:
 
 - TR-1 (durable insert is atomic): the MANDATED crash-recovery scenario — a REAL
-  ``sqlite3.Error`` raised from the step INSERT *after* the run INSERT within the
+  PostgreSQL database error raised from the step INSERT *after* the run INSERT within the
   same transaction leaves NO row in ``workflow_run`` (rollback of both), and the
   error propagates (it is NOT swallowed, unlike the engine's best-effort write).
 - Happy path: the run row + every seeded step row are durable after one call.
@@ -16,27 +16,11 @@ Each test maps to a business rule:
 
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
-
 import pytest
 
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
-)
+from cli_agent_orchestrator.clients.postgres import DatabaseError
 from cli_agent_orchestrator.services import workflow_journal
 from cli_agent_orchestrator.services.workflow_journal import insert_run_with_steps
-
-
-@pytest.fixture(autouse=True)
-def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Point the journal at a temp DB and create the run tables (real SQLite)."""
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
-    yield db_path
 
 
 def test_insert_run_with_steps_happy_run_and_steps_durable():
@@ -61,7 +45,7 @@ def test_insert_run_with_steps_happy_run_and_steps_durable():
 
 
 def test_tr1_step_insert_crash_rolls_back_the_run_row():
-    """TR-1 (MANDATED real crash): a genuine ``sqlite3.Error`` from the step INSERT,
+    """TR-1 (MANDATED real crash): a genuine PostgreSQL integrity error from the step INSERT,
     raised AFTER the run INSERT within the SAME transaction, must leave NO row in
     ``workflow_run`` — the whole transaction rolls back and NEITHER row is
     committed. This is a REAL crash between the two inserts (a NOT NULL constraint
@@ -71,7 +55,7 @@ def test_tr1_step_insert_crash_rolls_back_the_run_row():
     ``insert_steps`` back-to-back), the run INSERT would already have autocommitted
     a phantom RUNNING row with no step rows.
     """
-    with pytest.raises(sqlite3.Error):
+    with pytest.raises(DatabaseError):
         insert_run_with_steps(
             run_id="run-atomic-crash",
             workflow_name="wf",
@@ -105,7 +89,7 @@ def test_tr1_error_propagates_not_swallowed():
             steps=[("s1", None)],  # type: ignore[list-item]
             updated_at="2026-07-27T00:00:00Z",
         )
-    except sqlite3.Error:
+    except DatabaseError:
         raised = True
     assert raised is True
     assert workflow_journal.get_run("run-atomic-raise") is None

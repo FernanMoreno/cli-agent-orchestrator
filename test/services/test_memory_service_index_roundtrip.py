@@ -333,6 +333,21 @@ def test_writer_emits_reader_regex_format(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def settled_memory_benchmark(isolated_memory_db, tmp_path: Path) -> None:
+    """Collect preparation garbage before measuring the cold operation.
+
+    Native database and temporary-path setup can leave unreachable cycles.
+    Keep their deferred collection outside the benchmark, with normal GC
+    settings and every collection caused by the operation still enabled.
+    This does not initialize MemoryService or warm a database connection.
+    """
+    import gc
+
+    gc.collect()
+
+
+@pytest.mark.usefixtures("settled_memory_benchmark")
 def test_roundtrip_runs_under_one_second(tmp_path: Path) -> None:
     """Full round-trip for 10 entries completes under 1 second.
 

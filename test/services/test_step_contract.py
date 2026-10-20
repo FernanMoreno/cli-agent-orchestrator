@@ -1,16 +1,25 @@
-"""Attempt contracts use real SQLite and precede task delivery, not terminal creation."""
+"""Attempt contracts use the native PostgreSQL journal before task delivery."""
 
 import importlib.util
 import json
-import sqlite3
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from threading import Barrier
 from types import SimpleNamespace
+from typing import Iterator
 from unittest.mock import AsyncMock
 
 import pytest
+from psycopg import sql
 
+from cli_agent_orchestrator.clients.postgres import (
+    Connection,
+    DatabaseTarget,
+    IntegrityError,
+    connect,
+)
 from cli_agent_orchestrator.models.workflow_runtime import RunState
 from cli_agent_orchestrator.services import (
     agent_step,
@@ -20,31 +29,79 @@ from cli_agent_orchestrator.services import (
 )
 
 
+def _owner_connection() -> Connection:
+    """Open the explicit migration role for deliberate catalog-damage tests."""
+    return connect(DatabaseTarget.from_settings("main").migration_target())
+
+
+def _reject_contract_insert(monkeypatch) -> None:
+    """Cause a native CHECK violation without changing the verified catalog."""
+    original_connect = workflow_journal._connect
+
+    def connect_with_fault(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
+        original_execute = connection.execute
+
+        def fail_contract_insert(statement, params=(), *, prepare: bool | None = None):
+            normalized = " ".join(str(statement).split()).upper()
+            if normalized.startswith("INSERT INTO WORK_STEP_CONTRACTS VALUES"):
+                invalid = list(params)
+                invalid[3] = 0
+                params = tuple(invalid)
+            if prepare is None:
+                return original_execute(statement, params)
+            return original_execute(statement, params, prepare=prepare)
+
+        connection.execute = fail_contract_insert
+        return connection
+
+    monkeypatch.setattr(workflow_journal, "_connect", connect_with_fault)
+
+
+def _drop_contract_immutability_trigger() -> None:
+    with _owner_connection() as connection:
+        connection.execute(
+            sql.SQL(
+                "DROP TRIGGER work_step_contracts_immutable_update ON {}.work_step_contracts"
+            ).format(sql.Identifier(connection.target.schema))
+        )
+
+
+def _damage_work_migration_history() -> None:
+    with _owner_connection() as connection:
+        connection.execute(
+            "UPDATE _cao_schema_migrations SET checksum='damaged' "
+            "WHERE scope='main' AND component='work' AND version=2"
+        )
+
+
 def test_contract_schema_is_available_to_the_versioned_migrator():
+    from cli_agent_orchestrator.clients.work_postgres_schema import WORK_POSTGRES_MIGRATIONS
+
     assert (
-        importlib.util.find_spec("cli_agent_orchestrator.clients.step_contract_schema") is not None
+        importlib.util.find_spec("cli_agent_orchestrator.clients.work_postgres_schema") is not None
     )
+    assert any("work_step_contracts" in migration.tables for migration in WORK_POSTGRES_MIGRATIONS)
 
 
-def test_contract_verification_accepts_the_journal_default_tuple_cursor(tmp_path):
-    """The contract gate uses the journal's default sqlite tuple cursor."""
+def test_contract_verification_uses_native_connection_record_mapping():
+    """The contract gate is backed by a verified native PostgreSQL connection."""
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
-    database = tmp_path / "contracts.db"
-    WorkRepository(database).initialize()
-    with sqlite3.connect(database) as connection:
+    repository = WorkRepository(DatabaseTarget.from_settings("main"))
+    with repository.connection() as connection:
         WorkRepository._verify(connection)
+        row = connection.execute("SELECT 1 AS value").fetchone()
+        assert row[0] == row["value"] == 1
 
 
 @pytest.fixture
-def journal(tmp_path, monkeypatch):
+def journal(monkeypatch):
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
-    database = tmp_path / "contracts.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", database)
-    monkeypatch.setattr(workflow_journal, "_MIGRATED_PATHS", set())
+    repository = WorkRepository(DatabaseTarget.from_settings("main"))
+    repository.initialize()
     workflow_journal.insert_run("run", "script", "{}", "{}", "running", "now", tier="script")
-    WorkRepository(database).initialize()
     record = script_runner.ScriptRunRecord(
         run_id="run",
         workflow_name="script",
@@ -58,20 +115,17 @@ def journal(tmp_path, monkeypatch):
         finished_at=None,
     )
     monkeypatch.setattr(script_runner, "run_registry", {"run": record})
-    return database
+    return None
 
 
 @pytest.fixture
-def yaml_journal(tmp_path, monkeypatch):
-    """A verified temporary store holding a live YAML run, never an operator DB."""
+def yaml_journal():
+    """A verified per-test PostgreSQL store holding a live YAML run."""
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
-    database = tmp_path / "yaml-contracts.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", database)
-    monkeypatch.setattr(workflow_journal, "_MIGRATED_PATHS", set())
+    WorkRepository(DatabaseTarget.from_settings("main")).initialize()
     workflow_journal.insert_run("yaml-run", "yaml", "{}", "{}", "running", "now", tier="yaml")
-    WorkRepository(database).initialize()
-    return database
+    return None
 
 
 def contract():
@@ -140,6 +194,30 @@ async def test_yaml_contract_commits_before_terminal_allocation(yaml_journal, mo
 
     assert len(observed) == 1
     assert observed[0]["call_fingerprint"]
+
+
+def test_yaml_current_contract_fence_uses_readonly_native_snapshot(yaml_journal, monkeypatch):
+    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+
+    fields = contract()["fields"]
+    attempt = workflow_journal.begin_yaml_step_with_contract(
+        "yaml-run", "step", "1", "now", "v2:stable", fields
+    )
+    real_read_snapshot = WorkRepository.read_snapshot
+    observed_targets: list[tuple[str, int, str, str, str]] = []
+
+    @contextmanager
+    def checked_read_snapshot(repository: WorkRepository) -> Iterator[Connection]:
+        with real_read_snapshot(repository) as connection:
+            assert connection.read_only
+            observed_targets.append(connection.target.identity)
+            yield connection
+
+    monkeypatch.setattr(WorkRepository, "read_snapshot", checked_read_snapshot)
+    workflow_journal.assert_yaml_step_contract_current(
+        "yaml-run", "step", "1", attempt, "v2:stable", fields
+    )
+    assert observed_targets == [DatabaseTarget.from_settings("main").identity]
 
 
 @pytest.mark.parametrize("stale", (None, "generation", "fingerprint", "attempt"))
@@ -217,10 +295,10 @@ def test_yaml_retry_rejects_a_changed_first_contract(yaml_journal):
     ["{}", '{"schema_version":null}', '{"schema_version":true}', '{"schema_version":"1"}'],
 )
 def test_database_rejects_missing_or_untyped_schema_version(journal, payload):
-    with sqlite3.connect(journal) as connection:
-        with pytest.raises(sqlite3.IntegrityError):
+    with workflow_journal._connect() as connection:
+        with pytest.raises(IntegrityError):
             connection.execute(
-                "INSERT INTO work_step_contracts VALUES ('run','step','1',1,?,'now')", (payload,)
+                "INSERT INTO work_step_contracts VALUES ('run','step','1',1,%s,'now')", (payload,)
             )
 
 
@@ -314,11 +392,12 @@ def test_reexecution_contract_accepts_the_unchanged_gate_snapshot(journal):
         "run", "step", "1", "delivery", contract(), expected_prior=expected_prior
     )
     assert number == 1
-    with sqlite3.connect(journal) as connection:
+    with workflow_journal._connect() as connection:
         stored = connection.execute("SELECT contract_json FROM work_step_contracts").fetchone()[0]
         assert json.loads(stored)["fields"]["timeout_seconds"]["value"] == 12
-        with pytest.raises(sqlite3.IntegrityError):
-            connection.execute("DELETE FROM work_step_contracts")
+        with pytest.raises(IntegrityError):
+            with connection.transaction():
+                connection.execute("DELETE FROM work_step_contracts")
     assert workflow_journal.get_step("run", "step").state == "running"
 
 
@@ -338,10 +417,83 @@ def test_unresolved_attempt_blocks_second_admission_and_terminal_retry_increment
     assert begin() == 2
 
 
+@pytest.mark.parametrize("tier", ["script", "yaml"])
+def test_concurrent_same_step_attempt_allocation_has_one_durable_winner(
+    journal, yaml_journal, monkeypatch, tier
+):
+    """Two real PostgreSQL transactions cannot allocate the same run-step attempt."""
+    run_id = "run" if tier == "script" else "yaml-run"
+    before_parent_read = Barrier(2)
+    original_connect = workflow_journal._connect
+
+    def connect_racing_attempts():
+        connection = original_connect()
+        original_execute = connection.execute
+        paused_parent_read = False
+
+        def execute_with_rendezvous(statement, params=(), *, prepare: bool | None = None):
+            nonlocal paused_parent_read
+            normalized = " ".join(str(statement).split())
+            if not paused_parent_read and normalized.startswith(
+                "SELECT generation,state,tier FROM workflow_run WHERE run_id=%s"
+            ):
+                paused_parent_read = True
+                before_parent_read.wait(timeout=10)
+                # Keep both PostgreSQL statement snapshots open together so the
+                # old unlocked allocator deterministically reads the same parent
+                # state. The rendezvous is before the parent lock; no thread waits
+                # after a row lock that the other contender needs.
+                statement = normalized.replace(
+                    " WHERE run_id=%s",
+                    " WHERE run_id=%s AND (SELECT 1 FROM (SELECT pg_sleep(0.25)) "
+                    "AS _race_pause)=1",
+                    1,
+                )
+            if prepare is None:
+                return original_execute(statement, params)
+            return original_execute(statement, params, prepare=prepare)
+
+        connection.execute = execute_with_rendezvous
+        return connection
+
+    monkeypatch.setattr(workflow_journal, "_connect", connect_racing_attempts)
+
+    def begin():
+        try:
+            if tier == "script":
+                return workflow_journal.begin_step_with_contract(
+                    run_id, "race-step", "1", "now", contract()
+                )
+            value = contract()
+            return workflow_journal.begin_yaml_step_with_contract(
+                run_id,
+                "race-step",
+                "1",
+                "now",
+                value["call_fingerprint"],
+                value["fields"],
+            )
+        except ValueError:
+            return "blocked"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(begin) for _ in range(2)]
+        results = [future.result(timeout=20) for future in futures]
+
+    assert sorted(results, key=str) == [1, "blocked"]
+    with workflow_journal._connect() as connection:
+        rows = connection.execute(
+            "SELECT attempt_number FROM work_step_contracts "
+            "WHERE run_id=%s AND step_id='race-step' AND generation='1'",
+            (run_id,),
+        ).fetchall()
+    assert [row[0] for row in rows] == [1]
+
+
 def test_stale_generation_and_cancelled_run_cannot_create_contract(journal):
     with pytest.raises(ValueError):
         workflow_journal.begin_step_with_contract("run", "step", "2", "now", contract())
-    with sqlite3.connect(journal) as connection:
+    with workflow_journal._connect() as connection:
         connection.execute("UPDATE workflow_run SET state='cancelled' WHERE run_id='run'")
     with pytest.raises(ValueError):
         workflow_journal.begin_step_with_contract("run", "step", "1", "now", contract())
@@ -353,21 +505,20 @@ def test_callback_cannot_adopt_a_new_generation_after_it_was_created(journal):
         {"CAO_WORKFLOW_RUN_ID": "run", "CAO_WORKFLOW_STEP_ID": "step"}
     )
     script_runner.run_registry["run"].generation = "2"
-    with sqlite3.connect(journal) as connection:
+    with workflow_journal._connect() as connection:
         connection.execute("UPDATE workflow_run SET generation='2' WHERE run_id='run'")
     with pytest.raises(ValueError):
         callback.record_contract("abc12345", "v2:identity", contract())
     assert workflow_journal.get_step("run", "step") is None
 
 
-def test_contract_insert_failure_rolls_back_running_row(journal):
-    with sqlite3.connect(journal) as connection:
-        connection.execute(
-            "CREATE TRIGGER refuse_contract BEFORE INSERT ON work_step_contracts BEGIN SELECT RAISE(ABORT,'refused'); END"
-        )
-    with pytest.raises(sqlite3.IntegrityError):
+def test_contract_insert_failure_rolls_back_running_row(journal, monkeypatch):
+    _reject_contract_insert(monkeypatch)
+    with pytest.raises(IntegrityError):
         workflow_journal.begin_step_with_contract("run", "step", "1", "now", contract())
     assert workflow_journal.get_step("run", "step") is None
+    with workflow_journal._connect() as connection:
+        assert connection.execute("SELECT count(*) FROM work_step_contracts").fetchone()[0] == 0
 
 
 @pytest.mark.parametrize("kind", ["timeout", "reconcile", None])
@@ -386,11 +537,9 @@ def test_cold_process_reads_frozen_contract_without_resolving_a_profile(journal)
         [
             sys.executable,
             "-c",
-            "import json,sys; from pathlib import Path; "
-            "from cli_agent_orchestrator import constants; constants.DATABASE_FILE=Path(sys.argv[1]); "
+            "import json; "
             "from cli_agent_orchestrator.services import workflow_journal as j; "
             "print(json.dumps(j.get_step_contract('run','step','1',1)))",
-            str(journal),
         ],
         capture_output=True,
         text=True,
@@ -407,18 +556,15 @@ def test_cold_recovery_rejects_an_unverified_contract_store(journal):
     reader and simply returns JSON from a modified database.
     """
     workflow_journal.begin_step_with_contract("run", "step", "1", "now", contract())
-    with sqlite3.connect(journal) as connection:
-        connection.execute("DROP TRIGGER work_step_contracts_immutable_update")
+    _drop_contract_immutability_trigger()
 
     result = subprocess.run(
         [
             sys.executable,
             "-c",
-            "import json,sys; from pathlib import Path; "
-            "from cli_agent_orchestrator import constants; constants.DATABASE_FILE=Path(sys.argv[1]); "
+            "import json; "
             "from cli_agent_orchestrator.services import workflow_journal as j; "
             "print(json.dumps(j.get_step_contract('run','step','1',1)))",
-            str(journal),
         ],
         capture_output=True,
         text=True,
@@ -526,19 +672,16 @@ async def test_real_step_hook_captures_authorized_values_before_delivery(
 
     async def create(*args, **kwargs):
         if failure_at_creation == "cancel":
-            with sqlite3.connect(journal) as connection:
+            with workflow_journal._connect() as connection:
                 connection.execute("UPDATE workflow_run SET state='cancelled' WHERE run_id='run'")
         elif failure_at_creation == "storage":
-            with sqlite3.connect(journal) as connection:
-                connection.execute(
-                    "CREATE TRIGGER reject_contract BEFORE INSERT ON work_step_contracts BEGIN SELECT RAISE(ABORT,'storage unavailable'); END"
-                )
+            _reject_contract_insert(monkeypatch)
         return SimpleNamespace(id="abc12345")
 
     delivered = []
 
     def send(*args, **kwargs):
-        with sqlite3.connect(journal) as connection:
+        with workflow_journal._connect() as connection:
             raw = connection.execute("SELECT contract_json FROM work_step_contracts").fetchone()[0]
         delivered.append(json.loads(raw))
         raise RuntimeError("stop after delivery boundary")
@@ -568,7 +711,7 @@ async def test_real_step_hook_captures_authorized_values_before_delivery(
         assert failure.value.kind == "contract_rejected"
         assert failure.value.delivery_may_have_occurred is False
         if failure_at_creation == "storage":
-            assert isinstance(failure.value.__cause__, sqlite3.IntegrityError)
+            assert isinstance(failure.value.__cause__, IntegrityError)
     else:
         assert delivered, repr(failure.value)
         captured = delivered[0]
@@ -603,7 +746,7 @@ async def test_pre_assignment_contract_uses_authorized_arguments_not_terminal_re
     captured = []
 
     def send(*args, **kwargs):
-        with sqlite3.connect(journal) as connection:
+        with workflow_journal._connect() as connection:
             captured.append(
                 json.loads(
                     connection.execute("SELECT contract_json FROM work_step_contracts").fetchone()[
@@ -692,7 +835,7 @@ async def test_reused_terminal_contract_keeps_creation_only_fields_not_applicabl
     captured = []
 
     def send(*args, **kwargs):
-        with sqlite3.connect(journal) as connection:
+        with workflow_journal._connect() as connection:
             captured.append(
                 json.loads(
                     connection.execute("SELECT contract_json FROM work_step_contracts").fetchone()[
@@ -743,11 +886,10 @@ async def test_reused_terminal_contract_keeps_creation_only_fields_not_applicabl
 def test_contract_admission_rejects_damaged_verified_work_schema(journal, damage):
     from cli_agent_orchestrator.clients.work_repository import SchemaMismatch
 
-    with sqlite3.connect(journal) as connection:
-        if damage == "trigger":
-            connection.execute("DROP TRIGGER work_step_contracts_immutable_update")
-        else:
-            connection.execute("UPDATE work_migrations SET checksum='damaged' WHERE version=4")
+    if damage == "trigger":
+        _drop_contract_immutability_trigger()
+    else:
+        _damage_work_migration_history()
     with pytest.raises(SchemaMismatch):
         workflow_journal.begin_step_with_contract("run", "step", "1", "now", contract())
     assert workflow_journal.get_step("run", "step") is None
@@ -777,15 +919,18 @@ async def test_change_during_readiness_wait_blocks_initial_delivery(journal, mon
     )
 
     async def ready(*args, **kwargs):
-        with sqlite3.connect(journal) as connection:
-            if change == "cancel":
-                connection.execute("UPDATE workflow_run SET state='cancelled' WHERE run_id='run'")
-            elif change == "generation":
-                connection.execute("UPDATE workflow_run SET generation='2' WHERE run_id='run'")
-            elif change == "trigger":
-                connection.execute("DROP TRIGGER work_step_contracts_immutable_update")
-            else:
-                connection.execute("UPDATE work_migrations SET checksum='damaged' WHERE version=4")
+        if change in {"cancel", "generation"}:
+            with workflow_journal._connect() as connection:
+                if change == "cancel":
+                    connection.execute(
+                        "UPDATE workflow_run SET state='cancelled' WHERE run_id='run'"
+                    )
+                else:
+                    connection.execute("UPDATE workflow_run SET generation='2' WHERE run_id='run'")
+        elif change == "trigger":
+            _drop_contract_immutability_trigger()
+        else:
+            _damage_work_migration_history()
         return True
 
     monkeypatch.setattr(agent_step, "wait_until_status", ready)
@@ -822,7 +967,7 @@ async def test_redelivery_guard_is_not_swallowed_after_cancel(journal, monkeypat
         {"CAO_WORKFLOW_RUN_ID": "run", "CAO_WORKFLOW_STEP_ID": "step"}
     )
     recorder.record_contract("abc12345", "v2:identity", contract())
-    with sqlite3.connect(journal) as connection:
+    with workflow_journal._connect() as connection:
         connection.execute("UPDATE workflow_run SET state='cancelled' WHERE run_id='run'")
     redelivered = []
     monkeypatch.setattr(agent_step, "_PROMPT_PICKUP_GRACE", 0)
@@ -864,9 +1009,9 @@ def test_work_claim_between_legacy_preflight_and_settle_is_preserved(
 
     def claim_after_read(run_id, step_id):
         observed = real_get(run_id, step_id)
-        with sqlite3.connect(journal) as connection:
+        with workflow_journal._connect() as connection:
             connection.execute(
-                "UPDATE workflow_run_step SET state='work_pending' WHERE run_id=? AND step_id=?",
+                "UPDATE workflow_run_step SET state='work_pending' WHERE run_id=%s AND step_id=%s",
                 (run_id, step_id),
             )
         return observed

@@ -8,6 +8,8 @@ import tempfile
 import uuid
 from pathlib import Path
 
+from cli_agent_orchestrator.clients.browser_auth_repository import BrowserAuthRepository
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.models.browser_auth import BrowserAuthError
 from cli_agent_orchestrator.services.browser_auth import BrowserAuthService
 
@@ -45,7 +47,16 @@ def setup_available(root, deployment=None):
     policy = deployment.get("browser_login")
     # Only an interrupted first creation is resumable. Disabled existing accounts
     # require the local recovery tool, never the browser setup route.
-    return (policy is None and not (Path(root) / "browser-auth.sqlite3").exists()) or (
+    try:
+        target = DatabaseTarget.from_settings(scope="auth", home=Path(root))
+        installation_id = policy.get("installation_id") if isinstance(policy, dict) else None
+        repository = BrowserAuthRepository(target, installation_id)
+        initialized = repository.store_initialized()
+    except Exception:
+        return False
+    if policy is None:
+        return not initialized
+    return (
         isinstance(policy, dict)
         and policy.get("provisioning_pending") is True
         and not policy.get("enabled")
@@ -123,7 +134,9 @@ def create_first_account(root, binding, username, password, remember, peer):
             raise BrowserAuthError("invalid_auth_request", 422)
         deployment["browser_login"] = policy
         _publish(root / "deployment.json", deployment)
-        service = BrowserAuthService(root / "browser-auth.sqlite3", binding, policy)
+        target = DatabaseTarget.from_settings(scope="auth", home=root)
+        service = BrowserAuthService(target, binding, policy)
+        service.initialize_store()
         try:
             service.create_account(username, password)
         except BrowserAuthError as error:

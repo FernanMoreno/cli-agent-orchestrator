@@ -75,7 +75,9 @@ def make_wiki_file(
 @pytest.fixture()
 def svc(tmp_path, isolated_memory_db):
     """MemoryService with persistent, isolated metadata and access audit."""
-    return MemoryService(base_dir=tmp_path, db_engine=isolated_memory_db)
+    from cli_agent_orchestrator.clients import database
+
+    return MemoryService(base_dir=tmp_path, db_engine=database.engine)
 
 
 # ---------------------------------------------------------------------------
@@ -265,12 +267,12 @@ class TestSearchMode:
             )
         )
 
-        # SQLite has no rows, so metadata returns nothing
+        # The database has no rows, so metadata returns nothing
         assert len(results) == 0
 
     def test_hybrid_mode_merges_results(self, svc, tmp_path):
-        """Hybrid should return SQLite matches + BM25 fill."""
-        # Store one via service (goes to SQLite + wiki) — global scope so no cwd required.
+        """Hybrid should return database matches + BM25 fill."""
+        # Store one via service (goes to PostgreSQL + wiki) — global scope so no cwd required.
         run_async(
             svc.store(
                 content="Use pytest-xdist for parallel tests",
@@ -281,7 +283,7 @@ class TestSearchMode:
                 terminal_context=None,
             )
         )
-        # Create another wiki file NOT in SQLite (simulates legacy)
+        # Create another wiki file without a metadata row.
         make_wiki_file(
             tmp_path,
             key="legacy-tip",
@@ -301,7 +303,7 @@ class TestSearchMode:
         )
 
         keys = [m.key for m in results]
-        # Should find both: SQLite match + BM25 content match
+        # Should find both: metadata match + BM25 content match
         assert "parallel-testing" in keys
         assert "legacy-tip" in keys
 

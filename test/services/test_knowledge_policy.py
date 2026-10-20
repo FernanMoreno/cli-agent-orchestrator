@@ -6,22 +6,27 @@ import time
 
 import pytest
 
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.security import auth
 from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
 
+pytestmark = pytest.mark.postgres
+
 
 @pytest.fixture
-def policy_context(tmp_path):
-    return lambda: _policy_context(tmp_path)
+def policy_context(tmp_path, postgres_targets):
+    bootstrap_scope(postgres_targets.main)
+    return lambda: _policy_context(postgres_targets.main)
 
 
-def _policy_context(tmp_path):
+def _policy_context(target):
     name = "cli_agent_orchestrator.services.knowledge_policy"
     assert importlib.util.find_spec(name), "knowledge authorization boundary is missing"
     module = importlib.import_module(name)
     owner = auth._verified_principal("https://issuer.test", "owner", [auth.SCOPE_ADMIN], "jwt")
-    repository = WorkRepository(tmp_path / "knowledge.db")
+    repository = WorkRepository(target)
     repository.initialize()
     job = repository.create_job(
         project_id="project",
@@ -118,7 +123,14 @@ def test_no_admin_bypass_for_unknown_scope_action_or_stale_revision(policy_conte
 
 def test_policy_refuses_a_transaction_from_another_store(policy_context, tmp_path):
     module, repository, owner, job, grant, authority, policy = policy_context()
-    other = WorkRepository(tmp_path / "other.db")
+    from dataclasses import replace
+    from uuid import uuid4
+
+    other_target = replace(
+        repository.target, schema=repository.target.schema + "_other", store_id=str(uuid4())
+    )
+    bootstrap_scope(other_target)
+    other = WorkRepository(other_target)
     other.initialize()
     with other.transaction() as connection:
         with pytest.raises(PermissionError):

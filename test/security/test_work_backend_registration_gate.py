@@ -85,7 +85,7 @@ def _candidate_backend(candidate, tmp_path, monkeypatch):
 
 def _admission_context(tmp_path, candidate, backend):
     root = tmp_path.resolve()
-    repository = WorkRepository(tmp_path / f"{candidate}.sqlite3")
+    repository = WorkRepository(tmp_path / f"{candidate}.db")
     repository.initialize()
     WorkScheduler(repository).configure(
         capacity=1, max_queue=4, aging_seconds=10, expected_policy_revision=0

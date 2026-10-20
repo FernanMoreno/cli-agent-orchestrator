@@ -120,6 +120,22 @@ class TestCodexProviderInitialization:
         with pytest.raises(TimeoutError, match="Codex initialization timed out"):
             await provider.initialize()
 
+    @pytest.mark.asyncio
+    @patch("cli_agent_orchestrator.providers.codex.get_backend")
+    async def test_trust_prompt_timeout_does_not_log_terminal_output(self, mock_backend, caplog):
+        terminal_output = "private prompt sentinel: café / 日本語"
+        mock_backend.return_value.get_history.return_value = terminal_output
+        provider = CodexProvider("test1234", "test-session", "window-0", None)
+
+        with caplog.at_level(logging.ERROR, logger="cli_agent_orchestrator.providers.codex"):
+            await provider._handle_trust_prompt(timeout=0.0)
+
+        assert caplog.records[-1].getMessage() == (
+            "Codex startup prompt handler timed out — no prompt or welcome banner detected."
+        )
+        assert terminal_output not in caplog.text
+        mock_backend.return_value.get_history.assert_not_called()
+
 
 class TestCodexBuildCommand:
     def test_build_command_no_profile(self):
@@ -1038,6 +1054,45 @@ class TestCodexProviderCodexConfig:
             "codex --yolo --no-alt-screen --disable shell_snapshot"
             " -c check_for_update_on_startup=false"
         )
+
+    @pytest.mark.parametrize(
+        "override",
+        [
+            {"mcp_servers.cao.command": "evil-mcp"},
+            {"mcp_servers.cao.env": {"CAO_INTERACTION_CAPABILITY_FILE": "/tmp/attacker"}},
+            {"mcp_servers.cao.env.CAO_INTERACTION_CAPABILITY_FILE": "/tmp/attacker"},
+        ],
+    )
+    @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
+    def test_codex_config_cannot_retarget_protected_interaction_mcp(self, mock_load, override):
+        mock_profile = MagicMock()
+        mock_profile.model = None
+        mock_profile.system_prompt = None
+        mock_profile.mcpServers = None
+        mock_profile.codexProfile = None
+        mock_profile.codexConfig = override
+        mock_load.return_value = mock_profile
+
+        provider = CodexProvider("tid", "sess", "win", "agent")
+        provider.set_interaction_capability_file("/private/runtime.cap")
+
+        with pytest.raises(ValueError, match="cannot override MCP configuration"):
+            provider._build_codex_command()
+
+    @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
+    def test_codex_config_keeps_legacy_mcp_overrides_without_runtime_capability(self, mock_load):
+        mock_profile = MagicMock()
+        mock_profile.model = None
+        mock_profile.system_prompt = None
+        mock_profile.mcpServers = None
+        mock_profile.codexProfile = None
+        mock_profile.codexConfig = {"mcp_servers.cao.command": "custom-mcp"}
+        mock_load.return_value = mock_profile
+
+        provider = CodexProvider("tid", "sess", "win", "agent")
+        command = provider._build_codex_command()
+
+        assert 'mcp_servers.cao.command="custom-mcp"' in command
 
     @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
     def test_codex_config_composes_with_mcp_and_model(self, mock_load):
@@ -4681,6 +4736,38 @@ class TestCodexNativeCwd:
         mock_load.return_value = profile
         provider = CodexProvider("test1234", "sess", "win-0", "agent")
         assert "mcp_servers.s.cwd=" not in provider._build_codex_command()
+
+
+class TestCodexMcpEnabledTools:
+    @patch("cli_agent_orchestrator.providers.codex.load_agent_profile")
+    def test_enabled_tools_allowlist_is_emitted(self, mock_load):
+        profile = MagicMock()
+        profile.model = None
+        profile.system_prompt = ""
+        profile.codexProfile = None
+        profile.codexConfig = None
+        profile.mcpServers = {
+            "cao-mcp-server": {
+                "command": "python",
+                "args": ["-m", "cli_agent_orchestrator.mcp_server.server"],
+                "enabled_tools": [
+                    "cao_ask_user",
+                    "cao_wait_for_user_answers",
+                    "cao_acknowledge_user_answers",
+                ],
+            }
+        }
+        mock_load.return_value = profile
+
+        provider = CodexProvider("test1234", "sess", "win-0", "agent")
+        provider.set_interaction_capability_file("/private/runtime.cap")
+
+        command = provider._build_codex_command()
+
+        assert (
+            'mcp_servers.cao-mcp-server.enabled_tools=["cao_ask_user", '
+            '"cao_wait_for_user_answers", "cao_acknowledge_user_answers"]'
+        ) in command
 
 
 class TestCodexV0159TrustDialog:

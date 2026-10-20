@@ -1,19 +1,16 @@
 """U7 DELETE-route tests — explicit per-run deletion (issue #504, FR-11 / NFR-SEC-5).
 
-Exercises ``DELETE /workflows/runs/{run_id}`` over a REAL durable journal (temp
-SQLite DB): a delete removes the run and all its retained data so the U3 inspect /
+Exercises ``DELETE /workflows/runs/{run_id}`` over a REAL durable journal (isolated
+PostgreSQL target): a delete removes the run and all its retained data so the U3 inspect /
 events reads return not-found/empty afterward (BR-SEC-5), and an unknown-id delete
 is a well-defined no-op that never faults other reads (BR-3). The route-ordering pin
 (this path resolves to the delete handler, not the ``/workflows/{name}`` catch-all)
 lives in ``test_workflow_route_ordering.py``.
 
-The journal points at a temp DB via the patched ``DATABASE_FILE`` and a clean
-registry, mirroring ``test_workflow_inspection_replay.py``.
+Each test uses the shared isolated PostgreSQL target and a clean registry.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
@@ -27,14 +24,9 @@ _SPEC = WorkflowSpec(
 
 
 @pytest.fixture(autouse=True)
-def _isolated_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Fresh temp journal DB + clean registry/migration memo for each test."""
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    workflow_journal._event_migrated_paths.clear()
+def _isolated_journal(isolated_memory_db, monkeypatch: pytest.MonkeyPatch):
+    """Use the shared isolated PostgreSQL target and clear the process cache."""
     monkeypatch.setattr(workflow_service, "run_registry", {})
-    yield db_path
-    workflow_journal._event_migrated_paths.clear()
 
 
 def _seed_run(run_id: str = "r1") -> None:

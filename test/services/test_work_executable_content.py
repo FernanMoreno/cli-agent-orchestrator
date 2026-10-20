@@ -10,7 +10,9 @@ from test.services.test_work_contract_binding import bind, context
 from test.services.test_work_executable_staging import _minimal_static_elf
 
 import pytest
+from psycopg import sql
 
+from cli_agent_orchestrator.clients.postgres import IntegrityError, connect
 from cli_agent_orchestrator.security import auth
 from cli_agent_orchestrator.services.step_output_store import ImmutableResultStore
 from cli_agent_orchestrator.services.work_authority import WorkAuthority
@@ -18,6 +20,24 @@ from cli_agent_orchestrator.services.work_elf_identity import identify_static_ex
 from cli_agent_orchestrator.services.work_executable_staging import (
     WorkExecutableStagingUnavailable,
 )
+
+
+@contextmanager
+def mutable_catalog(repo, table, trigger):
+    with connect(repo.target.migration_target()) as connection:
+        connection.execute(
+            sql.SQL("ALTER TABLE {} DISABLE TRIGGER {}").format(
+                sql.Identifier(table), sql.Identifier(trigger)
+            )
+        )
+        try:
+            yield connection
+        finally:
+            connection.execute(
+                sql.SQL("ALTER TABLE {} ENABLE TRIGGER {}").format(
+                    sql.Identifier(table), sql.Identifier(trigger)
+                )
+            )
 
 
 def executable_content_module():
@@ -86,16 +106,13 @@ def test_publish_rejects_conflicting_catalog_metadata(tmp_path):
     repo, _, identity, content = bound_v2(tmp_path)
     service = module.WorkExecutableContent(repo)
     service.publish(identity, content)
-    with repo.connection() as connection:
-        trigger = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE name='work_executable_contents_immutable_update'"
-        ).fetchone()[0]
-        connection.execute("DROP TRIGGER work_executable_contents_immutable_update")
+    with mutable_catalog(
+        repo, "work_executable_contents", "work_executable_contents_immutable_update"
+    ) as connection:
         connection.execute(
-            "UPDATE work_executable_contents SET byte_length=byte_length+1 WHERE content_hash=?",
+            "UPDATE work_executable_contents SET byte_length=byte_length+1 WHERE content_hash=%s",
             (identity.sha256_digest,),
         )
-        connection.execute(trigger)
     with pytest.raises(ValueError, match="catalog conflicts"):
         service.publish(identity, content)
     assert (repo.executable_content_root / identity.sha256_digest).read_bytes() == content
@@ -176,14 +193,14 @@ def test_resolve_rejects_stale_authority_before_content_read_or_stage(tmp_path, 
             connection.execute(
                 "INSERT INTO work_attempts(id,work_item_id,attempt_number,generation,"
                 "provider,lease_expires_at,created_at) "
-                "SELECT 'replacement',work_item_id,2,2,provider,?,? "
-                "FROM work_attempts WHERE id=?",
+                "SELECT 'replacement',work_item_id,2,2,provider,%s,%s "
+                "FROM work_attempts WHERE id=%s",
                 (time.time() + 300, time.time(), binding.attempt_id),
             )
     else:
         with repo.transaction() as connection:
             connection.execute(
-                "UPDATE work_attempts SET state='finished' WHERE id=?",
+                "UPDATE work_attempts SET state='finished' WHERE id=%s",
                 (binding.attempt_id,),
             )
 
@@ -223,24 +240,31 @@ def test_resolve_rejects_missing_and_corrupt_catalog_or_content(tmp_path, damage
     with pytest.raises(ValueError):
         service.resolve_and_stage(binding.attempt_id, 1, identity.command_token)
     service.publish(identity, content)
-    with repo.connection() as connection:
-        trigger = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE name='work_executable_contents_immutable_update'"
-        ).fetchone()[0]
-        connection.execute("DROP TRIGGER work_executable_contents_immutable_update")
+    with mutable_catalog(
+        repo, "work_executable_contents", "work_executable_contents_immutable_update"
+    ) as connection:
         if damage == "size":
             connection.execute(
                 "UPDATE work_executable_contents SET byte_length=byte_length+1 "
-                "WHERE content_hash=?",
+                "WHERE content_hash=%s",
                 (identity.sha256_digest,),
             )
         else:
-            connection.execute("PRAGMA ignore_check_constraints=ON")
-            connection.execute(
-                "UPDATE work_executable_contents SET immutable_location=? WHERE content_hash=?",
-                ("f" * 64, identity.sha256_digest),
+            with pytest.raises(IntegrityError):
+                connection.execute(
+                    "UPDATE work_executable_contents SET immutable_location=%s WHERE content_hash=%s",
+                    ("f" * 64, identity.sha256_digest),
+                )
+    if damage == "location":
+        # PostgreSQL rejects a forged content location at the first boundary.
+        with repo.read_snapshot() as connection:
+            assert (
+                connection.execute(
+                    "SELECT immutable_location FROM work_executable_contents"
+                ).fetchone()[0]
+                == identity.sha256_digest
             )
-        connection.execute(trigger)
+        return
     with pytest.raises(ValueError):
         service.resolve_and_stage(binding.attempt_id, 1, identity.command_token)
 
@@ -250,17 +274,14 @@ def test_resolve_rejects_noncanonical_v2_evidence(tmp_path):
     repo, binding, identity, content = bound_v2(tmp_path)
     service = module.WorkExecutableContent(repo)
     service.publish(identity, content)
-    with repo.connection() as connection:
-        trigger = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE name='work_dispatch_v2_evidence_immutable_update'"
-        ).fetchone()[0]
-        connection.execute("DROP TRIGGER work_dispatch_v2_evidence_immutable_update")
+    with mutable_catalog(
+        repo, "work_dispatch_v2_evidence", "work_dispatch_v2_evidence_immutable_update"
+    ) as connection:
         connection.execute(
             "UPDATE work_dispatch_v2_evidence SET contract_json=contract_json||' ' "
-            "WHERE attempt_id=?",
+            "WHERE attempt_id=%s",
             (binding.attempt_id,),
         )
-        connection.execute(trigger)
     with pytest.raises(ValueError, match="canonical"):
         service.resolve_and_stage(binding.attempt_id, 1, identity.command_token)
 
@@ -278,3 +299,18 @@ def test_resolve_rejects_missing_or_changed_file(tmp_path):
     os.chmod(path, 0o600)
     with pytest.raises(ValueError):
         service.resolve_and_stage(binding.attempt_id, 1, identity.command_token)
+
+
+def test_concurrent_publish_keeps_one_matching_native_catalog_row(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    module = executable_content_module()
+    repo, _, identity, content = bound_v2(tmp_path)
+    service = module.WorkExecutableContent(repo)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        refs = list(workers.map(lambda _: service.publish(identity, content), range(2)))
+    assert refs[0] == refs[1]
+    with repo.read_snapshot() as connection:
+        assert (
+            connection.execute("SELECT count(*) FROM work_executable_contents").fetchone()[0] == 1
+        )

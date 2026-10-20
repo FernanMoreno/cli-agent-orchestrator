@@ -3,7 +3,7 @@
 import asyncio
 import hashlib
 import importlib
-import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -11,12 +11,14 @@ from types import SimpleNamespace
 import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
+from psycopg import sql
 
 from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.api import main
 from cli_agent_orchestrator.backends import work_registry
 from cli_agent_orchestrator.backends.herdr_backend import HerdrBackend
 from cli_agent_orchestrator.backends.tmux_backend import TmuxBackend
+from cli_agent_orchestrator.clients.postgres import connect
 from cli_agent_orchestrator.clients.work_repository import SchemaMismatch, WorkRepository
 from cli_agent_orchestrator.models.work_contract import (
     ContractPermissions,
@@ -178,7 +180,7 @@ def _provisioned_launch(repository, root, *, backend):
 
 
 def _install_lifespan_sandbox(monkeypatch):
-    """Keep composition tests inside one temporary SQLite store and no providers."""
+    """Keep composition tests inside one temporary PostgreSQL store and no providers."""
     calls = []
 
     async def never_returns(*args):
@@ -243,7 +245,7 @@ def composed_server(tmp_path, monkeypatch):
     monkeypatch.setenv("CAO_ENABLE_PUBLIC_WORK_INGRESS", "true")
     monkeypatch.delenv("CAO_WORK_DOCKER_LOCAL", raising=False)
     monkeypatch.delenv("CAO_WORK_DOCKER_IMAGE_ID", raising=False)
-    repository = WorkRepository(tmp_path / "composition.sqlite3")
+    repository = WorkRepository(tmp_path / "composition-store")
     repository.initialize()
     calls = _install_lifespan_sandbox(monkeypatch)
     monkeypatch.setattr(constants, "DATABASE_FILE", repository.path)
@@ -309,7 +311,7 @@ def test_lifespan_passes_repository_aware_local_backends_to_gateway(composed_ser
         pass
 
     assert len(configured_repositories) == 1
-    assert configured_repositories[0].path == composed_server.repository.path
+    assert configured_repositories[0].target.identity == composed_server.repository.target.identity
     assert len(builder_inputs) == 1
     repository, backends = builder_inputs[0]
     assert repository is configured_repositories[0]
@@ -411,7 +413,20 @@ def test_lifespan_admits_queued_work_only_through_the_exact_registered_backend(
     monkeypatch.setattr(work_registry, "WORK_BACKENDS", {"exact": backend})
     grants_before = _public_authority_counts(composed_server.repository)[0]
 
+    dispatcher_started = threading.Event()
+    dispatcher_release = asyncio.Event()
+
+    async def hold_registered_dispatcher(_gateway):
+        dispatcher_started.set()
+        await dispatcher_release.wait()
+
+    # This test asserts only the HTTP admission boundary. Keep the independently
+    # composed lifespan dispatcher behind an event until teardown; dispatch-focused
+    # tests exercise its real queue-consumption path.
+    monkeypatch.setattr(main, "_run_registered_work_dispatcher", hold_registered_dispatcher)
+
     with _client_for(principal) as client:
+        assert dispatcher_started.wait(timeout=5)
         response = client.post("/work-launches", json=_launch_body())
 
     assert composed_server.calls == ["init_db", "get_backend"]
@@ -558,6 +573,15 @@ def test_lifespan_composes_omitted_selection_through_durable_work_only(
         composed_server.repository, composed_server.root, backend="exact"
     )
     monkeypatch.setattr(work_registry, "WORK_BACKENDS", {"exact": backend})
+
+    async def hold_registered_dispatcher(_gateway):
+        await asyncio.Future()
+
+    # This test proves the HTTP admission boundary only. The application
+    # lifespan's independent dispatcher is exercised by dispatch-focused tests;
+    # letting it race this request adds a second preflight and may run the
+    # admitted order before these queue-only assertions complete.
+    monkeypatch.setattr(main, "_run_registered_work_dispatcher", hold_registered_dispatcher)
     legacy_session_calls = []
 
     async def record_legacy_session_call(**kwargs):
@@ -580,22 +604,23 @@ def test_lifespan_composes_omitted_selection_through_durable_work_only(
     assert legacy_session_calls == []
 
 
-def test_lifespan_refuses_to_yield_when_the_work_schema_is_corrupt(tmp_path, monkeypatch):
+@pytest.mark.postgres
+def test_lifespan_refuses_to_yield_when_the_work_schema_is_corrupt(
+    tmp_path, monkeypatch, postgres_core
+):
     """Breaks if a malformed Work store can serve before startup validation."""
-    database_path = tmp_path / "corrupt.sqlite3"
-    with sqlite3.connect(database_path) as connection:
-        connection.execute("CREATE TABLE work_items (id INTEGER PRIMARY KEY)")
+    corrupt_target = postgres_core
     calls = _install_lifespan_sandbox(monkeypatch)
-    monkeypatch.setattr(constants, "DATABASE_FILE", database_path)
+    monkeypatch.setattr(constants, "DATABASE_FILE", tmp_path / "corrupt-store")
     monkeypatch.setattr(work_registry, "WORK_BACKENDS", {})
 
     def initialize_corrupt_work_store():
         calls.append("init_db")
-        WorkRepository(database_path).initialize()
+        WorkRepository(corrupt_target).initialize()
 
     monkeypatch.setattr(main, "init_db", initialize_corrupt_work_store)
 
-    with pytest.raises(SchemaMismatch, match="work migration ledger is missing or modified"):
+    with pytest.raises(SchemaMismatch, match="component migration history mismatch"):
         with TestClient(main.app, base_url="http://localhost"):
             pass
 
@@ -610,15 +635,19 @@ def test_lifespan_gateway_factory_rejects_schema_corruption_after_init_db(
 
     def corrupt_schema_then_build(repository, *, backends):
         composed_server.calls.append("build_gateway")
-        with sqlite3.connect(repository.path) as connection:
-            connection.execute("DROP TABLE work_migrations")
+        with connect(repository.target.migration_target()) as connection:
+            connection.execute(
+                sql.SQL("DROP TABLE {}.{} CASCADE").format(
+                    sql.Identifier(repository.target.schema), sql.Identifier("work_store_control")
+                )
+            )
         return real_builder(repository, backends=backends)
 
     monkeypatch.setattr(
         work_launch_gateway, "build_durable_launch_gateway", corrupt_schema_then_build
     )
 
-    with pytest.raises(SchemaMismatch, match="work schema is incomplete, incompatible or modified"):
+    with pytest.raises(SchemaMismatch, match="component tables are missing"):
         with TestClient(main.app, base_url="http://localhost"):
             pytest.fail("lifespan must not yield after gateway schema verification fails")
 
@@ -800,7 +829,7 @@ async def test_lifespan_cleans_started_resources_when_gateway_composition_fails(
         cleanup_hooks.append("registry_teardown")
 
     def fail_gateway_builder(repository, *, backends):
-        assert repository.path == composed_server.repository.path
+        assert repository.target.identity == composed_server.repository.target.identity
         assert backends == work_registry.WORK_BACKENDS
         assert backends is not work_registry.WORK_BACKENDS
         composed_server.calls.append("build_gateway")

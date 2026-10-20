@@ -1,7 +1,8 @@
-"""Late observer crosses real provider receipt extraction and SQLite settlement."""
+"""Late observer crosses real provider receipt extraction and database settlement."""
 
 import asyncio
 import re
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -47,8 +48,8 @@ async def test_candidate_store_outage_does_not_permanently_stop_observer(monkeyp
 
 @pytest.mark.parametrize("authentic", [True, False])
 def test_restored_codex_late_evidence_requires_exact_receipt(tmp_path, monkeypatch, authentic):
-    path = tmp_path / "late-review.sqlite"
-    engine = create_engine(f"sqlite:///{path}")
+    path = tmp_path / "late-review.db"
+    engine = configured_orm_engine()
     db.Base.metadata.create_all(engine)
     monkeypatch.setattr(db, "SessionLocal", sessionmaker(bind=engine))
     monkeypatch.setattr(constants, "DATABASE_FILE", path)

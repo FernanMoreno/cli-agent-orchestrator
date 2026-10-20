@@ -53,6 +53,7 @@ class TestCreateTerminalCleanup:
 
         mock_tmux.session_exists.return_value = False
         mock_tmux.create_session.return_value = "w1"
+        mock_tmux.supports_event_inbox.return_value = False
         mock_load_profile.return_value = AgentProfile(name="dev", description="Dev")
 
         mock_provider = MagicMock()
@@ -75,6 +76,8 @@ class TestCreateTerminalCleanup:
         mock_pm.cleanup_provider.assert_called_once_with("tid1")
         mock_tmux.kill_session.assert_called_once()
         assert lifecycle == ["kill", "cleanup"]
+        call_names = [call[0] for call in mock_tmux.mock_calls]
+        assert call_names.index("stop_pipe_pane") < call_names.index("kill_session")
         mock_db_delete.assert_called_once_with("tid1")
 
     @pytest.mark.asyncio
@@ -482,6 +485,8 @@ class TestDeleteTerminal:
         assert result is True
         mock_tmux.stop_pipe_pane.assert_called_once_with("ses", "win")
         mock_tmux.kill_window.assert_called_once_with("ses", "win")
+        call_names = [call[0] for call in mock_tmux.mock_calls]
+        assert call_names.index("stop_pipe_pane") < call_names.index("kill_window")
         mock_pm.cleanup_provider.assert_called_once_with("tid1")
 
     @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal", return_value=True)

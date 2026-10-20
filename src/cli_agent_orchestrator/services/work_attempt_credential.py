@@ -7,11 +7,11 @@ import hashlib
 import hmac
 import os
 import secrets
-import sqlite3
 import stat
 import time
 from dataclasses import dataclass, field
 
+from cli_agent_orchestrator.clients.postgres import Connection, IntegrityError
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.services.work_authority import AuthorityDenied
 from cli_agent_orchestrator.services.work_contract import ContractConflict, WorkContracts
@@ -106,22 +106,19 @@ class WorkAttemptCredentials:
 
         return self.origins or WorkOrigins(self.repository)
 
-    @staticmethod
-    def _require_transaction(connection: sqlite3.Connection) -> None:
-        if not isinstance(connection, sqlite3.Connection) or not connection.in_transaction:
+    def _require_transaction(self, connection: Connection) -> None:
+        if (
+            not isinstance(connection, Connection)
+            or not connection.in_transaction
+            or connection.target.identity != self.repository.target.identity
+        ):
             raise WorkAttemptCredentialRejected(
-                "credential operation requires a caller transaction"
+                "credential operation requires a transaction on this Work target"
             )
-        main = next(
-            (row[2] for row in connection.execute("PRAGMA database_list") if row[1] == "main"),
-            None,
-        )
-        if not main:
-            raise WorkAttemptCredentialRejected("credential store is unavailable")
 
     def issue_in_transaction(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         binding,
         *,
         expected_attempt_revision: int,
@@ -145,7 +142,8 @@ class WorkAttemptCredentials:
                 "attempt binding is not currently authorized"
             ) from error
         attempt = connection.execute(
-            "SELECT state,revision,lease_expires_at FROM work_attempts WHERE id=? AND generation=?",
+            "SELECT state,revision,lease_expires_at FROM work_attempts "
+            "WHERE id=%s AND generation=%s FOR UPDATE",
             (binding.attempt_id, binding.generation),
         ).fetchone()
         if (
@@ -164,7 +162,7 @@ class WorkAttemptCredentials:
         workflow_receiver_binding = None
         receiver_origin = connection.execute(
             "SELECT * FROM work_child_origin_bindings "
-            "WHERE child_attempt_id=? AND child_generation=?",
+            "WHERE child_attempt_id=%s AND child_generation=%s",
             (binding.attempt_id, binding.generation),
         ).fetchone()
         if receiver_origin is not None:
@@ -191,82 +189,93 @@ class WorkAttemptCredentials:
                 )
                 receiver_secret = secrets.token_bytes(32)
         try:
-            connection.execute(
-                """INSERT INTO work_attempt_credentials
-                   (attempt_id,generation,job_id,work_item_id,principal_id,grant_id,
-                    grant_revision,installation_uuid,contract_hash,attempt_revision,
-                    lease_expires_at,expires_at,credential_sha256,issued_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    binding.attempt_id,
-                    binding.generation,
-                    binding.job_id,
-                    binding.work_item_id,
-                    binding.principal_id,
-                    binding.grant_id,
-                    binding.grant_revision,
-                    recovery.installation_uuid,
-                    binding.contract_hash,
-                    expected_attempt_revision,
-                    attempt["lease_expires_at"],
-                    expires_at,
-                    digest,
-                    issued_at,
-                ),
-            )
-            if receiver_origin is not None and receiver_secret is not None:
-                connection.execute(
-                    """INSERT INTO work_task_receiver_credentials
-                       (attempt_id,generation,job_id,work_item_id,receiver_subject_id,
-                        receiver_subject_revision,receiver_authorization_revision,
-                        receiver_grant_id,receiver_grant_revision,installation_uuid,
-                        attempt_revision,lease_expires_at,expires_at,delivery_id,
-                        delivery_hash,credential_sha256,issued_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            with connection.transaction():
+                inserted = connection.execute(
+                    """INSERT INTO work_attempt_credentials
+                       (attempt_id,generation,job_id,work_item_id,principal_id,grant_id,
+                        grant_revision,installation_uuid,contract_hash,attempt_revision,
+                        lease_expires_at,expires_at,credential_sha256,issued_at)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       ON CONFLICT DO NOTHING RETURNING attempt_id""",
                     (
                         binding.attempt_id,
                         binding.generation,
                         binding.job_id,
                         binding.work_item_id,
-                        receiver_origin["receiver_subject_id"],
-                        receiver_origin["receiver_subject_revision"],
-                        receiver_origin["receiver_authorization_revision"],
-                        receiver_origin["receiver_grant_id"],
-                        receiver_origin["receiver_grant_revision"],
+                        binding.principal_id,
+                        binding.grant_id,
+                        binding.grant_revision,
                         recovery.installation_uuid,
+                        binding.contract_hash,
                         expected_attempt_revision,
                         attempt["lease_expires_at"],
                         expires_at,
-                        receiver_origin["delivery_id"],
-                        receiver_origin["delivery_hash"],
-                        hashlib.sha256(receiver_secret).hexdigest(),
+                        digest,
                         issued_at,
                     ),
-                )
-            elif workflow_receiver_binding is not None and receiver_secret is not None:
-                self.repository._record_workflow_step_receiver_credential(
-                    connection,
-                    binding_id=workflow_receiver_binding.binding_id,
-                    attempt_id=binding.attempt_id,
-                    generation=binding.generation,
-                    schema_version=1,
-                    job_id=binding.job_id,
-                    work_item_id=binding.work_item_id,
-                    receiver_subject_id=workflow_receiver_binding.receiver_subject_ref.subject_id,
-                    receiver_subject_revision=workflow_receiver_binding.receiver_subject_ref.revision,
-                    receiver_authorization_revision=workflow_receiver_binding.receiver_authorization_ref.revision,
-                    receiver_grant_id=workflow_receiver_binding.receiver_grant_id,
-                    receiver_grant_revision=workflow_receiver_binding.receiver_grant_revision,
-                    installation_uuid=recovery.installation_uuid,
-                    attempt_revision=expected_attempt_revision,
-                    lease_expires_at=attempt["lease_expires_at"],
-                    expires_at=expires_at,
-                    delivery_id=workflow_receiver_binding.delivery_id,
-                    delivery_hash=workflow_receiver_binding.delivery_hash,
-                    credential_sha256=hashlib.sha256(receiver_secret).hexdigest(),
-                    issued_at=issued_at,
-                )
-        except sqlite3.IntegrityError as error:
+                ).fetchone()
+                if inserted is None:
+                    raise WorkAttemptCredentialConflict(
+                        "attempt or receiver credential issue is already consumed"
+                    )
+                if receiver_origin is not None and receiver_secret is not None:
+                    inserted_receiver = connection.execute(
+                        """INSERT INTO work_task_receiver_credentials
+                           (attempt_id,generation,job_id,work_item_id,receiver_subject_id,
+                            receiver_subject_revision,receiver_authorization_revision,
+                            receiver_grant_id,receiver_grant_revision,installation_uuid,
+                            attempt_revision,lease_expires_at,expires_at,delivery_id,
+                            delivery_hash,credential_sha256,issued_at)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                           ON CONFLICT DO NOTHING RETURNING attempt_id""",
+                        (
+                            binding.attempt_id,
+                            binding.generation,
+                            binding.job_id,
+                            binding.work_item_id,
+                            receiver_origin["receiver_subject_id"],
+                            receiver_origin["receiver_subject_revision"],
+                            receiver_origin["receiver_authorization_revision"],
+                            receiver_origin["receiver_grant_id"],
+                            receiver_origin["receiver_grant_revision"],
+                            recovery.installation_uuid,
+                            expected_attempt_revision,
+                            attempt["lease_expires_at"],
+                            expires_at,
+                            receiver_origin["delivery_id"],
+                            receiver_origin["delivery_hash"],
+                            hashlib.sha256(receiver_secret).hexdigest(),
+                            issued_at,
+                        ),
+                    ).fetchone()
+                    if inserted_receiver is None:
+                        raise WorkAttemptCredentialConflict(
+                            "attempt or receiver credential issue is already consumed"
+                        )
+                elif workflow_receiver_binding is not None and receiver_secret is not None:
+                    self.repository._record_workflow_step_receiver_credential(
+                        connection,
+                        binding_id=workflow_receiver_binding.binding_id,
+                        attempt_id=binding.attempt_id,
+                        generation=binding.generation,
+                        schema_version=1,
+                        job_id=binding.job_id,
+                        work_item_id=binding.work_item_id,
+                        receiver_subject_id=workflow_receiver_binding.receiver_subject_ref.subject_id,
+                        receiver_subject_revision=workflow_receiver_binding.receiver_subject_ref.revision,
+                        receiver_authorization_revision=workflow_receiver_binding.receiver_authorization_ref.revision,
+                        receiver_grant_id=workflow_receiver_binding.receiver_grant_id,
+                        receiver_grant_revision=workflow_receiver_binding.receiver_grant_revision,
+                        installation_uuid=recovery.installation_uuid,
+                        attempt_revision=expected_attempt_revision,
+                        lease_expires_at=attempt["lease_expires_at"],
+                        expires_at=expires_at,
+                        delivery_id=workflow_receiver_binding.delivery_id,
+                        delivery_hash=workflow_receiver_binding.delivery_hash,
+                        credential_sha256=hashlib.sha256(receiver_secret).hexdigest(),
+                        issued_at=issued_at,
+                    )
+        except IntegrityError as error:
             raise WorkAttemptCredentialConflict(
                 "attempt or receiver credential issue is already consumed or invalid"
             ) from error
@@ -280,7 +289,7 @@ class WorkAttemptCredentials:
 
     def authenticate_in_transaction(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         secret: bytes,
         *,
         now: float | None = None,
@@ -299,7 +308,7 @@ class WorkAttemptCredentials:
 
     def authenticate_digest_in_transaction(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         digest: str,
         *,
         now: float | None = None,
@@ -318,7 +327,7 @@ class WorkAttemptCredentials:
             raise WorkAttemptCredentialRejected("attempt credential time is invalid")
         self.repository._verify(connection)
         row = connection.execute(
-            "SELECT * FROM work_attempt_credentials WHERE credential_sha256=?", (digest,)
+            "SELECT * FROM work_attempt_credentials WHERE credential_sha256=%s", (digest,)
         ).fetchone()
         if row is None or not hmac.compare_digest(row["credential_sha256"], digest):
             raise WorkAttemptCredentialRejected("attempt credential is unknown")
@@ -332,7 +341,7 @@ class WorkAttemptCredentials:
                 "attempt credential authority is no longer live"
             ) from error
         attempt = connection.execute(
-            "SELECT state,revision,lease_expires_at FROM work_attempts WHERE id=? AND generation=?",
+            "SELECT state,revision,lease_expires_at FROM work_attempts WHERE id=%s AND generation=%s",
             (row["attempt_id"], row["generation"]),
         ).fetchone()
         if (
@@ -371,7 +380,7 @@ class WorkAttemptCredentials:
 
     def authenticate_receiver_in_transaction(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         secret: bytes,
         *,
         now: float | None = None,
@@ -387,7 +396,7 @@ class WorkAttemptCredentials:
             raise WorkAttemptCredentialRejected("receiver credential time is invalid")
         self.repository._verify(connection)
         row = connection.execute(
-            "SELECT * FROM work_task_receiver_credentials WHERE credential_sha256=?",
+            "SELECT * FROM work_task_receiver_credentials WHERE credential_sha256=%s",
             (digest,),
         ).fetchone()
         if row is None:
@@ -401,7 +410,7 @@ class WorkAttemptCredentials:
             raise WorkAttemptCredentialRejected("receiver credential is unknown")
         attempt_row = connection.execute(
             "SELECT credential_sha256 FROM work_attempt_credentials "
-            "WHERE attempt_id=? AND generation=?",
+            "WHERE attempt_id=%s AND generation=%s",
             (row["attempt_id"], row["generation"]),
         ).fetchone()
         if attempt_row is None:
@@ -413,15 +422,15 @@ class WorkAttemptCredentials:
             allow_finished=allow_finished,
         )
         origin = connection.execute(
-            "SELECT * FROM work_child_origin_bindings WHERE child_attempt_id=? "
-            "AND child_generation=?",
+            "SELECT * FROM work_child_origin_bindings WHERE child_attempt_id=%s "
+            "AND child_generation=%s",
             (row["attempt_id"], row["generation"]),
         ).fetchone()
         if origin is None:
             raise WorkAttemptCredentialRejected("receiver lineage binding is unavailable")
         live_attempt = connection.execute(
             "SELECT state,revision,lease_expires_at FROM work_attempts "
-            "WHERE id=? AND generation=?",
+            "WHERE id=%s AND generation=%s",
             (row["attempt_id"], row["generation"]),
         ).fetchone()
         try:
@@ -479,21 +488,21 @@ class WorkAttemptCredentials:
 
     def _authenticate_workflow_receiver_in_transaction(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         digest: str,
         *,
         checked_at: float,
         allow_finished: bool,
     ) -> WorkTaskReceiverCredentialContext:
         row = connection.execute(
-            "SELECT * FROM work_workflow_step_receiver_credentials " "WHERE credential_sha256=?",
+            "SELECT * FROM work_workflow_step_receiver_credentials " "WHERE credential_sha256=%s",
             (digest,),
         ).fetchone()
         if row is None or not hmac.compare_digest(row["credential_sha256"], digest):
             raise WorkAttemptCredentialRejected("receiver credential is unknown")
         attempt_row = connection.execute(
             "SELECT credential_sha256 FROM work_attempt_credentials "
-            "WHERE attempt_id=? AND generation=?",
+            "WHERE attempt_id=%s AND generation=%s",
             (row["attempt_id"], row["generation"]),
         ).fetchone()
         if attempt_row is None:
@@ -530,7 +539,7 @@ class WorkAttemptCredentials:
             ) from error
         live_attempt = connection.execute(
             "SELECT state,revision,lease_expires_at FROM work_attempts "
-            "WHERE id=? AND generation=?",
+            "WHERE id=%s AND generation=%s",
             (row["attempt_id"], row["generation"]),
         ).fetchone()
         allowed_states = {"sent", "acknowledged", "running"}

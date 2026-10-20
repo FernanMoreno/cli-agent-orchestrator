@@ -32,6 +32,15 @@ from cli_agent_orchestrator.services.work_origin import WorkOrigins
 from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
 from cli_agent_orchestrator.services.work_scheduler import WorkScheduler
 
+pytestmark = pytest.mark.postgres
+
+
+@pytest.fixture(autouse=True)
+def _provision_work_postgres_schema(postgres_targets):
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
+
+    bootstrap_scope(postgres_targets.main)
+
 
 def runtime_module():
     """Keep RED a test failure while the internal runtime does not exist yet."""
@@ -41,7 +50,7 @@ def runtime_module():
 
 
 def test_launch_runtime_pairs_origin_admission_and_receipt_owners(tmp_path):
-    repository = WorkRepository(tmp_path / "origin-runtime.sqlite3")
+    repository = WorkRepository(tmp_path / "origin-runtime")
 
     runtime = runtime_module().LaunchRuntime(
         repository,
@@ -71,7 +80,7 @@ class ProtectedFakeBackend(TmuxBackend):
 
 @pytest.fixture
 def trusted_setup(tmp_path):
-    repository = WorkRepository(tmp_path / "launch-runtime.sqlite3")
+    repository = WorkRepository(tmp_path / "launch-runtime")
     repository.initialize()
     WorkScheduler(repository).configure(
         capacity=2, max_queue=100, aging_seconds=10, expected_policy_revision=0
@@ -301,7 +310,7 @@ def test_runtime_carries_provisioned_v2_identity_through_binding_and_preflight(t
     with repository.read_snapshot() as connection:
         row = connection.execute(
             "SELECT contract_json,contract_hash FROM work_dispatch_v2_evidence "
-            "WHERE attempt_id=? AND generation=?",
+            "WHERE attempt_id=%s AND generation=%s",
             (first.attempt_id, first.generation),
         ).fetchone()
         assert tuple(row) == (contract.canonical_json(), contract.canonical_hash())
@@ -686,7 +695,7 @@ def test_reused_internal_key_conflicts_after_principal_origin_replacement(truste
 
 @pytest.mark.parametrize("mutation", ("retire", "replace"))
 def test_provision_change_between_admission_transactions_leaves_no_work(trusted_setup, mutation):
-    """The final SQLite transaction revalidates the exact resolved provision."""
+    """The final store transaction revalidates the exact resolved provision."""
     repository, principal, _, job, grant, contract = trusted_setup
     provision(trusted_setup)
     module, runtime, backend = make_runtime(trusted_setup)

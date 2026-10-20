@@ -92,17 +92,17 @@ async def test_memory_graph_cannot_bypass_legacy_boundary_with_cached_projection
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("audit_fails", [False, True])
-async def test_remote_store_denial_is_durable_or_unavailable(monkeypatch, tmp_path, audit_fails):
+@pytest.mark.postgres
+async def test_remote_store_denial_is_durable_or_unavailable(
+    monkeypatch, postgres_targets, audit_fails
+):
     from cli_agent_orchestrator.api import knowledge_routes
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
-    store = WorkRepository(tmp_path / "denial.sqlite")
-    store.initialize()
-    if audit_fails:
-        with store.connection() as connection:
-            connection.execute(
-                "CREATE TRIGGER reject_denied BEFORE INSERT ON work_memory_access_audit BEGIN SELECT RAISE(ABORT,'PRIVATE DATABASE ERROR'); END"
-            )
+    target = postgres_targets.main
+    bootstrap_scope(target)
+    store = WorkRepository(target)
     actor = auth._verified_principal("issuer", "worker", [auth.SCOPE_ADMIN], "jwt")
     previous = dict(main.app.dependency_overrides)
     main.app.dependency_overrides[auth.get_current_principal] = lambda: actor
@@ -111,14 +111,47 @@ async def test_remote_store_denial_is_durable_or_unavailable(monkeypatch, tmp_pa
     service = SimpleNamespace(store=Mock())
     monkeypatch.setattr(main, "_get_memory_service", lambda: service)
     try:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=main.app, client=("127.0.0.1", 1234)),
-            base_url="http://127.0.0.1",
-        ) as client:
-            response = await client.post(
-                "/internal/memory/store?secret=PRIVATE_QUERY",
-                json={"content": "PRIVATE BODY", "key": "PRIVATE KEY"},
-            )
+        if audit_fails:
+            from cli_agent_orchestrator.clients.postgres import Connection, DatabaseError
+
+            original_execute = Connection.execute
+            audit_failure = {}
+            failed_connections = []
+
+            def fail_denied_audit(self, statement, params=(), *, prepare: bool | None = None):
+                if str(statement).lstrip().startswith("INSERT INTO work_memory_access_audit"):
+                    failed_connections.append(self)
+                    try:
+                        original_execute(self, "SELECT 1 / 0")
+                    except DatabaseError as error:
+                        audit_failure["sqlstate"] = error.sqlstate
+                        raise
+                if prepare is None:
+                    return original_execute(self, statement, params)
+                return original_execute(self, statement, params, prepare=prepare)
+
+            with monkeypatch.context() as unavailable_audit:
+                unavailable_audit.setattr(Connection, "execute", fail_denied_audit)
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=main.app, client=("127.0.0.1", 1234)),
+                    base_url="http://127.0.0.1",
+                ) as client:
+                    response = await client.post(
+                        "/internal/memory/store?secret=PRIVATE_QUERY",
+                        json={"content": "PRIVATE BODY", "key": "PRIVATE KEY"},
+                    )
+            assert audit_failure == {"sqlstate": "22012"}
+            assert len(failed_connections) == 1
+            assert failed_connections[0].raw.closed
+        else:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=main.app, client=("127.0.0.1", 1234)),
+                base_url="http://127.0.0.1",
+            ) as client:
+                response = await client.post(
+                    "/internal/memory/store?secret=PRIVATE_QUERY",
+                    json={"content": "PRIVATE BODY", "key": "PRIVATE KEY"},
+                )
         assert response.status_code == (503 if audit_fails else 403)
         assert "PRIVATE" not in response.text
         service.store.assert_not_called()

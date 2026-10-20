@@ -70,3 +70,37 @@ def test_failed_fd_wrapper_leaves_no_snapshot_or_open_descriptor(tmp_path, monke
     assert not list(scratch.iterdir())
     with pytest.raises(OSError):
         os.fstat(captured[0])
+
+
+@pytest.mark.offline_database
+def test_materialized_snapshot_permissions_are_verified_without_repair(tmp_path):
+    scratch = tmp_path / "scratch"
+    scratch.mkdir(mode=0o700)
+    path = scratch / "snapshot.py"
+    path.write_text("print('private')\n")
+    path.chmod(0o600)
+    script_runner._verify_snapshot_permissions(path)
+    path.chmod(0o644)
+    with pytest.raises(RuntimeError, match="private source"):
+        script_runner._verify_snapshot_permissions(path)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+    path.chmod(0o600)
+    scratch.chmod(0o755)
+    with pytest.raises(RuntimeError, match="private source"):
+        script_runner._verify_snapshot_permissions(path)
+    assert stat.S_IMODE(scratch.stat().st_mode) == 0o755
+
+
+@pytest.mark.offline_database
+def test_materialized_snapshot_verifier_refuses_symlink_and_missing_source(tmp_path):
+    scratch = tmp_path / "scratch"
+    scratch.mkdir(mode=0o700)
+    target = scratch / "target.py"
+    target.write_text("print('private')\n")
+    target.chmod(0o600)
+    link = scratch / "snapshot.py"
+    link.symlink_to(target)
+    with pytest.raises(RuntimeError, match="private source"):
+        script_runner._verify_snapshot_permissions(link)
+    with pytest.raises(RuntimeError, match="private source"):
+        script_runner._verify_snapshot_permissions(scratch / "missing.py")

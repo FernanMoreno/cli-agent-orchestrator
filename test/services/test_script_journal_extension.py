@@ -19,21 +19,13 @@ Covers the four additive algorithms from
 - Migration idempotency: the additive ``ALTER TABLE`` migrators are safe to run
   twice and preserve INV-2 defaults on a pre-existing (pre-U3-shaped) row.
 
-The journal points at a temp SQLite DB via the patched ``DATABASE_FILE``,
-mirroring ``test_workflow_journal_resume.py``'s fixture pattern exactly.
+The journal uses the isolated native PostgreSQL test target.
 """
 
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
-
 import pytest
 
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
-)
 from cli_agent_orchestrator.services import workflow_journal
 from cli_agent_orchestrator.services.workflow_journal import RunRow
 from cli_agent_orchestrator.services.workflow_service import (
@@ -46,19 +38,13 @@ from cli_agent_orchestrator.services.workflow_service import (
 
 
 @pytest.fixture(autouse=True)
-def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Point the journal at a temp DB and create the tables (U3 migrators included)."""
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
-    yield db_path
+def _patched_journal():
+    """Keep the suite's workflow tests explicitly scoped to the PG autouse target."""
+    yield
 
 
-def _direct_connect() -> sqlite3.Connection:
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    return sqlite3.connect(str(DATABASE_FILE))
+def _direct_connect():
+    return workflow_journal._connect()
 
 
 def _seed_run(run_id: str, *, state: str = "running", tier: str = "script", generation: str = "1"):
@@ -75,7 +61,7 @@ def _seed_run(run_id: str, *, state: str = "running", tier: str = "script", gene
     # script run would set them (out of scope for U3 to build that path).
     with _direct_connect() as conn:
         conn.execute(
-            "UPDATE workflow_run SET tier = ?, generation = ? WHERE run_id = ?",
+            "UPDATE workflow_run SET tier = %s, generation = %s WHERE run_id = %s",
             (tier, generation, run_id),
         )
 
@@ -265,14 +251,9 @@ def test_is_resumable_for_tier_running_crash_remnant_resumable():
 
 
 # ---------------------------------------------------------------------------
-# Migration idempotency + INV-2 defaults
+# Insert defaults + INV-2 row shape
 # ---------------------------------------------------------------------------
-def test_migration_is_idempotent_and_preserves_defaults(_patched_journal):
-    # Running the migrators a second time must not raise and must not disturb
-    # existing columns/rows.
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
-
+def test_inserted_yaml_row_preserves_inv2_defaults(_patched_journal):
     _seed_run("run-yaml", tier="yaml", generation="1")
     row = workflow_journal.get_run("run-yaml")
     assert row is not None

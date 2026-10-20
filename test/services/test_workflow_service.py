@@ -32,16 +32,8 @@ _SCHEMA = {"type": "object", "properties": {"answer": {"type": "string"}}, "requ
 
 
 @pytest.fixture(autouse=True)
-def _clean_registry(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    """Each test starts with an empty run registry + output store.
-
-    ``DATABASE_FILE`` is pointed at an empty temp path so the engine's
-    best-effort journal write-through (and start_run's journal dup-check)
-    never touches — or reads — the developer's real database.
-    """
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.constants.DATABASE_FILE", tmp_path / "wf.db", raising=True
-    )
+def _clean_registry():
+    """Each test starts with an empty run registry + output store."""
     ws.run_registry.clear()
     ws._active_drives.clear()
     ws.step_output_store._store.clear()
@@ -160,10 +152,6 @@ async def test_workflow_step_forwards_explicit_engine(monkeypatch):
 async def test_managed_yaml_step_enters_work_and_stays_pending_without_legacy_agent_call(
     monkeypatch,
 ):
-    from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    WorkRepository(DATABASE_FILE).initialize()
     admit = AsyncMock(
         return_value={"id": "durable-work", "attempts": [{"id": "attempt", "generation": 1}]}
     )
@@ -189,10 +177,6 @@ async def test_managed_yaml_step_enters_work_and_stays_pending_without_legacy_ag
 
 @pytest.mark.asyncio
 async def test_managed_yaml_pending_step_recovers_same_attempt_after_restart(monkeypatch):
-    from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    WorkRepository(DATABASE_FILE).initialize()
     admit = AsyncMock(
         return_value={"id": "durable-work", "attempts": [{"id": "attempt", "generation": 1}]}
     )
@@ -227,10 +211,6 @@ async def test_managed_yaml_pending_step_recovers_same_attempt_after_restart(mon
 @pytest.mark.asyncio
 async def test_yaml_resume_uses_resolved_managed_admitter_after_restart(monkeypatch):
     """A restart recovers the provision-bound pending step at its original attempt."""
-    from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    WorkRepository(DATABASE_FILE).initialize()
     legacy = AsyncMock(side_effect=AssertionError("managed YAML step reached terminal runner"))
     monkeypatch.setattr(ws, "run_agent_step", legacy)
     spec = _spec()
@@ -258,11 +238,8 @@ async def test_yaml_resume_uses_resolved_managed_admitter_after_restart(monkeypa
 
 @pytest.mark.asyncio
 async def test_completed_managed_yaml_step_does_not_need_legacy_terminal_contract(monkeypatch):
-    from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.constants import DATABASE_FILE
     from cli_agent_orchestrator.services import workflow_journal
 
-    WorkRepository(DATABASE_FILE).initialize()
     monkeypatch.setattr(workflow_journal, "get_work_step_projection", lambda *_args: object())
     legacy = AsyncMock(side_effect=AssertionError("completed managed step was replayed"))
     monkeypatch.setattr(ws, "run_agent_step", legacy)
@@ -293,10 +270,6 @@ async def test_completed_managed_yaml_step_does_not_need_legacy_terminal_contrac
 async def test_managed_yaml_step_does_not_admit_work_if_durable_fence_fails(
     monkeypatch,
 ):
-    from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    WorkRepository(DATABASE_FILE).initialize()
     admit = AsyncMock(return_value={"id": "must-not-exist", "attempts": [{"id": "a"}]})
 
     def fail_fence(**_kwargs):
@@ -333,14 +306,10 @@ async def test_trace_b_worker_crashes_twice_then_succeeds(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_yaml_retry_reuses_the_first_durable_contract_hash(monkeypatch, tmp_path):
+async def test_yaml_retry_reuses_the_first_durable_contract_hash(monkeypatch):
     """A retry may run only after its new attempt proves the original evidence."""
-    from cli_agent_orchestrator.clients.work_repository import WorkRepository
     from cli_agent_orchestrator.services import agent_step, workflow_journal
 
-    connection = workflow_journal._connect()
-    connection.close()
-    WorkRepository(tmp_path / "wf.db").initialize()
     calls = 0
 
     async def preflighted_step(*args, **kwargs):
@@ -406,14 +375,10 @@ async def test_yaml_replay_without_a_verified_contract_never_reaches_agent_step(
 
 
 @pytest.mark.asyncio
-async def test_yaml_continuity_failure_never_creates_a_second_delivery(monkeypatch, tmp_path):
+async def test_yaml_continuity_failure_never_creates_a_second_delivery(monkeypatch):
     """An uncertain first send is a reconciliation boundary, not a retry budget."""
-    from cli_agent_orchestrator.clients.work_repository import WorkRepository
     from cli_agent_orchestrator.services import agent_step, workflow_journal
 
-    connection = workflow_journal._connect()
-    connection.close()
-    WorkRepository(tmp_path / "wf.db").initialize()
     calls = 0
 
     async def uncertain_step(*args, **kwargs):
@@ -448,18 +413,12 @@ async def test_yaml_continuity_failure_never_creates_a_second_delivery(monkeypat
 
 @pytest.mark.asyncio
 async def test_cold_yaml_resume_rejects_a_contract_store_with_deleted_trigger(
-    monkeypatch, tmp_path
+    monkeypatch,
 ):
     """A cold process cannot expose a historical attempt after its proof is damaged."""
-    import sqlite3
-
-    from cli_agent_orchestrator.clients.work_repository import WorkRepository
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget, connect
     from cli_agent_orchestrator.services import agent_step, workflow_journal
 
-    connection = workflow_journal._connect()
-    connection.close()
-    database = tmp_path / "wf.db"
-    WorkRepository(database).initialize()
     spec = _spec(retries=0)
     workflow_journal.insert_run(
         "yaml-cold",
@@ -493,8 +452,11 @@ async def test_cold_yaml_resume_rejects_a_contract_store_with_deleted_trigger(
         "yaml-cold", "s1", "1", attempt, fingerprint, "later", "failed", "error"
     )
     workflow_journal.update_run_state("yaml-cold", "failed", "later")
-    with sqlite3.connect(database) as connection:
-        connection.execute("DROP TRIGGER work_step_contracts_immutable_update")
+    migration_target = DatabaseTarget.from_settings("main").migration_target()
+    with connect(migration_target) as connection, connection.transaction():
+        connection.execute(
+            "DROP TRIGGER work_step_contracts_immutable_update ON work_step_contracts"
+        )
     ws.run_registry.clear()
     called = AsyncMock(return_value=_ok())
     monkeypatch.setattr(ws, "run_agent_step", called)
@@ -503,6 +465,44 @@ async def test_cold_yaml_resume_rejects_a_contract_store_with_deleted_trigger(
         await ws.resume_from_last_completed("yaml-cold")
 
     assert called.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_yaml_resume_preserves_postgres_availability_error(monkeypatch):
+    """An unavailable database is not relabeled as corrupt workflow history."""
+    from psycopg import OperationalError
+
+    from cli_agent_orchestrator.clients.work_repository import SchemaMismatch
+    from cli_agent_orchestrator.services import workflow_journal
+    from cli_agent_orchestrator.services.work_workflow_plans import WorkWorkflowPlans
+
+    workflow_journal.insert_run(
+        "yaml-pg-unavailable",
+        "wf",
+        "{}",
+        "{}",
+        "failed",
+        "2026-01-01T00:00:00Z",
+        tier="yaml",
+    )
+
+    def _database_unavailable(*_args):
+        raise OperationalError("temporary database outage")
+
+    monkeypatch.setattr(WorkWorkflowPlans, "requires_scoped_validation", _database_unavailable)
+
+    with pytest.raises(OperationalError, match="temporary database outage"):
+        await ws.resume_from_last_completed("yaml-pg-unavailable")
+
+    def _runtime_role_misconfigured(*_args):
+        raise SchemaMismatch("PostgreSQL runtime role has unsafe privileges")
+
+    monkeypatch.setattr(
+        WorkWorkflowPlans, "requires_scoped_validation", _runtime_role_misconfigured
+    )
+
+    with pytest.raises(SchemaMismatch, match="runtime role"):
+        await ws.resume_from_last_completed("yaml-pg-unavailable")
 
 
 @pytest.mark.asyncio

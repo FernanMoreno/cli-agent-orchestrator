@@ -1,11 +1,21 @@
 """Read an operator-owned renewable credential; authorization remains at the API."""
 
+import hmac
 import os
 import stat
 from pathlib import Path
 from typing import Optional
 
 _MAX_TOKEN_BYTES = 16384
+
+
+def ascii_token_matches(presented: str, expected: str) -> bool:
+    """Compare ASCII protocol tokens without raising on untrusted Unicode.
+
+    Non-ASCII credentials cannot match. Keep constant-time comparison for
+    supported tokens, without normalizing, logging or echoing either value.
+    """
+    return presented.isascii() and expected.isascii() and hmac.compare_digest(presented, expected)
 
 
 def read_local_token_file(filename: str) -> Optional[str]:

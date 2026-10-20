@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from typing import Any, Optional
 from unittest.mock import patch
 
@@ -40,7 +41,7 @@ Convert SSIS packages.
 
 
 def _engine(db_path: Path) -> Any:
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return engine
 

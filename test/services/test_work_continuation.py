@@ -6,10 +6,11 @@ import importlib.util
 import json
 import time
 from dataclasses import FrozenInstanceError, dataclass
-from test.fixtures.work_store import work_store_paths  # noqa: F401
 
 import pytest
 
+from cli_agent_orchestrator.clients.postgres.migrations import catalog_manifest
+from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_contract import (
     ContractPermissions,
@@ -26,6 +27,8 @@ from cli_agent_orchestrator.services.knowledge_policy import KnowledgePolicy
 from cli_agent_orchestrator.services.step_output_store import ArtifactRef, ImmutableResultStore
 from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
 from cli_agent_orchestrator.services.work_contract import WorkContracts
+
+pytestmark = pytest.mark.postgres
 
 
 def continuation_module():
@@ -60,10 +63,12 @@ class ContinuationContext:
 
 
 @pytest.fixture
-def continuation_context(work_store_paths):
-    repository = WorkRepository(work_store_paths.database)
+def continuation_context(tmp_path, postgres_targets):
+    target = postgres_targets.main
+    bootstrap_scope(target)
+    repository = WorkRepository(target, filesystem_home=postgres_targets.home)
     repository.initialize()
-    root = work_store_paths.database.parent
+    root = tmp_path
     principal = auth._verified_principal("https://issuer.test", "owner", [auth.SCOPE_ADMIN], "jwt")
     job = repository.create_job(
         project_id="project",
@@ -124,7 +129,9 @@ def continuation_context(work_store_paths):
         expected_grant_revision=grant.revision,
         contract=contract,
     )
-    artifact_store = ImmutableResultStore(work_store_paths.artifacts)
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir(mode=0o700)
+    artifact_store = ImmutableResultStore(artifacts)
     artifact_bytes = b"Bearer 0123456789abcdef"
 
     def register_verified_result(ref):
@@ -181,28 +188,40 @@ def continuation_context(work_store_paths):
 
 
 def _state(repository, artifacts):
+    from psycopg import sql
+
+    from cli_agent_orchestrator.clients.work_continuation_postgres_schema import (
+        WORKFLOW_CONTINUATION_MIGRATIONS,
+    )
+    from cli_agent_orchestrator.clients.work_postgres_schema import WORK_POSTGRES_MIGRATIONS
+
+    tables = tuple(
+        sorted(
+            {table for migration in WORK_POSTGRES_MIGRATIONS for table in migration.tables}
+            | {
+                table
+                for migration in WORKFLOW_CONTINUATION_MIGRATIONS
+                for table in migration.tables
+            }
+        )
+    )
+    schema_name = repository.target.schema
     with repository.connection() as connection:
-        schema = tuple(
-            tuple(row)
-            for row in connection.execute(
-                "SELECT type,name,tbl_name,sql FROM sqlite_master "
-                "WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
-            )
-        )
-        tables = tuple(
-            row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
-            )
-        )
+        schema = catalog_manifest(connection, tables)
         rows = tuple(
             (
                 name,
                 tuple(
-                    tuple(row)
-                    for row in connection.execute(
-                        f'SELECT * FROM "{name.replace(chr(34), chr(34) * 2)}" ORDER BY rowid'
+                    sorted(
+                        (
+                            tuple(row)
+                            for row in connection.execute(
+                                sql.SQL("SELECT * FROM {}.{}").format(
+                                    sql.Identifier(schema_name), sql.Identifier(name)
+                                )
+                            ).fetchall()
+                        ),
+                        key=repr,
                     )
                 ),
             )
@@ -214,6 +233,19 @@ def _state(repository, artifacts):
         if path.is_file()
     )
     return schema, rows, artifacts_state
+
+
+def test_state_snapshot_detects_a_real_work_row_change(continuation_context):
+    before = _state(continuation_context.repository, continuation_context.artifact_store)
+
+    continuation_context.repository.create_job(
+        project_id="state-change-project",
+        principal_id=continuation_context.principal.id,
+        allowed_providers=["mock_cli"],
+        grant_id="state-change-grant",
+    )
+
+    assert _state(continuation_context.repository, continuation_context.artifact_store) != before
 
 
 def _payload(context):

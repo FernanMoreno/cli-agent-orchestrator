@@ -3,6 +3,7 @@
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -342,7 +343,7 @@ class TestHandoffResultRetention:
     Two distinct gaps, two tests. Finding 1 is the CLOCK: every other swept table
     defaults its timestamp to naive-local ``datetime.now``, so ``cutoff_date``
     matches them, but ``HandoffResultModel.created_at`` defaults to ``_utcnow()``
-    and SQLite keeps only the UTC wall-clock -- a local cutoff therefore deletes
+    and PostgreSQL stores that UTC instant -- a local cutoff therefore deletes
     rows UTC-offset hours early or late. Finding 7 is the WIRING: every other
     cleanup test here patches ``cleanup_service.SessionLocal``, which does NOT
     intercept the ``database.SessionLocal`` that ``delete_old_handoff_results``
@@ -396,7 +397,7 @@ class TestHandoffResultRetention:
         other test in this file does) leaves the handoff sweep talking to the
         operator's real DB, which is why this path shipped unverified.
         """
-        engine = create_engine("sqlite:///:memory:")
+        engine = configured_orm_engine()
         Base.metadata.create_all(bind=engine)
         TestSession = sessionmaker(bind=engine, autocommit=False, autoflush=False)
         monkeypatch.setattr("cli_agent_orchestrator.clients.database.SessionLocal", TestSession)

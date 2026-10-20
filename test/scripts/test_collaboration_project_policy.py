@@ -2,11 +2,30 @@
 
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from cli_agent_orchestrator.utils import path_validation
+
+
+@pytest.fixture(autouse=True)
+def isolate_installer_user_home(tmp_path, monkeypatch):
+    """Keep installer policy tests away from the developer's user config."""
+    private_home = tmp_path / "user-home"
+    private_home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: private_home))
+
+    original_run = subprocess.run
+
+    def reject_systemctl(args, *positional, **kwargs):
+        if isinstance(args, (list, tuple)) and list(args[:2]) == ["systemctl", "--user"]:
+            raise AssertionError("policy tests must not autostart user services")
+        return original_run(args, *positional, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", reject_systemctl)
+    return private_home
 
 
 def installer():

@@ -11,16 +11,18 @@ from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, cast
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
     Float,
+    Identity,
     Index,
-    Integer,
     String,
     Text,
     UniqueConstraint,
     create_engine,
+    event,
     literal_column,
     text,
 )
@@ -101,13 +103,13 @@ class TerminalModel(Base):
     # settlement, so runtime/lifecycle cleanup may dismantle provider resources
     # but must retain this registry row until that observer acknowledges it.
     deferred_init_external_owner: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
+        Boolean, nullable=False, default=False, server_default=text("false")
     )
     # True once provider/FIFO/worktree runtime state has been fully dismantled
     # for a retained external-owner tombstone.  The row may remain for durable
     # failure observation, but it no longer consumes a live runtime slot.
     deferred_init_runtime_reclaimed: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
+        Boolean, nullable=False, default=False, server_default=text("false")
     )
     # Durable identity for one logical lifetime of a reusable session name.
     # Retained deferred-init tombstones can outlive the backend session; when a
@@ -115,60 +117,14 @@ class TerminalModel(Base):
     # distinguish the old rows from failures that belong to the CURRENT live
     # session. NULL is reserved for rows created before this column existed.
     session_incarnation_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    insertion_sequence: Mapped[int] = mapped_column(
+        BigInteger, Identity(always=False), unique=True, nullable=False
+    )
     last_active: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.now)
 
-    # ORDERING CONTRACT: the two session-scoped reads -- ``list_terminals_by_session``
-    # and ``list_terminals_in_sessions`` -- order by SQLite's implicit ``rowid``,
-    # so index 0 of a session's terminals is its OLDEST SURVIVING row.
-    # (``list_siblings_by_group_prefix`` also reads this table by session and is
-    # deliberately NOT ordered: its consumer matches on group prefixes and does
-    # not take a first element. Order it too if that ever changes.) Several consumers
-    # treat that as the session's conductor and one of them kills sessions on it.
-    # rowid is not declared above, so the dependency is invisible here. Three
-    # things break it SILENTLY:
-    #   * an ``INSERT OR REPLACE``/upsert against terminals -- a replace deletes
-    #     and re-inserts, so the row gets a NEW rowid and jumps to the end of its
-    #     session. Nothing does this today and
-    #     ``test_no_upsert_against_the_terminals_table`` fails the build if it
-    #     starts; use an UPDATE.
-    #   * writing ``rowid`` explicitly (``INSERT (rowid, ...) VALUES (-5, ...)``).
-    #   * giving ``id`` INTEGER affinity, which makes rowid an alias for it and
-    #     hands the order back to a random uuid.
-    # Declaring the table WITHOUT ROWID also breaks it but fails LOUDLY
-    # (``no such column: terminals.rowid``), as does reading it through
-    # ``aliased()`` or ``union()``.
-    #
-    # New rows sort after existing ones because SQLite assigns ``max(rowid)+1``
-    # among surviving rows -- so deleting rows recycles values but cannot reorder
-    # the ones still present. The exception is a table holding a row at
-    # 2**63-1, where SQLite picks random unused rowids and within-session order
-    # scrambles; unreachable without an explicit rowid write.
-    #
-    # Deliberately NOT a ``created_at`` column: rowid already records insertion
-    # order exactly and correctly for every row in every existing database,
-    # whereas a new column has to invent the value for rows that predate it, and
-    # there is no honest source for it -- ``last_active`` is written only on
-    # input delivery (send_input/send_special_key), so it is LATEST for the
-    # busiest terminal, which is usually the conductor, and backfilling from it
-    # inverts the very order this contract exists to preserve.
-    #
-    # Deliberately NOT ``caller_id`` either, and this one was priced rather than
-    # dismissed. A conductor created through ``create_session`` records no
-    # caller while an MCP-spawned worker records its supervisor, so
-    # ``caller_id IS NOT NULL`` looks like root-terminal identity. On its own it
-    # is not total -- ``caller_id`` is an optional parameter of the agent-step
-    # create path, so a root carrying an explicit caller would be outranked by a
-    # later terminal without one. It CAN be made total by also requiring the
-    # parent to be in the same session (a correlated ``EXISTS`` on
-    # ``tmux_session``, which is immutable after insert, so a root's caller can
-    # never be in its own session). Measured, that costs ~+29% on this read
-    # (50 sessions over 5k rows: 9.0ms -> 11.6ms) and couples the conductor pick
-    # to referential integrity nothing enforces -- there is no FK on
-    # ``caller_id`` and ghost terminals are deleted in three places, so a
-    # deleted root leaves every worker's caller dangling. Rejected on that cost
-    # and coupling, for a hazard the upsert guard above already turns into a red
-    # build. ``caller_id`` is still the right thing to read for a specific
-    # terminal's spawn parent; it is not worth its price as a sort key.
+    # Stable insertion order defines the oldest surviving terminal/conductor.
+    # PostgreSQL assigns the value; updates retain it and replacing an existing
+    # terminal is forbidden.
 
 
 def _utcnow() -> datetime:
@@ -201,8 +157,7 @@ class TerminalTurnReceiptModel(Base):
     generation: Mapped[str] = mapped_column(String, nullable=False)
     receipt_sha256: Mapped[str] = mapped_column(String, nullable=False)
     # prepared | sent | result_verified.  Validation is duplicated at the
-    # repository boundary for existing SQLite databases where a CHECK would
-    # otherwise be absent.
+    # repository boundary as well as the native schema.
     phase: Mapped[str] = mapped_column(String, nullable=False)
     result_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -240,7 +195,7 @@ class TerminalTurnRecoveryModel(Base):
     terminal_id: Mapped[str] = mapped_column(String, primary_key=True)
     generation: Mapped[str] = mapped_column(String, primary_key=True)
     state: Mapped[str] = mapped_column(String, nullable=False, default="pending")
-    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attempts: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     completion_detected_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -267,7 +222,7 @@ class TerminalLateObservationModel(Base):
     __tablename__ = "terminal_late_observations"
     terminal_id: Mapped[str] = mapped_column(String, primary_key=True)
     generation: Mapped[str] = mapped_column(String, primary_key=True)
-    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attempts: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     next_due: Mapped[float] = mapped_column(Float, nullable=False)
     deadline: Mapped[float] = mapped_column(Float, nullable=False)
     __table_args__ = (
@@ -344,7 +299,7 @@ class LocalPeerChallengeModel(Base):
     initiator_process_generation: Mapped[str] = mapped_column(String, nullable=False)
     initiator_display_name: Mapped[str] = mapped_column(String, nullable=False)
     initiator_public_key: Mapped[str] = mapped_column(String, nullable=False)
-    initiator_loopback_port: Mapped[int] = mapped_column(Integer, nullable=False)
+    initiator_loopback_port: Mapped[int] = mapped_column(BigInteger, nullable=False)
     candidate_instance_id: Mapped[str] = mapped_column(String, nullable=False)
     candidate_process_generation: Mapped[str] = mapped_column(String, nullable=False)
     candidate_display_name: Mapped[str] = mapped_column(String, nullable=False)
@@ -423,8 +378,8 @@ class ProjectMarkerModel(Base):
     project_id: Mapped[str] = mapped_column(String, primary_key=True)
     nonce: Mapped[str] = mapped_column(String, nullable=False)
     realpath: Mapped[str] = mapped_column(String, nullable=False)
-    device: Mapped[int] = mapped_column(Integer, nullable=False)
-    inode: Mapped[int] = mapped_column(Integer, nullable=False)
+    device: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    inode: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
 
 class BeadsOperationModel(Base):
@@ -474,8 +429,7 @@ class NativeChildModel(Base):
     provider: Mapped[str] = mapped_column(String, nullable=False)
     agent_profile: Mapped[str] = mapped_column(String, nullable=False)
     # planned | acknowledged | sent | running | succeeded | failed |
-    # reconcile | cancelled.  Validation lives in the service boundary so old
-    # SQLite files remain additive-only.
+    # reconcile | cancelled. Validation also lives in the service boundary.
     state: Mapped[str] = mapped_column(String, nullable=False, default="planned")
     lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     error_kind: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -495,7 +449,7 @@ class InboxModel(Base):
 
     __tablename__ = "inbox"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     sender_id: Mapped[str] = mapped_column(String, nullable=False)
     receiver_id: Mapped[str] = mapped_column(String, nullable=False)
     message: Mapped[str] = mapped_column(String, nullable=False)
@@ -514,7 +468,7 @@ class ManagedInboxTarget(NamedTuple):
 class MemoryMetadataModel(Base):
     """SQLAlchemy model for memory metadata (Phase 2 U1).
 
-    SQLite is the source of truth for metadata queries; wiki markdown
+    PostgreSQL is the source of truth for metadata queries; wiki markdown
     files remain the content store. Each row corresponds to exactly one
     wiki file on disk.
     """
@@ -527,7 +481,7 @@ class MemoryMetadataModel(Base):
     scope: Mapped[str] = mapped_column(String, nullable=False)
     scope_id: Mapped[str | None] = mapped_column(String, nullable=True)
     # A NOT NULL discriminator keeps the widened unique constraint total:
-    # SQLite considers NULL values distinct inside UNIQUE indexes.
+    # PostgreSQL treats NULL values as distinct in ordinary UNIQUE indexes.
     source_kind: Mapped[str] = mapped_column(
         String, nullable=False, default="native", server_default="native"
     )
@@ -535,7 +489,7 @@ class MemoryMetadataModel(Base):
     tags: Mapped[str] = mapped_column(String, nullable=False, default="")
     source_provider: Mapped[str | None] = mapped_column(String, nullable=True)
     source_terminal_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    token_estimate: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    token_estimate: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
@@ -545,7 +499,7 @@ class MemoryMetadataModel(Base):
     # NULL DEFAULT 0 so existing rows read as "never recalled" without a
     # backfill. Migrated onto existing DBs by ``_migrate_add_access_count``.
     access_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default="0"
+        BigInteger, nullable=False, default=0, server_default="0"
     )
     last_accessed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None
@@ -566,7 +520,7 @@ class MemoryMetadataModel(Base):
 
     __table_args__ = (
         UniqueConstraint("key", "scope", "scope_id", "source_kind", name="uq_memory_key_scope"),
-        # SQLite treats NULL scope_id values as distinct in the table-level
+        # PostgreSQL treats NULL scope_id values as distinct in the table-level
         # constraint. Keep PR #674's source_kind-aware identity while enforcing
         # issue #657 uniqueness within each global/federated source tier.
         Index(
@@ -575,7 +529,7 @@ class MemoryMetadataModel(Base):
             "scope",
             "source_kind",
             unique=True,
-            sqlite_where=text("scope_id IS NULL"),
+            postgresql_where=text("scope_id IS NULL"),
         ),
         CheckConstraint(
             "related_keys IS NULL OR length(related_keys) < 1024",
@@ -584,8 +538,8 @@ class MemoryMetadataModel(Base):
     )
 
 
-# Vault-note identity needs a non-null scope id for global mappings: SQLite
-# considers NULL values distinct inside UNIQUE indexes. This is table-local;
+# Vault-note identity uses a non-null scope id for global mappings because
+# ordinary PostgreSQL UNIQUE indexes consider NULL values distinct. This is table-local;
 # memory_metadata keeps its historical nullable global scope_id convention.
 VAULT_NOTE_SCOPE_ID_SENTINEL = ""
 
@@ -609,8 +563,8 @@ class VaultNoteModel(Base):
     managed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     content_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
     frontmatter_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
-    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    mtime_ns: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    mtime_ns: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
     last_reconciled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -718,12 +672,12 @@ class VaultRecallCounterModel(Base):
 
     vault_id: Mapped[str] = mapped_column(String, primary_key=True)
     counter_name: Mapped[str] = mapped_column(String, primary_key=True)
-    value: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    value: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
 
 
 # Relationship-store sentinel: ``memory_relationships.scope_id`` is NOT NULL and
-# stores this value for global/federated scope. SQLite treats ``NULL != NULL``
-# in a UNIQUE index, so a nullable scope_id would make the dedup index (and thus
+# stores this value for global/federated scope. Ordinary PostgreSQL UNIQUE
+# indexes consider NULL values distinct, so a nullable scope_id would make the dedup index (and thus
 # ``INSERT ... ON CONFLICT``) inert for global scope — silently duplicating
 # exactly the edges hardest to notice. Storing a NOT-NULL sentinel keeps the
 # dedup tuple total. ``""`` cannot collide with a real sanitized scope_id
@@ -774,7 +728,7 @@ class MemoryRelationshipModel(Base):
     # to 0); a stored value is a validated REAL in [0, 1].
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     # Optional ordering hint (e.g. legacy related_keys position). NULL if none.
-    rank: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    rank: Mapped[int | None] = mapped_column(BigInteger, nullable=True, default=None)
     # Bounded JSON blob. NULL if none; the CHECK caps FRESH DBs, the service
     # caps existing DBs (mirrors the ck_related_keys_length precedent).
     attributes_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
@@ -803,8 +757,8 @@ class MemoryRelationshipModel(Base):
             "origin",
             name="uq_memory_rel",
         ),
-        # FRESH-DB CHECKs only (SQLite cannot retro-add a CHECK); the service
-        # validates confidence range and attributes size on existing DBs.
+        # Native CHECK constraints complement the service validation of
+        # confidence range and attributes size.
         CheckConstraint(
             "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)",
             name="ck_memory_rel_confidence_range",
@@ -860,7 +814,7 @@ class WorkflowOutcomeModel(Base):
     )  # profile that did the work
     source_terminal_id: Mapped[str | None] = mapped_column(String, nullable=True)
     success: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    score: Mapped[int | None] = mapped_column(Integer, nullable=True)  # optional 0-100 metric
+    score: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # optional 0-100 metric
     friction_notes: Mapped[str] = mapped_column(
         Text, nullable=False, default=""
     )  # short, content-free
@@ -904,8 +858,8 @@ class HandoffResultModel(Base):
         which exception occurred.
 
     ``created_at``/``updated_at`` carry ``DateTime(timezone=True)``, which is a
-    no-op on SQLite: the offset is dropped on write, so the stored values are
-    NAIVE UTC. The retention sweep must therefore compare against a UTC cutoff --
+    native PostgreSQL timestamps with time zone. Connections use UTC;
+    legacy naive values are imported as UTC. Retention uses a UTC cutoff --
     see ``cleanup_service.cleanup_old_data``.
     """
 
@@ -958,8 +912,8 @@ class IdempotencyKeyModel(Base):
     # `IdempotencyKeyModel` exists on main or in ANY released tag through
     # v2.5.0), so no pre-existing database can hold a row without one and
     # there is nothing to migrate. A blank fingerprint is therefore not a
-    # legacy row to tolerate -- it can only come from a scratch sqlite built
-    # from an earlier revision of this branch, whose fix is deleting the file.
+    # legacy row to tolerate; malformed historical input must be rejected by
+    # the offline importer.
     # It is compared like any other value and simply mismatches, loudly.
     request_fingerprint: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.now)
@@ -983,727 +937,114 @@ def _ensure_db_dir() -> None:
 
 # Module-level singletons
 _ensure_db_dir()
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+
+
+def main_target():
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+
+    return DatabaseTarget.from_settings()
+
+
+def _native_orm_connection():
+    import psycopg
+
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+
+    target = DatabaseTarget.from_settings()
+    connection = psycopg.connect(**target.connection_parameters())
+    setattr(connection, "_cao_database_target", target)
+    return connection
+
+
+engine = create_engine("postgresql+psycopg://", creator=_native_orm_connection, pool_pre_ping=True)
+
+
+@event.listens_for(engine, "connect")
+def _configure_native_orm_connection(connection, record):
+    from psycopg import sql
+
+    target = getattr(connection, "_cao_database_target")
+    with connection.cursor() as cursor:
+        cursor.execute(
+            sql.SQL("SET search_path TO pg_catalog, {}").format(sql.Identifier(target.schema))
+        )
+        cursor.execute("SET TIME ZONE 'UTC'")
+        cursor.execute("SET statement_timeout TO '30s'")
+        cursor.execute("SET lock_timeout TO '10s'")
+    connection.commit()
+    record.info["cao_target_identity"] = target.identity
+
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-def init_db() -> None:
-    """Initialize database tables and apply schema migrations."""
-    _migrate_project_aliases_schema()
-    Base.metadata.create_all(bind=engine)
-    from cli_agent_orchestrator.clients.runtime_channel_schema import RemoteBase
+def core_migrations():
+    """Native PostgreSQL migrations for ORM tables and query indexes.
 
-    RemoteBase.metadata.create_all(bind=engine)
-    _restrict_db_file_permissions()
-    _migrate_terminals_schema()
-    _migrate_workflow_plan_snapshot()
-    _migrate_add_access_count()
-    _migrate_add_last_compiled_at()
-    _migrate_add_related_keys()
-    # Must run after additive legacy-column migrations and before the separate
-    # index migrator, which recreates the three secondary indexes after a rebuild.
-    _migrate_memory_source_kind()
-    _migrate_memory_indexes()
-    _migrate_workflow_index()
-    _migrate_workflow_run()
-    _migrate_workflow_run_indexes()
-    _migrate_workflow_run_step()
-    _migrate_workflow_outcome_indexes()
-    _migrate_workflow_run_event()
-    _migrate_workflow_run_seq()
-    # Appended LAST (issue #511). Disjoint from the workflow_run* tables that
-    # #504 also migrates, so registry order is immaterial — never reorder the
-    # entries above.
-    _migrate_memory_relationships()
-    # Appended LAST (issue #583 Bolt 2, ``approval-store``). Disjoint from every table above —
-    # its own new table, no shared columns — so registry order is immaterial here too.
-    _migrate_workflow_plan_approval()
-    # Add the nullable columns before the exclusion backfill so a pre-existing
-    # excluded note can carry its provenance into the durable tombstone.
-    _migrate_vault_key_provenance()
-    # Appended LAST (PR #674). Disjoint from every table above except for the
-    # one-time backfill read from vault_note.
-    _migrate_vault_exclusions()
-    # Appended LAST (PR #674 S5). One additive receipt table; no backfill.
-    _migrate_vault_migration_receipts()
-    # Appended LAST (issue #657). Runs after the source_kind table rebuild so
-    # the partial index enforces the full PR #674 memory identity.
-    _migrate_memory_scope_null_uniqueness()
-    # Work admission requires a verified additive schema; failure must propagate.
-    from cli_agent_orchestrator.clients.work_repository import initialize_work_store
-
-    initialize_work_store()
-    _migrate_workflow_continuations()
-    # Appended LAST (issue #447, ``handoff_results``). Its own new table, no shared
-    # columns with anything above, so registry order is immaterial here too.
-    _migrate_add_handoff_results()
-    _migrate_local_peer_principal()
-
-
-def _migrate_local_peer_principal() -> None:
-    """Expand peer receipts without inventing an owner for legacy records.
-
-    Old readers ignore this nullable column. Failed migration blocks startup;
-    repeat application and concurrent startup preserve all existing receipts.
+    Version 1 remains the frozen ORM baseline. Version 2 adds indexes for
+    existing query paths so installations already running v1 can upgrade
+    without changing the recorded version-1 checksum.
     """
-    with engine.connect() as connection:
-        connection.exec_driver_sql("BEGIN IMMEDIATE")
-        columns = {
-            row[1] for row in connection.exec_driver_sql("PRAGMA table_info(local_peer_tasks)")
-        }
-        if columns and "requester_principal_id" not in columns:
-            connection.exec_driver_sql(
-                "ALTER TABLE local_peer_tasks ADD COLUMN requester_principal_id TEXT"
-            )
-        connection.commit()
+    from sqlalchemy.dialects.postgresql import dialect
+    from sqlalchemy.schema import CreateIndex, CreateTable
+
+    from cli_agent_orchestrator.clients.postgres.migrations import ComponentMigration
+
+    tables = Base.metadata.sorted_tables
+    statements = [str(CreateTable(table).compile(dialect=dialect())) for table in tables]
+    statements.extend(
+        str(CreateIndex(index).compile(dialect=dialect()))
+        for table in tables
+        for index in sorted(table.indexes, key=lambda i: i.name)
+    )
+    baseline = ComponentMigration(
+        "core", "main", 1, tuple(statements), tuple(t.name for t in tables)
+    )
+    indexes = ComponentMigration(
+        "core",
+        "main",
+        2,
+        (
+            "CREATE INDEX idx_memory_scope ON memory_metadata (scope, scope_id)",
+            "CREATE INDEX idx_memory_updated ON memory_metadata (updated_at)",
+            "CREATE INDEX idx_memory_type ON memory_metadata (memory_type)",
+            "CREATE INDEX idx_memory_rel_lookup "
+            "ON memory_relationships (scope, scope_id, source_key)",
+        ),
+        ("memory_metadata", "memory_relationships"),
+    )
+    return (baseline, indexes)
+
+
+CORE_MIGRATIONS = core_migrations()
+
+
+def init_db() -> None:
+    """Verify provisioned native schema. Runtime credentials never migrate."""
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget, connect
+    from cli_agent_orchestrator.clients.postgres.migrations import (
+        verify_component,
+        verify_runtime_role,
+    )
+
+    with connect(DatabaseTarget.from_settings(), readonly=True) as connection:
+        verify_runtime_role(connection)
+        verify_component(connection, core_migrations())
 
 
 def init_runtime_db() -> None:
-    """Initialize ordinary bridge dependencies without creating Work authority.
-
-    Existing Work tables are preserved and checked by the ordinary ownership
-    guard. This initializer never creates, migrates or clears a Work ledger.
-    """
-    names = {
-        "terminals",
-        "session_incarnations",
-        "inbox",
-        "idempotency_keys",
-        "terminal_turn_receipts",
-        "terminal_turn_recovery",
-        "terminal_late_observations",
-        "native_children",
-        "memory_metadata",
-        "memory_relationships",
-        "project_aliases",
-        "vault_note",
-        "vault_exclusion",
-        "vault_recall_counter",
-        "vault_note_alias",
-    }
-    Base.metadata.create_all(
-        bind=engine, tables=[table for name, table in Base.metadata.tables.items() if name in names]
+    """Verify provisioned bridge dependencies without bootstrapping authority."""
+    from cli_agent_orchestrator.clients.postgres import connect
+    from cli_agent_orchestrator.clients.postgres.migrations import (
+        verify_component,
+        verify_runtime_role,
     )
-    from cli_agent_orchestrator.clients.runtime_channel_schema import RemoteBase
-
-    RemoteBase.metadata.create_all(bind=engine)
-    # Existing terminal schema migration uses the configured private DB path.
-    if str(engine.url.database) == str(constants.DATABASE_FILE):
-        _migrate_terminals_schema()
-    _restrict_db_file_permissions()
-
-
-def _restrict_db_file_permissions() -> None:
-    """Chmod the SQLite file (+ -wal/-shm siblings if present) to 0o600.
-
-    The DB persists sensitive data (workflow spec_snapshot prompt bodies,
-    inputs_json), matching the owner-only posture of prompt files and the audit
-    log. Called after ``create_all`` so the file exists. Best-effort: a chmod
-    failure (exotic filesystems) degrades permissions only, never blocks startup.
-    """
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    for path in (
-        DATABASE_FILE,
-        DATABASE_FILE.with_name(DATABASE_FILE.name + "-wal"),
-        DATABASE_FILE.with_name(DATABASE_FILE.name + "-shm"),
-    ):
-        if not path.exists():
-            continue
-        try:
-            os.chmod(path, 0o600)
-        except OSError as e:
-            logger.warning(f"Could not restrict DB file permissions on {path}: {e}")
-
-
-def _migrate_add_handoff_results() -> None:
-    """Create the handoff_results table on existing databases (issue #447).
-
-    ``Base.metadata.create_all`` already handles fresh databases; this
-    idempotent migration handles existing ones where the table does not
-    exist yet.  SQLite supports ``CREATE TABLE IF NOT EXISTS``, so we
-    delegate to raw SQL rather than a full schema rebuild.
-
-    The bare ``DATETIME`` columns here and the ORM model's
-    ``DateTime(timezone=True)`` are not a divergence in what gets STORED:
-    ``timezone=True`` is a no-op on SQLite, which keeps no offset either way, so
-    both paths hold naive UTC wall-clock (the writer's default is ``_utcnow``).
-    Registered LAST in ``init_db`` and order-independent: it touches its own new
-    table and no column of any other, so it neither depends on nor perturbs the
-    migrators above it.
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS handoff_results (
-                    job_id TEXT PRIMARY KEY,
-                    state TEXT NOT NULL,
-                    terminal_id TEXT,
-                    last_message TEXT,
-                    error_message TEXT,
-                    created_at DATETIME,
-                    updated_at DATETIME
-                )
-                """)
-            conn.commit()
-    except Exception as e:
-        logger.warning(f"Migration check for handoff_results failed: {e}")
-
-
-def _migrate_project_aliases_schema() -> None:
-    """Rebuild project_aliases if it predates the alias-only primary key.
-
-    The table originally used a composite PK ``(project_id, alias)``, which
-    allowed one alias to map to several project_ids and made reverse lookups
-    nondeterministic. The new schema keys on ``alias`` alone. SQLite cannot
-    alter a primary key in place, so drop and recreate. The table is an
-    opportunistic identity cache rebuilt by ``resolve_project_id`` on demand,
-    so dropping rows is safe. Runs before ``create_all`` so the fresh schema
-    is created with the new PK.
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            row = conn.execute(
-                "SELECT name FROM sqlite_master " "WHERE type='table' AND name='project_aliases'"
-            ).fetchone()
-            if row is None:
-                return  # table doesn't exist yet — create_all builds it fresh
-            cols = conn.execute("PRAGMA table_info(project_aliases)").fetchall()
-            # PRAGMA returns rows: (cid, name, type, notnull, dflt_value, pk).
-            # In the legacy schema both project_id and alias have pk>0; in the
-            # new schema only alias does.
-            pk_cols = {c[1] for c in cols if c[5]}
-            if pk_cols != {"alias"}:
-                conn.execute("DROP TABLE project_aliases")
-                conn.commit()
-                logger.info("Migration: rebuilt project_aliases with alias-only primary key")
-    except Exception as e:
-        logger.debug(f"project_aliases migration skipped: {e}")
-
-
-def _migrate_memory_indexes() -> None:
-    """Add explicit indexes on memory_metadata for query performance."""
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_memory_scope ON memory_metadata (scope, scope_id)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_memory_updated ON memory_metadata (updated_at)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_memory_type ON memory_metadata (memory_type)"
-            )
-    except Exception as e:
-        logger.debug(f"Memory index migration skipped: {e}")
-
-
-def _migrate_memory_source_kind() -> None:
-    """Widen memory identity with a non-null source discriminator.
-
-    SQLite cannot alter a UNIQUE constraint, so installed databases require a
-    transactional table rebuild.  The gate compares UNIQUE-index column lists,
-    not index names: SQLite discards names given to table-level constraints.
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    expected_unique_columns = ("key", "scope", "scope_id", "source_kind")
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            table_exists = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memory_metadata'"
-            ).fetchone()
-            if table_exists is None:
-                return
-            columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_metadata)")}
-            unique_indexes = [
-                row[1]
-                for row in conn.execute("PRAGMA index_list(memory_metadata)").fetchall()
-                if row[3] == "u"
-            ]
-            if any(
-                tuple(
-                    column[2]
-                    for column in conn.execute(
-                        f'PRAGMA index_info("{index_name.replace(chr(34), chr(34) * 2)}")'
-                    ).fetchall()
-                )
-                == expected_unique_columns
-                for index_name in unique_indexes
-            ):
-                if "source_kind" not in columns:
-                    raise RuntimeError(
-                        "memory_metadata unique index references missing source_kind"
-                    )
-                return
-
-            conn.execute("BEGIN")
-            conn.execute("""
-                CREATE TABLE memory_metadata_new (
-                    id VARCHAR NOT NULL PRIMARY KEY,
-                    key VARCHAR NOT NULL,
-                    memory_type VARCHAR NOT NULL,
-                    scope VARCHAR NOT NULL,
-                    scope_id VARCHAR,
-                    source_kind VARCHAR NOT NULL DEFAULT 'native',
-                    file_path VARCHAR NOT NULL,
-                    tags VARCHAR NOT NULL,
-                    source_provider VARCHAR,
-                    source_terminal_id VARCHAR,
-                    token_estimate INTEGER,
-                    created_at DATETIME,
-                    updated_at DATETIME,
-                    access_count INTEGER NOT NULL DEFAULT 0,
-                    last_accessed_at DATETIME,
-                    last_compiled_at DATETIME,
-                    related_keys TEXT,
-                    CONSTRAINT uq_memory_key_scope UNIQUE (key, scope, scope_id, source_kind)
-                )
-                """)
-            conn.execute("""
-                INSERT INTO memory_metadata_new (
-                    id, key, memory_type, scope, scope_id, source_kind, file_path, tags,
-                    source_provider, source_terminal_id, token_estimate, created_at, updated_at,
-                    access_count, last_accessed_at, last_compiled_at, related_keys
-                )
-                SELECT
-                    id, key, memory_type, scope, scope_id, 'native', file_path, tags,
-                    source_provider, source_terminal_id, token_estimate, created_at, updated_at,
-                    access_count, last_accessed_at, last_compiled_at, related_keys
-                FROM memory_metadata
-                """)
-            conn.execute("DROP TABLE memory_metadata")
-            conn.execute("ALTER TABLE memory_metadata_new RENAME TO memory_metadata")
-            columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_metadata)")}
-            if "source_kind" not in columns:
-                raise RuntimeError("memory_metadata rebuild did not add source_kind")
-            conn.commit()
-            logger.info("Migration: widened memory_metadata identity with source_kind")
-    except Exception as e:
-        logger.error(f"Memory source_kind migration failed: {e}")
-        raise
-
-
-def _migrate_add_access_count() -> None:
-    """Add access_count and last_accessed_at columns to memory_metadata if missing.
-
-    Idempotent: PRAGMA table_info gate, ALTER TABLE ADD COLUMN only
-    when missing. Fresh DBs already have the columns from
-    ``Base.metadata.create_all``. Existing rows get ``0`` / ``NULL`` — the
-    correct values for "never recalled".
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            cursor = conn.execute("PRAGMA table_info(memory_metadata)")
-            columns = {row[1] for row in cursor.fetchall()}
-            if "access_count" not in columns:
-                conn.execute(
-                    "ALTER TABLE memory_metadata ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0"
-                )
-                logger.info("Migration: added access_count column to memory_metadata")
-            if "last_accessed_at" not in columns:
-                conn.execute("ALTER TABLE memory_metadata ADD COLUMN last_accessed_at DATETIME")
-                logger.info("Migration: added last_accessed_at column to memory_metadata")
-    except Exception as e:
-        logger.debug(f"Migration check for access_count failed: {e}")
-
-
-def _migrate_add_last_compiled_at() -> None:
-    """Add last_compiled_at column to memory_metadata if missing.
-
-    Idempotent: skipped on fresh DBs (the column ships in the model) and on
-    repeated runs. Existing Phase 1/2 rows get NULL — correct, since they were
-    never LLM-compiled.
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            cursor = conn.execute("PRAGMA table_info(memory_metadata)")
-            columns = {row[1] for row in cursor.fetchall()}
-            if "last_compiled_at" not in columns:
-                conn.execute("ALTER TABLE memory_metadata ADD COLUMN last_compiled_at DATETIME")
-                logger.info("Migration: added last_compiled_at column to memory_metadata")
-    except Exception as e:
-        logger.debug(f"Migration check for last_compiled_at failed: {e}")
-
-
-def _migrate_add_related_keys() -> None:
-    """Add related_keys column to memory_metadata if missing.
-
-    Reuses the idempotent ALTER pattern: PRAGMA table_info gate, ALTER TABLE
-    ADD COLUMN only when missing. The CHECK(length < 1024) constraint applies
-    to FRESH DBs only — adding a CHECK to an existing SQLite table requires a
-    full table rebuild we deliberately avoid. Existing DBs rely on the
-    parse-side 1024-byte cap in ``_parse_related_keys``.
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            cursor = conn.execute("PRAGMA table_info(memory_metadata)")
-            columns = {row[1] for row in cursor.fetchall()}
-            if "related_keys" not in columns:
-                conn.execute("ALTER TABLE memory_metadata ADD COLUMN related_keys TEXT")
-                logger.info("Migration: added related_keys column to memory_metadata")
-    except Exception as e:
-        logger.debug(f"Migration check for related_keys failed: {e}")
-
-
-def _migrate_memory_relationships() -> None:
-    """Create the ``memory_relationships`` table + indexes and backfill legacy
-    links (issue #511). Appended LAST to the ``init_db()`` registry.
-
-    Idempotent, zero-arg, self-connecting — mirrors the existing migrators.
-    Failure is logged at debug and never propagated (a missing table is
-    recoverable; the service degrades). ``CREATE TABLE IF NOT EXISTS`` covers
-    existing DBs where ``Base.metadata.create_all`` (which builds the model with
-    its CHECK constraints on fresh DBs) has already run or will run — the same
-    fresh-vs-existing split the codebase uses for ``related_keys``.
-
-    Disjoint from the ``workflow_run*`` tables (#504); registry order is
-    immaterial.
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS memory_relationships ("
-                "id TEXT PRIMARY KEY, "
-                "scope TEXT NOT NULL, "
-                "scope_id TEXT NOT NULL, "
-                "source_key TEXT NOT NULL, "
-                "target_key TEXT NOT NULL, "
-                "type TEXT NOT NULL, "
-                "origin TEXT NOT NULL, "
-                "status TEXT NOT NULL DEFAULT 'active', "
-                "confidence REAL, "
-                "rank INTEGER, "
-                "attributes_json TEXT, "
-                "source_updated_at DATETIME, "
-                "created_at DATETIME, "
-                "updated_at DATETIME"
-                ")"
-            )
-            # Dedup UNIQUE index — total because scope_id is NOT NULL (sentinel),
-            # so ON CONFLICT fires for all scopes including global.
-            #
-            # ACCEPTED REDUNDANCY on a FRESH db (human review, PR #524): there,
-            # create_all() has already satisfied the model's UniqueConstraint via
-            # an unnamed sqlite_autoindex, so this statement adds a SECOND index
-            # over identical columns (the name matches the constraint, but SQLite
-            # does not treat a table-level UNIQUE as a named index, so
-            # IF NOT EXISTS does not suppress it). Kept deliberately: this
-            # migrator must remain zero-arg and idempotent for EXISTING dbs,
-            # where CREATE TABLE IF NOT EXISTS is a no-op and this is the ONLY
-            # thing that establishes the dedup index that replace_set/create rely
-            # on. Making it fresh-db-aware would mean probing pragma index_list
-            # and branching — more moving parts in a path whose failure mode is
-            # silent duplicate edges. The cost is one extra index on new
-            # installs: some write amplification and disk, no correctness or
-            # query-plan impact.
-            conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_rel ON memory_relationships "
-                "(scope, scope_id, source_key, target_key, type, origin)"
-            )
-            # Lookup index for the common (scope, scope_id, source_key) read path.
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_memory_rel_lookup ON memory_relationships "
-                "(scope, scope_id, source_key)"
-            )
-            conn.commit()
-            _backfill_legacy_related_keys(conn)
-    except Exception as e:
-        logger.debug(f"memory_relationships migration skipped: {e}")
-
-
-def _migrate_workflow_plan_approval() -> None:
-    """Create the durable ``workflow_plan_approval`` table if missing (issue #583 Bolt 2, ``approval-store``).
-
-    FR-8's re-approval mechanism: one row per APPROVED PLAN, keyed by the ``plan_id`` that
-    ``plan_identifier.compute`` derives from a run's execution-affecting fields. A changed plan produces a
-    different ``plan_id``, finds no row, and is refused until it is approved in its own right.
-
-    ``plan_id`` IS THE PRIMARY KEY, so one-approval-per-plan is enforced by the database rather than by code
-    remembering to check. Combined with ``INSERT OR IGNORE`` in ``services/approval_store.py``, that makes an
-    approval WRITE-ONCE: a repeated grant cannot overwrite the original ``approved_at`` / ``approved_by``, and
-    there is no update path at all. That absence is deliberate and is the unit's central control — an update
-    would let an existing approval be pointed at a changed plan, so the row would read as approved while the
-    work behind it had never been reviewed.
-
-    KEYED BY PLAN, NOT BY RUN, and deliberately carrying NO foreign key to ``workflow_run``: an approval's
-    lifetime is independent of any run, so deleting a run must not be able to revoke one.
-
-    Idempotent, zero-arg, self-connecting; failure logged at debug and never propagated (B4-BR-1 / B4-RD-4),
-    same precedent as every migrator above. Because that failure is SILENT, the table's existence is VERIFIED
-    rather than assumed: see ``test/services/test_approval_store.py`` for the ``PRAGMA table_info`` assertion on
-    a fresh database. A missing table makes every approval lookup answer False, which refuses every run —
-    fail-closed, but diagnosed far from its cause.
-
-    NOT registered in ``workflow_journal``'s ``_REQUIRED_RUN_COLUMNS`` / ``_REQUIRED_STEP_COLUMNS``. That
-    verification is scoped to the columns the JOURNAL's own SQL reads, and this table is read by neither, so
-    coupling the journal's connection cache to it would be wrong. The consequence is that this table gets no
-    runtime self-healing the way ``manifest_json`` does; ``approval_store._connect`` runs this migrator on every
-    connect instead, so a transient failure is retried on the next operation.
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS workflow_plan_approval ("
-                "plan_id TEXT PRIMARY KEY, "
-                "approved_at TEXT NOT NULL, "
-                "approved_by TEXT NOT NULL"
-                ")"
-            )
-    except Exception as e:  # noqa: BLE001 — derived/recoverable; logged at debug (B4-RD-4)
-        logger.debug(f"workflow_plan_approval migration skipped: {e}")
-
-
-def _migrate_memory_scope_null_uniqueness(engine: Any = None, *, strict: bool = False) -> None:
-    """Create the partial unique index backing ``uq_memory_key_scope`` for
-    NULL ``scope_id`` rows within each ``source_kind`` (issue #657). Appended LAST to the ``init_db()``
-    registry.
-
-    SQLite treats ``NULL != NULL`` in a UNIQUE index, so the table-level
-    ``uq_memory_key_scope`` constraint has never fired for global/federated
-    memories (``MemoryService.resolve_scope_id`` persists a real NULL for
-    both — ``memory_metadata`` deliberately keeps the column nullable; the
-    sentinel used by ``memory_relationships`` is wrong here). This index
-    covers exactly those rows; non-NULL scopes stay on the table constraint.
-
-    Idempotent, self-connecting — mirrors the existing migrators. ``engine``
-    lets a caller bound the attempt to an existing SQLAlchemy engine (the
-    memory-repair path passes its own); the default resolves the singleton
-    ``DATABASE_FILE`` exactly like the other migrators. Fail-soft by design:
-    on a database that still holds duplicate NULL-scope rows,
-    ``CREATE UNIQUE INDEX`` raises ``IntegrityError``, so duplicates are
-    pre-scanned and the index is skipped with a warning pointing at
-    ``cao memory repair`` rather than blocking startup. The repair now
-    re-invokes this migrator once its dedupe has cleared the duplicates, so
-    the index lands in the same repair run instead of at the next startup.
-    ``strict=True`` (the explicit ``cao memory repair --apply`` path) makes
-    that re-invocation honest: DDL failure — e.g. a competing SQLite write
-    lock — propagates instead of being logged at debug, and the named index
-    is verified present before returning, so repair can no longer report
-    success while the index is absent; the startup default stays fail-soft.
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    target = str(DATABASE_FILE)
-    try:
-        if engine is not None:
-            # Reuse the caller's engine connection pool so the attempt and the
-            # repairs share one database identity.
-            with engine.connect() as conn:
-                index_rows = conn.exec_driver_sql(
-                    "SELECT name FROM sqlite_master "
-                    "WHERE type = 'index' AND name = 'uq_memory_key_scope_null'"
-                ).fetchall()
-                if index_rows:
-                    return
-                duplicates = conn.exec_driver_sql(
-                    "SELECT key, scope, source_kind, COUNT(*) FROM memory_metadata "
-                    "WHERE scope_id IS NULL GROUP BY key, scope, source_kind HAVING COUNT(*) > 1"
-                ).fetchall()
-                if duplicates:
-                    rendered = ", ".join(
-                        f"{scope}:{key}[{source_kind}]x{count}"
-                        for key, scope, source_kind, count in duplicates
-                    )
-                    logger.warning(
-                        "Skipping uq_memory_key_scope_null creation: duplicate global/federated "
-                        f"rows in memory_metadata ({rendered}). Run `cao memory repair` to "
-                        "reconcile them; the unique index is created on the next startup."
-                    )
-                    return
-                conn.exec_driver_sql(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_key_scope_null "
-                    "ON memory_metadata (key, scope, source_kind) WHERE scope_id IS NULL"
-                )
-                conn.commit()
-                if strict:
-                    created = conn.exec_driver_sql(
-                        "SELECT name FROM sqlite_master "
-                        "WHERE type = 'index' AND name = 'uq_memory_key_scope_null'"
-                    ).fetchall()
-                    if not created:
-                        raise RuntimeError(
-                            "uq_memory_key_scope_null creation reported success but the "
-                            "index is absent from sqlite_master"
-                        )
-            return
-        with closing(sqlite3.connect(target)) as connection, connection as conn:
-            duplicates = conn.execute(
-                "SELECT key, scope, source_kind, COUNT(*) FROM memory_metadata "
-                "WHERE scope_id IS NULL GROUP BY key, scope, source_kind HAVING COUNT(*) > 1"
-            ).fetchall()
-            if duplicates:
-                rendered = ", ".join(
-                    f"{scope}:{key}[{source_kind}]x{count}"
-                    for key, scope, source_kind, count in duplicates
-                )
-                logger.warning(
-                    "Skipping uq_memory_key_scope_null creation: duplicate global/federated "
-                    f"rows in memory_metadata ({rendered}). Run `cao memory repair` to "
-                    "reconcile them; the unique index is created on the next startup."
-                )
-                return
-            conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_key_scope_null "
-                "ON memory_metadata (key, scope, source_kind) WHERE scope_id IS NULL"
-            )
-            if strict:
-                created = conn.execute(
-                    "SELECT name FROM sqlite_master "
-                    "WHERE type = 'index' AND name = 'uq_memory_key_scope_null'"
-                ).fetchall()
-                if not created:
-                    raise RuntimeError(
-                        "uq_memory_key_scope_null creation reported success but the "
-                        "index is absent from sqlite_master"
-                    )
-    except Exception as e:  # noqa: BLE001 — derived/recoverable; logged at debug
-        if strict:
-            raise
-        logger.debug(f"memory scope NULL uniqueness migration skipped: {e}")
-
-
-def _migrate_vault_exclusions() -> None:
-    """Create and backfill durable vault-forget identities.
-
-    ``vault_note.status`` is a rebuildable projection and cannot safely retain
-    user intent across path reuse, quarantine, or rebuild. Existing excluded
-    rows are therefore copied into the identity-keyed authoritative table.
-    Failure propagates because continuing without the backfill could republish
-    content that the user explicitly forgot.
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS vault_exclusion ("
-                "vault_id VARCHAR NOT NULL, "
-                "scope VARCHAR NOT NULL, "
-                "scope_id VARCHAR NOT NULL DEFAULT '', "
-                "cao_key VARCHAR NOT NULL, "
-                "last_known_relpath VARCHAR NOT NULL, "
-                "content_sha256 VARCHAR, "
-                "key_source VARCHAR, "
-                "key_source_reason VARCHAR, "
-                "created_at DATETIME NOT NULL, "
-                "PRIMARY KEY (vault_id, scope, scope_id, cao_key)"
-                ")"
-            )
-            note_table_exists = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'vault_note'"
-            ).fetchone()
-            if note_table_exists is None:
-                return
-            conn.execute(
-                "INSERT OR IGNORE INTO vault_exclusion ("
-                "vault_id, scope, scope_id, cao_key, last_known_relpath, "
-                "content_sha256, key_source, key_source_reason, created_at"
-                ") "
-                "SELECT vault_id, scope, scope_id, cao_key, vault_relpath, "
-                "content_sha256, key_source, key_source_reason, "
-                "COALESCE(last_reconciled_at, CURRENT_TIMESTAMP) "
-                "FROM vault_note WHERE status = 'excluded'"
-            )
-    except Exception as e:
-        logger.error(f"Vault exclusion migration failed: {e}")
-        raise
-
-
-def _migrate_vault_migration_receipts() -> None:
-    """Create the additive migration-receipt table on legacy databases."""
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            columns = conn.execute("PRAGMA table_info(vault_migration_receipt)").fetchall()
-            if columns:
-                return
-            conn.execute(
-                "CREATE TABLE vault_migration_receipt ("
-                "receipt_id VARCHAR NOT NULL PRIMARY KEY, "
-                "scope VARCHAR NOT NULL, "
-                "scope_id VARCHAR NOT NULL DEFAULT '', "
-                "cao_key VARCHAR NOT NULL, "
-                "native_relpath VARCHAR NOT NULL, "
-                "native_snapshot_sha256 VARCHAR NOT NULL, "
-                "vault_id VARCHAR NOT NULL, "
-                "managed_relpath VARCHAR NOT NULL, "
-                "vault_note_uid VARCHAR NOT NULL, "
-                "published_content_sha256 VARCHAR NOT NULL, "
-                "superseded_edges TEXT NOT NULL DEFAULT '[]', "
-                "status VARCHAR NOT NULL DEFAULT 'active', "
-                "created_at DATETIME NOT NULL"
-                ")"
-            )
-    except Exception as e:
-        logger.error(f"Vault migration receipt schema migration failed: {e}")
-        raise
-
-
-def _migrate_vault_key_provenance() -> None:
-    """Add nullable key provenance columns to legacy vault tables."""
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            for table in ("vault_note", "vault_exclusion"):
-                table_exists = conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-                    (table,),
-                ).fetchone()
-                if table_exists is None:
-                    continue
-                columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-                if "key_source" not in columns:
-                    conn.execute(f"ALTER TABLE {table} ADD COLUMN key_source VARCHAR")
-                if "key_source_reason" not in columns:
-                    conn.execute(f"ALTER TABLE {table} ADD COLUMN key_source_reason VARCHAR")
-    except Exception as e:
-        logger.error(f"Vault key provenance schema migration failed: {e}")
-        raise
+    from cli_agent_orchestrator.clients.runtime_channel_schema import runtime_channel_migrations
+
+    with connect(main_target(), readonly=True) as connection:
+        verify_runtime_role(connection)
+        verify_component(connection, CORE_MIGRATIONS)
+        verify_component(connection, runtime_channel_migrations())
 
 
 def _backfill_legacy_related_keys(conn: Any) -> None:
@@ -1753,7 +1094,7 @@ def _backfill_legacy_related_keys(conn: Any) -> None:
         # Per-source idempotency gate (exact = on the sentinel, never IS NULL).
         existing = conn.execute(
             "SELECT 1 FROM memory_relationships "
-            "WHERE source_key = ? AND scope = ? AND scope_id = ? "
+            "WHERE source_key = %s AND scope = %s AND scope_id = %s "
             "AND origin = 'legacy_related_keys' LIMIT 1",
             (key, scope, sentinel),
         ).fetchone()
@@ -1772,40 +1113,41 @@ def _backfill_legacy_related_keys(conn: Any) -> None:
             if scope_id is None:
                 found = conn.execute(
                     "SELECT 1 FROM memory_metadata "
-                    "WHERE key = ? AND scope = ? AND scope_id IS NULL LIMIT 1",
+                    "WHERE key = %s AND scope = %s AND scope_id IS NULL LIMIT 1",
                     (target, scope),
                 ).fetchone()
             else:
                 found = conn.execute(
                     "SELECT 1 FROM memory_metadata "
-                    "WHERE key = ? AND scope = ? AND scope_id = ? LIMIT 1",
+                    "WHERE key = %s AND scope = %s AND scope_id = %s LIMIT 1",
                     (target, scope, scope_id),
                 ).fetchone()
             if found is None:
                 reported.append(f"{scope}/{scope_id}/{key}->{target}: dangling")
                 continue
             try:
-                conn.execute(
-                    "INSERT INTO memory_relationships "
-                    "(id, scope, scope_id, source_key, target_key, type, origin, "
-                    "status, confidence, rank, attributes_json, source_updated_at, "
-                    "created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, 'relates_to', 'legacy_related_keys', "
-                    "'active', NULL, ?, NULL, ?, ?, ?) "
-                    "ON CONFLICT (scope, scope_id, source_key, target_key, type, origin) "
-                    "DO NOTHING",
-                    (
-                        str(uuid.uuid4()),
-                        scope,
-                        sentinel,
-                        key,
-                        target,
-                        rank,
-                        src_updated_at,
-                        now_iso,
-                        now_iso,
-                    ),
-                )
+                with conn.transaction():
+                    conn.execute(
+                        "INSERT INTO memory_relationships "
+                        "(id, scope, scope_id, source_key, target_key, type, origin, "
+                        "status, confidence, rank, attributes_json, source_updated_at, "
+                        "created_at, updated_at) "
+                        "VALUES (%s, %s, %s, %s, %s, 'relates_to', 'legacy_related_keys', "
+                        "'active', NULL, %s, NULL, %s, %s, %s) "
+                        "ON CONFLICT (scope, scope_id, source_key, target_key, type, origin) "
+                        "DO NOTHING",
+                        (
+                            str(uuid.uuid4()),
+                            scope,
+                            sentinel,
+                            key,
+                            target,
+                            rank,
+                            src_updated_at,
+                            now_iso,
+                            now_iso,
+                        ),
+                    )
             except Exception as e:
                 logger.debug(f"backfill insert skipped for {key}->{target}: {e}")
     try:
@@ -1819,482 +1161,6 @@ def _backfill_legacy_related_keys(conn: Any) -> None:
             len(reported),
             "; ".join(reported[:20]),
         )
-
-
-def _migrate_workflow_index() -> None:
-    """Create/upgrade the derived ``workflow_index`` table (issue #312, N2).
-
-    The table is a **derived, non-authoritative** projection of the workflow
-    spec YAML files on disk (B2-BR-2): it can be dropped and rebuilt
-    byte-identically from the files alone (``rebuild_index_from_files``). It
-    carries no run/execution state — runs and per-step state are N5/N6.
-
-    Idempotent (``CREATE TABLE IF NOT EXISTS``), zero-arg and self-connecting —
-    mirrors the existing ``_migrate_memory_indexes`` pattern. Failure is logged
-    at debug and never propagated (a missing index table is recoverable: the
-    next ``list`` rebuilds it).
-
-    U5 additively widens ``step_count`` to nullable: script-tier rows carry
-    NULL (step count is run-time-determined, unknowable at index time), while
-    YAML rows keep populating an int. ``CREATE TABLE IF NOT EXISTS`` only
-    covers fresh DBs — on a pre-U5 DB the column already exists as NOT NULL,
-    and SQLite cannot ``ALTER COLUMN`` to relax a NOT NULL constraint in
-    place. Same drop/rebuild precedent as ``_migrate_project_aliases_schema``:
-    the table is fully derived, so dropping it is safe — the next ``list``
-    rebuilds it from the workflow files on disk.
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            row = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_index'"
-            ).fetchone()
-            if row is not None:
-                cols = conn.execute("PRAGMA table_info(workflow_index)").fetchall()
-                # PRAGMA row: (cid, name, type, notnull, dflt_value, pk).
-                step_count_col = next((c for c in cols if c[1] == "step_count"), None)
-                if step_count_col is not None and step_count_col[3]:  # notnull flag set
-                    conn.execute("DROP TABLE workflow_index")
-                    conn.commit()
-                    logger.info(
-                        "Migration: rebuilt workflow_index with nullable step_count "
-                        "(dropped legacy table; rebuilt from workflow files on next list)"
-                    )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS workflow_index ("
-                "name TEXT PRIMARY KEY, "
-                "source_path TEXT NOT NULL, "
-                "mode TEXT NOT NULL, "
-                "step_count INTEGER, "  # nullable: script-tier rows carry NULL
-                "description TEXT NOT NULL DEFAULT '', "
-                "indexed_at TEXT NOT NULL"
-                ")"
-            )
-    except Exception as e:  # noqa: BLE001 — derived table; rebuilt on next list
-        logger.debug(f"workflow_index migration skipped: {e}")
-
-
-def _migrate_workflow_run() -> None:
-    """Create the durable ``workflow_run`` journal table if missing (issue #312, N6).
-
-    The run aggregate root: one row per run, keyed by ``run_id`` (E1,
-    domain-entities). Per Q1=B this is the **source of truth** for run execution
-    state; the Bolt-3 in-memory ``run_registry`` is a cache over it. No loop
-    columns (``iteration_counter`` etc.) — deferred to N8 (Q4=B, B4-BR-12).
-
-    Idempotent (``CREATE TABLE IF NOT EXISTS``), zero-arg and self-connecting —
-    mirrors ``_migrate_workflow_index`` (B2, B4-BR-1). Failure is logged at debug
-    and never propagated: a missing table is recoverable, the next write retries
-    the path and the live run completes on the in-memory floor (B4-RD-4).
-
-    U3 (issue #312, script-tier journal extension) additively appends two
-    columns — ``tier`` and ``generation`` (E1, domain-entities) — via the same
-    idempotent ``PRAGMA table_info`` gate used by ``_migrate_add_access_count`` /
-    ``_migrate_add_related_keys``. Both default to values that make a pre-U3 /
-    YAML row read identically to its pre-extension form (INV-1/INV-2): existing
-    rows back-fill to ``tier='yaml'``, ``generation='1'``. ``generation`` is TEXT,
-    not INTEGER, so it compares byte-identically against the env-var-transported
-    string generation value (domain-entities B4 fix).
-
-    ``manifest-column`` (issue #583 Bolt 2, ADR-583-12) additively appends ONE
-    column, ``manifest_json``, through the same PRAGMA-gated idiom — the frozen
-    execution manifest envelope, carrying source hash, inputs, repository and
-    worktree baseline, provider, model, profile, permissions, limits, retry
-    policy, the resolved-memory record, and the ``plan_id`` derived from them.
-    ``DEFAULT NULL`` means "manifest absent", which every pre-Bolt-2 row is, so
-    such a row reads back observably identical to its pre-extension form
-    (INV-1/INV-2) and no back-fill is attempted — a manifest records how a run was
-    LAUNCHED, which is not recoverable for a run that already started.
-
-    Because this body's failure is silent (see the ``except`` below), the column's
-    existence is VERIFIED rather than assumed: ``test_workflow_run_columns`` in
-    ``test/clients/test_workflow_run_migration.py`` asserts it on a fresh database,
-    with its TEXT type and NULL default. A silent failure would otherwise surface
-    far from its cause, as every run losing its manifest — which the Bolt 2
-    approval gate reads as "never approved" and refuses. That direction is
-    fail-closed, but the diagnosis is still remote, hence the assertion.
-
-    This column is NOT indexed (ADR-583-12: re-approval compares a ``plan_id``
-    read out of the envelope and no query filters on it). Writing and reading it
-    belong to the ``manifest-freeze`` unit, not to this migrator.
-
-    Issue #753 additively appends nullable ``error`` for the redacted, bounded
-    script-level failure diagnostic. Existing and non-script rows remain NULL.
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS workflow_run ("
-                "run_id TEXT PRIMARY KEY, "
-                "workflow_name TEXT NOT NULL, "
-                "spec_snapshot TEXT NOT NULL, "
-                "inputs_json TEXT NOT NULL, "
-                "state TEXT NOT NULL, "
-                "current_step_id TEXT, "
-                "started_at TEXT NOT NULL, "
-                "finished_at TEXT"
-                ")"
-            )
-            columns = {row[1] for row in conn.execute("PRAGMA table_info(workflow_run)")}
-            if "tier" not in columns:
-                conn.execute(
-                    "ALTER TABLE workflow_run ADD COLUMN tier TEXT NOT NULL DEFAULT 'yaml'"
-                )
-                logger.info("Migration: added tier column to workflow_run")
-            if "generation" not in columns:
-                conn.execute(
-                    "ALTER TABLE workflow_run ADD COLUMN generation TEXT NOT NULL DEFAULT '1'"
-                )
-                logger.info("Migration: added generation column to workflow_run")
-            if "manifest_json" not in columns:
-                conn.execute("ALTER TABLE workflow_run ADD COLUMN manifest_json TEXT DEFAULT NULL")
-                logger.info("Migration: added manifest_json column to workflow_run")
-            if "error" not in columns:
-                conn.execute("ALTER TABLE workflow_run ADD COLUMN error TEXT DEFAULT NULL")
-                logger.info("Migration: added error column to workflow_run")
-    except Exception as e:  # noqa: BLE001 — derived/recoverable; logged at debug (B4-RD-4)
-        logger.debug(f"workflow_run migration skipped: {e}")
-
-
-def _migrate_workflow_run_step() -> None:
-    """Create the durable ``workflow_run_step`` table if missing (issue #312, N6).
-
-    Per-step durable state: one row per ``(run_id, step_id)`` (E2,
-    domain-entities). ``reprompted``/``terminal_id`` are deliberately NOT
-    journaled (F3) — they are in-memory-only and defaulted on rebuild. No
-    ``which_guard_fired``/``iterations_run`` columns — N8 adds them via its own
-    additive migrator (Q4=B, B4-BR-12).
-
-    Idempotent, zero-arg, self-connecting; failure logged at debug and never
-    propagated (B4-BR-1 / B4-RD-4), same precedent as ``_migrate_workflow_index``.
-
-    U3 (issue #312, script-tier journal extension) additively appends
-    ``call_fingerprint`` (E2, domain-entities) via the same idempotent
-    ``PRAGMA table_info`` gate. Defaults to ``NULL`` so a pre-U3 / YAML row is
-    indistinguishable from its pre-extension form (INV-1/INV-2); ``append_step``
-    is the sole write path for the column (``update_step`` stays untouched — the
-    fingerprint is set once, at the RUNNING insert).
-
-    U1 (issue #504, event-log substrate) additively appends three nullable
-    columns via the same PRAGMA-gated ``ALTER TABLE ADD COLUMN`` idiom:
-    ``terminal_id`` (associated terminal), ``reprompted`` (reprompt flag), and
-    ``error_kind`` (structured error kind). All default to ``NULL`` so a
-    pre-U1 row reads back observably identical to its pre-extension form
-    (additive-only, C-1/C-4). ``workflow_run`` itself is untouched.
-
-    ``result-envelope`` (issue #583, BR-7) then additively appends ONE column,
-    ``result_json``, through the same gate — the serialised ``StepResultEnvelope``
-    that replay returns (FR-1). ``DEFAULT NULL`` means every pre-#583 row reads as
-    "envelope absent" (BR-10), which is safe rather than a gap: such a row's
-    fingerprint is legacy-scheme or NULL, so FR-6 already keeps it off the replay
-    path and the two guards agree instead of disagreeing.
-
-    Because the failure is silent, the column's existence is VERIFIED rather than
-    assumed (BR-8): see ``test/services/test_step_result.py`` for the
-    ``PRAGMA table_info`` assertion on a fresh database. A silent failure would
-    otherwise surface far away as every settle losing its envelope, which the
-    replay gate would read as crash-window rows and halt on.
-
-    MERGE NOTE (2026-08-17, #583 x #504). #583's original rationale for adding ONE
-    column rather than three read: "three statements would triple the chance of a
-    partial, silent migration", because this body is wrapped in
-    ``except Exception`` -> ``logger.debug``. **That argument is overtaken by the
-    merge** — #504 independently added three columns to the same silently-failing
-    block, so the combined body now issues FOUR guarded ``ALTER`` statements, not
-    one. The risk #583 minimised is materially larger than either change assumed
-    alone. #583's mitigation (assert the column exists on a fresh database) is
-    therefore MORE load-bearing after this merge. Flagged rather than silently
-    reconciled.
-
-    CORRECTION (2026-08-18, issue #583 Bolt 2, unit ``manifest-column``). The
-    sentence above previously ended by claiming that "#504's three columns have no
-    equivalent assertion". **That claim was false and has been removed.** All three
-    ARE asserted, in ``test/clients/test_workflow_run_migration.py``: ``terminal_id``,
-    ``reprompted`` and ``error_kind`` appear in ``test_workflow_run_step_columns``'s
-    exact ``set(cols) == {...}`` column set, and each carries a nullable check
-    (``[3] == 0``) plus a default check (``[4] == "NULL"``) in the same test. The
-    locations are named here so the denial cannot rot back: a reader who believed it
-    would add a duplicate assertion to close a gap that does not exist. What DOES
-    survive from the note above is the crowding itself — four guarded ``ALTER``
-    statements under one silent ``except`` is a real and growing risk, and adopting a
-    migration framework for it is recorded as a candidate decision (out of scope for
-    a single additive column).
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS workflow_run_step ("
-                "run_id TEXT NOT NULL, "
-                "step_id TEXT NOT NULL, "
-                "state TEXT NOT NULL, "
-                "attempts INTEGER NOT NULL, "
-                "output_json TEXT, "
-                "error TEXT, "
-                "updated_at TEXT NOT NULL, "
-                "PRIMARY KEY (run_id, step_id)"
-                ")"
-            )
-            columns = {row[1] for row in conn.execute("PRAGMA table_info(workflow_run_step)")}
-            if "call_fingerprint" not in columns:
-                conn.execute(
-                    "ALTER TABLE workflow_run_step ADD COLUMN call_fingerprint TEXT DEFAULT NULL"
-                )
-                logger.info("Migration: added call_fingerprint column to workflow_run_step")
-            if "terminal_id" not in columns:
-                conn.execute(
-                    "ALTER TABLE workflow_run_step ADD COLUMN terminal_id TEXT DEFAULT NULL"
-                )
-                logger.info("Migration: added terminal_id column to workflow_run_step")
-            if "reprompted" not in columns:
-                conn.execute(
-                    "ALTER TABLE workflow_run_step ADD COLUMN reprompted INTEGER DEFAULT NULL"
-                )
-                logger.info("Migration: added reprompted column to workflow_run_step")
-            if "error_kind" not in columns:
-                conn.execute(
-                    "ALTER TABLE workflow_run_step ADD COLUMN error_kind TEXT DEFAULT NULL"
-                )
-                logger.info("Migration: added error_kind column to workflow_run_step")
-            if "result_json" not in columns:
-                conn.execute(
-                    "ALTER TABLE workflow_run_step ADD COLUMN result_json TEXT DEFAULT NULL"
-                )
-                logger.info("Migration: added result_json column to workflow_run_step")
-    except Exception as e:  # noqa: BLE001 — derived/recoverable; logged at debug (B4-RD-4)
-        logger.debug(f"workflow_run_step migration skipped: {e}")
-
-
-def _migrate_workflow_outcome_indexes() -> None:
-    """Add indexes on workflow_outcomes for retrospector queries.
-
-    The table itself is created by ``Base.metadata.create_all`` (it ships in
-    the model, so fresh and existing DBs both get it). Retrospection filters
-    by session and by agent profile over a recency window — index both.
-    Idempotent, self-connecting, failure logged at debug — mirrors
-    ``_migrate_memory_indexes``.
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_outcome_session "
-                "ON workflow_outcomes (session_name, created_at)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_outcome_agent "
-                "ON workflow_outcomes (agent_profile, created_at)"
-            )
-    except Exception as e:
-        logger.debug(f"workflow_outcomes index migration skipped: {e}")
-
-
-def _migrate_workflow_run_event() -> None:
-    """Create the durable append-only ``workflow_run_event`` table if missing (issue #504, U1).
-
-    The event log root: one row per emitted workflow domain event, keyed by the
-    composite ``(run_id, seq)`` PRIMARY KEY (ADR-1, domain-entities). Per
-    NFR-DUR-1 this table is the authoritative, append-only, versioned record of
-    workflow execution — rows are inserted and never updated or reordered; ``seq``
-    (a per-run monotonically increasing sequence) is the SOLE ordering authority,
-    ``ts`` is display/duration only (BR-5). ``run_id``, ``seq``, ``event_type``,
-    ``event_schema_version`` (FR-1.1) and ``ts`` are NOT NULL; the remaining
-    columns are nullable and populated where applicable. ``iteration`` and
-    ``which_guard_fired`` are RESERVED for a later deterministic-loops feature
-    (FR-1.5) and stay NULL in the MVP.
-
-    Idempotent (``CREATE TABLE IF NOT EXISTS``), zero-arg and self-connecting —
-    mirrors ``_migrate_workflow_run`` (C-1/C-4, additive-only). Failure is logged
-    at debug and never propagated: a missing table is recoverable, the next
-    best-effort append retries the path.
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS workflow_run_event ("
-                "run_id TEXT NOT NULL, "
-                "seq INTEGER NOT NULL, "
-                "event_type TEXT NOT NULL, "
-                "event_schema_version INTEGER NOT NULL, "
-                "ts TEXT NOT NULL, "
-                "step_id TEXT, "
-                "attempt INTEGER, "
-                "state TEXT, "
-                "elapsed_ms INTEGER, "
-                "provider TEXT, "
-                "agent_profile TEXT, "
-                "engine TEXT, "
-                "terminal_id TEXT, "
-                "terminal_offset_start INTEGER, "
-                "terminal_offset_len INTEGER, "
-                "error_kind TEXT, "
-                "reason TEXT, "
-                "validation_result TEXT, "
-                "output_ref TEXT, "
-                "iteration INTEGER, "
-                "which_guard_fired TEXT, "
-                "PRIMARY KEY (run_id, seq)"
-                ")"
-            )
-    except Exception as e:  # noqa: BLE001 — derived/recoverable; logged at debug
-        logger.debug(f"workflow_run_event migration skipped: {e}")
-
-
-def _migrate_workflow_run_seq() -> None:
-    """Create the durable ``workflow_run_seq`` high-water table if missing (issue #504, U1).
-
-    One row per run: ``high_water`` records the highest per-run ``seq`` ever
-    ALLOCATED (best-effort persisted before the matching event append), so a
-    rebuild can resume strictly above any allocated slot even when its append was
-    swallowed (BR-3). ``high_water`` advances monotonically (BR-11) and is NOT
-    NULL; ``run_id`` is the PRIMARY KEY.
-
-    Idempotent (``CREATE TABLE IF NOT EXISTS``), zero-arg and self-connecting —
-    same additive-only posture as ``_migrate_workflow_run_event``. Failure is
-    logged at debug and never propagated.
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS workflow_run_seq ("
-                "run_id TEXT PRIMARY KEY, "
-                "high_water INTEGER NOT NULL"
-                ")"
-            )
-    except Exception as e:  # noqa: BLE001 — derived/recoverable; logged at debug
-        logger.debug(f"workflow_run_seq migration skipped: {e}")
-
-
-def _migrate_workflow_run_indexes() -> None:
-    """Add explicit indexes on ``workflow_run`` for list-query performance (U1, FR-3.2).
-
-    Two single-column indexes serving the two shapes ``list_runs`` produces: the
-    unfiltered newest-first list orders by ``started_at`` alone (served by
-    ``idx_workflow_run_started_at``), and the state-filtered list narrows on
-    ``state`` (served by ``idx_workflow_run_state``). Two single-column indexes
-    cover both paths; a single composite ``(state, started_at)`` would not serve
-    the unfiltered ``started_at``-only ordering (ADR-6, IR-1).
-
-    Zero-arg, self-connecting, and idempotent — mirrors ``_migrate_memory_indexes``.
-    Each statement uses ``CREATE INDEX IF NOT EXISTS`` so a second ``init_db()`` is
-    a no-op (IR-2); no destructive migration, no Alembic (NFR-5). It creates only
-    indexes, never columns — so the C-4 exact-column migration test is untouched
-    (IR-4). Registered AFTER ``_migrate_workflow_run`` in ``init_db`` so the base
-    table exists first. Failure is logged at debug and never raised: a missing
-    index degrades to a table scan, not a crash (IR-3).
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_workflow_run_started_at "
-                "ON workflow_run (started_at)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_workflow_run_state ON workflow_run (state)"
-            )
-    except Exception as e:  # noqa: BLE001 — missing index degrades to a scan (IR-3)
-        logger.debug(f"workflow_run index migration skipped: {e}")
-
-
-def _migrate_terminals_schema() -> None:
-    """Add terminal metadata columns to existing SQLite databases."""
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as conn:
-            cursor = conn.execute("PRAGMA table_info(terminals)")
-            columns = {row[1] for row in cursor.fetchall()}
-            if "allowed_tools" not in columns:
-                conn.execute("ALTER TABLE terminals ADD COLUMN allowed_tools TEXT")
-                conn.commit()
-                logger.info("Migration: added allowed_tools column to terminals table")
-            if "shell_command" not in columns:
-                conn.execute("ALTER TABLE terminals ADD COLUMN shell_command TEXT")
-                conn.commit()
-                logger.info("Migration: added shell_command column to terminals table")
-            if "caller_id" not in columns:
-                conn.execute("ALTER TABLE terminals ADD COLUMN caller_id TEXT")
-                conn.commit()
-                logger.info("Migration: added caller_id column to terminals table")
-            if "engine" not in columns:
-                conn.execute("ALTER TABLE terminals ADD COLUMN engine TEXT")
-                conn.commit()
-                logger.info("Migration: added engine column to terminals table")
-            if "kiro_policy_digest" not in columns:
-                conn.execute("ALTER TABLE terminals ADD COLUMN kiro_policy_digest TEXT")
-                conn.commit()
-            if "provider_variant" not in columns:
-                conn.execute("ALTER TABLE terminals ADD COLUMN provider_variant TEXT")
-                conn.commit()
-            if "group" not in columns:
-                # "group" is a SQL reserved word in some dialects but not SQLite;
-                # quoted defensively so this ALTER survives if that ever changes.
-                conn.execute('ALTER TABLE terminals ADD COLUMN "group" TEXT')
-                conn.commit()
-                logger.info("Migration: added group column to terminals table")
-            if "metadata" not in columns:
-                conn.execute('ALTER TABLE terminals ADD COLUMN "metadata" TEXT')
-                conn.commit()
-                logger.info("Migration: added metadata column to terminals table")
-            if "working_directory" not in columns:
-                conn.execute("ALTER TABLE terminals ADD COLUMN working_directory TEXT")
-                conn.commit()
-                logger.info("Migration: added working_directory column to terminals table")
-            if "deferred_init_failure" not in columns:
-                conn.execute("ALTER TABLE terminals ADD COLUMN deferred_init_failure TEXT")
-                conn.commit()
-                logger.info("Migration: added deferred_init_failure column to terminals table")
-            if "deferred_init_external_owner" not in columns:
-                conn.execute(
-                    "ALTER TABLE terminals ADD COLUMN deferred_init_external_owner "
-                    "INTEGER NOT NULL DEFAULT 0"
-                )
-                conn.commit()
-                logger.info(
-                    "Migration: added deferred_init_external_owner column to terminals table"
-                )
-            if "deferred_init_runtime_reclaimed" not in columns:
-                conn.execute(
-                    "ALTER TABLE terminals ADD COLUMN deferred_init_runtime_reclaimed "
-                    "INTEGER NOT NULL DEFAULT 0"
-                )
-                conn.commit()
-                logger.info(
-                    "Migration: added deferred_init_runtime_reclaimed column to terminals table"
-                )
-            if "session_incarnation_id" not in columns:
-                conn.execute("ALTER TABLE terminals ADD COLUMN session_incarnation_id TEXT")
-                conn.commit()
-                logger.info("Migration: added session_incarnation_id column to terminals table")
-    except Exception as e:
-        logger.warning(f"Migration check for terminals schema failed: {e}")
 
 
 def create_terminal(
@@ -2321,7 +1187,7 @@ def create_terminal(
     """Create terminal metadata record.
 
     ``idempotency_key``, when given, is persisted in the SAME ``SessionLocal``
-    session as the terminal row -- one ``commit()``, so SQLite's single-writer
+    session as the terminal row -- one ``commit()``, so the PostgreSQL
     transaction covers both inserts atomically (review on PR #634, issue
     #616). This is what lets a retry with the same key find the terminal even
     if the ORIGINAL caller never saw the HTTP response: the mapping is
@@ -2880,9 +1746,7 @@ def begin_terminal_turn_receipt(
             # its receipt.  A read-then-insert sequence is not sufficient: a
             # concurrent terminal teardown can delete the row after the read
             # and before the receipt commit, leaving private lifecycle state
-            # with no terminal.  This no-op update is portable across the
-            # SQLite and PostgreSQL backends CAO supports: it serializes
-            # SQLite's writer transaction and holds PostgreSQL's row lock.
+            # with no terminal. This update holds PostgreSQL's parent row lock.
             # Terminal deletion follows the complementary order -- parent
             # first, receipt cleanup second, in the same transaction -- so a
             # deletion which waits for this claim will erase the receipt it
@@ -3563,15 +2427,10 @@ def list_terminals_by_session(tmux_session: str) -> List[Dict[str, Any]]:
     still cedes ownership to a worker. Callers should cite this docstring rather
     than restate the rule.
 
-    Ordered by ``rowid``, which is insertion order, and normally creation order:
-    every row is written at one site (``db_create_terminal``, called from
-    ``terminal_service.create_terminal``), and a worker's row cannot precede its
-    conductor's because the MCP handoff either resolves a caller that already
-    has a row (``GET /terminals/{caller_id}``, which raises if the id is stale)
-    or, when it is running outside a CAO terminal, records no caller at all and
-    starts a NEW session in which the worker is itself the conductor. Reuse
-    after deletion does not reorder surviving rows -- see ``TerminalModel`` for
-    the mechanism and its limits.
+    Ordered by the durable ``insertion_sequence``. PostgreSQL assigns this
+    identity on insertion; the importer preserves the old store's insertion
+    order. Deleting a row does not reorder surviving rows. Sequence gaps are
+    valid and carry no lifecycle authority.
 
     Two known gaps, both pre-existing and neither introduced here:
 
@@ -3589,16 +2448,12 @@ def list_terminals_by_session(tmux_session: str) -> List[Dict[str, Any]]:
     ``_enrich_session_ownership`` already does. The ordering is what makes it
     *predictable*; it does not make it an identity.
 
-    This ORDER BY does not change what this function returned before it was
-    added -- an unordered scan of a rowid table already yielded rowid order.
-    It states the order instead of inheriting it, so an index added later
-    cannot quietly change which terminal is the conductor.
     """
     with SessionLocal() as db:
         terminals = (
             db.query(TerminalModel)
             .filter(TerminalModel.tmux_session == tmux_session)
-            .order_by(literal_column("terminals.rowid"))
+            .order_by(TerminalModel.insertion_sequence)
             .all()
         )
         return [
@@ -3659,19 +2514,9 @@ def list_terminals_in_sessions(tmux_sessions: List[str]) -> List[Dict[str, Any]]
     session names keeps the cost proportional to the workload instead of to the
     leak.
 
-    Ordered by ``rowid``, identically to ``list_terminals_by_session`` -- see
-    that function for the index-0-is-the-conductor contract and why rowid
-    expresses creation order. The two MUST order the same way: the caller picks
-    a session's "first known terminal", so the pick is order-sensitive, and an
-    ordered batched read beside an unordered per-session read is what let this
-    function silently disagree with the one it replaced.
-
-    The ORDER BY is not decoration. Without it the order is whatever the engine
-    plans: today every plan is a rowid scan (there is no index on
-    ``tmux_session``), but adding one -- the obvious reaction to a slow
-    per-session lookup -- reorders the probe. Measured, a plain ASC index on
-    ``(tmux_session, id)`` makes an unordered read return a worker ahead of the
-    session creator; ordering here is what keeps the conductor first.
+    Ordered by ``insertion_sequence``, identically to
+    ``list_terminals_by_session``. Both reads must select the same oldest
+    surviving terminal regardless of the planner's chosen index.
 
     Ordering by ``id`` would NOT do that: ``id`` is ``uuid4().hex[:8]``
     (utils/terminal.generate_terminal_id), so it makes the conductor a
@@ -3687,7 +2532,7 @@ def list_terminals_in_sessions(tmux_sessions: List[str]) -> List[Dict[str, Any]]
         terminals = (
             db.query(TerminalModel)
             .filter(TerminalModel.tmux_session.in_(tmux_sessions))
-            .order_by(literal_column("terminals.rowid"))
+            .order_by(TerminalModel.insertion_sequence)
             .all()
         )
         return [
@@ -4147,19 +2992,14 @@ def create_inbox_message(sender_id: str, receiver_id: str, message: str) -> Inbo
 def _managed_inbox_store_identity_for_session(
     db, *, expected: ManagedInboxStoreIdentity | None = None
 ) -> ManagedInboxStoreIdentity:
-    """Validate path and UUID using the exact SQLAlchemy connection being used."""
+    """Validate native target identity using the actual SQLAlchemy connection."""
     connection = db.connection()
-    rows = connection.exec_driver_sql("PRAGMA database_list").fetchall()
-    main = next((row[2] for row in rows if row[1] == "main"), None)
-    if not main:
-        raise RuntimeError("managed inbox requires a file-backed SQLite store")
-    try:
-        store_identity = str(Path(main).resolve(strict=False))
-        configured = str(Path(constants.DATABASE_FILE).resolve(strict=False))
-    except (OSError, RuntimeError) as error:
-        raise RuntimeError("managed inbox store identity cannot be resolved") from error
-    if store_identity != configured:
-        raise RuntimeError("managed inbox configured database differs from SQLAlchemy store")
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+
+    target = DatabaseTarget.from_settings()
+    if connection.info.get("cao_target_identity") != target.identity:
+        raise RuntimeError("managed inbox connection targets another PostgreSQL store")
+    store_identity = target.store_id
     row = connection.exec_driver_sql(
         "SELECT singleton,store_identity,store_uuid FROM work_inbox_store_context"
     ).fetchall()
@@ -4606,65 +3446,6 @@ def update_terminal_provider_variant(terminal_id: str, provider_variant: str) ->
         return False
 
 
-def _migrate_workflow_plan_snapshot() -> None:
-    """Create the integrity-checked private plan snapshot schema.
-
-    This migration is deliberately separate from the private snapshot store.
-    Callers that will lend a SQLite transaction to ``freeze_and_attach`` must
-    run it before opening that transaction; attempting DDL through the borrowed
-    connection could commit caller work or deadlock against its write lock.
-
-    Startup's existing database chmod remains best-effort for compatibility;
-    this migrator itself is mode-agnostic. Private snapshot reads and writes
-    independently enforce their stricter fail-closed permission contract before
-    touching persisted executable material.
-    """
-    import sqlite3
-
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    try:
-        with closing(sqlite3.connect(str(DATABASE_FILE))) as connection, connection as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS workflow_plan_snapshot ("
-                "plan_id TEXT PRIMARY KEY, "
-                "component_set_version TEXT NOT NULL"
-                ")"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS workflow_plan_snapshot_component ("
-                "plan_id TEXT NOT NULL, "
-                "component_name TEXT NOT NULL, "
-                "content_digest TEXT NOT NULL, "
-                "content BLOB NOT NULL, "
-                "PRIMARY KEY (plan_id, component_name), "
-                "FOREIGN KEY (plan_id) REFERENCES workflow_plan_snapshot(plan_id) "
-                "ON DELETE CASCADE"
-                ")"
-            )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS workflow_run_plan_snapshot ("
-                "run_id TEXT PRIMARY KEY, "
-                "plan_id TEXT NOT NULL, "
-                "FOREIGN KEY (run_id) REFERENCES workflow_run(run_id) ON DELETE CASCADE, "
-                "FOREIGN KEY (plan_id) REFERENCES workflow_plan_snapshot(plan_id) "
-                "ON DELETE RESTRICT"
-                ")"
-            )
-            for statement in (
-                "CREATE TABLE IF NOT EXISTS workflow_prepared_plan (prepared_id TEXT PRIMARY KEY,plan_id TEXT NOT NULL REFERENCES workflow_plan_snapshot(plan_id),workflow_name TEXT NOT NULL,tier TEXT NOT NULL,source_hash TEXT NOT NULL,principal_id TEXT NOT NULL,created_at REAL NOT NULL,expires_at REAL NOT NULL,public_manifest_json TEXT NOT NULL)",
-                "CREATE TABLE IF NOT EXISTS workflow_scoped_run (run_id TEXT PRIMARY KEY REFERENCES workflow_run(run_id) ON DELETE CASCADE,prepared_id TEXT NOT NULL REFERENCES workflow_prepared_plan(prepared_id),principal_id TEXT NOT NULL,plan_id TEXT NOT NULL)",
-                "CREATE TABLE IF NOT EXISTS workflow_plan_step_alias (run_id TEXT NOT NULL REFERENCES workflow_run(run_id) ON DELETE CASCADE,step_id TEXT NOT NULL,target_key TEXT NOT NULL,agent_profile TEXT NOT NULL,workflow_alias TEXT NOT NULL,seed_id TEXT NOT NULL,seed_revision INTEGER NOT NULL,provision_id TEXT NOT NULL,PRIMARY KEY(run_id,step_id))",
-            ):
-                conn.execute(statement)
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_workflow_run_plan_snapshot_plan "
-                "ON workflow_run_plan_snapshot(plan_id)"
-            )
-    except Exception as e:  # noqa: BLE001 — retryable; strict operations fail closed
-        logger.debug(f"workflow_plan_snapshot migration skipped: {e}")
-
-
 def update_terminal_kiro_policy_digest(terminal_id: str, digest: Optional[str]) -> bool:
     if digest is not None and not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("KAS policy digest must be lowercase SHA-256")
@@ -4675,20 +3456,3 @@ def update_terminal_kiro_policy_digest(terminal_id: str, digest: Optional[str]) 
         terminal.kiro_policy_digest = digest
         db.commit()
         return True
-
-
-def _migrate_workflow_continuations() -> None:
-    """Initialize verified additive controller/correlation tables after Work."""
-    from cli_agent_orchestrator.clients.beads_work_schema import initialize as initialize_beads
-    from cli_agent_orchestrator.clients.work_continuation_schema import initialize
-
-    connection = engine.raw_connection()
-    try:
-        initialize(connection)
-        initialize_beads(connection)
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()

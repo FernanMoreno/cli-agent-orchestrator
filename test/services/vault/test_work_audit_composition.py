@@ -1,12 +1,15 @@
 """Vault transactions must retain the fork's verified audit boundary."""
 
+from dataclasses import replace
+from test.postgres.orm import configured_orm_engine
 from test.services.vault.test_boundary_refusal import _boundary_state
+from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from cli_agent_orchestrator.clients.database import Base, MemoryRelationshipModel
+from cli_agent_orchestrator.clients.database import MemoryRelationshipModel
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.services.knowledge_policy import KnowledgeAccessDenied
 from cli_agent_orchestrator.services.memory_relationship_service import MemoryRelationshipService
 from cli_agent_orchestrator.services.memory_service import MemoryService
@@ -40,11 +43,13 @@ def test_vault_projection_has_durable_authority_before_shared_transaction(tmp_pa
     assert [row[0] for row in phases] == ["authorized", "completed"]
 
 
-def test_enclosing_audit_cannot_authorize_another_database(tmp_path):
-    owner_engine = create_engine(f'sqlite:///{tmp_path / "owner.db"}')
-    foreign_engine = create_engine(f'sqlite:///{tmp_path / "foreign.db"}')
-    Base.metadata.create_all(owner_engine)
-    Base.metadata.create_all(foreign_engine)
+def test_enclosing_audit_cannot_authorize_another_store_identity(tmp_path):
+    owner_engine = configured_orm_engine()
+    owner_target = DatabaseTarget.from_settings(scope="main")
+    foreign_target = replace(owner_target, store_id=str(uuid4()))
+    from test.postgres.fixtures import make_orm_engine
+
+    foreign_engine = make_orm_engine(foreign_target)
     owner = MemoryService(base_dir=tmp_path / "native", db_engine=owner_engine)
     relationships = MemoryRelationshipService(memory_service=owner)
     Foreign = sessionmaker(bind=foreign_engine)
@@ -57,6 +62,8 @@ def test_enclosing_audit_cannot_authorize_another_database(tmp_path):
                     )
     with Foreign() as db:
         assert db.query(MemoryRelationshipModel).count() == 0
+    foreign_engine.dispose()
+    owner_engine.dispose()
 
 
 @pytest.mark.parametrize(
@@ -68,14 +75,14 @@ def test_enclosing_audit_cannot_authorize_another_database(tmp_path):
     ],
 )
 def test_new_relationship_mutations_require_enclosing_audit(tmp_path, method, args, kwargs):
-    engine = create_engine(f'sqlite:///{tmp_path / "new-helper.db"}')
-    Base.metadata.create_all(engine)
+    engine = configured_orm_engine()
     owner = MemoryService(base_dir=tmp_path / "native", db_engine=engine)
     relationships = MemoryRelationshipService(memory_service=owner)
     Session = sessionmaker(bind=engine)
     with Session() as db:
         with pytest.raises(KnowledgeAccessDenied, match="enclosing audited"):
             getattr(relationships, method)(*args, **kwargs, db=db)
+    engine.dispose()
 
 
 def test_unreconciled_exclusion_blocks_vault_recall(tmp_path, monkeypatch):
@@ -89,7 +96,10 @@ def test_unreconciled_exclusion_blocks_vault_recall(tmp_path, monkeypatch):
 
     state = _lifecycle(tmp_path, monkeypatch)
     _store(state, "retained native bytes")
-    _migrate(state)
+    report = _migrate(state)
+    assert report.planned == 1
+    assert report.migrated == 1
+    assert report.failed == 0, report.errors
     with state.session() as db:
         receipt = db.query(VaultMigrationReceiptModel).one()
         db.add(
@@ -107,17 +117,18 @@ def test_unreconciled_exclusion_blocks_vault_recall(tmp_path, monkeypatch):
 
 
 def test_read_preflight_cannot_fall_back_from_reviewed_knowledge(tmp_path):
-    engine = create_engine(f'sqlite:///{tmp_path / "reviewed-helper.db"}')
-    Base.metadata.create_all(engine)
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
     from cli_agent_orchestrator.services.knowledge_policy import KnowledgePolicy
 
-    policy = KnowledgePolicy(WorkRepository(tmp_path / "reviewed-helper.db"), "job", "grant", 1)
+    target = DatabaseTarget.from_settings(scope="main")
+    policy = KnowledgePolicy(WorkRepository(target), "job", "grant", 1)
+    engine = configured_orm_engine()
     owner = MemoryService(base_dir=tmp_path / "native", db_engine=engine, knowledge_policy=policy)
     relationships = MemoryRelationshipService(memory_service=owner)
     with sessionmaker(bind=engine)() as db:
         with pytest.raises(KnowledgeAccessDenied, match="cannot fall back"):
             relationships.preflight_edge_identities({}, db=db)
+    engine.dispose()
 
 
 def test_vault_graph_uses_its_memory_database_owner(tmp_path, monkeypatch):
@@ -128,7 +139,10 @@ def test_vault_graph_uses_its_memory_database_owner(tmp_path, monkeypatch):
 
     state = _lifecycle(tmp_path, monkeypatch)
     _store(state, "retained native bytes")
-    _migrate(state)
+    report = _migrate(state)
+    assert report.planned == 1
+    assert report.migrated == 1
+    assert report.failed == 0, report.errors
     provider = MemoryGraphProvider(
         memory_service=state.service,
         lint_enabled=lambda: False,

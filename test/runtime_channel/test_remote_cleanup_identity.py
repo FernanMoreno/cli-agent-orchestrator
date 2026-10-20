@@ -1,34 +1,34 @@
 """Exact old remote teardown must preserve unrelated current central identity."""
 
 import json
+from test.postgres.fixtures import install_core_runtime_components, make_orm_engine
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 
-from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.clients import database
-from cli_agent_orchestrator.clients.runtime_channel_schema import RemoteBase, RemotePlacementModel
+from cli_agent_orchestrator.clients.runtime_channel_schema import RemotePlacementModel
 from cli_agent_orchestrator.runtime_channel import server
+
+pytestmark = pytest.mark.postgres
 
 
 @pytest.fixture
-def central(tmp_path, monkeypatch):
-    path = tmp_path / "central.sqlite"
-    engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
-    database.Base.metadata.create_all(engine)
-    RemoteBase.metadata.create_all(engine)
+def central(postgres_targets, monkeypatch):
+    target = postgres_targets.main
+    install_core_runtime_components(target)
+    engine = make_orm_engine(target)
     monkeypatch.setattr(database, "engine", engine)
-    monkeypatch.setattr(constants, "DATABASE_FILE", path)
-    monkeypatch.setattr(constants, "LOCK_DIR", tmp_path / "locks")
+    monkeypatch.setattr(database, "main_target", lambda: target)
     # Only the physical old-runtime result is simulated. The ordinary Work guard
     # reads this actual isolated DB and remains intact; no Work schema is minted.
     effect = Mock(return_value={"deleted": True})
     forget = Mock()
     monkeypatch.setattr(server.runtime_registry, "call_blocking", effect)
     monkeypatch.setattr(server.runtime_registry, "forget", forget)
-    yield engine, effect, forget
+    yield target, engine, effect, forget
     engine.dispose()
 
 
@@ -59,7 +59,7 @@ async def compensate_old_launch():
 
 @pytest.mark.asyncio
 async def test_old_compensation_preserves_same_id_unrelated_local_terminal(central):
-    engine, effect, forget = central
+    _, engine, effect, forget = central
     seed_terminal(engine)
     await compensate_old_launch()
     with engine.connect() as connection:
@@ -80,7 +80,7 @@ async def test_old_compensation_preserves_same_id_unrelated_local_terminal(centr
 
 @pytest.mark.asyncio
 async def test_old_compensation_preserves_displaced_remote_placement_and_projection(central):
-    engine, effect, forget = central
+    _, engine, effect, forget = central
     seed_terminal(engine, "replacement-session")
     identity = json.dumps({"id": "abcdef01", "session_incarnation_id": "replacement-session"})
     with engine.begin() as connection:
@@ -117,10 +117,10 @@ def test_publisher_cannot_restore_volatile_mapping_after_exact_cleanup(central, 
     from cli_agent_orchestrator.runtime_channel.store import RemoteOperationStore
     from cli_agent_orchestrator.services import remote_terminal_service as remote
 
-    engine, _, _ = central
+    target, engine, _, _ = central
     registry = RuntimeRegistry()
     monkeypatch.setattr(remote, "runtime_registry", registry)
-    store = RemoteOperationStore(engine)
+    store = RemoteOperationStore(target)
     epoch = store.activate_runtime("runtime", "runtime-inc")
     store.prepare("old-launch", "runtime", "runtime-inc", "launch", {})
     assert store.claim("old-launch", connection_epoch=epoch)

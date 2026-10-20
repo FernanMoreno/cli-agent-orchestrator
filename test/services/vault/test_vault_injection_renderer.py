@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from test.fixtures.vault_factory import build_vault_fixture
+from test.postgres.orm import configured_orm_engine
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session as OrmSession
@@ -26,7 +27,7 @@ def _injectable_renderer(tmp_path, monkeypatch):
     from cli_agent_orchestrator.services.vault import reader
     from cli_agent_orchestrator.services.vault import reconcile as reconcile_module
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine)
     monkeypatch.setattr(reader, "SessionLocal", session_factory)

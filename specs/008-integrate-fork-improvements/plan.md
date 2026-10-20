@@ -50,6 +50,48 @@ web/src; cao_mcp_apps/src; tui/src; test/{services,providers,clients,api,utils,r
 ## Verificación y cierre
 Por tarea: regresión red/green, suite de frontera y revisión del diff. Por componente: contratos/concurrencia/errores parciales. Al finalizar: Python completo aplicable, frontends/builds/TUI, arquitectura y project-composition-check, system-composition-review, Graphify refresh comprobado contra fuente, ledger de equivalencia y evidencia real con límites. No usar número de tareas verdes como prueba de cobertura si quedan capacidades pendientes.
 
+### Consolidación de main — 2026-10-12
+
+El checkout principal ya está en `main`. Se verifican por separado la ascendencia
+de commits, los deltas locales de cada worktree y los proyectos externos del
+Escritorio. Un delta local se compara contra su propia base y después contra el
+código vigente; no se copia un árbol antiguo sobre la migración PostgreSQL.
+
+Las demos se conservan en `examples/agent-collaboration/tasks/` y
+`examples/agent-collaboration/turn-recovery/`. Son aplicaciones stdlib y web
+estática independientes, sin imports al runtime CAOS ni cambios de permisos.
+Se mantienen los contratos y pruebas originales, con instrucciones relativas,
+datos iniciales vacíos y un índice de auditorías históricas. Graphify sirve para
+localizar los consumidores de aceptación; sus rutas se comprueban en fuente.
+Las pruebas se ejecutan con archivos de datos temporales y puertos libres.
+
+El inventario y las decisiones de integración se registran en
+`main-consolidation-20261012.md`; las comprobaciones completas de Spec021 y
+Spec016 permanecen abiertas hasta obtener sus propios resultados actuales.
+
+### Perfil de build T097 con digest fijo — 2026-10-12
+
+Los digests de Bubblewrap se admiten mediante una lista estática revisada en el
+backend. Un perfil nuevo requiere el source archive fijado, imagen OCI
+identificada por digest, versiones de paquetes, opciones de Meson, rutas fuente
+y de build, y dos compilaciones repetidas con resultado idéntico. La prueba de perfil
+solo amplía la admisión de ese binario exacto; no activa `WORK_BACKENDS` ni
+sustituye la aceptación en el guest Linux. Los digests no revisados permanecen
+rechazados. La evidencia concreta y sus límites están en
+`docs/auditoria-t097/soluciones/S08-limites-del-entorno.md`.
+
+La aceptación huésped T074 conservará resultados separados y sin skips: 8 casos
+host (`test_host_acceptance.py`, `test_proxy_concurrency.py` y
+`test_sibling_isolation.py`, marcador `t097_host`), 2 SIGKILL, 1 same-UID FD
+theft, 63 casos scratch Bubblewrap del `scratch-selectors.txt` (62 como el
+broker no-login y el selector exacto de sibling user namespace como `runner`
+UID/GID 1000, con metadata PostgreSQL privada propia), 1 socket pathname de
+Landlock, 2 casos de nodos de dispositivo y 3 casos del
+`extra-filesystem-selectors.txt` (recuperación de monitor muerto y los dos
+bloqueos de vault con alias de mayúsculas). La aceptación Docker T019/T020
+reportará sus 14 casos aparte; ningún grupo heredará ni contará skips como
+éxitos de otro grupo.
+
 ### Cierre operativo G04
 
 La operación remota ya dispone de identidades, recibos y reconciliación durables. Antes de cerrar G04 se comprobará, contra el código y pruebas ejecutables, cómo un operador autorizado observa capacidad retenida, nodos desconectados y las condiciones necesarias para reanudar una ejecución. Se reutilizarán las consultas y transiciones existentes; solo una ausencia funcional demostrada justificará añadir una proyección diagnóstica acotada. Una expiración de lease nunca sustituye prueba de cese. Una restauración `blocked_restore` nunca se activa automáticamente ni emite credenciales nuevas.

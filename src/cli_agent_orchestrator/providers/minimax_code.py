@@ -105,6 +105,7 @@ class ProviderError(Exception):
 
 
 class MiniMaxCodeProvider(BaseProvider):
+    supports_interaction_mcp_overlay = True
     """Provider for the interactive ``mcode`` terminal UI."""
 
     def __init__(
@@ -404,7 +405,7 @@ class MiniMaxCodeProvider(BaseProvider):
         model = self._model or (profile.model if profile is not None else None)
         self._apply_model_config(data_dir, model)
         if profile is not None and profile.mcpServers:
-            self._write_plugin(data_dir, profile.mcpServers)
+            self._write_plugin(data_dir, self.interaction_mcp_servers(profile.mcpServers))
         self._data_dir = data_dir
 
         system_prompt = (profile.system_prompt or "") if profile is not None else ""

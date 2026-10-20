@@ -74,6 +74,15 @@ _ISO_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 _IMPORT_TARGET_SCOPES = frozenset(
     {MemoryScope.GLOBAL.value, MemoryScope.PROJECT.value, MemoryScope.FEDERATED.value}
 )
+
+
+def _reject_legacy_dump(root: Path) -> None:
+    """Reject retired dump archives before resolving a target or writing data."""
+    marker = root / "sqlite-dump.json"
+    if marker.exists() or marker.is_symlink():
+        raise ValueError("Legacy memory archive format is not supported")
+
+
 _CONFLICT_POLICIES = frozenset({"skip", "replace", "merge"})
 
 # Metadata header comment marker written by store(). Any occurrence in an
@@ -223,19 +232,18 @@ class OkfArchiveBackend(MemoryArchiveBackend):
             resolve_and_validate_path(str(src), allow_file=True, description="Import source")
         )
         if src_real.is_file():
-            from cli_agent_orchestrator.services.memory_archive.legacy_reader import (
-                as_current_bundle,
-            )
             from cli_agent_orchestrator.services.memory_archive.tar_reader import extracted_bundle
 
-            with extracted_bundle(src_real) as unpacked, as_current_bundle(unpacked) as converted:
+            with extracted_bundle(src_real) as unpacked:
+                _reject_legacy_dump(unpacked)
                 report = getattr(type(self).import_bundle, "__wrapped__")(
-                    self, converted, target_scope, conflict_policy, dry_run, terminal_context
+                    self, unpacked, target_scope, conflict_policy, dry_run, terminal_context
                 )
                 assert isinstance(report, ImportReport)
                 return report
         if not src_real.is_dir():
             raise ValueError(f"Import source must be a directory or tar.gz archive: {src}")
+        _reject_legacy_dump(src_real)
 
         scope_id = self._svc.resolve_scope_id(target_scope, terminal_context)
         if target_scope == MemoryScope.PROJECT.value and scope_id is None:

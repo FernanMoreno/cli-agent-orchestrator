@@ -8,6 +8,7 @@ Tar-producing tests use a real MemoryService in tmp dirs.
 import asyncio
 import io
 import tarfile
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import patch
 
 import pytest
@@ -24,9 +25,7 @@ ENABLED_TARGET = "cli_agent_orchestrator.services.settings_service.is_memory_ena
 
 @pytest.fixture
 def real_service(tmp_path):
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'api.db'}", connect_args={"check_same_thread": False}
-    )
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     svc = MemoryService(base_dir=tmp_path / "memory", db_engine=engine)
     with patch(FACTORY_TARGET, return_value=svc):

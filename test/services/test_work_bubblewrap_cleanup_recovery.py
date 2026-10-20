@@ -55,7 +55,7 @@ def _store_identity(repository, attempt_id, identity):
         connection.execute(
             "INSERT INTO work_bubblewrap_process_identities "
             "(attempt_id,generation,protocol_version,identity_json,identity_sha256,created_at) "
-            "VALUES (?,?,?,?,?,0)",
+            "VALUES (%s,%s,%s,%s,%s,0)",
             (
                 attempt_id,
                 1,
@@ -492,7 +492,10 @@ process = subprocess.Popen([
     sys.argv[1], '--unshare-user', '--unshare-pid', '--unshare-net', '--unshare-ipc',
     '--die-with-parent', '--as-pid-1', '--ro-bind', '/', '/', '--', '/bin/sleep', '30',
 ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-pathlib.Path(sys.argv[2]).write_text(str(process.pid))
+pid_file = pathlib.Path(sys.argv[2])
+temporary_file = pid_file.with_name(pid_file.name + '.tmp')
+temporary_file.write_text(str(process.pid))
+temporary_file.replace(pid_file)
 while True:
     time.sleep(1)
 """

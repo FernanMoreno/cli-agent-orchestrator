@@ -1,4 +1,4 @@
-"""Atomic dispatch across real SQLite capacity, paths, authority and external intent.
+"""Atomic dispatch across real PostgreSQL capacity, paths, authority and external intent.
 
 The backend below is a test-only transport: no tmux process or provider CLI runs.
 """
@@ -6,7 +6,6 @@ The backend below is a test-only transport: no tmux process or provider CLI runs
 import asyncio
 import hashlib
 import multiprocessing
-import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event, Lock
@@ -14,8 +13,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from cli_agent_orchestrator import constants
+pytestmark = pytest.mark.postgres
+
 from cli_agent_orchestrator.backends.tmux_backend import TmuxBackend
+from cli_agent_orchestrator.clients.postgres import DatabaseError
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_contract import (
     ContractPermissions,
@@ -62,11 +63,11 @@ class AdmissionOnlyBackend(TmuxBackend):
 
 
 @pytest.fixture
-def context(tmp_path):
-    # Production stores Work attempts beside terminal metadata. Share the
-    # per-test SQLite selected by isolated_memory_db so target guards exercise
-    # the same durable registry instead of an incomplete second database.
-    repository = WorkRepository(constants.DATABASE_FILE)
+def context(tmp_path, postgres_targets):
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
+
+    bootstrap_scope(postgres_targets.main)
+    repository = WorkRepository(postgres_targets.main, filesystem_home=postgres_targets.home)
     repository.initialize()
     WorkScheduler(repository).configure(
         capacity=2, max_queue=100, aging_seconds=10, expected_policy_revision=0
@@ -408,25 +409,27 @@ def test_crash_after_committed_intent_keeps_reservations_without_restart_resend(
     assert context.repo.get_work(work["id"])["attempts"][0]["state"] == "sent"
     state = accounting(context.repo)
     assert (state["held"], state["paths"], state["spent"]) == (1, 1, 1)
-    restarted = WorkAdmission(WorkRepository(context.repo.path), backends={"test": context.backend})
+    restarted = WorkAdmission(
+        WorkRepository(context.repo.target, filesystem_home=context.repo.filesystem_home),
+        backends={"test": context.backend},
+    )
     assert restarted.dispatch_next(deliver) is None
     assert context.backend.effects == []
 
 
-def test_send_callback_can_commit_a_separate_sqlite_writer(context):
+def test_send_callback_can_commit_a_separate_postgres_writer(context):
     work = admit(context, "writer")
 
     def send(binding, port):
-        with sqlite3.connect(context.repo.path, timeout=0.2) as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with context.repo.transaction() as connection:
             assert (
                 connection.execute(
-                    "SELECT state FROM work_attempts WHERE id=?", (binding.attempt_id,)
+                    "SELECT state FROM work_attempts WHERE id=%s", (binding.attempt_id,)
                 ).fetchone()[0]
                 == "sent"
             )
             connection.execute(
-                "UPDATE work_jobs SET priority=priority WHERE id=?", (binding.job_id,)
+                "UPDATE work_jobs SET priority=priority WHERE id=%s", (binding.job_id,)
             )
         return deliver(binding, port)
 
@@ -478,15 +481,18 @@ def test_captured_effect_port_cannot_send_after_delivery_callback_returns(contex
     assert context.backend.effects == []
 
 
-def test_intent_persistence_failure_rolls_back_claim_paths_and_events(context):
+def test_intent_persistence_failure_rolls_back_claim_paths_and_events(context, monkeypatch):
     work = admit(context, "rollback")
     before = context.repo.read_events(work["job_id"])
-    with context.repo.transaction() as connection:
-        connection.execute(
-            "CREATE TRIGGER reject_sent BEFORE UPDATE OF state ON work_attempts "
-            "WHEN NEW.state='sent' BEGIN SELECT RAISE(ABORT,'intent unavailable'); END"
-        )
-    with pytest.raises(sqlite3.IntegrityError, match="intent unavailable"):
+    original = WorkRepository._append_event
+
+    def fail_sent_event(connection, **kwargs):
+        if kwargs.get("event_type") == "attempt.sent":
+            connection.execute("SELECT 1 / 0")
+        return original(connection, **kwargs)
+
+    monkeypatch.setattr(context.repo, "_append_event", fail_sent_event)
+    with pytest.raises(DatabaseError):
         context.service.dispatch_next(deliver)
     assert context.backend.effects == []
     assert context.repo.get_work(work["id"])["state"] == "queued"
@@ -530,9 +536,9 @@ def test_revocation_in_protected_backend_preflight_blocks_the_final_effect(conte
     assert accounting(context.repo)["held"] == accounting(context.repo)["paths"] == 1
 
 
-def _process_dispatch(database, start, results):
+def _process_dispatch(target, start, results):
     backend = AdmissionOnlyBackend()
-    repository = WorkRepository(database)
+    repository = WorkRepository(target)
     service = WorkAdmission(repository, backends={"test": backend})
     held_at_send = []
 
@@ -556,7 +562,7 @@ def test_ten_processes_share_two_durable_slots_without_duplicate_send(context):
     fork = multiprocessing.get_context("fork")
     start, results = fork.Event(), fork.Queue()
     workers = [
-        fork.Process(target=_process_dispatch, args=(context.repo.path, start, results))
+        fork.Process(target=_process_dispatch, args=(context.repo.target, start, results))
         for _ in range(10)
     ]
     try:
@@ -597,11 +603,10 @@ async def test_async_dispatch_runs_delivery_on_callers_loop_after_durable_intent
     async def send(binding, port):
         assert asyncio.get_running_loop() is loop
         await asyncio.sleep(0)
-        with sqlite3.connect(context.repo.path, timeout=0.2) as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with context.repo.transaction() as connection:
             assert (
                 connection.execute(
-                    "SELECT state FROM work_attempts WHERE id=?", (binding.attempt_id,)
+                    "SELECT state FROM work_attempts WHERE id=%s", (binding.attempt_id,)
                 ).fetchone()[0]
                 == "sent"
             )
@@ -658,7 +663,10 @@ async def test_async_cancellation_after_adapter_callback_closes_port_and_never_r
     assert accounting(context.repo)["held"] == accounting(context.repo)["paths"] == 1
     with pytest.raises(ValueError):
         ports[0].send_keys("session", "late", "must not send")
-    restarted = WorkAdmission(WorkRepository(context.repo.path), backends={"test": context.backend})
+    restarted = WorkAdmission(
+        WorkRepository(context.repo.target, filesystem_home=context.repo.filesystem_home),
+        backends={"test": context.backend},
+    )
     assert await restarted.dispatch_next_async(send) is None
     assert context.backend.effects == []
 
@@ -693,7 +701,7 @@ async def test_async_cancel_during_preflight_never_starts_delivery(context):
 @pytest.mark.asyncio
 async def test_async_restarted_dispatch_reads_exact_durable_snapshot(context):
     work = admit(context, "async-restart")
-    repository = WorkRepository(context.repo.path)
+    repository = WorkRepository(context.repo.target, filesystem_home=context.repo.filesystem_home)
     restarted = WorkAdmission(repository, backends={"test": context.backend})
     job, grant = context.jobs[0]
     snapshots = DelegationSnapshots(

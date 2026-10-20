@@ -48,7 +48,7 @@ async def test_run_step_passes_verified_principal_and_ignores_forged_caller_id(
     principal = auth._verified_principal(
         "https://issuer.test", "delegation-requester", [auth.SCOPE_WRITE], "jwt"
     )
-    repository = WorkRepository(tmp_path / "delegation.sqlite3")
+    repository = WorkRepository(tmp_path / "delegation.db")
     repository.initialize()
     calls = []
 
@@ -133,7 +133,7 @@ async def test_run_step_keeps_legacy_remote_access_without_auth_and_passes_no_pr
 
 def test_legacy_native_child_acknowledgement_is_not_a_work_task_receipt(tmp_path):
     """A legacy acknowledged row cannot pass the Work receipt type boundary."""
-    repository = WorkRepository(tmp_path / "legacy-child-ack.sqlite3")
+    repository = WorkRepository(tmp_path / "legacy-child-ack.db")
     repository.initialize()
     service = WorkService(repository)
     legacy_child = {

@@ -1,0 +1,15 @@
+# Impact before implementation — 2026-10-20
+
+Queried the existing 54,428-node Graphify corpus with its own vocabulary: `mcp`, `overlay`, `provider`, `server`. Exact new overlay and middleware symbols are absent: this graph cannot establish their current callers. No edges are invented and a full graph rebuild is unnecessary for this incremental policy primitive.
+
+Source-verified paths: BaseProvider.interaction_mcp_servers → overlay_interaction_capability_file; Codex._build_codex_command and ClaudeCodeProvider._build_claude_command use that boundary; OpenCode v2's initializer overlays installed native MCP maps directly. OpenCode v1 does not use the same private v2 config path. MCP main → restrictive middleware → FastMCP list/call/resource/prompt dispatch. Existing middleware filters exact names before handler execution; existing operation handlers own identity/project/persistence authority.
+
+Changed surface: immutable policy module, existing restrictive middleware constructor, protected configuration overlay, server middleware installation. Neighbors: provider builders, canonical command recognition, capability files, legacy OpenCode marker, registered plugin surfaces and operation authorization. No DB migration, event, transaction, retry or cleanup change. New-policy graph refresh may be deferred until wider provider integration; source contracts and real transport tests cover the absent symbols.
+
+## T007 client/preflight boundary, before implementation
+
+Rechecked existing graph for `validate_v2_mcp_configuration`, `_build_codex_command`, `write_v2_configuration`; graph results are supplementary and current source owns behavior. Source-verified edges: OpenCode v2 initializer calls write_v2_configuration then validate_v2_mcp_configuration before the child launch; native writer retains `environment`; Codex command builder calls BaseProvider.interaction_mcp_servers then serializes enabled_tools with TOML scalars. The policy module's immutable profile sets are the shared vocabulary. Restrict changes to those pre-launch decisions; native installation/grant ownership is a separate unresolved boundary under review. No persistence/API/resource-lifecycle effects in this increment.
+
+Independent source diagnosis also verified install_agent → apply_plugin_mcp_servers → provider recording/context writes → native branch → _materialize_opencode_mcp → translate_mcp_server_config, which currently drops policy metadata. Existing grant sidecar read/write is best-effort and must not become policy authority. The interim validation must run before native/store/context mutation, and translation also guards its own direct callers. No sidecar or shared environment policy is introduced in this increment.
+
+Catalog race source path: test_installed_agent_visible_in_opencode_list → _run_v2_debug_agent_list → generated bwrap driver → /doc → one-shot service.json scan → /api/config → /api/agent → debug agents. The graph does not describe the embedded driver; source and the safe failed-run report establish the ordering. Only the test driver's bounded auth-file wait is changed; no provider auth, persistence or production lifecycle is involved.

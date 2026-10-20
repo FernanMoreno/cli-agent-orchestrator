@@ -22,22 +22,17 @@ Covers the load-bearing behavior from
 
 ``run_agent_step`` and ``step_output_store`` are mocked — no real terminals — via
 the exact fixture pattern of ``test_workflow_journal_resume.py``. The journal
-points at a temp SQLite DB via the patched ``DATABASE_FILE``.
+uses the isolated PostgreSQL test target.
 """
 
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
 from typing import List
 from unittest.mock import AsyncMock
 
 import pytest
 
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
-)
+from cli_agent_orchestrator.clients.postgres import DatabaseError
 from cli_agent_orchestrator.models.terminal import AgentStepResult, TerminalStatus
 from cli_agent_orchestrator.models.workflow import (
     RunState,
@@ -57,22 +52,12 @@ _SCHEMA = {"type": "object", "properties": {"answer": {"type": "string"}}, "requ
 
 
 @pytest.fixture(autouse=True)
-def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Point the journal at a temp DB, create the tables, clean the registry.
-
-    Mirrors ``test_workflow_journal_resume.py`` exactly; also clears the event
-    migration memo so the fresh temp DB self-migrates on first event write.
-    """
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
-    workflow_journal._event_migrated_paths.clear()
+def _patched_journal():
+    """Clear process-local state around each isolated PostgreSQL case."""
     ws.run_registry.clear()
     ws._active_drives.clear()
     ws.step_output_store._store.clear()
-    yield db_path
-    workflow_journal._event_migrated_paths.clear()
+    yield
     ws.run_registry.clear()
     ws._active_drives.clear()
     ws.step_output_store._store.clear()
@@ -227,7 +212,7 @@ async def test_append_failure_does_not_break_run_and_leaves_hole(monkeypatch):
         # Drop exactly the 2nd append (leaves a hole at that seq); the high-water
         # for it was already persisted, so the sequence still declares the gap.
         if calls["n"] == 2:
-            raise sqlite3.OperationalError("simulated append failure")
+            raise DatabaseError("simulated append failure")
         return real_append(run_id, seq, event_type, **kwargs)
 
     monkeypatch.setattr(ws.workflow_journal, "append_event", _flaky_append)
@@ -251,7 +236,7 @@ async def test_all_appends_failing_still_completes_the_run(monkeypatch):
     monkeypatch.setattr(ws, "run_agent_step", AsyncMock(return_value=_ok()))
 
     def _boom(*a, **k):
-        raise sqlite3.OperationalError("db down")
+        raise DatabaseError("db down")
 
     monkeypatch.setattr(ws.workflow_journal, "append_event", _boom)
     monkeypatch.setattr(ws.workflow_journal, "persist_high_water", _boom)
@@ -439,7 +424,7 @@ async def test_lost_event_append_is_logged_at_warning(monkeypatch, caplog):
     import logging
 
     def _boom(*a, **k):
-        raise sqlite3.OperationalError("event table gone")
+        raise DatabaseError("event table gone")
 
     monkeypatch.setattr(workflow_journal, "append_event", _boom)
     monkeypatch.setattr(ws, "run_agent_step", AsyncMock(return_value=_ok()))
@@ -463,7 +448,7 @@ async def test_losing_an_event_is_never_quieter_than_losing_the_high_water(monke
     import logging
 
     def _boom(*a, **k):
-        raise sqlite3.OperationalError("db down")
+        raise DatabaseError("db down")
 
     monkeypatch.setattr(workflow_journal, "append_event", _boom)
     monkeypatch.setattr(workflow_journal, "persist_high_water", _boom)
@@ -645,7 +630,7 @@ async def test_a_genuinely_lost_terminal_append_is_still_declared(monkeypatch):
 
     def _drop_terminal_append(run_id, seq, event_type, **kwargs):
         if event_type == "run.completed":
-            raise sqlite3.OperationalError("simulated terminal append failure")
+            raise DatabaseError("simulated terminal append failure")
         return real_append(run_id, seq, event_type, **kwargs)
 
     monkeypatch.setattr(workflow_journal, "append_event", _drop_terminal_append)

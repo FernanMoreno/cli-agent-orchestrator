@@ -84,7 +84,7 @@ def logs_cmd(date_str):
     help="Plan or apply rollback for exactly one migration receipt.",
 )
 def repair_cmd(do_apply, receipt_id):
-    """Reconcile surviving canonical topics into SQLite and index.md."""
+    """Reconcile surviving canonical topics into PostgreSQL and index.md."""
     from cli_agent_orchestrator.services.memory_reconciliation import (
         MemoryReconciliationError,
         MemoryReconciliationService,

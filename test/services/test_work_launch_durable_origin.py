@@ -1,7 +1,6 @@
 """Durable launch origin binding must survive a runtime restart."""
 
 import json
-import sqlite3
 from dataclasses import replace
 from test.services.test_work_launch_runtime import (  # noqa: F401
     ProtectedFakeBackend,
@@ -13,7 +12,10 @@ from test.services.test_work_launch_runtime import (  # noqa: F401
 )
 
 import pytest
+from psycopg import sql
 
+from cli_agent_orchestrator.clients.postgres import IntegrityError, connect
+from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
 from cli_agent_orchestrator.clients.work_repository import WorkConflict
 from cli_agent_orchestrator.models.work_delivery import WorkDeliveryEnvelope
 from cli_agent_orchestrator.services.work_authority import AuthorityDenied
@@ -21,8 +23,34 @@ from cli_agent_orchestrator.services.work_contract import ContractConflict
 from cli_agent_orchestrator.services.work_launch import launch_adapter
 from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
 
+pytestmark = pytest.mark.postgres
 
-def test_runtime_resolves_sqlite_provision_without_context_registry(trusted_setup):
+
+@pytest.fixture(autouse=True)
+def _provision_work_postgres_schema(postgres_targets):
+    bootstrap_scope(postgres_targets.main)
+
+
+def _drop_trigger(connection, trigger_name):
+    row = connection.execute(
+        "SELECT relation.relname, pg_get_triggerdef(trigger.oid) AS definition "
+        "FROM pg_trigger AS trigger "
+        "JOIN pg_class AS relation ON relation.oid=trigger.tgrelid "
+        "JOIN pg_namespace AS namespace ON namespace.oid=relation.relnamespace "
+        "WHERE namespace.nspname=%s AND trigger.tgname=%s "
+        "AND NOT trigger.tgisinternal",
+        (connection.target.schema, trigger_name),
+    ).fetchone()
+    assert row is not None, f"expected trigger {trigger_name} to be installed"
+    connection.execute(
+        sql.SQL("DROP TRIGGER {} ON {}").format(
+            sql.Identifier(trigger_name), sql.Identifier(row["relname"])
+        )
+    )
+    return row["definition"]
+
+
+def test_runtime_resolves_postgres_provision_without_context_registry(trusted_setup):
     """A fresh runtime derives its launch authority only from durable evidence."""
     repository, principal, _, job, grant, contract = trusted_setup
     provision = WorkProvisioning(repository).provision_launch(
@@ -97,10 +125,10 @@ def test_launch_origin_marker_cannot_be_downgraded_to_legacy(trusted_setup):
         principal, runtime.resolve_launch(principal, "opaque", intent(module), "marker-key")
     )
 
-    with repository.transaction() as connection:
-        with pytest.raises(sqlite3.IntegrityError, match="origin protocol"):
+    with pytest.raises(IntegrityError, match="origin protocol"):
+        with repository.transaction() as connection:
             connection.execute(
-                "UPDATE work_items SET origin_protocol='legacy' WHERE id=?",
+                "UPDATE work_items SET origin_protocol='legacy' WHERE id=%s",
                 (receipt.work_item_id,),
             )
 
@@ -350,22 +378,22 @@ def _admitted_durable_launch(setup, *, idempotency_key, selection):
     return module, runtime, backend, receipt
 
 
-def test_missing_or_contradictory_launch_origin_fails_before_any_effect(trusted_setup):
+def test_missing_or_contradictory_launch_origin_fails_before_any_effect(
+    trusted_setup, postgres_targets
+):
     """WorkContracts never treats absent/contradictory v21 origin evidence as legacy."""
     _, runtime, backend, receipt = _admitted_durable_launch(
         trusted_setup, idempotency_key="missing-origin-binding", selection="missing-origin"
     )
     repository, _, _, _, _, _ = trusted_setup
-    with repository.transaction() as connection:
-        trigger = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE name='work_launch_origin_bindings_immutable_delete'"
-        ).fetchone()[0]
-        connection.execute("DROP TRIGGER work_launch_origin_bindings_immutable_delete")
-        connection.execute(
-            "DELETE FROM work_launch_origin_bindings WHERE attempt_id=? AND generation=?",
-            (receipt.attempt_id, receipt.generation),
-        )
-        connection.execute(trigger)
+    with connect(postgres_targets.main.migration_target()) as connection:
+        with connection.transaction():
+            trigger = _drop_trigger(connection, "work_launch_origin_bindings_immutable_delete")
+            connection.execute(
+                "DELETE FROM work_launch_origin_bindings WHERE attempt_id=%s AND generation=%s",
+                (receipt.attempt_id, receipt.generation),
+            )
+            connection.execute(trigger)
 
     with pytest.raises(ContractConflict, match="durable origin binding"):
         runtime._admission.contracts.revalidate_order(
@@ -379,15 +407,14 @@ def test_missing_or_contradictory_launch_origin_fails_before_any_effect(trusted_
         idempotency_key="contradictory-origin-marker",
         selection="contradictory-origin",
     )
-    with repository.transaction() as connection:
-        trigger = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE name='work_items_origin_protocol_monotonic'"
-        ).fetchone()[0]
-        connection.execute("DROP TRIGGER work_items_origin_protocol_monotonic")
-        connection.execute(
-            "UPDATE work_items SET origin_protocol='legacy' WHERE id=?", (receipt.work_item_id,)
-        )
-        connection.execute(trigger)
+    with connect(postgres_targets.main.migration_target()) as connection:
+        with connection.transaction():
+            trigger = _drop_trigger(connection, "work_items_origin_protocol_monotonic")
+            connection.execute(
+                "UPDATE work_items SET origin_protocol='legacy' WHERE id=%s",
+                (receipt.work_item_id,),
+            )
+            connection.execute(trigger)
 
     with pytest.raises(ContractConflict, match="contradicts its launch origin"):
         runtime._admission.contracts.revalidate_order(

@@ -1,6 +1,7 @@
-"""Session identity regressions using real SQLite persistence and selection."""
+"""Session identity regressions using real PostgreSQL persistence and selection."""
 
 from datetime import datetime
+from test.postgres.orm import configured_orm_engine
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -69,35 +70,17 @@ def test_new_incarnation_and_terminal_roll_back_together():
     assert db.get_terminal_metadata("replacement") is None
 
 
-def test_legacy_schema_migration_creates_pointer_table_idempotently(tmp_path, monkeypatch):
-    import sqlite3
+def test_explicit_native_bootstrap_preserves_legacy_pointer_backfill(isolated_memory_db):
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
 
-    from cli_agent_orchestrator import constants
-
-    path = tmp_path / "legacy.db"
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            "CREATE TABLE terminals (id TEXT PRIMARY KEY, tmux_session TEXT, tmux_window TEXT, "
-            "provider TEXT, agent_profile TEXT, last_active DATETIME)"
-        )
-        conn.execute(
-            "INSERT INTO terminals VALUES ('legacy', 'cao-s', 'w-legacy', 'mock_cli', NULL, NULL)"
-        )
-    engine = create_engine(f"sqlite:///{path}")
-    monkeypatch.setattr(constants, "DATABASE_FILE", path)
-    monkeypatch.setattr(db, "engine", engine)
-    monkeypatch.setattr(db, "SessionLocal", sessionmaker(bind=engine))
-    try:
-        db.init_db()
-        assert db.get_terminal_metadata("legacy")["session_incarnation_id"] is None
-        assert db.update_terminals_session_incarnation(
-            ["legacy"], "inc-current", session_name="cao-s"
-        )
-        db.init_db()
-        assert db.get_session_incarnation("cao-s") == "inc-current"
-        assert db.get_terminal_metadata("legacy")["session_incarnation_id"] == "inc-current"
-    finally:
-        engine.dispose()
+    db.create_terminal("legacy", "cao-s", "w-legacy", "mock_cli")
+    assert db.get_terminal_metadata("legacy")["session_incarnation_id"] is None
+    assert db.update_terminals_session_incarnation(["legacy"], "inc-current", session_name="cao-s")
+    bootstrap_scope(isolated_memory_db)
+    bootstrap_scope(isolated_memory_db)
+    db.init_db()
+    assert db.get_session_incarnation("cao-s") == "inc-current"
+    assert db.get_terminal_metadata("legacy")["session_incarnation_id"] == "inc-current"
 
 
 @pytest.mark.parametrize("bad_id", ["missing", "other-session", "conflicting"])

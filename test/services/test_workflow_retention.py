@@ -1,7 +1,7 @@
 """U7 tests — retention, redaction & deletion (issue #504, the six Q3 BR-SEC + FR-11).
 
 Each of the six binding security rules is exercised as a pass/fail behavior over a
-REAL durable journal (temp SQLite DB) — plus the FR-11 DELETE route and its
+REAL durable PostgreSQL journal — plus the FR-11 DELETE route and its
 route-ordering pin (in ``test/api/test_workflow_route_ordering.py``). The two
 load-bearing rules:
 
@@ -14,24 +14,18 @@ load-bearing rules:
   run through the real engine leaves NO event/step row carrying prompt text or full
   step output — asserted by scanning every stored cell for the injected sentinels.
 
-The journal points at a temp DB via the patched ``DATABASE_FILE`` and the event
-migration memo is reset, mirroring ``test_workflow_event_emission.py``.
+The shared PostgreSQL test fixture installs the immutable journal schema before each test.
 """
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import List
 from unittest.mock import AsyncMock
 
 import pytest
 
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
-)
+from cli_agent_orchestrator.clients.postgres import DatabaseError
 from cli_agent_orchestrator.models.terminal import AgentStepResult, TerminalStatus
 from cli_agent_orchestrator.models.workflow import StepState, WorkflowSpec, WorkflowStep
 from cli_agent_orchestrator.models.workflow_runtime import StepOutputRecord
@@ -40,21 +34,15 @@ from cli_agent_orchestrator.services import workflow_service as ws
 
 
 # ---------------------------------------------------------------------------
-# Fixtures — a temp journal DB + a settings block we can flip per test
+# Fixtures — isolated durable journal + a settings block we can flip per test
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
-def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Point the journal at a temp DB, create the tables, clean the registry."""
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
-    workflow_journal._event_migrated_paths.clear()
+def _patched_journal():
+    """Clean process-local state; PostgreSQL schema setup belongs to the shared fixture."""
     ws.run_registry.clear()
     ws._active_drives.clear()
     ws.step_output_store._store.clear()
-    yield db_path
-    workflow_journal._event_migrated_paths.clear()
+    yield
     ws.run_registry.clear()
     ws._active_drives.clear()
     ws.step_output_store._store.clear()
@@ -107,13 +95,6 @@ def _seed_run(run_id: str, *, started_at: str, state: str = "completed") -> None
 
 def _iso(days_ago: int) -> str:
     return (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def workflow_journal_db() -> Path:
-    """Resolve the (monkeypatched) temp DB path for a direct sentinel scan."""
-    from cli_agent_orchestrator import constants
-
-    return constants.DATABASE_FILE
 
 
 # ===========================================================================
@@ -246,10 +227,10 @@ async def test_br_sec_2_capture_off_stores_no_prompt_or_output_text(settings, mo
     await ws.start_run(spec, {}, "runNoText")
 
     # Scan every cell of every event row for the sentinels.
-    with sqlite3.connect(str(workflow_journal_db())) as conn:
+    with workflow_journal._connect() as conn:
         for table in ("workflow_run_event", "workflow_run_step"):
             rows = conn.execute(
-                f"SELECT * FROM {table} WHERE run_id = ?", ("runNoText",)
+                f"SELECT * FROM {table} WHERE run_id = %s", ("runNoText",)
             ).fetchall()
             for row in rows:
                 for cell in row:
@@ -363,9 +344,9 @@ async def test_br_sec_2_step_output_received_output_ref_null_when_capture_off(
     # ``output_json`` is FUNCTIONAL execution state (resume + ``{{steps.<id>.output}}``
     # templating) that is intentionally retained regardless of the capture gate — it is
     # not the diagnostic free-text the gate governs.
-    with sqlite3.connect(str(workflow_journal_db())) as conn:
+    with workflow_journal._connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM workflow_run_event WHERE run_id = ?", ("runCapOff",)
+            "SELECT * FROM workflow_run_event WHERE run_id = %s", ("runCapOff",)
         ).fetchall()
         for row in rows:
             for cell in row:
@@ -414,9 +395,9 @@ async def test_br_sec_2_step_output_received_never_carries_the_payload(settings,
     expected = workflow_retention.output_reference(json.dumps({"secret": big}))
     assert received.output_ref == expected
     # Defense in depth: the sentinel is in NO cell of the event log.
-    with sqlite3.connect(str(workflow_journal_db())) as conn:
+    with workflow_journal._connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM workflow_run_event WHERE run_id = ?", ("runCapOn",)
+            "SELECT * FROM workflow_run_event WHERE run_id = %s", ("runCapOn",)
         ).fetchall()
         for row in rows:
             for cell in row:
@@ -533,7 +514,7 @@ def test_br_sec_3_sweep_continues_past_a_failing_delete(settings, monkeypatch):
 
     def _flaky(run_id):
         if run_id == "bad":
-            raise sqlite3.OperationalError("simulated delete failure")
+            raise DatabaseError("simulated delete failure")
         return real_delete(run_id)
 
     monkeypatch.setattr(workflow_journal, "delete_run", _flaky)
@@ -603,7 +584,7 @@ def test_sweep_is_a_noop_when_enumeration_fails(settings, monkeypatch):
     """A run-enumeration read failure degrades the sweep to 0, never raises."""
 
     def _boom():
-        raise sqlite3.OperationalError("db down")
+        raise DatabaseError("db down")
 
     monkeypatch.setattr(workflow_journal, "list_run_ids_by_age", _boom)
     assert workflow_retention.sweep_runs(retention_days=1, retention_count=1) == 0

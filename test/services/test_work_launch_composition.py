@@ -1,15 +1,18 @@
 """The launch gateway factory composes only verified, non-authoritative infrastructure."""
 
-import sqlite3
+from dataclasses import replace
 from test.services.test_work_launch_runtime import (
     ProtectedFakeBackend,
     durable_counts,
     provision,
     trusted_setup,
 )
+from uuid import uuid4
 
 import pytest
+from psycopg import sql
 
+from cli_agent_orchestrator.clients.postgres import connect
 from cli_agent_orchestrator.clients.work_repository import (
     SchemaMismatch,
     WorkRepository,
@@ -70,7 +73,7 @@ def _process_launch_contract(contract):
     return EffectiveWorkContractV2.model_validate(payload)
 
 
-def test_factory_composes_verified_sqlite_then_resolves_later_provision_and_replays_restart(
+def test_factory_composes_verified_store_then_resolves_later_provision_and_replays_restart(
     trusted_setup,
 ):
     """Breaks if composition mints authority or provider caches per-request launch context."""
@@ -108,7 +111,7 @@ def test_factory_composes_verified_sqlite_then_resolves_later_provision_and_repl
     assert durable_counts(repository) == (1, 1, 1, 1, 1)
     with repository.connection() as connection:
         stored = connection.execute(
-            "SELECT idempotency_key,request_hash FROM work_items WHERE id=?", (first.work_item_id,)
+            "SELECT idempotency_key,request_hash FROM work_items WHERE id=%s", (first.work_item_id,)
         ).fetchone()
     assert stored["idempotency_key"] == f"launch-v1-{stored['request_hash']}"
     assert backend.effects == []
@@ -230,11 +233,49 @@ def test_factory_rejects_unverified_store_invalid_backend_and_unsupported_adapte
     assert _authority_counts(repository) == before_invalid_backend
     assert durable_counts(repository) == (0, 0, 0, 0, 0)
 
-    incompatible = WorkRepository(tmp_path / "incompatible.sqlite3")
-    with sqlite3.connect(incompatible.path) as connection:
-        connection.execute("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)")
-    with pytest.raises(SchemaMismatch, match="work schema is incomplete"):
-        gateway_module.build_durable_launch_gateway(incompatible, backends={"test": backend})
+    incompatible_schema = f"invalid_{uuid4().hex[:20]}"
+    migration_target = repository.target.migration_target()
+    with connect(migration_target) as connection:
+        connection.execute(
+            sql.SQL("CREATE SCHEMA {} AUTHORIZATION {}").format(
+                sql.Identifier(incompatible_schema),
+                sql.Identifier(repository.target.migration_user),
+            )
+        )
+        connection.execute(
+            sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                sql.Identifier(incompatible_schema), sql.Identifier(repository.target.user)
+            )
+        )
+    incompatible_target = replace(
+        repository.target,
+        schema=incompatible_schema,
+        store_id=str(uuid4()),
+        migration_user=None,
+        migration_secret_file=None,
+    )
+    from cli_agent_orchestrator.clients.database import core_migrations
+    from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
+
+    migrate_component(
+        replace(
+            repository.target,
+            schema=incompatible_schema,
+            store_id=incompatible_target.store_id,
+        ),
+        core_migrations(),
+    )
+    try:
+        incompatible = WorkRepository(incompatible_target, filesystem_home=tmp_path)
+        with pytest.raises(SchemaMismatch, match="component migration history mismatch"):
+            gateway_module.build_durable_launch_gateway(incompatible, backends={"test": backend})
+    finally:
+        with connect(migration_target) as connection:
+            connection.execute(
+                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
+                    sql.Identifier(incompatible_schema)
+                )
+            )
 
     WorkProvisioning(repository).provision_launch(
         principal,

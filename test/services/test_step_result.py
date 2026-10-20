@@ -10,10 +10,8 @@ Two of these tests are the point of the file:
   redactor sees only the kept prefix, so a credential in the dropped tail vanishes without
   ``redacted`` ever being set, and a credential straddling the boundary is cut in half —
   defeating the pattern match while persisting the surviving half.
-* ``test_column_exists_after_migration`` exists because ``_migrate_workflow_run_step``
-  swallows its own failure at debug level, so BR-8 requires the column be VERIFIED rather
-  than assumed. A silent failure would otherwise surface far away as every settle losing its
-  envelope, which the replay gate would read as crash-window rows and halt on.
+* ``test_column_exists_after_migration`` verifies the immutable PostgreSQL catalog
+  manifest contains the persisted result envelope column.
 
 OUT OF SCOPE HERE (unit 6, ``journal-step-lifecycle``): ``StepRow.result_json``, the two
 ``SELECT`` lists, and the write at settle. BR-1's unconditional write is provable only there,
@@ -24,12 +22,13 @@ not try.
 from __future__ import annotations
 
 import json
-import sqlite3
-from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
-from cli_agent_orchestrator.clients.database import _migrate_workflow_run_step
+from cli_agent_orchestrator.clients.postgres import connect
+from cli_agent_orchestrator.clients.postgres.migrations import migrate_component, verify_component
+from cli_agent_orchestrator.clients.workflows_postgres_schema import WORKFLOW_MIGRATIONS
 from cli_agent_orchestrator.constants import WORKFLOW_JOURNAL_RESULT_MAX_BYTES as BOUND
 from cli_agent_orchestrator.models.workflow import StepResultEnvelope
 from cli_agent_orchestrator.services.step_result import (
@@ -255,75 +254,82 @@ def test_model_default_flags_are_false() -> None:
 # ---------------------------------------------------------------------------
 # The column (BR-7, BR-8, BR-10)
 # ---------------------------------------------------------------------------
-@pytest.fixture
-def patched_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point the migrator at a fresh temp DB (repo idiom, test_workflow_run_migration.py)."""
-    db_path = tmp_path / "t.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    return db_path
+def _install(target):
+    migrate_component(target, WORKFLOW_MIGRATIONS)
+    with connect(target, readonly=True) as connection:
+        verify_component(connection, WORKFLOW_MIGRATIONS)
 
 
-def _step_columns(db_path: Path) -> dict:
-    with sqlite3.connect(str(db_path)) as conn:
-        rows = conn.execute("PRAGMA table_info(workflow_run_step)").fetchall()
-    return {r[1]: r for r in rows}  # (cid, name, type, notnull, dflt_value, pk)
+def _step_columns(target) -> dict:
+    with connect(target, readonly=True) as connection:
+        rows = connection.execute(
+            "SELECT column_name,data_type,is_nullable,column_default "
+            "FROM information_schema.columns "
+            "WHERE table_schema=%s AND table_name='workflow_run_step' ORDER BY ordinal_position",
+            (target.schema,),
+        ).fetchall()
+    return {
+        row[0]: {"type": row[1], "nullable": row[2] == "YES", "default": row[3]} for row in rows
+    }
 
 
-def test_column_exists_after_migration(patched_db: Path) -> None:
-    """BR-7/BR-8: the column is VERIFIED present, not assumed.
-
-    ``_migrate_workflow_run_step`` wraps its whole body in ``except Exception`` ->
-    ``logger.debug``, so a failed migration is SILENT and a returning migrator proves nothing.
-    """
-    _migrate_workflow_run_step()
-    cols = _step_columns(patched_db)
+@pytest.mark.postgres
+def test_column_exists_after_migration(postgres_targets) -> None:
+    """BR-7/BR-8: the column is verified in the native PostgreSQL catalog."""
+    target = postgres_targets["main"]
+    _install(target)
+    cols = _step_columns(target)
     assert "result_json" in cols
-    assert cols["result_json"][2] == "TEXT"
-    assert cols["result_json"][3] == 0  # nullable
-    # PRAGMA table_info reports the literal default expression as the string "NULL".
-    assert cols["result_json"][4] == "NULL"
-    # The pre-existing columns are untouched — BR-9: ``output_json`` keeps its own contract.
+    assert cols["result_json"]["type"] == "text"
+    assert cols["result_json"]["nullable"] is True
+    assert cols["result_json"]["default"] is None
     assert "output_json" in cols
     assert "call_fingerprint" in cols
 
 
-def test_migration_is_idempotent(patched_db: Path) -> None:
-    """BR-7: a second run adds nothing, raises nothing, and preserves existing rows."""
-    _migrate_workflow_run_step()
-    before = set(_step_columns(patched_db))
-    with sqlite3.connect(str(patched_db)) as conn:
-        conn.execute(
+@pytest.mark.postgres
+def test_migration_is_idempotent(postgres_targets) -> None:
+    """BR-7: reapplying the immutable component migration preserves existing rows."""
+    target = postgres_targets["main"]
+    _install(target)
+    run_id = "step-result-" + uuid4().hex
+    with connect(target) as connection:
+        connection.execute(
             "INSERT INTO workflow_run_step "
-            "(run_id, step_id, state, attempts, updated_at) "
-            "VALUES ('r1', 's1', 'completed', 1, '2026-01-01T00:00:00Z')"
+            "(run_id,step_id,state,attempts,updated_at) VALUES (%s,%s,%s,%s,%s)",
+            (run_id, "s1", "completed", 1, "2026-01-01T00:00:00Z"),
         )
-        conn.commit()
-
-    _migrate_workflow_run_step()  # must be a no-op
-
-    assert set(_step_columns(patched_db)) == before
-    with sqlite3.connect(str(patched_db)) as conn:
-        count = conn.execute("SELECT COUNT(*) FROM workflow_run_step").fetchone()[0]
+    before = set(_step_columns(target))
+    _install(target)
+    assert set(_step_columns(target)) == before
+    with connect(target, readonly=True) as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM workflow_run_step WHERE run_id=%s", (run_id,)
+        ).fetchone()[0]
     assert count == 1
 
 
-def test_row_written_without_an_envelope_reads_as_absent(patched_db: Path) -> None:
+@pytest.mark.postgres
+def test_row_written_without_an_envelope_reads_as_absent(postgres_targets) -> None:
     """BR-10: ``DEFAULT NULL`` means a row written without an envelope reads as absent.
 
     Every pre-#583 row has exactly this shape. It is safe rather than a gap: such a row's
     fingerprint is legacy-scheme or NULL, so FR-6 keeps it off the replay path too — the two
     guards agree instead of disagreeing.
     """
-    _migrate_workflow_run_step()
-    with sqlite3.connect(str(patched_db)) as conn:
-        conn.execute(
+    target = postgres_targets["main"]
+    _install(target)
+    run_id = "step-result-" + uuid4().hex
+    with connect(target) as connection:
+        connection.execute(
             "INSERT INTO workflow_run_step "
-            "(run_id, step_id, state, attempts, updated_at) "
-            "VALUES ('r1', 's1', 'completed', 1, '2026-01-01T00:00:00Z')"
+            "(run_id,step_id,state,attempts,updated_at) VALUES (%s,%s,%s,%s,%s)",
+            (run_id, "s1", "completed", 1, "2026-01-01T00:00:00Z"),
         )
-        conn.commit()
-        stored = conn.execute(
-            "SELECT result_json FROM workflow_run_step WHERE run_id='r1' AND step_id='s1'"
+    with connect(target, readonly=True) as connection:
+        stored = connection.execute(
+            "SELECT result_json FROM workflow_run_step WHERE run_id=%s AND step_id=%s",
+            (run_id, "s1"),
         ).fetchone()[0]
 
     assert stored is None

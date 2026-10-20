@@ -1,0 +1,888 @@
+openapi: 3.1.0
+info:
+  title: CAO Agent Interactions API
+  version: 1.0.0
+  description: |
+    Contract for feature 016. Human routes derive a sealed Principal from the
+    existing browser/bearer/loopback auth dependency and enforce the per-source
+    content ACL. Agent routes derive an AgentActor only from a server-issued
+    terminal-incarnation capability. Request body actor, sender, source and
+    target fields are never identity proof. List/events are metadata-only;
+    prompt/answer content requires an exact content grant.
+    Human routes reject the configured CAO service bearer when auth is enabled.
+    With auth disabled, the existing trusted-loopback Principal remains a
+    shared local trust boundary and is not a distinct human identity.
+servers:
+  - url: /
+security: []
+tags:
+  - name: human-interactions
+  - name: agent-interactions
+paths:
+  /interactions:
+    get:
+      tags: [human-interactions]
+      summary: List interaction metadata visible to the current Principal
+      description: Content is omitted. A read scope alone never grants content access.
+      security:
+        - principalBearer: []
+        - browserSession: []
+      parameters:
+        - in: query
+          name: status
+          schema: { type: array, items: { $ref: '#/components/schemas/Lifecycle' } }
+          style: form
+          explode: true
+        - in: query
+          name: terminal_id
+          schema: { type: string }
+        - in: query
+          name: work_item_id
+          schema: { type: string }
+        - in: query
+          name: recipient
+          schema: { type: string }
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Metadata snapshot with cursor.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/InteractionMetadata' }
+                  next_cursor: { type: [string, 'null'] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /interactions/sources/{terminal_id}/content-owner:
+    put:
+      tags: [human-interactions]
+      summary: Operator explicitly claims an unowned terminal source for content access
+      description: |
+        Requires cao:admin and an existing verified Principal. The authenticated
+        Principal becomes the owner; the request cannot nominate another
+        identity. Incarnation is checked and the operation is audited. This does
+        not allow a general cao:read or cao:write Principal to see content.
+      security:
+        - principalBearer: []
+        - browserSession: []
+      parameters:
+        - in: path
+          name: terminal_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_incarnation_id, reason]
+              properties:
+                expected_incarnation_id: { type: string, minLength: 1, maxLength: 128 }
+                reason: { type: string, minLength: 1, maxLength: 512 }
+      responses:
+        '200':
+          description: Current Principal is now the recorded content owner for this incarnation.
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Stale' }
+  /interactions/{question_id}:
+    get:
+      tags: [human-interactions]
+      summary: Read protected question detail
+      security:
+        - principalBearer: []
+        - browserSession: []
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+        - in: query
+          name: expected_version
+          required: false
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Detail is included only after exact content authorization and freshness checks.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InteractionDetail' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Stale' }
+  /interactions/{question_id}/answers:
+    post:
+      tags: [human-interactions]
+      summary: Accept one human answer for the exact question version
+      security:
+        - principalBearer: []
+        - browserSession: []
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+        - in: header
+          name: If-Match
+          required: true
+          description: Strong ETag for the exact question version, formatted as a quoted integer.
+          schema: { type: string, pattern: '^"[1-9][0-9]*"$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AnswerRequest' }
+      responses:
+        '200':
+          description: Existing receipt returned for an equivalent idempotent answer.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnswerReceipt' }
+        '201':
+          description: New answer durably accepted. Does not assert agent continuation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnswerReceipt' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Stale' }
+        '422': { $ref: '#/components/responses/InvalidAnswer' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /interactions/{question_id}/cancel:
+    post:
+      tags: [human-interactions]
+      summary: Cancel a pending interaction
+      security:
+        - principalBearer: []
+        - browserSession: []
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+        - in: header
+          name: If-Match
+          required: true
+          schema: { type: string, pattern: '^"[1-9][0-9]*"$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 512 }
+      responses:
+        '200': { description: Cancelled lifecycle and audit receipt. }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /interactions/{question_id}/reconcile:
+    post:
+      tags: [human-interactions]
+      summary: Reconcile a manual or uncertain interaction without automatic resend
+      security:
+        - principalBearer: []
+        - browserSession: []
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+        - in: header
+          name: If-Match
+          required: true
+          schema: { type: string, pattern: '^"[1-9][0-9]*"$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [outcome, evidence_code]
+              properties:
+                outcome:
+                  type: string
+                  enum: [answered_outside_cao, no_effect_proven, remains_uncertain, dialog_still_open]
+                evidence_code: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z][A-Za-z0-9_.:-]{0,127}$', description: 'Opaque audit reference; narratives, numeric authentication codes and recognized secrets are rejected.' }
+                note: { type: string, maxLength: 512 }
+      responses:
+        '200': { description: Reconciled state; no answer content is fabricated. }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /interactions/{question_id}/delegation:
+    post:
+      tags: [human-interactions]
+      summary: Delegate one reviewed clarification to its current server-derived supervisor
+      description: |
+        Assignment lineage identifies a candidate, but never grants answer authority.
+        Only the current content owner may grant a bounded delegation for this exact
+        question/version after reviewing its protected detail. Approval and native
+        manual-only questions cannot be delegated. This grants no execution permission.
+      security:
+        - principalBearer: []
+        - browserSession: []
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+        - in: header
+          name: If-Match
+          required: true
+          schema: { type: string, pattern: '^"[1-9][0-9]*"$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_assignment_id, reason]
+              properties:
+                expected_assignment_id: { type: string, minLength: 1, maxLength: 128 }
+                reason: { type: string, minLength: 1, maxLength: 512 }
+                expires_in_seconds: { type: integer, minimum: 1, maximum: 300, default: 60 }
+      responses:
+        '200':
+          description: Delegation recorded; updated protected detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InteractionDetail' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [human-interactions]
+      summary: Revoke the current exact-question clarification delegation
+      security:
+        - principalBearer: []
+        - browserSession: []
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+        - in: header
+          name: If-Match
+          required: true
+          schema: { type: string, pattern: '^"[1-9][0-9]*"$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 512 }
+      responses:
+        '200':
+          description: Delegation revoked; updated protected detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InteractionDetail' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /interactions/{question_id}/history:
+    get:
+      tags: [human-interactions]
+      summary: Read authorized interaction history
+      security:
+        - principalBearer: []
+        - browserSession: []
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+      responses:
+        '200':
+          description: Attributable lifecycle/effect history. Answer content remains protected detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: '#/components/schemas/HistoryEvent' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /interaction-wait-graph:
+    get:
+      tags: [human-interactions]
+      summary: Read wait dependencies in the current authorized scope
+      security:
+        - principalBearer: []
+        - browserSession: []
+      responses:
+        '200':
+          description: Safe IDs, labels, states and cycle hints; no question body.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [nodes, edges]
+                properties:
+                  nodes: { type: array, items: { $ref: '#/components/schemas/WaitNode' } }
+                  edges: { type: array, items: { $ref: '#/components/schemas/WaitEdge' } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /interaction-capabilities:
+    get:
+      tags: [human-interactions, agent-interactions]
+      summary: Read provider/version/modality support matrix
+      description: Does not claim native support without version-specific evidence.
+      security:
+        - principalBearer: []
+        - browserSession: []
+        - interactionCapability: []
+      responses:
+        '200':
+          description: Provider capabilities and manual-only reason.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ProviderCapability' }
+  /agent/interactions/groups:
+    post:
+      tags: [agent-interactions]
+      summary: Create a typed group of explicit questions from the authenticated source
+      security:
+        - interactionCapability: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+      description: |
+        Source terminal, incarnation, actor, owner and Work binding are derived
+        from the capability and server records. The request schema rejects
+        caller-supplied source/actor/recipient identity.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateGroupRequest' }
+      responses:
+        '200':
+          description: Existing group returned for an equivalent create retry using the same Idempotency-Key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreatedGroup' }
+        '201':
+          description: Group accepted and durably bound to current source turn.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreatedGroup' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/InvalidAnswer' }
+        '429':
+          description: Capacity limit; no active request was evicted.
+  /agent/interactions:
+    get:
+      tags: [agent-interactions]
+      summary: List interactions in the caller's server-derived source/delegation scope
+      security:
+        - interactionCapability: []
+      parameters:
+        - in: query
+          name: status
+          schema: { type: array, items: { $ref: '#/components/schemas/Lifecycle' } }
+          style: form
+          explode: true
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Current metadata snapshot. Cross-source entries require a live delegated relationship.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/InteractionMetadata' }
+                  next_cursor: { type: [string, 'null'] }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /agent/interactions/{question_id}:
+    get:
+      tags: [agent-interactions]
+      summary: Read a question in the caller's source/delegation scope
+      security:
+        - interactionCapability: []
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+      responses:
+        '200':
+          description: Protected detail only when the live source/delegation policy permits it.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InteractionDetail' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '410': { $ref: '#/components/responses/Stale' }
+  /agent/interactions/{question_id}/answers:
+    post:
+      tags: [agent-interactions]
+      summary: Resolve a delegated question only within current supervisor authority
+      security:
+        - interactionCapability: []
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+        - in: header
+          name: If-Match
+          required: true
+          schema: { type: string, pattern: '^"[1-9][0-9]*"$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AnswerRequest' }
+      responses:
+        '200': { description: Existing delegated answer receipt. }
+        '201': { description: Accepted delegated clarification; agent approvals remain prohibited. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Stale' }
+  /agent/interactions/{question_id}/escalate:
+    post:
+      tags: [agent-interactions]
+      summary: Ask policy to escalate a question to its authorized human owner
+      security:
+        - interactionCapability: []
+      parameters:
+        - $ref: '#/components/parameters/QuestionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason_code]
+              properties:
+                reason_code:
+                  type: string
+                  enum: [human_decision, insufficient_authority, supervisor_unavailable, deadline]
+                detail: { type: string, maxLength: 512 }
+      responses:
+        '200': { description: Policy result and safe routing receipt. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /agent/interactions/groups/{group_id}/wait:
+    post:
+      tags: [agent-interactions]
+      summary: Wait for the group's required answers, bounded to 30 seconds
+      security:
+        - interactionCapability: []
+      parameters:
+        - in: path
+          name: group_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [wait_seconds]
+              properties:
+                wait_seconds: { type: integer, minimum: 0, maximum: 30 }
+                after_event_sequence: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: Ready answers are for this source task and remain replayable by receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WaitResult' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '410': { $ref: '#/components/responses/Stale' }
+  /agent/interactions/groups/{group_id}/ack:
+    post:
+      tags: [agent-interactions]
+      summary: Acknowledge returned answer receipts after the agent observes them
+      security:
+        - interactionCapability: []
+      parameters:
+        - in: path
+          name: group_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [receipts]
+              properties:
+                receipts:
+                  type: array
+                  minItems: 1
+                  maxItems: 20
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [question_id, version, receipt]
+                    properties:
+                      question_id: { type: string, format: uuid }
+                      version: { type: integer, minimum: 1 }
+                      receipt: { type: string, minLength: 32, maxLength: 128 }
+      responses:
+        '200': { description: Durable acknowledgement state. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '410': { $ref: '#/components/responses/Stale' }
+components:
+  securitySchemes:
+    principalBearer:
+      type: http
+      scheme: bearer
+      description: Existing JWT/user bearer resolved to a sealed Principal.
+    browserSession:
+      type: apiKey
+      in: cookie
+      name: cao_session
+      description: Existing browser session resolved to a sealed Principal.
+    interactionCapability:
+      type: apiKey
+      in: header
+      name: X-CAO-Interaction-Capability
+      description: Random per-terminal/incarnation secret injected only into bundled cao-mcp-server. Never a human identity.
+  parameters:
+    QuestionId:
+      in: path
+      name: question_id
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    Unauthorized:
+      description: Missing or invalid human authentication.
+    Forbidden:
+      description: Principal/capability lacks exact resource, content, delegation or Work authority.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Question is outside caller-visible metadata scope.
+    Stale:
+      description: Source incarnation, turn, Work binding, question version or expiry is no longer current.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: Version/idempotency race or divergent prior answer.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    InvalidAnswer:
+      description: Typed response is invalid, unsupported or contains disallowed secret material.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+  schemas:
+    Lifecycle:
+      type: string
+      enum: [open, answered, expired, cancelled, stale, manual_only, reconciled_external]
+    DeliveryState:
+      type: string
+      enum: [accepted, prepared, claimed, returned_to_mcp, agent_acknowledged, confirmed, uncertain, no_effect, reconciled]
+    InteractionMetadata:
+      type: object
+      additionalProperties: false
+      required: [question_id, version, lifecycle, delivery_state, source, kind, required, recipient, created_at, expires_at, can_answer]
+      properties:
+        question_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        group_id: { type: [string, 'null'], format: uuid }
+        lifecycle: { $ref: '#/components/schemas/Lifecycle' }
+        delivery_state:
+          anyOf:
+            - $ref: '#/components/schemas/DeliveryState'
+            - type: 'null'
+        source:
+          type: object
+          required: [terminal_id, incarnation_id, provider, execution_mode]
+          properties:
+            terminal_id: { type: string }
+            incarnation_id: { type: string }
+            provider: { type: string }
+            provider_version: { type: [string, 'null'] }
+            execution_mode: { type: string }
+        task:
+          type: [object, 'null']
+          properties:
+            work_item_id: { type: [string, 'null'] }
+            attempt_id: { type: [string, 'null'] }
+            session_name: { type: [string, 'null'] }
+        kind: { type: string, enum: [text, single_choice, multi_choice, choice_or_text, approval, credential, native_unknown] }
+        required: { type: boolean }
+        recipient:
+          type: object
+          required: [kind, reason]
+          properties:
+            kind: { type: string, enum: [human, supervisor, unassigned, manual] }
+            label: { type: [string, 'null'] }
+            reason: { type: string }
+        group_progress:
+          type: [object, 'null']
+          properties:
+            required_answered: { type: integer, minimum: 0 }
+            required_total: { type: integer, minimum: 0 }
+            total: { type: integer, minimum: 0 }
+        origin: { type: string, enum: [explicit, native] }
+        can_answer: { type: boolean }
+        manual_reason: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: [string, 'null'], format: date-time }
+    InteractionDetail:
+      type: object
+      additionalProperties: false
+      required: [question_id, version, lifecycle, delivery_state, source, kind, required, recipient, created_at, expires_at, can_answer, prompt, options, allow_free_text, answer_receipt]
+      properties:
+        question_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        group_id: { type: [string, 'null'], format: uuid }
+        lifecycle: { $ref: '#/components/schemas/Lifecycle' }
+        delivery_state:
+          anyOf:
+            - $ref: '#/components/schemas/DeliveryState'
+            - type: 'null'
+        source:
+          type: object
+          required: [terminal_id, incarnation_id, provider, execution_mode]
+          properties:
+            terminal_id: { type: string }
+            incarnation_id: { type: string }
+            provider: { type: string }
+            provider_version: { type: [string, 'null'] }
+            execution_mode: { type: string }
+        task:
+          type: [object, 'null']
+          properties:
+            work_item_id: { type: [string, 'null'] }
+            attempt_id: { type: [string, 'null'] }
+            session_name: { type: [string, 'null'] }
+        kind: { type: string, enum: [text, single_choice, multi_choice, choice_or_text, approval, credential, native_unknown] }
+        required: { type: boolean }
+        recipient:
+          type: object
+          required: [kind, reason]
+          properties:
+            kind: { type: string, enum: [human, supervisor, unassigned, manual] }
+            label: { type: [string, 'null'] }
+            reason: { type: string }
+        group_progress:
+          type: [object, 'null']
+          properties:
+            required_answered: { type: integer, minimum: 0 }
+            required_total: { type: integer, minimum: 0 }
+            total: { type: integer, minimum: 0 }
+        origin: { type: string, enum: [explicit, native] }
+        can_answer: { type: boolean }
+        manual_reason: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: [string, 'null'], format: date-time }
+        prompt: { type: [string, 'null'], maxLength: 16384 }
+        options:
+          type: array
+          maxItems: 32
+          items:
+            type: object
+            required: [id, label, available]
+            properties:
+              id: { type: string, minLength: 1, maxLength: 128 }
+              label: { type: string, maxLength: 1024 }
+              available: { type: boolean }
+        allow_free_text: { type: boolean }
+        answer_receipt: { type: [object, 'null'] }
+        delegation_candidate:
+          type: [object, 'null']
+          additionalProperties: false
+          required: [terminal_id, assignment_id]
+          properties:
+            terminal_id: { type: string }
+            assignment_id: { type: string }
+            incarnation_id: { type: string }
+        delegation:
+          type: [object, 'null']
+          properties:
+            terminal_id: { type: string }
+            assignment_id: { type: string }
+            expires_at: { type: string, format: date-time }
+            state: { type: string, enum: [active, revoked, expired] }
+    AnswerRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_version, response]
+      properties:
+        expected_version: { type: integer, minimum: 1 }
+        response:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [kind, text]
+              properties:
+                kind: { const: text }
+                text: { type: string, maxLength: 4096 }
+            - type: object
+              additionalProperties: false
+              required: [kind, option_ids]
+              properties:
+                kind: { const: options }
+                option_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 32
+                  uniqueItems: true
+                  items: { type: string }
+            - type: object
+              additionalProperties: false
+              required: [kind, text]
+              properties:
+                kind: { const: free_text }
+                text: { type: string, maxLength: 4096 }
+    AnswerReceipt:
+      type: object
+      additionalProperties: false
+      required: [question_id, version, answer_id, lifecycle, delivery_state, accepted_at, replayed]
+      properties:
+        question_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        answer_id: { type: string, format: uuid }
+        lifecycle: { $ref: '#/components/schemas/Lifecycle' }
+        delivery_state: { $ref: '#/components/schemas/DeliveryState' }
+        accepted_at: { type: string, format: date-time }
+        replayed: { type: boolean }
+    CreateGroupRequest:
+      type: object
+      additionalProperties: false
+      required: [questions]
+      properties:
+        expires_in_seconds: { type: integer, minimum: 1, maximum: 86400, default: 1800 }
+        wait_for_required: { type: boolean, default: true }
+        questions:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [kind, prompt, required]
+            properties:
+              client_key: { type: string, maxLength: 128 }
+              kind: { type: string, enum: [text, single_choice, multi_choice, choice_or_text, approval] }
+              prompt: { type: string, minLength: 1, maxLength: 16384 }
+              required: { type: boolean }
+              allow_free_text: { type: boolean, default: false }
+              options:
+                type: array
+                maxItems: 32
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [id, label]
+                  properties:
+                    id: { type: string, minLength: 1, maxLength: 128 }
+                    label: { type: string, minLength: 1, maxLength: 1024 }
+    CreatedGroup:
+      type: object
+      additionalProperties: false
+      required: [group_id, lifecycle, questions, wait_required]
+      properties:
+        group_id: { type: string, format: uuid }
+        lifecycle: { type: string, enum: [open, satisfied] }
+        wait_required: { type: boolean }
+        questions:
+          type: array
+          items:
+            type: object
+            required: [question_id, version, required, lifecycle, expires_at]
+            properties:
+              question_id: { type: string, format: uuid }
+              version: { type: integer, minimum: 1 }
+              required: { type: boolean }
+              lifecycle: { $ref: '#/components/schemas/Lifecycle' }
+              expires_at: { type: string, format: date-time }
+    WaitResult:
+      type: object
+      additionalProperties: false
+      required: [group_id, state, answers, next_poll_after_ms]
+      properties:
+        group_id: { type: string, format: uuid }
+        state: { type: string, enum: [pending, ready, expired, cancelled, stale, cycle_blocked] }
+        answers:
+          type: array
+          items:
+            type: object
+            required: [question_id, version, receipt, response]
+            properties:
+              question_id: { type: string, format: uuid }
+              version: { type: integer, minimum: 1 }
+              receipt: { type: string, minLength: 32, maxLength: 128 }
+              response: { $ref: '#/components/schemas/AnswerRequest/properties/response' }
+        next_poll_after_ms: { type: integer, minimum: 0, maximum: 30000 }
+        next_event_sequence: { type: integer, minimum: 0 }
+    HistoryEvent:
+      type: object
+      additionalProperties: false
+      required: [sequence, event_type, actor_kind, occurred_at, safe_metadata]
+      properties:
+        sequence: { type: integer, minimum: 1 }
+        event_type: { type: string }
+        actor_kind: { type: string, enum: [principal, agent, system] }
+        actor_label: { type: [string, 'null'] }
+        occurred_at: { type: string, format: date-time }
+        safe_metadata: { type: object, additionalProperties: true }
+    WaitNode:
+      type: object
+      required: [id, kind, state]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [task, question_group] }
+        state: { type: string }
+        label: { type: [string, 'null'] }
+    WaitEdge:
+      type: object
+      required: [from, to, required]
+      properties:
+        from: { type: string }
+        to: { type: string }
+        required: { type: boolean }
+        cycle: { type: boolean }
+    ProviderCapability:
+      type: object
+      additionalProperties: false
+      required: [provider, execution_mode, emits_explicit, detects_native, responds_native, manual_reason]
+      properties:
+        provider: { type: string }
+        provider_version: { type: [string, 'null'] }
+        execution_mode: { type: string }
+        emits_explicit: { type: boolean }
+        detects_native: { type: boolean }
+        responds_native:
+          type: array
+          items: { type: string, enum: [text, single_choice, multi_choice, choice_or_text, approval] }
+        manual_reason: { type: [string, 'null'] }
+        required_mcp_tools: { type: array, items: { type: string } }
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [code, detail]
+      properties:
+        code: { type: string }
+        detail: { type: string }
+        current_version: { type: [integer, 'null'] }

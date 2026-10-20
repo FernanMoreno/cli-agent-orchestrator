@@ -188,7 +188,7 @@ def _setup(
     contract_write_paths=None,
     lease_seconds=300,
 ):
-    repository = WorkRepository(tmp_path / "t098.sqlite3")
+    repository = WorkRepository(tmp_path / "t098.db")
     repository.initialize()
     WorkScheduler(repository).configure(
         capacity=capacity, max_queue=20, aging_seconds=5, expected_policy_revision=0
@@ -468,7 +468,7 @@ async def test_double_fork_descendants_can_exec_only_the_bound_static_elf(tmp_pa
 def test_shebang_cannot_be_published_as_bound_static_executable(tmp_path):
     script = b"#!/bin/sh\nprintf should-not-run\\n\n"
     digest = hashlib.sha256(script).hexdigest()
-    repository = WorkRepository(tmp_path / "shebang.sqlite3")
+    repository = WorkRepository(tmp_path / "shebang.db")
     repository.initialize()
     identity = ExecutableIdentity(
         command_token="/worker",
@@ -505,7 +505,7 @@ async def test_go_authority_revocation_leaves_no_worker_effect_or_redelivery(tmp
     )
     with repository.read_snapshot() as connection:
         grant_id = connection.execute(
-            "SELECT id FROM work_grants WHERE principal_id=? ORDER BY created_at LIMIT 1",
+            "SELECT id FROM work_grants WHERE principal_id=%s ORDER BY created_at LIMIT 1",
             (principal.id,),
         ).fetchone()["id"]
     original_release = WorkBubblewrapSetupIntent.release_if_current
@@ -618,7 +618,7 @@ async def test_authority_change_at_process_effect_boundary_leaves_no_worker_mark
     state["principal"] = principal
     with repository.read_snapshot() as connection:
         state["grant"] = connection.execute(
-            "SELECT id FROM work_grants WHERE principal_id=? ORDER BY created_at LIMIT 1",
+            "SELECT id FROM work_grants WHERE principal_id=%s ORDER BY created_at LIMIT 1",
             (principal.id,),
         ).fetchone()["id"]
 

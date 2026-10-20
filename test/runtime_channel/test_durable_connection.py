@@ -1,23 +1,24 @@
 import asyncio
 
 import pytest
-from sqlalchemy import create_engine
 
 from cli_agent_orchestrator.runtime_channel.durable_connection import DurableRuntimeConnection
 from cli_agent_orchestrator.runtime_channel.protocol import CommandType, Result, decode
 from cli_agent_orchestrator.runtime_channel.registry import RemoteOutcomeUnknownError
 from cli_agent_orchestrator.runtime_channel.store import RemoteOperationStore
 
+pytestmark = pytest.mark.postgres
 
-def store(tmp_path):
-    result = RemoteOperationStore(create_engine(f'sqlite:///{tmp_path / "journal"}'))
-    result.create_schema()
-    return result
+
+def store(target):
+    return RemoteOperationStore(target)
 
 
 @pytest.mark.asyncio
-async def test_response_loss_and_reconnect_reuses_settled_proof_without_another_send(tmp_path):
-    journal = store(tmp_path)
+async def test_response_loss_and_reconnect_reuses_settled_proof_without_another_send(
+    postgres_runtime_channel,
+):
+    journal = store(postgres_runtime_channel)
     frames = []
     epoch = journal.activate_runtime("worker", "inc-one")
 
@@ -50,8 +51,8 @@ async def test_response_loss_and_reconnect_reuses_settled_proof_without_another_
 
 
 @pytest.mark.asyncio
-async def test_cancel_before_channel_write_is_durably_unsent(tmp_path):
-    journal = store(tmp_path)
+async def test_cancel_before_channel_write_is_durably_unsent(postgres_runtime_channel):
+    journal = store(postgres_runtime_channel)
     frames = []
     epoch = journal.activate_runtime("worker", "inc-one")
 
@@ -73,8 +74,8 @@ async def test_cancel_before_channel_write_is_durably_unsent(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_duplicate_concurrent_calls_one_physical_write(tmp_path):
-    journal = store(tmp_path)
+async def test_duplicate_concurrent_calls_one_physical_write(postgres_runtime_channel):
+    journal = store(postgres_runtime_channel)
     frames = []
     epoch = journal.activate_runtime("worker", "inc-one")
 

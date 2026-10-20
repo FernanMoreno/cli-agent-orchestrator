@@ -13,6 +13,7 @@ from cli_agent_orchestrator.clients.database import (
     get_terminal_turn_recovery,
     transition_native_child,
 )
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.constants import FIFO_DIR
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import TurnResultUnavailableError
@@ -149,7 +150,7 @@ async def cancel_turn(terminal_id: str, generation: str) -> dict:
 
 
 async def _cancel_serialized(terminal_id: str, generation: str) -> dict:
-    lock = terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id)
+    lock = terminal_dispatch_lock(DatabaseTarget.from_settings(scope="main"), terminal_id)
     acquisition = asyncio.create_task(asyncio.to_thread(lock.__enter__))
     try:
         await asyncio.shield(acquisition)

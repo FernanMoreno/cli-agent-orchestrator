@@ -1,10 +1,15 @@
 """Tests for the opencode_cli branch of the install command."""
 
+import inspect
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
+import textwrap
+import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict
 
@@ -111,6 +116,478 @@ def _help_lists_subcommand(help_output: str, subcommand: str) -> bool:
         if subcommand in {name.strip() for name in names.split(",")}:
             return True
     return False
+
+
+def _wait_for_service_password(profile, service, *, deadline, now=None, sleep=None):
+    """Wait for the private startup receipt within the existing shared deadline."""
+    if now is None:
+        now = time.monotonic
+    if sleep is None:
+        sleep = time.sleep
+    while now() < deadline and service.poll() is None:
+        try:
+            for service_file in profile.rglob("service.json"):
+                try:
+                    info = json.loads(service_file.read_text(encoding="utf-8"))
+                except (OSError, ValueError, UnicodeError):
+                    continue
+                if (
+                    isinstance(info, dict)
+                    and isinstance(info.get("password"), str)
+                    and info["password"]
+                ):
+                    if now() < deadline and service.poll() is None:
+                        return info["password"]
+                    return None
+        except OSError:
+            # The private service can publish/rename directories during startup.
+            # A transient scan failure is still bounded by the same deadline.
+            pass
+        remaining = deadline - now()
+        if remaining > 0:
+            sleep(min(0.1, remaining))
+    return None
+
+
+def _run_v2_debug_agent_list(
+    opencode: str,
+    agent_id: str,
+    agents_dir: Path,
+    config_file: Path,
+    private_home: Path,
+) -> None:
+    from cli_agent_orchestrator.utils.opencode_v2 import write_v2_configuration
+
+    v2_config_dir = private_home / "cao" / "opencode-v2"
+    source_config = json.loads(config_file.read_text(encoding="utf-8"))
+    write_v2_configuration(
+        v2_config_dir,
+        source_agents=agents_dir,
+        source_config=source_config,
+        session_id="install-agent-list-test",
+    )
+    v2_config = json.loads((v2_config_dir / "opencode.json").read_text(encoding="utf-8"))
+    assert v2_config["agents"][agent_id]["mode"] == "all"
+    mcp_rules = [
+        rule
+        for rule in v2_config["agents"][agent_id]["permissions"]
+        if rule["action"] == "cao-mcp-server_*"
+    ]
+    assert {rule["effect"] for rule in mcp_rules} == {"allow", "deny"}
+
+    project_dir = private_home / "agent-list-project"
+    project_dir.mkdir(parents=True)
+    git = shutil.which("git")
+    assert git is not None, "OpenCode agent listing requires git for project context"
+    git_template = private_home / "git-template"
+    git_template.mkdir()
+    git_env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(private_home),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+    subprocess.run(
+        [git, "init", "--quiet", f"--template={git_template}", str(project_dir)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=git_env,
+    )
+    subprocess.run(
+        [git, "-C", str(project_dir), "config", "user.name", "CAO Test"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=git_env,
+    )
+    subprocess.run(
+        [git, "-C", str(project_dir), "config", "user.email", "cao-test@example.invalid"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=git_env,
+    )
+    subprocess.run(
+        [git, "-C", str(project_dir), "config", "commit.gpgsign", "false"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=git_env,
+    )
+    (project_dir / "README.md").write_text(
+        "Private OpenCode agent-list integration fixture.\n", encoding="utf-8"
+    )
+    subprocess.run(
+        [git, "-C", str(project_dir), "add", "--", "README.md"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=git_env,
+    )
+    subprocess.run(
+        [git, "-C", str(project_dir), "commit", "--quiet", "-m", "private fixture"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=git_env,
+    )
+    git_root = subprocess.run(
+        [git, "-C", str(project_dir), "rev-parse", "--show-toplevel"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=git_env,
+    ).stdout.strip()
+    assert Path(git_root).resolve() == project_dir.resolve()
+
+    bwrap = shutil.which("bwrap")
+    if bwrap is None:
+        pytest.skip("v2 agent listing requires bwrap user and network namespaces")
+
+    probe = subprocess.run(
+        [
+            bwrap,
+            "--unshare-user",
+            "--unshare-pid",
+            "--unshare-net",
+            "--die-with-parent",
+            "--new-session",
+            "--tmpfs",
+            "/",
+            "--dir",
+            "/usr",
+            "--ro-bind",
+            "/usr",
+            "/usr",
+            "--dir",
+            "/lib",
+            "--ro-bind",
+            "/lib",
+            "/lib",
+            "--dir",
+            "/lib64",
+            "--ro-bind",
+            "/lib64",
+            "/lib64",
+            "--dir",
+            "/bin",
+            "--ro-bind",
+            "/bin",
+            "/bin",
+            "--dir",
+            "/etc",
+            "--ro-bind",
+            "/etc",
+            "/etc",
+            "--dir",
+            "/tmp",
+            "--tmpfs",
+            "/tmp",
+            "--dir",
+            "/home",
+            "--tmpfs",
+            "/home",
+            "--dev",
+            "/dev",
+            "--proc",
+            "/proc",
+            "--",
+            "/usr/bin/true",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env={"LC_ALL": "C"},
+    )
+    if probe.returncode != 0:
+        reason = probe.stderr.strip() or f"exit status {probe.returncode}"
+        pytest.skip(f"host cannot create required bwrap namespaces: {reason}")
+
+    driver_path = private_home / "opencode-agent-list-driver.py"
+    driver_path.write_text(
+        inspect.getsource(_wait_for_service_password) + "\n" + textwrap.dedent("""\
+            import json
+            import os
+            import signal
+            import subprocess
+            import sys
+            import time
+            import base64
+            import urllib.error
+            import urllib.parse
+            import urllib.request
+            from pathlib import Path
+
+            opencode = "/opencode-bin/opencode"
+            project = Path("/work")
+            profile = Path(os.environ["OPENCODE_CONFIG_DIR"])
+            service_log = (profile / "serve.log").open("wb")
+            report = {
+                "service_ready": False,
+                "service_auth_ready": False,
+                "service_context_warmed": False,
+                "api_config_poll_count": 0,
+                "api_agent_target_ready": False,
+                "api_agent_poll_count": 0,
+                "command_exit": None,
+                "agent_count": 0,
+                "target_found": False,
+            }
+            report_path = profile / "debug-agents-result.json"
+            with __import__("socket").socket() as sock:
+                sock.bind(("127.0.0.1", 0))
+                port = sock.getsockname()[1]
+            service = subprocess.Popen(
+                [opencode, "serve", "--hostname", "127.0.0.1", "--port", str(port), "--service"],
+                cwd=project,
+                env=os.environ.copy(),
+                stdout=service_log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+            try:
+                ready = False
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline and service.poll() is None:
+                    try:
+                        with urllib.request.urlopen(
+                            f"http://127.0.0.1:{port}/doc", timeout=0.25
+                        ) as response:
+                            ready = response.status == 200
+                        if ready:
+                            break
+                    except OSError:
+                        time.sleep(0.1)
+                if not ready:
+                    raise SystemExit("OpenCode service readiness failed")
+                report["service_ready"] = True
+                password = _wait_for_service_password(profile, service, deadline=deadline)
+                if not password:
+                    raise SystemExit("OpenCode service authentication was not initialized")
+                report["service_auth_ready"] = True
+                authorization = "Basic " + base64.b64encode(
+                    ("opencode:" + password).encode()
+                ).decode()
+                query = urllib.parse.urlencode({"location[directory]": "/work"})
+                route = "/api/config?" + query
+                config_ready = False
+                while time.monotonic() < deadline and service.poll() is None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    report["api_config_poll_count"] += 1
+                    request = urllib.request.Request(f"http://127.0.0.1:{port}{route}")
+                    request.add_header("Authorization", authorization)
+                    try:
+                        with urllib.request.urlopen(
+                            request, timeout=min(0.25, remaining)
+                        ) as response:
+                            if response.status == 200:
+                                response.read()
+                                report["service_context_warmed"] = True
+                                config_ready = True
+                                break
+                    except urllib.error.HTTPError as error:
+                        if error.code not in {502, 503, 504}:
+                            raise
+                        error.close()
+                    except (OSError, TimeoutError, urllib.error.URLError):
+                        pass
+                    remaining = deadline - time.monotonic()
+                    if remaining > 0:
+                        time.sleep(min(0.1, remaining))
+                if not config_ready:
+                    raise SystemExit("OpenCode service context readiness failed")
+                agent_route = "/api/agent?" + query
+                # Agent listing does not wait for configured-plugin activation; poll this same
+                # location only within the readiness deadline already in progress.
+                while time.monotonic() < deadline:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    report["api_agent_poll_count"] += 1
+                    request = urllib.request.Request(f"http://127.0.0.1:{port}{agent_route}")
+                    request.add_header("Authorization", authorization)
+                    try:
+                        with urllib.request.urlopen(request, timeout=min(0.25, remaining)) as response:
+                            if response.status != 200:
+                                time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+                                continue
+                            report["service_context_warmed"] = True
+                            body = response.read(1048577)
+                        if len(body) <= 1048576:
+                            payload = json.loads(body)
+                            rows = payload.get("data") if isinstance(payload, dict) else None
+                            if isinstance(rows, list):
+                                report["api_agent_target_ready"] = any(
+                                    isinstance(item, dict)
+                                    and (item.get("id") == sys.argv[1] or item.get("name") == sys.argv[1])
+                                    for item in rows
+                                )
+                    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError, UnicodeDecodeError):
+                        pass
+                    if report["api_agent_target_ready"]:
+                        break
+                    remaining = deadline - time.monotonic()
+                    if remaining > 0:
+                        time.sleep(min(0.1, remaining))
+                listed = subprocess.run(
+                    [opencode, "debug", "agents"],
+                    cwd=project,
+                    env=os.environ.copy(),
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                report["command_exit"] = listed.returncode
+                if listed.returncode != 0:
+                    raise SystemExit("OpenCode debug agents command failed")
+                payload = json.loads(listed.stdout)
+                if isinstance(payload, dict):
+                    payload = payload.get("data", payload.get("agents", []))
+                if not isinstance(payload, list):
+                    raise SystemExit("OpenCode debug agents returned an unexpected shape")
+                listed_ids = {
+                    item.get("id") or item.get("name")
+                    for item in payload
+                    if isinstance(item, dict)
+                }
+                report["agent_count"] = len(listed_ids)
+                report["target_found"] = sys.argv[1] in listed_ids
+                if sys.argv[1] not in listed_ids:
+                    raise SystemExit("translated CAO agent missing from OpenCode listing")
+            finally:
+                service_log.close()
+                if service.poll() is None:
+                    os.killpg(service.pid, signal.SIGTERM)
+                    try:
+                        service.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(service.pid, signal.SIGKILL)
+                        service.wait(timeout=5)
+                report_path.write_text(json.dumps(report), encoding="utf-8")
+                report_path.chmod(0o600)
+            """),
+        encoding="utf-8",
+    )
+    driver_path.chmod(0o600)
+
+    v2_data_home = v2_config_dir / "data"
+    (v2_data_home / "opencode").mkdir(parents=True, mode=0o700)
+    bwrap_env = {
+        "HOME": "/home/felni/private-home",
+        "PATH": "/opencode-bin:/usr/bin:/bin",
+        "XDG_CONFIG_HOME": "/home/felni/private-home/xdg-config",
+        "XDG_DATA_HOME": "/home/felni/private-home/cao/opencode-v2/data",
+        "XDG_STATE_HOME": "/home/felni/private-home/xdg-state",
+        "OPENCODE_CONFIG": "/home/felni/private-home/cao/opencode-v2/opencode.json",
+        "OPENCODE_CONFIG_DIR": "/home/felni/private-home/cao/opencode-v2",
+        "OPENCODE_DISABLE_AUTOUPDATE": "1",
+        "DO_NOT_TRACK": "1",
+        "CI": "1",
+        "TERM": "dumb",
+    }
+    bwrap_args = [
+        bwrap,
+        "--unshare-user",
+        "--unshare-pid",
+        "--unshare-net",
+        "--die-with-parent",
+        "--new-session",
+        "--tmpfs",
+        "/",
+        "--dir",
+        "/usr",
+        "--ro-bind",
+        "/usr",
+        "/usr",
+        "--dir",
+        "/lib",
+        "--ro-bind",
+        "/lib",
+        "/lib",
+        "--dir",
+        "/lib64",
+        "--ro-bind",
+        "/lib64",
+        "/lib64",
+        "--dir",
+        "/bin",
+        "--ro-bind",
+        "/bin",
+        "/bin",
+        "--dir",
+        "/etc",
+        "--ro-bind",
+        "/etc",
+        "/etc",
+        "--dir",
+        "/tmp",
+        "--tmpfs",
+        "/tmp",
+        "--dir",
+        "/home",
+        "--tmpfs",
+        "/home",
+        "--dir",
+        "/home/felni",
+        "--bind",
+        str(private_home),
+        "/home/felni/private-home",
+        "--tmpfs",
+        "/tmp",
+        "--dir",
+        "/work",
+        "--bind",
+        str(project_dir),
+        "/work",
+        "--dir",
+        "/opencode-bin",
+        "--ro-bind",
+        opencode,
+        "/opencode-bin/opencode",
+        "--dev",
+        "/dev",
+        "--proc",
+        "/proc",
+        "--chdir",
+        "/work",
+        "--clearenv",
+    ]
+    for key, value in bwrap_env.items():
+        bwrap_args.extend(("--setenv", key, value))
+    bwrap_args.extend(
+        (
+            "--",
+            "/usr/bin/python3",
+            "/home/felni/private-home/opencode-agent-list-driver.py",
+            agent_id,
+        )
+    )
+    listed = subprocess.run(
+        bwrap_args,
+        capture_output=True,
+        text=True,
+        timeout=45,
+        env={"LC_ALL": "C"},
+    )
+    report_path = v2_config_dir / "debug-agents-result.json"
+    report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.is_file() else {}
+    assert listed.returncode == 0, f"isolated OpenCode agent listing failed: {report}"
+    assert report.get("service_ready") is True
+    assert report.get("service_auth_ready") is True
+    assert report.get("service_context_warmed") is True
+    assert report.get("command_exit") == 0
+    assert report.get("target_found") is True, f"translated CAO agent missing: {report}"
 
 
 # ---------------------------------------------------------------------------
@@ -571,11 +1048,11 @@ class TestStaleMcpGrantsRemoved:
 
 
 @pytest.mark.skipif(
-    shutil.which("opencode") is None,
+    os.environ.get("CAO_TEST_OPENCODE_BINARY") is None and shutil.which("opencode") is None,
     reason="opencode binary not on PATH",
 )
 class TestOpencodeAgentListIntegration:
-    """Verify the installed agent and use a CLI list command when it is isolated."""
+    """Verify an installed agent through the matching OpenCode runtime path."""
 
     def test_installed_agent_visible_in_opencode_list(
         self, runner: CliRunner, install_workspace: Dict[str, Any]
@@ -584,20 +1061,20 @@ class TestOpencodeAgentListIntegration:
         agents_dir = install_workspace["agents_dir"]
         config_file = install_workspace["config_file"]
         config_dir = agents_dir.parent
+        agent_id = f"smoke-test-agent-{uuid.uuid4().hex[:12]}"
 
         _write_profile(
-            local_store / "smoke-test-agent.md",
-            name="smoke-test-agent",
-            mcp_servers="  cao-mcp-server:\n    command: cao-mcp-server\n",
+            local_store / f"{agent_id}.md",
+            name=agent_id,
+            mcp_servers="  cao-mcp-server:\n    command: /bin/false\n",
         )
 
-        result = runner.invoke(install, ["smoke-test-agent", "--provider", "opencode_cli"])
+        result = runner.invoke(install, [agent_id, "--provider", "opencode_cli"])
         assert result.exit_code == 0, result.output
 
-        # OpenCode discovers agent files and MCP grants from the same isolated
-        # config root supplied below. These checks still exercise the real
-        # install path when a CLI version offers only service-backed listing.
-        agent_file = agents_dir / "smoke-test-agent.md"
+        # First assert the installer-owned V1 files and grants. V2 translates this
+        # profile into its own private per-terminal config before listing agents.
+        agent_file = agents_dir / f"{agent_id}.md"
         assert agent_file.is_file()
         agent = frontmatter.loads(agent_file.read_text(encoding="utf-8"))
         assert agent.metadata["description"] == "Test agent"
@@ -607,79 +1084,174 @@ class TestOpencodeAgentListIntegration:
         config = json.loads(config_file.read_text(encoding="utf-8"))
         assert config["mcp"]["cao-mcp-server"]["type"] == "local"
         assert config["tools"]["cao-mcp-server*"] is False
-        assert config["agent"]["smoke-test-agent"]["tools"]["cao-mcp-server*"] is True
-
-        env = {
-            "OPENCODE_CONFIG": str(config_file),
-            "OPENCODE_CONFIG_DIR": str(config_dir),
-            "OPENCODE_DISABLE_AUTOUPDATE": "1",
-        }
+        assert config["agent"][agent_id]["tools"]["cao-mcp-server*"] is True
 
         opencode = os.environ.get("CAO_TEST_OPENCODE_BINARY") or shutil.which("opencode")
         assert opencode is not None
+
+        private_home = install_workspace["local_store"].parent / "opencode-home"
+        xdg_config = private_home / "xdg-config"
+        xdg_data = private_home / "xdg-data"
+        xdg_state = private_home / "xdg-state"
+        for path in (private_home, xdg_config, xdg_data, xdg_state):
+            path.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+        env = {
+            "HOME": str(private_home),
+            "PATH": os.environ.get("PATH", ""),
+            "XDG_CONFIG_HOME": str(xdg_config),
+            "XDG_DATA_HOME": str(xdg_data),
+            "XDG_STATE_HOME": str(xdg_state),
+            "OPENCODE_DISABLE_AUTOUPDATE": "1",
+            "DO_NOT_TRACK": "1",
+            "CI": "1",
+            "TERM": "dumb",
+        }
+
         root_help = subprocess.run(
             [opencode, "--help"],
             capture_output=True,
             text=True,
-            env={**os.environ, **env},
+            env=env,
             timeout=15,
         )
         assert root_help.returncode == 0, root_help.stderr
 
-        if not _help_lists_subcommand(root_help.stdout + root_help.stderr, "agent"):
-            if _help_lists_subcommand(root_help.stdout + root_help.stderr, "debug"):
-                debug_help = subprocess.run(
-                    [opencode, "debug", "--help"],
+        legacy_env = {
+            **env,
+            "OPENCODE_CONFIG": str(config_file),
+            "OPENCODE_CONFIG_DIR": str(config_dir),
+        }
+
+        if _help_lists_subcommand(root_help.stdout + root_help.stderr, "agent"):
+            agent_help = subprocess.run(
+                [opencode, "agent", "--help"],
+                capture_output=True,
+                text=True,
+                env=legacy_env,
+                timeout=15,
+            )
+            assert agent_help.returncode == 0, agent_help.stderr
+            if _help_lists_subcommand(agent_help.stdout + agent_help.stderr, "list"):
+                proc = subprocess.run(
+                    [opencode, "agent", "list"],
                     capture_output=True,
                     text=True,
-                    env={**os.environ, **env},
-                    timeout=15,
+                    env=legacy_env,
+                    timeout=60,
                 )
-                assert debug_help.returncode == 0, debug_help.stderr
-                if _help_lists_subcommand(debug_help.stdout + debug_help.stderr, "agent"):
-                    details = subprocess.run(
-                        [opencode, "debug", "agent", "smoke-test-agent"],
-                        capture_output=True,
-                        text=True,
-                        env={**os.environ, **env},
-                        timeout=60,
-                    )
-                    assert details.returncode == 0, details.stderr or details.stdout
-                    resolved = json.loads(details.stdout)
-                    assert resolved["name"] == "smoke-test-agent"
-                    assert resolved["mode"] == "all"
-                    return
-                if _help_lists_subcommand(debug_help.stdout + debug_help.stderr, "agents"):
-                    pytest.skip(
-                        "OpenCode exposes `debug agents` through its persistent service; "
-                        "skip only that service-backed listing to keep this check scoped "
-                        "to the isolated discovery directory. The installed agent and "
-                        "opencode.json were validated above."
-                    )
-            pytest.fail(
-                "No isolated agent discovery command: " + root_help.stdout + root_help.stderr
-            )
+                assert proc.returncode == 0, proc.stderr or proc.stdout
+                assert re.search(rf"(?m)^\s*{re.escape(agent_id)}(?:\s|$)", proc.stdout)
+                return
 
-        agent_help = subprocess.run(
-            [opencode, "agent", "--help"],
-            capture_output=True,
-            text=True,
-            env={**os.environ, **env},
-            timeout=15,
-        )
-        assert agent_help.returncode == 0, agent_help.stderr
-        if not _help_lists_subcommand(agent_help.stdout + agent_help.stderr, "list"):
-            pytest.skip(
-                "OpenCode advertises `agent` but not its `list` subcommand; "
-                "the installed agent and opencode.json were validated above."
+        if _help_lists_subcommand(root_help.stdout + root_help.stderr, "debug"):
+            debug_help = subprocess.run(
+                [opencode, "debug", "--help"],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=15,
             )
+            assert debug_help.returncode == 0, debug_help.stderr
+            debug_output = debug_help.stdout + debug_help.stderr
+            if _help_lists_subcommand(debug_output, "agents"):
+                _run_v2_debug_agent_list(opencode, agent_id, agents_dir, config_file, private_home)
+                return
+            if _help_lists_subcommand(debug_output, "agent"):
+                details = subprocess.run(
+                    [opencode, "debug", "agent", agent_id],
+                    capture_output=True,
+                    text=True,
+                    env=legacy_env,
+                    timeout=60,
+                )
+                assert details.returncode == 0, details.stderr or details.stdout
+                resolved = json.loads(details.stdout)
+                assert resolved["name"] == agent_id
+                assert resolved["mode"] == "all"
+                return
 
-        proc = subprocess.run(
-            [opencode, "agent", "list"],
-            capture_output=True,
-            text=True,
-            env={**os.environ, **env},
-            timeout=60,
+        pytest.skip(
+            "This OpenCode version exposes no supported agent listing command; "
+            "the installed profile and tool grants were validated above."
         )
-        assert proc.returncode == 0, proc.stderr or proc.stdout
-        assert re.search(r"(?m)^\s*smoke-test-agent(?:\s|$)", proc.stdout)
+
+
+@pytest.mark.parametrize("profile", ["interaction", "collaboration", "unknown", None])
+def test_native_install_rejects_policy_before_changing_artifacts(
+    runner: CliRunner, install_workspace: Dict[str, Any], profile
+):
+    source = install_workspace["local_store"] / "test-agent.md"
+    _write_profile(
+        source,
+        mcp_servers=(
+            "  cao-mcp-server:\n    command: cao-mcp-server\n"
+            f"    cao_tool_profile: {json.dumps(profile)}\n"
+        ),
+    )
+    original_source = source.read_bytes()
+    agent = install_workspace["agents_dir"] / "test-agent.md"
+    agent.parent.mkdir(parents=True)
+    agent.write_bytes(b"previous native agent\n")
+    config = install_workspace["config_file"]
+    config.write_text('{"mcp": {}, "agent": {}}\n')
+    original_config = config.read_bytes()
+    result = runner.invoke(install, ["test-agent", "--provider", "opencode_cli"])
+    assert result.exit_code != 0
+    assert "per-agent propagation" in result.output
+    assert agent.read_bytes() == b"previous native agent\n"
+    assert config.read_bytes() == original_config
+    assert source.read_bytes() == original_source
+    assert list(install_workspace["context_dir"].iterdir()) == []
+
+
+def test_native_translation_cannot_silently_discard_profile_metadata():
+    from cli_agent_orchestrator.utils.opencode_config import translate_mcp_server_config
+
+    with pytest.raises(ValueError, match="per-agent propagation"):
+        translate_mcp_server_config(
+            {"command": "cao-mcp-server", "cao_tool_profile": "interaction"}
+        )
+
+
+@pytest.mark.parametrize("field", ["env", "environment"])
+@pytest.mark.parametrize(
+    "marker", ["CAO_INTERNAL_MCP_TOOL_PROFILE", "CAO_INTERNAL_INTERACTION_PULL_FLOW_ONLY"]
+)
+def test_native_install_rejects_reserved_policy_in_shared_environment(
+    runner: CliRunner, install_workspace: Dict[str, Any], field, marker
+):
+    source = install_workspace["local_store"] / "test-agent.md"
+    _write_profile(
+        source,
+        mcp_servers=(
+            f"  cao-mcp-server:\n    command: cao-mcp-server\n    {field}:\n      {marker}: '1'\n"
+        ),
+    )
+    before = source.read_bytes()
+    result = runner.invoke(install, ["test-agent", "--provider", "opencode_cli"])
+    assert result.exit_code != 0
+    assert "per-agent propagation" in result.output
+    assert source.read_bytes() == before
+    assert not install_workspace["agents_dir"].exists()
+    assert not install_workspace["config_file"].exists()
+
+
+def test_native_install_rejects_env_pairs_before_dict_coercion(
+    runner: CliRunner, install_workspace: Dict[str, Any]
+):
+    source = install_workspace["local_store"] / "test-agent.md"
+    _write_profile(
+        source,
+        mcp_servers=(
+            "  cao-mcp-server:\n    command: cao-mcp-server\n    env:\n"
+            "      - [CAO_INTERNAL_MCP_TOOL_PROFILE, collaboration]\n"
+        ),
+    )
+    before = source.read_bytes()
+    result = runner.invoke(install, ["test-agent", "--provider", "opencode_cli"])
+    assert result.exit_code != 0
+    assert "environment must be a mapping" in result.output
+    assert source.read_bytes() == before
+    assert not install_workspace["agents_dir"].exists()
+    assert not install_workspace["config_file"].exists()

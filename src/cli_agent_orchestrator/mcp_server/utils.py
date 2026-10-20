@@ -8,6 +8,8 @@ enforced by ``test/test_http_only_boundary.py``.
 
 import ipaddress
 import logging
+import os
+import stat
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 
@@ -18,6 +20,13 @@ from cli_agent_orchestrator.security.auth import get_local_bearer
 from cli_agent_orchestrator.utils.orchestration import _mcp_timeout
 
 logger = logging.getLogger(__name__)
+
+INTERACTION_CAPABILITY_FILE_ENV = "CAO_INTERACTION_CAPABILITY_FILE"
+INTERACTION_CAPABILITY_HEADER = "X-CAO-Interaction-Capability"
+
+
+class InteractionCapabilityUnavailable(RuntimeError):
+    """The bundled MCP process lacks a readable per-terminal capability file."""
 
 
 def _auth_headers() -> Dict[str, str]:
@@ -32,6 +41,120 @@ def _auth_headers() -> Dict[str, str]:
 
     token = get_local_bearer()
     return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def _read_interaction_capability() -> str:
+    """Read the private per-incarnation credential without logging its value.
+
+    Only the path is placed in the bundled MCP environment. The token is not
+    accepted from a second environment variable, request body, or CLI argument.
+    ``O_NOFOLLOW`` prevents a symlink swap where supported, and the file must
+    be private to the current OS user on POSIX systems.
+    """
+    path = os.environ.get(INTERACTION_CAPABILITY_FILE_ENV, "").strip()
+    if not path:
+        raise InteractionCapabilityUnavailable("agent interaction capability is unavailable")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        # Reject FIFOs without blocking the bundled MCP process on open.
+        flags |= os.O_NONBLOCK
+    try:
+        descriptor = os.open(path, flags)
+        try:
+            details = os.fstat(descriptor)
+            if not stat.S_ISREG(details.st_mode) or details.st_size > 512:
+                raise InteractionCapabilityUnavailable(
+                    "agent interaction capability file is invalid"
+                )
+            if os.name == "posix" and details.st_uid != os.geteuid():
+                raise InteractionCapabilityUnavailable(
+                    "agent interaction capability file owner is invalid"
+                )
+            if os.name == "posix" and stat.S_IMODE(details.st_mode) & 0o077:
+                raise InteractionCapabilityUnavailable(
+                    "agent interaction capability file permissions are too broad"
+                )
+            raw = os.read(descriptor, 513)
+        finally:
+            os.close(descriptor)
+    except InteractionCapabilityUnavailable:
+        raise
+    except OSError as exc:
+        # Do not include the path or exception text; the path may be user data.
+        raise InteractionCapabilityUnavailable(
+            "agent interaction capability file cannot be read"
+        ) from None
+    try:
+        capability = raw.decode("ascii", errors="strict").strip()
+    except UnicodeDecodeError:
+        raise InteractionCapabilityUnavailable(
+            "agent interaction capability file is invalid"
+        ) from None
+    if not capability or len(capability) > 512 or any(ch.isspace() for ch in capability):
+        raise InteractionCapabilityUnavailable("agent interaction capability is invalid")
+    return capability
+
+
+def _interaction_headers(
+    *, idempotency_key: Optional[str] = None, if_match: Optional[str] = None
+) -> Dict[str, str]:
+    """Return service-hop plus per-source identity headers for agent routes."""
+    headers = _auth_headers()
+    headers[INTERACTION_CAPABILITY_HEADER] = _read_interaction_capability()
+    if idempotency_key is not None:
+        headers["Idempotency-Key"] = idempotency_key
+    if if_match is not None:
+        headers["If-Match"] = if_match
+    return headers
+
+
+def interaction_get_json(
+    path: str,
+    *,
+    timeout: Optional[float] = None,
+    **params: Any,
+) -> Any:
+    """GET a per-source interaction over direct, local-only HTTP."""
+    with requests.Session() as client:
+        client.trust_env = False
+        response = client.request(
+            "GET",
+            _local_api_url(path),
+            params={key: value for key, value in params.items() if value is not None} or None,
+            headers=_interaction_headers(),
+            timeout=_mcp_timeout() if timeout is None else timeout,
+            allow_redirects=False,
+        )
+    response.raise_for_status()
+    return response.json()
+
+
+def interaction_post_json(
+    path: str,
+    body: Dict[str, Any],
+    *,
+    idempotency_key: Optional[str] = None,
+    if_match: Optional[str] = None,
+    timeout: Optional[float] = None,
+) -> Any:
+    """POST typed content directly to the local API without proxy forwarding."""
+    with requests.Session() as client:
+        client.trust_env = False
+        response = client.request(
+            "POST",
+            _local_api_url(path),
+            json=body,
+            headers=_interaction_headers(idempotency_key=idempotency_key, if_match=if_match),
+            timeout=_mcp_timeout() if timeout is None else timeout,
+            allow_redirects=False,
+        )
+    response.raise_for_status()
+    try:
+        return response.json()
+    except ValueError:  # pragma: no cover - API mutations normally return JSON
+        return {}
 
 
 def get_json(path: str, *, timeout: Optional[float] = None, **params: Any) -> Any:

@@ -4,7 +4,7 @@ Self-healing for the memory wiki. Consumes the frozen ``LintIssue`` records
 produced by :mod:`cli_agent_orchestrator.services.wiki_lint` and, under an
 explicit ``--apply`` gate, repairs three classes of finding:
 
-- ``orphan_page``    — delete the wiki file + drop its index.md line + SQLite row.
+- ``orphan_page``    — delete the wiki file + drop its index.md line + metadata row.
 - ``contradiction``  — keep the newer article (by ``updated_at``), ``forget`` the loser.
 - ``stale_claim``    — strip the paragraph naming the stale path/symbol, atomic rewrite.
   Only the ``file not found:`` and ``symbol not found in source:`` sub-types are
@@ -336,9 +336,9 @@ def _delete_row(db: Any, key: str, scope: str, scope_id: Optional[str]) -> int:
 async def _heal_orphan(
     svc: MemoryService, issue: LintIssue, scope: str, scope_id: Optional[str], db: Any
 ) -> HealAction:
-    """Delete wiki file + index line + SQLite row for one orphan_page issue.
+    """Delete wiki file + index line + metadata row for one orphan_page issue.
 
-    The SQLite row delete runs on the SHARED ``db`` session (no per-issue
+    The metadata row delete runs on the SHARED ``db`` session (no per-issue
     commit); the batch transaction is committed once by the caller.
     """
     try:
@@ -359,7 +359,7 @@ async def _heal_orphan(
     # containers; the healer reconstructs wiki_path using the CURRENT (scope,
     # scope_id). A key collision (project B has an orphan key that is a LIVE
     # memory in project A) would otherwise delete a valid file. An orphan is, by
-    # definition, absent from BOTH the index and SQLite for its own container —
+    # definition, absent from BOTH the index and metadata for its own container —
     # so if either is present for THIS (scope, scope_id) the file is not
     # orphaned here and we refuse to unlink it.
     if _row_exists(db, key, scope, scope_id) or _index_has_key(svc, scope, scope_id, key):
@@ -367,7 +367,7 @@ async def _heal_orphan(
             "orphan_pruned",
             key,
             status="skipped",
-            description="not orphaned in this scope (SQLite row or index entry present); refusing delete",
+            description="not orphaned in this scope (PostgreSQL metadata row or index entry present); refusing delete",
         )
 
     if not wiki_path.exists():

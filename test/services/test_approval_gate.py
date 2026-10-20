@@ -148,10 +148,10 @@ def test_a_store_fault_is_not_reported_as_a_missing_approval(enforcement_on, mon
     and run again" — that cannot work, because nothing about the plan is wrong. The refusal must be
     distinguishable from a genuine absence.
     """
-    import sqlite3
+    import psycopg
 
     def unreadable_store(*_args, **_kwargs):
-        raise sqlite3.OperationalError("database is locked")
+        raise psycopg.OperationalError("PostgreSQL unavailable")
 
     monkeypatch.setattr(approval_store, "_connect", unreadable_store)
 
@@ -175,10 +175,10 @@ def test_a_database_error_refuses_rather_than_permits(enforcement_on, monkeypatc
     :class:`PlanApprovalRequiredError`, but it is still a refusal: an unreadable store never admits
     a run.
     """
-    import sqlite3
+    import psycopg
 
     def unreadable_store(*_args, **_kwargs):
-        raise sqlite3.OperationalError("database is locked")
+        raise psycopg.OperationalError("PostgreSQL unavailable")
 
     monkeypatch.setattr(approval_store, "_connect", unreadable_store)
     with pytest.raises(approval_gate.PlanApprovalUnavailableError):

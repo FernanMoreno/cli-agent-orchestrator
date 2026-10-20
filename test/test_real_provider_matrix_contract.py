@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from test.e2e import test_real_provider_matrix as matrix
+from test.fixtures import cao_server as server_fixture
 from types import SimpleNamespace
 from typing import Callable
 from unittest.mock import patch
@@ -74,6 +78,349 @@ def test_manifest_loads_reviewed_registered_provider(
         auth_files=(Path(".matrix/auth.json"),),
         capabilities=frozenset({"native_children"}),
     )
+
+
+@pytest.mark.parametrize(
+    ("requested", "returned", "expected"),
+    (
+        ("matrix-session", "cao-matrix-session", "cao-matrix-session"),
+        ("cao-existing-session", "cao-existing-session", "cao-existing-session"),
+    ),
+)
+def test_created_session_name_matches_terminal_service_namespace(
+    requested: str, returned: object, expected: str
+) -> None:
+    assert matrix._validate_created_session_name(requested, returned) == expected
+
+
+@pytest.mark.parametrize("returned", (None, 3, "matrix-session", "cao-other-session"))
+def test_created_session_name_rejects_noncanonical_response(returned: object) -> None:
+    with pytest.raises(ValueError, match="^created_session_name_mismatch$"):
+        matrix._validate_created_session_name("matrix-session", returned)
+
+
+def test_create_parent_returns_canonical_name_and_cleans_bad_response_by_request(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[str, str, dict[str, object]]] = []
+    server = SimpleNamespace(url="http://matrix.test", home_dir=tmp_path)
+
+    def request(method: str, url: str, **kwargs: object) -> SimpleNamespace:
+        calls.append((method, url, kwargs))
+        if method == "POST":
+            return _response(201, {"id": "parent-123", "session_name": "unexpected"})
+        if method == "DELETE":
+            return _response(200, {"deleted": True})
+        raise AssertionError(f"unexpected request: {method} {url}")
+
+    monkeypatch.setattr(matrix, "_request", request)
+    monkeypatch.setattr(matrix, "_wait_for_terminal_ready", lambda *_args: None)
+    with pytest.raises(ValueError, match="^created_session_name_mismatch$"):
+        matrix._create_parent(server, "claude_code", "matrix-profile")
+
+    post_method, _post_url, post_kwargs = calls[0]
+    requested_name = post_kwargs["params"]["session_name"]
+    assert post_method == "POST"
+    assert isinstance(requested_name, str)
+    assert requested_name.startswith("real-e2e-")
+    delete_method, delete_url, _delete_kwargs = calls[1]
+    assert delete_method == "DELETE"
+    assert delete_url == f"{server.url}/sessions/{requested_name}"
+
+
+def test_create_parent_cleans_requested_name_after_malformed_json_and_preserves_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[str, str, dict[str, object]]] = []
+    server = SimpleNamespace(url="http://matrix.test", home_dir=tmp_path)
+    parse_error = ValueError("malformed response")
+
+    class MalformedResponse:
+        status_code = 201
+
+        def json(self) -> object:
+            raise parse_error
+
+    def request(method: str, url: str, **kwargs: object) -> object:
+        calls.append((method, url, kwargs))
+        if method == "POST":
+            return MalformedResponse()
+        if method == "DELETE":
+            return _response(200, {"deleted": True})
+        raise AssertionError(f"unexpected request: {method} {url}")
+
+    monkeypatch.setattr(matrix, "_request", request)
+    with pytest.raises(ValueError) as raised:
+        matrix._create_parent(server, "claude_code", "matrix-profile")
+
+    assert raised.value is parse_error
+    requested_name = calls[0][2]["params"]["session_name"]
+    assert calls[1][0] == "DELETE"
+    assert calls[1][1] == f"{server.url}/sessions/{requested_name}"
+
+
+@pytest.mark.parametrize("terminal_id", ("", None, 7))
+def test_create_parent_cleans_requested_name_after_invalid_terminal_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, terminal_id: object
+) -> None:
+    calls: list[tuple[str, str, dict[str, object]]] = []
+    server = SimpleNamespace(url="http://matrix.test", home_dir=tmp_path)
+
+    def request(method: str, url: str, **kwargs: object) -> object:
+        calls.append((method, url, kwargs))
+        if method == "POST":
+            requested = kwargs["params"]["session_name"]
+            return _response(
+                201,
+                {"id": terminal_id, "session_name": f"cao-{requested}"},
+            )
+        if method == "DELETE":
+            return _response(200, {"deleted": True})
+        raise AssertionError(f"unexpected request: {method} {url}")
+
+    monkeypatch.setattr(matrix, "_request", request)
+    with pytest.raises(ValueError, match="^parent_session_response_invalid$"):
+        matrix._create_parent(server, "claude_code", "matrix-profile")
+
+    requested_name = calls[0][2]["params"]["session_name"]
+    assert calls[1][0] == "DELETE"
+    assert calls[1][1] == f"{server.url}/sessions/{requested_name}"
+
+
+def test_create_parent_cleans_requested_name_after_readiness_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[str, str, dict[str, object]]] = []
+    server = SimpleNamespace(url="http://matrix.test", home_dir=tmp_path)
+    readiness_error = RuntimeError("readiness failed")
+
+    def request(method: str, url: str, **kwargs: object) -> object:
+        calls.append((method, url, kwargs))
+        if method == "POST":
+            requested = kwargs["params"]["session_name"]
+            return _response(201, {"id": "parent-123", "session_name": f"cao-{requested}"})
+        if method == "DELETE":
+            return _response(200, {"deleted": True})
+        raise AssertionError(f"unexpected request: {method} {url}")
+
+    monkeypatch.setattr(matrix, "_request", request)
+    monkeypatch.setattr(
+        matrix, "_wait_for_terminal_ready", lambda *_args: (_ for _ in ()).throw(readiness_error)
+    )
+    with pytest.raises(RuntimeError) as raised:
+        matrix._create_parent(server, "claude_code", "matrix-profile")
+
+    assert raised.value is readiness_error
+    requested_name = calls[0][2]["params"]["session_name"]
+    assert calls[1][0] == "DELETE"
+    assert calls[1][1] == f"{server.url}/sessions/{requested_name}"
+
+
+def test_create_parent_keeps_primary_contract_error_when_requested_name_cleanup_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    server = SimpleNamespace(url="http://matrix.test", home_dir=tmp_path)
+    requested_names: list[str] = []
+    deleted_urls: list[str] = []
+
+    def request(method: str, url: str, **kwargs: object) -> object:
+        if method == "POST":
+            requested = kwargs["params"]["session_name"]
+            requested_names.append(requested)
+            return _response(201, {"id": "parent-123", "session_name": "bad-response-name"})
+        if method == "DELETE":
+            deleted_urls.append(url)
+            raise RuntimeError("cleanup transport failed")
+        raise AssertionError(f"unexpected request: {method} {url}")
+
+    monkeypatch.setattr(matrix, "_request", request)
+    with pytest.raises(ValueError) as raised:
+        matrix._create_parent(server, "claude_code", "matrix-profile")
+
+    assert str(raised.value) == "created_session_name_mismatch"
+    assert requested_names
+    assert deleted_urls == [f"{server.url}/sessions/{requested_names[0]}"]
+    assert any(
+        "created session cleanup by requested name unconfirmed" in note
+        for note in getattr(raised.value, "__notes__", ())
+    )
+
+
+def test_create_parent_cleanup_note_falls_back_when_add_note_is_not_callable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class LegacyNoteError(ValueError):
+        add_note = None
+
+    server = SimpleNamespace(url="http://matrix.test", home_dir=tmp_path)
+
+    def request(method: str, url: str, **kwargs: object) -> object:
+        if method == "POST":
+            requested = kwargs["params"]["session_name"]
+            return _response(201, {"id": "parent-123", "session_name": f"cao-{requested}"})
+        if method == "DELETE":
+            raise RuntimeError("cleanup transport failed")
+        raise AssertionError(f"unexpected request: {method} {url}")
+
+    def fail_validation(*_args: object) -> str:
+        raise LegacyNoteError("primary validation error")
+
+    monkeypatch.setattr(matrix, "_request", request)
+    monkeypatch.setattr(matrix, "_validate_created_session_name", fail_validation)
+    with pytest.raises(LegacyNoteError) as raised:
+        matrix._create_parent(server, "claude_code", "matrix-profile")
+
+    assert str(raised.value) == "primary validation error"
+    assert raised.value.__notes__ == ["created session cleanup by requested name unconfirmed"]
+
+
+def test_matrix_fixture_owns_tmux_root_and_closes_it_before_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    events: list[str] = []
+    root = tmp_path / "private-tmux"
+    home = tmp_path / "live_provider_cao_home"
+    auth_key = "CAO_MATRIX_AUTH_SENTINEL"
+    auth_environment = {auth_key: "fixture-value"}
+    provider = matrix.MatrixProvider(
+        name="claude_code",
+        model="matrix-test-model",
+        binary="claude",
+        auth_env=(),
+        auth_files=(),
+        capabilities=frozenset({"native_children"}),
+    )
+    cell = matrix.MatrixCell(parent=provider, child=provider)
+    server = SimpleNamespace(home_dir=home, stop=lambda: events.append("server_stop"))
+    observed: dict[str, object] = {}
+
+    def create_root() -> Path:
+        events.append("tmux_root_create")
+        root.mkdir(mode=0o700)
+        return root
+
+    def start_server(
+        passed_home: Path,
+        _port: int,
+        *,
+        extra_env: dict[str, str],
+        deadline: float,
+        allowed_external_credentials: frozenset[str],
+    ) -> SimpleNamespace:
+        events.append("server_start")
+        passed_home.mkdir(mode=0o700)
+        observed.update(
+            {
+                "home": passed_home,
+                "extra_env": extra_env,
+                "deadline": deadline,
+                "allowed": allowed_external_credentials,
+            }
+        )
+        return server
+
+    def cleanup_root(
+        passed_root: Path,
+        passed_home: Path,
+        _tmux_module: object,
+        *,
+        owner_stopped: bool,
+    ) -> bool:
+        events.append("tmux_root_cleanup")
+        assert passed_root == root
+        assert passed_home == home
+        assert owner_stopped is True
+        return True
+
+    monkeypatch.setattr(matrix, "_configured_auth_home", lambda: tmp_path)
+    monkeypatch.setattr(
+        matrix,
+        "_matrix_server_auth_environment",
+        lambda _cell: (auth_environment, frozenset({auth_key})),
+    )
+    monkeypatch.setattr(matrix.owned_tmux, "create_private_tmux_tmpdir", create_root)
+    monkeypatch.setattr(matrix.owned_tmux, "cleanup_private_tmux_root", cleanup_root)
+    monkeypatch.setattr(matrix, "_start_cao_server", start_server)
+    monkeypatch.setattr(matrix, "_pick_free_port", lambda: 42342)
+    monkeypatch.setattr(matrix, "_fixture_health_timeout", lambda: 5.0)
+    monkeypatch.setattr(matrix, "_registered_cao_server_for_home", lambda _home: None)
+    monkeypatch.setattr(
+        matrix,
+        "_remove_fixture_home_after_confirmed_stop",
+        lambda passed_home, _tmp_path: (events.append("home_remove"), shutil.rmtree(passed_home)),
+    )
+    request = SimpleNamespace(node=SimpleNamespace(callspec=SimpleNamespace(params={"cell": cell})))
+
+    fixture = matrix.live_provider_cao_server.__wrapped__(tmp_path, request)
+    assert next(fixture) is server
+    with pytest.raises(StopIteration):
+        next(fixture)
+
+    assert observed["home"] == home
+    assert observed["allowed"] == frozenset({auth_key})
+    passed_env = observed["extra_env"]
+    assert isinstance(passed_env, dict)
+    assert passed_env[auth_key] == "fixture-value"
+    assert passed_env["TMUX"] == ""
+    assert passed_env["TMUX_TMPDIR"] == str(root)
+    assert passed_env["TMPDIR"] == str(root)
+    assert events == [
+        "tmux_root_create",
+        "server_start",
+        "server_stop",
+        "tmux_root_cleanup",
+        "home_remove",
+    ]
+    assert not home.exists()
+
+
+def test_matrix_fixture_preserves_home_when_private_tmux_cleanup_is_unconfirmed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "private-tmux"
+    home = tmp_path / "live_provider_cao_home"
+    provider = matrix.MatrixProvider(
+        name="claude_code",
+        model="matrix-test-model",
+        binary="claude",
+        auth_env=(),
+        auth_files=(),
+        capabilities=frozenset({"native_children"}),
+    )
+    cell = matrix.MatrixCell(parent=provider, child=provider)
+    server = SimpleNamespace(home_dir=home, stop=lambda: None)
+
+    def create_root() -> Path:
+        root.mkdir(mode=0o700)
+        return root
+
+    def start_server(passed_home: Path, *_args: object, **_kwargs: object) -> SimpleNamespace:
+        passed_home.mkdir(mode=0o700)
+        return server
+
+    monkeypatch.setattr(matrix, "_configured_auth_home", lambda: tmp_path)
+    monkeypatch.setattr(matrix, "_matrix_server_auth_environment", lambda _cell: ({}, frozenset()))
+    monkeypatch.setattr(matrix.owned_tmux, "create_private_tmux_tmpdir", create_root)
+    monkeypatch.setattr(
+        matrix.owned_tmux, "cleanup_private_tmux_root", lambda *_args, **_kwargs: False
+    )
+    monkeypatch.setattr(matrix, "_start_cao_server", start_server)
+    monkeypatch.setattr(matrix, "_pick_free_port", lambda: 42342)
+    monkeypatch.setattr(matrix, "_fixture_health_timeout", lambda: 5.0)
+    monkeypatch.setattr(matrix, "_registered_cao_server_for_home", lambda _home: None)
+    monkeypatch.setattr(
+        matrix,
+        "_remove_fixture_home_after_confirmed_stop",
+        lambda *_args: pytest.fail("HOME removed"),
+    )
+    request = SimpleNamespace(node=SimpleNamespace(callspec=SimpleNamespace(params={"cell": cell})))
+
+    fixture = matrix.live_provider_cao_server.__wrapped__(tmp_path, request)
+    assert next(fixture) is server
+    with pytest.raises(RuntimeError, match="^live provider cleanup incomplete$"):
+        fixture.close()
+    assert root.is_dir()
+    assert home.is_dir()
 
 
 _QUOTA_TERMINAL_ID = "quota-terminal-123"
@@ -1399,10 +1746,36 @@ def test_auth_copy_cannot_mutate_reusable_login(monkeypatch, tmp_path):
     assert not (home / "record.json").is_symlink()
 
 
+def _selected_provider_fixture_request() -> SimpleNamespace:
+    """Build the selected-cell request shape required by the R4 fixture."""
+    provider = matrix.MatrixProvider(
+        name="fixture-contract",
+        model="fixture-contract",
+        binary="unused-test-value",
+        auth_env=(),
+        auth_files=(),
+        capabilities=frozenset(),
+    )
+    cell = matrix.MatrixCell(parent=provider, child=provider)
+    callspec = SimpleNamespace(params={"cell": cell})
+    return SimpleNamespace(node=SimpleNamespace(callspec=callspec))
+
+
+def _stub_fixture_tmux(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / "private-tmux-root"
+    monkeypatch.setattr(matrix.owned_tmux, "create_private_tmux_tmpdir", lambda: root)
+    monkeypatch.setattr(
+        matrix.owned_tmux,
+        "cleanup_private_tmux_root",
+        lambda *_args, **_kwargs: True,
+    )
+
+
 @pytest.mark.parametrize("outcome", [None, RuntimeError("failure"), KeyboardInterrupt()])
 def test_provider_fixture_cleans_auth_home_on_success_failure_cancel(
     monkeypatch, tmp_path, outcome
 ):
+    _stub_fixture_tmux(monkeypatch, tmp_path)
     auth = tmp_path / "auth"
     auth.mkdir()
     monkeypatch.setenv(matrix._AUTH_HOME_ENV, str(auth))
@@ -1415,7 +1788,9 @@ def test_provider_fixture_cleans_auth_home_on_success_failure_cancel(
         return SimpleNamespace(home_dir=home, stop=lambda: stopped.append(True))
 
     monkeypatch.setattr(matrix, "_start_cao_server", start)
-    fixture = matrix.live_provider_cao_server.__wrapped__(tmp_path)
+    fixture = matrix.live_provider_cao_server.__wrapped__(
+        tmp_path, _selected_provider_fixture_request()
+    )
     next(fixture)
     if outcome is None:
         with pytest.raises(StopIteration):
@@ -1428,6 +1803,7 @@ def test_provider_fixture_cleans_auth_home_on_success_failure_cancel(
 
 
 def test_provider_fixture_removes_auth_after_startup_failure(monkeypatch, tmp_path):
+    _stub_fixture_tmux(monkeypatch, tmp_path)
     home = tmp_path / "live_provider_cao_home"
 
     def fail_start(*args, **kwargs):
@@ -1437,7 +1813,11 @@ def test_provider_fixture_removes_auth_after_startup_failure(monkeypatch, tmp_pa
 
     monkeypatch.setattr(matrix, "_start_cao_server", fail_start)
     with pytest.raises(RuntimeError, match="startup failed"):
-        next(matrix.live_provider_cao_server.__wrapped__(tmp_path))
+        next(
+            matrix.live_provider_cao_server.__wrapped__(
+                tmp_path, _selected_provider_fixture_request()
+            )
+        )
     assert not home.exists()
 
 
@@ -1446,5 +1826,451 @@ def test_provider_fixture_missing_isolation_blocks_before_launch(monkeypatch, tm
     launched = []
     monkeypatch.setattr(matrix, "_start_cao_server", lambda *args, **kwargs: launched.append(True))
     with pytest.raises(pytest.fail.Exception, match="isolated"):
-        next(matrix.live_provider_cao_server.__wrapped__(tmp_path))
+        next(
+            matrix.live_provider_cao_server.__wrapped__(
+                tmp_path, _selected_provider_fixture_request()
+            )
+        )
     assert not launched
+
+
+def _register_fixture_server_owner(home, stop):
+    owner = matrix.CaoServer(
+        url="http://127.0.0.1:1",
+        port=1,
+        home_dir=home,
+        database_targets=None,
+        database_config_path=home / "private-config.json",
+        log_path=home / "server.log",
+        stop=stop,
+    )
+    server_fixture._LIVE_SERVERS.add(owner)
+    return owner
+
+
+def test_provider_fixture_preserves_home_when_stop_is_unconfirmed(monkeypatch, tmp_path):
+    _stub_fixture_tmux(monkeypatch, tmp_path)
+    home = tmp_path / "live_provider_cao_home"
+    stop_error = RuntimeError("stop not confirmed")
+    owners = []
+
+    def start(home_dir, *args, **kwargs):
+        home_dir.mkdir()
+        (home_dir / "owner-marker").write_text("private test sentinel")
+        owner = _register_fixture_server_owner(home_dir, lambda: (_ for _ in ()).throw(stop_error))
+        owners.append(owner)
+        return owner
+
+    monkeypatch.setattr(matrix, "_start_cao_server", start)
+    fixture = matrix.live_provider_cao_server.__wrapped__(
+        tmp_path, _selected_provider_fixture_request()
+    )
+    next(fixture)
+    try:
+        with pytest.raises(RuntimeError) as raised:
+            next(fixture)
+        assert raised.value is stop_error
+        assert owners[0] in server_fixture._LIVE_SERVERS
+        assert home.is_dir()
+    finally:
+        for owner in owners:
+            server_fixture._LIVE_SERVERS.discard(owner)
+
+
+def test_provider_fixture_keeps_body_error_primary_when_stop_is_unconfirmed(monkeypatch, tmp_path):
+    _stub_fixture_tmux(monkeypatch, tmp_path)
+    home = tmp_path / "live_provider_cao_home"
+    stop_error = RuntimeError("stop not confirmed")
+    body_error = ValueError("body failed")
+    owners = []
+
+    def start(home_dir, *args, **kwargs):
+        home_dir.mkdir()
+        (home_dir / "owner-marker").write_text("private test sentinel")
+        owner = _register_fixture_server_owner(home_dir, lambda: (_ for _ in ()).throw(stop_error))
+        owners.append(owner)
+        return owner
+
+    monkeypatch.setattr(matrix, "_start_cao_server", start)
+    fixture = matrix.live_provider_cao_server.__wrapped__(
+        tmp_path, _selected_provider_fixture_request()
+    )
+    next(fixture)
+    try:
+        with pytest.raises(ValueError) as raised:
+            fixture.throw(body_error)
+        assert raised.value is body_error
+        assert any("cleanup incomplete" in note for note in getattr(body_error, "__notes__", ()))
+        assert owners[0] in server_fixture._LIVE_SERVERS
+        assert home.is_dir()
+    finally:
+        for owner in owners:
+            server_fixture._LIVE_SERVERS.discard(owner)
+
+
+def test_provider_fixture_preserves_startup_error_and_registered_home(monkeypatch, tmp_path):
+    _stub_fixture_tmux(monkeypatch, tmp_path)
+    home = tmp_path / "live_provider_cao_home"
+    startup_error = RuntimeError("startup failed")
+    stop_error = RuntimeError("stop not confirmed")
+    owners = []
+
+    def fail_start(home_dir, *args, **kwargs):
+        home_dir.mkdir()
+        (home_dir / "owner-marker").write_text("private test sentinel")
+        owner = _register_fixture_server_owner(home_dir, lambda: (_ for _ in ()).throw(stop_error))
+        owners.append(owner)
+        raise startup_error from stop_error
+
+    monkeypatch.setattr(matrix, "_start_cao_server", fail_start)
+    fixture = matrix.live_provider_cao_server.__wrapped__(
+        tmp_path, _selected_provider_fixture_request()
+    )
+    try:
+        with pytest.raises(RuntimeError) as raised:
+            next(fixture)
+        assert raised.value is startup_error
+        assert raised.value.__cause__ is stop_error
+        assert any("cleanup incomplete" in note for note in getattr(startup_error, "__notes__", ()))
+        assert owners[0] in server_fixture._LIVE_SERVERS
+        assert home.is_dir()
+    finally:
+        for owner in owners:
+            server_fixture._LIVE_SERVERS.discard(owner)
+
+
+def test_provider_fixture_partial_home_cleanup_note_is_truthful(monkeypatch, tmp_path):
+    _stub_fixture_tmux(monkeypatch, tmp_path)
+    auth = tmp_path / "auth"
+    auth.mkdir()
+    monkeypatch.setenv(matrix._AUTH_HOME_ENV, str(auth))
+    home = tmp_path / "live_provider_cao_home"
+    marker = home / "owner-marker"
+    body_error = ValueError("body failed before partial cleanup")
+
+    def start(home_dir, *args, **kwargs):
+        home_dir.mkdir()
+        (home_dir / "owner-marker").write_text("private test sentinel")
+        return SimpleNamespace(home_dir=home_dir, stop=lambda: None)
+
+    def partially_remove(path, *, ignore_errors=False):
+        assert path == home
+        assert ignore_errors is False
+        marker.unlink()
+        raise OSError("controlled partial cleanup failure")
+
+    monkeypatch.setattr(matrix, "_start_cao_server", start)
+    # Rebind only the fixture module's namespace, so pytest's own shutil
+    # cleanup functions remain untouched.
+    monkeypatch.setattr(matrix, "shutil", SimpleNamespace(rmtree=partially_remove))
+    fixture = matrix.live_provider_cao_server.__wrapped__(
+        tmp_path, _selected_provider_fixture_request()
+    )
+    next(fixture)
+    with pytest.raises(ValueError) as raised:
+        fixture.throw(body_error)
+
+    assert raised.value is body_error
+    assert home.is_dir()
+    assert not marker.exists()
+    notes = getattr(body_error, "__notes__", ())
+    assert "live provider fixture cleanup incomplete; isolated HOME cleanup unconfirmed" in notes
+    assert all("HOME preserved" not in note for note in notes)
+
+
+_SYNTHETIC_CLAUDE_CREDENTIAL = b'{"fixture":"synthetic-only"}\n'
+_SYNTHETIC_CLAUDE_METADATA = b'{"fixture":"metadata-only"}\n'
+
+
+def _identity_without_access_time(path: Path) -> tuple[int, ...]:
+    info = path.stat()
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_uid,
+        info.st_nlink,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+def _claude_archive_fixture_inputs(monkeypatch, tmp_path, pytest_request):
+    auth_home = tmp_path / "isolated-auth"
+    auth_home.mkdir(mode=0o700)
+    auth_home.chmod(0o700)
+    auth_claude = auth_home / ".claude"
+    auth_claude.mkdir(mode=0o700)
+    auth_claude.chmod(0o700)
+    credential = auth_claude / ".credentials.json"
+    credential.write_bytes(_SYNTHETIC_CLAUDE_CREDENTIAL)
+    credential.chmod(0o600)
+    (auth_home / ".claude.json").write_bytes(_SYNTHETIC_CLAUDE_METADATA)
+    (auth_home / ".claude.json").chmod(0o600)
+
+    evidence_owner = tempfile.TemporaryDirectory(
+        prefix="caos-claude-archive-evidence-", dir=tempfile.gettempdir()
+    )
+    pytest_request.addfinalizer(evidence_owner.cleanup)
+    evidence_root = Path(evidence_owner.name)
+    assert stat.S_IMODE(evidence_root.stat().st_mode) == 0o700
+    assert not evidence_root.resolve().is_relative_to(tmp_path.parent.resolve())
+    monkeypatch.setenv(matrix._AUTH_HOME_ENV, str(auth_home))
+    monkeypatch.setenv(matrix._CLAUDE_ARCHIVE_ROOT_ENV, str(evidence_root))
+
+    provider = matrix.MatrixProvider(
+        name="claude_code",
+        model="matrix-test-model",
+        binary="claude",
+        auth_env=(),
+        auth_files=(Path(".claude/.credentials.json"), Path(".claude.json")),
+        capabilities=frozenset({"native_children"}),
+    )
+    cell = matrix.MatrixCell(parent=provider, child=provider)
+    request = SimpleNamespace(node=SimpleNamespace(callspec=SimpleNamespace(params={"cell": cell})))
+    return auth_home, evidence_root, credential, provider, cell, request
+
+
+def _start_private_claude_archive_fixture(monkeypatch, tmp_path, events, *, stop=None, tmux=True):
+    auth_home = tmp_path / "isolated-auth"
+    monkeypatch.setattr(matrix, "_configured_auth_home", lambda: auth_home)
+    monkeypatch.setattr(matrix, "_matrix_server_auth_environment", lambda _cell: ({}, frozenset()))
+    tmux_root = tmp_path / "fixture-tmux"
+
+    def create_tmux_root():
+        events.append("tmux_create")
+        tmux_root.mkdir(mode=0o700)
+        return tmux_root
+
+    def cleanup_tmux_root(_root, _home, _client, *, owner_stopped):
+        events.append("tmux_cleanup")
+        assert owner_stopped is True
+        return tmux
+
+    def start_server(home, *_args, **_kwargs):
+        events.append("server_start")
+        assert home.is_dir()
+        assert stat.S_IMODE(home.stat().st_mode) == 0o700
+        assert stat.S_IMODE((home / ".claude").stat().st_mode) == 0o700
+        return SimpleNamespace(
+            home_dir=home,
+            stop=stop or (lambda: events.append("server_stop")),
+        )
+
+    monkeypatch.setattr(matrix.owned_tmux, "create_private_tmux_tmpdir", create_tmux_root)
+    monkeypatch.setattr(matrix.owned_tmux, "cleanup_private_tmux_root", cleanup_tmux_root)
+    monkeypatch.setattr(matrix, "_start_cao_server", start_server)
+    monkeypatch.setattr(matrix, "_pick_free_port", lambda: 42342)
+    monkeypatch.setattr(matrix, "_fixture_health_timeout", lambda: 5.0)
+    monkeypatch.setattr(matrix, "_registered_cao_server_for_home", lambda _home: None)
+
+
+def test_claude_archive_runs_after_teardown_even_when_functional_test_fails(
+    monkeypatch, tmp_path, request
+):
+    auth_home, evidence_root, credential, provider, cell, matrix_request = (
+        _claude_archive_fixture_inputs(monkeypatch, tmp_path, request)
+    )
+    credential_identity = _identity_without_access_time(credential)
+    credential_content = credential.read_bytes()
+    metadata_source = auth_home / ".claude.json"
+    metadata_identity = _identity_without_access_time(metadata_source)
+    metadata_content = metadata_source.read_bytes()
+    auth_claude_identity = _identity_without_access_time(auth_home / ".claude")
+    events: list[str] = []
+    _start_private_claude_archive_fixture(monkeypatch, tmp_path, events)
+    real_archive = matrix.claude_auth_archive.archive_private_credential_copy
+    original_remove = matrix._remove_archived_claude_workspace
+
+    def archive_with_event(*args, **kwargs):
+        events.append("archive")
+        return real_archive(*args, **kwargs)
+
+    def remove_with_event(state):
+        assert (state.home / ".claude.json").read_bytes() == _SYNTHETIC_CLAUDE_METADATA
+        events.append("workspace_remove")
+        return original_remove(state)
+
+    monkeypatch.setattr(
+        matrix.claude_auth_archive,
+        "archive_private_credential_copy",
+        archive_with_event,
+    )
+    monkeypatch.setattr(matrix, "_remove_archived_claude_workspace", remove_with_event)
+    monkeypatch.setattr(
+        matrix, "_delete_session", lambda _server, _name: events.append("session_delete")
+    )
+
+    fixture = matrix.live_provider_cao_server.__wrapped__(tmp_path, matrix_request)
+    server = next(fixture)
+    matrix._link_auth_material(server, provider)
+    matrix._delete_session_and_record_archive_eligibility(server, "cao-matrix-session", cell)
+    body_error = AssertionError("synthetic functional assertion failure")
+    with pytest.raises(AssertionError) as raised:
+        fixture.throw(body_error)
+    assert raised.value is body_error
+
+    assert events == [
+        "tmux_create",
+        "server_start",
+        "session_delete",
+        "server_stop",
+        "tmux_cleanup",
+        "archive",
+        "workspace_remove",
+    ]
+    archive_root = evidence_root / "archives"
+    run_archives = list(archive_root.iterdir())
+    assert len(run_archives) == 1
+    archive_run = run_archives[0]
+    archived = archive_run / "credentials.json"
+    assert archived.read_bytes() == _SYNTHETIC_CLAUDE_CREDENTIAL
+    assert stat.S_IMODE(archived.stat().st_mode) == 0o600
+    assert stat.S_IMODE(archive_run.stat().st_mode) == 0o700
+    assert list(archive_run.iterdir()) == [archived]
+    assert not server.home_dir.parent.exists()
+    assert credential.read_bytes() == credential_content
+    assert _identity_without_access_time(credential) == credential_identity
+    assert metadata_source.read_bytes() == metadata_content
+    assert _identity_without_access_time(metadata_source) == metadata_identity
+    assert _identity_without_access_time(auth_home / ".claude") == auth_claude_identity
+
+
+@pytest.mark.parametrize("boundary", ["delete", "stop", "owner", "tmux", "archive", "setup"])
+def test_claude_archive_retains_durable_workspace_on_uncertain_boundary(
+    monkeypatch, tmp_path, boundary, request
+):
+    _auth_home, evidence_root, _credential, provider, cell, matrix_request = (
+        _claude_archive_fixture_inputs(monkeypatch, tmp_path, request)
+    )
+    events: list[str] = []
+
+    def stop():
+        events.append("server_stop")
+        if boundary == "stop":
+            raise RuntimeError("synthetic stop uncertainty")
+
+    _start_private_claude_archive_fixture(
+        monkeypatch, tmp_path, events, stop=stop, tmux=boundary != "tmux"
+    )
+    if boundary == "owner":
+        monkeypatch.setattr(
+            matrix,
+            "_registered_cao_server_for_home",
+            lambda home: SimpleNamespace(home_dir=home),
+        )
+    if boundary == "archive":
+        monkeypatch.setattr(
+            matrix.claude_auth_archive,
+            "archive_private_credential_copy",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("synthetic archive failure")),
+        )
+    if boundary == "delete":
+        monkeypatch.setattr(
+            matrix,
+            "_delete_session",
+            lambda *_args: (_ for _ in ()).throw(RuntimeError("synthetic DELETE failure")),
+        )
+
+    fixture = matrix.live_provider_cao_server.__wrapped__(tmp_path, matrix_request)
+    server = next(fixture)
+    matrix._link_auth_material(server, provider)
+    if boundary not in {"delete", "setup"}:
+        monkeypatch.setattr(matrix, "_delete_session", lambda *_args: None)
+        matrix._delete_session_and_record_archive_eligibility(server, "cao-matrix-session", cell)
+
+    body_error = ValueError("synthetic body failure")
+    if boundary == "setup":
+        with pytest.raises(ValueError) as raised:
+            fixture.throw(body_error)
+        assert raised.value is body_error
+    else:
+        with pytest.raises((RuntimeError, ValueError)):
+            if boundary == "delete":
+                with pytest.raises(RuntimeError, match="synthetic DELETE failure"):
+                    matrix._delete_session_and_record_archive_eligibility(
+                        server, "cao-matrix-session", cell
+                    )
+                fixture.close()
+            else:
+                fixture.close()
+
+    assert server.home_dir.is_dir()
+    credential = server.home_dir / ".claude" / ".credentials.json"
+    assert credential.read_bytes() == _SYNTHETIC_CLAUDE_CREDENTIAL
+    archive_root = evidence_root / "archives"
+    assert not archive_root.exists() or list(archive_root.iterdir()) == []
+
+
+def test_claude_archive_invalid_root_fails_before_tmux_or_server(monkeypatch, tmp_path, request):
+    _auth_home, evidence_root, _credential, _provider, _cell, matrix_request = (
+        _claude_archive_fixture_inputs(monkeypatch, tmp_path, request)
+    )
+    invalid_root = tmp_path / "missing-parent" / "evidence"
+    monkeypatch.setenv(matrix._CLAUDE_ARCHIVE_ROOT_ENV, str(invalid_root))
+    events: list[str] = []
+    _start_private_claude_archive_fixture(monkeypatch, tmp_path, events)
+    fixture = matrix.live_provider_cao_server.__wrapped__(tmp_path, matrix_request)
+    with pytest.raises(RuntimeError, match="^Claude credential archive preflight failed$"):
+        next(fixture)
+    assert events == []
+    assert not invalid_root.exists()
+    assert not (evidence_root / "archives").exists()
+
+
+def test_claude_archive_rejects_pytest_temporary_base(monkeypatch, tmp_path, request):
+    _auth_home, evidence_root, _credential, _provider, _cell, matrix_request = (
+        _claude_archive_fixture_inputs(monkeypatch, tmp_path, request)
+    )
+    temporary_root = tmp_path / "durable-by-name-only"
+    monkeypatch.setenv(matrix._CLAUDE_ARCHIVE_ROOT_ENV, str(temporary_root))
+    events: list[str] = []
+    _start_private_claude_archive_fixture(monkeypatch, tmp_path, events)
+    fixture = matrix.live_provider_cao_server.__wrapped__(tmp_path, matrix_request)
+    with pytest.raises(RuntimeError, match="^Claude credential archive preflight failed$"):
+        next(fixture)
+    assert events == []
+    assert not temporary_root.exists()
+
+
+def test_claude_archive_rejects_environment_auth_before_start(monkeypatch, tmp_path, request):
+    _auth_home, evidence_root, _credential, _provider, _cell, matrix_request = (
+        _claude_archive_fixture_inputs(monkeypatch, tmp_path, request)
+    )
+    events: list[str] = []
+    _start_private_claude_archive_fixture(monkeypatch, tmp_path, events)
+    monkeypatch.setattr(
+        matrix,
+        "_matrix_server_auth_environment",
+        lambda _cell: ({"ANTHROPIC_API_KEY": "synthetic-only"}, frozenset()),
+    )
+    fixture = matrix.live_provider_cao_server.__wrapped__(tmp_path, matrix_request)
+    with pytest.raises(RuntimeError, match="^Claude credential archive preflight failed$"):
+        next(fixture)
+    assert events == []
+    assert not (evidence_root / "archives").exists()
+
+
+def test_claude_archive_is_ignored_for_other_cells(monkeypatch, tmp_path):
+    monkeypatch.setenv(matrix._CLAUDE_ARCHIVE_ROOT_ENV, str(tmp_path / "missing-root"))
+    _stub_fixture_tmux(monkeypatch, tmp_path)
+    auth_home = tmp_path / "auth"
+    auth_home.mkdir(mode=0o700)
+    home = tmp_path / "live_provider_cao_home"
+    monkeypatch.setattr(matrix, "_configured_auth_home", lambda: auth_home)
+    monkeypatch.setattr(matrix, "_matrix_server_auth_environment", lambda _cell: ({}, frozenset()))
+
+    def start(home_dir, *_args, **_kwargs):
+        home_dir.mkdir(mode=0o700)
+        return SimpleNamespace(home_dir=home_dir, stop=lambda: None)
+
+    monkeypatch.setattr(matrix, "_start_cao_server", start)
+    fixture = matrix.live_provider_cao_server.__wrapped__(
+        tmp_path, _selected_provider_fixture_request()
+    )
+    next(fixture)
+    with pytest.raises(StopIteration):
+        next(fixture)
+    assert not home.exists()
+    assert not (tmp_path / "missing-root").exists()

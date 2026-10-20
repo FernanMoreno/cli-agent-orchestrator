@@ -1104,6 +1104,10 @@ class WorkProcessSupervisor:
         deadline = None if timeout is None else time.monotonic() + timeout
         with attempt._wait_lock:
             while True:
+                monitor_to_reap: subprocess.Popen[bytes] | None = None
+                monitor_wait_timeout: float | None = None
+                monitor_pidfd: int | None = None
+                init_pidfd: int | None = None
                 with self._lock:
                     if attempt._identity is None and attempt._external_process_identity is None:
                         return self.uncertain(
@@ -1126,36 +1130,89 @@ class WorkProcessSupervisor:
                             "pidfd poll error cannot prove process-tree exit",
                         )
                     if monitor_exited and init_exited:
-                        if attempt._monitor is not None:
+                        monitor = attempt._monitor
+                        if monitor is not None:
                             try:
-                                attempt.returncode = attempt._monitor.wait(timeout=0)
+                                attempt.returncode = monitor.wait(timeout=0)
                             except subprocess.TimeoutExpired:
-                                return self.uncertain(
-                                    attempt,
-                                    "monitor pidfd became readable before its child status was waitable",
+                                remaining = (
+                                    None if deadline is None else deadline - time.monotonic()
                                 )
+                                if remaining is not None and remaining <= 0:
+                                    return self.uncertain(
+                                        attempt,
+                                        "monitor pidfd became readable before its child status was waitable",
+                                    )
+                                # Popen.wait(timeout=0) can report no status while another
+                                # Popen waiter (for example communicate()) owns its waitpid
+                                # lock. Keep the original deadline, but wait outside the
+                                # supervisor lock so cancellation and cleanup can proceed.
+                                monitor_to_reap = monitor
+                                monitor_wait_timeout = remaining
                             except OSError as exc:
                                 return self.uncertain(
                                     attempt,
                                     f"could not reap unshare monitor after pidfd exit: {exc}",
                                 )
+                        if monitor_to_reap is None:
+                            attempt._state = WorkProcessState.TERMINATED
+                            attempt.reason = None
+                            self._close_pidfd(attempt)
+                            self._close_monitor_pidfd(attempt)
+                            return attempt.state
+                    if monitor_to_reap is None:
+                        if deadline is not None:
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                return (
+                                    WorkProcessState.UNCERTAIN
+                                    if attempt.state is WorkProcessState.UNCERTAIN
+                                    else WorkProcessState.RUNNING
+                                )
+                            timeout_ms = max(1, int(remaining * 1000 + 0.999))
+                        else:
+                            timeout_ms = -1
+
+                if monitor_to_reap is not None:
+                    try:
+                        # Recompute after releasing the supervisor lock: scheduling
+                        # may have consumed the deadline since the first check.
+                        monitor_wait_timeout = (
+                            None if deadline is None else deadline - time.monotonic()
+                        )
+                        if monitor_wait_timeout is not None and monitor_wait_timeout <= 0:
+                            return self.uncertain(
+                                attempt,
+                                "monitor pidfd became readable before its child status was waitable",
+                            )
+                        monitor_returncode = monitor_to_reap.wait(timeout=monitor_wait_timeout)
+                    except subprocess.TimeoutExpired:
+                        return self.uncertain(
+                            attempt,
+                            "monitor pidfd became readable before its child status was waitable",
+                        )
+                    except OSError as exc:
+                        return self.uncertain(
+                            attempt,
+                            f"could not reap unshare monitor after pidfd exit: {exc}",
+                        )
+                    with self._lock:
+                        if (
+                            self._attempt is not attempt
+                            or attempt._monitor is not monitor_to_reap
+                            or attempt._monitor_pidfd != monitor_pidfd
+                            or attempt._pidfd != init_pidfd
+                        ):
+                            return self.uncertain(
+                                attempt,
+                                "monitor ownership changed while awaiting child status",
+                            )
+                        attempt.returncode = monitor_returncode
                         attempt._state = WorkProcessState.TERMINATED
                         attempt.reason = None
                         self._close_pidfd(attempt)
                         self._close_monitor_pidfd(attempt)
                         return attempt.state
-
-                    if deadline is not None:
-                        remaining = deadline - time.monotonic()
-                        if remaining <= 0:
-                            return (
-                                WorkProcessState.UNCERTAIN
-                                if attempt.state is WorkProcessState.UNCERTAIN
-                                else WorkProcessState.RUNNING
-                            )
-                        timeout_ms = max(1, int(remaining * 1000 + 0.999))
-                    else:
-                        timeout_ms = -1
 
                 poller = select.poll()
                 poller.register(monitor_pidfd, select.POLLIN | select.POLLHUP | select.POLLERR)

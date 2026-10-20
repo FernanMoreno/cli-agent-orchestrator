@@ -29,6 +29,7 @@ from cli_agent_orchestrator.constants import (
     TMUX_HISTORY_LINES,
 )
 from cli_agent_orchestrator.utils import fifo_writer
+from cli_agent_orchestrator.utils.database_environment import is_database_env_key
 from cli_agent_orchestrator.utils.forwarded_env import is_hijack_env_key
 from cli_agent_orchestrator.utils.path_validation import (
     BLOCKED_SYSTEM_DIRECTORIES,
@@ -432,6 +433,16 @@ def _require_cao_session_name(session_name: str, action: str) -> None:
 
 class TmuxClient:
     """Simplified tmux client for basic operations."""
+
+    _DATABASE_ENV_MASK = "__CAO_RESERVED_DATABASE_ENV_REMOVED__"
+
+    # ``respawn-pane`` acknowledges the request before the replacement shell
+    # has taken over the PTY.  Returning during that interval lets the first
+    # command sent by a cancellation/recovery caller land in tmux's bootstrap
+    # process and disappear.  Keep the readiness wait bounded: a shell that
+    # never starts is an actionable reset failure, not an unbounded hang.
+    _RESPAWN_READY_TIMEOUT_SECONDS = 5.0
+    _RESPAWN_READY_POLL_SECONDS = 0.05
 
     # How long ``kill_session`` waits for tmux to actually reap the session
     # before giving up and reporting the kill unconfirmed. tmux's own reaping is
@@ -925,7 +936,7 @@ class TmuxClient:
         ...), whose value would run as the operator when the pane starts.
         The second class has no allowlist.
         """
-        if is_hijack_env_key(key):
+        if is_database_env_key(key) or is_hijack_env_key(key):
             return True
         if key in cls._BLOCKED_PREFIX_ALLOWLIST:
             return False
@@ -956,6 +967,47 @@ class TmuxClient:
                 continue
             environment[key] = value
 
+    def _database_env_names(self, session_name: Optional[str] = None) -> set[str]:
+        """Return reserved DB variable names in tmux's global/session env.
+
+        The tmux client subprocess is filtered before it reaches the server,
+        but a server may have been started earlier by another process with DB
+        credentials in its global environment. New panes merge that global
+        environment with the session environment, so checking only
+        ``os.environ`` is insufficient.
+
+        Values are never logged or returned. A mocked tmux server with no
+        concrete command result has no inspectable environment and remains a
+        no-op; a real failed inspection is fail-closed.
+        """
+        scopes: list[tuple[str, ...]] = [("show-environment", "-g")]
+        if session_name is not None:
+            scopes.append(("show-environment", "-t", f"={session_name}"))
+
+        names: set[str] = set()
+        for command in scopes:
+            result = self.server.cmd(*command)
+            returncode = getattr(result, "returncode", None)
+            if type(returncode) is not int:
+                return set()
+            if returncode != 0:
+                raise RuntimeError("Could not safely inspect the tmux environment")
+            for line in result.stdout:
+                if not isinstance(line, str):
+                    continue
+                key, separator, _value = line.partition("=")
+                if separator and is_database_env_key(key):
+                    names.add(key)
+        return names
+
+    def _remove_database_env_from_session(self, session_name: str, names: set[str]) -> None:
+        """Hide inherited DB variables from future processes in one session."""
+        for key in sorted(names):
+            result = self.server.cmd("set-environment", "-r", "-t", f"={session_name}", key)
+            returncode = getattr(result, "returncode", None)
+            if type(returncode) is int and returncode != 0:
+                raise RuntimeError("Could not safely remove reserved environment from tmux session")
+
     def create_session(
         self,
         session_name: str,
@@ -972,6 +1024,7 @@ class TmuxClient:
             # mass teardown (harness-control#845). Runs before new_session, and
             # starts the server if it isn't up yet.
             exit_empty_configured = self._set_server_exit_empty_off()
+            database_env_names = self._database_env_names()
 
             working_directory = self._resolve_and_validate_working_directory(working_directory)
 
@@ -1011,6 +1064,13 @@ class TmuxClient:
             # value. See issue #248.
             self._merge_extra_env(environment, extra_env)
             environment["CAO_TERMINAL_ID"] = terminal_id
+            if database_env_names:
+                # tmux merges its server-global environment into each new
+                # pane. Use harmless placeholders for the bootstrap command,
+                # then mark the names removed in this session before starting
+                # the actual interactive shell. This leaves other tmux
+                # sessions and the server-global environment untouched.
+                environment.update({key: self._DATABASE_ENV_MASK for key in database_env_names})
 
             # Explicit 220x50 pane size avoids the default 80x24 that tmux
             # assigns to detached sessions. kiro-cli 2.1.x's TUI v2 fails to
@@ -1019,6 +1079,7 @@ class TmuxClient:
             # silently dropped. Starting at a larger size makes the attach
             # resize a no-op/shrink, which kiro handles correctly. All other
             # providers tolerate wider panes. See issue #216.
+            session = None
             try:
                 session = self.server.new_session(
                     session_name=session_name,
@@ -1028,7 +1089,33 @@ class TmuxClient:
                     environment=environment,
                     x=220,
                     y=50,
+                    window_command="sleep 600" if database_env_names else None,
                 )
+                if database_env_names:
+                    self._remove_database_env_from_session(session_name, database_env_names)
+                    shell_result = self.server.cmd("show-options", "-gqv", "default-shell")
+                    if (
+                        type(getattr(shell_result, "returncode", None)) is not int
+                        or shell_result.returncode != 0
+                        or not shell_result.stdout
+                    ):
+                        raise RuntimeError("Could not safely resolve the tmux default shell")
+                    default_shell = shell_result.stdout[0].strip()
+                    first_pane = session.windows[0].panes[0]
+                    if not first_pane.pane_id:
+                        raise RuntimeError("Could not safely locate the tmux session pane")
+                    respawn_result = self.server.cmd(
+                        "respawn-pane",
+                        "-k",
+                        "-t",
+                        first_pane.pane_id,
+                        f"exec {shlex.quote(default_shell)}",
+                    )
+                    if (
+                        type(getattr(respawn_result, "returncode", None)) is int
+                        and respawn_result.returncode != 0
+                    ):
+                        raise RuntimeError("Could not safely start the tmux session shell")
                 if not exit_empty_configured:
                     # An external restart can kill the bootstrap invocation.
                     # Reapply once new_session has established a live server.
@@ -1059,6 +1146,8 @@ class TmuxClient:
                     "been removed; the launch can be retried with the same name."
                 ) from e
             except Exception as e:
+                if session is not None:
+                    self._kill_via_cli(session_name)
                 if work_safe:
                     raise TmuxCreateUncertain(
                         f"Work session '{session_name}' may remain after creation failed; "
@@ -1192,6 +1281,9 @@ class TmuxClient:
                 time.sleep(0.1)
             if not session:
                 raise ValueError(f"Session '{session_name}' not found")
+
+            database_env_names = self._database_env_names(session_name)
+            self._remove_database_env_from_session(session_name, database_env_names)
 
             window_env: dict[str, str] = {}
             self._merge_extra_env(window_env, extra_env)
@@ -1364,6 +1456,9 @@ class TmuxClient:
             session = self._find_session(session_name)
             if not session:
                 raise ValueError(f"Session '{session_name}' not found")
+
+            database_env_names = self._database_env_names(session_name)
+            self._remove_database_env_from_session(session_name, database_env_names)
 
             if self._find_marked_pane(session, session_name, terminal_name) is not None:
                 raise ValueError(
@@ -2193,6 +2288,9 @@ class TmuxClient:
         shell = shell_result.stdout[0].strip()
         if not os.path.isabs(shell):
             raise RuntimeError("tmux replacement shell must be an absolute executable")
+        old_pid = str(pane.pane_pid or "")
+        database_env_names = self._database_env_names(session_name)
+        self._remove_database_env_from_session(session_name, database_env_names)
         # An omitted shell-command makes tmux replay the pane's ORIGINAL
         # command, which can be the very worker being cancelled.
         # new-window's environment override is not retained by respawn-pane;
@@ -2208,6 +2306,36 @@ class TmuxClient:
             )
         if result.returncode != 0:
             raise RuntimeError("tmux could not confirm turn cancellation")
+        self._wait_for_replacement_shell(pane, old_pid=old_pid, shell=shell)
+
+    def _wait_for_replacement_shell(self, pane: Pane, *, old_pid: str, shell: str) -> None:
+        """Wait until ``respawn-pane`` has handed the PTY to the new shell.
+
+        libtmux returns from ``respawn-pane`` while tmux is still running its
+        bootstrap command.  A caller that sends input immediately can lose the
+        input before the shell starts; polling the pane's live pid/command is
+        the only boundary tmux exposes for this transition.  The old pid is
+        part of the check so a stale pane listing cannot satisfy readiness.
+        """
+        expected_command = os.path.basename(shell)
+        deadline = time.monotonic() + self._RESPAWN_READY_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            try:
+                state = pane.cmd(
+                    "display-message",
+                    "-p",
+                    "#{pane_pid}\t#{pane_current_command}\t#{pane_dead}",
+                )
+                if state.returncode == 0 and state.stdout:
+                    pid, command, dead = state.stdout[0].strip().split("\t", 2)
+                    if dead != "1" and pid and pid != old_pid and command == expected_command:
+                        return
+            except (AttributeError, IndexError, TypeError, ValueError):
+                # A transient pane listing during respawn is not readiness or
+                # failure; keep the same bounded wait and probe again.
+                pass
+            time.sleep(self._RESPAWN_READY_POLL_SECONDS)
+        raise RuntimeError("tmux replacement shell did not become ready")
 
     def get_pane_current_command(self, session_name: str, window_name: str) -> Optional[str]:
         """Get the current foreground command running in a pane.

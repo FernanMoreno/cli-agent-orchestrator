@@ -1,7 +1,7 @@
 """The outcome MCP tools, exercised as HTTP clients.
 
 ``report_outcome`` and ``list_outcomes`` used to instantiate ``OutcomeService()``
-and open SQLite in the agent's own process, so they failed for any agent that did
+and open the local database in the agent's own process, so they failed for any agent that did
 not share a filesystem with cao-server — and the memory gateway
 (``CAO_MEMORY_API_URL``) does not cover outcomes, so configuration could not work
 around it. They now call the existing ``POST``/``GET /outcomes`` routes.
@@ -24,6 +24,7 @@ pass while exercising a path production no longer takes.
 from __future__ import annotations
 
 import asyncio
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import patch
 
 import pytest
@@ -40,9 +41,7 @@ LEARNING_TARGET = "cli_agent_orchestrator.services.settings_service.is_learning_
 @pytest.fixture
 def isolated_db(tmp_path):
     """Point the routes' OutcomeService at a tmp engine."""
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'outcomes.db'}", connect_args={"check_same_thread": False}
-    )
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     factory = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     with patch("cli_agent_orchestrator.clients.database.SessionLocal", factory):

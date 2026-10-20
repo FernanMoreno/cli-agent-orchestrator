@@ -28,6 +28,7 @@ _TRUSTED_BWRAP_BUILD_DIGESTS = frozenset(
     {
         "2177c6adb34a871e8c7472ca33e7b1ea1161593a04a4d395c4923c298951cd23",
         "efd07a9dfd55016ec5cb16facb67aac2735fa900e261f6a44be1517dcf31c015",
+        "18a513db177974d371d2c1fbf9d6f8f5b2bcb43565e242e5a7b4bdc4886e4c39",
     }
 )
 _TRUSTED_BWRAP_SHA256 = (
@@ -1643,13 +1644,29 @@ def test_wait_pidfd_readable_checks_ready_pidfd_with_zero_timeout() -> None:
     api = _composition_api()
     if not hasattr(os, "pidfd_open"):
         pytest.skip("host Python or kernel has no pidfd support")
-    process = subprocess.Popen(["/bin/sleep", "0.05"])
-    pidfd = os.pidfd_open(process.pid)
+
+    process: subprocess.Popen[bytes] | None = None
+    pidfd: int | None = None
     try:
-        process.wait(timeout=1.0)
+        process = subprocess.Popen(["/bin/true"])
+        pidfd = os.pidfd_open(process.pid)
+        readiness_poller = select.poll()
+        readiness_poller.register(pidfd, select.POLLIN)
+        readiness_events = readiness_poller.poll(5000)
+        assert any(
+            ready_fd == pidfd and flags & select.POLLIN for ready_fd, flags in readiness_events
+        ), "test child did not become natively readable within the setup bound"
+        process.wait(timeout=5.0)
         assert api._wait_pidfd_readable(pidfd, 0.0) is True
     finally:
-        os.close(pidfd)
+        try:
+            if process is not None:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5.0)
+        finally:
+            if pidfd is not None:
+                os.close(pidfd)
 
 
 @pytest.mark.parametrize(

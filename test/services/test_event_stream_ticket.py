@@ -270,7 +270,12 @@ async def test_cursor_evicted_before_first_stream_iteration_signals_resync(monke
         response = await main.events_stream(request, cursor=prior["id"])
     else:
         response = await main.agui_stream(
-            request, cursor=prior["id"], since=None, last_event_id=None
+            request,
+            cursor=prior["id"],
+            interaction_cursor=None,
+            interaction_limit=100,
+            since=None,
+            last_event_id=None,
         )
     # Retention expires after preflight, before the generator registers/replays.
     for _ in range(event_log_service.RING_CAPACITY):

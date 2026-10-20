@@ -1,21 +1,25 @@
-"""Durable operation routing with SQLite; no provider or backend process runs."""
+"""Durable operation routing with PostgreSQL; no provider process runs."""
 
 import asyncio
 import importlib
 import json
 import multiprocessing
-import sqlite3
+from dataclasses import replace
 from test.integration.test_work_dispatch import (  # noqa: F401
     AdmissionOnlyBackend,
     accounting,
     admit,
     context,
 )
+from typing import cast
 
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
+pytestmark = pytest.mark.postgres
+
 from cli_agent_orchestrator.clients import database
+from cli_agent_orchestrator.clients.postgres import Connection, DatabaseError, connect
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.services.work_admission import WorkAdmission
 from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
@@ -119,6 +123,13 @@ def envelope(operation, message):
     )
 
 
+def reopened_repository(context):
+    return WorkRepository(
+        context.repo.target,
+        filesystem_home=context.repo.filesystem_home,
+    )
+
+
 @pytest.mark.asyncio
 async def test_restart_routes_mixed_operations_with_exact_payload_and_snapshot(context):
     observed = []
@@ -154,7 +165,7 @@ async def test_restart_routes_mixed_operations_with_exact_payload_and_snapshot(c
         ),
     )
     restarted = WorkAdmission(
-        WorkRepository(context.repo.path),
+        reopened_repository(context),
         backends={"test": context.backend},
         delivery_adapters=adapters,
     )
@@ -262,13 +273,23 @@ async def test_retired_launch_origin_during_readiness_blocks_the_protected_effec
 async def test_delivery_integrity_covers_adapter_version(context):
     registry(context, [])
     work = admit(context, "version-tamper", delivery=envelope("launch", "task"))
-    with context.repo.transaction() as connection:
-        trigger = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE name='work_delivery_orders_immutable_update'"
-        ).fetchone()[0]
-        connection.execute("DROP TRIGGER work_delivery_orders_immutable_update")
-        connection.execute("UPDATE work_delivery_orders SET adapter_version=2")
-        connection.execute(trigger)
+    with connect(context.repo.target.migration_target()) as connection:
+        connection.execute(
+            "ALTER TABLE work_delivery_orders DISABLE TRIGGER "
+            "work_delivery_orders_immutable_update"
+        )
+        try:
+            result = connection.execute(
+                "UPDATE work_delivery_orders SET adapter_version=%s "
+                "WHERE attempt_id=%s AND generation=%s",
+                (2, work["attempts"][0]["id"], work["attempts"][0]["generation"]),
+            )
+            assert result.rowcount == 1
+        finally:
+            connection.execute(
+                "ALTER TABLE work_delivery_orders ENABLE TRIGGER "
+                "work_delivery_orders_immutable_update"
+            )
     assert await context.service.dispatch_registered_next() is None
     assert context.repo.get_work(work["id"])["state"] == "queued"
     assert context.backend.effects == []
@@ -296,14 +317,19 @@ def test_invalid_or_secret_delivery_never_enters_database_or_errors(context, pay
         assert connection.execute("SELECT count(*) FROM work_delivery_orders").fetchone()[0] == 0
 
 
-def test_delivery_failure_rolls_back_binding_item_queue_and_events(context):
+def test_delivery_failure_rolls_back_binding_item_queue_and_events(context, monkeypatch):
     registry(context, [])
-    with context.repo.transaction() as connection:
-        connection.execute(
-            "CREATE TRIGGER reject_delivery BEFORE INSERT ON work_delivery_orders "
-            "BEGIN SELECT RAISE(ABORT,'delivery unavailable'); END"
-        )
-    with pytest.raises(sqlite3.IntegrityError, match="delivery unavailable"):
+    original_execute = Connection.execute
+
+    def fail_delivery_insert(connection, statement, params=(), *, prepare: bool | None = None):
+        if isinstance(statement, str) and statement.startswith("INSERT INTO work_delivery_orders "):
+            return original_execute(connection, "SELECT 1 / 0")
+        if prepare is None:
+            return original_execute(connection, statement, params)
+        return original_execute(connection, statement, params, prepare=prepare)
+
+    monkeypatch.setattr(Connection, "execute", fail_delivery_insert)
+    with pytest.raises(DatabaseError, match="division by zero"):
         admit(context, "rollback-delivery", delivery=envelope("launch", "task"))
     with context.repo.connection() as connection:
         for table in (
@@ -345,7 +371,7 @@ async def test_registered_timeout_never_resends_after_restart(context):
     with pytest.raises(DeliveryUncertain):
         await context.service.dispatch_registered_next()
     restarted = WorkAdmission(
-        WorkRepository(context.repo.path),
+        reopened_repository(context),
         backends={"test": context.backend},
         delivery_adapters=adapters,
     )
@@ -355,7 +381,7 @@ async def test_registered_timeout_never_resends_after_restart(context):
     assert context.backend.effects == [(target[1], target[2], "task")]
 
 
-def _dispatch_in_fresh_process(database, output):
+def _dispatch_in_fresh_process(target, filesystem_home, output):
     async def send(binding, payload, snapshot, port):
         port.bind_terminal_target(payload.terminal_id, payload.session_name, payload.window_name)
         port.send_keys(payload.session_name, payload.window_name, payload.message)
@@ -363,7 +389,7 @@ def _dispatch_in_fresh_process(database, output):
         return DeliveryObservation(task_received=True)
 
     service = WorkAdmission(
-        WorkRepository(database),
+        WorkRepository(target, filesystem_home=filesystem_home),
         backends={"test": AdmissionOnlyBackend()},
         delivery_adapters={("launch", 1): target_adapter(send)},
     )
@@ -389,10 +415,16 @@ def test_new_process_recovers_delivery_without_original_request_objects(context)
     )
     processes = multiprocessing.get_context("spawn")
     output = processes.Queue()
+    runtime_target = replace(
+        context.repo.target,
+        migration_user=None,
+        migration_secret_file=None,
+    )
     try:
         for expected in [(work["id"], "durable message", b"frozen context process-delivery"), None]:
             worker = processes.Process(
-                target=_dispatch_in_fresh_process, args=(str(context.repo.path), output)
+                target=_dispatch_in_fresh_process,
+                args=(runtime_target, context.repo.filesystem_home, output),
             )
             worker.start()
             try:
@@ -448,7 +480,7 @@ async def test_same_version_drifted_order_does_not_block_a_healthy_registered_op
         return DeliveryObservation(task_received=True)
 
     restarted = WorkAdmission(
-        WorkRepository(context.repo.path),
+        reopened_repository(context),
         backends={"test": context.backend},
         delivery_adapters={
             ("launch", 1): module.DeliveryAdapter(DriftedMessage, launch_send),
@@ -475,7 +507,7 @@ async def test_plaintext_task_content_is_opaque_in_delivery_rows_and_restores_af
 
     with context.repo.connection() as connection:
         row = connection.execute(
-            "SELECT payload_json FROM work_delivery_orders WHERE attempt_id=?",
+            "SELECT payload_json FROM work_delivery_orders WHERE attempt_id=%s",
             (work["attempts"][0]["id"],),
         ).fetchone()
         delivery_events = connection.execute(
@@ -485,7 +517,7 @@ async def test_plaintext_task_content_is_opaque_in_delivery_rows_and_restores_af
     assert all(message not in event["metadata"] for event in delivery_events)
 
     restarted = WorkAdmission(
-        WorkRepository(context.repo.path),
+        reopened_repository(context),
         backends={"test": context.backend},
         delivery_adapters=adapters,
     )
@@ -505,7 +537,7 @@ async def test_missing_or_tampered_content_reference_never_delivers_or_guesses_p
     with context.repo.connection() as connection:
         encoded = json.loads(
             connection.execute(
-                "SELECT payload_json FROM work_delivery_orders WHERE attempt_id=?",
+                "SELECT payload_json FROM work_delivery_orders WHERE attempt_id=%s",
                 (work["attempts"][0]["id"],),
             ).fetchone()["payload_json"]
         )
@@ -518,7 +550,7 @@ async def test_missing_or_tampered_content_reference_never_delivers_or_guesses_p
         content.write_bytes(b'{"message":"another order payload"}')
 
     restarted = WorkAdmission(
-        WorkRepository(context.repo.path),
+        reopened_repository(context),
         backends={"test": context.backend},
         delivery_adapters=adapters,
     )
@@ -537,39 +569,50 @@ async def test_legacy_plaintext_order_is_not_dispatched_without_a_content_refere
     work = admit(context, "legacy-plaintext", delivery=envelope("launch", "new order payload"))
     delivery = importlib.import_module("cli_agent_orchestrator.services.work_delivery")
     models = importlib.import_module("cli_agent_orchestrator.models.work_delivery")
-    with context.repo.transaction() as connection:
-        order_trigger = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE name='work_delivery_orders_immutable_update'"
-        ).fetchone()[0]
-        connection.execute("DROP TRIGGER work_delivery_orders_immutable_update")
-        content_trigger = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE name='work_delivery_content_refs_immutable_delete'"
-        ).fetchone()
-        if content_trigger is not None:
-            connection.execute("DROP TRIGGER work_delivery_content_refs_immutable_delete")
-            connection.execute(
-                "DELETE FROM work_delivery_content_refs WHERE attempt_id=? AND generation=?",
-                (work["attempts"][0]["id"], work["attempts"][0]["generation"]),
-            )
-            connection.execute(content_trigger[0])
-        row = connection.execute(
-            "SELECT request_hash,contract_hash FROM work_delivery_orders WHERE attempt_id=?",
-            (work["attempts"][0]["id"],),
-        ).fetchone()
-        legacy = models.WorkDeliveryEnvelope(
-            operation_kind="launch",
-            adapter_version=1,
-            payload_json='{"message":"legacy plaintext"}',
+    migration_target = context.repo.target.migration_target()
+    with connect(migration_target) as connection:
+        connection.execute(
+            "ALTER TABLE work_delivery_orders DISABLE TRIGGER "
+            "work_delivery_orders_immutable_update"
         )
         connection.execute(
-            "UPDATE work_delivery_orders SET payload_json=?,delivery_hash=? WHERE attempt_id=?",
-            (
-                legacy.payload_json,
-                delivery._digest(legacy, row["contract_hash"], row["request_hash"]),
-                work["attempts"][0]["id"],
-            ),
+            "ALTER TABLE work_delivery_content_refs DISABLE TRIGGER "
+            "work_delivery_content_refs_immutable_delete"
         )
-        connection.execute(order_trigger)
+        try:
+            connection.execute(
+                "DELETE FROM work_delivery_content_refs WHERE attempt_id=%s AND generation=%s",
+                (work["attempts"][0]["id"], work["attempts"][0]["generation"]),
+            )
+            row = connection.execute(
+                "SELECT request_hash,contract_hash FROM work_delivery_orders "
+                "WHERE attempt_id=%s AND generation=%s",
+                (work["attempts"][0]["id"], work["attempts"][0]["generation"]),
+            ).fetchone()
+            legacy = models.WorkDeliveryEnvelope(
+                operation_kind="launch",
+                adapter_version=1,
+                payload_json='{"message":"legacy plaintext"}',
+            )
+            connection.execute(
+                "UPDATE work_delivery_orders SET payload_json=%s,delivery_hash=%s "
+                "WHERE attempt_id=%s AND generation=%s",
+                (
+                    legacy.payload_json,
+                    delivery._digest(legacy, row["contract_hash"], row["request_hash"]),
+                    work["attempts"][0]["id"],
+                    work["attempts"][0]["generation"],
+                ),
+            )
+        finally:
+            connection.execute(
+                "ALTER TABLE work_delivery_orders ENABLE TRIGGER "
+                "work_delivery_orders_immutable_update"
+            )
+            connection.execute(
+                "ALTER TABLE work_delivery_content_refs ENABLE TRIGGER "
+                "work_delivery_content_refs_immutable_delete"
+            )
 
     assert await context.service.dispatch_registered_next() is None
     assert context.repo.get_work(work["id"])["state"] == "queued"
@@ -604,14 +647,23 @@ def test_ambiguous_delivery_json_is_rejected_before_admission(context, payload_j
 
 def test_delivery_history_cannot_be_updated_or_deleted(context):
     registry(context, [])
-    admit(context, "immutable", delivery=envelope("launch", "task"))
-    for sql in [
-        "DELETE FROM work_delivery_orders",
-        "UPDATE work_delivery_orders SET adapter_version=2",
+    work = admit(context, "immutable", delivery=envelope("launch", "task"))
+    attempt_id = work["attempts"][0]["id"]
+    generation = work["attempts"][0]["generation"]
+    for statement, parameters in [
+        (
+            "DELETE FROM work_delivery_orders WHERE attempt_id=%s AND generation=%s",
+            (attempt_id, generation),
+        ),
+        (
+            "UPDATE work_delivery_orders SET adapter_version=%s "
+            "WHERE attempt_id=%s AND generation=%s",
+            (2, attempt_id, generation),
+        ),
     ]:
-        with context.repo.transaction() as connection:
-            with pytest.raises(sqlite3.IntegrityError):
-                connection.execute(sql)
+        with pytest.raises(DatabaseError):
+            with context.repo.transaction() as connection:
+                connection.execute(statement, parameters)
 
 
 @pytest.mark.asyncio
@@ -693,3 +745,31 @@ def test_nested_credential_fields_never_persist_even_when_payload_model_accepts_
             ),
         )
     assert accounting(context.repo)["queued"] == 0
+
+
+def test_delivery_reads_reject_connections_from_another_postgres_store(context, postgres_targets):
+    from cli_agent_orchestrator.models.work_contract import WorkContractBinding
+    from cli_agent_orchestrator.services.work_contract import ContractConflict
+    from cli_agent_orchestrator.services.work_delivery import WorkDeliveries
+
+    deliveries = WorkDeliveries(context.repo)
+    with connect(postgres_targets.peer) as connection:
+        with pytest.raises(ContractConflict, match="another Work store"):
+            deliveries._load(connection, cast(WorkContractBinding, object()))
+
+
+def test_delivery_binding_requires_the_callers_write_transaction(context):
+    from cli_agent_orchestrator.models.work_contract import WorkContractBinding
+    from cli_agent_orchestrator.services.work_contract import ContractConflict
+    from cli_agent_orchestrator.services.work_delivery import WorkDeliveries
+
+    deliveries = WorkDeliveries(context.repo)
+    request = envelope("launch", "task")
+    with connect(context.repo.target) as connection:
+        with pytest.raises(ContractConflict, match="caller-owned write transaction"):
+            deliveries._bind(
+                connection,
+                cast(WorkContractBinding, object()),
+                request,
+                request=request,
+            )

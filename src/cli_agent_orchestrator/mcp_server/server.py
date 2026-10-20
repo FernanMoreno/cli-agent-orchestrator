@@ -5,13 +5,29 @@ import logging
 import os
 import re
 import time
-from typing import Annotated, Any, Dict, List, Optional, Tuple, TypedDict, Union, cast
+from datetime import datetime
+from typing import (
+    Annotated,
+    Any,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    TypedDict,
+    TypeVar,
+    Union,
+    cast,
+)
+from urllib.parse import quote
+from uuid import UUID
 
 import requests
 from fastmcp import FastMCP
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cli_agent_orchestrator.constants import (
+    _CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV,
     ADVERTISED_URL_ENV,
     API_BASE_URL,
     DISCOVERY_TOOL_MARKER,
@@ -78,6 +94,392 @@ NumericTerminalId = Annotated[int, Field(strict=True, ge=10_000_000, le=99_999_9
 ENABLE_WORKING_DIRECTORY = os.getenv("CAO_ENABLE_WORKING_DIRECTORY", "false").lower() == "true"
 
 MAX_USER_PROMPT_ANSWER_LENGTH = 4000
+
+
+class _InteractionOptionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(min_length=1, max_length=128)
+    label: str = Field(min_length=1, max_length=1024)
+
+
+class _InteractionQuestionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    client_key: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    kind: Literal["text", "single_choice", "multi_choice", "choice_or_text", "approval"]
+    prompt: str = Field(min_length=1, max_length=16384)
+    required: bool
+    allow_free_text: bool = False
+    options: List[_InteractionOptionInput] = Field(default_factory=list, max_length=32)
+
+    @field_validator("prompt")
+    @classmethod
+    def _prompt_utf8_cap(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 16384:
+            raise ValueError("prompt exceeds 16384 UTF-8 bytes")
+        return value
+
+    @model_validator(mode="after")
+    def _question_shape(self):
+        option_ids = [option.id for option in self.options]
+        if len(option_ids) != len(set(option_ids)):
+            raise ValueError("option ids must be unique")
+        if any(len(option.label.encode("utf-8")) > 1024 for option in self.options):
+            raise ValueError("option labels exceed 1024 UTF-8 bytes")
+        if self.kind == "text" and self.options:
+            raise ValueError("text questions cannot declare options")
+        if self.kind == "single_choice" and self.allow_free_text:
+            raise ValueError("single_choice does not allow free text")
+        if self.allow_free_text and self.kind not in {"text", "choice_or_text"}:
+            raise ValueError("free text is valid only for text or choice_or_text")
+        if self.kind in {"single_choice", "multi_choice", "approval"} and not self.options:
+            raise ValueError("choice questions require declared options")
+        if self.kind == "choice_or_text" and not self.allow_free_text and not self.options:
+            raise ValueError("choice_or_text requires options or free text")
+        if self.kind == "approval" and not self.required:
+            raise ValueError("approval questions are always required")
+        return self
+
+
+class _InteractionTextAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: Literal["text"]
+    text: str = Field(max_length=4096)
+
+
+class _InteractionOptionsAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: Literal["options"]
+    option_ids: List[str] = Field(min_length=1, max_length=32)
+
+    @field_validator("option_ids")
+    @classmethod
+    def _unique_options(cls, value: List[str]) -> List[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("option_ids must be unique")
+        return value
+
+
+class _InteractionFreeTextAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: Literal["free_text"]
+    text: str = Field(max_length=4096)
+
+
+_InteractionAnswerInput = Annotated[
+    Union[
+        _InteractionTextAnswer,
+        _InteractionOptionsAnswer,
+        _InteractionFreeTextAnswer,
+    ],
+    Field(discriminator="kind"),
+]
+
+
+_InteractionToolErrorCode = Literal[
+    "capability_unavailable",
+    "unauthorized",
+    "forbidden",
+    "not_found",
+    "conflict",
+    "stale",
+    "invalid",
+    "capacity_exceeded",
+    "timeout",
+    "unavailable",
+    "invalid_identifier",
+    "invalid_response",
+]
+
+
+class _InteractionAckInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    question_id: UUID
+    version: int = Field(ge=1)
+    receipt: str = Field(min_length=32, max_length=128)
+
+    @field_validator("receipt")
+    @classmethod
+    def _receipt_ascii(cls, value: str) -> str:
+        if not value.isascii():
+            raise ValueError("answer receipt must contain only ASCII characters")
+        return value
+
+
+class _ReturnedInteractionAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    question_id: UUID
+    version: int = Field(ge=1)
+    receipt: str = Field(min_length=32, max_length=128)
+    response: _InteractionAnswerInput
+
+    @field_validator("receipt")
+    @classmethod
+    def _receipt_ascii(cls, value: str) -> str:
+        if not value.isascii():
+            raise ValueError("answer receipt must contain only ASCII characters")
+        return value
+
+
+class _InteractionWaitResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    group_id: UUID
+    state: Literal["pending", "ready", "expired", "cancelled", "stale", "cycle_blocked"]
+    answers: List[_ReturnedInteractionAnswer] = Field(default_factory=list)
+    next_poll_after_ms: int = Field(ge=0, le=30000)
+    next_event_sequence: Optional[int] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _pending_has_no_answer_body(self):
+        if self.state != "ready" and self.answers:
+            raise ValueError("non-ready interaction waits must not contain answer bodies")
+        return self
+
+
+class _InteractionToolErrorBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: _InteractionToolErrorCode
+    detail: str = Field(min_length=1, max_length=512)
+
+
+class _InteractionToolFailure(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    success: Literal[False]
+    error: _InteractionToolErrorBody
+
+
+class _InteractionAckResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    success: Literal[True]
+    acknowledged: int = Field(ge=0, le=20)
+
+
+_InteractionWaitToolResult = Union[_InteractionWaitResult, _InteractionToolFailure]
+_InteractionAckToolResult = Union[_InteractionAckResult, _InteractionToolFailure]
+
+
+_InteractionLifecycle = Literal[
+    "open", "answered", "expired", "cancelled", "stale", "manual_only", "reconciled_external"
+]
+
+_InteractionDeliveryState = Literal[
+    "accepted",
+    "prepared",
+    "claimed",
+    "returned_to_mcp",
+    "agent_acknowledged",
+    "confirmed",
+    "uncertain",
+    "no_effect",
+    "reconciled",
+]
+_InteractionKind = Literal[
+    "text",
+    "single_choice",
+    "multi_choice",
+    "choice_or_text",
+    "approval",
+    "credential",
+    "native_unknown",
+]
+
+
+class _InteractionSourceOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    terminal_id: str
+    incarnation_id: str
+    provider: str
+    provider_version: Optional[str] = None
+    execution_mode: str
+
+
+class _InteractionTaskOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    work_item_id: Optional[str] = None
+    attempt_id: Optional[str] = None
+    session_name: Optional[str] = None
+
+
+class _InteractionRecipientOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["human", "supervisor", "unassigned", "manual"]
+    label: Optional[str] = None
+    reason: str
+
+
+class _InteractionProgressOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    required_answered: int = Field(ge=0)
+    required_total: int = Field(ge=0)
+    total: Optional[int] = Field(default=None, ge=0)
+
+
+class _InteractionMetadataOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    question_id: UUID
+    version: int = Field(ge=1)
+    group_id: Optional[UUID] = None
+    lifecycle: _InteractionLifecycle
+    delivery_state: Optional[_InteractionDeliveryState] = None
+    source: _InteractionSourceOutput
+    task: Optional[_InteractionTaskOutput] = None
+    kind: _InteractionKind
+    required: bool
+    recipient: _InteractionRecipientOutput
+    group_progress: Optional[_InteractionProgressOutput] = None
+    origin: Literal["explicit", "native"]
+    can_answer: bool
+    manual_reason: Optional[str] = None
+    created_at: datetime
+    expires_at: Optional[datetime] = None
+
+
+class _InteractionOptionOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(min_length=1, max_length=128)
+    label: str = Field(max_length=1024)
+    available: bool
+
+
+class _InteractionDelegationCandidateOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    terminal_id: str
+    assignment_id: str
+    incarnation_id: Optional[str] = None
+
+
+class _InteractionDelegationOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    terminal_id: str
+    assignment_id: str
+    expires_at: datetime
+    state: Literal["active", "revoked", "expired"]
+
+
+class _InteractionAnswerReceiptOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    question_id: UUID
+    version: int = Field(ge=1)
+    answer_id: UUID
+    lifecycle: _InteractionLifecycle
+    delivery_state: _InteractionDeliveryState
+    accepted_at: datetime
+    replayed: bool
+
+
+class _InteractionDetailOutput(_InteractionMetadataOutput):
+    prompt: Optional[str] = Field(default=None, max_length=16384)
+    options: List[_InteractionOptionOutput] = Field(default_factory=list, max_length=32)
+    allow_free_text: bool
+    answer_receipt: Optional[_InteractionAnswerReceiptOutput] = None
+    delegation_candidate: Optional[_InteractionDelegationCandidateOutput] = None
+    delegation: Optional[_InteractionDelegationOutput] = None
+
+
+class _InteractionPageOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    items: List[_InteractionMetadataOutput]
+    next_cursor: Optional[str]
+
+
+class _InteractionQuestionCreatedOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    question_id: UUID
+    version: int = Field(ge=1)
+    required: bool
+    lifecycle: _InteractionLifecycle
+    expires_at: datetime
+
+
+class _InteractionCreatedGroupOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    group_id: UUID
+    lifecycle: Literal["open", "satisfied"]
+    questions: List[_InteractionQuestionCreatedOutput] = Field(max_length=20)
+    wait_required: bool
+
+
+class _InteractionAnswerReceiptResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    question_id: UUID
+    version: int = Field(ge=1)
+    answer_id: UUID
+    lifecycle: _InteractionLifecycle
+    delivery_state: _InteractionDeliveryState
+    accepted_at: datetime
+    replayed: bool
+
+
+_InteractionCreateToolResult = Union[_InteractionCreatedGroupOutput, _InteractionToolFailure]
+_InteractionPageToolResult = Union[_InteractionPageOutput, _InteractionToolFailure]
+_InteractionDetailToolResult = Union[_InteractionDetailOutput, _InteractionToolFailure]
+_InteractionAnswerToolResult = Union[_InteractionAnswerReceiptResult, _InteractionToolFailure]
+_InteractionOutputModel = TypeVar("_InteractionOutputModel", bound=BaseModel)
+
+
+def _typed_interaction_tool_result(
+    result: dict[str, Any] | _InteractionToolFailure,
+    success_model: type[_InteractionOutputModel],
+    *,
+    invalid_detail: str = "The interaction API returned an invalid response.",
+) -> _InteractionOutputModel | _InteractionToolFailure:
+    """Validate a bounded success or failure before exposing it through FastMCP."""
+    if isinstance(result, _InteractionToolFailure):
+        return result
+    try:
+        if result.get("success") is False:
+            return _InteractionToolFailure.model_validate(result)
+        return success_model.model_validate(result)
+    except Exception:
+        return _invalid_interaction_response(invalid_detail)
+
+
+def _interaction_path_segment(value: Any) -> str:
+    """Accept only canonical UUID identifiers before building privileged URLs."""
+    try:
+        normalized = str(UUID(str(value)))
+    except (ValueError, TypeError, AttributeError):
+        raise ValueError("interaction identifier must be a UUID") from None
+    return quote(normalized, safe="")
+
+
+def _tool_failure(
+    code: _InteractionToolErrorCode,
+    detail: str,
+) -> _InteractionToolFailure:
+    return _InteractionToolFailure(
+        success=False,
+        error=_InteractionToolErrorBody(code=code, detail=detail),
+    )
+
+
+def _invalid_interaction_id() -> _InteractionToolFailure:
+    return _tool_failure("invalid_identifier", "Interaction and group identifiers must be UUIDs.")
+
+
+def _invalid_interaction_response(
+    detail: str = "The interaction API returned an invalid response.",
+) -> _InteractionToolFailure:
+    return _tool_failure("invalid_response", detail)
 
 
 # Create MCP server
@@ -1098,6 +1500,212 @@ async def answer_user_prompt(
     task delivery should use assign, handoff, or send_message instead.
     """
     return _send_user_prompt_answer(terminal_id, answer)
+
+
+def _interaction_tool_error(exc: Exception) -> _InteractionToolFailure:
+    """Return bounded, non-sensitive MCP errors without echoing HTTP bodies."""
+    if isinstance(exc, mcp_utils.InteractionCapabilityUnavailable):
+        return _tool_failure("capability_unavailable", str(exc))
+    if isinstance(exc, requests.HTTPError):
+        response = exc.response
+        status_code = response.status_code if response is not None else 0
+        error_by_status: dict[int, tuple[_InteractionToolErrorCode, str]] = {
+            401: ("unauthorized", "The interaction capability is missing or expired."),
+            403: ("forbidden", "The interaction is outside this agent's current authority."),
+            404: ("not_found", "The interaction was not found in this agent's scope."),
+            409: ("conflict", "The interaction conflicts with current state."),
+            410: ("stale", "The source turn, incarnation, or question version is stale."),
+            422: ("invalid", "The typed interaction request is invalid."),
+            429: ("capacity_exceeded", "Interaction capacity is full."),
+        }
+        code, detail = error_by_status.get(
+            status_code,
+            ("unavailable", "The interaction service could not complete the request."),
+        )
+        return _tool_failure(code, detail)
+    if isinstance(exc, requests.Timeout):
+        return _tool_failure(
+            "timeout", "The interaction request timed out; retry with the same operation key."
+        )
+    if isinstance(exc, requests.ConnectionError):
+        return _tool_failure("unavailable", "The CAO interaction API is unreachable.")
+    return _tool_failure("unavailable", "The interaction request could not be completed.")
+
+
+async def _call_interaction_tool(
+    function, *args, **kwargs
+) -> dict[str, Any] | _InteractionToolFailure:
+    try:
+        result = await asyncio.to_thread(function, *args, **kwargs)
+    except Exception as exc:
+        return _interaction_tool_error(exc)
+    if isinstance(result, dict):
+        return result
+    if isinstance(result, list):
+        return {"result": result}
+    return _invalid_interaction_response()
+
+
+@mcp.tool()
+async def cao_ask_user(
+    operation_key: str = Field(min_length=16, max_length=128),
+    questions: List[_InteractionQuestionInput] = Field(min_length=1, max_length=20),
+    expires_in_seconds: Annotated[int, Field(ge=1, le=86400)] = 1800,
+    wait_for_required: bool = True,
+) -> _InteractionCreateToolResult:
+    """Create a typed group of user questions and return its stable IDs.
+
+    Reuse operation_key after a lost response for the same logical request.
+    This tool does not write to a terminal; call cao_wait_for_user_answers in
+    the same agent task when the required answers are needed.
+    """
+    body = {
+        "questions": [question.model_dump(mode="json") for question in questions],
+        "expires_in_seconds": expires_in_seconds,
+        "wait_for_required": wait_for_required,
+    }
+    result = await _call_interaction_tool(
+        mcp_utils.interaction_post_json,
+        "/agent/interactions/groups",
+        body,
+        idempotency_key=operation_key,
+    )
+    return _typed_interaction_tool_result(result, _InteractionCreatedGroupOutput)
+
+
+@mcp.tool()
+async def cao_wait_for_user_answers(
+    group_id: UUID,
+    wait_seconds: int = Field(ge=0, le=30),
+    after_event_sequence: Annotated[Optional[int], Field(ge=0)] = None,
+) -> _InteractionWaitToolResult:
+    """Wait up to 30 seconds for required answers in this live task.
+
+    A ready result contains typed responses and opaque receipts. It reports
+    that CAO returned those responses; use cao_acknowledge_user_answers only
+    after the agent has actually observed them.
+    """
+    try:
+        group_segment = _interaction_path_segment(group_id)
+    except ValueError:
+        return _invalid_interaction_id()
+    result = await _call_interaction_tool(
+        mcp_utils.interaction_post_json,
+        f"/agent/interactions/groups/{group_segment}/wait",
+        {"wait_seconds": wait_seconds, "after_event_sequence": after_event_sequence},
+        timeout=wait_seconds + 5,
+    )
+    return _typed_interaction_tool_result(
+        result,
+        _InteractionWaitResult,
+        invalid_detail="The interaction API returned an invalid wait result.",
+    )
+
+
+@mcp.tool()
+async def cao_acknowledge_user_answers(
+    group_id: UUID,
+    receipts: List[_InteractionAckInput] = Field(min_length=1, max_length=20),
+) -> _InteractionAckToolResult:
+    """Record that this agent observed the exact returned answer receipts."""
+    try:
+        group_segment = _interaction_path_segment(group_id)
+    except ValueError:
+        return _invalid_interaction_id()
+    result = await _call_interaction_tool(
+        mcp_utils.interaction_post_json,
+        f"/agent/interactions/groups/{group_segment}/ack",
+        {"receipts": [receipt.model_dump(mode="json") for receipt in receipts]},
+    )
+    if isinstance(result, _InteractionToolFailure):
+        return result
+    if result.get("success") is False:
+        return _typed_interaction_tool_result(result, _InteractionAckResult)
+    acknowledged = result.get("result")
+    if not isinstance(acknowledged, list) or len(acknowledged) != len(receipts):
+        return _invalid_interaction_response(
+            "The interaction API returned an invalid acknowledgement result."
+        )
+    return _InteractionAckResult(success=True, acknowledged=len(acknowledged))
+
+
+@mcp.tool()
+async def cao_list_interactions(
+    status: Optional[List[_InteractionLifecycle]] = None,
+    cursor: Optional[str] = None,
+    limit: Annotated[int, Field(ge=1, le=100)] = 50,
+) -> _InteractionPageToolResult:
+    """List safe interaction metadata in the current server-derived scope."""
+    result = await _call_interaction_tool(
+        mcp_utils.interaction_get_json,
+        "/agent/interactions",
+        status=status,
+        cursor=cursor,
+        limit=limit,
+    )
+    return _typed_interaction_tool_result(result, _InteractionPageOutput)
+
+
+@mcp.tool()
+async def cao_get_interaction(
+    question_id: UUID,
+) -> _InteractionDetailToolResult:
+    """Read one interaction visible to this source or current delegation."""
+    try:
+        question_segment = _interaction_path_segment(question_id)
+    except ValueError:
+        return _invalid_interaction_id()
+    result = await _call_interaction_tool(
+        mcp_utils.interaction_get_json,
+        f"/agent/interactions/{question_segment}",
+    )
+    return _typed_interaction_tool_result(result, _InteractionDetailOutput)
+
+
+@mcp.tool()
+async def cao_answer_interaction(
+    question_id: UUID,
+    expected_version: int = Field(ge=1),
+    idempotency_key: str = Field(min_length=16, max_length=128),
+    response: _InteractionAnswerInput = Field(...),
+) -> _InteractionAnswerToolResult:
+    """Answer a reviewed delegated clarification within current authority."""
+    try:
+        question_segment = _interaction_path_segment(question_id)
+    except ValueError:
+        return _invalid_interaction_id()
+    result = await _call_interaction_tool(
+        mcp_utils.interaction_post_json,
+        f"/agent/interactions/{question_segment}/answers",
+        {
+            "expected_version": expected_version,
+            "response": response.model_dump(mode="json"),
+        },
+        idempotency_key=idempotency_key,
+        if_match=f'"{expected_version}"',
+    )
+    return _typed_interaction_tool_result(result, _InteractionAnswerReceiptResult)
+
+
+@mcp.tool()
+async def cao_escalate_interaction(
+    question_id: UUID,
+    reason_code: Literal[
+        "human_decision", "insufficient_authority", "supervisor_unavailable", "deadline"
+    ],
+    detail: Annotated[Optional[str], Field(max_length=512)] = None,
+) -> _InteractionDetailToolResult:
+    """Escalate by policy to the authorized human owner."""
+    try:
+        question_segment = _interaction_path_segment(question_id)
+    except ValueError:
+        return _invalid_interaction_id()
+    result = await _call_interaction_tool(
+        mcp_utils.interaction_post_json,
+        f"/agent/interactions/{question_segment}/escalate",
+        {"reason_code": reason_code, "detail": detail},
+    )
+    return _typed_interaction_tool_result(result, _InteractionDetailOutput)
 
 
 @mcp.tool(description=LOAD_SKILL_TOOL_DESCRIPTION)
@@ -3477,7 +4085,34 @@ def main():
     ready_token = os.environ.get(READY_TOKEN_ENV)
     if ready_file and ready_token:
         mcp.add_middleware(StartupReadinessMiddleware(Path(ready_file), ready_token))
+    _install_tool_profile_middleware_if_requested(mcp)
+    _install_interaction_pull_flow_middleware_if_requested(mcp)
     mcp.run()
+
+
+def _install_tool_profile_middleware_if_requested(server_instance: FastMCP) -> bool:
+    """An absent profile preserves compatibility; an invalid one aborts startup."""
+    from cli_agent_orchestrator.utils.mcp_tool_policy import MCP_TOOL_PROFILE_ENV
+
+    if MCP_TOOL_PROFILE_ENV not in os.environ:
+        return False
+    from cli_agent_orchestrator.mcp_server.tool_profiles import ToolProfileMiddleware
+
+    server_instance.add_middleware(ToolProfileMiddleware(os.environ[MCP_TOOL_PROFILE_ENV]))
+    return True
+
+
+def _install_interaction_pull_flow_middleware_if_requested(server_instance: FastMCP) -> bool:
+    """Enable the pull-flow catalog only for CAO-marked private launches."""
+    if os.environ.get(_CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV) != "1":
+        return False
+
+    from cli_agent_orchestrator.mcp_server.interaction_pull_flow_only import (
+        InteractionPullFlowOnlyMiddleware,
+    )
+
+    server_instance.add_middleware(InteractionPullFlowOnlyMiddleware())
+    return True
 
 
 async def _workflow_authoring_http(

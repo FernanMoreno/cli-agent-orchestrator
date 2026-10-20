@@ -2,7 +2,7 @@
 
 ``mcp_over_testclient`` is the seam that keeps MCP tool tests meaningful now that
 the memory and outcome tools are HTTP clients. Before, those tests called the
-tools in-process against a real SQLite file, which is exactly the coupling the
+tools in-process against a local database session, which is exactly the coupling the
 tools were changed to remove — so a test that keeps doing it would pass while
 testing something the production path no longer does.
 

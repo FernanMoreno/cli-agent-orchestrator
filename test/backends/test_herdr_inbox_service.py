@@ -3,13 +3,13 @@
 import asyncio
 import inspect
 import json
-import sqlite3
 import time
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
 from cli_agent_orchestrator import constants
+from cli_agent_orchestrator.clients.postgres import connect
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.services.herdr_inbox_service import HerdrInboxService
 
@@ -1346,33 +1346,33 @@ class TestHerdrInboxServiceSocketPath:
 @pytest.fixture(params=["owned", "unavailable"])
 def fenced_work_store(tmp_path, monkeypatch, request):
     """Use only a temporary Work store for lifecycle ownership checks."""
-    path = tmp_path / "work.sqlite3"
-    monkeypatch.setattr(constants, "DATABASE_FILE", path)
     monkeypatch.setattr(constants, "LOCK_DIR", tmp_path / "locks")
     if request.param == "unavailable":
-        with sqlite3.connect(path) as connection:
-            connection.execute("CREATE TABLE work_attempts (terminal_id TEXT)")
+        from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+
+        with connect(DatabaseTarget.from_settings().migration_target()) as connection:
+            connection.execute("DROP TABLE work_attempts CASCADE")
     else:
-        repository = WorkRepository(path)
+        repository = WorkRepository()
         repository.initialize()
         now = time.time()
         with repository.transaction() as connection:
             connection.execute(
                 "INSERT INTO work_jobs "
                 "(id,project_id,principal_id,allowed_providers,grant_id,created_at) "
-                "VALUES (?,?,?,?,?,?)",
+                "VALUES (%s,%s,%s,%s,%s,%s)",
                 ("job", "project", "principal", '["mock_cli"]', "grant", now),
             )
             connection.execute(
                 "INSERT INTO work_items "
                 "(id,job_id,operation_kind,idempotency_key,request_hash,contract_id,created_at) "
-                "VALUES (?,?,?,?,?,?,?)",
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
                 ("item", "job", "launch", "request", "hash", "contract", now),
             )
             connection.execute(
                 "INSERT INTO work_attempts "
                 "(id,work_item_id,attempt_number,generation,provider,terminal_id,state,"
-                "lease_expires_at,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                "lease_expires_at,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 ("attempt", "item", 1, 1, "mock_cli", "work-terminal", "planned", now + 60, now),
             )
     return request.param
@@ -1442,7 +1442,7 @@ class TestHerdrWorkLifecycleFence:
 
     @pytest.mark.parametrize("fenced_work_store", ["owned"], indirect=True)
     def test_reconcile_rechecks_every_removed_terminal_before_kill(self, fenced_work_store):
-        repository = WorkRepository(constants.DATABASE_FILE)
+        repository = WorkRepository()
         service = HerdrInboxService(socket_path="/tmp/test.sock")
         service.register_terminal("first", "pane-first")
         service.register_terminal("second", "pane-second")
@@ -1453,7 +1453,7 @@ class TestHerdrWorkLifecycleFence:
             if len(removed) == 1:
                 with repository.transaction() as connection:
                     connection.execute(
-                        "UPDATE work_attempts SET terminal_id=? WHERE id='attempt'",
+                        "UPDATE work_attempts SET terminal_id=%s WHERE id='attempt'",
                         (terminal_id,),
                     )
             return True

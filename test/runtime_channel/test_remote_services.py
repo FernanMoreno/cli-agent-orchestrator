@@ -3,15 +3,17 @@
 import asyncio
 import contextlib
 import re
+from dataclasses import replace
+from test.postgres.fixtures import make_orm_engine
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.clients import database
-from cli_agent_orchestrator.clients.runtime_channel_schema import RemoteBase
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
 from cli_agent_orchestrator.models.agent_profile import AgentProfile
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers import codex
@@ -30,25 +32,43 @@ from cli_agent_orchestrator.services import remote_terminal_service as remote
 from cli_agent_orchestrator.services import terminal_service
 from cli_agent_orchestrator.services.status_monitor import status_monitor
 
+pytestmark = pytest.mark.postgres
+
 
 @pytest.fixture
-def pair(tmp_path, monkeypatch):
-    engines = [
-        create_engine(f"sqlite:///{tmp_path / name}", connect_args={"check_same_thread": False})
-        for name in ["central.sqlite", "bridge.sqlite"]
-    ]
-    database.Base.metadata.create_all(engines[0])
-    RemoteBase.metadata.create_all(engines[0])
-    # The physical runtime must work with the real minimal initializer, not a
-    # test-only full central schema that could conceal missing dependencies.
-    with monkeypatch.context() as boot:
-        boot.setattr(database, "engine", engines[1])
-        boot.setattr(constants, "DATABASE_FILE", tmp_path / "bridge.sqlite")
-        database.init_runtime_db()
+def pair(postgres_targets, monkeypatch, tmp_path):
+    from cli_agent_orchestrator.services.interactions import service as interaction_service
+
+    interaction_service._DEFAULT_SERVICE = None
+    central_target = postgres_targets.main
+    # The isolated auth database provides an independent physical PG store;
+    # re-scope its test schema as a runtime's logical main component.
+    bridge_target = replace(postgres_targets.auth, scope="main")
+    for target in (central_target, bridge_target):
+        bootstrap_scope(target)
+    central_engine = make_orm_engine(central_target)
+    bridge_engine = make_orm_engine(bridge_target)
     monkeypatch.setattr(constants, "LOCK_DIR", tmp_path / "locks")
-    monkeypatch.setattr(constants, "DATABASE_FILE", tmp_path / "central.sqlite")
-    monkeypatch.setattr(database, "engine", engines[0])
-    monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=engines[0]))
+    monkeypatch.setattr(database, "main_target", lambda: central_target)
+    monkeypatch.setattr(database, "engine", central_engine)
+    monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=central_engine))
+    original_from_settings = DatabaseTarget.from_settings
+    with monkeypatch.context() as boot:
+        boot.setattr(database, "engine", bridge_engine)
+        boot.setattr(database, "SessionLocal", sessionmaker(bind=bridge_engine))
+        boot.setattr(database, "main_target", lambda: bridge_target)
+        boot.setattr(
+            DatabaseTarget,
+            "from_settings",
+            classmethod(
+                lambda cls, scope="main", home=None: (
+                    bridge_target
+                    if scope == "main"
+                    else original_from_settings(scope=scope, home=home)
+                )
+            ),
+        )
+        database.init_runtime_db()
     monkeypatch.setattr(codex, "CAO_HOME_DIR", tmp_path / "home")
     monkeypatch.setattr(terminal_service, "TERMINAL_LOG_DIR", tmp_path / "logs")
     monkeypatch.setattr(terminal_service, "clear_session_env", lambda _: None)
@@ -114,24 +134,38 @@ def pair(tmp_path, monkeypatch):
     native.cleanup_terminal_exact.return_value = TerminalCleanupResult(
         TerminalCleanupOutcome.DELETED
     )
-    old = (database.engine, database.SessionLocal, constants.DATABASE_FILE)
 
     @contextlib.contextmanager
     def local():
-        before = (database.engine, database.SessionLocal, constants.DATABASE_FILE)
-        database.engine, database.SessionLocal, constants.DATABASE_FILE = (
-            engines[1],
-            sessionmaker(bind=engines[1]),
-            tmp_path / "bridge.sqlite",
-        )
-        try:
+        with monkeypatch.context() as local_patch:
+            local_patch.setattr(database, "engine", bridge_engine)
+            local_patch.setattr(database, "SessionLocal", sessionmaker(bind=bridge_engine))
+            local_patch.setattr(database, "main_target", lambda: bridge_target)
+            local_patch.setattr(
+                DatabaseTarget,
+                "from_settings",
+                classmethod(
+                    lambda cls, scope="main", home=None: (
+                        bridge_target
+                        if scope == "main"
+                        else original_from_settings(scope=scope, home=home)
+                    )
+                ),
+            )
             yield
-        finally:
-            database.engine, database.SessionLocal, constants.DATABASE_FILE = before
 
-    yield engines, local, native, transcript
-    for engine in engines:
-        engine.dispose()
+    yield (
+        central_target,
+        bridge_target,
+        central_engine,
+        bridge_engine,
+        local,
+        native,
+        transcript,
+    )
+    central_engine.dispose()
+    bridge_engine.dispose()
+    interaction_service._DEFAULT_SERVICE = None
     runtime_registry._runtimes.clear()
     runtime_registry._placement.clear()
     runtime_registry._status.clear()
@@ -139,9 +173,9 @@ def pair(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_paired_real_services_launch_input_output_key_directory_exit_delete(pair):
-    engines, local, native, transcript = pair
-    central = RemoteOperationStore(engines[0])
-    journal = RemoteOperationStore(engines[1])
+    central_target, bridge_target, _, _, local, native, transcript = pair
+    central = RemoteOperationStore(central_target)
+    journal = RemoteOperationStore(bridge_target)
     epoch = central.activate_runtime("rt", "inc")
     bridge = Bridge("ws://isolated", "rt", "test", store=journal, incarnation_id="inc")
     bridge.admit_epoch(epoch)
@@ -195,8 +229,9 @@ async def test_paired_real_services_launch_input_output_key_directory_exit_delet
 
 @pytest.mark.asyncio
 async def test_paired_verify_and_duplicate_cancel_reset_once_without_task_redelivery(pair):
-    engines, local, native, _ = pair
-    central, journal = RemoteOperationStore(engines[0]), RemoteOperationStore(engines[1])
+    central_target, bridge_target, _, _, local, native, _ = pair
+    central = RemoteOperationStore(central_target)
+    journal = RemoteOperationStore(bridge_target)
     epoch = central.activate_runtime("rt", "inc")
     bridge = Bridge("ws://isolated", "rt", "test", store=journal, incarnation_id="inc")
     bridge.admit_epoch(epoch)
@@ -252,60 +287,109 @@ async def test_paired_verify_and_duplicate_cancel_reset_once_without_task_redeli
 
 @pytest.mark.asyncio
 async def test_response_loss_reconnect_uses_real_bridge_receipt_without_another_paste(pair):
-    engines, local, native, _ = pair
-    central, journal = RemoteOperationStore(engines[0]), RemoteOperationStore(engines[1])
+    central_target, bridge_target, _, _, local, native, _ = pair
+    central = RemoteOperationStore(central_target)
+    journal = RemoteOperationStore(bridge_target)
     epoch = central.activate_runtime("rt", "inc")
     bridge = Bridge("ws://isolated", "rt", "test", store=journal, incarnation_id="inc")
     bridge.admit_epoch(epoch)
     results = []
-    bridge._send = AsyncMock(side_effect=lambda result: results.append(result))
+    result_ready = asyncio.Event()
+    pending_bridge_tasks = set()
+
+    def remember_result(result):
+        results.append(result)
+        result_ready.set()
+
+    bridge._send = AsyncMock(side_effect=remember_result)
     lose = [False]
 
-    async def send(raw):
+    async def deliver_to_bridge(raw):
         with local():
             await bridge.handle(decode(raw))
         if not lose[0]:
             await accept_result(connection, results.pop())
 
+    async def send(raw):
+        # The in-process peer accepts work, then loses its send acknowledgement.
+        pending_bridge_tasks.add(asyncio.create_task(deliver_to_bridge(raw)))
+        if lose[0]:
+            raise OSError("simulated transport loss after bridge enqueue")
+
     connection = DurableRuntimeConnection("rt", "inc", epoch, central, send)
     runtime_registry.register("rt", send, connection=connection)
     runtime_registry.activate(connection)
-    launched = await launch_remote(
-        "rt", LaunchRequest(agent_profile="review", provider="codex", op_id="launch")
-    )
-    row = remote.placement(launched.id)
-    payload = {
-        "message": "task",
-        "task_delivery": True,
-        "frozen_memory": "",
-        "_launch_op_id": "launch",
-        "_session_incarnation_id": row["session_incarnation_id"],
-    }
-    lose[0] = True
-    from cli_agent_orchestrator.runtime_channel.registry import RemoteOutcomeUnknownError
-
-    with pytest.raises(RemoteOutcomeUnknownError):
-        await connection.call(
-            CommandType.INPUT, payload, launched.id, op_id="input-once", timeout=1
+    try:
+        launched = await launch_remote(
+            "rt", LaunchRequest(agent_profile="review", provider="codex", op_id="launch")
         )
-    writes = len(native.send_keys.call_args_list)
-    epoch = central.activate_runtime("rt", "inc")
-    restarted = Bridge("ws://isolated", "rt", "test", store=journal, incarnation_id="inc")
-    restarted.admit_epoch(epoch)
-    replacement = DurableRuntimeConnection("rt", "inc", epoch, central, send)
-    replacement.active = True
-    await replacement.resolve_durable(results.pop())
-    settled = await replacement.call(CommandType.INPUT, payload, launched.id, op_id="input-once")
-    assert settled["turn_sequence"] > 0
-    assert len(native.send_keys.call_args_list) == writes
-    assert journal.get("input-once")["state"] == "settled"
+        from cli_agent_orchestrator.runtime_channel.registry import COMMAND_TIMEOUT
+
+        await asyncio.wait_for(asyncio.gather(*pending_bridge_tasks), timeout=COMMAND_TIMEOUT)
+        assert results == []
+        writes_after_launch = len(native.send_keys.call_args_list)
+        row = remote.placement(launched.id)
+        payload = {
+            "message": "task",
+            "task_delivery": True,
+            "frozen_memory": "",
+            "_launch_op_id": "launch",
+            "_session_incarnation_id": row["session_incarnation_id"],
+        }
+        result_ready.clear()
+        lose[0] = True
+        from cli_agent_orchestrator.runtime_channel.registry import RemoteOutcomeUnknownError
+
+        with pytest.raises(RemoteOutcomeUnknownError):
+            await connection.call(
+                CommandType.INPUT, payload, launched.id, op_id="input-once", timeout=COMMAND_TIMEOUT
+            )
+        await asyncio.wait_for(result_ready.wait(), timeout=COMMAND_TIMEOUT)
+        await asyncio.wait_for(asyncio.gather(*pending_bridge_tasks), timeout=COMMAND_TIMEOUT)
+        assert len(results) == 1
+        writes_after_input = len(native.send_keys.call_args_list)
+        assert writes_after_input == writes_after_launch + 1
+        epoch = central.activate_runtime("rt", "inc")
+        restarted = Bridge("ws://isolated", "rt", "test", store=journal, incarnation_id="inc")
+        restarted.admit_epoch(epoch)
+        replacement = DurableRuntimeConnection("rt", "inc", epoch, central, send)
+        replacement.active = True
+        durable_result = results.pop()
+        assert durable_result.op_id == "input-once"
+        assert durable_result.runtime_incarnation_id == replacement.incarnation_id
+        assert durable_result.ok is True
+        assert await accept_result(replacement, durable_result)
+        central_row_before_replay = central.get("input-once")
+        journal_row_before_replay = journal.get("input-once")
+        assert central_row_before_replay["state"] == "settled"
+        assert central_row_before_replay["result"]["ok"] is True
+        assert journal_row_before_replay["state"] == "settled"
+        assert journal_row_before_replay["result"]["ok"] is True
+        settled = await replacement.call(
+            CommandType.INPUT, payload, launched.id, op_id="input-once"
+        )
+        assert settled["turn_sequence"] > 0
+        assert len(native.send_keys.call_args_list) == writes_after_input
+        central_row_after_replay = central.get("input-once")
+        journal_row_after_replay = journal.get("input-once")
+        assert central_row_after_replay["state"] == central_row_before_replay["state"]
+        assert central_row_after_replay["result"] == central_row_before_replay["result"]
+        assert journal_row_after_replay["state"] == journal_row_before_replay["state"]
+        assert journal_row_after_replay["result"] == journal_row_before_replay["result"]
+    finally:
+        unfinished = [task for task in pending_bridge_tasks if not task.done()]
+        for task in unfinished:
+            task.cancel()
+        if pending_bridge_tasks:
+            await asyncio.gather(*pending_bridge_tasks, return_exceptions=True)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("lost", [False, True])
 async def test_actual_inbox_remote_unsent_pending_or_postsend_reconcile(pair, monkeypatch, lost):
-    engines, local, native, _ = pair
-    central, journal = RemoteOperationStore(engines[0]), RemoteOperationStore(engines[1])
+    central_target, bridge_target, _, _, local, native, _ = pair
+    central = RemoteOperationStore(central_target)
+    journal = RemoteOperationStore(bridge_target)
     epoch = central.activate_runtime("rt", "inc")
     bridge = Bridge("ws://isolated", "rt", "test", store=journal, incarnation_id="inc")
     bridge.admit_epoch(epoch)
@@ -353,8 +437,9 @@ async def test_actual_inbox_remote_unsent_pending_or_postsend_reconcile(pair, mo
 
 @pytest.mark.asyncio
 async def test_late_cancelled_launch_exact_compensation_cannot_resurrect(pair):
-    engines, local, native, _ = pair
-    central, journal = RemoteOperationStore(engines[0]), RemoteOperationStore(engines[1])
+    central_target, bridge_target, _, _, local, native, _ = pair
+    central = RemoteOperationStore(central_target)
+    journal = RemoteOperationStore(bridge_target)
     epoch = central.activate_runtime("rt", "inc")
     bridge = Bridge("ws://isolated", "rt", "test", store=journal, incarnation_id="inc")
     bridge.admit_epoch(epoch)

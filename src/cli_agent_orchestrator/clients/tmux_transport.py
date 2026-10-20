@@ -7,6 +7,7 @@ keep the original argument assembly, result shape and object model intact.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from subprocess import TimeoutExpired
@@ -40,6 +41,9 @@ def run_tmux(
 
 def run_tmux(argv: Sequence[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
     """Bound a CLI invocation without exposing a task payload in timeout errors."""
+    from cli_agent_orchestrator.utils.database_environment import without_database_environment
+
+    kwargs["env"] = without_database_environment(kwargs.get("env") or os.environ)
     try:
         return subprocess.run(argv, timeout=COMMAND_TIMEOUT_SECONDS, **kwargs)
     except TimeoutExpired:

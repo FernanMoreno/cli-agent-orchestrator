@@ -9,14 +9,12 @@ from threading import Barrier
 
 import pytest
 
-from cli_agent_orchestrator.clients.database import _migrate_workflow_index
 from cli_agent_orchestrator.services import workflow_spec_service as svc
 
 
 @pytest.fixture
 def authoring_dir(tmp_path, monkeypatch):
     monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", tmp_path / "index.db")
-    _migrate_workflow_index()
     root = Path.home() / ".cao-test-workflows" / uuid.uuid4().hex
     root.mkdir(parents=True)
     try:

@@ -1,4 +1,4 @@
-"""Real SQLite revocation retires silent streams and prevents subsequent input."""
+"""PostgreSQL revocation retires silent streams and prevents subsequent input."""
 
 import asyncio
 
@@ -11,12 +11,18 @@ from cli_agent_orchestrator.api import browser_auth_routes
 from cli_agent_orchestrator.security import auth
 from cli_agent_orchestrator.services.browser_auth import BrowserAuthService
 
+pytestmark = pytest.mark.postgres
 
-def make_app(tmp_path):
+
+def make_app(postgres_targets):
+    from cli_agent_orchestrator.clients.browser_auth_repository import BROWSER_AUTH_MIGRATIONS
+    from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
+
     app = FastAPI()
     principal = auth._verified_principal("urn:cao:test", "operator", ["cao:write"], "jwt")
+    migrate_component(postgres_targets.auth, BROWSER_AUTH_MIGRATIONS)
     service = BrowserAuthService(
-        tmp_path / "auth.sqlite3",
+        postgres_targets.auth,
         {
             "id": principal.id,
             "issuer": principal.issuer,
@@ -26,6 +32,7 @@ def make_app(tmp_path):
         },
         {"installation_id": "test"},
     )
+    service.initialize_store()
     service.create_account("operator", "a long private passphrase")
     app.state.browser_auth = service
     app.state.browser_auth_config = {
@@ -38,9 +45,9 @@ def make_app(tmp_path):
     return app, service
 
 
-def test_silent_websocket_retires_when_sqlite_session_is_revoked(tmp_path):
+def test_silent_websocket_retires_when_postgres_session_is_revoked(postgres_targets):
     assert hasattr(browser_auth_routes, "BrowserSessionLifetimeMiddleware")
-    app, service = make_app(tmp_path)
+    app, service = make_app(postgres_targets)
     app.add_middleware(browser_auth_routes.BrowserSessionLifetimeMiddleware)
 
     @app.websocket("/socket")
@@ -75,9 +82,9 @@ def test_silent_websocket_retires_when_sqlite_session_is_revoked(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_silent_stream_revocation_cancels_generator_without_replaying(tmp_path):
+async def test_silent_stream_revocation_cancels_generator_without_replaying(postgres_targets):
     assert hasattr(browser_auth_routes, "BrowserSessionLifetimeMiddleware")
-    app, service = make_app(tmp_path)
+    app, service = make_app(postgres_targets)
     secret, _ = service.login("operator", "a long private passphrase", True, "local")
     stopped = asyncio.Event()
 
@@ -129,10 +136,10 @@ async def test_silent_stream_revocation_cancels_generator_without_replaying(tmp_
 
 
 @pytest.mark.asyncio
-async def test_initial_websocket_storage_outage_is_retryable(tmp_path, monkeypatch):
+async def test_initial_websocket_storage_outage_is_retryable(postgres_targets, monkeypatch):
     from cli_agent_orchestrator.models.browser_auth import BrowserAuthError
 
-    app, service = make_app(tmp_path)
+    app, service = make_app(postgres_targets)
     secret, _ = service.login("operator", "a long private passphrase", True, "local")
 
     def unavailable(*args, **kwargs):

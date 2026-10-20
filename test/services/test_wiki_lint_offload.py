@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from typing import Any
 
 import pytest
@@ -16,10 +17,7 @@ from cli_agent_orchestrator.services import settings_service, wiki_lint
 
 @pytest.fixture
 def db_engine(tmp_path: Path) -> Any:
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'lint-offload.db'}",
-        connect_args={"check_same_thread": False},
-    )
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return engine
 

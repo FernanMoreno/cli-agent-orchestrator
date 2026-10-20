@@ -3,11 +3,11 @@
 import errno
 import hashlib
 import json
-import sqlite3
 import time
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Callable, Mapping
 
+from cli_agent_orchestrator.clients.postgres import Connection, Record
 from cli_agent_orchestrator.clients.work_repository import (
     SchemaMismatch,
     WorkConflict,
@@ -130,7 +130,7 @@ def _canonical_ack(
     return encoded
 
 
-def _evidence(row: sqlite3.Row) -> WorkBubblewrapSetupEvidence:
+def _evidence(row: Record) -> WorkBubblewrapSetupEvidence:
     return WorkBubblewrapSetupEvidence(
         attempt_id=row["attempt_id"],
         generation=row["generation"],
@@ -161,7 +161,7 @@ class WorkBubblewrapSetupIntent:
         *,
         expected_proxy_fd: int | None = None,
         expected_proxy_socket_identity: tuple[int, int] | None = None,
-        authorize: Callable[[sqlite3.Connection], None] | None = None,
+        authorize: Callable[[Connection], None] | None = None,
     ) -> WorkBubblewrapSetupEvidence:
         """Commit setup facts in one writer transaction, without granting release."""
         _identity(attempt_id, "attempt_id")
@@ -192,7 +192,8 @@ class WorkBubblewrapSetupIntent:
                 connection, attempt_id, generation=generation
             )
             attempt = connection.execute(
-                "SELECT state,revision FROM work_attempts WHERE id=? AND generation=?",
+                "SELECT state,revision FROM work_attempts "
+                "WHERE id=%s AND generation=%s FOR UPDATE",
                 (attempt_id, generation),
             ).fetchone()
             if (
@@ -221,7 +222,7 @@ class WorkBubblewrapSetupIntent:
             ):
                 raise WorkConflict("Bubblewrap executable digest is not unique in the contract")
             catalog = connection.execute(
-                "SELECT byte_length,immutable_location FROM work_executable_contents WHERE content_hash=?",
+                "SELECT byte_length,immutable_location FROM work_executable_contents WHERE content_hash=%s",
                 (executable_digest,),
             ).fetchone()
             if catalog is None or catalog["immutable_location"] != executable_digest:
@@ -245,7 +246,7 @@ class WorkBubblewrapSetupIntent:
                 connection, attempt_id, generation, identity, identity_digest
             )
             existing = connection.execute(
-                "SELECT * FROM work_bubblewrap_setup_intents WHERE attempt_id=?", (attempt_id,)
+                "SELECT * FROM work_bubblewrap_setup_intents WHERE attempt_id=%s", (attempt_id,)
             ).fetchone()
             values = (
                 generation,
@@ -280,7 +281,7 @@ class WorkBubblewrapSetupIntent:
                 "INSERT INTO work_bubblewrap_setup_intents "
                 "(attempt_id,generation,schema_version,contract_hash,command_token,"
                 "executable_sha256,ack_json,ack_sha256,process_identity_sha256,release_intent,created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,'pending',?)",
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s)",
                 (
                     attempt_id,
                     generation,
@@ -295,8 +296,10 @@ class WorkBubblewrapSetupIntent:
                 ),
             )
             row = connection.execute(
-                "SELECT * FROM work_bubblewrap_setup_intents WHERE attempt_id=?", (attempt_id,)
+                "SELECT * FROM work_bubblewrap_setup_intents WHERE attempt_id=%s", (attempt_id,)
             ).fetchone()
+            if row is None:
+                raise WorkConflict("Bubblewrap setup intent could not be read back")
             return _evidence(row)
 
     def release_if_current(
@@ -305,7 +308,7 @@ class WorkBubblewrapSetupIntent:
         *,
         expected_attempt_revision: int,
         release: Callable[[], None],
-        authorize: Callable[[sqlite3.Connection], None] | None = None,
+        authorize: Callable[[Connection], None] | None = None,
     ) -> None:
         """Hold the writer fence from fresh authority validation through GO."""
         if not isinstance(evidence, WorkBubblewrapSetupEvidence):
@@ -331,14 +334,14 @@ class WorkBubblewrapSetupIntent:
             if authorize is not None:
                 authorize(connection)
             if connection.execute(
-                "SELECT 1 FROM work_bubblewrap_release_claims WHERE attempt_id=?",
+                "SELECT 1 FROM work_bubblewrap_release_claims WHERE attempt_id=%s",
                 (evidence.attempt_id,),
             ).fetchone():
                 raise WorkConflict("Bubblewrap GO has already been claimed for this attempt")
             connection.execute(
                 "INSERT INTO work_bubblewrap_release_claims "
                 "(attempt_id,generation,contract_hash,command_token,executable_sha256,"
-                "ack_sha256,process_identity_sha256,claimed_at) VALUES (?,?,?,?,?,?,?,?)",
+                "ack_sha256,process_identity_sha256,claimed_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                 (*claim_values, time.time()),
             )
 
@@ -351,7 +354,7 @@ class WorkBubblewrapSetupIntent:
                 claim = connection.execute(
                     "SELECT attempt_id,generation,contract_hash,command_token,executable_sha256,"
                     "ack_sha256,process_identity_sha256,schema_version "
-                    "FROM work_bubblewrap_release_claims WHERE attempt_id=?",
+                    "FROM work_bubblewrap_release_claims WHERE attempt_id=%s",
                     (evidence.attempt_id,),
                 ).fetchone()
                 if (
@@ -361,7 +364,7 @@ class WorkBubblewrapSetupIntent:
                 ):
                     raise WorkConflict("Bubblewrap release claim differs from the pending setup")
                 lease = connection.execute(
-                    "SELECT lease_expires_at FROM work_attempts WHERE id=? AND generation=?",
+                    "SELECT lease_expires_at FROM work_attempts WHERE id=%s AND generation=%s",
                     (evidence.attempt_id, evidence.generation),
                 ).fetchone()
                 if lease is None or lease["lease_expires_at"] <= time.time():
@@ -377,7 +380,7 @@ class WorkBubblewrapSetupIntent:
 
     def _require_current_release(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         evidence: WorkBubblewrapSetupEvidence,
         expected_attempt_revision: int,
     ) -> None:
@@ -386,11 +389,12 @@ class WorkBubblewrapSetupIntent:
             connection, evidence.attempt_id, generation=evidence.generation
         )
         attempt = connection.execute(
-            "SELECT state,revision,lease_expires_at FROM work_attempts WHERE id=? AND generation=?",
+            "SELECT state,revision,lease_expires_at FROM work_attempts "
+            "WHERE id=%s AND generation=%s FOR UPDATE",
             (evidence.attempt_id, evidence.generation),
         ).fetchone()
         stored = connection.execute(
-            "SELECT * FROM work_bubblewrap_setup_intents WHERE attempt_id=?",
+            "SELECT * FROM work_bubblewrap_setup_intents WHERE attempt_id=%s",
             (evidence.attempt_id,),
         ).fetchone()
         if (
@@ -416,7 +420,7 @@ class WorkBubblewrapSetupIntent:
             raise ValueError("invalid attempt generation")
         with self.repository.read_snapshot() as connection:
             row = connection.execute(
-                "SELECT * FROM work_bubblewrap_setup_intents WHERE attempt_id=?", (attempt_id,)
+                "SELECT * FROM work_bubblewrap_setup_intents WHERE attempt_id=%s", (attempt_id,)
             ).fetchone()
             if row is None:
                 return None
@@ -429,7 +433,7 @@ class WorkBubblewrapSetupIntent:
                     "stored Bubblewrap setup intent has invalid version or generation"
                 )
             identity_row = connection.execute(
-                "SELECT * FROM work_bubblewrap_process_identities WHERE attempt_id=?",
+                "SELECT * FROM work_bubblewrap_process_identities WHERE attempt_id=%s",
                 (attempt_id,),
             ).fetchone()
             if identity_row is None or identity_row["generation"] != generation:
@@ -442,7 +446,7 @@ class WorkBubblewrapSetupIntent:
                     "stored Bubblewrap setup intent has a different process identity"
                 )
             binding = connection.execute(
-                "SELECT * FROM work_dispatch_bindings WHERE attempt_id=? AND generation=?",
+                "SELECT * FROM work_dispatch_bindings WHERE attempt_id=%s AND generation=%s",
                 (attempt_id, generation),
             ).fetchone()
             if binding is None:
@@ -472,7 +476,7 @@ class WorkBubblewrapSetupIntent:
             ):
                 raise SchemaMismatch("stored Bubblewrap setup intent digest is ambiguous")
             catalog = connection.execute(
-                "SELECT byte_length,immutable_location FROM work_executable_contents WHERE content_hash=?",
+                "SELECT byte_length,immutable_location FROM work_executable_contents WHERE content_hash=%s",
                 (row["executable_sha256"],),
             ).fetchone()
             if catalog is None or catalog["immutable_location"] != row["executable_sha256"]:

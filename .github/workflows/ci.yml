@@ -38,7 +38,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --all-extras --dev
 
+      - name: Verify disposable PostgreSQL test prerequisite
+        run: docker info --format '{{.ServerVersion}}'
+
       - name: Run unit tests with coverage
+        env:
+          CAO_TEST_POSTGRES_AUTOSTART: "1"
         run: |
           # CI intentionally includes integration-marked tests except for the Kiro
           # provider test, which requires an authenticated external CLI.
@@ -577,20 +582,27 @@ jobs:
         if: always()
         run: python scripts/assert_no_ffi.py --manifest-path tui/Cargo.toml
 
-      # The three live-contract tests in tui/tests/endpoint_contract.rs call a REAL cao-server;
-      # they are the deliberate hermeticity exemption. Without a server they fail on
-      # `Connection refused` on every PR (verified: with CAO_API_PORT=19999 they FAIL rather than
-      # skip, which is correct BR-7 behaviour and is why this gap was visible at all).
-      #
-      # `uv sync` is required because this job installs Python but NOT the project — it had
-      # `setup-python` and no `uv sync`, so `cao-server` did not exist here at all. (#321)
-      # This job runs `uv` but had NO `setup-uv` — it was the only uv-using job in the workflow
-      # without it, so `uv sync` would fail with `uv: command not found`. Caught by comparing every
-      # job's setup-uv presence against its uv usage rather than assuming the toolchain was there.
-      # NOTE: `@v4` is a MUTABLE tag, matching the three pre-existing setup-uv call sites in this
-      # file. The affirmed SHA-pinning rule covers actions THIS INTENT adds; pinning here while the
-      # other three stay on @v4 would be inconsistent without pinning all four. Flagged in
-      # ci-config.md as a follow-up rather than half-applied. (#321)
+      # These three Rust endpoint contracts call the real server. Install the same PostgreSQL
+      # major on both runners; the helper starts its own loopback-only cluster and provisions
+      # isolated native main/auth/peer targets for the server process.
+      - name: Install PostgreSQL 18 on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common ca-certificates
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-18
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
+          /usr/lib/postgresql/18/bin/initdb --version
+
+      - name: Install PostgreSQL 18 on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install postgresql@18
+          postgres_bin_dir="$(brew --prefix postgresql@18)/bin"
+          echo "$postgres_bin_dir" >> "$GITHUB_PATH"
+          "$postgres_bin_dir/initdb" --version
+
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
@@ -600,99 +612,8 @@ jobs:
       - name: Install the Python project (provides cao-server for the live contract test)
         run: uv sync --locked --all-extras --dev
 
-      - name: Start cao-server and wait for readiness
-        # Poll /health rather than `sleep N`: a fixed sleep is either flaky or slow, and /health is
-        # the same endpoint the TUI itself probes. 30 x 1s matches the readiness cap the TUI uses.
-        # `timeout(1)` is NOT used — it does not exist on macOS runners by default. (#321)
-        run: |
-          # The PID IS recorded and IS read — by the teardown step below. An earlier revision
-          # wrote /tmp/cao-server.pid that nothing read, and the revision after that dropped the
-          # file entirely on the reasoning that "the runner is ephemeral and torn down with the
-          # job, so a cleanup step would be ceremony."
-          #
-          # THAT REASONING WAS WRONG, and the first CI run is what proved it: `setup-uv`'s
-          # POST-JOB step runs before the runner is torn down, and on macOS it hung for exactly
-          # 300s in `uv cache prune --ci` and then failed the job with exit 2 — after all 8 pty
-          # tests had PASSED. The job's own teardown line names the culprit: "Terminate orphan
-          # process: pid (12288) (Python)". The server was still running while the post step tried
-          # to prune the cache underneath it.
-          #
-          # Linux passed this step only by luck: its uv cache RESTORED, and `setup-uv` skips the
-          # prune-and-save path entirely on a cache hit. macOS missed ("Failed to restore: Cache
-          # service responded with 400"), took the prune path, and hit the contention. So this is
-          # a cache-miss-only failure on BOTH platforms, not a Darwin quirk — which is why the fix
-          # is an explicit shutdown rather than a platform condition. (#321)
-          uv run cao-server &
-          echo "$!" > "${RUNNER_TEMP}/cao-server.pid"
-          for i in $(seq 1 30); do
-            if curl -sf "http://127.0.0.1:9889/health" >/dev/null 2>&1; then
-              echo "cao-server ready after ${i}s"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "cao-server did not become ready within 30s" >&2
-          exit 1
-
-      - name: cargo test --locked
-        working-directory: tui
-        run: cargo test --locked
-
-      # `if: always()` so the server is stopped even when the tests FAIL. Without it a red test
-      # run would leave the server up and turn one honest failure into two — the test failure plus
-      # a post-job cache error that has nothing to do with the change under review.
-      #
-      # Kills the process GROUP (`-PID`), not just the recorded pid: `uv run cao-server` is a
-      # parent `uv` process that execs the server as a child, and the Linux teardown listed BOTH
-      # ("pid (3510) (uv)", "pid (3517) (cao-server)"). Killing only the recorded pid would leave
-      # the other alive and holding the cache — the exact condition this step exists to remove.
-      #
-      # Never fails the job: `|| true` on every kill and `exit 0` at the end. A cleanup step that
-      # can fail is a second way for a green build to go red, and "the server had already exited"
-      # is not a defect. (#321)
-      - name: Stop cao-server before the post-job cache steps run
-        if: always()
-        run: |
-          pidfile="${RUNNER_TEMP}/cao-server.pid"
-          if [ ! -f "$pidfile" ]; then
-            echo "no pidfile at $pidfile; cao-server was never started"
-            exit 0
-          fi
-          pid="$(cat "$pidfile")"
-          # SIGTERM the group, give it a moment, then SIGKILL whatever ignored it. Mirrors the
-          # pty harness's own escalation rather than inventing a second shutdown policy.
-          kill -TERM "-${pid}" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
-          for _ in 1 2 3 4 5; do
-            kill -0 "$pid" 2>/dev/null || break
-            sleep 1
-          done
-          kill -KILL "-${pid}" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
-          rm -f "$pidfile"
-          echo "cao-server stopped"
-          exit 0
-
-      # ---------------------------------------------------------------------------------
-      # THE NO-FFI GATE (FR-5.2, SR-4, T-10) — hard gate, on BOTH platforms.
-      #
-      # T-10 forbids linking the TUI against the Python runtime: the boundary is subprocess
-      # for CLI invocation and HTTP for server reads. The affirmed rule requires this be a
-      # DETERMINISTIC dependency-graph check rather than a code-review convention, because an
-      # FFI crate does not arrive as a reviewable line in Cargo.toml — it arrives several
-      # levels down a transitive chain in a diff that shows only Cargo.lock churn.
-      #
-      # PROVEN ABLE TO FAIL, not assumed: `pyo3 = "0.22"` was planted in tui/Cargo.toml, the
-      # graph re-resolved (39 -> 53 crates), and the check rejected it — naming both `pyo3`
-      # and the transitively-pulled `pyo3-ffi` — before Cargo.toml/Cargo.lock were restored
-      # byte-identically. test/test_no_ffi_guard.py keeps that property asserted in the Python
-      # suite, since the live proof mutates the lockfile and cannot run in CI.
-      #
-      # Runs on both platforms deliberately: cargo-deny's own [bans] section carries an
-      # independent implementation of the same ban, but that job is a Docker action and
-      # therefore Linux-only. This step is the macOS coverage. (#321)
-      # ---------------------------------------------------------------------------------
-      # `python`, not `python3`: actions/setup-python puts `python` on PATH on every platform,
-      # and this matches how publish-to-pypi.yml already invokes scripts/assert_wheel_matrix.py.
-      # No `working-directory` — the script takes a repo-root-relative --manifest-path.
+      - name: cargo test --locked with native PostgreSQL endpoint contracts
+        run: uv run python scripts/ci_rust_contracts.py -- cargo test --locked
   security:
     name: Security Scan
     runs-on: ubuntu-latest

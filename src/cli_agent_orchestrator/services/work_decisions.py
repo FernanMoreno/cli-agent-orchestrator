@@ -1,6 +1,6 @@
 """Durable local human-decision receipts for already bound work effects.
 
-This service records and claims a local SQLite receipt.  It neither grants
+This service records and claims a local PostgreSQL receipt.  It neither grants
 authority nor executes a provider effect; callers must perform an external
 effect only after ``consume_effect`` returns ``True``.
 """
@@ -138,7 +138,7 @@ class WorkDecisions:
             "FROM work_human_decisions d "
             "LEFT JOIN work_human_decision_claims c ON c.decision_id=d.id "
             "LEFT JOIN work_human_decision_revocations r ON r.decision_id=d.id "
-            "WHERE d.id=? GROUP BY d.id",
+            "WHERE d.id=%s GROUP BY d.id,r.revoked_at",
             (decision_id,),
         ).fetchone()
         if row is None:
@@ -172,7 +172,7 @@ class WorkDecisions:
     def _revocation(connection, decision_id: str) -> DecisionRevocationRecord | None:
         row = connection.execute(
             "SELECT decision_id,actor_id,revoked_at,reason "
-            "FROM work_human_decision_revocations WHERE decision_id=?",
+            "FROM work_human_decision_revocations WHERE decision_id=%s",
             (decision_id,),
         ).fetchone()
         if row is None:
@@ -247,8 +247,8 @@ class WorkDecisions:
                 generation=generation,
             )
             existing = connection.execute(
-                "SELECT id FROM work_human_decisions WHERE attempt_id=? AND generation=? "
-                "AND idempotency_key=?",
+                "SELECT id FROM work_human_decisions WHERE attempt_id=%s AND generation=%s "
+                "AND idempotency_key=%s",
                 (attempt_id, generation, idempotency_key),
             ).fetchone()
             if existing is not None:
@@ -272,7 +272,7 @@ class WorkDecisions:
             connection.execute(
                 "INSERT INTO work_human_decisions "
                 "(id,job_id,work_item_id,attempt_id,generation,contract_hash,idempotency_key,actor_id,"
-                "created_at,action,reason,evidence_refs,authorized_effects) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "created_at,action,reason,evidence_refs,authorized_effects) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
                     decision_id,
                     binding.job_id,
@@ -347,11 +347,14 @@ class WorkDecisions:
                 binding.contract_hash,
             ):
                 raise DecisionConflict("decision belongs to an obsolete contract binding")
+            connection.execute(
+                "SELECT id FROM work_human_decisions WHERE id=%s FOR UPDATE", (decision_id,)
+            )
             if self._revocation(connection, decision_id) is not None:
                 raise DecisionRevoked("human decision was revoked before this effect claim")
             claimed = connection.execute(
                 "INSERT INTO work_human_decision_claims (decision_id,effect,actor_id,consumed_at) "
-                "VALUES (?,?,?,?) ON CONFLICT(decision_id,effect) DO NOTHING",
+                "VALUES (%s,%s,%s,%s) ON CONFLICT(decision_id,effect) DO NOTHING",
                 (decision_id, effect, principal.id, __import__("time").time()),
             ).rowcount
             if not claimed:
@@ -377,6 +380,12 @@ class WorkDecisions:
             decision = self._decision(connection, decision_id)
             if decision.actor_id != principal.id:
                 raise DecisionConflict("only the original decision actor may revoke it")
+            connection.execute(
+                "SELECT id FROM work_jobs WHERE id=%s FOR UPDATE", (decision.job_id,)
+            )
+            connection.execute(
+                "SELECT id FROM work_human_decisions WHERE id=%s FOR UPDATE", (decision_id,)
+            )
             prior = self._revocation(connection, decision_id)
             if prior is not None:
                 if (prior.actor_id, prior.reason) != (principal.id, reason):
@@ -385,7 +394,7 @@ class WorkDecisions:
             revoked_at = __import__("time").time()
             connection.execute(
                 "INSERT INTO work_human_decision_revocations "
-                "(decision_id,actor_id,revoked_at,reason) VALUES (?,?,?,?)",
+                "(decision_id,actor_id,revoked_at,reason) VALUES (%s,%s,%s,%s)",
                 (decision_id, principal.id, revoked_at, reason),
             )
             self.repository._append_event(

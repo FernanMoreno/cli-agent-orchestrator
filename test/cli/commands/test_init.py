@@ -4,11 +4,11 @@ import errno
 import shutil
 import uuid
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.cli.commands.init import init, seed_default_skills
@@ -136,10 +136,7 @@ class TestInitCommand:
         """The command initializes schema before running the real bounded repair."""
         base = tmp_path / "memory"
         _write_agent_topic(base, "surviving-agent")
-        replacement_engine = create_engine(
-            f"sqlite:///{tmp_path / 'replacement.db'}",
-            connect_args={"check_same_thread": False},
-        )
+        replacement_engine = configured_orm_engine()
         sessions = sessionmaker(autocommit=False, autoflush=False, bind=replacement_engine)
         monkeypatch.setattr(db_module, "SessionLocal", sessions)
         monkeypatch.setattr(memory_reconciliation, "MEMORY_BASE_DIR", base)

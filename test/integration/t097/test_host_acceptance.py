@@ -305,7 +305,7 @@ async def test_revocation_after_ack_withholds_go_and_prevents_redelivery(tmp_pat
     )
     with repository.read_snapshot() as connection:
         grant_id = connection.execute(
-            "SELECT id FROM work_grants WHERE principal_id=? ORDER BY created_at LIMIT 1",
+            "SELECT id FROM work_grants WHERE principal_id=%s ORDER BY created_at LIMIT 1",
             (principal.id,),
         ).fetchone()["id"]
     original_release = WorkBubblewrapSetupIntent.release_if_current

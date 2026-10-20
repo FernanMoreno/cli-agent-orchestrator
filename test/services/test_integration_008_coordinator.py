@@ -242,7 +242,7 @@ def test_same_tx_attachment_failure_leaves_no_run_or_driver(coordinator_context)
         for table in ("workflow_run", "workflow_driver", "workflow_coordinator"):
             assert (
                 conn.execute(
-                    "SELECT 1 FROM " + table + " WHERE run_id=?", ("rolled-back",)
+                    "SELECT 1 FROM " + table + " WHERE run_id=%s", ("rolled-back",)
                 ).fetchone()
                 is None
             )
@@ -477,7 +477,7 @@ def test_private_policy_cannot_be_extended_by_mutable_controller_columns(coordin
     start = start_controller(f)
     with f.context.repo.transaction() as conn:
         conn.execute(
-            "UPDATE workflow_coordinator SET max_iterations=max_iterations+1 WHERE id=?",
+            "UPDATE workflow_coordinator SET max_iterations=max_iterations+1 WHERE id=%s",
             (start["coordinator_id"],),
         )
     with pytest.raises(ValueError, match="private_budget_integrity"):
@@ -538,7 +538,7 @@ def test_unknown_allocation_blocks_new_driver_even_after_lease_expiry(coordinato
     f.driver.begin_process("controller-run", epoch)
     with f.context.repo.transaction() as conn:
         conn.execute(
-            "UPDATE workflow_driver SET lease_expires_at=0 WHERE run_id=?", ("controller-run",)
+            "UPDATE workflow_driver SET lease_expires_at=0 WHERE run_id=%s", ("controller-run",)
         )
     other = WorkflowContinuationDriver(f.service.plans, f.projector, instance_id="other")
     with pytest.raises(DriverRefused, match="orphan_process"):
@@ -589,7 +589,7 @@ def test_deadline_fences_pending_run_without_fabricating_stop(coordinator_contex
     f.driver.release("controller-run", epoch)
     with f.context.repo.transaction() as conn:
         conn.execute(
-            "UPDATE workflow_coordinator SET deadline=? WHERE id=?",
+            "UPDATE workflow_coordinator SET deadline=%s WHERE id=%s",
             (time.time() - 1, start["coordinator_id"]),
         )
     asyncio.run(f.driver.tick())
@@ -619,12 +619,20 @@ def test_revoked_origin_after_acceptance_cannot_allocate_next_iteration(coordina
     assert f.service.status(f.subject, start["coordinator_id"])["work_verified_completed"] is False
 
 
-def test_schema_drift_refuses_before_driver_claim(coordinator_context):
+def test_schema_drift_refuses_before_driver_claim(coordinator_context, postgres_targets):
     f = coordinator_context
     start_controller(f)
-    with f.context.repo.transaction() as conn:
-        conn.execute("DROP TRIGGER coordinator_events_no_update")
-    with pytest.raises(ValueError, match="continuation_schema_integrity"):
+    from cli_agent_orchestrator.clients.postgres import connect
+
+    assert f.context.repo.target.identity == postgres_targets.main.identity
+    with connect(postgres_targets.main.migration_target()) as owner:
+        with owner.transaction():
+            owner.execute(
+                "DROP TRIGGER coordinator_events_no_update ON workflow_coordinator_events"
+            )
+    from cli_agent_orchestrator.clients.postgres.migrations import SchemaMismatch
+
+    with pytest.raises(SchemaMismatch, match="component schema fingerprint mismatch"):
         f.driver.claim(f.subject, "controller-run")
 
 
@@ -677,7 +685,7 @@ def test_finite_minimum_and_maximum_use_accepted_artifacts(
         f.projector.project_pending_for_run("controller-run")
         with f.context.repo.read_snapshot() as conn:
             event = conn.execute(
-                "SELECT * FROM workflow_continuation_outbox WHERE step_id=?",
+                "SELECT * FROM workflow_continuation_outbox WHERE step_id=%s",
                 ("iteration-" + str(iteration),),
             ).fetchone()
         continued = f.service.checkpoint(f.subject, "controller-run", event)
@@ -689,7 +697,7 @@ def test_finite_minimum_and_maximum_use_accepted_artifacts(
 
             with f.context.repo.read_snapshot() as conn:
                 attempt_id = conn.execute(
-                    "SELECT work_attempt_id FROM work_workflow_step_bindings WHERE step_id=?",
+                    "SELECT work_attempt_id FROM work_workflow_step_bindings WHERE step_id=%s",
                     ("iteration-" + str(iteration),),
                 ).fetchone()[0]
             f.projector.work_service.cleanup_attempt(
@@ -717,7 +725,7 @@ def test_finite_minimum_and_maximum_use_accepted_artifacts(
 
             with f.context.repo.read_snapshot() as conn:
                 path_id = conn.execute(
-                    "SELECT id FROM work_reservation_sets WHERE attempt_id=?", (attempt_id,)
+                    "SELECT id FROM work_reservation_sets WHERE attempt_id=%s", (attempt_id,)
                 ).fetchone()[0]
             paths = WorkReservations(
                 f.context.repo,

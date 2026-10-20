@@ -360,11 +360,11 @@ def test_workflow_retry_authorization_persists_and_replays_one_exact_failure(con
     )
     with context.repo.transaction() as connection:
         connection.execute(
-            "UPDATE work_items SET state='failed',revision=revision+1 WHERE id=?",
+            "UPDATE work_items SET state='failed',revision=revision+1 WHERE id=%s",
             (work["id"],),
         )
         connection.execute(
-            "UPDATE work_attempts SET state='failed',revision=revision+1 WHERE id=?",
+            "UPDATE work_attempts SET state='failed',revision=revision+1 WHERE id=%s",
             (binding.work_attempt_id,),
         )
 
@@ -472,7 +472,7 @@ def test_workflow_retry_authorization_persists_and_replays_one_exact_failure(con
     with context.repo.read_snapshot() as connection:
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_workflow_step_retry_authorizations WHERE binding_id=?",
+                "SELECT count(*) FROM work_workflow_step_retry_authorizations WHERE binding_id=%s",
                 (binding.binding_id,),
             ).fetchone()[0]
             == 1
@@ -496,7 +496,7 @@ def test_run_capability_is_hashed_run_scoped_and_generation_fenced(context):
     with context.repo.read_snapshot() as connection:
         row = connection.execute(
             "SELECT credential_sha256,state FROM work_workflow_run_capabilities "
-            "WHERE run_id=? ORDER BY revision DESC LIMIT 1",
+            "WHERE run_id=%s ORDER BY revision DESC LIMIT 1",
             ("workflow-run",),
         ).fetchone()
     assert row["credential_sha256"] == hashlib.sha256(token.encode()).hexdigest()
@@ -506,6 +506,13 @@ def test_run_capability_is_hashed_run_scoped_and_generation_fenced(context):
         connection.execute("UPDATE workflow_run SET generation='2' WHERE run_id='workflow-run'")
     with pytest.raises(OriginDenied):
         origins.authenticate_run_capability("workflow-run", 1, token)
+
+
+def test_unknown_run_capability_is_denied_from_real_empty_capability_store(context):
+    origins = WorkWorkflowOrigins(context.repo)
+
+    with pytest.raises(OriginDenied, match="absent, stale, or revoked"):
+        origins.authenticate_run_capability("unknown-workflow-run", 1, "a" * 32)
 
 
 def test_unprovisioned_workflow_does_not_require_work_principal_registration(context):
@@ -560,17 +567,33 @@ def test_managed_workflow_attempt_binds_exact_contract_snapshot_and_replays_afte
         assert connection.execute("SELECT count(*) FROM work_items").fetchone()[0] == 1
         assert connection.execute("SELECT count(*) FROM work_attempts").fetchone()[0] == 1
         binding = connection.execute(
-            "SELECT * FROM work_dispatch_bindings WHERE attempt_id=? AND generation=?",
+            "SELECT * FROM work_dispatch_bindings WHERE attempt_id=%s AND generation=%s",
             (first_attempt["id"], first_attempt["generation"]),
         ).fetchone()
         item = connection.execute(
-            "SELECT idempotency_key,request_hash FROM work_items WHERE id=?", (first["id"],)
+            "SELECT idempotency_key,request_hash FROM work_items WHERE id=%s", (first["id"],)
         ).fetchone()
         assert binding["contract_hash"] == request["contract"].canonical_hash()
         assert binding["snapshot_id"] == request["contract"].snapshot.id
         assert item["idempotency_key"].startswith("workflow-step-v1:")
         assert item["request_hash"] != "0" * 64
     assert restarted_admission.workflow_origins is restarted_origins
+
+
+def test_managed_workflow_recovery_with_plans_uses_readonly_snapshot(context):
+    from cli_agent_orchestrator.services.work_workflow_plans import WorkWorkflowPlans
+
+    origins, _authority, _subject, _authorization, request = _managed_workflow(context)
+    first = origins.admit_step(**request)
+    restarted_origins = WorkWorkflowOrigins(
+        context.repo,
+        plans=WorkWorkflowPlans(context.repo),
+    )
+
+    recovered = restarted_origins.recover_step(**request)
+
+    assert recovered["id"] == first["id"]
+    assert recovered["attempts"][0]["id"] == first["attempts"][0]["id"]
 
 
 def test_managed_workflow_replay_is_frozen_and_pending_attempt_cannot_retry(context):
@@ -653,7 +676,7 @@ def test_workflow_origin_requires_durable_step_marker_before_work_admission(cont
     origins, _authority, _subject, _authorization, request = _managed_workflow(context)
     with context.repo.transaction() as connection:
         connection.execute(
-            "UPDATE workflow_run_step SET state='running' WHERE run_id=? AND step_id=?",
+            "UPDATE workflow_run_step SET state='running' WHERE run_id=%s AND step_id=%s",
             (request["run_id"], request["step_id"]),
         )
 
@@ -669,13 +692,37 @@ def test_workflow_binding_lookups_return_none_for_unmanaged_work(context):
     assert origins.read_step_binding("yaml", "missing-run", 1, "missing-step", 1) is None
 
 
+def test_workflow_binding_lookup_rejects_a_different_store_transaction(context):
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget, connect
+    from cli_agent_orchestrator.clients.work_repository import WorkConflict
+
+    origins, _authority, subject, _authorization, request = _managed_workflow(context)
+    foreign_target = DatabaseTarget.from_settings(scope="auth")
+    with connect(foreign_target) as foreign_connection:
+        with foreign_connection.transaction():
+            with pytest.raises(WorkConflict, match="another store"):
+                origins.read_binding_for_attempt(
+                    "attempt", 1, "work-item", connection=foreign_connection
+                )
+            with pytest.raises(OriginDenied, match="another store"):
+                origins.create_run_capability(
+                    subject,
+                    run_id=request["run_id"],
+                    workflow_id=request["workflow_id"],
+                    tier=request["tier"],
+                    run_generation=request["run_generation"],
+                    spec_hash=request["spec_hash"],
+                    connection=foreign_connection,
+                )
+
+
 def test_durable_workflow_marker_cannot_skip_step_attempts(context):
     from cli_agent_orchestrator.services import workflow_journal
 
     _origins, _authority, _subject, _authorization, request = _managed_workflow(context)
     with context.repo.transaction() as connection:
         connection.execute(
-            "UPDATE workflow_run_step SET state='running', attempts=0 WHERE run_id=? AND step_id=?",
+            "UPDATE workflow_run_step SET state='running', attempts=0 WHERE run_id=%s AND step_id=%s",
             (request["run_id"], request["step_id"]),
         )
 

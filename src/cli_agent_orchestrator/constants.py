@@ -118,7 +118,7 @@ except OSError:
 # Managed environment variable file
 CAO_ENV_FILE = CAO_HOME_DIR / ".env"
 
-# SQLite database directory
+# Stable compatibility path namespace for database-related artifacts; not a storage backend.
 DB_DIR = CAO_HOME_DIR / "db"
 
 # Log file directory structure
@@ -377,15 +377,14 @@ OPENCODE_CONFIG_FILE = OPENCODE_CONFIG_DIR / "opencode.json"  # OpenCode MCP + t
 # =============================================================================
 # Database Configuration
 # =============================================================================
-# SQLite database file path and connection URL
+# Stable artifact path retained for compatibility; runtime uses private PostgreSQL target configuration.
 DATABASE_FILE = DB_DIR / "cli-agent-orchestrator.db"
-DATABASE_URL = f"sqlite:///{DATABASE_FILE}"
+DATABASE_URL = "postgresql+psycopg://"
 
 # Shared, per-user directory for discovering independent CAO profiles. This is
 # intentionally independent of CAO_HOME_DIR so profiles running under the same
 # local user can coordinate without sharing their private databases.
 LOCAL_PEER_DIR = Path.home() / ".aws" / "cli-agent-orchestrator" / "local-peers"
-LOCAL_PEER_REGISTRY_FILE = LOCAL_PEER_DIR / "registry.sqlite3"
 LOCAL_PEER_INSTANCE_ID_FILE = CAO_HOME_DIR / "local-peer-id"
 LOCAL_PEER_PRIVATE_KEY_FILE = CAO_HOME_DIR / "local-peer-signing-key"
 LOCAL_PEER_DISPLAY_NAME = os.environ.get("CAO_INSTANCE_NAME", "").strip() or CAO_HOME_DIR.name
@@ -403,6 +402,11 @@ API_BASE_URL = f"http://{SERVER_HOST}:{SERVER_PORT}"
 
 # Default timeout (seconds) for HTTP calls to the CAO API server.
 MCP_REQUEST_TIMEOUT = 30
+
+# Private launch marker. The protected provider overlay uses this only for an
+# explicit OpenCode v2 interaction session; profile configuration is never a
+# source of authority for enabling this catalog restriction.
+_CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV = "CAO_INTERNAL_INTERACTION_PULL_FLOW_ONLY"
 
 # Cross-node placement + callback routing (one-agent-per-pod topology).
 # Defined here — not in mcp_server/server.py — because BOTH the MCP client
@@ -833,12 +837,9 @@ WORKFLOW_MAX_SPEC_BYTES = 256 * 1024
 WORKFLOW_OUTPUT_SCHEMA_MAX_DEPTH = 8
 WORKFLOW_MAX_INPUTS = 64
 
-# SQLite busy-timeout for journal connections, in milliseconds (issue #583, NFR-4).
-# Journal writes are single-row upserts in one short transaction, so the realistic
-# contention window is milliseconds; 5000 gives ~3 orders of magnitude of headroom, which
-# makes "database is locked" mean a genuinely stuck writer rather than ordinary collision.
-# Per-connection (unlike WAL, which is per-database and deliberately out of scope,
-# ADR-583-10).
+# PostgreSQL lock timeout for journal connections, in milliseconds.
+# The historical constant name remains compatible with existing configuration;
+# short journal transactions fail when a competing writer holds a lock too long.
 WORKFLOW_JOURNAL_BUSY_TIMEOUT_MS = 5000
 
 # Max size (bytes) of the compact-JSON resolved inputs map delivered to a script
@@ -905,7 +906,7 @@ HANDOFF_RESULTS_ROUTE = "/handoff-results/{job_id}"
 
 # Default directory scanned for workflow spec YAML files when no --dir is given
 # (Bolt 2, N2). Spec files on disk are the single source of truth; the
-# ``workflow_index`` SQLite table is a derived, droppable projection (B2-BR-2).
+# ``workflow_index`` PostgreSQL table is a derived, droppable projection (B2-BR-2).
 WORKFLOW_SPEC_DIR = CAO_HOME_DIR / "workflows"
 
 # Soft cap on the in-memory structured-return store (Bolt 2, N4, ADR-4 / Q1=A).

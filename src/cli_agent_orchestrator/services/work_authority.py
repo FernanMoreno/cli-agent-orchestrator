@@ -3,12 +3,12 @@
 import hashlib
 import json
 import math
-import sqlite3
 import time
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from uuid import uuid4
 
+from cli_agent_orchestrator.clients.postgres import Connection, DatabaseTarget, IntegrityError
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.security.auth import (
     SCOPE_ADMIN,
@@ -138,6 +138,48 @@ class WorkAuthority:
         self.repository = repository
 
     @staticmethod
+    def lock_job_authority_lane(connection: Connection, job_id: str) -> None:
+        """Serialize grant-chain writers for one job before they lock grant rows.
+
+        The transaction must already hold the verified Work store fence. This
+        lane is intentionally transaction-scoped and reentrant: higher-level
+        operations can take it before branch-specific origin or mailbox locks,
+        while every `_chain` writer takes it as a backstop before its first
+        `FOR UPDATE`.
+        """
+        if not connection.in_transaction:
+            raise ValueError("authority lane requires a caller-owned transaction")
+        if connection.read_only:
+            return
+        if not isinstance(job_id, str) or not job_id or job_id != job_id.strip():
+            raise AuthorityDenied("grant job identity is invalid")
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+            (f"cao:work-authority:v1:{job_id}",),
+        )
+
+    @classmethod
+    def lock_job_authority_lane_for_grant(cls, connection: Connection, grant_id: str) -> str:
+        """Select a grant's immutable job without locking it, then take that job lane."""
+        if not connection.in_transaction:
+            raise ValueError("authority lane requires a caller-owned transaction")
+        row = connection.execute(
+            "SELECT job_id FROM work_grants WHERE id=%s ORDER BY revision DESC LIMIT 1",
+            (grant_id,),
+        ).fetchone()
+        if row is None:
+            raise AuthorityDenied("grant not found")
+        job_id: str = row["job_id"]
+        cls.lock_job_authority_lane(connection, job_id)
+        return job_id
+
+    def _owns_source_target(self, source: object) -> bool:
+        return (
+            isinstance(source, DatabaseTarget)
+            and source.identity == self.repository.target.identity
+        )
+
+    @staticmethod
     def _principal(principal: Principal, *, admin: bool = False) -> None:
         if (
             not is_verified_principal(principal)
@@ -176,13 +218,10 @@ class WorkAuthority:
             )
 
     def verify_offline_cut(
-        self, lease: OfflineCutLease, *, source_database: Path
+        self, lease: OfflineCutLease, *, source_database: DatabaseTarget
     ) -> OfflineCutLease:
         """Revalidate the exact stored lease in a new serialized transaction."""
-        if (
-            not isinstance(lease, OfflineCutLease)
-            or Path(source_database).resolve() != self.repository.path.resolve()
-        ):
+        if not isinstance(lease, OfflineCutLease) or not self._owns_source_target(source_database):
             raise AuthorityDenied("offline cut must name this server-owned work store")
         with self.repository.transaction() as connection:
             self.repository._verify(connection)
@@ -200,7 +239,7 @@ class WorkAuthority:
 
     def _observe_cut(
         self,
-        connection: sqlite3.Connection,
+        connection: Connection,
         lease: dict,
         *,
         capture_id: str,
@@ -246,15 +285,12 @@ class WorkAuthority:
         self,
         lease: OfflineCutLease,
         *,
-        source_database: Path,
+        source_database: DatabaseTarget,
         capture_id: str,
         phase: str,
         inventory: dict,
     ) -> dict:
-        if (
-            not isinstance(lease, OfflineCutLease)
-            or Path(source_database).resolve() != self.repository.path.resolve()
-        ):
+        if not isinstance(lease, OfflineCutLease) or not self._owns_source_target(source_database):
             raise AuthorityDenied("offline cut observation must name this server-owned work store")
         with self.repository.transaction() as connection:
             self.repository._verify(connection)
@@ -267,7 +303,7 @@ class WorkAuthority:
         self,
         lease: OfflineCutLease,
         *,
-        source_database: Path,
+        source_database: DatabaseTarget,
         capture_id: str,
         inventory: dict,
         publish,
@@ -275,7 +311,7 @@ class WorkAuthority:
         """Serialize final fence verification, private promotion, fsync and receipt eligibility."""
         if (
             not isinstance(lease, OfflineCutLease)
-            or Path(source_database).resolve() != self.repository.path.resolve()
+            or not self._owns_source_target(source_database)
             or not callable(publish)
         ):
             raise AuthorityDenied("offline cut publication must name this server-owned work store")
@@ -292,7 +328,7 @@ class WorkAuthority:
                 "manifest_size",
             }:
                 raise AuthorityDenied("offline cut publication is invalid")
-            # The filesystem work above ran under the BEGIN IMMEDIATE lock.  This
+            # The filesystem work above ran under the store fence transaction. This
             # second check catches TTL expiry before the durable publication CAS.
             self.repository._verify_offline_cut(connection, lease.__dict__)
             return self._offline_cut_lease(
@@ -311,15 +347,16 @@ class WorkAuthority:
             )
 
     @staticmethod
-    def _register(connection: sqlite3.Connection, principal: Principal) -> None:
+    def _register(connection: Connection, principal: Principal) -> None:
         if not isinstance(principal, Principal) or not getattr(principal, "id", None):
             raise AuthorityDenied("verified recipient principal required")
         connection.execute(
-            "INSERT OR IGNORE INTO work_principals(id,issuer,subject,kind,created_at) VALUES (?,?,?,?,?)",
+            "INSERT INTO work_principals(id,issuer,subject,kind,created_at) "
+            "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING",
             (principal.id, principal.issuer, principal.subject, principal.kind, time.time()),
         )
         stored = connection.execute(
-            "SELECT issuer,subject,kind FROM work_principals WHERE id=?", (principal.id,)
+            "SELECT issuer,subject,kind FROM work_principals WHERE id=%s", (principal.id,)
         ).fetchone()
         if stored is None or tuple(stored) != (principal.issuer, principal.subject, principal.kind):
             raise AuthorityDenied("principal identity conflicts with its durable record")
@@ -337,11 +374,15 @@ class WorkAuthority:
         return float(value)
 
     @staticmethod
-    def _load(connection: sqlite3.Connection, grant_id: str, expected_revision: int) -> Grant:
+    def _load(connection: Connection, grant_id: str, expected_revision: int) -> Grant:
         if type(expected_revision) is not int or expected_revision <= 0:
             raise GrantConflict("expected grant revision must be positive")
+        if not connection.in_transaction:
+            raise ValueError("grant reads require a caller-owned transaction")
+        lock_clause = "" if connection.read_only else " FOR UPDATE"
         row = connection.execute(
-            "SELECT * FROM work_grants WHERE id=? ORDER BY revision DESC LIMIT 1", (grant_id,)
+            "SELECT * FROM work_grants WHERE id=%s ORDER BY revision DESC LIMIT 1" + lock_clause,
+            (grant_id,),
         ).fetchone()
         if row is None:
             raise AuthorityDenied("grant not found")
@@ -363,6 +404,13 @@ class WorkAuthority:
     def _chain(
         self, connection, grant_id, expected_revision, *, live=True
     ) -> tuple[list[Grant], dict]:
+        if not connection.in_transaction:
+            raise ValueError("grant-chain reads require a caller-owned transaction")
+        if not connection.read_only:
+            # The unlocked identity read only chooses the lane; all authority
+            # is revalidated from locked rows after acquiring it.
+            self.lock_job_authority_lane_for_grant(connection, grant_id)
+        lock_clause = "" if connection.read_only else " FOR UPDATE"
         chain: list[Grant] = []
         seen = set()
         while True:
@@ -374,7 +422,7 @@ class WorkAuthority:
             if live and (
                 grant.expires_at <= time.time()
                 or connection.execute(
-                    "SELECT 1 FROM work_grant_revocations WHERE grant_id=? AND grant_revision=?",
+                    "SELECT 1 FROM work_grant_revocations WHERE grant_id=%s AND grant_revision=%s",
                     key,
                 ).fetchone()
             ):
@@ -383,7 +431,14 @@ class WorkAuthority:
             if grant.parent_grant_id is None:
                 break
             grant_id, expected_revision = grant.parent_grant_id, grant.parent_revision
-        job = self.repository._job(connection, chain[0].job_id)
+        job = connection.execute(
+            "SELECT * FROM work_jobs WHERE id=%s" + lock_clause, (chain[0].job_id,)
+        ).fetchone()
+        if job is None:
+            raise AuthorityDenied("grant job is absent")
+        job = dict(job)
+        for field in ("allowed_providers", "budget"):
+            job[field] = json.loads(job[field])
         if (
             chain[-1].id != job["grant_id"]
             or chain[-1].principal_id != job["principal_id"]
@@ -437,12 +492,12 @@ class WorkAuthority:
         ):
             raise AuthorityDenied("managed lineage origin reference is invalid")
         subject = connection.execute(
-            "SELECT * FROM work_origin_subjects WHERE subject_id=? "
+            "SELECT * FROM work_origin_subjects WHERE subject_id=%s "
             "ORDER BY revision DESC LIMIT 1",
             (subject_id,),
         ).fetchone()
         authorization = connection.execute(
-            "SELECT * FROM work_origin_authorizations WHERE subject_id=? AND origin_kind=? "
+            "SELECT * FROM work_origin_authorizations WHERE subject_id=%s AND origin_kind=%s "
             "ORDER BY revision DESC LIMIT 1",
             (subject_id, authorization_kind),
         ).fetchone()
@@ -486,8 +541,10 @@ class WorkAuthority:
             raise AuthorityDenied("managed lineage authorization no longer permits this action")
         return subject, authorization, chain, job
 
-    def _event(self, connection, grant: Grant, actor: Principal, event_type: str) -> None:
-        connection.execute("UPDATE work_jobs SET revision=revision+1 WHERE id=?", (grant.job_id,))
+    def _event(
+        self, connection: Connection, grant: Grant, actor: Principal, event_type: str
+    ) -> None:
+        connection.execute("UPDATE work_jobs SET revision=revision+1 WHERE id=%s", (grant.job_id,))
         self.repository._append_event(
             connection,
             job_id=grant.job_id,
@@ -496,10 +553,10 @@ class WorkAuthority:
             metadata={"grant_id": grant.id, "grant_revision": grant.revision},
         )
 
-    def _insert(self, connection, grant: Grant, actor: Principal) -> Grant:
+    def _insert(self, connection: Connection, grant: Grant, actor: Principal) -> Grant:
         try:
             connection.execute(
-                "INSERT INTO work_grants(id,revision,job_id,principal_id,parent_grant_id,parent_revision,allowed_providers,permissions,enforcement_level,expires_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO work_grants(id,revision,job_id,principal_id,parent_grant_id,parent_revision,allowed_providers,permissions,enforcement_level,expires_at,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
                     grant.id,
                     grant.revision,
@@ -514,18 +571,18 @@ class WorkAuthority:
                     time.time(),
                 ),
             )
-        except sqlite3.IntegrityError as exc:
+        except IntegrityError as exc:
             raise GrantConflict("grant snapshot already exists or violates ancestry") from exc
         self._event(connection, grant, actor, "grant.issued")
         return grant
 
     @staticmethod
     def _managed_subject_may_delegate(
-        connection: sqlite3.Connection, principal: Principal, parent: Grant, job: dict
+        connection: Connection, principal: Principal, parent: Grant, job: dict
     ) -> bool:
         """Keep legacy grants unchanged, but never let a managed subject bypass origin actions."""
         subject = connection.execute(
-            """SELECT * FROM work_origin_subjects WHERE subject_id=?
+            """SELECT * FROM work_origin_subjects WHERE subject_id=%s
                ORDER BY revision DESC LIMIT 1""",
             (principal.id,),
         ).fetchone()
@@ -534,12 +591,12 @@ class WorkAuthority:
         if subject["state"] != "active":
             return False
         authorizations = connection.execute(
-            """SELECT authorization.* FROM work_origin_authorizations AS authorization
-               WHERE authorization.subject_id=?
-                 AND authorization.revision=(
+            """SELECT authz.* FROM work_origin_authorizations AS authz
+               WHERE authz.subject_id=%s
+                 AND authz.revision=(
                      SELECT max(current.revision) FROM work_origin_authorizations AS current
-                     WHERE current.subject_id=authorization.subject_id
-                       AND current.origin_kind=authorization.origin_kind
+                     WHERE current.subject_id=authz.subject_id
+                       AND current.origin_kind=authz.origin_kind
                  )""",
             (principal.id,),
         ).fetchall()
@@ -691,7 +748,7 @@ class WorkAuthority:
         provider: str,
         requested_permissions: Permissions,
     ) -> Grant:
-        """Caller owns verified BEGIN IMMEDIATE; this helper never commits."""
+        """Caller owns a verified native PostgreSQL transaction; never commits here."""
         if not connection.in_transaction:
             raise ValueError("a caller-owned transaction is required")
         self._principal(principal)
@@ -717,11 +774,21 @@ class WorkAuthority:
             raise ValueError("revocation requires a bounded reason")
         with self.repository.transaction() as connection:
             self.repository._verify(connection)
+            # Revoke used to lock its leaf first, then wait for an ancestor or
+            # job held by `_chain`. Join the same job lane before the first row
+            # lock so revocation and authorization have one deterministic order.
+            self.lock_job_authority_lane_for_grant(connection, grant_id)
+            locked = connection.execute(
+                "SELECT id FROM work_grants WHERE id=%s AND revision=%s FOR UPDATE",
+                (grant_id, expected_grant_revision),
+            ).fetchone()
+            if locked is None:
+                raise AuthorityDenied("grant not found")
             chain, _ = self._chain(connection, grant_id, expected_grant_revision, live=False)
             if principal.id not in {grant.principal_id for grant in chain}:
                 raise AuthorityDenied("only grant owner or an ancestor may revoke")
             prior = connection.execute(
-                "SELECT actor_principal_id,reason FROM work_grant_revocations WHERE grant_id=? AND grant_revision=?",
+                "SELECT actor_principal_id,reason FROM work_grant_revocations WHERE grant_id=%s AND grant_revision=%s",
                 (grant_id, expected_grant_revision),
             ).fetchone()
             if prior:
@@ -730,7 +797,7 @@ class WorkAuthority:
                 return
             self._register(connection, principal)
             connection.execute(
-                "INSERT INTO work_grant_revocations VALUES (?,?,?,?,?)",
+                "INSERT INTO work_grant_revocations VALUES (%s,%s,%s,%s,%s)",
                 (grant_id, expected_grant_revision, principal.id, time.time(), reason),
             )
             self._event(connection, chain[0], principal, "grant.revoked")

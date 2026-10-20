@@ -10,6 +10,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from test.fixtures.vault_factory import build_vault_fixture
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -80,7 +81,7 @@ def _make_memory(
 
 def _real_vault_service(tmp_path: Path, monkeypatch, keys: tuple[str, ...]):
     """Index real vault notes and return their service and immutable byte snapshots."""
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine)
     monkeypatch.setattr(reconcile_module, "SessionLocal", session_factory)

@@ -217,7 +217,7 @@ class ProvisionRef(FrozenOriginModel):
 
 
 class ProvisionedLaunch(FrozenOriginModel):
-    """The active durable launch context reconstructed from SQLite only."""
+    """The active durable launch context reconstructed from Work history only."""
 
     schema_version: Literal[1] = 1
     ref: ProvisionRef

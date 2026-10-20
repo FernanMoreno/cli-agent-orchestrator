@@ -18,9 +18,10 @@ from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
 @pytest.fixture
 def plan_context(context, monkeypatch):
     module = importlib.import_module("cli_agent_orchestrator.services.work_workflow_plans")
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget
     from cli_agent_orchestrator.services import approval_store
 
-    monkeypatch.setattr(approval_store, "DATABASE_FILE", context.repo.path)
+    assert context.repo.target.identity == DatabaseTarget.from_settings().identity
     origins, authority, subject, authorization, request, ref = _provisioned_workflow(context)
     source = "INPUTS = {}\nSCOPE = {'version': 1, 'targets': {'repo': {'agents': ['developer'], 'memory': 'off'}}}\n"
     digest = hashlib.sha256(source.encode()).hexdigest()
@@ -167,7 +168,7 @@ def test_approved_plan_starts_two_runs_with_atomic_private_attachment(plan_conte
         with context.repo.read_snapshot() as connection:
             assert (
                 connection.execute(
-                    "SELECT plan_id FROM workflow_run_plan_snapshot WHERE run_id=?", (run_id,)
+                    "SELECT plan_id FROM workflow_run_plan_snapshot WHERE run_id=%s", (run_id,)
                 ).fetchone()[0]
                 == result["plan_id"]
             )
@@ -479,7 +480,7 @@ def test_dynamic_prompt_is_frozen_once_and_conflicting_replay_is_refused(plan_co
             "SELECT provision_id FROM workflow_plan_step_alias WHERE run_id='scoped-dynamic' AND step_id='computed'"
         ).fetchone()
         row = conn.execute(
-            "SELECT delivery_json FROM work_workflow_step_provisions WHERE id=?", (alias[0],)
+            "SELECT delivery_json FROM work_workflow_step_provisions WHERE id=%s", (alias[0],)
         ).fetchone()
         assert json.loads(json.loads(row[0])["payload_json"])["message"] == request["prompt"]
     with pytest.raises(ValueError, match="scoped step is bound to another seed"):
@@ -555,7 +556,7 @@ def test_unreferenced_prepared_plan_cleanup_collects_private_bytes(plan_context)
         assert conn.execute("SELECT 1 FROM workflow_prepared_plan").fetchone() is None
         assert (
             conn.execute(
-                "SELECT 1 FROM workflow_plan_snapshot_component WHERE plan_id=?",
+                "SELECT 1 FROM workflow_plan_snapshot_component WHERE plan_id=%s",
                 (result["plan_id"],),
             ).fetchone()
             is None
@@ -729,7 +730,7 @@ def test_scoped_drive_corrupt_or_downgraded_manifest_never_falls_back(plan_conte
     plans, subject, directory, context = plan_context
     with context.repo.transaction() as connection:
         connection.execute(
-            "UPDATE workflow_run SET manifest_json=? WHERE run_id='scoped-dynamic'", (manifest,)
+            "UPDATE workflow_run SET manifest_json=%s WHERE run_id='scoped-dynamic'", (manifest,)
         )
     record = SimpleNamespace(
         run_id="scoped-dynamic",

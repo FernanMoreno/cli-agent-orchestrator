@@ -14,24 +14,18 @@ Covers the load-bearing behavior from ``functional-design/business-logic-model.m
 - a best-effort journal write failure does NOT break the live run (B4-BR-5)
 
 ``run_agent_step`` and ``step_output_store`` are mocked — no real terminals. The
-journal points at a temp SQLite DB via the patched DATABASE_FILE; the two migrators
-create the tables in a fixture.
+journal and Work repository use the isolated PostgreSQL test target.
 """
 
 from __future__ import annotations
 
 import asyncio
-import sqlite3
-from pathlib import Path
 from typing import List
 from unittest.mock import AsyncMock
 
 import pytest
 
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
-)
+from cli_agent_orchestrator.clients.postgres import DatabaseError, DatabaseTarget
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.terminal import AgentStepResult, TerminalStatus
 from cli_agent_orchestrator.models.workflow import (
@@ -48,17 +42,13 @@ _SCHEMA = {"type": "object", "properties": {"answer": {"type": "string"}}, "requ
 
 
 @pytest.fixture(autouse=True)
-def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Point the journal at a temp DB, create the tables, clean the registry."""
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    WorkRepository(db_path).initialize()
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
+def _patched_journal():
+    """Verify the configured Work store and clear process-local workflow state."""
+    WorkRepository(DatabaseTarget.from_settings("main")).initialize()
     ws.run_registry.clear()
     ws._active_drives.clear()
     ws.step_output_store._store.clear()
-    yield db_path
+    yield
     ws.run_registry.clear()
     ws._active_drives.clear()
     ws.step_output_store._store.clear()
@@ -181,7 +171,7 @@ async def test_best_effort_write_failure_does_not_break_run(monkeypatch, _patche
     monkeypatch.setattr(
         ws.workflow_journal,
         "update_step",
-        lambda *a, **k: (_ for _ in ()).throw(sqlite3.Error("boom")),
+        lambda *a, **k: (_ for _ in ()).throw(DatabaseError("boom")),
     )
     res = await ws.start_run(_spec(step_ids=("s1", "s2")), {}, "runFail")
     # The live run still completes on the in-memory floor.

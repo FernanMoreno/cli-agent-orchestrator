@@ -1,8 +1,9 @@
-import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
 import pytest
+
+pytestmark = pytest.mark.postgres
 
 BINDING = dict(
     id="existing-operator",
@@ -15,7 +16,9 @@ PASSWORD = "a sufficiently long password"
 
 
 @pytest.fixture
-def service(tmp_path):
+def service(postgres_targets):
+    from cli_agent_orchestrator.clients.browser_auth_repository import BROWSER_AUTH_MIGRATIONS
+    from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
     from cli_agent_orchestrator.services.browser_auth import BrowserAuthService
 
     now = [1000.0]
@@ -27,7 +30,10 @@ def service(tmp_path):
         remembered_absolute_seconds=200,
         access_seconds=10,
     )
-    instance = BrowserAuthService(tmp_path / "auth.sqlite3", BINDING, policy, clock=lambda: now[0])
+    target = postgres_targets["auth"]
+    migrate_component(target, BROWSER_AUTH_MIGRATIONS)
+    instance = BrowserAuthService(target, BINDING, policy, clock=lambda: now[0])
+    instance.initialize_store()
     instance.create_account("Owner", PASSWORD)
     return instance, now, policy
 
@@ -50,7 +56,8 @@ def test_login_preserves_identity_and_persists_without_secrets(service):
     assert dto["remembered"] is True
     assert dto["absolute_expires_at"] == 1200
     assert auth.identity(secret) == BINDING
-    restarted = BrowserAuthService(auth.repository.path, BINDING, policy, clock=lambda: now[0])
+    restarted = BrowserAuthService(auth.repository.target, BINDING, policy, clock=lambda: now[0])
+    restarted.validate_binding()
     assert restarted.session(secret)["session_id"] == dto["session_id"]
     with auth.repository.transaction() as db:
         rows = repr([tuple(r) for r in db.execute("SELECT * FROM browser_sessions")])
@@ -86,6 +93,37 @@ def test_logout_is_independent_and_logout_all_wins_over_renew(service):
         list(pool.map(lambda _: auth.renew(second), range(8)))
     auth.logout_all(second)
     error("session_revoked", lambda: auth.identity(second))
+
+
+def test_concurrent_renew_cannot_undo_logout_all(service):
+    auth, _, _ = service
+    secret, _ = auth.login("owner", PASSWORD)
+    start = Barrier(3)
+
+    def renew():
+        start.wait(timeout=10)
+        try:
+            auth.renew(secret)
+            return "renewed"
+        except Exception as exc:
+            return exc.code
+
+    def revoke():
+        start.wait(timeout=10)
+        try:
+            auth.logout_all(secret)
+            return "revoked"
+        except Exception as exc:
+            return exc.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        renew_future = pool.submit(renew)
+        revoke_future = pool.submit(revoke)
+        start.wait(timeout=10)
+        assert renew_future.result(timeout=15) in {"renewed", "session_revoked"}
+        assert revoke_future.result(timeout=15) in {"revoked", "session_revoked"}
+
+    error("session_revoked", lambda: auth.identity(secret))
 
 
 def test_password_change_reset_disable_invalidate(service):
@@ -131,7 +169,7 @@ def test_clock_rollback_and_policy_tightening_fail_closed(service):
     error("clock_untrusted", lambda: auth.session(secret))
     now[0] = 1010
     tightened = BrowserAuthService(
-        auth.repository.path,
+        auth.repository.target,
         BINDING,
         dict(policy, remembered_absolute_seconds=10, remembered_idle_seconds=10),
         clock=lambda: now[0],
@@ -139,29 +177,26 @@ def test_clock_rollback_and_policy_tightening_fail_closed(service):
     error("session_expired", lambda: tightened.session(secret))
 
 
-def test_binding_change_and_database_lock_fail_closed(service):
+def test_binding_change_fails_closed(service):
     from cli_agent_orchestrator.services.browser_auth import BrowserAuthService
 
     auth, now, policy = service
     secret, _ = auth.login("owner", PASSWORD)
     changed = BrowserAuthService(
-        auth.repository.path, dict(BINDING, subject="other"), policy, clock=lambda: now[0]
+        auth.repository.target, dict(BINDING, subject="other"), policy, clock=lambda: now[0]
     )
     error("auth_unavailable", lambda: changed.session(secret))
-    with sqlite3.connect(auth.repository.path) as db:
-        db.execute("BEGIN IMMEDIATE")
-        error("auth_unavailable", lambda: auth.identity(secret))
 
 
 @pytest.mark.parametrize(
     "policy",
     [dict(access_seconds=0), dict(temporal_idle_seconds=999999), dict(access_seconds=999999)],
 )
-def test_invalid_policy_rejected(tmp_path, policy):
+def test_invalid_policy_rejected(postgres_targets, policy):
     from cli_agent_orchestrator.services.browser_auth import BrowserAuthService
 
     with pytest.raises(ValueError):
-        BrowserAuthService(tmp_path / "auth.sqlite3", BINDING, policy)
+        BrowserAuthService(postgres_targets["auth"], BINDING, policy)
 
 
 def test_local_pending_account_verification_creates_no_session(service):
@@ -224,6 +259,33 @@ def test_forward_jump_cannot_resurrect_session_after_clock_returns(service):
     error("session_expired", lambda: auth.session(secret))
     now[0] = 1001
     error("clock_untrusted", lambda: auth.session(secret))
+
+
+def test_concurrent_forward_clock_observation_survives_denial_rollback(service):
+    from cli_agent_orchestrator.services.browser_auth import BrowserAuthService
+
+    auth, _, policy = service
+    secret, _ = auth.login("owner", PASSWORD)
+    forward = BrowserAuthService(auth.repository.target, BINDING, policy, clock=lambda: 2000.0)
+    backward = BrowserAuthService(auth.repository.target, BINDING, policy, clock=lambda: 1001.0)
+    start = Barrier(3)
+
+    def check(service_instance):
+        start.wait(timeout=10)
+        try:
+            service_instance.session(secret)
+            return "valid"
+        except Exception as exc:
+            return exc.code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        forward_result = pool.submit(check, forward)
+        backward_result = pool.submit(check, backward)
+        start.wait(timeout=10)
+        assert forward_result.result(timeout=15) == "session_expired"
+        assert backward_result.result(timeout=15) in {"valid", "clock_untrusted"}
+
+    error("clock_untrusted", lambda: backward.session(secret))
 
 
 def test_oversized_password_never_matches_fallback_verification_text(service):
@@ -338,10 +400,15 @@ def test_failed_old_verifier_does_not_release_new_window_capacity(service, monke
         )
 
 
-def test_ten_character_password_supports_creation_login_change_and_recovery(tmp_path):
+def test_ten_character_password_supports_creation_login_change_and_recovery(postgres_targets):
+    from cli_agent_orchestrator.clients.browser_auth_repository import BROWSER_AUTH_MIGRATIONS
+    from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
     from cli_agent_orchestrator.services.browser_auth import BrowserAuthService
 
-    auth = BrowserAuthService(tmp_path / "auth.sqlite3", BINDING)
+    target = postgres_targets["auth"]
+    migrate_component(target, BROWSER_AUTH_MIGRATIONS)
+    auth = BrowserAuthService(target, BINDING)
+    auth.initialize_store()
     auth.create_account("owner", "1234567890")
     secret, _ = auth.login("owner", "1234567890")
     auth.change_password(secret, "1234567890", "abcdefghij")

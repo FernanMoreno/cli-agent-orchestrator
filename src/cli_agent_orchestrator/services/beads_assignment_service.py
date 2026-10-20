@@ -18,11 +18,10 @@ class BeadsAssignments:
 
     @contextmanager
     def _lock(self, workspace):
-        from cli_agent_orchestrator import constants
         from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
         identity = "beads-" + hashlib.sha256(str(workspace.root).encode()).hexdigest()
-        with terminal_dispatch_lock(constants.DATABASE_FILE, identity):
+        with terminal_dispatch_lock(self.repository.target, identity):
             yield
 
     def _material(self, workspace_id, task_id):
@@ -74,7 +73,7 @@ class BeadsAssignments:
         else:
             self.coordinator.plans._owner(principal)
         row = connection.execute(
-            "SELECT * FROM beads_work_bindings WHERE binding_id=?", (identity,)
+            "SELECT * FROM beads_work_bindings WHERE binding_id=%s", (identity,)
         ).fetchone()
         if row is None or row["owner"] != principal.id:
             raise LookupError("beads_binding_missing")
@@ -111,7 +110,7 @@ class BeadsAssignments:
         ).hexdigest()
         with self.repository.read_snapshot() as connection:
             existing = connection.execute(
-                "SELECT request_hash FROM beads_work_bindings WHERE binding_id=?", (identity,)
+                "SELECT request_hash FROM beads_work_bindings WHERE binding_id=%s", (identity,)
             ).fetchone()
         if existing:
             if existing["request_hash"] != request_hash:
@@ -136,14 +135,15 @@ class BeadsAssignments:
             )
             with self.repository.transaction() as connection:
                 prior = connection.execute(
-                    "SELECT request_hash FROM beads_work_bindings WHERE binding_id=?", (identity,)
+                    "SELECT request_hash FROM beads_work_bindings WHERE binding_id=%s", (identity,)
                 ).fetchone()
                 if prior:
                     if prior["request_hash"] != request_hash:
                         raise beads.BeadsConflict("beads_assignment_material_changed")
                 else:
                     connection.execute(
-                        "INSERT INTO beads_work_bindings VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "INSERT INTO beads_work_bindings VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                        "ON CONFLICT (binding_id) DO NOTHING",
                         (
                             identity,
                             principal.id,
@@ -163,6 +163,12 @@ class BeadsAssignments:
                             time.time(),
                         ),
                     )
+                persisted = connection.execute(
+                    "SELECT request_hash FROM beads_work_bindings WHERE binding_id=%s",
+                    (identity,),
+                ).fetchone()
+                if persisted is None or persisted[0] != request_hash:
+                    raise beads.BeadsConflict("beads_assignment_material_changed")
         return self.status(principal, identity)
 
     def status(self, principal, identity):
@@ -199,7 +205,7 @@ class BeadsAssignments:
                 with self.repository.transaction() as connection:
                     self._row(connection, principal, identity)
                     connection.execute(
-                        "UPDATE beads_work_bindings SET state='completed',revision=revision+1 WHERE binding_id=? AND state='assigned'",
+                        "UPDATE beads_work_bindings SET state='completed',revision=revision+1 WHERE binding_id=%s AND state='assigned'",
                         (identity,),
                     )
             value["state"] = (
@@ -235,7 +241,7 @@ class BeadsAssignments:
             task["work_attempts"] = []
             with self.repository.read_snapshot() as connection:
                 row = connection.execute(
-                    "SELECT * FROM beads_work_bindings WHERE owner=? AND workspace_id=? AND task_id=? "
+                    "SELECT * FROM beads_work_bindings WHERE owner=%s AND workspace_id=%s AND task_id=%s "
                     "ORDER BY created_at DESC,binding_id DESC LIMIT 1",
                     (principal.id, workspace_id, task["id"]),
                 ).fetchone()
@@ -248,7 +254,7 @@ class BeadsAssignments:
                     connection.execute(
                         "SELECT a.id,a.terminal_id,a.state,a.generation,b.step_id,b.run_generation "
                         "FROM work_workflow_step_bindings b JOIN work_attempts a ON a.id=b.work_attempt_id "
-                        "WHERE b.run_id=? ORDER BY b.run_generation,b.workflow_step_attempt,a.id LIMIT 65",
+                        "WHERE b.run_id=%s ORDER BY b.run_generation,b.workflow_step_attempt,a.id LIMIT 65",
                         (row["run_id"],),
                     ).fetchall()
                     if row["run_id"]
@@ -301,22 +307,29 @@ class BeadsAssignments:
                 raise beads.BeadsConflict("beads_assignment_material_changed")
 
             def attach(connection, coordinator_id, attached_run):
+                # Coordinate workspace capacity and active-task uniqueness across
+                # app instances. The partial unique index remains the final
+                # integrity guard for duplicate active task assignments.
+                connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+                    (f"beads-workspace:{connection.target.store_id}:{row['workspace_id']}",),
+                )
                 current = self._row(connection, principal, identity)
                 if current["state"] != "prepared" or current["run_id"] is not None:
                     raise beads.BeadsConflict("beads_assignment_already_started")
                 count = connection.execute(
-                    "SELECT COUNT(*) FROM beads_work_bindings WHERE workspace_id=? AND state IN ('assigned','stopping','reconcile')",
+                    "SELECT COUNT(*) FROM beads_work_bindings WHERE workspace_id=%s AND state IN ('assigned','stopping','reconcile')",
                     (row["workspace_id"],),
                 ).fetchone()[0]
                 if connection.execute(
-                    "SELECT 1 FROM beads_work_bindings WHERE workspace_id=? AND task_id=? AND state IN ('assigned','stopping','reconcile')",
+                    "SELECT 1 FROM beads_work_bindings WHERE workspace_id=%s AND task_id=%s AND state IN ('assigned','stopping','reconcile')",
                     (row["workspace_id"], row["task_id"]),
                 ).fetchone():
                     raise beads.BeadsConflict("beads_task_already_assigned")
                 if count >= 32:
                     raise beads.BeadsConflict("beads_workspace_capacity")
                 connection.execute(
-                    "UPDATE beads_work_bindings SET coordinator_id=?,run_id=?,state='assigned',revision=revision+1 WHERE binding_id=?",
+                    "UPDATE beads_work_bindings SET coordinator_id=%s,run_id=%s,state='assigned',revision=revision+1 WHERE binding_id=%s",
                     (coordinator_id, attached_run, identity),
                 )
 
@@ -340,14 +353,14 @@ class BeadsAssignments:
         with self.repository.transaction() as connection:
             self._row(connection, principal, identity)
             connection.execute(
-                "UPDATE beads_work_bindings SET state='stopping',revision=revision+1 WHERE binding_id=? AND state='assigned'",
+                "UPDATE beads_work_bindings SET state='stopping',revision=revision+1 WHERE binding_id=%s AND state='assigned'",
                 (identity,),
             )
         result = await self.coordinator.stop(principal, row["coordinator_id"])
         if result["state"] == "stopped":
             with self.repository.transaction() as connection:
                 connection.execute(
-                    "UPDATE beads_work_bindings SET state='stopped',revision=revision+1 WHERE binding_id=? AND state='stopping'",
+                    "UPDATE beads_work_bindings SET state='stopped',revision=revision+1 WHERE binding_id=%s AND state='stopping'",
                     (identity,),
                 )
         return self.status(principal, identity)

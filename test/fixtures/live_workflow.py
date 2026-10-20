@@ -8,7 +8,13 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from test.fixtures.cao_server import CaoServer, _pick_free_port, _start_cao_server
+from test.fixtures.cao_server import (
+    CaoServer,
+    _authorize_live_provider,
+    _pick_free_port,
+    _stage_live_provider_auth,
+    _start_cao_server,
+)
 from typing import Iterator
 
 import pytest
@@ -16,26 +22,11 @@ import pytest
 
 @pytest.fixture
 def live_workflow_server(tmp_path: Path) -> Iterator[CaoServer]:
-    if os.environ.get("CAO_RUN_LIVE_PROVIDER_TESTS") != "1":
-        pytest.skip("Set CAO_RUN_LIVE_PROVIDER_TESTS=1 for real workflow acceptance")
     provider = os.environ.get("CAO_LIVE_WORKFLOW_PROVIDER", "claude_code")
-    choices = {
-        "claude_code": (
-            "claude",
-            "claude-haiku-4-5",
-            (".claude/.credentials.json", ".claude.json"),
-        ),
-        "codex": ("codex", "gpt-6-luna", (".codex/auth.json",)),
-        "opencode_cli": (
-            "opencode",
-            "opencode-go/longcat-2.5-preview-free",
-            (".local/share/opencode/auth.json",),
-        ),
-    }
-    assert provider in choices, "Select an explicitly supported live provider"
-    binary, model, auth_files = choices[provider]
-    assert shutil.which(binary) and shutil.which("tmux"), "Provider CLI and tmux are required"
-    auth_home = Path(os.environ.get("CAO_REAL_PROVIDER_E2E_AUTH_HOME", str(Path.home())))
+    authorization = _authorize_live_provider(provider)
+    auth_files = authorization.auth_files
+    auth_home = authorization.auth_home
+    assert shutil.which("tmux"), "tmux is required"
     home = tmp_path / "live-workflow-home"
     home.mkdir(mode=0o700)
     if provider == "codex":
@@ -44,45 +35,32 @@ def live_workflow_server(tmp_path: Path) -> Iterator[CaoServer]:
             "OPENAI_API_KEY"
         ), "Zero-extra-cost acceptance requires a ChatGPT subscription login"
     assert all((auth_home / relative).is_file() for relative in auth_files)
-    # Copy only the documented login records; never mutate the operator's profile.
-    for relative in auth_files:
-        source = auth_home / relative
-        assert source.is_file(), f"Required subscription login record absent: {relative}"
-        target = home / relative
-        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        shutil.copyfile(source, target)
-        target.chmod(0o600)
+    # Copy only manifest-listed login records; never mutate the auth source.
+    _stage_live_provider_auth(home, authorization)
     cao_home = home / ".aws" / "cli-agent-orchestrator"
     store = cao_home / "agent-store"
     store.mkdir(parents=True, mode=0o700)
     for name in ("reviewer", "live-workflow"):
         (store / f"{name}.md").write_text(
             f"---\nname: {name}\ndescription: Live workflow acceptance\n"
-            f"provider: {provider}\nmodel: {model}\nrole: reviewer\n---\n"
+            f"provider: {provider}\nmodel: {authorization.model}\nrole: reviewer\n---\n"
             "Answer briefly. Always include the requested CAO-TURN-RECEIPT token verbatim as "
             "the final output line after completing the task, even when asked for output only. "
             "Do not edit files, delegate, or start background work.\n",
             encoding="utf-8",
         )
-    # Remove paid/API authentication inputs inherited by the managed subprocess.
+    # ``_start_cao_server`` removes inherited provider credentials and uses
+    # the private HOME above; don't pass secret-shaped placeholder values.
     isolated = {
-        key: ""
-        for key in os.environ
-        if key.endswith(("API_KEY", "API_TOKEN", "BASE_URL"))
-        or key in {"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "OPENAI_ACCESS_TOKEN"}
+        "CAO_HOME_DIR": str(cao_home),
+        "CAO_TERMINAL_BACKEND": "tmux",
+        "CODEX_HOME": str(home / ".codex"),
+        "CLAUDE_CONFIG_DIR": str(home / ".claude"),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_DATA_HOME": str(home / ".local/share"),
+        "OPENCODE_CONFIG": "",
+        "OPENCODE_CONFIG_DIR": str(home / ".config/opencode"),
     }
-    isolated.update(
-        {
-            "CAO_HOME_DIR": str(cao_home),
-            "CAO_TERMINAL_BACKEND": "tmux",
-            "CODEX_HOME": str(home / ".codex"),
-            "CLAUDE_CONFIG_DIR": str(home / ".claude"),
-            "XDG_CONFIG_HOME": str(home / ".config"),
-            "XDG_DATA_HOME": str(home / ".local/share"),
-            "OPENCODE_CONFIG": "",
-            "OPENCODE_CONFIG_DIR": str(home / ".config/opencode"),
-        }
-    )
     tmux_tmp = Path(tempfile.mkdtemp(prefix="cw-"))
     isolated["TMUX_TMPDIR"] = str(tmux_tmp)
     server = None

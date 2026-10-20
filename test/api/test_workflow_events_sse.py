@@ -2,7 +2,7 @@
 
 Covers the SSE live-follow arm content-negotiated onto the SAME
 ``GET /workflows/runs/{run_id}/events`` path as U3's batch read, over a REAL
-durable journal (temp SQLite DB) — the point is to prove the exact wire contract
+durable journal (isolated PostgreSQL target) — the point is to prove the exact wire contract
 #505's client follower (U10) consumes:
 
 - **Durable replay** (BR-1/BR-3): connecting with ``Accept: text/event-stream``
@@ -26,8 +26,8 @@ durable journal (temp SQLite DB) — the point is to prove the exact wire contra
 - **Batch path unchanged**: a normal (non-stream) GET still returns U3's
   ``EventTimelinePage`` JSON byte-behavior-identical.
 
-The journal is pointed at a temp DB via the patched ``DATABASE_FILE`` and the
-event migration memo is reset, mirroring ``test_workflow_inspection_replay.py``.
+Each test uses the shared isolated PostgreSQL target and an empty process-local
+registry, so the stream reads the durable journal without touching user data.
 """
 
 from __future__ import annotations
@@ -35,7 +35,6 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-from pathlib import Path
 from typing import Dict, List
 
 import pytest
@@ -52,14 +51,9 @@ _STREAM_TIMEOUT_S = 15.0
 
 
 @pytest.fixture(autouse=True)
-def _isolated_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Fresh temp journal DB + clean registry/migration memo for each test."""
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    workflow_journal._event_migrated_paths.clear()
+def _isolated_journal(isolated_memory_db, monkeypatch: pytest.MonkeyPatch):
+    """Use the shared isolated PostgreSQL target and clear the process cache."""
     monkeypatch.setattr(workflow_service, "run_registry", {})
-    yield db_path
-    workflow_journal._event_migrated_paths.clear()
 
 
 # ---------------------------------------------------------------------------

@@ -131,10 +131,15 @@ class MemoryGraphProvider(GraphProvider):
         resolved_binding = self._binding_resolver(scope, scope_id)
         scope_id = resolved_binding.scope_id
         lint_enabled = self._lint_enabled()
+        repository = self._svc._legacy_repository()
         key = (
             "memory",
             str(self._svc.base_dir.resolve()),
-            str(self._svc._legacy_repository().path.resolve()),
+            str(repository.path.resolve()),
+            # The filesystem artifact root can be shared by distinct PostgreSQL
+            # schemas/stores. Partition cached views by the configured logical
+            # store identity as well; this tuple contains no credentials.
+            repository.target.identity,
             scope,
             scope_id,
             lint_enabled,

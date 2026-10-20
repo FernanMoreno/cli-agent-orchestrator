@@ -51,26 +51,20 @@ Rule coverage, one group per rule from
 - SR-6  — a ``step_id`` full of SQL metacharacters round-trips as data (:class:`TestNoSql`).
 - TD-1  — exactly five package imports, by AST (:class:`TestPosture`).
 
-Rows are seeded THROUGH THE JOURNAL against a real temp SQLite DB (the patched
-``DATABASE_FILE``), mirroring ``test_script_journal_extension.py``'s and
-``test_journal_step_lifecycle.py``'s fixture pattern — not mocked, so the gate is tested
-against the row shape ``begin_step``/``settle_step`` actually write.
+Rows are seeded THROUGH THE JOURNAL against the per-test PostgreSQL target — not mocked,
+so the gate is tested against the row shape ``begin_step``/``settle_step`` actually write.
 """
 
 from __future__ import annotations
 
 import ast
 import inspect
-import sqlite3
 from pathlib import Path
 from typing import Optional
 
 import pytest
 
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
-)
+from cli_agent_orchestrator.clients.postgres import Connection, DatabaseError
 from cli_agent_orchestrator.models.workflow import RecoveryPolicy, StepResultEnvelope
 from cli_agent_orchestrator.models.workflow_runtime import StepState
 from cli_agent_orchestrator.services import step_replay, workflow_journal
@@ -124,19 +118,12 @@ _POLICIES: list[Optional[RecoveryPolicy]] = [
 
 
 @pytest.fixture(autouse=True)
-def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Point the journal at a temp DB and create the tables (both #583 columns included)."""
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
-    yield db_path
+def _journal_state():
+    """Use the isolated PostgreSQL schema installed by the shared test fixture."""
 
 
-def _direct_connect() -> sqlite3.Connection:
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    return sqlite3.connect(str(DATABASE_FILE))
+def _direct_connect() -> Connection:
+    return workflow_journal._connect()
 
 
 def _seed_step(
@@ -161,7 +148,7 @@ def _seed_step(
         with _direct_connect() as conn:
             conn.execute(
                 "UPDATE workflow_run_step SET call_fingerprint = NULL "
-                "WHERE run_id = ? AND step_id = ?",
+                "WHERE run_id = %s AND step_id = %s",
                 (run_id, step_id),
             )
 
@@ -367,7 +354,7 @@ class TestPerRuleTable:
 
     def test_rule9_halts_a_lossy_envelope_rather_than_serving_abridged_text(self):
         """PR #628 review (Copilot F5). ``build_envelope`` redacts and then bounds
-        ``last_message`` before it reaches SQLite, but the ORIGINAL call answered with
+        ``last_message`` before it reaches persistence, but the ORIGINAL call answered with
         ``run_agent_step``'s raw text — the success arm of the route never touches the
         envelope. So replaying a lossy envelope serves text the original call did not, and
         ``RunStepResponse`` has no ``truncated``/``redacted`` field in which to say so.
@@ -524,7 +511,7 @@ class TestInfiniteHaltRegression:
         # The human authorises a rerun (unit 12's transition, simulated by the state alone).
         with _direct_connect() as conn:
             conn.execute(
-                "UPDATE workflow_run_step SET state = ? WHERE run_id = ? AND step_id = ?",
+                "UPDATE workflow_run_step SET state = %s WHERE run_id = %s AND step_id = %s",
                 (RERUN_AUTHORIZED, RUN, STEP),
             )
 
@@ -1057,21 +1044,21 @@ class TestReadFailure:
 
         monkeypatch.setattr(step_replay, "get_step", _boom)
 
-    def test_sqlite_error_propagates_unchanged(self, monkeypatch: pytest.MonkeyPatch):
-        error = sqlite3.OperationalError("database is locked")
+    def test_postgres_error_propagates_unchanged(self, monkeypatch: pytest.MonkeyPatch):
+        error = DatabaseError("database unavailable")
         self._patch_get_step_to_raise(monkeypatch, error)
-        with pytest.raises(sqlite3.Error) as excinfo:
+        with pytest.raises(DatabaseError) as excinfo:
             decide(RUN, STEP, FP_CALL, None)
         assert excinfo.value is error  # identity: not re-wrapped, not re-raised as something else
 
     def test_no_verdict_is_returned_when_the_read_fails(self, monkeypatch: pytest.MonkeyPatch):
         """The row is ABSENT here, so a swallowed error would have produced the most
         dangerous possible verdict — rule 1's ``EXECUTE``."""
-        self._patch_get_step_to_raise(monkeypatch, sqlite3.DatabaseError("disk I/O error"))
+        self._patch_get_step_to_raise(monkeypatch, DatabaseError("connection lost"))
         returned = None
         try:
             returned = decide(RUN, STEP, FP_CALL, RecoveryPolicy.IDEMPOTENT)
-        except sqlite3.Error:
+        except DatabaseError:
             pass
         assert returned is None
 
@@ -1147,7 +1134,7 @@ class TestOneReadNoWrites:
             conn.execute(
                 "INSERT INTO workflow_run_step (run_id, step_id, state, attempts, output_json, "
                 "error, updated_at, call_fingerprint, result_json) "
-                "VALUES (?, ?, ?, 1, NULL, NULL, ?, ?, ?)",
+                "VALUES (%s, %s, %s, 1, NULL, NULL, %s, %s, %s)",
                 (RUN, STEP, StepState.COMPLETED.value, TS, FP_CALL, RESULT_JSON),
             )
         assert decide(RUN, STEP, FP_CALL, None).verdict is ReplayVerdict.REPLAY
@@ -1334,7 +1321,7 @@ class TestReasonContent:
 class TestEnvelopePassthrough:
     def test_the_returned_envelope_is_field_for_field_what_parse_envelope_produced(self):
         """The gate re-sanitises nothing and adds nothing: the value was redacted and then
-        bounded by ``build_envelope`` before it reached SQLite (unit 2's SR-1/BR-2), and a
+        bounded by ``build_envelope`` before it reached persistence (unit 2's SR-1/BR-2), and a
         caller receives exactly what was persisted."""
         _seed_step(state=StepState.COMPLETED.value, fingerprint=FP_CALL, result_json=RESULT_JSON)
         d = decide(RUN, STEP, FP_CALL, None)

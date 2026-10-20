@@ -14,6 +14,7 @@ from test.security.test_work_bubblewrap_composition import (
 
 import pytest
 
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.services import work_bubblewrap_composition as composition
 
@@ -27,7 +28,7 @@ def _digest(payload):
 def test_parent_persists_exact_process_identity_before_worker_release(tmp_path):
     bwrap = _real_bubblewrap()
     executable_identity, executable = _worker_fixture()
-    store = WorkRepository(tmp_path / "work.db")
+    store = WorkRepository(DatabaseTarget.from_settings(scope="main"), filesystem_home=tmp_path)
     store.initialize()
     _sent_attempt(store)
     identities = []
@@ -85,7 +86,12 @@ def test_parent_persists_exact_process_identity_before_worker_release(tmp_path):
         bwrap_sha256_digest=_TRUSTED_BWRAP_SHA256,
     )
     assert len(identities) == 1
-    assert WorkRepository(store.path).read_bubblewrap_process_identity("a", 1) == identities[0]
+    assert (
+        WorkRepository(
+            store.target, filesystem_home=store.filesystem_home
+        ).read_bubblewrap_process_identity("a", 1)
+        == identities[0]
+    )
     assert result.stdout == _WORKER_MARKER
 
 

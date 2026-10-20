@@ -36,30 +36,24 @@ call" vacuously true and "the YAML tier never reaches the gate" untestable, so t
 one level lower — at the terminal layer — exactly as ``test_run_step_replay_branch.py`` does.
 A route or engine that wrongly fell through therefore REACHES the spy.
 
-ISOLATION (SR-1): every test points ``constants.DATABASE_FILE`` at a ``tmp_path`` file before
-writing anything and asserts it, and every ``run_id`` is prefixed ``rvg-`` so a leak is
-attributable on sight. ``run-step-replay-branch``'s Finding 3 found real rows in the
-developer's own database written by two sibling api test files; this unit manufactures rows
-the gate exists to HALT on, so the requirement is stricter here than anywhere else.
+ISOLATION (SR-1): every test uses the shared fixture's private worker PostgreSQL schema,
+which the fixture resets before each test; it asserts the configured target identity and
+prefixes each ``run_id`` with ``rvg-`` so a leak is attributable on sight.
+``run-step-replay-branch``'s Finding 3 found real rows in a shared database written by sibling
+API tests; this unit manufactures rows the gate exists to HALT on, so isolation remains a
+correctness condition.
 """
 
 from __future__ import annotations
 
 import json
-import sqlite3
 from contextlib import ExitStack, contextmanager
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import cli_agent_orchestrator.constants as constants
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
-)
-from cli_agent_orchestrator.clients.work_repository import WorkRepository
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget, connect
 from cli_agent_orchestrator.constants import TERMINALS_RUN_STEP_ROUTE
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.models.workflow import (
@@ -68,13 +62,17 @@ from cli_agent_orchestrator.models.workflow import (
     WorkflowStep,
 )
 from cli_agent_orchestrator.models.workflow_runtime import RunState, StepState
-from cli_agent_orchestrator.services import step_replay, workflow_journal, workflow_service
+from cli_agent_orchestrator.services import (
+    agent_step,
+    remote_terminal_service,
+    step_replay,
+    workflow_journal,
+    workflow_service,
+)
 from cli_agent_orchestrator.services.script_runner import ScriptRunRecord
+from cli_agent_orchestrator.services.status_monitor import StatusMonitor
 from cli_agent_orchestrator.services.step_fingerprint import StepCallFields, compute
 from cli_agent_orchestrator.services.step_result import serialise_envelope
-
-# Captured at import, before any fixture can patch it — see the services file's rationale.
-_PRODUCTION_DATABASE_FILE = Path(constants.DATABASE_FILE)
 
 _AGENT_STEP = "cli_agent_orchestrator.services.agent_step"
 
@@ -89,33 +87,25 @@ FP_LEGACY = "a1b2c3d4" * 8
 # Isolation + harness
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
-def _isolated_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Temp SQLite journal + both #583-era tables + an isolated process-local registry."""
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
-    WorkRepository(db_path).initialize()
+def _isolated_journal(isolated_memory_db, monkeypatch: pytest.MonkeyPatch):
+    """Use the private PostgreSQL schema and isolate process-local run state."""
     before = dict(workflow_service.run_registry)
     workflow_service.run_registry.clear()
     workflow_service._active_drives.clear()
     workflow_service.step_output_store._store.clear()
-    yield db_path
+    yield isolated_memory_db
     workflow_service.run_registry.clear()
     workflow_service.run_registry.update(before)
     workflow_service._active_drives.clear()
     workflow_service.step_output_store._store.clear()
 
 
-def _assert_tmp_db(db_path: Path) -> None:
-    """Assert this test is operating on the ``tmp_path`` database (SR-1). One line per test."""
-    from cli_agent_orchestrator.constants import DATABASE_FILE as live
-
-    assert Path(live) == db_path, f"journal points at {live}, not the tmp_path database"
-    assert (
-        Path(live) != _PRODUCTION_DATABASE_FILE
-    ), "journal points at the developer's REAL database"
-    assert db_path.exists(), "the tmp_path database was never created"
+def _assert_isolated_target(target) -> None:
+    """Assert tests use the fixture-owned worker target reset between cases."""
+    configured = DatabaseTarget.from_settings(scope="main")
+    assert target.scope == "main"
+    assert target.identity == configured.identity
+    assert target.schema.startswith("w_"), "test is not bound to its isolated worker schema"
 
 
 class _ProviderSpy:
@@ -132,10 +122,9 @@ class _ProviderSpy:
         self.prompts: List[str] = []
         self.terminals: List[str] = []
 
-    def __call__(self, terminal_id: str, prompt: str, *args, **kwargs) -> bool:
+    def __call__(self, terminal_id: str, prompt: str, *args, **kwargs) -> None:
         self.terminals.append(terminal_id)
         self.prompts.append(prompt)
-        return True
 
 
 @contextmanager
@@ -148,12 +137,27 @@ def _terminal_layer(spy: _ProviderSpy, *, created_id: str = "rvg-fresh-terminal"
     """
     terminal = MagicMock()
     terminal.id = created_id
+    isolated_monitor = StatusMonitor()
+
+    def _send_input_with_turn(terminal_id, prompt, *args, **kwargs):
+        spy(terminal_id, prompt, *args, **kwargs)
+        return isolated_monitor.notify_input_sent(terminal_id, real_send=True)
+
     patches = (
+        patch(f"{_AGENT_STEP}.status_monitor", new=isolated_monitor),
+        patch(
+            "cli_agent_orchestrator.services.terminal_service.status_monitor",
+            new=isolated_monitor,
+        ),
+        patch(
+            "cli_agent_orchestrator.services.remote_terminal_service.placement",
+            return_value=None,
+        ),
         patch(
             f"{_AGENT_STEP}.terminal_service.create_terminal",
             new=AsyncMock(return_value=terminal),
         ),
-        patch(f"{_AGENT_STEP}.terminal_service.send_input", new=spy),
+        patch(f"{_AGENT_STEP}.terminal_service.send_input", new=_send_input_with_turn),
         patch(f"{_AGENT_STEP}.terminal_service.delete_terminal", return_value=True),
         patch(f"{_AGENT_STEP}.terminal_service.get_output", return_value="a fresh answer"),
         patch(f"{_AGENT_STEP}.terminal_service.exit_terminal_cli", return_value=None),
@@ -284,32 +288,25 @@ def _manufacture_legacy_row(run_id: str, step_id: str, envelope: StepResultEnvel
     A settled row carrying a pre-``v2`` fingerprint is not what any production writer
     produces, so the upgrade window has to be constructed rather than driven.
     """
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    with sqlite3.connect(str(DATABASE_FILE)) as conn:
+    with connect(DatabaseTarget.from_settings(scope="main")) as conn:
         conn.execute(
             "INSERT INTO workflow_run_step "
             "(run_id, step_id, state, attempts, output_json, error, updated_at, "
             " call_fingerprint, result_json) "
-            "VALUES (?, ?, 'completed', 1, NULL, NULL, ?, ?, ?)",
+            "VALUES (%s, %s, 'completed', 1, NULL, NULL, %s, %s, %s)",
             (run_id, step_id, TS, FP_LEGACY, serialise_envelope(envelope)),
         )
 
 
 def _raw_row(run_id: str, step_id: str) -> Optional[tuple]:
     """The row as stored bytes — the unchanged-across-the-run comparison."""
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    conn = sqlite3.connect(str(DATABASE_FILE))
-    try:
+    with connect(DatabaseTarget.from_settings(scope="main")) as conn:
         return conn.execute(
             "SELECT run_id, step_id, state, attempts, output_json, error, updated_at, "
             "call_fingerprint, result_json FROM workflow_run_step "
-            "WHERE run_id = ? AND step_id = ?",
+            "WHERE run_id = %s AND step_id = %s",
             (run_id, step_id),
         ).fetchone()
-    finally:
-        conn.close()
 
 
 # The three-step resumed run every NFR-2 test drives: s1 and s2 already settled and
@@ -357,7 +354,7 @@ class TestNoProviderCallForAnAlreadyCompletedStep:
     """
 
     def test_no_provider_call_is_made_for_the_replayed_steps(self, client, _isolated_journal):
-        _assert_tmp_db(_isolated_journal)
+        _assert_isolated_target(_isolated_journal)
         spy, responses = _drive_resumed_run(client)
 
         assert responses["s1"].status_code == 200
@@ -374,7 +371,7 @@ class TestNoProviderCallForAnAlreadyCompletedStep:
         """HALF TWO, AND THE ONE THAT STOPS THE TEST PASSING FOR A RUN THAT DID NOTHING.
         Without it, a route that returned 200 for every step without ever executing anything
         would satisfy the first half perfectly."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_isolated_target(_isolated_journal)
         spy, responses = _drive_resumed_run(client)
 
         assert responses["s3"].status_code == 200
@@ -384,7 +381,7 @@ class TestNoProviderCallForAnAlreadyCompletedStep:
     def test_the_whole_resumed_run_makes_exactly_one_provider_call(self, client, _isolated_journal):
         """BOTH HALVES IN ONE ASSERTION. The exact list is what a future change cannot satisfy
         by weakening one side: it pins the count, the identity and the ordering at once."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_isolated_target(_isolated_journal)
         spy, _responses = _drive_resumed_run(client)
 
         assert spy.prompts == [_PROMPTS["s3"]]
@@ -400,7 +397,7 @@ class TestNoProviderCallForAnAlreadyCompletedStep:
         replayed step in a route that had simply lost the envelope, so the payload is asserted
         too — and the dead terminal id, which is the only place the stored envelope can come
         from (``StepRow`` has no ``terminal_id`` column)."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_isolated_target(_isolated_journal)
         _spy, responses = _drive_resumed_run(client)
 
         assert responses["s1"].json()["last_message"] == "s1's stored answer"
@@ -415,7 +412,7 @@ class TestNoProviderCallForAnAlreadyCompletedStep:
     ):
         """A replayed step must cost no WRITE either, across the whole run rather than one
         call — a later step's settle must not disturb an earlier step's row."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_isolated_target(_isolated_journal)
         run_id = _RESUMED_RUN
         _register_script_run(run_id)
         bodies = {
@@ -445,7 +442,7 @@ class TestNoProviderCallForAnAlreadyCompletedStep:
         invoked" half passes on while proving nothing, and naming it here is what makes
         ``test_a_provider_call_is_made_for_the_step_that_genuinely_executes`` load-bearing
         rather than decorative."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_isolated_target(_isolated_journal)
         spy, responses = _drive_resumed_run(client, replay_everything=True)
 
         assert spy.prompts == []
@@ -511,7 +508,7 @@ class TestSequentialYamlWorkflowsKeepWorking:
 
     @pytest.mark.asyncio
     async def test_a_sequential_yaml_run_completes_with_unchanged_results(self, _isolated_journal):
-        _assert_tmp_db(_isolated_journal)
+        _assert_isolated_target(_isolated_journal)
         spy = _ProviderSpy()
         with _terminal_layer(spy):
             result = await workflow_service.start_run(_yaml_spec(), {}, f"{self.RUN}-a")
@@ -529,7 +526,7 @@ class TestSequentialYamlWorkflowsKeepWorking:
         self, _isolated_journal
     ):
         """YAML runs keep their own durable contract identity and do not write script envelopes."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_isolated_target(_isolated_journal)
         spy = _ProviderSpy()
         with _terminal_layer(spy):
             await workflow_service.start_run(_yaml_spec(), {}, f"{self.RUN}-b")
@@ -563,7 +560,7 @@ class TestSequentialYamlWorkflowsKeepWorking:
         unchanged would pass the test above even if the gate ran on every step and happened to
         return ``EXECUTE`` every time — which is precisely the cheapness claim every unit in
         this Bolt made and none tested."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_isolated_target(_isolated_journal)
         gate = _GateSpy(monkeypatch)
         spy = _ProviderSpy()
         with _terminal_layer(spy):
@@ -584,7 +581,7 @@ class TestSequentialYamlWorkflowsKeepWorking:
         that one asserts the route's guard, this one is C-1's binding assertion that a
         pre-existing YAML caller still gets its step EXECUTED — the stored result must not be
         served to another tier."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_isolated_target(_isolated_journal)
         run_id = f"{self.RUN}-route"
         _register_yaml_run_row(run_id)  # journal row, NO live ScriptRunRecord
         body = _body("y1", run_id, prompt="do y1 over http")
@@ -609,7 +606,7 @@ class TestSequentialYamlWorkflowsKeepWorking:
         """THE FORCING FUNCTION for the two ``== []`` assertions above. A spy installed on the
         wrong name records nothing and every "never called" assertion passes for free, so a
         call the gate genuinely DOES make is driven through it here."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_isolated_target(_isolated_journal)
         run_id = f"{self.RUN}-spy-check"
         _register_script_run(run_id)  # a SCRIPT-tier run: the gate is consulted
         body = _body("s1", run_id, prompt="do s1")
@@ -638,7 +635,7 @@ class TestTheUpgradeWindowOverHttp:
     def test_an_undeclared_resume_halts_as_unverifiable_and_never_as_diverged(
         self, client, _isolated_journal
     ):
-        _assert_tmp_db(_isolated_journal)
+        _assert_isolated_target(_isolated_journal)
         run_id = f"{self.RUN}-undeclared"
         _register_script_run(run_id)
         body = _body("s1", run_id, prompt="do s1")
@@ -662,7 +659,7 @@ class TestTheUpgradeWindowOverHttp:
         """Rule 4 end to end: the SAME row, the same route, a declared policy — and the step
         runs instead of halting. Without this half the test above would also pass on a route
         that halted on every legacy row regardless of what its author declared."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_isolated_target(_isolated_journal)
         run_id = f"{self.RUN}-idempotent"
         _register_script_run(run_id)
         body = _body("s1", run_id, prompt="do s1", recovery="idempotent")
@@ -681,7 +678,7 @@ class TestTheUpgradeWindowOverHttp:
         """BR-8 at the HTTP boundary, over both routes at once. 409/``diverged`` is the wrong
         answer for an unverifiable row and a reordering of rules 4-6 is what would produce it,
         so the prohibition is asserted where an operator would actually read it."""
-        _assert_tmp_db(_isolated_journal)
+        _assert_isolated_target(_isolated_journal)
         statuses: Dict[str, tuple] = {}
         for label, recovery in (("undeclared", None), ("idempotent", "idempotent")):
             run_id = f"{self.RUN}-nodiv-{label}"

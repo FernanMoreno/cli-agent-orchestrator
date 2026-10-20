@@ -80,6 +80,7 @@ async def _launch(binding, payload, snapshot, port):
                 allowed_tools=list(payload.allowed_tools),
                 model=binding.contract.model.value,
                 prompt_redelivery=False,
+                interaction_work_binding=binding,
             )
             if payload.message:
                 terminal_service.send_input(

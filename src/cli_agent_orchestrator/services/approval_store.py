@@ -13,7 +13,7 @@ correct while permitting something.
 THERE IS NO UPDATE, NO DELETE AND NO REPLACING UPSERT, AND THAT ABSENCE IS THE CENTRAL CONTROL. An update path
 would let a caller point an existing approval at a changed plan: the row would read as approved, its timestamp
 would look recent, and **work nobody reviewed would execute with a genuine approval behind it** — not a bypass
-of the gate, but a corruption of the thing the gate consults. ``grant`` therefore uses ``INSERT OR IGNORE``, so
+of the gate, but a corruption of the thing the gate consults. ``grant`` therefore uses ``INSERT ... ON CONFLICT DO NOTHING``, so
 write-once is a property of the statement rather than of a caller remembering to look first.
 
 ABSENCE AND STORE FAULTS BOTH REFUSE EXECUTION. ``approval_state`` distinguishes a missing approval
@@ -32,14 +32,20 @@ takes approval BEFORE running. ``approval-gate``'s refusal message MUST carry th
 has nothing to act on.
 """
 
-import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from cli_agent_orchestrator.clients.database import _migrate_workflow_plan_approval
-from cli_agent_orchestrator.constants import DATABASE_FILE
+from cli_agent_orchestrator.clients.postgres import (
+    ConfigurationError,
+    Connection,
+    DatabaseError,
+    DatabaseTarget,
+    connect,
+)
+from cli_agent_orchestrator.clients.postgres.migrations import SchemaMismatch, verify_component
+from cli_agent_orchestrator.clients.private_plan_postgres_schema import PRIVATE_PLAN_MIGRATIONS
 
 
 @dataclass(frozen=True)
@@ -56,37 +62,29 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _connect() -> sqlite3.Connection:
-    """Open a connection, ensuring the table exists first.
-
-    THE MIGRATOR RUNS ON EVERY CONNECT, AND THAT IS NOT BELT-AND-BRACES. Relying on ``init_db`` alone is
-    verifiably insufficient: ``workflow_journal``'s own ``_MIGRATED_PATHS`` comment records that **five test
-    modules repoint ``DATABASE_FILE`` to a temporary path mid-process**, which is exactly why the journal does
-    not trust the lifespan either. Without this call the table would be absent precisely where this unit's tests
-    and ``approval-gate``'s run, and every lookup would answer "not approved" — refusing every run.
-
-    DELIBERATELY NOT MEMOISED, unlike the journal. It needed ``_MIGRATED_PATHS`` because it re-ran two migrators
-    plus DDL on EVERY journal call; this issues one idempotent ``CREATE TABLE IF NOT EXISTS`` before an
-    operation that happens once per run start. A cache would also require the column verification the journal
-    learned it needed — because a migrator that swallows failure "RETURNS NORMALLY when it fails" and so
-    establishes nothing — which is a lot of machinery for three columns. Revisit if this table ever lands on a
-    hot path.
-    """
-    _migrate_workflow_plan_approval()
-    return sqlite3.connect(str(DATABASE_FILE))
+def _connect() -> Connection:
+    """Open a verified native transaction without modifying schema."""
+    connection = connect(DatabaseTarget.from_settings())
+    try:
+        connection.begin()
+        verify_component(connection, PRIVATE_PLAN_MIGRATIONS)
+        return connection
+    except BaseException:
+        connection.close()
+        raise
 
 
 def grant(plan_id: str, approved_by: str) -> None:
     """Record an approval for ``plan_id``. Write-once: a repeated grant is a no-op.
 
-    ``INSERT OR IGNORE`` rather than a plain ``INSERT`` so a second grant for an already-approved plan neither
+    ``INSERT ... ON CONFLICT DO NOTHING`` rather than a plain ``INSERT`` so a second grant for an already-approved plan neither
     errors nor overwrites the original ``approved_at`` / ``approved_by``. Harmless to repeat, impossible to
     rewrite.
     """
     with closing(_connect()) as _owned_conn, _owned_conn as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO workflow_plan_approval (plan_id, approved_at, approved_by) "
-            "VALUES (?, ?, ?)",
+            "INSERT INTO workflow_plan_approval (plan_id, approved_at, approved_by) "
+            "VALUES (%s, %s, %s) ON CONFLICT (plan_id) DO NOTHING",
             (plan_id, _now(), approved_by),
         )
 
@@ -102,9 +100,9 @@ def approval_state(plan_id: str) -> str:
     try:
         with closing(_connect()) as _owned_conn, _owned_conn as conn:
             row = conn.execute(
-                "SELECT 1 FROM workflow_plan_approval WHERE plan_id = ?", (plan_id,)
+                "SELECT 1 FROM workflow_plan_approval WHERE plan_id = %s", (plan_id,)
             ).fetchone()
-    except sqlite3.Error:
+    except (DatabaseError, ConfigurationError, SchemaMismatch):
         # A database fault is not "no approval". UNKNOWN keeps the run fail-closed (the gate refuses)
         # while preserving that the cause was a store the gate could not read, not a missing approval.
         return UNKNOWN
@@ -125,10 +123,10 @@ def get_approval(plan_id: str) -> Optional[PlanApproval]:
     try:
         with closing(_connect()) as _owned_conn, _owned_conn as conn:
             row = conn.execute(
-                "SELECT plan_id, approved_at, approved_by FROM workflow_plan_approval WHERE plan_id = ?",
+                "SELECT plan_id, approved_at, approved_by FROM workflow_plan_approval WHERE plan_id = %s",
                 (plan_id,),
             ).fetchone()
-    except sqlite3.Error:
+    except (DatabaseError, ConfigurationError, SchemaMismatch):
         return None
     if row is None:
         return None

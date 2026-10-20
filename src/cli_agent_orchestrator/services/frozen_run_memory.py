@@ -117,7 +117,7 @@ class WorkOrderSnapshotReader:
                 snapshot = DelegationSnapshots._load_authorized(
                     connection,
                     connection.execute(
-                        "SELECT * FROM work_delegation_snapshots WHERE id=?", (snapshot_id,)
+                        "SELECT * FROM work_delegation_snapshots WHERE id=%s", (snapshot_id,)
                     ).fetchone(),
                 )
                 if (

@@ -1,31 +1,56 @@
 """Durable identity, transactional events and independent-connection races."""
 
 import hashlib
-import importlib
 import json
-import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
-from test.fixtures.work_store import work_store_paths  # noqa: F401
+from uuid import UUID, uuid4
 
 import pytest
 
-from cli_agent_orchestrator.clients.work_process_identity_schema import (
-    PROCESS_IDENTITY_SCHEMA,
-)
+pytestmark = pytest.mark.postgres
+
+from cli_agent_orchestrator.clients.postgres import Connection, DatabaseError, connect
 from cli_agent_orchestrator.clients.work_repository import (
     SchemaMismatch,
     WorkConflict,
     WorkRepository,
 )
+from cli_agent_orchestrator.security import auth
+from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
 from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 
 
 @pytest.fixture
-def store(work_store_paths):
-    repository = WorkRepository(work_store_paths.database)
-    repository.initialize()
-    return repository
+def store(postgres_targets):
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
+
+    bootstrap_scope(postgres_targets.main)
+    return WorkRepository(postgres_targets.main, filesystem_home=postgres_targets.home)
+
+
+def _inject_database_failure(
+    monkeypatch,
+    *,
+    statement_prefix: str,
+    failure_value: str,
+    params_match=None,
+) -> None:
+    """Cause a real PostgreSQL error inside a transaction without changing the schema."""
+    original_execute = Connection.execute
+
+    def fail_matching_execute(connection, statement, params=None, *, prepare: bool | None = None):
+        if (
+            isinstance(statement, str)
+            and statement.startswith(statement_prefix)
+            and (params_match is None or params_match(params))
+        ):
+            return original_execute(connection, "SELECT %s::integer", (failure_value,))
+        if prepare is None:
+            return original_execute(connection, statement, params)
+        return original_execute(connection, statement, params, prepare=prepare)
+
+    monkeypatch.setattr(Connection, "execute", fail_matching_execute)
 
 
 def create_job(store):
@@ -58,41 +83,6 @@ def _process_identity_v3(**overrides):
     return {**payload, "identity_sha256": identity_sha256}
 
 
-def legacy_v21_store(path):
-    """Build an actual v21 ledger, then let a test migrate that same file to v22."""
-    repository_module = importlib.import_module("cli_agent_orchestrator.clients.work_repository")
-    store = WorkRepository(path)
-    verifier = WorkRepository._verify
-    with store.transaction() as connection:
-        for version in range(1, 22):
-            for statement in repository_module._MIGRATIONS[version]:
-                connection.execute(statement)
-            if version == 16:
-                store._initialize_inbox_store_context(connection)
-            connection.execute(
-                "INSERT INTO work_migrations VALUES (?,?,?,?)",
-                (version, repository_module._CHECKSUMS[version], time.time(), "verified"),
-            )
-        verifier(connection, version=21)
-
-    def verify_v21(connection, *, version=None):
-        return verifier(connection, version=21 if version is None else version)
-
-    store.__dict__["_verify"] = verify_v21
-    store.__dict__["_legacy_v21"] = True
-    return store
-
-
-def migrate_legacy_v21_store(store):
-    """Restore the current verifier before applying the real v21-to-v22 migration."""
-    store.__dict__.pop("_verify")
-    store.__dict__.pop("_legacy_v21")
-    store.initialize()
-    with store.connection() as connection:
-        WorkRepository._verify(connection)
-    return store
-
-
 def _admission_request(job, **overrides):
     request = dict(
         job_id=job["id"],
@@ -114,18 +104,10 @@ def admit(store, job, **overrides):
     return store.admit_work(**request)
 
 
-def legacy_admit(store, job, **overrides):
-    """Historical fixture writer: only valid against the deliberately-v21 store."""
-    assert store.__dict__.get("_legacy_v21") is True
-    with store.transaction() as connection:
-        store._verify(connection)
-        return store._admit_work(connection, **_admission_request(job, **overrides))
-
-
 def test_repeated_request_survives_restart_without_duplicate_attempt(store):
     job = create_job(store)
     first = admit(store, job)
-    reopened = WorkRepository(store.path)
+    reopened = WorkRepository(store.target, filesystem_home=store.filesystem_home)
     assert admit(reopened, job) == first
     assert reopened.get_work(first["id"])["attempts"] == first["attempts"]
     assert len(first["attempts"]) == 1
@@ -144,11 +126,11 @@ def test_process_identity_v3_survives_repository_restart_and_is_idempotent(store
 
     assert persist(attempt_id, 1, identity) is None
     assert persist(attempt_id, 1, identity) is None
-    reopened = WorkRepository(store.path)
+    reopened = WorkRepository(store.target, filesystem_home=store.filesystem_home)
     assert reopened.read_process_identity(attempt_id, 1) == identity
     with reopened.connection() as connection:
         stored = connection.execute(
-            "SELECT identity_json FROM work_process_identities WHERE attempt_id=?",
+            "SELECT identity_json FROM work_process_identities WHERE attempt_id=%s",
             (attempt_id,),
         ).fetchone()
     assert json.loads(stored["identity_json"]) == identity
@@ -213,15 +195,24 @@ def test_read_process_identity_rejects_tampered_persisted_digest(store):
 
     persist(attempt_id, 1, identity)
     tampered = dict(identity, monitor_pid=9999)
-    with store.transaction() as connection:
-        connection.execute("DROP TRIGGER work_process_identities_immutable_update")
-        connection.execute(
-            "UPDATE work_process_identities SET identity_json=? WHERE attempt_id=?",
-            (json.dumps(tampered, sort_keys=True, separators=(",", ":")), attempt_id),
-        )
-        connection.execute(PROCESS_IDENTITY_SCHEMA[1])
+    with connect(store.target.migration_target()) as connection:
+        with connection.transaction():
+            connection.execute(
+                "ALTER TABLE work_process_identities "
+                "DISABLE TRIGGER work_process_identities_immutable_update"
+            )
+            connection.execute(
+                "UPDATE work_process_identities SET identity_json=%s WHERE attempt_id=%s",
+                (json.dumps(tampered, sort_keys=True, separators=(",", ":")), attempt_id),
+            )
+            connection.execute(
+                "ALTER TABLE work_process_identities "
+                "ENABLE TRIGGER work_process_identities_immutable_update"
+            )
     with pytest.raises(SchemaMismatch, match="process identity"):
-        WorkRepository(store.path).read_process_identity(attempt_id, 1)
+        WorkRepository(store.target, filesystem_home=store.filesystem_home).read_process_identity(
+            attempt_id, 1
+        )
 
 
 def test_process_identity_v3_only_persists_for_active_attempts(store):
@@ -254,6 +245,56 @@ def test_process_identity_v3_rejects_cancelled_attempt(store):
     assert callable(persist), "WorkRepository must durably store process identities"
     with pytest.raises(WorkConflict, match="active"):
         persist(attempt_id, 1, _process_identity_v3())
+
+
+def test_restored_store_revokes_the_copied_live_offline_cut(store):
+    operator = auth._verified_principal(
+        "https://issuer.test", "offline-cut-operator", [auth.SCOPE_ADMIN], "jwt"
+    )
+    job = store.create_job(
+        project_id="offline-cut-project",
+        principal_id=operator.id,
+        allowed_providers=["mock_cli"],
+        grant_id="offline-cut-root",
+    )
+    WorkAuthority(store).issue_root(
+        operator,
+        job_id=job["id"],
+        providers={"mock_cli"},
+        permissions=Permissions(tools={"Read"}, paths={"/workspace"}),
+        expires_at=time.time() + 600,
+    )
+    with store.transaction() as connection:
+        cut = store._acquire_offline_cut(connection, operator_principal_id=operator.id, ttl=600)
+
+    with store.read_snapshot() as connection:
+        before = connection.execute(
+            "SELECT id,state,revision,revoked_at FROM work_offline_cuts WHERE id=%s",
+            (cut["id"],),
+        ).fetchone()
+    assert before is not None and before["state"] == "live"
+
+    restored = store.block_imported_restore(
+        source_store_uuid=UUID(store.target.store_id).hex,
+        installation_uuid=uuid4().hex,
+        bundle_digest="a" * 64,
+        restore_receipt="b" * 64,
+    )
+
+    assert restored.execution_state == "blocked_restore"
+    with store.read_snapshot() as connection:
+        after = connection.execute(
+            "SELECT id,state,revision,revoked_at FROM work_offline_cuts WHERE id=%s",
+            (cut["id"],),
+        ).fetchone()
+        live_count = connection.execute(
+            "SELECT count(*) FROM work_offline_cuts WHERE state='live'"
+        ).fetchone()[0]
+    assert after is not None
+    assert after["state"] == "revoked"
+    assert after["revision"] == before["revision"] + 1
+    assert after["revoked_at"] is not None
+    assert live_count == 0
 
 
 def test_caller_owned_admission_and_transition_roll_back_together(store):
@@ -317,7 +358,14 @@ def test_changed_contract_or_provider_cannot_hide_behind_payload_hash(store):
 def test_concurrent_identical_admissions_have_single_identity(store):
     job = create_job(store)
     with ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(lambda _: admit(WorkRepository(store.path), job), range(16)))
+        results = list(
+            pool.map(
+                lambda _: admit(
+                    WorkRepository(store.target, filesystem_home=store.filesystem_home), job
+                ),
+                range(16),
+            )
+        )
     assert len({item["id"] for item in results}) == 1
     assert len({item["attempts"][0]["id"] for item in results}) == 1
     page = store.read_events(job["id"])
@@ -325,19 +373,39 @@ def test_concurrent_identical_admissions_have_single_identity(store):
     assert [event["sequence"] for event in page["events"]] == [1, 2]
 
 
-def test_event_insert_failure_rolls_back_admission(store):
+def test_event_insert_failure_rolls_back_admission(store, monkeypatch):
     job = create_job(store)
-    with sqlite3.connect(store.path) as connection:
-        # A constraint failure after INSERT proves transaction rollback, not a mocked call.
-        connection.execute("CREATE TEMP TABLE unused (id INTEGER)")
-        connection.execute(
-            "CREATE TRIGGER fail_event BEFORE INSERT ON work_events BEGIN SELECT RAISE(ABORT,'event unavailable'); END"
-        )
-    with pytest.raises(sqlite3.IntegrityError, match="event unavailable"):
+    _inject_database_failure(
+        monkeypatch,
+        statement_prefix="INSERT INTO work_events",
+        failure_value="event unavailable",
+    )
+    with pytest.raises(DatabaseError, match="event unavailable"):
         admit(store, job)
-    with sqlite3.connect(store.path) as connection:
+    with store.read_snapshot() as connection:
         assert connection.execute("SELECT count(*) FROM work_items").fetchone()[0] == 0
         assert connection.execute("SELECT count(*) FROM work_attempts").fetchone()[0] == 0
+        assert connection.execute("SELECT high_water FROM work_event_sequences").fetchone()[0] == 1
+
+
+def test_missing_event_sequence_readback_rolls_back_admission(store, monkeypatch):
+    job = create_job(store)
+    original_execute = Connection.execute
+
+    def hide_updated_sequence(connection, statement, params=(), *, prepare: bool | None = None):
+        if statement == "SELECT high_water FROM work_event_sequences WHERE job_id=%s":
+            return original_execute(connection, "SELECT NULL WHERE FALSE")
+        if prepare is None:
+            return original_execute(connection, statement, params)
+        return original_execute(connection, statement, params, prepare=prepare)
+
+    monkeypatch.setattr(Connection, "execute", hide_updated_sequence)
+    with pytest.raises(WorkConflict, match="sequence disappeared"):
+        admit(store, job)
+
+    with store.read_snapshot() as connection:
+        assert connection.execute("SELECT count(*) FROM work_items").fetchone()[0] == 0
+        assert connection.execute("SELECT count(*) FROM work_events").fetchone()[0] == 1
         assert connection.execute("SELECT high_water FROM work_event_sequences").fetchone()[0] == 1
 
 
@@ -367,9 +435,13 @@ def test_cursor_pages_and_declared_retention_gap(store):
 
 def test_admission_reverifies_corrupt_schema(store):
     job = create_job(store)
-    with sqlite3.connect(store.path) as connection:
-        connection.execute("UPDATE work_migrations SET checksum='tampered'")
-    with pytest.raises(RuntimeError, match="ledger"):
+    with connect(store.target.migration_target()) as connection:
+        with connection.transaction():
+            connection.execute(
+                "UPDATE _cao_schema_migrations SET checksum='tampered' "
+                "WHERE scope='main' AND component='work' AND version=2"
+            )
+    with pytest.raises(SchemaMismatch, match="migration history"):
         admit(store, job)
 
 
@@ -439,19 +511,19 @@ def test_transition_and_descendant_cancellation_share_the_durable_commit(store, 
     ]
 
 
-def test_descendant_receipt_failure_rolls_back_the_entire_cancellation(store):
+def test_descendant_receipt_failure_rolls_back_the_entire_cancellation(store, monkeypatch):
     job = create_job(store)
     root = admit(store, job)
     child = admit_descendant(store, job, root)
     baseline_events = store.read_events(job["id"])
-    with sqlite3.connect(store.path) as connection:
-        connection.execute(
-            "CREATE TRIGGER fail_descendant_receipt BEFORE INSERT ON "
-            "work_transition_receipts WHEN NEW.work_item_id='"
-            f"{child['id']}' BEGIN SELECT RAISE(ABORT,'descendant receipt unavailable'); END"
-        )
+    _inject_database_failure(
+        monkeypatch,
+        statement_prefix="INSERT INTO work_transition_receipts",
+        failure_value="descendant receipt unavailable",
+        params_match=lambda params: params is not None and params[2] == child["id"],
+    )
 
-    with pytest.raises(sqlite3.IntegrityError, match="descendant receipt unavailable"):
+    with pytest.raises(DatabaseError, match="descendant receipt unavailable"):
         advance(store, root, target="cancelled", event_id="root-cancelled")
 
     assert store.get_work(root["id"]) == root
@@ -502,7 +574,7 @@ def test_late_generation_and_expired_lease_do_not_dispatch(store):
     work = admit(store, job)
     with pytest.raises(ValueError, match="generation"):
         advance(store, work, generation=2)
-    with sqlite3.connect(store.path) as connection:
+    with store.transaction() as connection:
         connection.execute("UPDATE work_attempts SET lease_expires_at=1")
     with pytest.raises(ValueError, match="lease"):
         advance(store, work)
@@ -535,14 +607,15 @@ def test_execution_observation_records_receipt_before_running(store):
     assert types[-2:] == ["attempt.acknowledged", "attempt.running"]
 
 
-def test_transition_failure_rolls_back_both_states_and_event_sequence(store):
+def test_transition_failure_rolls_back_both_states_and_event_sequence(store, monkeypatch):
     job = create_job(store)
     work = admit(store, job)
-    with sqlite3.connect(store.path) as connection:
-        connection.execute(
-            "CREATE TRIGGER fail_event BEFORE INSERT ON work_events BEGIN SELECT RAISE(ABORT,'event unavailable'); END"
-        )
-    with pytest.raises(sqlite3.IntegrityError):
+    _inject_database_failure(
+        monkeypatch,
+        statement_prefix="INSERT INTO work_events",
+        failure_value="event unavailable",
+    )
+    with pytest.raises(DatabaseError, match="event unavailable"):
         advance(store, work)
     assert store.get_work(work["id"]) == work
     assert store.read_events(job["id"])["high_water"] == 2
@@ -624,10 +697,9 @@ def test_accepted_result_cannot_be_replaced_and_late_evidence_is_retained(store)
     assert store.get_work(work["id"])["attempts"][-1]["result_id"] == first["id"]
 
 
-def test_join_checks_actual_children_not_only_callers_assertion(work_store_paths):
-    store = legacy_v21_store(work_store_paths.database)
+def test_join_checks_actual_children_not_only_callers_assertion(store):
     job = create_job(store)
-    parent = legacy_admit(store, job)
+    parent = admit(store, job)
     sent = advance(store, parent, event_id=f"sent-{parent['id']}")
     parent = advance(
         store,
@@ -638,25 +710,25 @@ def test_join_checks_actual_children_not_only_callers_assertion(work_store_paths
             generation=1, expected_generation=1, task_received=True, execution_started=True
         ),
     )
-    child = legacy_admit(store, job, idempotency_key="child", parent_work_item_id=parent["id"])
-    migrate_legacy_v21_store(store)
+    child = admit_descendant(store, job, parent)
     register_result(store, parent)
     with pytest.raises(ValueError, match="children"):
         finish(store, store.get_work(parent["id"]))
     assert store.get_work(child["id"])["state"] == "queued"
 
 
-def test_result_reference_failure_does_not_claim_success(store):
+def test_result_reference_failure_does_not_claim_success(store, monkeypatch):
     job = create_job(store)
     work = running_work(store, job)
-    with sqlite3.connect(store.path) as connection:
-        connection.execute(
-            "CREATE TRIGGER fail_event BEFORE INSERT ON work_events BEGIN SELECT RAISE(ABORT,'event unavailable'); END"
-        )
-    with pytest.raises(sqlite3.IntegrityError):
+    _inject_database_failure(
+        monkeypatch,
+        statement_prefix="INSERT INTO work_events",
+        failure_value="event unavailable",
+    )
+    with pytest.raises(DatabaseError, match="event unavailable"):
         register_result(store, work)
     assert store.get_work(work["id"]) == work
-    with sqlite3.connect(store.path) as connection:
+    with store.read_snapshot() as connection:
         assert connection.execute("SELECT count(*) FROM work_results").fetchone()[0] == 0
 
 
@@ -667,7 +739,7 @@ def test_result_registration_runs_origin_precondition_in_the_acceptance_transact
 
     def require_workflow_origin(connection):
         assert connection.in_transaction
-        assert connection.execute("SELECT id FROM work_items WHERE id=?", (work["id"],)).fetchone()
+        assert connection.execute("SELECT id FROM work_items WHERE id=%s", (work["id"],)).fetchone()
         calls.append(connection)
 
     result = register_result(store, work, before_register=require_workflow_origin)
@@ -690,7 +762,7 @@ def test_result_registration_runs_origin_precondition_in_the_acceptance_transact
     with store.connection() as connection:
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_results WHERE content_hash=?", (digest,)
+                "SELECT count(*) FROM work_results WHERE content_hash=%s", (digest,)
             ).fetchone()[0]
             == 0
         )
@@ -717,7 +789,7 @@ def test_renewal_is_fenced_and_never_revives_expired_or_cancelled_attempt(store)
             lease_seconds=120,
             actor_id="operator",
         )
-    with sqlite3.connect(store.path) as connection:
+    with store.transaction() as connection:
         connection.execute("UPDATE work_attempts SET lease_expires_at=1")
     with pytest.raises(ValueError, match="lease"):
         store.renew_attempt(
@@ -764,7 +836,7 @@ def test_expiry_declares_uncertainty_without_auto_replacement(store):
     job = create_job(store)
     running = running_work(store, job)
     assert hasattr(store, "reconcile_expired"), "lease sweep missing"
-    with sqlite3.connect(store.path) as connection:
+    with store.transaction() as connection:
         connection.execute("UPDATE work_attempts SET lease_expires_at=1")
     assert store.reconcile_expired(actor_id="supervisor") == [running["id"]]
     work = store.get_work(running["id"])

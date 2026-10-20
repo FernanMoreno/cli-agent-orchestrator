@@ -1,5 +1,6 @@
 """Unit tests for the OpenCode CLI provider."""
 
+import asyncio
 import re
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -178,6 +179,16 @@ class TestGetStatusFromFixtures:
         )
         assert provider.get_status(output) == TerminalStatus.WAITING_QUOTA
 
+    def test_v2_expired_api_key_is_provider_error(self):
+        provider = make_provider()
+        provider._cli_major = 2
+        output = (
+            "This API key has expired. Create a new API key in OpenCode Console and replace it "
+            "in your client or secret store.\n"
+            "live-opencode · LongCat 2.5 Preview Free · OpenCode Go · ctrl+p menu"
+        )
+        assert provider.get_status(output) == TerminalStatus.ERROR
+
     def test_idle_post_completion_returns_idle(self):
         # Use plain fixture — ANSI variant reuses the completed frame (see OPENCODE_FIXTURES.md).
         output = load_fixture("opencode_cli_idle_post_completion.txt")
@@ -314,6 +325,19 @@ class TestGetStatusFromScreen:
                 ]
             )
             == TerminalStatus.WAITING_QUOTA
+        )
+
+    def test_v2_expired_api_key_screen_is_provider_error(self):
+        provider = make_provider()
+        provider._cli_major = 2
+        assert (
+            provider.get_status_from_screen(
+                [
+                    "This API key has expired. Create a new API key in OpenCode Console and replace it in your client or secret store.",
+                    "live-opencode · LongCat 2.5 Preview Free · OpenCode Go · ctrl+p menu",
+                ]
+            )
+            == TerminalStatus.ERROR
         )
 
     def test_blank_screen_returns_unknown(self):
@@ -674,6 +698,40 @@ class TestInitialize:
             "test-session", "window-0", strip_escapes=True, visible_only=True
         )
         mock_monitor.observe_initial_screen_snapshot.assert_called_once_with("test-tid", viewport)
+
+
+@pytest.mark.asyncio
+@patch("cli_agent_orchestrator.services.status_monitor.status_monitor")
+@patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
+async def test_initial_viewport_provider_error_fails_immediately(backend, monitor):
+    monitor.observe_initial_screen_snapshot.return_value = TerminalStatus.ERROR
+    backend.return_value.get_history.return_value = "provider error details"
+
+    with pytest.raises(
+        RuntimeError, match="OpenCode CLI reported an error during initial readiness"
+    ) as exc_info:
+        await make_provider()._wait_for_initial_ready(timeout=120.0)
+
+    backend.return_value.get_history.assert_called_once_with(
+        "test-session", "window-0", strip_escapes=True, visible_only=True
+    )
+    assert "provider error details" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+@patch("cli_agent_orchestrator.services.status_monitor.status_monitor")
+@patch("cli_agent_orchestrator.providers.opencode_cli.get_backend")
+async def test_initial_viewport_unknown_waits_until_the_readiness_deadline(backend, monitor):
+    monitor.observe_initial_screen_snapshot.return_value = TerminalStatus.UNKNOWN
+    backend.return_value.get_history.return_value = "OpenCode is still loading"
+    provider = make_provider()
+    started = asyncio.get_running_loop().time()
+
+    assert await provider._wait_for_initial_ready(timeout=0.05) is False
+
+    elapsed = asyncio.get_running_loop().time() - started
+    assert elapsed >= 0.04
+    assert monitor.observe_initial_screen_snapshot.call_count >= 1
 
 
 # ---------------------------------------------------------------------------

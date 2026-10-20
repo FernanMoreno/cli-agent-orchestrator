@@ -2,9 +2,12 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 
 from cli_agent_orchestrator.cli.commands.info import info
+
+pytestmark = pytest.mark.offline_database
 
 
 class TestInfoCommand:
@@ -19,7 +22,8 @@ class TestInfoCommand:
                 result = runner.invoke(info)
 
         assert result.exit_code == 0
-        assert "Database path:" in result.output
+        assert "Database: PostgreSQL" in result.output
+        assert "cli-agent-orchestrator.db" not in result.output
         assert "Not currently in a CAO session." in result.output
 
     def test_info_via_cao_session_name_env_var(self):
@@ -67,7 +71,8 @@ class TestInfoCommand:
             result = runner.invoke(info)
 
         assert result.exit_code == 0
-        assert "Database path:" in result.output
+        assert "Database: PostgreSQL" in result.output
+        assert "cli-agent-orchestrator.db" not in result.output
         assert "Not currently in a CAO session." in result.output
 
     def test_info_in_cao_session_server_responds(self):
@@ -85,7 +90,8 @@ class TestInfoCommand:
                 result = runner.invoke(info)
 
         assert result.exit_code == 0
-        assert "Database path:" in result.output
+        assert "Database: PostgreSQL" in result.output
+        assert "cli-agent-orchestrator.db" not in result.output
         assert "Session ID: cao-test-session" in result.output
         assert "Active terminals: 2" in result.output
 

@@ -245,7 +245,7 @@ def sweep_runs(
     union of the two prune sets). Both bounds default from settings when ``None``;
     passing an explicit value overrides (proving BR-SEC-3's "both configurable").
 
-    Row-based (the journal is SQLite rows, not day-partitioned files), so this is its
+    Row-based (the journal is PostgreSQL rows, not day-partitioned files), so this is its
     OWN capping — NOT ``audit_log.sweep_old_audit_logs`` (that sweeps day-files).
     Enumeration reuses ``workflow_journal.list_run_ids_by_age`` (run_id + started_at,
     most-recent first). Each pruned run_id is removed via U1's

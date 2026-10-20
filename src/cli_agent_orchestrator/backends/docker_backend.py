@@ -53,6 +53,7 @@ _ALLOWED_MANAGED_TOOLS = frozenset(
     {
         "cao.work.child",
         "cao.work.handoff",
+        "cao.work.message",
         "cao.work.task_received",
         "cao.work.submit_result",
     }
@@ -851,7 +852,7 @@ class DockerWorkBackend(TmuxBackend):
             )
             attempt = connection.execute(
                 "SELECT state,revision,lease_expires_at FROM work_attempts "
-                "WHERE id=? AND generation=?",
+                "WHERE id=%s AND generation=%s",
                 (attempt_id, generation),
             ).fetchone()
             if (

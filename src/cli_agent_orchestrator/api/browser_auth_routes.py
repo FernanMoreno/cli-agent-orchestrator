@@ -62,7 +62,10 @@ def configure_browser_auth(app):
         stored_binding = {**stored_binding, "scopes": sorted(set(stored_binding["scopes"]))}
     if stored_binding != binding:
         raise ValueError("browser binding differs from configured operator")
-    service = BrowserAuthService(root / "browser-auth.sqlite3", binding, config)
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+
+    target = DatabaseTarget.from_settings(scope="auth", home=root)
+    service = BrowserAuthService(target, binding, config)
     service.validate_binding()
     app.state.browser_auth = service
     app.state.browser_auth_config = config

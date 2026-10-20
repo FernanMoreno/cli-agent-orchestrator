@@ -620,6 +620,7 @@ def _has_terminal_error(text: str, *, execution_established: bool = False) -> bo
 
 
 class KimiCliProvider(BaseProvider):
+    supports_interaction_mcp_overlay = True
     """Provider for Kimi CLI tool integration.
 
     Manages the lifecycle of a Kimi CLI session in a tmux window,
@@ -860,7 +861,10 @@ class KimiCliProvider(BaseProvider):
 
                 # Add MCP server configuration if present in the agent profile.
                 # Kimi accepts --mcp-config as a JSON string (repeatable flag).
-                if profile is not None and profile.mcpServers:
+                interaction_mcp_servers = (
+                    self.interaction_mcp_servers(profile.mcpServers) if profile is not None else {}
+                )
+                if interaction_mcp_servers:
                     # Set MCP tool call timeout to 600s by modifying ~/.kimi/config.toml
                     # directly. We cannot use --config flag because it causes Kimi CLI
                     # to bypass its default config file, which breaks OAuth authentication
@@ -869,7 +873,7 @@ class KimiCliProvider(BaseProvider):
                     self._ensure_mcp_timeout()
 
                     mcp_config = {}
-                    for server_name, server_config in profile.mcpServers.items():
+                    for server_name, server_config in interaction_mcp_servers.items():
                         if isinstance(server_config, dict):
                             mcp_config[server_name] = dict(server_config)
                         else:
@@ -2484,7 +2488,9 @@ class KimiCliProvider(BaseProvider):
                     f"Failed to reset Kimi Code runtime directory {terminal_dir}: {exc}"
                 ) from exc
 
-        mcp_servers = profile.mcpServers if profile is not None else None
+        mcp_servers = (
+            self.interaction_mcp_servers(profile.mcpServers) if profile is not None else None
+        )
         builder = KimiCodeRuntimeHomeBuilder(source_home, terminal_dir)
         try:
             profile_tools = profile.tools if profile is not None else None

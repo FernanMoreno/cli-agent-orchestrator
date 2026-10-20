@@ -11,44 +11,24 @@ Covers the load-bearing behavior from
 - ``persist_high_water`` monotonicity (BR-11) and the two rebuild re-seed terms
   ``persisted_high_water`` / ``max_event_seq`` returning 0 on an unknown run
   (BR-3 co-terms; U2 consumes them).
-- ``append_event`` duplicate ``(run_id, seq)`` raises ``sqlite3.IntegrityError``
+- ``append_event`` duplicate ``(run_id, seq)`` raises PostgreSQL ``IntegrityError``
   rather than silently overwriting (BR-10).
 - ``delete_run`` cascades across all four tables and is a no-op on an unknown id
   (FR-11 / NFR-SEC-5, BR-12).
-- NFR-PERF-1-T: the event migrator runs at most once across N appends — a
-  call-count assertion (NOT timing) proving the memoized ``_connect_event`` does
-  not migrate per append (BR-7).
+- Runtime journal writes consume the immutable workflow component schema; DDL
+  installation is covered by explicit PostgreSQL migration tests.
 
-The journal points at a temp SQLite DB via the patched ``DATABASE_FILE``,
-mirroring ``test_workflow_journal_resume.py``'s fixture pattern exactly.
+The autouse test fixture resets an isolated PostgreSQL worker schema before each
+test, matching the runtime database and exception semantics.
 """
 
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
-
 import pytest
 
-from cli_agent_orchestrator.clients import database
+from cli_agent_orchestrator.clients.postgres import DatabaseError, IntegrityError
 from cli_agent_orchestrator.services import workflow_journal
 from cli_agent_orchestrator.services.workflow_journal import EventRow, GapMarker
-
-
-@pytest.fixture(autouse=True)
-def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Point the journal at a fresh temp DB and reset the migration memo.
-
-    ``_connect_event`` self-migrates on first use per (process, db-path), so no
-    explicit migrator call is needed here. The module-level
-    ``_event_migrated_paths`` set is cleared so a prior test's paths never leak
-    into this one (each test gets a unique tmp path anyway).
-    """
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    workflow_journal._event_migrated_paths.clear()
-    yield db_path
-    workflow_journal._event_migrated_paths.clear()
 
 
 def _all_fields_event(run_id: str, seq: int) -> dict:
@@ -225,7 +205,7 @@ def test_reseed_terms_degrade_to_zero_on_read_failure(monkeypatch: pytest.Monkey
     # The rebuild re-seed terms must never raise into the rebuild path; a DB read
     # error degrades to 0 (BR-3 posture). Force _connect_event to raise.
     def _boom():
-        raise sqlite3.OperationalError("simulated read failure")
+        raise DatabaseError("simulated read failure")
 
     monkeypatch.setattr(workflow_journal, "_connect_event", _boom)
     assert workflow_journal.persisted_high_water("r1") == 0
@@ -239,7 +219,7 @@ def test_append_event_duplicate_seq_raises_integrity_error():
     workflow_journal.append_event(
         "r1", 1, "run.started", event_schema_version=1, ts="2026-07-27T00:00:00Z"
     )
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(IntegrityError):
         workflow_journal.append_event(
             "r1", 1, "run.started", event_schema_version=1, ts="2026-07-27T00:00:01Z"
         )
@@ -298,34 +278,6 @@ def test_delete_run_unknown_id_is_noop_not_error():
     # BR-12: deleting an absent run id must not raise and must not fault reads.
     workflow_journal.delete_run("never-existed")
     assert workflow_journal.get_run("never-existed") is None
-
-
-# ---------------------------------------------------------------------------
-# NFR-PERF-1-T: the event migrator runs at most once across N appends (BR-7).
-# Call-count assertion — NEVER timing.
-# ---------------------------------------------------------------------------
-def test_event_migrator_runs_at_most_once(monkeypatch: pytest.MonkeyPatch):
-    calls = {"n": 0}
-    real = database._migrate_workflow_run_event
-
-    def _counting_migrator() -> None:
-        calls["n"] += 1
-        real()
-
-    # _connect_event imports the migrator lazily from the database module, so
-    # patching the database-module attribute is picked up on the next append.
-    monkeypatch.setattr(database, "_migrate_workflow_run_event", _counting_migrator)
-    # Force a cold path so the first append actually triggers a migration.
-    workflow_journal._event_migrated_paths.clear()
-
-    for seq in range(1, 51):  # N = 50 appends
-        workflow_journal.append_event(
-            "r1", seq, "step.started", event_schema_version=1, ts="2026-07-27T00:00:00Z"
-        )
-
-    # The whole point of the memoized _connect_event: the migrator fires at most
-    # once regardless of how many events are appended. FAILS if it runs per append.
-    assert calls["n"] <= 1
 
 
 # ---------------------------------------------------------------------------

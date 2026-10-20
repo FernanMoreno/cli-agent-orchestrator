@@ -1,4 +1,4 @@
-"""Real SQLite snapshot verification must not block the API event loop."""
+"""Real PostgreSQL snapshot verification must not block the API event loop."""
 
 import asyncio
 import threading
@@ -37,7 +37,7 @@ def test_slow_real_snapshot_does_not_block_event_loop(scoped_result_context, mon
         finally:
             release.set()
             await task
-        assert responsive, "continuation SQLite verification blocked the shared event loop"
+        assert responsive, "continuation snapshot verification blocked the shared event loop"
 
     asyncio.run(scenario())
 
@@ -45,7 +45,7 @@ def test_slow_real_snapshot_does_not_block_event_loop(scoped_result_context, mon
 from test.services.test_integration_008_coordinator import coordinator_context, start_controller
 
 
-def test_coordinator_stop_keeps_real_sqlite_off_event_loop(coordinator_context, monkeypatch):
+def test_coordinator_stop_keeps_database_io_off_event_loop(coordinator_context, monkeypatch):
     f = coordinator_context
     started = start_controller(f)
     main_thread = threading.get_ident()
@@ -54,7 +54,9 @@ def test_coordinator_stop_keeps_real_sqlite_off_event_loop(coordinator_context, 
 
         @contextmanager
         def checked(original=original):
-            assert threading.get_ident() != main_thread, "stop touched SQLite on the event loop"
+            assert (
+                threading.get_ident() != main_thread
+            ), "stop touched the database on the event loop"
             with original() as conn:
                 yield conn
 
@@ -63,7 +65,7 @@ def test_coordinator_stop_keeps_real_sqlite_off_event_loop(coordinator_context, 
     assert result["state"] == "stopped"
 
 
-def test_real_http_health_remains_available_during_sqlite_verification(
+def test_real_http_health_remains_available_during_snapshot_verification(
     scoped_result_context, monkeypatch
 ):
     import socket
@@ -116,7 +118,7 @@ def test_real_http_health_remains_available_during_sqlite_verification(
         assert entered.wait(3)
         response = requests.get(url + "/health", timeout=1)
         assert response.status_code == 200
-        assert not pending.done(), "health ran only after SQLite stopped blocking"
+        assert not pending.done(), "health ran only after snapshot verification stopped blocking"
     finally:
         release.set()
         if pending is not None:
@@ -145,7 +147,7 @@ def test_successive_rounds_reach_work_behind_128_waiting_rows(
                 if table == "workflow_driver":
                     row["state"] = "waiting"
                 columns = ",".join(row)
-                placeholders = ",".join("?" for _ in row)
+                placeholders = ",".join("%s" for _ in row)
                 conn.execute(
                     f"INSERT INTO {table} ({columns}) VALUES ({placeholders})", tuple(row.values())
                 )

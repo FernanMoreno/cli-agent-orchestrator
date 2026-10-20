@@ -6,7 +6,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 
+
+@pytest.mark.offline_database
 def test_showcase_authenticates_stream_by_header_without_token_in_url(tmp_path):
     curl = tmp_path / "curl"
     calls = tmp_path / "calls.jsonl"

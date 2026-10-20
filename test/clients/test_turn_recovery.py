@@ -1,13 +1,14 @@
-"""Durable recovery contract against real SQLite transactions."""
+"""Durable recovery contract against real PostgreSQL transactions."""
 
 from concurrent.futures import ThreadPoolExecutor
+from test.postgres.orm import configured_orm_engine
 from threading import Barrier
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.clients import database as db
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget, connect
 
 GEN = "a" * 32
 RECEIPT = "b" * 64
@@ -16,14 +17,13 @@ RESULT = "c" * 64
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
-    path = tmp_path / "turns.sqlite"
-    engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
-    db.Base.metadata.create_all(engine)
+    target = DatabaseTarget.from_settings()
+    engine = configured_orm_engine()
     monkeypatch.setattr(db, "SessionLocal", sessionmaker(bind=engine))
     db.create_terminal("supervisor", "session", "window", "codex", "developer")
     assert db.begin_terminal_turn_receipt("supervisor", "codex", GEN, RECEIPT)
     assert db.mark_terminal_turn_receipt_sent("supervisor", GEN, RECEIPT)
-    yield path
+    yield target
     engine.dispose()
 
 
@@ -36,7 +36,7 @@ def test_supervisor_failure_budget_survives_restart(store, monkeypatch):
         assert row["state"] == ("reconcile" if attempt == 3 else "verifying")
         assert row["completion_detected_at"] is not None
         assert "receipt_sha256" not in row
-    engine = create_engine(f"sqlite:///{store}")
+    engine = configured_orm_engine()
     monkeypatch.setattr(db, "SessionLocal", sessionmaker(bind=engine))
     assert db.get_terminal_turn_recovery("supervisor")["attempts"] == 3
     assert (
@@ -140,13 +140,11 @@ def test_failure_cannot_undo_verified_result(store):
     assert row["reason"] is None
 
 
-def test_actual_sqlite_read_failure_is_not_pending(store):
-    from sqlalchemy import text
+def test_actual_postgres_read_failure_is_not_pending(store):
     from sqlalchemy.exc import SQLAlchemyError
 
-    with db.SessionLocal() as session:
-        session.execute(text("DROP TABLE terminal_turn_recovery"))
-        session.commit()
+    with connect(store.migration_target()) as connection, connection.transaction():
+        connection.execute("DROP TABLE terminal_turn_recovery CASCADE")
     with pytest.raises(SQLAlchemyError):
         db.get_terminal_turn_recovery("supervisor")
 
@@ -174,7 +172,7 @@ def test_final_detection_timestamp_survives_repeated_calls_and_restart(store, mo
     assert detected is not None
     repeated = db.mark_terminal_turn_verification_started("supervisor", GEN, RECEIPT)
     assert repeated["completion_detected_at"] == detected
-    engine = create_engine(f"sqlite:///{store}")
+    engine = configured_orm_engine()
     monkeypatch.setattr(db, "SessionLocal", sessionmaker(bind=engine))
     restored = db.mark_terminal_turn_verification_started("supervisor", GEN, RECEIPT)
     assert restored["completion_detected_at"] == detected

@@ -1,12 +1,12 @@
-"""Durable cursor behavior exercised against the real SQLite authority."""
+"""Durable cursor behavior exercised against the real PostgreSQL authority."""
 
-import sqlite3
 import threading
 import time
 from test.services.test_knowledge_policy import policy_context  # noqa: F401
 
 import pytest
 
+from cli_agent_orchestrator.clients.postgres import IntegrityError
 from cli_agent_orchestrator.security import auth
 from cli_agent_orchestrator.services.knowledge_policy import KnowledgePolicy
 from cli_agent_orchestrator.services.knowledge_revisions import (
@@ -16,6 +16,8 @@ from cli_agent_orchestrator.services.knowledge_revisions import (
     KnowledgeRevisions,
 )
 from cli_agent_orchestrator.services.work_authority import Permissions
+
+pytestmark = pytest.mark.postgres
 
 
 def _proposal(service, principal, record_id, expected_version=0):
@@ -29,6 +31,32 @@ def _proposal(service, principal, record_id, expected_version=0):
         confidence=0.8,
         fresh_until=time.time() + 300,
     )
+
+
+def test_recovery_pages_preserve_binary_identifier_order(policy_context):
+    _, repository, owner, job, grant, _, policy = policy_context()
+    service = KnowledgeRevisions(repository, authorize=policy)
+    identifiers = ("z", "A", "a", "Z", "aa", "a-", "0")
+    for record_id in identifiers:
+        _proposal(service, owner, record_id)
+    found = []
+    cursor = None
+    while True:
+        page = service.recovery_page(
+            owner,
+            scope="project",
+            scope_id="project",
+            job_id=job["id"],
+            grant_id=grant.id,
+            grant_revision=1,
+            limit=2,
+            cursor=cursor,
+        )
+        found.extend(row.record_id for row in page["revisions"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert found == sorted(identifiers, key=lambda value: value.encode("utf-8"))
 
 
 def test_recovery_cursor_ttl_is_absolute_and_survives_service_recreation(policy_context):
@@ -81,8 +109,8 @@ def test_recovery_cursor_ttl_is_absolute_and_survives_service_recreation(policy_
         )
 
 
-def test_recovery_cursor_expires_while_waiting_for_sqlite_writer(policy_context):
-    """Would fail if a continuation captured its expiry clock before BEGIN IMMEDIATE."""
+def test_recovery_cursor_expires_while_waiting_for_authority_row_lock(policy_context):
+    """A continuation samples its expiry clock after acquiring the authority row lock."""
     _, repository, owner, job, grant, _, policy = policy_context()
     writer = KnowledgeRevisions(repository, authorize=policy)
     for record_id in ("first", "second"):
@@ -129,14 +157,19 @@ def test_recovery_cursor_expires_while_waiting_for_sqlite_writer(policy_context)
         except BaseException as error:
             outcome["error"] = error
 
-    with repository.transaction():
-        worker = threading.Thread(target=continue_page)
-        worker.start()
-        assert worker_started.wait(1)
-        clock_read.wait(1)
-        now[0] = 102.0
-    release_clock.set()
-    worker.join(5)
+    try:
+        with repository.transaction() as blocker:
+            blocker.execute(
+                "SELECT id FROM work_jobs WHERE id=%s FOR UPDATE", (job["id"],)
+            ).fetchone()
+            worker = threading.Thread(target=continue_page)
+            worker.start()
+            assert worker_started.wait(1)
+            assert not clock_read.wait(0.25), "expiry clock was sampled before authorization lock"
+            now[0] = 102.0
+    finally:
+        release_clock.set()
+    worker.join(10)
     assert not worker.is_alive()
     assert isinstance(outcome.get("error"), KnowledgeCursorExpired)
     assert "page" not in outcome
@@ -282,7 +315,7 @@ def test_recovery_cursor_persistence_failure_rolls_back_its_authorization_audit(
         before = connection.execute(
             "SELECT last_record_id,last_revision FROM work_knowledge_cursors"
         ).fetchone()
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(IntegrityError):
         reader.recovery_page(
             owner,
             scope="project",

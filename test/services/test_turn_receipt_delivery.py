@@ -161,7 +161,9 @@ def test_automated_task_delivery_does_not_type_into_a_waiting_provider_dialog():
         patch.object(ts, "get_backend", return_value=backend),
     ):
         manager.get_provider.return_value = provider
-        with pytest.raises(TerminalInputBlockedError, match="waiting for a user answer"):
+        with pytest.raises(
+            TerminalInputBlockedError, match="waiting for a provider-owned interaction"
+        ):
             ts.send_input("receipt-terminal", "automated task", task_delivery=True)
 
     provider.prepare_input.assert_not_called()
@@ -535,7 +537,7 @@ def test_receipt_governed_turn_can_submit_only_its_exact_visible_composer():
         assert ts.redeliver_dropped_message("receipt-terminal", "caller task", 1, provider) is False
 
     box.assert_called_once_with("receipt-terminal", prepared)
-    send_key.assert_called_once_with("receipt-terminal", "Enter")
+    send_key.assert_called_once_with("receipt-terminal", "Enter", same_turn=True)
     send.assert_not_called()
 
 

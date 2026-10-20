@@ -14,11 +14,19 @@ def _collect(path: Path, *args: str) -> str:
     env = os.environ.copy()
     # Inspect the project's suite defaults, independent of the parent runner.
     env.pop("PYTEST_ADDOPTS", None)
+    # Keep explicit pytest_cov loading below deterministic even when the
+    # parent process normally auto-discovers third-party pytest plugins.
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     result = subprocess.run(
         [
             sys.executable,
             "-m",
             "pytest",
+            # The isolated backend runner disables plugin auto-discovery;
+            # load the project's declared coverage plugin explicitly so
+            # pyproject options and this test's --no-cov override are valid.
+            "-p",
+            "pytest_cov.plugin",
             str(path),
             "-c",
             str(REPO_ROOT / "pyproject.toml"),

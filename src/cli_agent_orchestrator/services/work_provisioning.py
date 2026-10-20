@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from cli_agent_orchestrator.clients.postgres import Connection, Record
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_contract import EffectiveWorkContract
 from cli_agent_orchestrator.models.work_delivery import WorkDeliveryEnvelope
@@ -155,6 +156,18 @@ class WorkProvisioning:
         self.repository = repository
 
     @staticmethod
+    def _lock_selector(connection: Connection, namespace: str, *parts: str) -> None:
+        """Serialize revision allocation, including first writes with no row to lock."""
+        if not connection.in_transaction:
+            raise ProvisionDenied("provision revision allocation requires a transaction")
+        lock_material = _canonical(
+            ["work-provisioning-v1", connection.target.identity, namespace, *parts]
+        )
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (lock_material,)
+        )
+
+    @staticmethod
     def _principal(principal, *, admin=False):
         try:
             WorkAuthority._principal(principal, admin=admin)
@@ -181,11 +194,11 @@ class WorkProvisioning:
         return principal
 
     @staticmethod
-    def _registered(connection, principal):
+    def _registered(connection: Connection, principal: Principal) -> None:
         if not isinstance(principal, Principal):
             raise ProvisionDenied("verified principal required")
         row = connection.execute(
-            "SELECT issuer,subject,kind FROM work_principals WHERE id=?", (principal.id,)
+            "SELECT issuer,subject,kind FROM work_principals WHERE id=%s", (principal.id,)
         ).fetchone()
         if row is None or tuple(row) != (principal.issuer, principal.subject, principal.kind):
             raise ProvisionDenied("principal is not durably registered")
@@ -202,7 +215,7 @@ class WorkProvisioning:
 
     def _validate(
         self,
-        connection,
+        connection: Connection,
         *,
         admin=None,
         subject,
@@ -254,7 +267,7 @@ class WorkProvisioning:
             snapshot = DelegationSnapshots._load_authorized(
                 connection,
                 connection.execute(
-                    "SELECT * FROM work_delegation_snapshots WHERE id=?", (contract.snapshot.id,)
+                    "SELECT * FROM work_delegation_snapshots WHERE id=%s", (contract.snapshot.id,)
                 ).fetchone(),
             )
         except (SnapshotUnavailable, ValueError) as error:
@@ -268,15 +281,15 @@ class WorkProvisioning:
         return job, contract, snapshot
 
     @staticmethod
-    def _latest(connection, principal_id, selector):
+    def _latest(connection: Connection, principal_id: str, selector: str) -> Record | None:
         return connection.execute(
-            "SELECT * FROM work_launch_provisions WHERE principal_id=? AND selector=? "
+            "SELECT * FROM work_launch_provisions WHERE principal_id=%s AND selector=%s "
             "ORDER BY revision DESC LIMIT 1",
             (principal_id, selector),
         ).fetchone()
 
     @staticmethod
-    def _ref(row):
+    def _ref(row: Record) -> ProvisionRef:
         return ProvisionRef(
             schema_version=row["schema_version"],
             id=row["id"],
@@ -285,7 +298,7 @@ class WorkProvisioning:
             revision=row["revision"],
         )
 
-    def _view(self, connection, row):
+    def _view(self, connection: Connection, row: Record) -> ProvisionedLaunch:
         try:
             contract = self._contract(WorkContracts._from_json(row["contract_json"]))
         except (ContractConflict, ValidationError, TypeError, ValueError, ProvisionDenied) as error:
@@ -299,10 +312,10 @@ class WorkProvisioning:
             or row["snapshot_hash"] != contract.snapshot.delivered_hash
         ):
             raise ProvisionUnavailable("durable launch provision is unavailable")
-        # Do not reconstruct a Principal from SQLite.  Validate the stored
+        # Do not reconstruct a Principal from PostgreSQL.  Validate the stored
         # principal record structurally and fresh grant/snapshot evidence below.
         principal = connection.execute(
-            "SELECT issuer,subject,kind FROM work_principals WHERE id=?", (row["principal_id"],)
+            "SELECT issuer,subject,kind FROM work_principals WHERE id=%s", (row["principal_id"],)
         ).fetchone()
         if principal is None:
             raise ProvisionUnavailable("durable provision subject is unavailable")
@@ -313,7 +326,7 @@ class WorkProvisioning:
             snapshot = DelegationSnapshots._load_authorized(
                 connection,
                 connection.execute(
-                    "SELECT * FROM work_delegation_snapshots WHERE id=?", (row["snapshot_id"],)
+                    "SELECT * FROM work_delegation_snapshots WHERE id=%s", (row["snapshot_id"],)
                 ).fetchone(),
             )
         except (AuthorityDenied, GrantConflict, SnapshotUnavailable, ValueError) as error:
@@ -349,7 +362,7 @@ class WorkProvisioning:
 
     def _insert(
         self,
-        connection,
+        connection: Connection,
         *,
         prior,
         subject,
@@ -369,7 +382,7 @@ class WorkProvisioning:
         connection.execute(
             "INSERT INTO work_launch_provisions "
             "(principal_id,selector,revision,id,schema_version,state,issuer_id,job_id,grant_id,grant_revision,contract_id,contract_json,contract_hash,snapshot_id,snapshot_hash,adapter_version,lease_seconds,created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (
                 subject.id,
                 selector,
@@ -403,7 +416,10 @@ class WorkProvisioning:
                 "contract_hash": contract.canonical_hash(),
             },
         )
-        return self._ref(self._latest(connection, subject.id, selector))
+        created = self._latest(connection, subject.id, selector)
+        if created is None:
+            raise ProvisionDenied("durable launch provision could not be read back")
+        return self._ref(created)
 
     def provision_launch(
         self,
@@ -426,6 +442,7 @@ class WorkProvisioning:
         _exact_positive(adapter_version, "adapter version")
         _exact_positive(lease_seconds, "lease seconds", maximum=3600)
         with self.repository.transaction() as connection:
+            self._lock_selector(connection, "launch", getattr(subject, "id", ""), selector)
             prior = self._latest(connection, getattr(subject, "id", None), selector)
             if prior is None:
                 if expected_revision != 0:
@@ -465,6 +482,7 @@ class WorkProvisioning:
         if type(expected_revision) is not int or expected_revision <= 0:
             raise ProvisionConflict("expected provision revision must be positive")
         with self.repository.transaction() as connection:
+            self._lock_selector(connection, "launch", getattr(subject, "id", ""), selector)
             prior = self._latest(connection, getattr(subject, "id", None), selector)
             if (
                 prior is None
@@ -510,7 +528,7 @@ class WorkProvisioning:
 
     @staticmethod
     def _origin_revision(
-        connection,
+        connection: Connection,
         *,
         subject_ref,
         authorization_ref,
@@ -526,12 +544,21 @@ class WorkProvisioning:
             raise ProvisionDenied(
                 "explicit origin subject and authorization refs are required"
             ) from error
+        # Resolve callers may be inside a REPEATABLE READ, READ ONLY snapshot.
+        # An advisory-lock wait cannot refresh that snapshot, so locking there
+        # would block while still returning the old authorization. Writer
+        # transactions take the locks before checking live history.
+        if not connection.read_only:
+            WorkOriginAuthority._lock_subject_history(connection, subject_ref.subject_id)
+            WorkOriginAuthority._lock_authorization_history(
+                connection, authorization_ref.subject_id, authorization_ref.origin_kind
+            )
         subject = connection.execute(
-            "SELECT * FROM work_origin_subjects WHERE subject_id=? ORDER BY revision DESC LIMIT 1",
+            "SELECT * FROM work_origin_subjects WHERE subject_id=%s ORDER BY revision DESC LIMIT 1",
             (subject_ref.subject_id,),
         ).fetchone()
         authorization = connection.execute(
-            "SELECT * FROM work_origin_authorizations WHERE subject_id=? AND origin_kind=? "
+            "SELECT * FROM work_origin_authorizations WHERE subject_id=%s AND origin_kind=%s "
             "ORDER BY revision DESC LIMIT 1",
             (authorization_ref.subject_id, authorization_ref.origin_kind),
         ).fetchone()
@@ -562,7 +589,7 @@ class WorkProvisioning:
         return subject_ref, authorization_ref, authorization
 
     @staticmethod
-    def _workflow_provision_ref(row):
+    def _workflow_provision_ref(row: Record) -> WorkflowStepProvisionRef:
         return WorkflowStepProvisionRef(
             id=row["id"],
             principal_id=row["principal_id"],
@@ -622,6 +649,7 @@ class WorkProvisioning:
         output_schema_json, output_schema_hash = self._workflow_output_schema(output_schema)
 
         with self.repository.transaction() as connection:
+            self._lock_selector(connection, "workflow-step", subject.id, workflow_id, step_id)
             self.repository._verify(connection)
             prior = self._workflow_step_latest(connection, subject.id, workflow_id, step_id)
             if prior is None:
@@ -743,7 +771,7 @@ class WorkProvisioning:
                 "contract_id,contract_json,contract_hash,snapshot_id,snapshot_hash,delivery_json,delivery_template_hash,adapter_version,lease_seconds,"
                 "output_schema_json,output_schema_hash,receiver_subject_id,receiver_subject_revision,receiver_authorization_kind,receiver_authorization_revision,"
                 "receiver_grant_id,receiver_grant_revision,receiver_received_action,receiver_result_action,created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
                     subject.id,
                     workflow_id,
@@ -985,22 +1013,37 @@ class WorkProvisioning:
         return encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _workflow_step_latest(connection, principal_id, workflow_id, step_id):
+    def _workflow_step_latest(
+        connection: Connection, principal_id: str, workflow_id: str, step_id: str
+    ) -> Record | None:
         return connection.execute(
-            "SELECT * FROM work_workflow_step_provisions WHERE principal_id=? AND workflow_id=? "
-            "AND step_id=? ORDER BY revision DESC LIMIT 1",
+            "SELECT * FROM work_workflow_step_provisions WHERE principal_id=%s AND workflow_id=%s "
+            "AND step_id=%s ORDER BY revision DESC LIMIT 1",
             (principal_id, workflow_id, step_id),
         ).fetchone()
 
     @staticmethod
-    def _workflow_step_for_spec(connection, principal_id, workflow_id, step_id, spec_hash):
+    def _workflow_step_for_spec(
+        connection: Connection,
+        principal_id: str,
+        workflow_id: str,
+        step_id: str,
+        spec_hash: str,
+    ) -> Record | None:
         return connection.execute(
-            "SELECT * FROM work_workflow_step_provisions WHERE principal_id=? AND workflow_id=? "
-            "AND step_id=? AND spec_hash=? ORDER BY revision DESC LIMIT 1",
+            "SELECT * FROM work_workflow_step_provisions WHERE principal_id=%s AND workflow_id=%s "
+            "AND step_id=%s AND spec_hash=%s ORDER BY revision DESC LIMIT 1",
             (principal_id, workflow_id, step_id, spec_hash),
         ).fetchone()
 
-    def _resolve_launch(self, connection, authenticated_principal, selector, *, expected_ref=None):
+    def _resolve_launch(
+        self,
+        connection: Connection,
+        authenticated_principal: Principal,
+        selector: str,
+        *,
+        expected_ref: ProvisionRef | None = None,
+    ) -> ProvisionedLaunch:
         """Resolve with a caller-owned transaction, optionally fencing one exact revision.
 
         The caller supplies the authenticated ``Principal``.  Stored principal
@@ -1027,14 +1070,16 @@ class WorkProvisioning:
             raise ProvisionUnavailable("durable launch provision is unavailable")
         return provision
 
-    def _resolve_unique_active_launch(self, connection, authenticated_principal):
+    def _resolve_unique_active_launch(
+        self, connection: Connection, authenticated_principal: Principal
+    ) -> ProvisionedLaunch:
         """Resolve only when the principal has one latest active selector."""
         self.repository._verify(connection)
         self._principal(authenticated_principal)
         self._registered(connection, authenticated_principal)
         rows = connection.execute(
             "SELECT provision_row.* FROM work_launch_provisions AS provision_row "
-            "WHERE provision_row.principal_id=? "
+            "WHERE provision_row.principal_id=%s "
             "AND provision_row.revision=(SELECT MAX(history.revision) "
             "FROM work_launch_provisions AS history "
             "WHERE history.principal_id=provision_row.principal_id "
@@ -1051,7 +1096,9 @@ class WorkProvisioning:
         with self.repository.read_snapshot() as connection:
             return self._resolve_unique_active_launch(connection, authenticated_principal)
 
-    def _revalidate_bound_launch(self, connection, *, ref, fingerprint):
+    def _revalidate_bound_launch(
+        self, connection: Connection, *, ref: ProvisionRef, fingerprint: str
+    ) -> ProvisionedLaunch:
         """Validate a persisted launch binding without reconstructing a Principal."""
         self.repository._verify(connection)
         if not isinstance(ref, ProvisionRef) or not isinstance(fingerprint, str):
@@ -1071,7 +1118,7 @@ class WorkProvisioning:
 
     def derive_plan_step(
         self,
-        connection,
+        connection: Connection,
         principal,
         seed,
         *,
@@ -1089,11 +1136,12 @@ class WorkProvisioning:
         """
         if not connection.in_transaction:
             raise ProvisionDenied("plan provisioning requires caller transaction")
+        self._lock_selector(connection, "workflow-step", principal.id, workflow_alias, step_id)
         import hashlib
 
         proof = connection.execute(
             "SELECT r.principal_id,r.plan_id,p.source_hash FROM workflow_scoped_run r "
-            "JOIN workflow_prepared_plan p ON p.prepared_id=r.prepared_id WHERE r.run_id=?",
+            "JOIN workflow_prepared_plan p ON p.prepared_id=r.prepared_id WHERE r.run_id=%s",
             (run_id,),
         ).fetchone()
         if (
@@ -1170,11 +1218,12 @@ class WorkProvisioning:
             }
         )
         derived = derived.model_copy(update={"provision_fingerprint": derived.fingerprint()})
-        row = dict(
-            connection.execute(
-                "SELECT * FROM work_workflow_step_provisions WHERE id=?", (seed.ref.id,)
-            ).fetchone()
-        )
+        seed_row = connection.execute(
+            "SELECT * FROM work_workflow_step_provisions WHERE id=%s", (seed.ref.id,)
+        ).fetchone()
+        if seed_row is None:
+            raise ProvisionDenied("scoped provisioning seed is unavailable")
+        row = dict(seed_row)
         row.update(
             workflow_id=workflow_alias,
             step_id=step_id,
@@ -1190,7 +1239,7 @@ class WorkProvisioning:
             "INSERT INTO work_workflow_step_provisions ("
             + ",".join(columns)
             + ") VALUES ("
-            + ",".join("?" for _ in columns)
+            + ",".join("%s" for _ in columns)
             + ")",
             tuple(row[key] for key in columns),
         )

@@ -1,4 +1,4 @@
-"""Two local HTTP processes coordinate through one temporary SQLite authority.
+"""Two local HTTP processes coordinate through one temporary PostgreSQL authority.
 
 This checks process and store boundaries on one host. It does not simulate HA,
 consensus, replicated storage, or a network partition between replicated nodes.
@@ -41,7 +41,7 @@ def _free_port() -> int:
         return int(listener.getsockname()[1])
 
 
-def _serve_knowledge_http(database_path: str, port: int) -> None:
+def _serve_knowledge_http(database_path, port: int) -> None:
     """Serve the production knowledge router in its own local process."""
     _clear_local_auth_environment()
 
@@ -64,11 +64,11 @@ def _serve_knowledge_http(database_path: str, port: int) -> None:
     ).run()
 
 
-def _start_node(database_path: Path) -> tuple[multiprocessing.Process, str]:
+def _start_node(database_path) -> tuple[multiprocessing.Process, str]:
     port = _free_port()
     process = multiprocessing.get_context("fork").Process(
         target=_serve_knowledge_http,
-        args=(str(database_path), port),
+        args=(database_path, port),
         name=f"knowledge-http-{port}",
     )
     process.start()
@@ -134,14 +134,15 @@ def _stored_revisions(repository: WorkRepository) -> tuple[int, list[tuple[int, 
     return head[0], [(row[0], row[1]) for row in revisions]
 
 
-def test_two_processes_share_sqlite_authority_across_conflict_and_reconnect(
+def test_two_processes_share_postgresql_authority_across_conflict_and_reconnect(
     tmp_path, inherited_auth_environment, monkeypatch
 ):
     monkeypatch.delenv("AUTH0_DOMAIN", raising=False)
     monkeypatch.delenv("CAO_AUTH_JWKS_URI", raising=False)
     assert not auth.is_auth_enabled()
-    database_path = tmp_path / "authority" / "work.sqlite3"
-    database_path.parent.mkdir()
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+
+    database_path = DatabaseTarget.from_settings()
     repository = WorkRepository(database_path)
     repository.initialize()
     principal = auth.local_operator_principal()

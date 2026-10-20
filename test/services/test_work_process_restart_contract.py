@@ -55,7 +55,7 @@ def test_restart_recovers_process_identity_without_argv_or_redelivery(tmp_path: 
     except WorkProcessIsolationUnavailable as exc:
         pytest.skip(f"host cannot run the required Work namespaces: {exc}")
 
-    database_path = tmp_path / "work.sqlite3"
+    database_path = tmp_path / "work.db"
     worker_started = tmp_path / "worker-started"
     controller_ready = tmp_path / "controller-ready"
     repository = WorkRepository(database_path)
@@ -384,7 +384,7 @@ def test_reattached_wait_requires_both_init_and_monitor_pidfds_to_exit(monkeypat
 def test_restart_keeps_lost_attempt_reconciled_without_pid_or_proxy_replay(
     tmp_path: Path, monkeypatch
 ) -> None:
-    database_path = tmp_path / "work.sqlite3"
+    database_path = tmp_path / "work.db"
     repository = WorkRepository(database_path)
     repository.initialize()
     job = repository.create_job(

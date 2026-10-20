@@ -201,8 +201,8 @@ def test_cancel_finished_run_409(client, monkeypatch):
 # Unit A — script-run input validation + cap, BEFORE any journal row (BR-A3)
 # ---------------------------------------------------------------------------
 @pytest.fixture
-def script_run_env(client, monkeypatch, tmp_path):
-    """A ScriptSpec-returning resolver + a fresh journal DB.
+def script_run_env(client, monkeypatch, tmp_path, isolated_memory_db):
+    """A ScriptSpec-returning resolver + the shared isolated PostgreSQL journal.
 
     ``run_script_workflow`` is patched to a spy that would ONLY be reached if
     validation/cap passed — the tests assert it is NOT called on rejection AND
@@ -215,13 +215,8 @@ def script_run_env(client, monkeypatch, tmp_path):
         "cli_agent_orchestrator.services.settings_service.SETTINGS_FILE", settings_path
     )
     monkeypatch.delenv("CAO_WORKFLOW_REQUIRE_APPROVAL", raising=False)
-    from cli_agent_orchestrator.clients.database import _migrate_workflow_run
     from cli_agent_orchestrator.models.workflow import InputDecl, ScriptSpec
     from cli_agent_orchestrator.services import script_runner, workflow_journal
-
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
 
     spec = ScriptSpec(
         name="scr",
@@ -402,32 +397,28 @@ async def test_blocking_script_manifest_freeze_is_offloaded_from_event_loop(monk
     assert observed["sentinel_ran_while_blocked"] is True
 
 
+from cli_agent_orchestrator.clients.postgres import (  # noqa: E402
+    DatabaseTarget,
+    IntegrityError,
+    OperationalError,
+    connect,
+)
+
 # ---------------------------------------------------------------------------
 # U2 (issue #505) — the async submission spine: POST /workflows/runs:submit
 # ---------------------------------------------------------------------------
-import sqlite3  # noqa: E402
-
 from cli_agent_orchestrator.services import workflow_journal  # noqa: E402
 
 
 @pytest.fixture
-def async_yaml_env(client, monkeypatch, tmp_path):
-    """A YAML-spec resolver + a real temp journal DB + a mocked prepared drive.
+def async_yaml_env(client, monkeypatch, tmp_path, isolated_memory_db):
+    """A YAML-spec resolver + isolated PostgreSQL journal + a mocked prepared drive.
 
     The background drive is mocked at ``start_run_prepared`` so no real terminals
     spawn; it settles the journal to COMPLETED so the poll-to-terminal test can
     observe convergence. The durable insert (``insert_run_with_steps``) is REAL, so
-    the durable-before-ack invariant is exercised against a real DB.
+    the durable-before-ack invariant is exercised against PostgreSQL.
     """
-    from cli_agent_orchestrator.clients.database import (
-        _migrate_workflow_run,
-        _migrate_workflow_run_step,
-    )
-
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
 
     workflow_service.run_registry.clear()
     workflow_service._active_drives.clear()
@@ -449,7 +440,7 @@ def async_yaml_env(client, monkeypatch, tmp_path):
         return _result(state=RunState.COMPLETED)
 
     monkeypatch.setattr(workflow_service, "start_run_prepared", _fake_prepared)
-    yield {"drove": drove, "journal": workflow_journal, "db": db_path}
+    yield {"drove": drove, "journal": workflow_journal}
     workflow_service.run_registry.clear()
     workflow_service._active_drives.clear()
 
@@ -567,11 +558,11 @@ def test_submit_run_id_allocated_before_ack(client, async_yaml_env):
 
 
 def test_submit_insert_failure_returns_5xx_and_no_row(client, async_yaml_env, monkeypatch):
-    """INV-1/T3: when the atomic insert raises ``sqlite3.Error``, the submit returns
+    """INV-1/T3: when the atomic insert raises ``PostgreSQL database error``, the submit returns
     5xx, emits NO 202, and NO row exists (the insert is a hard precondition)."""
 
     def _boom(*a, **k):
-        raise sqlite3.OperationalError("disk I/O error")
+        raise OperationalError("disk I/O error")
 
     monkeypatch.setattr(workflow_journal, "insert_run_with_steps", _boom)
     resp = client.post(
@@ -594,13 +585,13 @@ def test_submit_integrity_error_is_409_not_500(client, async_yaml_env, monkeypat
     broke when in fact their run id was simply taken, which sends them to the logs
     instead of to a new id.
 
-    MUTATION PROOF: delete the ``except sqlite3.IntegrityError`` arm (or move it BELOW
-    the generic ``sqlite3.Error`` arm, which shadows it since IntegrityError is a
+    MUTATION PROOF: delete the ``except IntegrityError`` arm (or move it BELOW
+    the generic ``DatabaseError`` arm, which shadows it since IntegrityError is a
     subclass) and this fails with 500.
     """
 
     def _collide(*a, **k):
-        raise sqlite3.IntegrityError("UNIQUE constraint failed: workflow_run.run_id")
+        raise IntegrityError("UNIQUE constraint failed: workflow_run.run_id")
 
     monkeypatch.setattr(workflow_journal, "insert_run_with_steps", _collide)
     resp = client.post(
@@ -616,7 +607,7 @@ def test_submit_script_tier_integrity_error_is_409_not_500(client, async_script_
     so a fix applied to only one arm would leave the other returning 500)."""
 
     def _collide(*a, **k):
-        raise sqlite3.IntegrityError("UNIQUE constraint failed: workflow_run.run_id")
+        raise IntegrityError("UNIQUE constraint failed: workflow_run.run_id")
 
     monkeypatch.setattr(workflow_journal, "insert_run", _collide)
     resp = client.post(
@@ -801,16 +792,7 @@ def test_submit_invalid_inputs_400_no_orphan_row(client, async_yaml_env):
 
 def test_submit_oversized_inputs_400_pre_journal(client, monkeypatch, tmp_path):
     """OR-1/NFR-4: inputs over the 32KiB cap -> 400 before any journal write."""
-    from cli_agent_orchestrator.clients.database import (
-        _migrate_workflow_run,
-        _migrate_workflow_run_step,
-    )
     from cli_agent_orchestrator.models.workflow import InputDecl, WorkflowSpec, WorkflowStep
-
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
 
     spec = WorkflowSpec(
         name="wf",
@@ -832,8 +814,8 @@ def test_submit_oversized_inputs_400_pre_journal(client, monkeypatch, tmp_path):
 
 
 @pytest.fixture
-def async_script_env(client, monkeypatch, tmp_path):
-    """A ScriptSpec resolver + real journal DB + mocked script prepared drive."""
+def async_script_env(client, monkeypatch, tmp_path, isolated_memory_db):
+    """A ScriptSpec resolver + isolated PostgreSQL journal + mocked prepared drive."""
     # This fixture deliberately exercises the historic explicit legacy posture.
     settings_path = tmp_path / "settings.json"
     settings_path.write_text('{"workflow":{"require_approval":false}}')
@@ -841,17 +823,9 @@ def async_script_env(client, monkeypatch, tmp_path):
         "cli_agent_orchestrator.services.settings_service.SETTINGS_FILE", settings_path
     )
     monkeypatch.delenv("CAO_WORKFLOW_REQUIRE_APPROVAL", raising=False)
-    from cli_agent_orchestrator.clients.database import (
-        _migrate_workflow_run,
-        _migrate_workflow_run_step,
-    )
     from cli_agent_orchestrator.models.workflow import ScriptSpec
     from cli_agent_orchestrator.services import script_runner
 
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
     workflow_service.run_registry.clear()
     workflow_service._active_drives.clear()
 
@@ -1025,16 +999,7 @@ def test_submit_script_lint_fail_422_no_row(client, async_script_env):
 
 def test_submit_reserved_mode_501_no_row(client, monkeypatch, tmp_path):
     """OR-3: a reserved (non-sequential) YAML mode -> 501 pre-journal, NO row."""
-    from cli_agent_orchestrator.clients.database import (
-        _migrate_workflow_run,
-        _migrate_workflow_run_step,
-    )
     from cli_agent_orchestrator.models.workflow import WorkflowSpec, WorkflowStep
-
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
 
     spec = WorkflowSpec(
         name="wf",
@@ -1059,15 +1024,7 @@ async def test_run_in_background_never_reraises_and_marks_failed(monkeypatch, tm
     ``_run_in_background`` does NOT propagate (never re-raises into the loop) and
     best-effort marks the run FAILED so no run is left stuck RUNNING."""
     from cli_agent_orchestrator.api.main import _run_in_background
-    from cli_agent_orchestrator.clients.database import (
-        _migrate_workflow_run,
-        _migrate_workflow_run_step,
-    )
 
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
     # Seed the run row as RUNNING (as the submit handler would have).
     workflow_journal.insert_run(
         run_id="bg-fail",
@@ -1112,14 +1069,11 @@ async def test_run_in_background_backstop_write_failure_swallowed(monkeypatch, t
     """
     from cli_agent_orchestrator.api.main import _run_in_background
 
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-
     async def _boom(record):
         raise RuntimeError("drive failed")
 
     def _boom_update(*a, **k):
-        raise sqlite3.OperationalError("journal down")
+        raise OperationalError("journal down")
 
     monkeypatch.setattr(workflow_service, "start_run_prepared", _boom)
     monkeypatch.setattr(workflow_journal, "settle_run_state_if_running", _boom_update)
@@ -1203,15 +1157,7 @@ async def test_background_drive_cancellation_marks_failed_and_reraises(monkeypat
     import asyncio as _asyncio
 
     from cli_agent_orchestrator.api.main import _run_in_background
-    from cli_agent_orchestrator.clients.database import (
-        _migrate_workflow_run,
-        _migrate_workflow_run_step,
-    )
 
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
     workflow_journal.insert_run(
         run_id="bg-cancel",
         workflow_name="wf",
@@ -1264,15 +1210,7 @@ async def test_backstop_does_not_overwrite_a_settled_completed_row(monkeypatch, 
     ``workflow_journal.update_run_state`` and this fails with ``state == 'failed'``.
     """
     from cli_agent_orchestrator.api.main import _run_in_background
-    from cli_agent_orchestrator.clients.database import (
-        _migrate_workflow_run,
-        _migrate_workflow_run_step,
-    )
 
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
     workflow_journal.insert_run(
         run_id="bg-settled",
         workflow_name="wf",
@@ -1323,15 +1261,7 @@ async def test_backstop_does_not_overwrite_a_journalled_cancelled_row(monkeypatc
     import asyncio as _asyncio
 
     from cli_agent_orchestrator.api.main import _run_in_background
-    from cli_agent_orchestrator.clients.database import (
-        _migrate_workflow_run,
-        _migrate_workflow_run_step,
-    )
 
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
     workflow_journal.insert_run(
         run_id="bg-cancel-settled",
         workflow_name="wf",
@@ -1437,21 +1367,12 @@ async def test_background_drives_are_admission_bounded(monkeypatch, tmp_path):
 #   GET /workflows/runs          (list, declared BEFORE the /workflows/{name}
 #                                 catch-all — the RO-1 route-ordering hazard)
 #   GET /workflows/runs/{id}/result  (full retained WorkflowRunResult)
-# Real temp journal DB; run_registry EMPTY (reads never touch it).
+# Isolated PostgreSQL journal; run_registry EMPTY (reads never touch it).
 # ---------------------------------------------------------------------------
 @pytest.fixture
-def read_surface_db(client, monkeypatch, tmp_path):
-    """A real temp journal DB for the U4 read routes, with an EMPTY run_registry
-    so every assertion proves the read is answerable from the journal alone."""
-    from cli_agent_orchestrator.clients.database import (
-        _migrate_workflow_run,
-        _migrate_workflow_run_step,
-    )
+def read_surface_db(isolated_memory_db, monkeypatch):
+    """Use the isolated PostgreSQL target with an EMPTY run registry."""
 
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
     workflow_service.run_registry.clear()
     yield workflow_journal
     workflow_service.run_registry.clear()
@@ -1556,10 +1477,10 @@ def test_list_runs_empty_is_200(client, read_surface_db):
 
 
 def test_list_runs_db_error_500(client, read_surface_db, monkeypatch):
-    """T5 (LR-4): a ``sqlite3.Error`` from the DAL maps to 500, NOT a silent []."""
+    """T5 (LR-4): a ``DatabaseError`` from the DAL maps to 500, NOT a silent []."""
 
     def _boom(*a, **k):
-        raise sqlite3.OperationalError("disk I/O error")
+        raise OperationalError("disk I/O error")
 
     monkeypatch.setattr(workflow_journal, "list_runs", _boom)
     resp = client.get("/workflows/runs")
@@ -1959,7 +1880,7 @@ def test_failure_envelope_adds_no_persisted_column(client, read_surface_db):
 
     The expected set below gained ``terminal_id``/``reprompted``/``error_kind`` from
     #504's U1 additive columns and ``result_json`` from #583's ``result-envelope`` —
-    all four created by ``_migrate_workflow_run_step`` at init_db time, NOT by envelope
+    all four created by the immutable workflow migration, NOT by envelope
     assembly. The assertion still carries its full force, because what it guards is
     that assembling an envelope adds no column: the set is captured AFTER the result
     call and must equal the migrated schema exactly, so an envelope-driven write would
@@ -1978,10 +1899,16 @@ def test_failure_envelope_adds_no_persisted_column(client, read_surface_db):
         steps=[{"id": "s1", "state": StepState.FAILED.value, "attempts": 1, "error": "x"}],
     )
     client.get("/workflows/runs/nocol/result")  # assembles the envelope
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    with sqlite3.connect(str(DATABASE_FILE)) as conn:
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(workflow_run_step)")}
+    target = DatabaseTarget.from_settings(scope="main")
+    with connect(target) as conn:
+        cols = {
+            row[0]
+            for row in conn.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = %s AND table_name = %s",
+                (target.schema, "workflow_run_step"),
+            ).fetchall()
+        }
     assert cols == {
         "run_id",
         "step_id",

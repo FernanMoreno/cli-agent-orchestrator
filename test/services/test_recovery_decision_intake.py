@@ -48,9 +48,8 @@ Coverage, one group per rule from
   (:class:`TestTheLiveRunGuardPrecedesAnyWrite`).
 - RL-3 — the decision outlives the process that made it (:class:`TestTheDecisionIsDurable`).
 
-Rows are seeded THROUGH THE JOURNAL against a real temp SQLite DB (the patched
-``DATABASE_FILE``), mirroring ``test_step_replay.py`` and ``test_journal_step_lifecycle.py``
-— not mocked, so the transitions are tested against the row shape ``begin_step`` /
+Rows are seeded THROUGH THE JOURNAL against the isolated PostgreSQL target provided by the
+shared test fixture — not mocked, so the transitions use the row shape ``begin_step`` /
 ``settle_step`` actually write.
 """
 
@@ -59,20 +58,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sqlite3
 import subprocess
 import sys
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
-)
+from cli_agent_orchestrator.clients.postgres import Connection, DatabaseError, DatabaseTarget
 from cli_agent_orchestrator.models.workflow import RecoveryPolicy, StepResultEnvelope
 from cli_agent_orchestrator.models.workflow_runtime import (
     RecoveryDecision,
@@ -111,7 +105,7 @@ SNAPSHOT = json.dumps({"source": "def main():\n    pass\n"})
 
 
 @pytest.fixture(autouse=True)
-def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def _patched_journal(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """Use isolated historical runs with an explicit operator approval opt-out.
 
     These null-manifest fixtures exercise recovery consent, not prepared-plan
@@ -124,11 +118,7 @@ def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     settings_file.write_text(json.dumps({"workflow": {"require_approval": False}}))
     monkeypatch.setattr(settings_service, "SETTINGS_FILE", settings_file)
     monkeypatch.delenv("CAO_WORKFLOW_REQUIRE_APPROVAL", raising=False)
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
-    yield db_path
+    yield
 
 
 @pytest.fixture(autouse=True)
@@ -163,16 +153,8 @@ def client() -> TestClient:
     return TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
 
 
-def _direct_connect() -> sqlite3.Connection:
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    return sqlite3.connect(str(DATABASE_FILE))
-
-
-def _db_path() -> str:
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    return str(DATABASE_FILE)
+def _direct_connect() -> Connection:
+    return workflow_journal._connect()
 
 
 def _seed_run(
@@ -211,7 +193,7 @@ def _seed_step(
         with _direct_connect() as conn:
             conn.execute(
                 "UPDATE workflow_run_step SET call_fingerprint = NULL "
-                "WHERE run_id = ? AND step_id = ?",
+                "WHERE run_id = %s AND step_id = %s",
                 (run_id, step_id),
             )
 
@@ -225,7 +207,7 @@ def _seed_three_halted_steps() -> None:
 def _state_of(step_id: str = STEP, run_id: str = RUN) -> Optional[str]:
     with _direct_connect() as conn:
         row = conn.execute(
-            "SELECT state FROM workflow_run_step WHERE run_id = ? AND step_id = ?",
+            "SELECT state FROM workflow_run_step WHERE run_id = %s AND step_id = %s",
             (run_id, step_id),
         ).fetchone()
     return None if row is None else row[0]
@@ -234,26 +216,25 @@ def _state_of(step_id: str = STEP, run_id: str = RUN) -> Optional[str]:
 def _all_columns(step_id: str = STEP, run_id: str = RUN) -> Dict[str, Any]:
     """Every column of one row, so a test can assert what a decision did NOT touch."""
     with _direct_connect() as conn:
-        conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT * FROM workflow_run_step WHERE run_id = ? AND step_id = ?",
+            "SELECT * FROM workflow_run_step WHERE run_id = %s AND step_id = %s",
             (run_id, step_id),
         ).fetchone()
     assert row is not None
-    return dict(row)
+    return {key: row[key] for key in row.keys()}
 
 
 class _FailOnNthExecute:
-    """A ``sqlite3.Connection`` proxy that raises on the Nth ``execute`` (SR-3's fault).
+    """A native PostgreSQL Connection proxy that injects a fault on the Nth execute.
 
     Wraps a real connection so the transaction semantics under test are the REAL ones: the
-    ``with`` block still delegates to ``sqlite3.Connection.__exit__``, which is what commits
-    on a clean exit and rolls back on an exception. ``__enter__``/``__exit__`` are declared
+    ``with`` block still delegates to ``Connection.__exit__``, which commits on a clean exit
+    and rolls back on an exception. ``__enter__``/``__exit__`` are declared
     explicitly because the ``with`` protocol looks dunders up on the TYPE, so ``__getattr__``
     would never see them.
     """
 
-    def __init__(self, conn: sqlite3.Connection, fail_on: int) -> None:
+    def __init__(self, conn: Connection, fail_on: int) -> None:
         self._conn = conn
         self._fail_on = fail_on
         self.executes = 0
@@ -271,7 +252,7 @@ class _FailOnNthExecute:
     def execute(self, *args: Any, **kwargs: Any) -> Any:
         self.executes += 1
         if self.executes == self._fail_on:
-            raise sqlite3.OperationalError("disk I/O error (injected)")
+            raise DatabaseError("PostgreSQL write failure (injected)")
         return self._conn.execute(*args, **kwargs)
 
 
@@ -594,9 +575,9 @@ class TestTheWritesAreOneTransaction:
         real_connect = workflow_journal._connect
 
         def _failing_connect() -> Any:
-            # Each call gets its OWN proxy with its own counter, and ``_connect``'s
-            # ``PRAGMA`` runs on the real connection BEFORE the wrap — so on the write
-            # connection ``fail_on=2`` is precisely the SECOND of the three UPDATEs, and on
+            # Each call gets its OWN proxy with its own counter, and connection setup happens
+            # on the real connection BEFORE the wrap — so on the write connection
+            # ``fail_on=2`` is precisely the SECOND of the three UPDATEs, and on
             # the ``get_steps`` connection (one SELECT) it never fires.
             proxy = _FailOnNthExecute(real_connect(), fail_on=2)
             proxies.append(proxy)
@@ -604,7 +585,7 @@ class TestTheWritesAreOneTransaction:
 
         monkeypatch.setattr(workflow_journal, "_connect", _failing_connect)
 
-        with pytest.raises(sqlite3.OperationalError):
+        with pytest.raises(DatabaseError, match="PostgreSQL write failure"):
             apply_decisions(RUN, {STEP: "rerun", STEP_B: "skip", STEP_C: "rerun"})
 
         monkeypatch.setattr(workflow_journal, "_connect", real_connect)
@@ -650,7 +631,7 @@ class TestTheLogLineIsEvidence:
         monkeypatch.setattr(workflow_journal, "_connect", _failing_connect)
 
         with caplog.at_level(logging.WARNING, logger=workflow_journal.__name__):
-            with pytest.raises(sqlite3.OperationalError):
+            with pytest.raises(DatabaseError, match="PostgreSQL write failure"):
                 apply_decisions(RUN, {STEP: "rerun", STEP_B: "skip", STEP_C: "rerun"})
 
         assert [r for r in caplog.records if "recovery decision" in r.getMessage()] == []
@@ -765,21 +746,22 @@ class TestTheDecisionIsDurable:
         """A durable row update, not in-memory state — the gate reads journal rows, so an
         in-memory decision would be invisible to the step it was meant to resolve.
 
-        Proved by a SEPARATE INTERPRETER reading the database file, so nothing about this
-        process's connection, module state or caches can carry the answer. It proves the write
-        is committed and visible elsewhere; it does not exercise CAO's own startup path.
+        Proved by a SEPARATE INTERPRETER reading the configured PostgreSQL target, so nothing
+        about this process's connection, module state or caches can carry the answer. It proves
+        the write is committed and visible elsewhere; it does not exercise CAO's own startup
+        path.
         """
         _seed_step(state=StepState.COMPLETED.value)
         apply_decisions(RUN, {STEP: RecoveryDecision.SKIP})
 
         probe = (
-            "import sqlite3,sys;"
-            "c=sqlite3.connect(sys.argv[1]);"
-            "print(c.execute('SELECT state FROM workflow_run_step "
-            "WHERE run_id=? AND step_id=?',(sys.argv[2],sys.argv[3])).fetchone()[0])"
+            "import sys;"
+            "from cli_agent_orchestrator.services import workflow_journal;"
+            "row=workflow_journal.get_step(sys.argv[1],sys.argv[2]);"
+            "print(row.state if row is not None else '')"
         )
         result = subprocess.run(
-            [sys.executable, "-c", probe, _db_path(), RUN, STEP],
+            [sys.executable, "-c", probe, RUN, STEP],
             capture_output=True,
             text=True,
             timeout=60,
@@ -1157,12 +1139,12 @@ class TestOrphanedRecoveryConsentRequiresARedecision:
             raise AssertionError("the drive must not be invoked after a failed consent read")
 
         def _read_failure(*args: object) -> List[workflow_journal.StepRow]:
-            raise sqlite3.Error("injected consent read failure")
+            raise DatabaseError("injected consent read failure")
 
         monkeypatch.setattr(script_runner, "_drive_process", _must_not_drive)
         monkeypatch.setattr(workflow_journal, "get_steps", _read_failure)
 
-        with pytest.raises(sqlite3.Error, match="injected consent read failure"):
+        with pytest.raises(DatabaseError, match="injected consent read failure"):
             await script_runner.resume_script_run(RUN)
 
         assert drive_calls == []
@@ -1185,7 +1167,7 @@ class TestOrphanedRecoveryConsentRequiresARedecision:
         from cli_agent_orchestrator.models.workflow import WorkflowSpec
         from cli_agent_orchestrator.services import agent_step
 
-        WorkRepository(_db_path()).initialize()
+        WorkRepository(DatabaseTarget.from_settings("main")).initialize()
         step = WorkflowSpec.model_validate_json(yaml_snapshot).steps[0]
         fields = agent_step._effective_step_fields(
             provider=step.provider,
@@ -1543,7 +1525,7 @@ class TestUnconsumedConsentIsRevokedWhenTheDriveEnds:
         monkeypatch.setattr(
             workflow_journal,
             "revoke_unconsumed_decisions",
-            lambda *a, **k: (_ for _ in ()).throw(sqlite3.Error("revoke failed")),
+            lambda *a, **k: (_ for _ in ()).throw(DatabaseError("revoke failed")),
         )
 
         result = await script_runner.resume_script_run(RUN, {STEP: "skip"})

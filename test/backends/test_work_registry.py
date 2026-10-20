@@ -8,7 +8,7 @@ from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
 
 def _repository(tmp_path):
-    repository = WorkRepository(tmp_path / "work.sqlite3")
+    repository = WorkRepository(tmp_path / "work.db")
     repository.initialize()
     return repository
 

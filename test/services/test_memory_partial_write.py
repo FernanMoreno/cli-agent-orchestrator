@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -20,10 +21,7 @@ from cli_agent_orchestrator.services.memory_service import (
 def test_store_raises_typed_error_after_durable_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'metadata.db'}",
-        connect_args={"check_same_thread": False},
-    )
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     service = MemoryService(tmp_path / "memory", engine)
 

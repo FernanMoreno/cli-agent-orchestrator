@@ -7,7 +7,6 @@ import click
 import requests
 
 from cli_agent_orchestrator.constants import (
-    DATABASE_FILE,
     SERVER_HOST,
     SERVER_PORT,
     SESSION_PREFIX,
@@ -18,8 +17,7 @@ from cli_agent_orchestrator.constants import (
 def info():
     """Display information about the current session."""
     try:
-        # Display database path
-        click.echo(f"Database path: {DATABASE_FILE}")
+        click.echo("Database: PostgreSQL")
 
         # Try to get current session name:
         # 1. Check CAO_SESSION_NAME env var (set by herdr backend)

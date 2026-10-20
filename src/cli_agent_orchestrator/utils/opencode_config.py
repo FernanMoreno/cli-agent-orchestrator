@@ -14,8 +14,17 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Set
 
-from cli_agent_orchestrator.constants import OPENCODE_CONFIG_DIR, OPENCODE_CONFIG_FILE, SKILLS_DIR
+from cli_agent_orchestrator.constants import (
+    _CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV,
+    OPENCODE_CONFIG_DIR,
+    OPENCODE_CONFIG_FILE,
+    SKILLS_DIR,
+)
 from cli_agent_orchestrator.utils.mcp_resolution import cao_mcp_environment, resolve_cao_mcp_command
+from cli_agent_orchestrator.utils.mcp_tool_policy import (
+    MCP_TOOL_PROFILE_CONFIG,
+    MCP_TOOL_PROFILE_ENV,
+)
 from cli_agent_orchestrator.utils.path_validation import flatten_path_separators
 
 logger = logging.getLogger(__name__)
@@ -118,6 +127,26 @@ def write_config(data: Dict[str, Any]) -> None:
     )
 
 
+def validate_mcp_tool_profile_installation(cao_config: Mapping[str, Any]) -> None:
+    """Refuse policy loss until native installation has per-agent propagation."""
+    has_reserved_policy = any(
+        isinstance(cao_config.get(field), Mapping)
+        and (
+            MCP_TOOL_PROFILE_ENV in cao_config[field]
+            or _CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV in cao_config[field]
+        )
+        for field in ("env", "environment")
+    )
+    if MCP_TOOL_PROFILE_CONFIG in cao_config or has_reserved_policy:
+        raise ValueError("OpenCode MCP tool profile installation requires per-agent propagation")
+    for field in ("env", "environment"):
+        value = cao_config.get(field)
+        if value is not None and not isinstance(value, Mapping):
+            # dict(list_of_pairs) would otherwise materialize reserved markers
+            # only after this validation and place them in the shared config.
+            raise ValueError("OpenCode MCP environment must be a mapping")
+
+
 def translate_mcp_server_config(cao_config: Dict[str, Any]) -> Dict[str, Any]:
     """Translate a CAO mcpServer entry to OpenCode's ``mcp`` format.
 
@@ -146,6 +175,7 @@ def translate_mcp_server_config(cao_config: Dict[str, Any]) -> Dict[str, Any]:
     ``cwd`` is passed through as the author wrote it — ``AgentProfile.mcpServers``
     is ``Dict[str, Any]``, so CAO does not own that value.
     """
+    validate_mcp_tool_profile_installation(cao_config)
     # Resolve the bundled cao-mcp-server console script to a PATH-independent
     # invocation before flattening into OpenCode's command list.
     # persisted=True: OpenCode reads this from opencode.json at launch, so prefer

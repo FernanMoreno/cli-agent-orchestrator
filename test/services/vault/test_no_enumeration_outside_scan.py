@@ -19,7 +19,7 @@ def _is_memory_metadata_file_path(node: ast.AST) -> bool:
 
 
 def test_vault_read_boundaries_do_not_enumerate_directories():
-    """Reader and binding resolve SQLite/config state, never vault trees."""
+    """Reader and binding resolve database/config state, never vault trees."""
     forbidden = {"rglob", "glob", "iterdir", "walk", "scandir"}
     sinks: list[str] = []
     violations: list[str] = []

@@ -32,10 +32,12 @@ import asyncio
 import json
 import logging
 import os
+import stat
 import sys
 import tempfile
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -1021,6 +1023,26 @@ def record_step_completion(
 # ---------------------------------------------------------------------------
 # _materialize_snapshot (BR-30) — engine-owned temp file, 0o600 under 0o700 root
 # ---------------------------------------------------------------------------
+def _verify_snapshot_permissions(path: Path) -> None:
+    """Verify private executable artifacts without changing their permissions."""
+    if os.name != "posix":
+        return
+    try:
+        source = path.lstat()
+        parent = path.parent.lstat()
+        if (
+            not stat.S_ISREG(source.st_mode)
+            or not stat.S_ISDIR(parent.st_mode)
+            or source.st_uid != os.geteuid()
+            or parent.st_uid != os.geteuid()
+            or source.st_mode & 0o077
+            or parent.st_mode & 0o077
+        ):
+            raise RuntimeError("private source permissions are unsafe")
+    except OSError:
+        raise RuntimeError("private source is unavailable") from None
+
+
 def _materialize_snapshot(run_id: str, source: str) -> str:
     """Write the frozen ``spec_snapshot.source`` to an engine-owned temp file (BR-30).
 
@@ -1711,10 +1733,11 @@ async def resume_script_run(
             with scoped_plan_owner.repository.read_snapshot() as driver_connection:
                 if (
                     driver_connection.execute(
-                        "SELECT 1 FROM sqlite_master WHERE name='workflow_driver'"
+                        "SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND c.relname='workflow_driver'",
+                        (driver_connection.target.schema,),
                     ).fetchone()
                     and driver_connection.execute(
-                        "SELECT 1 FROM workflow_driver WHERE run_id=?", (run_id,)
+                        "SELECT 1 FROM workflow_driver WHERE run_id=%s", (run_id,)
                     ).fetchone()
                 ):
                     raise ResumeNotAllowedError("enabled continuation requires its durable driver")
@@ -1857,10 +1880,11 @@ async def resume_script_run(
             with scoped_plan_owner.repository.read_snapshot() as driver_connection:
                 if (
                     driver_connection.execute(
-                        "SELECT 1 FROM sqlite_master WHERE name='workflow_driver'"
+                        "SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND c.relname='workflow_driver'",
+                        (driver_connection.target.schema,),
                     ).fetchone()
                     and driver_connection.execute(
-                        "SELECT 1 FROM workflow_driver WHERE run_id=?", (run_id,)
+                        "SELECT 1 FROM workflow_driver WHERE run_id=%s", (run_id,)
                     ).fetchone()
                 ):
                     raise ResumeNotAllowedError("enabled continuation requires its durable driver")

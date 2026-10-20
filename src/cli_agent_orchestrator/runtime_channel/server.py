@@ -1,7 +1,6 @@
 """Scoped central remote routing with durable, exact runtime placement."""
 
 import asyncio
-import hmac
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -41,6 +40,7 @@ from cli_agent_orchestrator.security.auth import (
     get_current_principal,
     require_any_scope,
 )
+from cli_agent_orchestrator.security.local_token import ascii_token_matches
 from cli_agent_orchestrator.services import remote_terminal_service as remote
 from cli_agent_orchestrator.services.event_bus import bus
 
@@ -53,13 +53,12 @@ async def compensate_launch(connection, operation):
     terminal = operation["result"]["payload"]["terminal"]
 
     def teardown():
-        from cli_agent_orchestrator import constants
         from cli_agent_orchestrator.services.terminal_service import (
             ensure_terminal_is_not_work_owned,
         )
         from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
-        with terminal_dispatch_lock(constants.DATABASE_FILE, terminal["id"]):
+        with terminal_dispatch_lock(database.main_target(), terminal["id"]):
             ensure_terminal_is_not_work_owned(terminal["id"])
             result = runtime_registry.call_blocking(
                 connection.runtime_id,
@@ -169,7 +168,7 @@ async def accept_result(connection, result):
 async def runtime_channel(websocket: WebSocket):
     token = runtime_token()
     provided = websocket.headers.get(TOKEN_HEADER, "")
-    if not token or not hmac.compare_digest(provided, token):
+    if not token or not ascii_token_matches(provided, token):
         await websocket.close(code=1008)
         return
     await websocket.accept()
@@ -183,7 +182,7 @@ async def runtime_channel(websocket: WebSocket):
         ):
             await websocket.close(code=1008)
             return
-        store = RemoteOperationStore(database.engine)
+        store = RemoteOperationStore(database.main_target())
         epoch = await asyncio.to_thread(
             store.activate_runtime, hello.runtime_id, hello.runtime_incarnation_id
         )
@@ -345,7 +344,7 @@ async def launch_remote(runtime_id: str, body: LaunchRequest):
     dependencies=[Depends(require_any_scope(SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN))],
 )
 async def get_operation(runtime_id: str, op_id: str, refresh: bool = False):
-    row = await asyncio.to_thread(RemoteOperationStore(database.engine).get, op_id)
+    row = await asyncio.to_thread(RemoteOperationStore(database.main_target()).get, op_id)
     if not row or row["runtime_id"] != runtime_id:
         raise HTTPException(404, "Remote operation not found")
     if refresh and row["state"] in {"dispatching", "reconcile"}:
@@ -358,6 +357,8 @@ async def get_operation(runtime_id: str, op_id: str, refresh: bool = False):
             if observed.get("operation_result"):
                 await accept_result(conn, Result.model_validate(observed["operation_result"]))
                 row = await asyncio.to_thread(conn.store.get, op_id)
+                if not row or row["runtime_id"] != runtime_id:
+                    raise HTTPException(404, "Remote operation not found")
     # Omit stored prompt/policy payload and backend transcript from diagnostic reads.
     result = {
         key: row[key]
@@ -375,7 +376,7 @@ async def get_operation(runtime_id: str, op_id: str, refresh: bool = False):
     if row["command_type"] == "launch" and row["state"] == "settled" and row["result"]["ok"]:
         result["terminal_id"] = row["result"]["payload"]["terminal"]["id"]
     result["cancellation_requested"] = await asyncio.to_thread(
-        RemoteOperationStore(database.engine).cancellation_requested, op_id
+        RemoteOperationStore(database.main_target()).cancellation_requested, op_id
     )
     return result
 
@@ -385,7 +386,7 @@ async def get_operation(runtime_id: str, op_id: str, refresh: bool = False):
     dependencies=[Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN))],
 )
 async def cancel_operation(runtime_id: str, op_id: str):
-    store = RemoteOperationStore(database.engine)
+    store = RemoteOperationStore(database.main_target())
     row = await asyncio.to_thread(store.get, op_id)
     if not row or row["runtime_id"] != runtime_id or row["command_type"] != "launch":
         raise HTTPException(404, "Remote launch operation not found")

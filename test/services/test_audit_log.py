@@ -27,6 +27,7 @@ import stat
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from typing import Any, List, Optional
 
 import pytest
@@ -604,10 +605,7 @@ class TestU75PlanCases:
         from cli_agent_orchestrator.clients.database import Base
         from cli_agent_orchestrator.services.memory_service import MemoryService
 
-        engine = create_engine(
-            f"sqlite:///{tmp_path}/u75.db",
-            connect_args={"check_same_thread": False},
-        )
+        engine = configured_orm_engine()
         Base.metadata.create_all(bind=engine)
         svc = MemoryService(base_dir=tmp_path / "msvc-base", db_engine=engine)
         ctx = {
@@ -646,10 +644,7 @@ class TestU75PlanCases:
         from cli_agent_orchestrator.clients.database import Base
         from cli_agent_orchestrator.services.memory_service import MemoryService
 
-        engine = create_engine(
-            f"sqlite:///{tmp_path}/u75-fail.db",
-            connect_args={"check_same_thread": False},
-        )
+        engine = configured_orm_engine()
         Base.metadata.create_all(bind=engine)
         svc = MemoryService(base_dir=tmp_path / "msvc-fail", db_engine=engine)
 

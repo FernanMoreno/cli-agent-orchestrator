@@ -19,7 +19,7 @@ from cli_agent_orchestrator.security.browser_passwords import (
 
 
 class BrowserAuthService:
-    def __init__(self, path, binding: dict, policy: dict | None = None, clock=time.time):
+    def __init__(self, target, binding: dict, policy: dict | None = None, clock=time.time):
         config = dict(policy or {})
         limits = dict(config.get("limits", {}))
         limits.update(
@@ -40,9 +40,13 @@ class BrowserAuthService:
             raise ValueError("Browser identity binding must be a verified JWT operator")
         self.clock = clock
         self.enabled = config.get("enabled", True)
-        self.repository = BrowserAuthRepository(path, config.get("installation_id", "local"))
+        self.repository = BrowserAuthRepository(target, config.get("installation_id", "local"))
         # Verify scrypt capacity before enabling login, including unknown-account verification.
         self._dummy = dummy_password_hash()
+
+    def initialize_store(self):
+        """Initialize the installation binding during explicit first-account setup."""
+        self.repository.initialize_store()
 
     @staticmethod
     def _digest(value):
@@ -63,7 +67,7 @@ class BrowserAuthService:
             raise BrowserAuthError("clock_untrusted", 503)
         if now < metadata["time_high_water"] and not local:
             raise BrowserAuthError("clock_untrusted", 503)
-        db.execute("UPDATE auth_metadata SET time_high_water=MAX(time_high_water,?)", (now,))
+        db.execute("UPDATE auth_metadata SET time_high_water=GREATEST(time_high_water,%s)", (now,))
         return now, metadata
 
     @staticmethod
@@ -110,7 +114,7 @@ class BrowserAuthService:
     @staticmethod
     def _audit(db, now, kind, outcome="ok", account=None, session=None, peer="local"):
         db.execute(
-            "INSERT INTO browser_auth_events (occurred_at,event_kind,outcome_code,account_id,session_id,peer_category,auth_method) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO browser_auth_events (occurred_at,event_kind,outcome_code,account_id,session_id,peer_category,auth_method) VALUES (%s,%s,%s,%s,%s,%s,%s)",
             (
                 now,
                 kind,
@@ -121,7 +125,7 @@ class BrowserAuthService:
                 "local_password",
             ),
         )
-        db.execute("DELETE FROM browser_auth_events WHERE occurred_at < ?", (now - 90 * 86400,))
+        db.execute("DELETE FROM browser_auth_events WHERE occurred_at < %s", (now - 90 * 86400,))
 
     def create_account(self, username, password):
         normalized = self._username(username)
@@ -131,7 +135,11 @@ class BrowserAuthService:
             if self._account(db) is not None:
                 raise BrowserAuthError("account_exists", 409)
             db.execute(
-                "INSERT INTO browser_accounts VALUES (?,?,?,?,?,?,1,1,?,?,?,?,?,?,?)",
+                """INSERT INTO browser_accounts
+                   (id,username_normalized,password_scheme,password_salt,password_hash,password_params,
+                    account_version,enabled,principal_id,issuer,subject,principal_kind,scopes_json,
+                    created_at,password_changed_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,1,TRUE,%s,%s,%s,%s,%s,%s,%s)""",
                 (
                     secrets.token_hex(16),
                     normalized,
@@ -158,9 +166,9 @@ class BrowserAuthService:
 
     @staticmethod
     def _purge(db, now):
-        db.execute("DELETE FROM browser_login_limits WHERE updated_at < ?", (now - 600,))
+        db.execute("DELETE FROM browser_login_limits WHERE updated_at < %s", (now - 600,))
         db.execute(
-            "DELETE FROM browser_sessions WHERE COALESCE(revoked_at,absolute_expires_at) < ?",
+            "DELETE FROM browser_sessions WHERE COALESCE(revoked_at,absolute_expires_at) < %s",
             (now - 7 * 86400,),
         )
 
@@ -168,7 +176,7 @@ class BrowserAuthService:
         self._purge(db, now)
         for key, kind in buckets:
             row = db.execute(
-                "SELECT * FROM browser_login_limits WHERE bucket_digest=?", (key,)
+                "SELECT * FROM browser_login_limits WHERE bucket_digest=%s", (key,)
             ).fetchone()
             if row and row["blocked_until"] > now:
                 raise BrowserAuthError(
@@ -184,7 +192,7 @@ class BrowserAuthService:
             raise BrowserAuthError("auth_unavailable", 503)
         for key, kind in buckets:
             row = db.execute(
-                "SELECT * FROM browser_login_limits WHERE bucket_digest=?", (key,)
+                "SELECT * FROM browser_login_limits WHERE bucket_digest=%s", (key,)
             ).fetchone()
             reset = (
                 not row
@@ -193,12 +201,18 @@ class BrowserAuthService:
             )
             if reset:
                 db.execute(
-                    "INSERT OR REPLACE INTO browser_login_limits VALUES (?,?,?,0,0,?,1)",
+                    """INSERT INTO browser_login_limits
+                       (bucket_digest,bucket_kind,window_started_at,failures,blocked_until,updated_at,pending_count)
+                       VALUES (%s,%s,%s,0,0,%s,1)
+                       ON CONFLICT(bucket_digest) DO UPDATE SET
+                           bucket_kind=EXCLUDED.bucket_kind,
+                           window_started_at=EXCLUDED.window_started_at,
+                           failures=0,blocked_until=0,updated_at=EXCLUDED.updated_at,pending_count=1""",
                     (key, kind, now, now),
                 )
             else:
                 db.execute(
-                    "UPDATE browser_login_limits SET pending_count=pending_count+1,updated_at=? WHERE bucket_digest=?",
+                    "UPDATE browser_login_limits SET pending_count=pending_count+1,updated_at=%s WHERE bucket_digest=%s",
                     (now, key),
                 )
 
@@ -206,7 +220,7 @@ class BrowserAuthService:
             (
                 key,
                 db.execute(
-                    "SELECT window_started_at FROM browser_login_limits WHERE bucket_digest=?",
+                    "SELECT window_started_at FROM browser_login_limits WHERE bucket_digest=%s",
                     (key,),
                 ).fetchone()[0],
             )
@@ -226,7 +240,7 @@ class BrowserAuthService:
                 with self.repository.transaction() as db:
                     for key, started_at in reservations:
                         db.execute(
-                            "UPDATE browser_login_limits SET pending_count=MAX(0,pending_count-1) WHERE bucket_digest=? AND window_started_at=?",
+                            "UPDATE browser_login_limits SET pending_count=GREATEST(0,pending_count-1) WHERE bucket_digest=%s AND window_started_at=%s",
                             (key, started_at),
                         )
 
@@ -234,12 +248,12 @@ class BrowserAuthService:
     def _finish_attempt(db, now, reservations, valid):
         for key, started_at in reservations:
             db.execute(
-                "UPDATE browser_login_limits SET pending_count=MAX(0,pending_count-1),failures=failures+?,updated_at=? WHERE bucket_digest=? AND window_started_at=?",
+                "UPDATE browser_login_limits SET pending_count=GREATEST(0,pending_count-1),failures=failures+%s,updated_at=%s WHERE bucket_digest=%s AND window_started_at=%s",
                 (0 if valid else 1, now, key, started_at),
             )
             if not valid:
                 db.execute(
-                    "UPDATE browser_login_limits SET blocked_until=? WHERE bucket_digest=? AND window_started_at=? AND failures>=10 AND blocked_until<=?",
+                    "UPDATE browser_login_limits SET blocked_until=%s WHERE bucket_digest=%s AND window_started_at=%s AND failures>=10 AND blocked_until<=%s",
                     (now + 60, key, started_at, now),
                 )
 
@@ -308,7 +322,7 @@ class BrowserAuthService:
                         for key, _ in buckets
                         if (
                             row := db.execute(
-                                "SELECT blocked_until FROM browser_login_limits WHERE bucket_digest=?",
+                                "SELECT blocked_until FROM browser_login_limits WHERE bucket_digest=%s",
                                 (key,),
                             ).fetchone()
                         )
@@ -349,14 +363,18 @@ class BrowserAuthService:
                     )
                     session_id = secrets.token_hex(16)
                     db.execute(
-                        "INSERT INTO browser_sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL)",
+                        """INSERT INTO browser_sessions
+                           (id,account_id,secret_digest,auth_epoch,account_version,remembered,idle_seconds,
+                            absolute_seconds,created_at,last_activity_at,absolute_expires_at,access_expires_at,
+                            revoked_at,revoke_reason)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,NULL)""",
                         (
                             session_id,
                             account["id"],
                             self._digest(secret),
                             metadata["auth_epoch"],
                             account["account_version"],
-                            int(bool(remember)),
+                            bool(remember),
                             idle,
                             absolute,
                             now,
@@ -374,7 +392,7 @@ class BrowserAuthService:
                         peer=peer,
                     )
                     session = db.execute(
-                        "SELECT * FROM browser_sessions WHERE id=?", (session_id,)
+                        "SELECT * FROM browser_sessions WHERE id=%s", (session_id,)
                     ).fetchone()
                     result = self._dto(session, account, now)
             settled[0] = True
@@ -387,7 +405,7 @@ class BrowserAuthService:
         if not isinstance(secret, str) or not secret or len(secret) > 256:
             raise BrowserAuthError("session_required")
         session = db.execute(
-            "SELECT * FROM browser_sessions WHERE secret_digest=?", (self._digest(secret),)
+            "SELECT * FROM browser_sessions WHERE secret_digest=%s", (self._digest(secret),)
         ).fetchone()
         if session is None:
             raise BrowserAuthError("session_required")
@@ -410,10 +428,10 @@ class BrowserAuthService:
             raise BrowserAuthError("access_renewal_required")
         if touch:
             db.execute(
-                "UPDATE browser_sessions SET last_activity_at=? WHERE id=?", (now, session["id"])
+                "UPDATE browser_sessions SET last_activity_at=%s WHERE id=%s", (now, session["id"])
             )
             session = db.execute(
-                "SELECT * FROM browser_sessions WHERE id=?", (session["id"],)
+                "SELECT * FROM browser_sessions WHERE id=%s", (session["id"],)
             ).fetchone()
         return session, account, now
 
@@ -460,11 +478,11 @@ class BrowserAuthService:
                 session, account, now = self._load(db, secret)
                 idle, absolute = self._deadlines(session)
                 db.execute(
-                    "UPDATE browser_sessions SET access_expires_at=? WHERE id=?",
+                    "UPDATE browser_sessions SET access_expires_at=%s WHERE id=%s",
                     (min(now + self.policy.access_seconds, idle, absolute), session["id"]),
                 )
                 updated = db.execute(
-                    "SELECT * FROM browser_sessions WHERE id=?", (session["id"],)
+                    "SELECT * FROM browser_sessions WHERE id=%s", (session["id"],)
                 ).fetchone()
                 return self._dto(updated, account, now)
         except BrowserAuthError as exc:
@@ -480,11 +498,11 @@ class BrowserAuthService:
         with self.repository.transaction() as db:
             now, _ = self._now(db)
             session = db.execute(
-                "SELECT * FROM browser_sessions WHERE secret_digest=?", (self._digest(secret),)
+                "SELECT * FROM browser_sessions WHERE secret_digest=%s", (self._digest(secret),)
             ).fetchone()
             if session is not None and session["revoked_at"] is None:
                 db.execute(
-                    "UPDATE browser_sessions SET revoked_at=?,revoke_reason='logout' WHERE id=?",
+                    "UPDATE browser_sessions SET revoked_at=%s,revoke_reason='logout' WHERE id=%s",
                     (now, session["id"]),
                 )
                 self._audit(db, now, "logout", account=session["account_id"], session=session["id"])
@@ -492,7 +510,7 @@ class BrowserAuthService:
     def _revoke(self, db, now, reason):
         db.execute("UPDATE auth_metadata SET auth_epoch=auth_epoch+1")
         db.execute(
-            "UPDATE browser_sessions SET revoked_at=COALESCE(revoked_at,?),revoke_reason=COALESCE(revoke_reason,?)",
+            "UPDATE browser_sessions SET revoked_at=COALESCE(revoked_at,%s),revoke_reason=COALESCE(revoke_reason,%s)",
             (now, reason),
         )
 
@@ -505,7 +523,7 @@ class BrowserAuthService:
     def _replace_password(self, db, account, record, now, reason):
         self._check_binding(account)
         db.execute(
-            "UPDATE browser_accounts SET password_scheme=?,password_salt=?,password_hash=?,password_params=?,account_version=account_version+1,password_changed_at=?,enabled=1 WHERE id=?",
+            "UPDATE browser_accounts SET password_scheme=%s,password_salt=%s,password_hash=%s,password_params=%s,account_version=account_version+1,password_changed_at=%s,enabled=TRUE WHERE id=%s",
             (
                 record["scheme"],
                 record["salt"],
@@ -572,7 +590,9 @@ class BrowserAuthService:
     def disable(self):
         with self.repository.transaction() as db:
             now, _ = self._now(db, local=True)
-            db.execute("UPDATE browser_accounts SET enabled=0,account_version=account_version+1")
+            db.execute(
+                "UPDATE browser_accounts SET enabled=FALSE,account_version=account_version+1"
+            )
             self._revoke(db, now, "local_disable")
             self._audit(db, now, "local_disable")
 

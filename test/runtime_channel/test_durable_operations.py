@@ -1,23 +1,21 @@
 """Operation response loss must not create a second remote effect."""
 
 import pytest
-from sqlalchemy import create_engine
 
 from cli_agent_orchestrator.runtime_channel.store import (
     RemoteIdentityConflict,
     RemoteOperationStore,
 )
 
-
-def open_store(path):
-    store = RemoteOperationStore(create_engine(f"sqlite:///{path}"))
-    store.create_schema()
-    return store
+pytestmark = pytest.mark.postgres
 
 
-def test_restart_retains_claim_and_prevents_redelivery(tmp_path):
-    path = tmp_path / "operations.sqlite"
-    store = open_store(path)
+def open_store(target):
+    return RemoteOperationStore(target)
+
+
+def test_restart_retains_claim_and_prevents_redelivery(postgres_runtime_channel):
+    store = open_store(postgres_runtime_channel)
     store.activate_runtime("worker", "inc-one")
     store.prepare(
         "operation",
@@ -29,21 +27,21 @@ def test_restart_retains_claim_and_prevents_redelivery(tmp_path):
         generation="g1",
     )
     assert store.claim("operation")
-    restarted = open_store(path)
+    restarted = open_store(postgres_runtime_channel)
     assert not restarted.claim("operation")
     assert restarted.get("operation")["state"] == "dispatching"
 
 
-def test_idempotency_key_rejects_changed_material(tmp_path):
-    store = open_store(tmp_path / "db")
+def test_idempotency_key_rejects_changed_material(postgres_runtime_channel):
+    store = open_store(postgres_runtime_channel)
     store.activate_runtime("worker", "inc-one")
     store.prepare("operation", "worker", "inc-one", "input", {"text": "task"})
     with pytest.raises(RemoteIdentityConflict):
         store.prepare("operation", "worker", "inc-one", "input", {"text": "different"})
 
 
-def test_old_incarnation_cannot_settle_new_runtime(tmp_path):
-    store = open_store(tmp_path / "db")
+def test_old_incarnation_cannot_settle_new_runtime(postgres_runtime_channel):
+    store = open_store(postgres_runtime_channel)
     store.activate_runtime("worker", "inc-one")
     store.prepare("operation", "worker", "inc-one", "input", {"text": "task"})
     assert store.claim("operation")
@@ -52,8 +50,8 @@ def test_old_incarnation_cannot_settle_new_runtime(tmp_path):
     assert store.get("operation")["state"] == "reconcile"
 
 
-def test_late_result_settles_unknown_without_repeating_effect(tmp_path):
-    store = open_store(tmp_path / "db")
+def test_late_result_settles_unknown_without_repeating_effect(postgres_runtime_channel):
+    store = open_store(postgres_runtime_channel)
     store.activate_runtime("worker", "inc-one")
     store.prepare("operation", "worker", "inc-one", "input", {"text": "task"})
     assert store.claim("operation")
@@ -65,8 +63,8 @@ def test_late_result_settles_unknown_without_repeating_effect(tmp_path):
     assert store.get("operation")["result"]["sequence"] == 4
 
 
-def test_replaced_connection_cannot_claim_a_queued_operation(tmp_path):
-    store = open_store(tmp_path / "db")
+def test_replaced_connection_cannot_claim_a_queued_operation(postgres_runtime_channel):
+    store = open_store(postgres_runtime_channel)
     old_epoch = store.activate_runtime("worker", "inc-one")
     store.prepare("operation", "worker", "inc-one", "input", {"text": "task"})
     new_epoch = store.activate_runtime("worker", "inc-one")
@@ -75,10 +73,10 @@ def test_replaced_connection_cannot_claim_a_queued_operation(tmp_path):
     assert store.claim("operation", connection_epoch=new_epoch)
 
 
-def test_expired_unsent_operation_never_claims_or_runs(tmp_path):
+def test_expired_unsent_operation_never_claims_or_runs(postgres_runtime_channel):
     import time
 
-    store = open_store(tmp_path / "db")
+    store = open_store(postgres_runtime_channel)
     epoch = store.activate_runtime("worker", "inc-one")
     store.prepare(
         "operation", "worker", "inc-one", "input", {"text": "task"}, deadline=time.time() - 1
@@ -88,10 +86,10 @@ def test_expired_unsent_operation_never_claims_or_runs(tmp_path):
     assert store.get("operation")["state"] == "cancelled"
 
 
-def test_current_effect_fence_checks_deadline_and_connection_epoch(tmp_path):
+def test_current_effect_fence_checks_deadline_and_connection_epoch(postgres_runtime_channel):
     import time
 
-    store = open_store(tmp_path / "db")
+    store = open_store(postgres_runtime_channel)
     old_epoch = store.activate_runtime("worker", "inc-one")
     store.prepare(
         "operation", "worker", "inc-one", "input", {"text": "task"}, deadline=time.time() + 60
@@ -102,11 +100,11 @@ def test_current_effect_fence_checks_deadline_and_connection_epoch(tmp_path):
     assert not store.effect_is_current("operation", connection_epoch=old_epoch)
 
 
-def test_concurrent_connection_activations_get_distinct_persisted_epochs(tmp_path):
+def test_concurrent_connection_activations_get_distinct_persisted_epochs(postgres_runtime_channel):
     import threading
     from concurrent.futures import ThreadPoolExecutor
 
-    store = open_store(tmp_path / "db")
+    store = open_store(postgres_runtime_channel)
     store.activate_runtime("worker", "inc-one")
     start = threading.Barrier(8)
 

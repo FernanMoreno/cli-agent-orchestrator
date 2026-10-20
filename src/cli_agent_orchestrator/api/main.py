@@ -50,6 +50,10 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
+from cli_agent_orchestrator.api.interactions import (
+    optional_creation_principal,
+)
+from cli_agent_orchestrator.api.interactions import router as interactions_router
 from cli_agent_orchestrator.api.knowledge_routes import (
     legacy_graph_memory_operator,
     legacy_memory_operator,
@@ -1391,11 +1395,13 @@ def _reconcile_memory_at_startup() -> None:
 
 def _recover_t097_proxy_effects_at_startup() -> int:
     """Mark open MCP effects uncertain only when their exact process owner exited."""
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.constants import DATABASE_FILE
     from cli_agent_orchestrator.services.work_service import WorkService
 
-    recovered = WorkService(WorkRepository(DATABASE_FILE)).recover_incomplete_proxy_effects()
+    recovered = WorkService(
+        WorkRepository(DatabaseTarget.from_settings())
+    ).recover_incomplete_proxy_effects()
     if recovered:
         logger.warning(
             "T097 startup recovery marked %d MCP issue/effect record(s) for operator "
@@ -1456,7 +1462,7 @@ def _compose_managed_workflow_runtime(app: FastAPI, repository, gateway):
     """Bind workflow origins, accepted-result storage, and replay projector.
 
     All components share the exact launch runtime's WorkAdmission and the same
-    repository. The artifact store is paired with the SQLite path so a restarted
+    repository. The artifact store uses the configured filesystem content root so a restarted
     server reads accepted result bytes from the same durable content namespace.
     """
     from cli_agent_orchestrator.services.step_output_store import ImmutableResultStore
@@ -1487,9 +1493,7 @@ def _compose_managed_workflow_runtime(app: FastAPI, repository, gateway):
         runtime.origins._bind_admission(admission)
         admission.attempt_credentials.bind_origins(runtime.origins)
 
-        result_artifacts = ImmutableResultStore(
-            repository.path.with_name(repository.path.name + ".result-content")
-        )
+        result_artifacts = ImmutableResultStore(repository.result_content_root)
         result_service = WorkService(
             repository,
             origins=runtime.origins,
@@ -1533,10 +1537,10 @@ async def lifespan(app: FastAPI):
 
     managed_launch_required()
     from cli_agent_orchestrator.backends import work_registry
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget
     from cli_agent_orchestrator.clients.work_repository import WorkRepository
-    from cli_agent_orchestrator.constants import DATABASE_FILE
 
-    work_repository = WorkRepository(DATABASE_FILE)
+    work_repository = WorkRepository(DatabaseTarget.from_settings())
     work_backends = work_registry.local_work_backends_for(work_repository)
     logger.info("Starting CLI Agent Orchestrator server...")
     setup_logging()
@@ -1552,6 +1556,12 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("OTel telemetry init failed; continuing", exc_info=True)
     init_db()
+    from cli_agent_orchestrator.services.interactions.service import (
+        get_default_interaction_service,
+    )
+
+    app.state.interaction_service = get_default_interaction_service()
+    await asyncio.to_thread(app.state.interaction_service.initialize)
     _seed_default_skills_at_startup()
     _reconcile_memory_at_startup()
     try:
@@ -1667,8 +1677,8 @@ async def lifespan(app: FastAPI):
         from cli_agent_orchestrator.services.agui_enablement import agui_surface_enabled
 
         if agui_surface_enabled():
+            from cli_agent_orchestrator.clients.postgres import DatabaseTarget
             from cli_agent_orchestrator.clients.work_repository import WorkRepository
-            from cli_agent_orchestrator.constants import DATABASE_FILE
             from cli_agent_orchestrator.services.agui.approval_bridge import ApprovalBridge
             from cli_agent_orchestrator.services.agui.base import InProcessUiEmitter
             from cli_agent_orchestrator.services.agui.handoff_approval import (
@@ -1686,7 +1696,7 @@ async def lifespan(app: FastAPI):
                 answer_delivery=TerminalServiceAnswerDelivery(),
                 # This permits only an explicit trusted upstream binding.  Bridge
                 # status events still remain unbound and terminal/UI-only.
-                decisions=WorkDecisions(WorkRepository(DATABASE_FILE)),
+                decisions=WorkDecisions(WorkRepository(DatabaseTarget.from_settings())),
             )
             approval_bridge = ApprovalBridge(construct=approval_construct)
             app.state.approval_bridge = approval_bridge
@@ -1915,7 +1925,9 @@ def _build_pty_env() -> Dict[str, str]:
     non-dumb ``TERM`` values from the operator are preserved verbatim. See
     issue #150.
     """
-    env = os.environ.copy()
+    from cli_agent_orchestrator.utils.database_environment import without_database_environment
+
+    env = without_database_environment(os.environ)
     if env.get("TERM", "") in _UNUSABLE_TERM_VALUES:
         env["TERM"] = _DEFAULT_PTY_TERM
     return env
@@ -1934,6 +1946,7 @@ from cli_agent_orchestrator.api.local_coordination_routes import router as local
 
 app.include_router(local_coordination_router)
 app.include_router(work_router)
+app.include_router(interactions_router)
 app.include_router(knowledge_router)
 from cli_agent_orchestrator.runtime_channel.server import router as runtime_router
 
@@ -2723,6 +2736,13 @@ async def agui_stream(
     cursor: Optional[str] = Query(
         default=None, description="Confirmed event ID for fresh-ticket reconnects."
     ),
+    interaction_cursor: Optional[str] = Query(
+        default=None,
+        description="Opaque cursor for paging the bounded interaction metadata snapshot.",
+    ),
+    interaction_limit: int = Query(
+        default=100, ge=1, le=100, description="Maximum interaction rows in the state snapshot."
+    ),
     since: Optional[str] = Query(
         default=None,
         description=(
@@ -2766,6 +2786,19 @@ async def agui_stream(
         request, "/agui/v1/stream", (SCOPE_READ, SCOPE_WRITE, SCOPE_ADMIN)
     )
     scopes = await validate()
+    if interaction_cursor is not None:
+        from cli_agent_orchestrator.services.interactions.service import (
+            InteractionInvalid,
+            InteractionService,
+        )
+
+        try:
+            InteractionService.validate_projection_cursor(interaction_cursor)
+        except InteractionInvalid as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid interaction projection cursor.",
+            ) from exc
     if cursor and not since:
         _require_retained_event_cursor(cursor, allow_derived=True)
         last_event_id = cursor
@@ -2788,6 +2821,10 @@ async def agui_stream(
     from fastapi.responses import StreamingResponse
 
     from cli_agent_orchestrator.services import session_service
+    from cli_agent_orchestrator.services.agui.interaction_projection import (
+        project_interaction_snapshot,
+        unavailable_interaction_snapshot,
+    )
     from cli_agent_orchestrator.services.agui.lifecycle_tracker import ToolCallLifecycleTracker
     from cli_agent_orchestrator.services.agui_stream import (
         state_delta_frame,
@@ -2814,6 +2851,34 @@ async def agui_stream(
             except Exception:
                 logger.debug("agui_stream: terminal listing failed for %s", sess.get("id"))
         return build_dashboard_snapshot(sessions, terminals, list(scopes))
+
+    def _interaction_projection() -> Dict:
+        try:
+            from cli_agent_orchestrator.api.interactions import get_interaction_service
+
+            page = get_interaction_service(request).projection_snapshot(
+                cursor=interaction_cursor,
+                limit=interaction_limit,
+            )
+            return project_interaction_snapshot(page)
+        except Exception:
+            # Keep the authorized fleet stream available if the independent
+            # ledger projection is temporarily unreadable. Do not log exception
+            # text because it may contain backend or database details.
+            logger.warning("agui_stream: interaction projection unavailable")
+            return unavailable_interaction_snapshot()
+
+    async def _fleet_snapshot_with_interactions() -> Dict:
+        fleet = _fleet_snapshot()
+        # Fleet backend reads can take time. Revalidate at the projection
+        # boundary so revoked scopes never get a final ledger snapshot.
+        await validate()
+        fleet["interactions"] = _interaction_projection()
+        # The projection is a database read and may race with session revocation.
+        # Check again before this snapshot can be emitted to the stream.
+        current_scopes = await validate()
+        fleet["scopes"] = list(current_scopes)
+        return fleet
 
     def _sse(event_id: Optional[str], agui_type: str, data: Dict) -> str:
         """Format one SSE frame, with an ``id:`` cursor when the event has one."""
@@ -2905,8 +2970,7 @@ async def agui_stream(
             # RFC-6902 STATE_DELTA patches after each fleet event.
             prev_snapshot: Optional[Dict] = None
             try:
-                await validate()
-                prev_snapshot = _fleet_snapshot()
+                prev_snapshot = await _fleet_snapshot_with_interactions()
                 agui_type, data = state_snapshot_frame(prev_snapshot)
                 yield _sse(None, agui_type, data)
             except HTTPException:
@@ -2921,6 +2985,29 @@ async def agui_stream(
             # propagates through the ``finally`` that unregisters the subscriber.
             async for event in _authorized_live_events(bus, sub, validate):
                 if event.get("__heartbeat__"):
+                    try:
+                        await validate()
+                    except HTTPException:
+                        return
+                    # Interaction writes do not publish to the fleet bus. Poll
+                    # the durable, bounded ledger page on every authorized idle
+                    # heartbeat, then refresh the current scopes in that state.
+                    if prev_snapshot is not None:
+                        curr_snapshot = dict(prev_snapshot)
+                        curr_snapshot["interactions"] = _interaction_projection()
+                        try:
+                            current_scopes = await validate()
+                        except HTTPException:
+                            return
+                        # Revalidation returns the current grant set. Keep the
+                        # projection in sync on idle heartbeats, where no fleet
+                        # event would otherwise refresh the browser's controls.
+                        curr_snapshot["scopes"] = list(current_scopes)
+                        delta = state_delta_frame(prev_snapshot, curr_snapshot)
+                        if delta is not None:
+                            dtype, ddata = delta
+                            yield _sse(None, dtype, ddata)
+                        prev_snapshot = curr_snapshot
                     yield ": keep-alive\n\n"
                     continue
                 rid = event.get("id")
@@ -2938,15 +3025,25 @@ async def agui_stream(
                 # natural follow-up for high event rates (this is the opt-in L2
                 # dashboard surface, not the orchestration hot path).
                 try:
-                    curr = _fleet_snapshot()
+                    curr = await _fleet_snapshot_with_interactions()
                     if prev_snapshot is not None:
                         delta = state_delta_frame(prev_snapshot, curr)
                         if delta is not None:
                             dtype, ddata = delta
                             yield _sse(None, dtype, ddata)
                     prev_snapshot = curr
+                except HTTPException:
+                    return
                 except Exception:
                     logger.warning("agui_stream: STATE_DELTA computation failed", exc_info=True)
+
+            # `_authorized_live_events` ends quietly after failed validation.
+            # Recheck before synthesizing any terminal/tool closers so a revoked
+            # stream receives no data after its authority has ended.
+            try:
+                await validate()
+            except HTTPException:
+                return
 
             # Session end: synthesize closers for any remaining open tool calls.
             for ftype, fdata in tracker.close_all():
@@ -4258,6 +4355,7 @@ async def create_session(
     initial_message = body.initial_message if body else None
     initial_message_orchestration_type = None
     prompt_redelivery = body.prompt_redelivery if body else True
+    creation_principal = await optional_creation_principal(request)
     # Structural caps on group/metadata (call-me-ram, PR #433 review) are
     # enforced by CreateSessionBody's own field_validators above — invalid
     # values fail Pydantic body parsing and FastAPI returns 422 automatically,
@@ -4317,6 +4415,7 @@ async def create_session(
             resume_session_id=resume_session_id,
             group=body.group if body else None,
             metadata=body.metadata if body else None,
+            creation_principal=creation_principal,
         )
 
         if memory_manager and str(memory_manager).lower() in ("true", "1", "yes"):
@@ -4359,6 +4458,7 @@ async def create_session(
                         working_directory=working_directory,
                         registry=registry,
                         idempotency_key=sidecar_idempotency_key,
+                        creation_principal=creation_principal,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to spawn memory_manager sidecar: {e}")
@@ -4622,6 +4722,7 @@ async def create_terminal_in_session(
             model=model,
             use_worktree=use_worktree,
             idempotency_key=idempotency_key,
+            creation_principal=await optional_creation_principal(request),
         )
         return result
     except HTTPException:
@@ -5040,6 +5141,15 @@ async def send_terminal_key(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Unable to verify durable Work terminal ownership",
         ) from e
+    except TerminalInputBlockedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": str(e),
+                "action": e.action,
+                "delivery_may_have_occurred": e.delivery_may_have_occurred,
+            },
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except RemoteRuntimeError as exc:
@@ -5812,7 +5922,7 @@ async def _record_job_state(job_id: Optional[str], state: str, **fields: Any) ->
     incomplete without a call here.
 
     Off the loop for the same reason ``run_agent_step``'s completed-write is
-    (PR #453 review nit): the write is SQLite I/O, and the handler is async.
+    (PR #453 review nit): the write is PostgreSQL I/O, and the handler is async.
 
     MODULE-LEVEL ON PURPOSE, not nested in ``run_step`` beside ``_settle_step``:
     every arm that persists needs the same guard, and inlining it nine times
@@ -6133,7 +6243,7 @@ async def run_step(
             )
             if decision.verdict is step_replay.ReplayVerdict.REPLAY:
                 # FR-1. The envelope is returned VERBATIM (SR-3): it was redacted and
-                # then bounded by ``build_envelope`` before it reached SQLite, and a
+                # then bounded by ``build_envelope`` before it reached PostgreSQL, and a
                 # second redaction pass could match its own ``[REDACTED:<name>]``
                 # marker. Reading ``result_json`` raw would bypass that pipeline
                 # entirely; ``decision.envelope`` is the only sanctioned payload.
@@ -6332,6 +6442,21 @@ async def run_step(
                 # auto-continuation contract may say it can resume by itself.
                 "retryable": False,
                 "provider_may_resume": e.provider_may_resume if e.kind == "quota_wait" else False,
+                **(
+                    {
+                        "wait_diagnostics": {
+                            "phase": e.wait_diagnostics.phase,
+                            "last_status": e.wait_diagnostics.last_status.value,
+                            "observed_working": e.wait_diagnostics.observed_working,
+                            "receipt_probe_errors": e.wait_diagnostics.receipt_probe_errors,
+                            "receipt_candidate_seen": e.wait_diagnostics.receipt_candidate_seen,
+                            "stable_receipt_observations": e.wait_diagnostics.stable_receipt_observations,
+                            "idle_extraction_attempted": e.wait_diagnostics.idle_extraction_attempted,
+                        }
+                    }
+                    if e.wait_diagnostics is not None
+                    else {}
+                ),
             },
         )
     except (TimeoutError, TerminalInputBlockedError) as e:
@@ -6527,7 +6652,7 @@ async def list_workflow_runs_endpoint(
     deliberately omits lives at this REST boundary (LR-1): an illegal ``state``
     filter is a 400; a legal-but-unmatched value simply yields ``[]``. ``limit`` is
     clamped to ``[1, 500]`` by FastAPI at the boundary (LR-2). An empty result is a
-    200 with ``[]`` (LR-3), never a 404. A ``sqlite3.Error`` from the DAL maps to
+    200 with ``[]`` (LR-3), never a 404. A ``DatabaseError`` from the DAL maps to
     500 (LR-4) — a silently empty list would hide a broken database from a human
     who explicitly asked to list runs.
 
@@ -6535,9 +6660,9 @@ async def list_workflow_runs_endpoint(
     most-recently-started run (any state), which U5/U6 consume to resolve
     ``status`` with no explicit run id.
     """
-    import sqlite3
     from dataclasses import asdict
 
+    from cli_agent_orchestrator.clients.postgres import DatabaseError, IntegrityError
     from cli_agent_orchestrator.models.workflow_runtime import RunState
     from cli_agent_orchestrator.services import workflow_journal
 
@@ -6552,7 +6677,7 @@ async def list_workflow_runs_endpoint(
 
     try:
         rows = workflow_journal.list_runs(state=state, limit=limit)
-    except sqlite3.Error as e:
+    except DatabaseError as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"failed to list runs: {e}",
@@ -6967,13 +7092,13 @@ async def approve_workflow_plan_endpoint(
     """Approve a plan identifier so its runs may start (issue #583 FR-8).
 
     Idempotent: approving an already-approved plan changes nothing and SAYS SO, reporting the
-    ORIGINAL ``approved_at``/``approved_by``. ``approval_store.grant`` is ``INSERT OR IGNORE``
+    ORIGINAL ``approved_at``/``approved_by``. ``approval_store.grant`` is ``INSERT ... ON CONFLICT DO NOTHING``
     because an update path could transfer an existing approval to a changed plan, so a plain
     "success" here would leave an operator unable to tell "I have just approved this" from "this was
     approved last week by someone else and my grant did nothing".
 
     Success is derived from a READ-BACK rather than from the absence of an exception, because
-    ``INSERT OR IGNORE`` succeeds silently whether or not it inserted. A missing row afterwards is
+    ``INSERT ... ON CONFLICT DO NOTHING`` succeeds silently whether or not it inserted. A missing row afterwards is
     an error, never a cheerful success — this unit's worst failure mode is a command that appears to
     work, leaving the operator to meet the same refusal on the next run with no explanation.
     """
@@ -7244,7 +7369,7 @@ async def submit_workflow_run_endpoint(
     3. Validate + cap inputs BEFORE any create (OR-1, NFR-4) — no row yet.
     4. Script tier: lint gate -> 422 (OR-2); reserved YAML mode -> 501 (OR-3) —
        both BEFORE any insert, so a rejected run leaves NO durable row and NO 202.
-    5. The awaited HARD atomic durable insert (INV-1, TR-1) — a ``sqlite3.Error``
+    5. The awaited HARD atomic durable insert (INV-1, TR-1) — a ``DatabaseError``
        aborts with 500 and NO 202. This is the one deliberate deviation from the
        engines' best-effort write. An ``IntegrityError`` is special-cased FIRST
        (it is an ``Error`` subclass, so arm order is load-bearing) and maps to
@@ -7259,9 +7384,9 @@ async def submit_workflow_run_endpoint(
         return await _start_scoped_workflow(body, request, principal, submit=True)
     if body.expected_plan_id is not None:
         raise HTTPException(status_code=422, detail="expected_plan_id requires prepared_id")
-    import sqlite3
     import uuid
 
+    from cli_agent_orchestrator.clients.postgres import DatabaseError, IntegrityError
     from cli_agent_orchestrator.constants import WORKFLOW_INPUTS_MAX_BYTES
     from cli_agent_orchestrator.models.workflow import (
         NotBuiltYetError,
@@ -7408,19 +7533,19 @@ async def submit_workflow_run_endpoint(
                 # on it; reusing it rather than rebuilding is what makes checked-equals-stored true.
                 manifest_json,
             )
-        except sqlite3.IntegrityError:
+        except IntegrityError:
             # TOCTOU (PR #525 review): step 0's uniqueness check and this insert are
             # not one atomic operation, so two concurrent submits carrying the SAME
             # caller-supplied run_id can both pass step 0. The loser's PRIMARY KEY
             # violation is the same collision step 0 reports as 409 when it sees it
             # serially, so it must answer 409 too — a 500 would tell the caller the
             # server broke when in fact their run id was simply taken. Ordered BEFORE
-            # the generic arm: IntegrityError is a sqlite3.Error subclass.
+            # the generic arm: IntegrityError is a DatabaseError subclass.
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"run id '{run_id}' already exists",
             )
-        except sqlite3.Error as e:
+        except DatabaseError as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"failed to durably record run '{run_id}': {e}",
@@ -7490,14 +7615,14 @@ async def submit_workflow_run_endpoint(
                 "yaml",
                 "1",
             )
-        except sqlite3.IntegrityError:
+        except IntegrityError:
             # Same TOCTOU → 409 mapping as the script arm above; ordered before the
-            # generic sqlite3.Error arm because IntegrityError subclasses it.
+            # generic DatabaseError arm because IntegrityError subclasses it.
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"run id '{run_id}' already exists",
             )
-        except sqlite3.Error as e:
+        except DatabaseError as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"failed to durably record run '{run_id}': {e}",
@@ -7618,13 +7743,13 @@ async def get_workflow_run_endpoint(
     try:
         # OFF-LOOP too: on a registry cache miss this reads the journal itself
         # (the cold-read fallback / _rebuild_record_from_journal), so it is a
-        # synchronous sqlite call on the same footing as the enrichment reads below.
+        # synchronous PostgreSQL call on the same footing as the enrichment reads below.
         status_snapshot = await asyncio.to_thread(workflow_service.get_run_status, run_id)
     except KeyError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown run '{run_id}'")
 
     # (2) Durable enrichment sources (journal-authoritative, no registry needed).
-    #     OFF-LOOP: the journal DAL is synchronous sqlite, so every call runs in a
+    #     OFF-LOOP: the journal DAL is synchronous PostgreSQL, so every call runs in a
     #     worker thread. This route is `async def`, so a bare call would block the
     #     single event loop for the whole read — including the 250 ms SSE followers
     #     (``_EVENTS_FOLLOW_POLL_INTERVAL_S``). Matches the SSE and DELETE arms,
@@ -8056,7 +8181,7 @@ async def get_workflow_run_events_endpoint(
         )
 
     # BATCH arm — byte-behavior-identical for existing callers. The DAL call runs
-    # OFF-LOOP (synchronous sqlite in an `async def`); the SSE arm above already
+    # OFF-LOOP (synchronous PostgreSQL in an `async def`); the SSE arm above already
     # wraps the same function, so leaving this one bare made the two arms of ONE
     # route disagree on event-loop discipline.
     events, gaps = await asyncio.to_thread(
@@ -8303,7 +8428,7 @@ async def get_workflow_run_diagnostics_endpoint(
 
     # Journal-authoritative (BR-6): the run row comes from get_run, NOT the live
     # registry — a cleared registry (post-restart) does not affect this read.
-    # OFF-LOOP: synchronous sqlite in an `async def` (see the SSE/DELETE arms).
+    # OFF-LOOP: synchronous PostgreSQL in an `async def` (see the SSE/DELETE arms).
     run_row = await asyncio.to_thread(workflow_journal.get_run, run_id)
     if run_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"unknown run '{run_id}'")
@@ -8407,7 +8532,7 @@ async def delete_workflow_run_endpoint(
     that is still live (a known run in a non-terminal state) is REJECTED with 409:
     deleting it would leave the drive loop running with no way to cancel it and its
     later appends orphaned. Cancel first, then delete. The
-    blocking sqlite cascade runs off the event loop (``to_thread``) so a slow DB op
+    blocking PostgreSQL cascade runs off the event loop (``to_thread``) so a slow DB op
     bounds its blast radius to this one request. ``run_id`` binds through
     parameterized SQL in the DAL (no injection surface), matching the pass-through
     posture of the sibling inspect/events/cancel/resume run routes.
@@ -8694,7 +8819,7 @@ async def cancel_workflow_run_endpoint(
         if service is not None:
             with service.repository.read_snapshot() as connection:
                 controlled = connection.execute(
-                    "SELECT 1 FROM workflow_driver WHERE run_id=?", (run_id,)
+                    "SELECT 1 FROM workflow_driver WHERE run_id=%s", (run_id,)
                 ).fetchone()
             if controlled:
                 try:
@@ -8791,12 +8916,28 @@ async def resume_workflow_run_endpoint(
     every non-completed step to ``PENDING`` and re-runs it — so a ``skip`` there
     would re-execute the very step the operator asked to skip, silently.
     """
+    from cli_agent_orchestrator.clients.work_repository import SchemaMismatch as WorkSchemaMismatch
+    from cli_agent_orchestrator.services import script_runner, workflow_journal, workflow_service
+
     service = getattr(request.app.state, "workflow_coordinator", None)
     if service is not None:
-        with service.repository.read_snapshot() as connection:
-            controlled = connection.execute(
-                "SELECT 1 FROM workflow_driver WHERE run_id=?", (run_id,)
-            ).fetchone()
+        try:
+            with service.repository.read_snapshot() as connection:
+                controlled = connection.execute(
+                    "SELECT 1 FROM workflow_driver WHERE run_id=%s", (run_id,)
+                ).fetchone()
+        except WorkSchemaMismatch as error:
+            if workflow_service.is_work_catalog_integrity_mismatch(error):
+                try:
+                    row = workflow_journal.get_run(run_id)
+                except Exception:
+                    raise error
+                if row is not None and row.tier != "script":
+                    corrupt = workflow_service.ResumeCorruptError(
+                        f"run '{run_id}' YAML contract store is corrupt"
+                    )
+                    raise HTTPException(status_code=422, detail=str(corrupt)) from error
+            raise
         if controlled:
             from cli_agent_orchestrator.api.work_coordinator_routes import refused
 
@@ -8806,8 +8947,6 @@ async def resume_workflow_run_endpoint(
                 return dict(await service.resume(principal, run_id))
             except (ValueError, PermissionError, LookupError) as error:
                 refused(error)
-
-    from cli_agent_orchestrator.services import script_runner, workflow_journal, workflow_service
 
     decisions = body.decisions if body is not None else None
 
@@ -9668,7 +9807,7 @@ async def get_handoff_result_endpoint(
     except Exception as exc:  # noqa: BLE001 — see the leak note below
         # A storage failure must never hand the job_id to the ASGI error logger.
         # This handler has no generic exception handler above it, so an escaping
-        # SQLAlchemy DBAPI error (a locked SQLite file being the realistic case)
+        # SQLAlchemy DBAPI error (a PostgreSQL connection or query failure)
         # reaches uvicorn's ServerErrorMiddleware, which logs the whole traceback
         # to ``uvicorn.error`` -- and that traceback prints the bound parameters,
         # ``[parameters: ('<job_id>',)]``. The access-log filter in
@@ -9881,6 +10020,15 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
     Do NOT expose the server to untrusted networks (e.g. --host 0.0.0.0)
     without authentication.
     """
+    expected_interaction_incarnation = websocket.query_params.get("expected_incarnation_id")
+    if expected_interaction_incarnation is not None and (
+        not expected_interaction_incarnation
+        or len(expected_interaction_incarnation) > 128
+        or any(ord(character) < 0x20 for character in expected_interaction_incarnation)
+    ):
+        await websocket.close(code=4409, reason="Interaction source incarnation is stale")
+        return
+
     # Reject connections from clients outside the configured allowlist.
     # Defaults to loopback; operators running cao-server inside a container can
     # extend the allowlist with the ``CAO_WS_ALLOWED_CLIENTS`` env var so the
@@ -10010,6 +10158,12 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
     if not metadata:
         await websocket.close(code=4004, reason="Terminal not found")
         return
+    if (
+        expected_interaction_incarnation is not None
+        and metadata.get("session_incarnation_id") != expected_interaction_incarnation
+    ):
+        await websocket.close(code=4409, reason="Interaction source incarnation is stale")
+        return
 
     from cli_agent_orchestrator.services import remote_terminal_service as remote
 
@@ -10133,6 +10287,35 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
                 payload = json.loads(msg)
                 if payload.get("type") == "input":
                     raw = payload["data"].encode()
+                    if raw:
+                        if expected_interaction_incarnation is not None:
+                            fresh_metadata = await asyncio.to_thread(
+                                get_terminal_metadata, terminal_id
+                            )
+                            if (
+                                fresh_metadata is None
+                                or fresh_metadata.get("session_incarnation_id")
+                                != expected_interaction_incarnation
+                            ):
+                                await websocket.close(
+                                    code=4409,
+                                    reason="Interaction source incarnation is stale",
+                                )
+                                return
+                        # Browser/native PTY input bypasses the JSON input route.
+                        # Advance interaction generation before any bytes reach
+                        # the agent so prior question waits cannot be replayed
+                        # into a new human-controlled turn.
+                        interaction_input_kwargs = {"reason": "websocket_input"}
+                        if expected_interaction_incarnation is not None:
+                            interaction_input_kwargs["expected_incarnation_id"] = (
+                                expected_interaction_incarnation
+                            )
+                        await asyncio.to_thread(
+                            terminal_service.record_direct_interaction_input,
+                            terminal_id,
+                            **interaction_input_kwargs,
+                        )
                     # Write in chunks to avoid overflowing the PTY buffer
                     chunk_size = 1024
                     for i in range(0, len(raw), chunk_size):
@@ -10157,6 +10340,11 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str):
                         pass
         except HTTPException:
             await websocket.close(code=4401, reason="Authorization expired")
+        except TerminalInputBlockedError:
+            # The generation guard runs before bytes are written. Close with
+            # a stable, sanitized reason so clients do not mistake the input
+            # for delivered terminal data or retry it on this connection.
+            await websocket.close(code=4409, reason="Input blocked by a required interaction")
         except WebSocketDisconnect:
             pass
         except (Exception, asyncio.CancelledError):
@@ -11290,9 +11478,9 @@ async def review_workflow_plan_endpoint(
 
 
 async def _start_scoped_workflow(body, request, principal, *, submit) -> Dict[str, Any]:
-    import sqlite3
     import uuid
 
+    from cli_agent_orchestrator.clients.postgres import DatabaseError, IntegrityError
     from cli_agent_orchestrator.models.workflow import RunState, ScriptSpec
     from cli_agent_orchestrator.services import script_runner, workflow_service
 
@@ -11312,7 +11500,7 @@ async def _start_scoped_workflow(body, request, principal, *, submit) -> Dict[st
             requested_name=body.name_or_path,
             requested_inputs=body.inputs,
         )
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         raise HTTPException(
             status_code=409, detail={"kind": "run_id_exists", "retryable": False}
         ) from None
@@ -11328,12 +11516,9 @@ async def _start_scoped_workflow(body, request, principal, *, submit) -> Dict[st
             private_path = await asyncio.to_thread(
                 script_runner._materialize_snapshot, run_id, spec.source
             )
-            from cli_agent_orchestrator.services.private_plan_snapshot import (
-                _verify_read_permissions,
-            )
-
             await asyncio.to_thread(
-                _verify_read_permissions, __import__("pathlib").Path(private_path)
+                script_runner._verify_snapshot_permissions,
+                __import__("pathlib").Path(private_path),
             )
         except (OSError, RuntimeError):
             from cli_agent_orchestrator.services import workflow_journal

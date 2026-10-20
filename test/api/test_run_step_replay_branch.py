@@ -3,7 +3,7 @@
 This is the unit where replay becomes USER-VISIBLE: it closes FR-1 and surfaces
 FR-3 and FR-7 over HTTP. The route acts on ``step_replay.decide``'s verdict and
 decides nothing itself, so these tests drive the gate through REAL journal rows
-in an isolated temp database wherever the verdict is the thing under test, and
+in a private PostgreSQL schema wherever the verdict is the thing under test, and
 mock ``decide`` only where the assertion is about the route's call INTO it.
 
 One test group per rule from
@@ -50,7 +50,7 @@ One test group per rule from
 - SR-3  — the replayed ``last_message`` is byte-identical to ``parse_envelope``'s
   output, and the route re-sanitises nothing.
 
-THE JOURNAL IS ISOLATED PER TEST (the ``_isolated_journal`` fixture). Without it
+THE JOURNAL IS ISOLATED PER TEST (the shared PostgreSQL fixture). Without it
 these tests would read and write the developer's real database, and a settled row
 from one run would change the verdict of the next.
 """
@@ -58,23 +58,28 @@ from one run would change the verdict of the next.
 from __future__ import annotations
 
 import inspect
-import sqlite3
-from pathlib import Path
 from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
+from cli_agent_orchestrator.clients.postgres import (
+    DatabaseTarget,
+    OperationalError,
+    connect,
 )
 from cli_agent_orchestrator.constants import TERMINALS_RUN_STEP_ROUTE
 from cli_agent_orchestrator.models.terminal import AgentStepResult, TerminalStatus
 from cli_agent_orchestrator.models.workflow import RecoveryPolicy, StepResultEnvelope
 from cli_agent_orchestrator.models.workflow_runtime import RunState
-from cli_agent_orchestrator.services import step_replay, workflow_journal, workflow_service
+from cli_agent_orchestrator.services import (
+    agent_step,
+    step_replay,
+    workflow_journal,
+    workflow_service,
+)
 from cli_agent_orchestrator.services.script_runner import ScriptRunRecord
+from cli_agent_orchestrator.services.status_monitor import StatusMonitor
 from cli_agent_orchestrator.services.step_fingerprint import StepCallFields, compute
 from cli_agent_orchestrator.services.step_replay import ReplayDecision, ReplayVerdict
 from cli_agent_orchestrator.services.step_result import parse_envelope, serialise_envelope
@@ -100,23 +105,9 @@ FOREIGN_FP = "v2:" + "b" * 64
 # Fixtures + helpers
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
-def _isolated_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Point the journal at a temp DB and create both #583-era tables.
-
-    Mirrors ``test_journal_step_lifecycle.py``'s fixture. Isolation is not
-    hygiene here, it is correctness: the replay verdict IS a function of the
-    journal's contents, so a shared database would make every test in this file
-    depend on which ones ran before it.
-    """
-    monkeypatch.setattr(
-        "cli_agent_orchestrator.constants.DATABASE_FILE", tmp_path / "wf.db", raising=True
-    )
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
-    from cli_agent_orchestrator.clients.work_repository import WorkRepository
-
-    WorkRepository(tmp_path / "wf.db").initialize()
-    return tmp_path / "wf.db"
+def _isolated_journal(isolated_memory_db):
+    """Use the shared private PostgreSQL schema for each replay-verdict test."""
+    return isolated_memory_db
 
 
 def _body(**overrides) -> dict:
@@ -258,12 +249,27 @@ def _patch_terminal_layer(*, created_id: str = "fresh-terminal", get_wd_return=N
     """
     terminal = MagicMock()
     terminal.id = created_id
+
+    def _send_input_with_turn(terminal_id, *args, **kwargs):
+        return agent_step.status_monitor.notify_input_sent(terminal_id, real_send=True)
+
+    # Keep the real turn sequence local to this helper invocation.
+    isolated_monitor = StatusMonitor()
     return (
+        patch(f"{_AGENT_STEP}.status_monitor", new=isolated_monitor),
+        patch(
+            "cli_agent_orchestrator.services.terminal_service.status_monitor",
+            new=isolated_monitor,
+        ),
+        patch(
+            "cli_agent_orchestrator.services.remote_terminal_service.placement",
+            return_value=None,
+        ),
         patch(
             f"{_AGENT_STEP}.terminal_service.create_terminal",
             new=AsyncMock(return_value=terminal),
         ),
-        patch(f"{_AGENT_STEP}.terminal_service.send_input", return_value=True),
+        patch(f"{_AGENT_STEP}.terminal_service.send_input", new=_send_input_with_turn),
         patch(f"{_AGENT_STEP}.terminal_service.delete_terminal", return_value=True),
         patch(f"{_AGENT_STEP}.terminal_service.get_output", return_value="fresh output"),
         patch(f"{_AGENT_STEP}.terminal_service.exit_terminal_cli", return_value=None),
@@ -284,18 +290,13 @@ def _ok_result(terminal_id: str = "fresh-terminal") -> AgentStepResult:
 
 def _raw_row(run_id: str, step_id: str = "s1") -> Optional[tuple]:
     """Read the row as stored bytes — the byte-identical comparison for BR-4."""
-    from cli_agent_orchestrator.constants import DATABASE_FILE
-
-    conn = sqlite3.connect(str(DATABASE_FILE))
-    try:
+    with connect(DatabaseTarget.from_settings(scope="main")) as conn:
         return conn.execute(
             "SELECT run_id, step_id, state, attempts, output_json, error, updated_at, "
             "call_fingerprint, result_json FROM workflow_run_step "
-            "WHERE run_id = ? AND step_id = ?",
+            "WHERE run_id = %s AND step_id = %s",
             (run_id, step_id),
         ).fetchone()
-    finally:
-        conn.close()
 
 
 def _seed_replayable(run_id: str, body: dict, envelope: StepResultEnvelope) -> None:
@@ -314,12 +315,10 @@ class TestReplayCreatesNothing:
         """A managed marker blocks both legacy execution and a stale replay envelope."""
         body = _body(env_vars=_env("run-work-pending"))
         _seed_replayable("run-work-pending", body, _envelope())
-        from cli_agent_orchestrator.constants import DATABASE_FILE
-
-        with sqlite3.connect(str(DATABASE_FILE)) as connection:
+        with connect(DatabaseTarget.from_settings(scope="main")) as connection:
             connection.execute(
                 "UPDATE workflow_run_step SET state='work_pending' "
-                "WHERE run_id=? AND step_id='s1'",
+                "WHERE run_id=%s AND step_id='s1'",
                 ("run-work-pending",),
             )
 
@@ -335,8 +334,32 @@ class TestReplayCreatesNothing:
         body = _body(env_vars=_env("run-replay-a"))
         _seed_replayable("run-replay-a", body, _envelope())
 
-        create, send, delete, out, exit_cli, wait, status_p, get_wd = _patch_terminal_layer()
-        with create as m_create, send, delete, out, exit_cli, wait, status_p, get_wd:
+        (
+            monitor,
+            terminal_monitor,
+            local_placement,
+            create,
+            send,
+            delete,
+            out,
+            exit_cli,
+            wait,
+            status_p,
+            get_wd,
+        ) = _patch_terminal_layer()
+        with (
+            monitor,
+            terminal_monitor,
+            local_placement,
+            create as m_create,
+            send,
+            delete,
+            out,
+            exit_cli,
+            wait,
+            status_p,
+            get_wd,
+        ):
             resp = client.post(TERMINALS_RUN_STEP_ROUTE, json=body)
 
         assert resp.status_code == 200
@@ -397,7 +420,7 @@ class TestUnreadableJournalNeverExecutes:
         body = _body(env_vars=_env("run-dberr-a"))
         _register_run("run-dberr-a")
         with (
-            patch(_GET_STEP, side_effect=sqlite3.OperationalError("database is locked")),
+            patch(_GET_STEP, side_effect=OperationalError("injected database read failure")),
             patch(_RUN_STEP, new=AsyncMock(return_value=_ok_result())),
         ):
             resp = client.post(TERMINALS_RUN_STEP_ROUTE, json=body)
@@ -410,7 +433,7 @@ class TestUnreadableJournalNeverExecutes:
         body = _body(env_vars=_env("run-dberr-b"))
         _register_run("run-dberr-b")
         with (
-            patch(_GET_STEP, side_effect=sqlite3.OperationalError("database is locked")),
+            patch(_GET_STEP, side_effect=OperationalError("injected database read failure")),
             patch(_RUN_STEP, new=AsyncMock(return_value=_ok_result())) as m_run,
         ):
             resp = client.post(TERMINALS_RUN_STEP_ROUTE, json=body)
@@ -742,8 +765,23 @@ class TestTheHoist:
         body = _body(env_vars=_env(run_id), caller_id="sup-one")
         _register_run(run_id)  # no step row -> EXECUTE, so the whole path runs
 
-        create, send, delete, out, exit_cli, wait, status_p, _unused = _patch_terminal_layer()
+        (
+            monitor,
+            terminal_monitor,
+            local_placement,
+            create,
+            send,
+            delete,
+            out,
+            exit_cli,
+            wait,
+            status_p,
+            _unused,
+        ) = _patch_terminal_layer()
         with (
+            monitor,
+            terminal_monitor,
+            local_placement,
             create,
             send,
             delete,
@@ -785,8 +823,23 @@ class TestTheHoist:
             stored_fingerprints.append(contract["call_fingerprint"])
             return real_begin(r_id, s_id, generation, updated_at, contract, **kwargs)
 
-        create, send, delete, out, exit_cli, wait, status_p, _unused = _patch_terminal_layer()
+        (
+            monitor,
+            terminal_monitor,
+            local_placement,
+            create,
+            send,
+            delete,
+            out,
+            exit_cli,
+            wait,
+            status_p,
+            _unused,
+        ) = _patch_terminal_layer()
         with (
+            monitor,
+            terminal_monitor,
+            local_placement,
             create,
             send,
             delete,

@@ -94,6 +94,19 @@ async def test_process_adapter_runs_only_the_frozen_executable_with_frozen_conte
     assert adapter.terminal_target is None
 
 
+def test_process_adapter_accepts_only_the_exact_optional_message_tool_grant():
+    adapter = agent_step_process_adapter()
+    payload = ProcessAgentStepPayloadV2(agent_profile="developer", message="send a Work message")
+    contract = _process_contract(
+        permissions=ContractPermissions(
+            tools=tuple(sorted((*_MCP_TOOLS, "cao.work.message"))),
+            commands=(_WORKER_COMMAND,),
+        )
+    )
+
+    adapter.validate_contract(payload, contract)
+
+
 @pytest.mark.asyncio
 async def test_process_adapter_reports_only_a_verified_nonzero_docker_exit():
     adapter = agent_step_process_adapter()
@@ -205,6 +218,14 @@ def test_process_adapter_keeps_v1_terminal_delivery_separate():
             _process_contract(
                 permissions=ContractPermissions(
                     tools=("cao.work.task_received",), commands=(_WORKER_COMMAND,)
+                )
+            ),
+            "receipt and result tools",
+        ),
+        (
+            _process_contract(
+                permissions=ContractPermissions(
+                    tools=(*_MCP_TOOLS, "*"), commands=(_WORKER_COMMAND,)
                 )
             ),
             "receipt and result tools",

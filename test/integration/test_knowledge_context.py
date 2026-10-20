@@ -22,9 +22,8 @@ from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuth
 async def test_same_approved_context_and_revocation_across_service_http_mcp(tmp_path, monkeypatch):
     monkeypatch.delenv("CAO_AUTH_JWKS_URI", raising=False)
     monkeypatch.delenv("AUTH0_DOMAIN", raising=False)
-    repository = WorkRepository(tmp_path / "knowledge.sqlite3")
+    repository = WorkRepository()
     repository.initialize()
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", repository.path)
     actor = auth.local_operator_principal()
     job = repository.create_job(
         project_id="project",
@@ -76,7 +75,7 @@ async def test_same_approved_context_and_revocation_across_service_http_mcp(tmp_
         )
 
     # Replace only network transport: MCP still crosses actual HTTP routing/auth,
-    # policy, SQLite and serialization. No model/CLI or operator database involved.
+    # policy, PostgreSQL and serialization. No model/CLI or operator database involved.
     def get_json(path, **params):
         async def request():
             async with client() as http:

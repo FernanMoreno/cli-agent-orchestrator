@@ -1,6 +1,9 @@
 """Browser auth verifies origin, credential isolation and sealed operator identity."""
 
 import asyncio
+import json
+import shutil
+from pathlib import Path
 
 import pytest
 from fastapi import Depends, FastAPI
@@ -19,14 +22,18 @@ def test_public_browser_mode_is_available_without_exposing_account():
 
 
 @pytest.fixture
-def browser_app(tmp_path):
+def browser_app(postgres_targets):
     from cli_agent_orchestrator.api.browser_auth_routes import router
+    from cli_agent_orchestrator.clients.browser_auth_repository import BROWSER_AUTH_MIGRATIONS
+    from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
     from cli_agent_orchestrator.services.browser_auth import BrowserAuthService
 
     app = FastAPI()
     binding = auth._verified_principal("urn:cao:test", "operator", ["cao:read"], "jwt")
+    target = postgres_targets.auth
+    migrate_component(target, BROWSER_AUTH_MIGRATIONS)
     service = BrowserAuthService(
-        tmp_path / "auth.sqlite3",
+        target,
         {
             "id": binding.id,
             "issuer": binding.issuer,
@@ -36,6 +43,7 @@ def browser_app(tmp_path):
         },
         {"installation_id": "test"},
     )
+    service.initialize_store()
     service.create_account("operator", "a long private passphrase")
     app.state.browser_auth = service
     app.state.browser_auth_config = {
@@ -77,6 +85,20 @@ def login(client, remember=True):
     )
 
 
+def install_database_config(module, root, postgres_targets):
+    """Give a deployment private copies of the fixture's three-scope credentials."""
+    targets = json.loads(postgres_targets.config_file.read_text())["targets"]
+    for target in targets.values():
+        for field in ("secret_file", "migration_secret_file"):
+            name = target.get(field)
+            if name:
+                destination = root / "cao" / name
+                shutil.copyfile(postgres_targets.home / name, destination)
+                destination.chmod(0o600)
+    module.write_database_config(root, targets)
+
+
+@pytest.mark.postgres
 def test_cookie_login_preserves_identity_scope_and_never_returns_secret(browser_app):
     app, service, binding = browser_app
     with client_for(app) as client:
@@ -104,6 +126,7 @@ def test_cookie_login_preserves_identity_scope_and_never_returns_secret(browser_
         {"Origin": "http://127.0.0.1:9889"},
     ],
 )
+@pytest.mark.postgres
 def test_login_rejects_untrusted_or_missing_browser_origin(browser_app, headers):
     app, _, _ = browser_app
     client = TestClient(
@@ -115,6 +138,7 @@ def test_login_rejects_untrusted_or_missing_browser_origin(browser_app, headers)
     assert "set-cookie" not in response.headers
 
 
+@pytest.mark.postgres
 def test_cookie_cannot_rescue_explicit_invalid_bearer(browser_app, monkeypatch):
     monkeypatch.setenv("CAO_AUTH_JWKS_URI", "http://127.0.0.1/jwks")
     app, _, _ = browser_app
@@ -123,6 +147,7 @@ def test_cookie_cannot_rescue_explicit_invalid_bearer(browser_app, monkeypatch):
     assert client.get("/protected", headers={"Authorization": "Bearer invalid"}).status_code == 401
 
 
+@pytest.mark.postgres
 def test_temporary_cookie_and_password_validation_do_not_leak(browser_app):
     app, _, _ = browser_app
     client = client_for(app)
@@ -142,6 +167,7 @@ def test_temporary_cookie_and_password_validation_do_not_leak(browser_app):
     assert response.status_code == 413
 
 
+@pytest.mark.postgres
 def test_logout_old_response_cannot_delete_new_cookie(browser_app):
     app, _, _ = browser_app
     client = client_for(app)
@@ -152,7 +178,10 @@ def test_logout_old_response_cannot_delete_new_cookie(browser_app):
     assert client.get("/auth/session").status_code == 200
 
 
-def test_production_startup_accepts_locally_created_default_operator(tmp_path, monkeypatch):
+@pytest.mark.postgres
+def test_production_startup_accepts_locally_created_default_operator(
+    tmp_path, monkeypatch, postgres_targets
+):
     import importlib.util
     from pathlib import Path
 
@@ -162,8 +191,14 @@ def test_production_startup_accepts_locally_created_default_operator(tmp_path, m
     spec = importlib.util.spec_from_file_location("browser_deployment_test", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    from cli_agent_orchestrator.clients.browser_auth_repository import BROWSER_AUTH_MIGRATIONS
+    from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
+
+    migrate_component(postgres_targets.auth, BROWSER_AUTH_MIGRATIONS)
+    monkeypatch.setenv("CAO_DATABASE_CONFIG_FILE", str(postgres_targets.config_file))
     root = tmp_path / "personal"
     module.initialize(root, server_port=19889, jwks_port=19890, image_id="sha256:" + "a" * 64)
+    install_database_config(module, root, postgres_targets)
     monkeypatch.setattr(module.getpass, "getpass", lambda prompt: "a long private passphrase")
     module.account_create(root, username="operator")
     for key, value in module.environment(root).items():

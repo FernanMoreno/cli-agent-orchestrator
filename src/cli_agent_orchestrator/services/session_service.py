@@ -38,6 +38,7 @@ from cli_agent_orchestrator.clients.database import (
     list_terminals_in_sessions,
     update_terminals_session_incarnation,
 )
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.constants import SESSION_PREFIX
 from cli_agent_orchestrator.models.inbox import OrchestrationType
 from cli_agent_orchestrator.models.kiro_engine import KiroEngine
@@ -48,6 +49,7 @@ from cli_agent_orchestrator.plugins import (
     PostKillSessionEvent,
     PostKillTerminalEvent,
 )
+from cli_agent_orchestrator.security.auth import Principal
 from cli_agent_orchestrator.services.plugin_dispatch import dispatch_plugin_event
 from cli_agent_orchestrator.services.session_env import clear_session_env
 from cli_agent_orchestrator.services.session_lock import session_lifecycle_lock
@@ -81,6 +83,7 @@ async def create_session(
     resume_session_id: str | None = None,
     group: Optional[List[str]] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    creation_principal: Principal | None = None,
 ) -> Terminal:
     """Create a new session by creating its initial terminal.
 
@@ -145,6 +148,7 @@ async def create_session(
         resume_session_id=resume_session_id,
         group=group,
         metadata=metadata,
+        creation_principal=creation_principal,
     )
     dispatch_plugin_event(
         registry,
@@ -665,9 +669,11 @@ def delete_session(session_name: str, registry: PluginRegistry | None = None) ->
     if not session_name.startswith(SESSION_PREFIX):
         # Every CAO session is stored under SESSION_PREFIX, so an unprefixed
         # name is never ours; at most it is a personal tmux session that
-        # happens to share the operator's server. Refuse before touching
-        # anything. The API canonicalises bare names to the prefixed form
-        # before calling here, so this is the guard for direct callers.
+        # happens to share the operator's server. The read-only remote lookup
+        # above is required to preserve registered remote sessions, but no
+        # local teardown may proceed for an unregistered, unprefixed name.
+        # The API canonicalises bare names to the prefixed form before calling
+        # here, so this remains the guard for direct callers.
         raise ValueError(
             f"'{session_name}' is not a CAO session name (CAO sessions start with "
             f"'{SESSION_PREFIX}'); refusing to delete a session CAO did not create"
@@ -728,7 +734,7 @@ def delete_session(session_name: str, registry: PluginRegistry | None = None) ->
             # grow while we acquire the dispatch locks and finish teardown.
             for terminal_id in sorted(set(incarnation_ids)):
                 terminal_locks.enter_context(
-                    terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id)
+                    terminal_dispatch_lock(DatabaseTarget.from_settings(scope="main"), terminal_id)
                 )
             for terminal_id in sorted(set(incarnation_ids)):
                 terminal_service.ensure_terminal_is_not_work_owned(terminal_id)

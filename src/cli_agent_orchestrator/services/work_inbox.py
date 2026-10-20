@@ -238,7 +238,7 @@ class WorkInboxCoordinator:
         if not created:
             with self.repository.connection() as connection:
                 existing_order = connection.execute(
-                    "SELECT 1 FROM work_delivery_orders WHERE attempt_id=? AND generation=?",
+                    "SELECT 1 FROM work_delivery_orders WHERE attempt_id=%s AND generation=%s",
                     (attempt["id"], attempt["generation"]),
                 ).fetchone()
             if existing_order is not None:

@@ -1,13 +1,13 @@
-"""Real SQLite/path/process checks for cooperative exclusive write reservations."""
+"""PostgreSQL/path/process checks for cooperative exclusive write reservations."""
 
 import hashlib
 import importlib
 import multiprocessing
 import os
-import sqlite3
 import time
 from test.services.test_local_peer_recovery import cancel_peer_task, cancellable_peer_task
 
+import psycopg
 import pytest
 
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
@@ -17,7 +17,7 @@ from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 
 def context(tmp_path, count=3):
     module = importlib.import_module("cli_agent_orchestrator.services.work_reservations")
-    repository = WorkRepository(tmp_path / "reservations.sqlite3")
+    repository = WorkRepository(tmp_path / "reservation-artifacts")
     repository.initialize()
     root = tmp_path / "checkout"
     root.mkdir()
@@ -167,15 +167,18 @@ def test_conflicting_multi_path_request_does_not_leak_partial_reservations(tmp_p
     )
 
 
-def test_event_failure_rolls_back_entire_reservation_set(tmp_path):
+def test_event_failure_rolls_back_entire_reservation_set(tmp_path, monkeypatch):
     module, repo, root, job, work = context(tmp_path)
-    with sqlite3.connect(repo.path) as connection:
-        connection.execute(
-            "CREATE TRIGGER fail_reservation_event BEFORE INSERT ON work_events WHEN NEW.event_type='paths.reserved' BEGIN SELECT RAISE(ABORT,'reservation event unavailable'); END"
-        )
-    with pytest.raises(sqlite3.IntegrityError, match="event unavailable"):
+    append_event = repo._append_event
+
+    def fail_after_event(connection, **arguments):
+        append_event(connection, **arguments)
+        connection.execute("SELECT 1 / 0")
+
+    monkeypatch.setattr(repo, "_append_event", fail_after_event)
+    with pytest.raises(psycopg.errors.DivisionByZero):
         reserve(module, repo, root, job, work[0], ["one", "two"])
-    with sqlite3.connect(repo.path) as connection:
+    with repo.read_snapshot() as connection:
         assert connection.execute("SELECT count(*) FROM work_reservation_sets").fetchone()[0] == 0
         assert connection.execute("SELECT count(*) FROM work_path_reservations").fetchone()[0] == 0
 
@@ -331,12 +334,75 @@ def test_independent_processes_cannot_reserve_the_same_path(tmp_path):
                 process.join(5)
 
 
+def _race_reserve_path(database, root, job, work, paths, barrier, outcomes):
+    module = importlib.import_module("cli_agent_orchestrator.services.work_reservations")
+    try:
+        barrier.wait(15)
+        value = reserve(module, WorkRepository(database), root, job, work, paths)
+        outcomes.put(("reserved", value.id))
+    except module.ReservationConflict:
+        outcomes.put(("conflict", None))
+    except BaseException as exc:
+        outcomes.put(("error", repr(exc)))
+
+
+def test_independent_processes_serialize_nested_path_reservations(tmp_path):
+    module, repo, root, job, work = context(tmp_path, count=2)
+    ctx = multiprocessing.get_context("fork")
+    barrier, outcomes = ctx.Barrier(2), ctx.Queue()
+    requests = [("tree",), ("tree/child",)]
+    processes = [
+        ctx.Process(
+            target=_race_reserve_path,
+            args=(repo.path, root, job, item, paths, barrier, outcomes),
+        )
+        for item, paths in zip(work, requests)
+    ]
+    for process in processes:
+        process.start()
+    try:
+        results = [outcomes.get(timeout=20) for _ in processes]
+        assert [kind for kind, _ in results].count("reserved") == 1
+        assert [kind for kind, _ in results].count("conflict") == 1
+        assert all(kind != "error" for kind, _ in results), results
+        for process in processes:
+            process.join(10)
+            assert process.exitcode == 0
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(5)
+
+
+def test_stopped_release_allows_reacquiring_an_ancestor_path(tmp_path):
+    module, repo, root, job, work = context(tmp_path, count=2)
+    first = reserve(module, repo, root, job, work[0], ["tree/child"])
+    cancel(repo, work[0])
+    manager = module.WorkReservations(
+        repo,
+        stop_verifier=lambda owner: module.StoppedWriter(
+            owner.attempt_id, owner.generation, owner.revision, "backend-exit"
+        ),
+    )
+    released = manager.release(
+        first.id,
+        generation=1,
+        expected_revision=1,
+        expected_attempt_revision=2,
+        actor_id="operator",
+    )
+    assert released.state == "released"
+    second = reserve(module, repo, root, job, work[1], ["tree"])
+    assert second.state == "active"
+
+
 def test_new_attempt_generation_fences_the_old_reservation_holder(tmp_path):
     module, repo, root, job, work = context(tmp_path)
     first = reserve(module, repo, root, job, work[0], ["target"])
     with repo.transaction() as connection:
         connection.execute(
-            "INSERT INTO work_attempts(id,work_item_id,attempt_number,generation,provider,lease_expires_at,created_at) VALUES ('new-attempt',?,2,2,'mock_cli',?,?)",
+            "INSERT INTO work_attempts(id,work_item_id,attempt_number,generation,provider,lease_expires_at,created_at) VALUES ('new-attempt',%s,2,2,'mock_cli',%s,%s)",
             (work[0]["id"], time.time() + 300, time.time()),
         )
     with pytest.raises(module.ReservationConflict):
@@ -353,7 +419,7 @@ def test_release_rechecks_cas_after_server_stop_verification(tmp_path):
     def verify(owner):
         with repo.transaction() as connection:
             connection.execute(
-                "UPDATE work_reservation_sets SET revision=revision+1 WHERE id=?", (first.id,)
+                "UPDATE work_reservation_sets SET revision=revision+1 WHERE id=%s", (first.id,)
             )
         return module.StoppedWriter(
             owner.attempt_id, owner.generation, owner.revision, "server-stop"
@@ -414,7 +480,7 @@ def test_cancel_does_not_release_lease_until_worker_stops(cancellable_peer_task,
     )
 
 
-def test_concurrent_peer_terminal_transitions_share_one_sqlite_winner(cancellable_peer_task):
+def test_concurrent_peer_terminal_transitions_share_one_winner(cancellable_peer_task):
     import concurrent.futures
     import json
     import threading

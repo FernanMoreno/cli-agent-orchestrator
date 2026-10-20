@@ -12,9 +12,10 @@ from typing import Any, Optional
 from cli_agent_orchestrator.agent_plugins.mcp_delivery import with_plugin_mcp as _with_plugin_mcp
 from cli_agent_orchestrator.agent_plugins.mcp_mapping import CODEX_BARE_KEY
 from cli_agent_orchestrator.backends.registry import get_backend
-from cli_agent_orchestrator.constants import CAO_HOME_DIR
+from cli_agent_orchestrator.constants import _CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV, CAO_HOME_DIR
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import _TURN_RECEIPT_PATTERN, BaseProvider
+from cli_agent_orchestrator.providers.mcp_interactions import is_bundled_cao_mcp_entry
 from cli_agent_orchestrator.services.settings_service import get_server_settings
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
 from cli_agent_orchestrator.utils.mcp_resolution import (
@@ -23,6 +24,11 @@ from cli_agent_orchestrator.utils.mcp_resolution import (
 from cli_agent_orchestrator.utils.mcp_resolution import is_cao_mcp_server as _is_cao_mcp_server
 from cli_agent_orchestrator.utils.mcp_resolution import (
     resolve_mcp_server_config,
+)
+from cli_agent_orchestrator.utils.mcp_tool_policy import (
+    INTERACTION_TOOLS,
+    MCP_TOOL_PROFILE_ENV,
+    resolve_tool_profile,
 )
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 from cli_agent_orchestrator.utils.text import strip_terminal_escapes
@@ -1035,6 +1041,7 @@ class ProviderError(Exception):
 
 
 class CodexProvider(BaseProvider):
+    supports_interaction_mcp_overlay = True
     """Provider for Codex CLI tool integration."""
 
     # Codex's interactive output can be obscured by a post-turn model-switch
@@ -1263,10 +1270,11 @@ class CodexProvider(BaseProvider):
             developer_instructions_fragment = f'-c "developer_instructions=$(cat {shlex.quote(str(developer_instructions_file))})"'
 
         if profile is not None:
+            interaction_mcp_servers = self.interaction_mcp_servers(profile.mcpServers)
             # Add MCP servers via -c config overrides (per-session, no global config changes).
             # Each server field is set via dotted path: mcp_servers.<name>.<field>=<value>
-            if profile.mcpServers:
-                for server_name, server_config in profile.mcpServers.items():
+            if interaction_mcp_servers:
+                for server_name, server_config in interaction_mcp_servers.items():
                     # Codex-only validation: the server name becomes part of
                     # the -c override PATH (a TOML dotted path), so it must be
                     # a single bare key — a quote/newline would corrupt the
@@ -1289,6 +1297,29 @@ class CodexProvider(BaseProvider):
                     if "args" in cfg:
                         args_toml = "[" + ", ".join(_toml_scalar(a) for a in cfg["args"]) + "]"
                         command_parts.extend(["-c", f"{prefix}.args={args_toml}"])
+                    enabled_tools = cfg.get("enabled_tools")
+                    if enabled_tools is not None:
+                        if not isinstance(enabled_tools, (list, tuple)) or not all(
+                            isinstance(tool, str) for tool in enabled_tools
+                        ):
+                            raise ValueError(
+                                f"MCP server '{server_name}' enabled_tools must be a list of strings"
+                            )
+                    policy_env = cfg.get("env") or {}
+                    if MCP_TOOL_PROFILE_ENV in policy_env:
+                        profile_tools = resolve_tool_profile(policy_env[MCP_TOOL_PROFILE_ENV])
+                        if policy_env.get(_CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV) == "1":
+                            profile_tools = profile_tools & INTERACTION_TOOLS
+                        enabled_tools = (
+                            sorted(profile_tools)
+                            if enabled_tools is None
+                            else [tool for tool in enabled_tools if tool in profile_tools]
+                        )
+                    if enabled_tools is not None:
+                        tools_toml = (
+                            "[" + ", ".join(_toml_scalar(tool) for tool in enabled_tools) + "]"
+                        )
+                        command_parts.extend(["-c", f"{prefix}.enabled_tools={tools_toml}"])
                     # Codex documents `mcp_servers.<id>.cwd` ("Working directory for
                     # the MCP stdio server process"), so the plugin's directory is
                     # carried natively here rather than through the /bin/sh shim the
@@ -1358,13 +1389,32 @@ class CodexProvider(BaseProvider):
             # overrides take precedence unless CAO needs a final safety fence.
             if profile.codexConfig:
                 for key, value in profile.codexConfig.items():
+                    if (
+                        (
+                            self.interaction_capability_file
+                            or any(
+                                isinstance(cfg, dict)
+                                and (
+                                    MCP_TOOL_PROFILE_ENV in (cfg.get("env") or {})
+                                    or MCP_TOOL_PROFILE_ENV in (cfg.get("environment") or {})
+                                )
+                                for cfg in interaction_mcp_servers.values()
+                            )
+                        )
+                        and isinstance(key, str)
+                        and (key == "mcp_servers" or key.startswith("mcp_servers."))
+                    ):
+                        raise ValueError(
+                            "codexConfig cannot override MCP configuration while the "
+                            "private interaction capability or tool profile is enabled"
+                        )
                     command_parts.extend(["-c", _toml_override(key, value)])
 
             # Codex omits optional MCP servers that are still starting when it
             # builds the first turn's tool catalog. CAO's callback tools must
             # be present before a worker receives work, so make only CAO's own
             # MCP required and give its startup enough time for a cold launch.
-            for server_name, server_config in (profile.mcpServers or {}).items():
+            for server_name, server_config in interaction_mcp_servers.items():
                 cfg = (
                     dict(server_config)
                     if isinstance(server_config, dict)
@@ -1497,17 +1547,8 @@ class CodexProvider(BaseProvider):
 
             await asyncio.sleep(1.0)
 
-        pane_tail = ""
-        try:
-            output = get_backend().get_history(self.session_name, self.window_name)
-            if output:
-                pane_tail = "\n".join(output.splitlines()[-10:])
-        except Exception:
-            pass
         logger.error(
-            "Codex startup prompt handler timed out — no prompt or welcome banner detected. "
-            "Pane tail:\n%s",
-            pane_tail,
+            "Codex startup prompt handler timed out — no prompt or welcome banner detected."
         )
 
     async def initialize(self) -> bool:

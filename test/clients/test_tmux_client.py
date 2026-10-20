@@ -136,7 +136,7 @@ class TestCreateSession:
             "new_session"
         ), f"expected 'cmd' (exit-empty) before 'new_session', got order: {call_names}"
 
-    def test_exit_empty_nonzero_returncode_does_not_block_launch(self, tmux, tmp_path):
+    def test_exit_empty_nonzero_returncode_does_not_block_launch(self, tmux, tmp_path, monkeypatch):
         """libtmux 0.51's Server.cmd() RETURNS a failed tmux_cmd result instead
         of raising (this is exactly the shape that hid the reviewer-reported
         P2: a clean-server 'error connecting ...' status-1 result that no
@@ -154,12 +154,13 @@ class TestCreateSession:
             stdout=[],
             stderr=["error connecting to /tmp/tmux-0/default (No such file or directory)"],
         )
+        monkeypatch.setattr(tmux, "_database_env_names", lambda _session_name=None: set())
 
         result = tmux.create_session("ses", "my-window", "tid1", str(tmp_path))
 
         assert result == "my-window"
 
-    def test_exit_empty_failure_does_not_block_launch(self, tmux, tmp_path):
+    def test_exit_empty_failure_does_not_block_launch(self, tmux, tmp_path, monkeypatch):
         """Setting exit-empty is best-effort: a failure must NOT abort the launch."""
         mock_window = MagicMock()
         mock_window.name = "my-window"
@@ -167,12 +168,15 @@ class TestCreateSession:
         mock_session.windows = [mock_window]
         tmux.server.new_session.return_value = mock_session
         tmux.server.cmd.side_effect = RuntimeError("tmux unavailable")
+        monkeypatch.setattr(tmux, "_database_env_names", lambda _session_name=None: set())
 
         # Must still succeed despite the set-option failure.
         result = tmux.create_session("ses", "my-window", "tid1", str(tmp_path))
         assert result == "my-window"
 
-    def test_exit_empty_is_retried_once_after_a_failed_set(self, tmux, tmp_path, caplog):
+    def test_exit_empty_is_retried_once_after_a_failed_set(
+        self, tmux, tmp_path, caplog, monkeypatch
+    ):
         """A create right after an external ``kill-server`` can reach the old
         server while it is still exiting, and tmux reports ``server exited
         unexpectedly``. The set is retried once, and a retry that succeeds
@@ -186,6 +190,7 @@ class TestCreateSession:
             MagicMock(returncode=1, stdout=[], stderr=["server exited unexpectedly"]),
             MagicMock(returncode=0, stdout=[], stderr=[]),
         ]
+        monkeypatch.setattr(tmux, "_database_env_names", lambda _session_name=None: set())
 
         with patch("cli_agent_orchestrator.clients.tmux.time.sleep") as mock_sleep:
             tmux.create_session("ses", "my-window", "tid1", str(tmp_path))

@@ -1,20 +1,20 @@
 """Read-only work routes expose one durable snapshot and enforce job ownership."""
 
-import sqlite3
-
 import pytest
 from fastapi.testclient import TestClient
 
 from cli_agent_orchestrator.api.main import app
+from cli_agent_orchestrator.clients.postgres import connect
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work import EventPage, WorkView
+from cli_agent_orchestrator.models.work_operations import WorkOperations
 from cli_agent_orchestrator.security import auth
 from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 
 
 @pytest.fixture
 def durable_work(tmp_path, monkeypatch):
-    path = tmp_path / "work.sqlite3"
+    path = tmp_path / "work-artifacts"
     monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", path)
     principal = auth._verified_principal("https://issuer.test/", "owner", [auth.SCOPE_READ], "jwt")
     app.dependency_overrides[auth.get_current_principal] = lambda: principal
@@ -70,6 +70,18 @@ def test_get_work_is_versioned_durable_and_never_infers_success(client, durable_
     assert "request_hash" not in response.json()
 
 
+def test_operations_projection_uses_native_postgres_catalog_and_queries(client, durable_work):
+    repository, principal, job, work = durable_work
+    response = client.get(f"/work-items/{work['id']}/operations")
+    assert response.status_code == 200
+    view = WorkOperations.model_validate(response.json())
+    assert view.job_id == job["id"]
+    assert view.work_item_id == work["id"]
+    assert view.release_allowed is False
+    assert view.reactivation_allowed is False
+    assert view.execution_allowed is True
+
+
 def test_event_page_preserves_retention_gaps_and_cursor(client, durable_work):
     repository, principal, job, work = durable_work
     repository.prune_events(job["id"], through_sequence=1)
@@ -99,8 +111,14 @@ def test_owner_without_read_scope_is_forbidden(client, durable_work):
 
 def test_schema_damage_is_unavailable_not_empty_success(client, durable_work):
     repository, principal, job, work = durable_work
-    with sqlite3.connect(repository.path) as connection:
-        connection.execute("UPDATE work_migrations SET checksum='tampered'")
+    with connect(repository.target.migration_target()) as connection:
+        with connection.transaction():
+            changed = connection.execute(
+                "UPDATE _cao_schema_migrations SET checksum=%s "
+                "WHERE scope=%s AND component='work' AND version=1",
+                ("tampered", repository.target.scope),
+            ).rowcount
+            assert changed == 1
     response = client.get(f"/work-items/{work['id']}")
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "work_store_unavailable"

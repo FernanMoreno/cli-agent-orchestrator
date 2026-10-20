@@ -19,7 +19,7 @@ Harness constructs (domain-entities.md):
   - ``RestartSimulator`` — clears ``run_registry`` + ``_active_drives`` so the
     next read rebuilds via ``_rebuild_record_from_journal`` (the ADR-2 recovery
     path where the defect lived).
-  - ``MigratorSpy`` — counts ``_migrate_workflow_run_event`` calls (BR-6).
+  - The workflow schema is installed by the explicit PostgreSQL component migration.
 
 BR-7 (guard-integrity) — each assertion below carries its DEFECT ORACLE; a test
 that stays green under its defect is decorative and must be strengthened. The
@@ -38,7 +38,8 @@ oracles (self-verified by cp-aside mutation for the two headline cases):
   - BR-4  terminal-state guard  : drop the F-1 ``get_run`` terminal check in
                                   ``_follow_run_events`` -> the follower HANGS
                                   (caught here by a hard timeout, never a hang).
-  - BR-6  no per-append migrate : migrate on every append -> RED (spy count > 1).
+  - The DAL never creates schema during a runtime write; migration fingerprints are
+    asserted in the client migration tests.
 
 BR-3 fault-direction correction (verified empirically, NOT a paraphrase):
   The supervisor mutated the two-term re-seed ``max(persisted_high_water,
@@ -57,16 +58,15 @@ BR-3 fault-direction correction (verified empirically, NOT a paraphrase):
   covered by the supplementary BR-3b. Both terms of ``max(...)`` thus have a
   distinct mutation oracle (BR-7).
 
-The journal points at a temp SQLite DB via the patched ``DATABASE_FILE``; the
-event-migration memo is reset per test. Every live-follow / SSE assertion is
-bounded by a hard timeout so a regression fails loudly and NEVER hangs the suite.
+The autouse test fixture resets an isolated PostgreSQL worker schema per test.
+Every live-follow / SSE assertion is bounded by a hard timeout so a regression
+fails loudly and NEVER hangs the suite.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
 import threading
 from pathlib import Path
 from typing import Callable, Dict, List, Tuple
@@ -75,12 +75,8 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
-import cli_agent_orchestrator.clients.database as dbmod
 from cli_agent_orchestrator.api.main import app
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
-)
+from cli_agent_orchestrator.clients.postgres import DatabaseError
 from cli_agent_orchestrator.models.terminal import AgentStepResult, TerminalStatus
 from cli_agent_orchestrator.models.workflow import RunState, WorkflowSpec, WorkflowStep
 from cli_agent_orchestrator.plugins import PluginRegistry
@@ -106,25 +102,15 @@ _STREAM_TIMEOUT_S = 15.0
 
 
 # ---------------------------------------------------------------------------
-# Fixtures — a fresh temp journal DB + clean registry/migration memo per test.
+# Fixtures — a fresh isolated PostgreSQL worker schema + clean in-memory registry.
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
-def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Point the journal at a temp DB, create the tables, clean the registry.
-
-    Mirrors ``test_workflow_event_emission.py`` exactly; the event-migration memo
-    is cleared so the fresh temp DB self-migrates on first event write (BR-6).
-    """
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
-    workflow_journal._event_migrated_paths.clear()
+def _patched_journal(monkeypatch: pytest.MonkeyPatch):
+    """Clear process-local workflow state around each native PostgreSQL case."""
     ws.run_registry.clear()
     ws._active_drives.clear()
     ws.step_output_store._store.clear()
-    yield db_path
-    workflow_journal._event_migrated_paths.clear()
+    yield
     ws.run_registry.clear()
     ws._active_drives.clear()
     ws.step_output_store._store.clear()
@@ -202,7 +188,7 @@ class SwallowInjector:
 
         def _wrapped(run_id: str, seq: int, event_type: str, **kwargs: object) -> None:
             if predicate(seq, event_type):
-                raise sqlite3.OperationalError("U9 SwallowInjector: append_event swallowed")
+                raise DatabaseError("U9 SwallowInjector: append_event swallowed")
             real_append(run_id, seq, event_type, **kwargs)  # type: ignore[arg-type]
 
         self.monkeypatch.setattr(ws.workflow_journal, "append_event", _wrapped)
@@ -224,7 +210,7 @@ class SwallowInjector:
                 return
 
             def _boom(run_id: str, seq: int) -> None:
-                raise sqlite3.OperationalError("U9 SwallowInjector: persist_high_water swallowed")
+                raise DatabaseError("U9 SwallowInjector: persist_high_water swallowed")
 
             ws.workflow_journal.persist_high_water = _boom  # type: ignore[assignment]
             try:
@@ -242,20 +228,6 @@ class RestartSimulator:
     def restart() -> None:
         ws.run_registry.clear()
         ws._active_drives.clear()
-
-
-class MigratorSpy:
-    """Count ``_migrate_workflow_run_event`` invocations (BR-6, call-count NEVER timing)."""
-
-    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        self.calls = 0
-        real_migrate = dbmod._migrate_workflow_run_event
-
-        def _counting() -> None:
-            self.calls += 1
-            real_migrate()
-
-        monkeypatch.setattr(dbmod, "_migrate_workflow_run_event", _counting)
 
 
 # ---------------------------------------------------------------------------
@@ -577,27 +549,6 @@ def test_br5_journal_authoritative_after_restart(client, monkeypatch):
 
 
 # ===========================================================================
-# BR-6 — no per-append migration (call-count, NEVER timing).
-# ORACLE: migrate on every append -> spy count > 1 -> RED.
-# ===========================================================================
-def test_br6_event_migrator_invoked_at_most_once_across_many_appends(monkeypatch):
-    """A real run emitting N (>1) events invokes ``_migrate_workflow_run_event`` at
-    most ONCE — the migration is memoized per db-path per process, not run per
-    append (NFR-PERF-1). A pure call-count assertion, never a timing measurement.
-    """
-    spy = MigratorSpy(monkeypatch)
-    fixture = RealDriveRunFixture(monkeypatch)
-
-    assert fixture.drive("R6", step_ids=("s1", "s2")) == RunState.COMPLETED
-
-    # The run emitted many events (the full FR-1.4 taxonomy over 2 steps)...
-    n_appends = len(workflow_journal.read_events("R6"))
-    assert n_appends > 1
-    # ...yet the event migrator ran at most once.
-    assert spy.calls <= 1
-
-
-# ===========================================================================
 # BR-7 — guard-integrity meta-rule: each assertion carries its defect oracle.
 # ===========================================================================
 def test_br7_guard_integrity_defect_oracles_are_documented():
@@ -612,7 +563,6 @@ def test_br7_guard_integrity_defect_oracles_are_documented():
         "BR-2",
         "BR-3",
         "BR-4",
-        "BR-6",
         "_journal_event",  # BR-1 oracle
         "max_event_seq",  # BR-3 oracle (the supervisor's single-term mutation)
         "persisted_high_water",  # BR-3b oracle

@@ -1,9 +1,12 @@
 """Replacement fencing through the durable scheduler/work seams."""
 
-import sqlite3
+from dataclasses import replace
+from uuid import uuid4
 
 import pytest
+from psycopg import sql
 
+from cli_agent_orchestrator.clients.postgres import connect
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 from cli_agent_orchestrator.services.work_scheduler import (
@@ -14,7 +17,7 @@ from cli_agent_orchestrator.services.work_scheduler import (
 
 
 def _reconciled_held_work(tmp_path, *, budget=2):
-    repository = WorkRepository(tmp_path / "replacement.sqlite3")
+    repository = WorkRepository(tmp_path / "replacement-store")
     repository.initialize()
     scheduler = WorkScheduler(repository)
     scheduler.configure(capacity=1, max_queue=2, aging_seconds=10, expected_policy_revision=0)
@@ -166,17 +169,19 @@ def test_quota_reconcile_without_stop_proof_keeps_generation_and_slot(tmp_path, 
     assert repository.read_events(reconcile["job_id"])["events"] == before
 
 
-def test_stop_verifier_runs_without_sqlite_transaction(tmp_path):
-    """Holding SQLite while asking the external verifier would deadlock this probe."""
+def test_stop_verifier_runs_without_database_row_locks(tmp_path):
+    """The external stop probe runs before any Work row lock is held."""
     from cli_agent_orchestrator.services.work_service import WorkService
 
     repository, reconcile, held = _reconciled_held_work(tmp_path)
     observed = []
 
     def verify(owner):
-        with sqlite3.connect(repository.path, timeout=0.1, isolation_level=None) as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.rollback()
+        with repository.transaction() as connection:
+            connection.execute("SET LOCAL statement_timeout = '100ms'")
+            connection.execute(
+                "SELECT id FROM work_items WHERE id=%s FOR UPDATE", (reconcile["id"],)
+            )
         observed.append(owner.attempt_id)
         return StoppedWriter(owner.attempt_id, owner.generation, owner.revision, "exit")
 
@@ -211,7 +216,7 @@ def test_scheduler_release_for_replacement_persists_exact_stop_evidence(tmp_path
     assert released["revision"] == reconcile["revision"] + 1
     with repository.connection() as connection:
         row = connection.execute(
-            "SELECT state,stop_evidence_ref FROM work_scheduler_requests WHERE id=?", (held.id,)
+            "SELECT state,stop_evidence_ref FROM work_scheduler_requests WHERE id=%s", (held.id,)
         ).fetchone()
     assert tuple(row) == ("released", "scheduler-stop-proof")
 
@@ -225,7 +230,7 @@ def test_revision_changed_during_verifier_keeps_slot_and_generation(tmp_path):
     def verify(owner):
         with repository.transaction() as connection:
             connection.execute(
-                "UPDATE work_items SET revision=revision+1 WHERE id=?", (reconcile["id"],)
+                "UPDATE work_items SET revision=revision+1 WHERE id=%s", (reconcile["id"],)
             )
         return StoppedWriter(owner.attempt_id, owner.generation, owner.revision, "exit")
 
@@ -348,26 +353,51 @@ def test_retry_failure_keeps_durable_stop_evidence_without_duplicate_effects(tmp
 
     with repository.connection() as connection:
         row = connection.execute(
-            "SELECT state,stop_evidence_ref FROM work_scheduler_requests WHERE id=?", (held.id,)
+            "SELECT state,stop_evidence_ref FROM work_scheduler_requests WHERE id=%s", (held.id,)
         ).fetchone()
     assert tuple(row) == ("released", "exit-proof")
     assert repository.get_work(reconcile["id"])["attempts"][-1]["generation"] == 1
 
 
 def test_replacement_rejects_mismatched_scheduler_store_without_effects(tmp_path):
-    """A scheduler on another SQLite store cannot release this work's writer."""
+    """A scheduler on another PostgreSQL target cannot release this work's writer."""
     from cli_agent_orchestrator.services.work_service import WorkService
 
     repository, reconcile, held = _reconciled_held_work(tmp_path)
-    foreign_repository = WorkRepository(tmp_path / "foreign.sqlite3")
-    foreign_repository.initialize()
+    foreign_schema = f"foreign_{uuid4().hex[:20]}"
+    foreign_target = replace(
+        repository.target,
+        schema=foreign_schema,
+        store_id=str(uuid4()),
+        migration_user=None,
+        migration_secret_file=None,
+    )
+    with connect(repository.target.migration_target()) as connection:
+        connection.execute(
+            sql.SQL("CREATE SCHEMA {} AUTHORIZATION {}").format(
+                sql.Identifier(foreign_schema),
+                sql.Identifier(repository.target.migration_user),
+            )
+        )
+        connection.execute(
+            sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                sql.Identifier(foreign_schema), sql.Identifier(repository.target.user)
+            )
+        )
+    foreign_repository = WorkRepository(foreign_target, filesystem_home=tmp_path)
     foreign_scheduler = WorkScheduler(foreign_repository)
 
-    with pytest.raises(WorkConflict):
-        _retry(WorkService(repository), reconcile, foreign_scheduler)
+    try:
+        with pytest.raises(WorkConflict):
+            _retry(WorkService(repository), reconcile, foreign_scheduler)
 
-    assert repository.get_work(reconcile["id"])["attempts"][-1]["generation"] == 1
-    assert WorkScheduler(repository).get_by_attempt(held.attempt_id).state == "held"
+        assert repository.get_work(reconcile["id"])["attempts"][-1]["generation"] == 1
+        assert WorkScheduler(repository).get_by_attempt(held.attempt_id).state == "held"
+    finally:
+        with connect(repository.target.migration_target()) as connection:
+            connection.execute(
+                sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(foreign_schema))
+            )
 
 
 @pytest.mark.parametrize("cleanup_state", ["pending", "complete"])
@@ -416,7 +446,7 @@ def test_attempt_revision_changed_during_replacement_verifier_keeps_slot_and_gen
     def verify(owner):
         with repository.transaction() as connection:
             connection.execute(
-                "UPDATE work_attempts SET revision=revision+1 WHERE id=?", (owner.attempt_id,)
+                "UPDATE work_attempts SET revision=revision+1 WHERE id=%s", (owner.attempt_id,)
             )
         return StoppedWriter(owner.attempt_id, owner.generation, owner.revision, "stale-proof")
 
@@ -534,7 +564,7 @@ def test_replacement_preserves_consumed_units_and_requires_readmission(tmp_path)
     with repository.connection() as connection:
         consumed = connection.execute(
             "SELECT sum(units) FROM work_scheduler_requests "
-            "WHERE work_item_id=? AND state='released'",
+            "WHERE work_item_id=%s AND state='released'",
             (reconcile["id"],),
         ).fetchone()[0]
     assert consumed == 1

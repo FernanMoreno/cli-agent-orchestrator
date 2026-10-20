@@ -1,91 +1,51 @@
-"""Tests for DB dir/file permission hardening (PR #372 security review).
+"""Native PostgreSQL credentials are private and unsafe stores fail closed."""
 
-The SQLite DB persists workflow ``spec_snapshot`` (full prompt bodies) and
-``inputs_json``, so the dir must be owner-only (0o700) and the DB file (plus any
--wal/-shm siblings) 0o600 — the same posture as claude_code prompt files and the
-audit log. The chmods are best-effort: a failure logs and never blocks startup.
-"""
-
-import stat
-from pathlib import Path
+import os
+from dataclasses import replace
 
 import pytest
-from sqlalchemy import create_engine
 
-from cli_agent_orchestrator.clients import database as db_mod
+from cli_agent_orchestrator.clients import database
+from cli_agent_orchestrator.clients.postgres import ConfigurationError, connect
+from cli_agent_orchestrator.clients.postgres.migrations import SchemaMismatch, verify_runtime_role
 
-
-def _mode(path: Path) -> int:
-    return stat.S_IMODE(path.stat().st_mode)
-
-
-@pytest.fixture
-def isolated_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Point the module at a temp DB dir/file + a temp engine."""
-    db_dir = tmp_path / "db"
-    db_file = db_dir / "cli-agent-orchestrator.db"
-    monkeypatch.setattr(db_mod, "DB_DIR", db_dir)
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_file, raising=True)
-    db_mod._ensure_db_dir()
-    engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False})
-    monkeypatch.setattr(db_mod, "engine", engine)
-    yield db_dir, db_file
-    engine.dispose()
+pytestmark = pytest.mark.postgres
 
 
-class TestDbPermissions:
-    def test_init_db_sets_dir_0700_and_file_0600(self, isolated_db):
-        db_dir, db_file = isolated_db
-        db_mod.init_db()
-        assert _mode(db_dir) == 0o700
-        assert db_file.exists()
-        assert _mode(db_file) == 0o600
+@pytest.mark.parametrize("permission", [0o644, 0o660, 0o666])
+def test_runtime_rejects_readable_credential_files(postgres_core, permission):
+    secret = postgres_core.secret_file
+    os.chmod(secret, permission)
+    try:
+        with pytest.raises(ConfigurationError):
+            connect(postgres_core)
+    finally:
+        os.chmod(secret, 0o600)
 
-    def test_ensure_db_dir_tightens_preexisting_loose_dir(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        # exist_ok=True means mkdir's mode is ignored for a pre-existing dir; the
-        # explicit chmod must still tighten it to 0o700.
-        db_dir = tmp_path / "loose-db"
-        db_dir.mkdir(mode=0o755)
-        monkeypatch.setattr(db_mod, "DB_DIR", db_dir)
-        db_mod._ensure_db_dir()
-        assert _mode(db_dir) == 0o700
 
-    def test_init_db_restricts_wal_and_shm_siblings(self, isolated_db):
-        db_dir, db_file = isolated_db
-        # Simulate leftover WAL/SHM siblings from a prior run with loose perms.
-        wal = db_file.with_name(db_file.name + "-wal")
-        shm = db_file.with_name(db_file.name + "-shm")
-        for sibling in (wal, shm):
-            sibling.touch(mode=0o644)
-            sibling.chmod(0o644)
-        db_mod.init_db()
-        assert _mode(wal) == 0o600
-        assert _mode(shm) == 0o600
+def test_runtime_rejects_schema_owner_credentials(postgres_core):
+    with connect(postgres_core.migration_target()) as owner:
+        with pytest.raises(SchemaMismatch):
+            verify_runtime_role(owner)
 
-    def test_restrict_db_file_permissions_missing_file_is_noop(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        # Best-effort: an absent DB file (nothing created yet) must not raise.
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.constants.DATABASE_FILE",
-            tmp_path / "nope" / "absent.db",
-            raising=True,
-        )
-        db_mod._restrict_db_file_permissions()
 
-    def test_restrict_db_file_permissions_chmod_failure_logged_not_raised(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
-    ):
-        db_file = tmp_path / "x.db"
-        db_file.touch()
-        monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_file, raising=True)
+def test_initialization_does_not_create_legacy_local_database_file(postgres_core, monkeypatch):
+    from test.postgres.fixtures import make_orm_engine
 
-        def _boom(*args, **kwargs):
-            raise OSError("chmod unsupported")
+    from cli_agent_orchestrator import constants
 
-        monkeypatch.setattr(db_mod.os, "chmod", _boom)
-        with caplog.at_level("WARNING"):
-            db_mod._restrict_db_file_permissions()
-        assert any("Could not restrict DB file permissions" in r.message for r in caplog.records)
+    engine = make_orm_engine(postgres_core)
+    monkeypatch.setattr(database, "engine", engine)
+    legacy_file = constants.DATABASE_FILE
+    try:
+        database.init_db()
+        assert not legacy_file.exists()
+    finally:
+        engine.dispose()
+
+
+def test_missing_credentials_do_not_get_created(postgres_core, tmp_path):
+    absent = tmp_path / "absent.json"
+    with pytest.raises(ConfigurationError):
+        connect(replace(postgres_core, secret_file=absent))
+    assert not absent.exists()

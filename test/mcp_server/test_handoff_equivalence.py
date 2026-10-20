@@ -23,6 +23,7 @@ import pytest
 
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.services.agent_step import run_agent_step
+from cli_agent_orchestrator.services.status_monitor import StatusMonitor
 from cli_agent_orchestrator.services.terminal_service import OutputMode
 from cli_agent_orchestrator.utils.orchestration import HandoffContext
 
@@ -44,9 +45,11 @@ class _SequenceRecorder:
             t.id = tid
             return t
 
+        isolated_monitor = StatusMonitor()
+
         def _send(terminal_id, prompt, *a, **k):
             self.calls.append(("send_input", terminal_id, prompt))
-            return True
+            return isolated_monitor.notify_input_sent(terminal_id, real_send=True)
 
         def _get_output(terminal_id, mode):
             self.calls.append(("get_output", terminal_id, mode))
@@ -67,6 +70,15 @@ class _SequenceRecorder:
             return TerminalStatus.COMPLETED
 
         return [
+            patch(f"{_STEP}.status_monitor", new=isolated_monitor),
+            patch(
+                "cli_agent_orchestrator.services.terminal_service.status_monitor",
+                new=isolated_monitor,
+            ),
+            patch(
+                "cli_agent_orchestrator.services.remote_terminal_service.placement",
+                return_value=None,
+            ),
             patch(f"{_STEP}.terminal_service.create_terminal", new=AsyncMock(side_effect=_create)),
             patch(f"{_STEP}.terminal_service.send_input", side_effect=_send),
             patch(f"{_STEP}.terminal_service.get_output", side_effect=_get_output),

@@ -9,7 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from psycopg import sql
 
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_contract import (
     ContractPermissions,
@@ -88,7 +90,7 @@ class FakeAdapter:
 
 @dataclass(frozen=True)
 class CompletedWork:
-    database: Path
+    database: DatabaseTarget
     artifacts_root: Path
     repository: WorkRepository
     artifacts: ImmutableResultStore
@@ -99,7 +101,7 @@ class CompletedWork:
 
 
 def _completed_work(tmp_path: Path) -> tuple[CompletedWork, FakeAdapter]:
-    database = tmp_path / "work.sqlite3"
+    database = DatabaseTarget.from_settings("main")
     artifacts_root = tmp_path / "artifacts"
     repository = WorkRepository(database)
     repository.initialize()
@@ -216,25 +218,25 @@ def _completed_work(tmp_path: Path) -> tuple[CompletedWork, FakeAdapter]:
 
 def _durable_snapshot(repository: WorkRepository, artifacts: ImmutableResultStore) -> tuple:
     with repository.connection() as connection:
+        schema = connection.target.schema
         tables = tuple(
             row[0]
             for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' "
-                "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = %s AND table_type = 'BASE TABLE' "
+                "ORDER BY table_name",
+                (schema,),
             )
         )
-        rows = tuple(
-            (
-                table,
-                tuple(
-                    tuple(row)
-                    for row in connection.execute(
-                        f'SELECT * FROM "{table.replace(chr(34), chr(34) * 2)}" ORDER BY rowid'
-                    )
-                ),
+        rows_by_table = []
+        for table in tables:
+            table_rows = connection.execute(
+                sql.SQL("SELECT * FROM {}").format(sql.Identifier(schema, table))
             )
-            for table in tables
-        )
+            rows_by_table.append(
+                (table, tuple(sorted((tuple(row) for row in table_rows), key=repr)))
+            )
+        rows = tuple(rows_by_table)
     files = tuple(
         (path.name, path.read_bytes())
         for path in sorted(artifacts.root.iterdir(), key=lambda path: path.name)
@@ -486,7 +488,8 @@ def test_finished_work_without_the_finish_cas_winner_is_not_completed(tmp_path):
     completed, _ = _completed_work(tmp_path)
     with completed.repository.transaction() as connection:
         connection.execute(
-            "UPDATE work_items SET accepted_result_id=NULL WHERE id=?", (completed.work["id"],)
+            "UPDATE work_items SET accepted_result_id=NULL WHERE id=%s",
+            (completed.work["id"],),
         )
     before = _durable_snapshot(completed.repository, completed.artifacts)
 
@@ -494,3 +497,36 @@ def test_finished_work_without_the_finish_cas_winner_is_not_completed(tmp_path):
         _export(completed)
 
     assert _durable_snapshot(completed.repository, completed.artifacts) == before
+
+
+def test_durable_snapshot_is_limited_to_owned_schema_and_observes_work_row_changes(tmp_path):
+    completed, _ = _completed_work(tmp_path)
+    before, _ = _durable_snapshot(completed.repository, completed.artifacts)
+    before_by_table = dict(before)
+    table_names = set(before_by_table)
+
+    assert {"work_jobs", "work_items"} <= table_names
+    assert not any(table.startswith("pg_") for table in table_names)
+
+    job = completed.repository.create_job(
+        project_id="snapshot-project",
+        principal_id=completed.principal.id,
+        allowed_providers=["fake-shared-provider"],
+        grant_id="snapshot-grant",
+    )
+    admitted = completed.repository.admit_work(
+        job_id=job["id"],
+        operation_kind="launch",
+        idempotency_key="snapshot-work-row",
+        request_hash="b" * 64,
+        contract_id="snapshot-contract",
+        snapshot_id=None,
+        provider="fake-shared-provider",
+        actor_id=completed.principal.id,
+    )
+
+    after, _ = _durable_snapshot(completed.repository, completed.artifacts)
+    after_by_table = dict(after)
+
+    assert after_by_table["work_items"] != before_by_table["work_items"]
+    assert admitted["id"] in {row[0] for row in after_by_table["work_items"]}

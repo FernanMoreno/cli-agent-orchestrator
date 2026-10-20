@@ -145,7 +145,7 @@ def durable_counts(repository):
 
 @pytest.fixture
 def gateway_setup(tmp_path):
-    repository = WorkRepository(tmp_path / "launch-gateway.sqlite3")
+    repository = WorkRepository(tmp_path / "launch-gateway.db")
     repository.initialize()
     WorkScheduler(repository).configure(
         capacity=2, max_queue=100, aging_seconds=10, expected_policy_revision=0
@@ -203,10 +203,10 @@ def test_gateway_returns_its_own_durable_receipt_and_replays_after_runtime_resta
 
     with repository.connection() as connection:
         own_work = connection.execute(
-            "SELECT id, state FROM work_items WHERE id=?", (first.work_item_id,)
+            "SELECT id, state FROM work_items WHERE id=%s", (first.work_item_id,)
         ).fetchone()
         own_order = connection.execute(
-            "SELECT attempt_id, generation FROM work_delivery_orders WHERE attempt_id=? AND generation=?",
+            "SELECT attempt_id, generation FROM work_delivery_orders WHERE attempt_id=%s AND generation=%s",
             (first.attempt_id, first.generation),
         ).fetchone()
     assert tuple(own_work) == (first.work_item_id, "queued")

@@ -10,9 +10,12 @@ so they don't disturb the session-scoped server.
 
 from __future__ import annotations
 
+import builtins
 import concurrent.futures
 import contextlib
-import shutil
+import signal
+import subprocess
+import test.fixtures.cao_server as cao_server_module
 import time
 from pathlib import Path
 from test.conftest import mint_test_token
@@ -185,10 +188,33 @@ def test_parallel_ports_distinct(tmp_path_factory: pytest.TempPathFactory) -> No
                 srv.stop()
 
 
-def test_startup_failure_raises_with_log_tail(
+@pytest.mark.offline_database
+def test_health_early_exit_raises_with_safe_log_diagnostic(tmp_path: Path) -> None:
+    """A startup failure exposes status and size, not private log contents."""
+    log_sentinel = "private-early-exit-log-sentinel"
+    log_path = tmp_path / "server.log"
+    log_path.write_text(log_sentinel, encoding="utf-8")
+    process = Mock()
+    process.poll.return_value = 17
+    process.returncode = 17
+
+    with pytest.raises(RuntimeError, match="exited with code 17") as excinfo:
+        _wait_for_health(
+            "http://127.0.0.1:12345",
+            deadline=4.0,
+            process=process,
+            log_path=log_path,
+        )
+    msg = str(excinfo.value)
+    assert "log_bytes=" in msg
+    assert log_sentinel not in msg
+    assert log_path.read_text(encoding="utf-8") == log_sentinel
+
+
+def test_startup_failure_raises_with_safe_log_diagnostic(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
-    """A subprocess that crashes during startup surfaces a diagnostic, not a hang."""
+    """An invalid import-time port setting fails through the real child lifecycle."""
     home = tmp_path_factory.mktemp("cao_crash")
     with pytest.raises(RuntimeError) as excinfo:
         _start_cao_server(
@@ -197,10 +223,250 @@ def test_startup_failure_raises_with_log_tail(
             extra_env={"CAO_API_PORT": "not-an-int"},
             deadline=4.0,
         )
-    msg = str(excinfo.value)
-    assert "Log tail" in msg
-    # The subprocess died (exit code) OR the deadline expired — either is fine.
-    assert "cao-server" in msg
+
+    message = str(excinfo.value)
+    assert "exited with code" in message
+    assert "log_bytes=" in message
+    assert "not-an-int" not in message
+    assert "Traceback" not in message
+
+    private_log = (home / "server.log").read_text(encoding="utf-8", errors="replace")
+    assert "invalid literal for int()" in private_log
+    assert "not-an-int" in private_log
+
+
+class _PersistentFakeProcess:
+    """Popen substitute that remains alive until the test releases it."""
+
+    pid = 43210
+
+    def __init__(self) -> None:
+        self.alive = True
+        self.wait_calls = 0
+
+    @property
+    def returncode(self) -> int | None:
+        return None if self.alive else 0
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.wait_calls += 1
+        if self.alive:
+            raise subprocess.TimeoutExpired("fake-cao-server", timeout)
+        return 0
+
+
+class _FakeTargetContext:
+    def __init__(self, targets: object) -> None:
+        self.targets = targets
+        self.enter_calls = 0
+        self.exit_calls = 0
+
+    def __enter__(self) -> object:
+        self.enter_calls += 1
+        return self.targets
+
+    def __exit__(self, *exc_info: object) -> bool:
+        self.exit_calls += 1
+        return False
+
+
+def _patch_fake_server_start(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    health_error: BaseException | None = None,
+) -> tuple[
+    _PersistentFakeProcess,
+    _FakeTargetContext,
+    Path,
+    list[object],
+    list[tuple[int, int]],
+    list[object],
+]:
+    """Make _start_cao_server fully offline while retaining lifecycle effects."""
+    runtime_config = tmp_path / "private-runtime-targets.json"
+    runtime_config.write_text("{}", encoding="utf-8")
+    targets = type("Targets", (), {"config_file": runtime_config, "main": object()})()
+    target_context = _FakeTargetContext(targets)
+    process = _PersistentFakeProcess()
+    popen_calls: list[object] = []
+    signals: list[tuple[int, int]] = []
+    opened_logs: list[object] = []
+    original_open = builtins.open
+
+    def tracked_open(file: object, *args: object, **kwargs: object) -> object:
+        handle = original_open(file, *args, **kwargs)
+        if Path(file) == tmp_path / "server.log":
+            opened_logs.append(handle)
+        return handle
+
+    def fake_popen(*args: object, **kwargs: object) -> _PersistentFakeProcess:
+        popen_calls.append((args, kwargs))
+        return process
+
+    def fake_health(*args: object, **kwargs: object) -> None:
+        if health_error is not None:
+            raise health_error
+
+    monkeypatch.setattr(cao_server_module, "_seed_packaged_skills", lambda *_: None)
+    monkeypatch.setattr(cao_server_module, "_seed_omp_e2e_state", lambda *_: None)
+    monkeypatch.setattr(cao_server_module, "_subprocess_env", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        cao_server_module,
+        "_runtime_only_database_targets",
+        lambda *_: (targets, runtime_config),
+    )
+    monkeypatch.setattr(cao_server_module, "_wait_for_health", fake_health)
+    monkeypatch.setattr(cao_server_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(cao_server_module.os, "killpg", lambda pid, sig: signals.append((pid, sig)))
+    monkeypatch.setattr(
+        "test.postgres.fixtures.isolated_live_targets",
+        lambda *_args, **_kwargs: target_context,
+    )
+    monkeypatch.setattr(cao_server_module, "open", tracked_open, raising=False)
+    return process, target_context, runtime_config, popen_calls, signals, opened_logs
+
+
+@pytest.mark.offline_database
+def test_terminate_keeps_retry_state_and_log_open_until_exit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    process = _PersistentFakeProcess()
+    signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        cao_server_module.os,
+        "killpg",
+        lambda pid, sig: signals.append((pid, sig)),
+    )
+    log_handle = (tmp_path / "server.log").open("ab")
+    stopped = [False]
+
+    try:
+        with pytest.raises(RuntimeError, match="did not stop"):
+            cao_server_module._terminate(process, log_handle, stopped)
+
+        assert stopped == [False]
+        assert not log_handle.closed
+        assert process.wait_calls == 2
+
+        process.alive = False
+        cao_server_module._terminate(process, log_handle, stopped)
+        assert stopped == [True]
+        assert log_handle.closed
+        assert signals == [(process.pid, signal.SIGTERM), (process.pid, signal.SIGKILL)]
+
+        cao_server_module._terminate(process, log_handle, stopped)
+        assert signals == [(process.pid, signal.SIGTERM), (process.pid, signal.SIGKILL)]
+    finally:
+        process.alive = False
+        if not log_handle.closed:
+            log_handle.close()
+
+
+@pytest.mark.offline_database
+def test_stop_retains_owned_resources_until_process_exit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (
+        process,
+        target_context,
+        runtime_config,
+        popen_calls,
+        signals,
+        opened_logs,
+    ) = _patch_fake_server_start(monkeypatch, tmp_path)
+    server = _start_cao_server(tmp_path, 45679)
+    try:
+        args, kwargs = popen_calls[0]
+        assert kwargs["start_new_session"] is True
+        assert args
+
+        with pytest.raises(RuntimeError, match="did not stop"):
+            server.stop()
+
+        assert process.alive
+        assert process.wait_calls == 2
+        assert signals == [(process.pid, signal.SIGTERM), (process.pid, signal.SIGKILL)]
+        assert target_context.exit_calls == 0
+        assert runtime_config.exists()
+        assert server in cao_server_module._LIVE_SERVERS
+        assert len(opened_logs) == 1 and not opened_logs[0].closed
+
+        process.alive = False
+        server.stop()
+        assert target_context.exit_calls == 1
+        assert not runtime_config.exists()
+        assert server not in cao_server_module._LIVE_SERVERS
+        assert opened_logs[0].closed
+
+        server.stop()
+        assert target_context.exit_calls == 1
+        assert signals == [(process.pid, signal.SIGTERM), (process.pid, signal.SIGKILL)]
+    finally:
+        process.alive = False
+        server.stop()
+
+
+@pytest.mark.offline_database
+def test_startup_failure_retains_cleanup_owner_if_child_is_still_alive(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    startup_error = RuntimeError("fake startup failure")
+    (
+        process,
+        target_context,
+        runtime_config,
+        popen_calls,
+        signals,
+        opened_logs,
+    ) = _patch_fake_server_start(
+        monkeypatch,
+        tmp_path,
+        health_error=startup_error,
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="fake startup failure") as excinfo:
+            _start_cao_server(tmp_path, 45680)
+
+        assert excinfo.value is startup_error
+        assert excinfo.value.__cause__ is not None
+        assert str(excinfo.value.__cause__) == (
+            "cao-server process did not stop; owned resources retained for retry"
+        )
+        assert "cao-server startup cleanup incomplete; see chained cause" in getattr(
+            excinfo.value, "__notes__", []
+        )
+        assert popen_calls
+        assert popen_calls[0][1]["start_new_session"] is True
+        assert process.alive
+        assert process.wait_calls == 2
+        assert signals == [(process.pid, signal.SIGTERM), (process.pid, signal.SIGKILL)]
+        assert target_context.exit_calls == 0
+        assert runtime_config.exists()
+        assert len(opened_logs) == 1 and not opened_logs[0].closed
+
+        owners = [
+            server for server in cao_server_module._LIVE_SERVERS if server.home_dir == tmp_path
+        ]
+        assert len(owners) == 1
+        process.alive = False
+        owners[0].stop()
+        assert target_context.exit_calls == 1
+        assert not runtime_config.exists()
+        assert owners[0] not in cao_server_module._LIVE_SERVERS
+        assert opened_logs[0].closed
+    finally:
+        process.alive = False
+        for owner in tuple(cao_server_module._LIVE_SERVERS):
+            if owner.home_dir == tmp_path:
+                owner.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +528,7 @@ def test_auth_rejects_no_token(cao_server_with_auth: AuthCaoServer) -> None:
     )
     assert (
         resp.status_code == 401
-    ), f"expected 401 with no Authorization header, got {resp.status_code}: {resp.text}"
+    ), f"expected 401 with no Authorization header, got HTTP {resp.status_code}"
 
 
 def test_auth_accepts_valid_token(cao_server_with_auth: AuthCaoServer) -> None:
@@ -280,16 +546,16 @@ def test_auth_accepts_valid_token(cao_server_with_auth: AuthCaoServer) -> None:
     )
     assert (
         resp.status_code != 401
-    ), f"expected non-401 with valid Bearer token, got {resp.status_code}: {resp.text}"
+    ), f"expected non-401 with valid Bearer token, got HTTP {resp.status_code}"
 
 
 # ---------------------------------------------------------------------------
-# cao_terminal — gated on a provider CLI being available
+# cao_terminal — gated by explicit isolated provider authorization
 # ---------------------------------------------------------------------------
 
 
-def test_provider_unavailable_response_accepts_missing_binary_400() -> None:
-    """All provider identifiers share the same missing-binary fixture gate."""
+def test_legacy_provider_error_wording_classifier_is_characterized() -> None:
+    """Keep the legacy phrase classifier independent of live-fixture skip policy."""
     from test.fixtures.cao_server import _provider_is_unavailable_response
 
     assert _provider_is_unavailable_response(
@@ -306,12 +572,19 @@ def test_provider_unavailable_response_accepts_missing_binary_400() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "cao_terminal",
+    [
+        pytest.param({"provider": "codex", "agent_profile": "developer"}, id="codex"),
+        pytest.param({"provider": "claude_code", "agent_profile": "developer"}, id="claude"),
+        pytest.param({"provider": "opencode_cli", "agent_profile": "developer"}, id="opencode"),
+    ],
+    indirect=True,
+)
 def test_cao_terminal_create_and_get(
     cao_server: CaoServer,
     cao_terminal: str,
 ) -> None:
-    if not shutil.which("kiro-cli"):
-        pytest.skip("kiro-cli not available — default cao_terminal provider needs it")
     assert isinstance(cao_terminal, str) and cao_terminal
     # The terminal endpoint should be reachable while the fixture holds the
     # session open. The status field is provider-dependent — we only assert

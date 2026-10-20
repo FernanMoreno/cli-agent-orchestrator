@@ -5,15 +5,15 @@ from __future__ import annotations
 import hashlib
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from test.fixtures.vault_factory import build_vault_fixture
+from test.postgres.orm import configured_orm_engine
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import inspect
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.clients.database import (
-    Base,
     MemoryMetadataModel,
     MemoryRelationshipModel,
     VaultNoteAliasModel,
@@ -79,6 +79,21 @@ BYTE_EQUAL_COLUMNS = {
         "attributes_json",
         "source_updated_at",
     },
+}
+
+BYTE_EQUAL_ROW_KEYS = {
+    "vault_note": ("note_uid",),
+    "vault_finding": ("vault_id", "vault_relpath", "code", "severity"),
+    "vault_note_alias": ("vault_id", "former_relpath", "cao_key"),
+    "memory_metadata": ("id",),
+    "memory_relationships": (
+        "scope",
+        "scope_id",
+        "source_key",
+        "target_key",
+        "type",
+        "origin",
+    ),
 }
 
 STRUCTURAL_COLUMNS = {
@@ -194,14 +209,24 @@ def test_unchanged_incremental_reconcile_is_byte_deterministic_and_refreshes_all
     engine = _database(
         tmp_path / "incremental.db", monkeypatch, reconcile_module, memory_relationship_service
     )
-    _stage_incremental_rename(engine, forward)
+    incremental_key = _stage_incremental_rename(engine, forward)
+    renamed_path = forward.root / "Projects/CAO Design/Renamed.md"
+    expected_updated_at = datetime.fromtimestamp(
+        renamed_path.stat().st_mtime_ns / 1_000_000_000, timezone.utc
+    )
+    with sessionmaker(bind=engine)() as db:
+        renamed_metadata = (
+            db.query(MemoryMetadataModel).filter_by(key=incremental_key, source_kind="vault").one()
+        )
+        assert renamed_metadata.updated_at == expected_updated_at
     byte_equal = _dump(engine, BYTE_EQUAL_COLUMNS)
     structural_before = _dump(engine, STRUCTURAL_COLUMNS)
     assert len(structural_before["vault_note_alias"]) == 1
 
     reconcile(forward.vault, apply=True, run_id="unchanged-run")
 
-    assert _dump(engine, BYTE_EQUAL_COLUMNS) == byte_equal
+    actual = _dump(engine, BYTE_EQUAL_COLUMNS)
+    assert actual == byte_equal, _byte_equal_diff(byte_equal, actual)
     _assert_structural_group(engine, structural_before, run_id="unchanged-run")
 
 
@@ -222,11 +247,22 @@ def test_reverse_creation_order_rebuild_matches_forward_byte_state(
     rebuild(forward.vault, run_id="forward-rebuild")
     forward_byte = _dump(first, BYTE_EQUAL_COLUMNS)
 
-    second = _database(
-        tmp_path / "reverse.db", monkeypatch, reconcile_module, memory_relationship_service
-    )
-    rebuild(reverse.vault, run_id="reverse-rebuild")
-    assert _dump(second, BYTE_EQUAL_COLUMNS) == forward_byte
+    from test.postgres.fixtures import isolated_live_main_target
+
+    # Creation-order determinism must compare independent stores, so the
+    # second engine cannot merely reconnect to the first PostgreSQL target.
+    with isolated_live_main_target(tmp_path / "reverse-store") as target:
+        monkeypatch.setenv("CAO_DATABASE_CONFIG_FILE", str(target.home / "database-config.json"))
+        second = _database(
+            tmp_path / "reverse.db", monkeypatch, reconcile_module, memory_relationship_service
+        )
+        try:
+            rebuild(reverse.vault, run_id="reverse-rebuild")
+            assert _dump(second, BYTE_EQUAL_COLUMNS) == forward_byte
+            assert _dump(first, BYTE_EQUAL_COLUMNS) == forward_byte
+        finally:
+            second.dispose()
+            first.dispose()
 
 
 def test_rebuild_leaves_native_rows_untouched(tmp_path, monkeypatch, deterministic_vaults):
@@ -266,8 +302,7 @@ def _assert_fixed_mtimes(fixture) -> None:
 
 
 def _database(path, monkeypatch, reconcile_module, relationship_module):
-    engine = create_engine(f"sqlite:///{path}")
-    Base.metadata.create_all(engine)
+    engine = configured_orm_engine()
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reconcile_module, "SessionLocal", Session)
     monkeypatch.setattr(relationship_module, "SessionLocal", Session)
@@ -276,9 +311,13 @@ def _database(path, monkeypatch, reconcile_module, relationship_module):
 
 
 def _assert_live_schema_is_completely_classified(engine) -> None:
+    from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+
+    target = DatabaseTarget.from_settings()
     with engine.connect() as connection:
+        inspector = inspect(connection)
         for table in BYTE_EQUAL_COLUMNS:
-            live = {row[1] for row in connection.exec_driver_sql(f"PRAGMA table_info({table})")}
+            live = {column["name"] for column in inspector.get_columns(table, schema=target.schema)}
             byte_equal = BYTE_EQUAL_COLUMNS[table]
             structural = STRUCTURAL_COLUMNS[table]
             assert byte_equal.isdisjoint(structural)
@@ -305,6 +344,42 @@ def _dump(engine, columns_by_table):
             ).all()
             dump[table] = [tuple(_json_value(value) for value in row) for row in rows]
     return dump
+
+
+def _byte_equal_diff(before, after):
+    """Name row identities and changed columns when a byte-stable projection drifts."""
+    changes = {}
+    for table, columns_set in BYTE_EQUAL_COLUMNS.items():
+        columns = tuple(sorted(columns_set))
+        key_columns = BYTE_EQUAL_ROW_KEYS[table]
+        column_index = {column: index for index, column in enumerate(columns)}
+        key_indexes = tuple(column_index[column] for column in key_columns)
+        before_by_key = {
+            tuple(row[index] for index in key_indexes): dict(zip(columns, row))
+            for row in before[table]
+        }
+        after_by_key = {
+            tuple(row[index] for index in key_indexes): dict(zip(columns, row))
+            for row in after[table]
+        }
+        before_keys = set(before_by_key)
+        after_keys = set(after_by_key)
+        changed = {
+            key: tuple(
+                column
+                for column in columns
+                if before_by_key[key][column] != after_by_key[key][column]
+            )
+            for key in sorted(before_keys & after_keys, key=repr)
+            if before_by_key[key] != after_by_key[key]
+        }
+        if changed or before_keys != after_keys:
+            changes[table] = {
+                "added_rows": tuple(sorted(after_keys - before_keys, key=repr)),
+                "removed_rows": tuple(sorted(before_keys - after_keys, key=repr)),
+                "changed_columns_by_row": changed,
+            }
+    return f"byte-equal projection changed: {changes!r}"
 
 
 def _assert_structural_group(

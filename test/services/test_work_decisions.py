@@ -10,14 +10,16 @@ atomicity of an external effect.
 from __future__ import annotations
 
 import importlib
-import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget, connect
+from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.security import auth
 from cli_agent_orchestrator.services.delegation_snapshot import (
@@ -61,7 +63,7 @@ class VerifiedAttempt:
 
 @dataclass(frozen=True)
 class DecisionContext:
-    """SQLite authority and the initial bound attempt for one work item."""
+    """PostgreSQL authority and the initial bound attempt for one work item."""
 
     repository: WorkRepository
     actor: Any
@@ -83,7 +85,7 @@ def _contract_with_snapshot(
 ):
     """Create a fresh persisted snapshot and the contract that names it."""
     models = importlib.import_module("cli_agent_orchestrator.models.work_contract")
-    contract_id = "decision-contract-" + label
+    contract_id = "decision-contract-" + job["id"] + "-" + label
     snapshot = snapshots.freeze(
         principal=actor,
         job_id=job["id"],
@@ -100,11 +102,11 @@ def _contract_with_snapshot(
         provider="mock_cli",
         backend=backend,
         permissions=models.ContractPermissions(
-            tools=("Read",), paths=(str(repository.path.parent),)
+            tools=("Read",), paths=(str(repository.filesystem_home),)
         ),
         resources=models.ContractResources(
-            checkout_root=str(repository.path.parent),
-            write_paths=(str(repository.path.parent / ("target-" + label)),),
+            checkout_root=str(repository.filesystem_home),
+            write_paths=(str(repository.filesystem_home / ("target-" + label)),),
             units=1,
         ),
         snapshot=models.ContractSnapshot(
@@ -132,7 +134,7 @@ def _bind_attempt(
         expected_grant_revision=grant.revision,
         contract=contract,
     )
-    restored = WorkContracts(WorkRepository(repository.path)).revalidate_order(
+    restored = WorkContracts(WorkRepository(repository.target)).revalidate_order(
         binding.attempt_id, generation=binding.generation
     )
     return VerifiedAttempt(
@@ -149,13 +151,13 @@ def _decision_context(tmp_path) -> DecisionContext:
     """An effective principal, durable grant and one currently bound attempt."""
     tmp_path.mkdir(parents=True, exist_ok=True)
     actor = auth._verified_principal("https://issuer.test", "operator", [auth.SCOPE_ADMIN], "jwt")
-    repository = WorkRepository(tmp_path / "work-decisions.sqlite3")
+    repository = WorkRepository(DatabaseTarget.from_settings(), filesystem_home=tmp_path)
     repository.initialize()
     job = repository.create_job(
         project_id="project",
         principal_id=actor.id,
         allowed_providers=["mock_cli"],
-        grant_id="root-grant",
+        grant_id=uuid4().hex,
     )
     authority = WorkAuthority(repository)
     grant = authority.issue_root(
@@ -198,7 +200,7 @@ def _decision_context(tmp_path) -> DecisionContext:
 def _prepare_revised_attempt(context: DecisionContext) -> VerifiedAttempt:
     """Fixture-only historical setup for a reconciled retry of the same work item.
 
-    This deliberately prepares historical SQLite rows.  It is not a public
+    This deliberately prepares historical persisted rows.  It is not a public
     replanning API, a claim of backend evidence, or a proof that external work
     stopped; the fixture has dispatched no effect.  The subsequent retry still
     uses real generation fencing, grant authorization, binding and revalidation.
@@ -209,11 +211,11 @@ def _prepare_revised_attempt(context: DecisionContext) -> VerifiedAttempt:
         context.repository._verify(connection)
         changed_attempt = connection.execute(
             "UPDATE work_attempts SET state='reconcile',revision=revision+1 "
-            "WHERE id=? AND generation=? AND revision=? AND state='planned'",
+            "WHERE id=%s AND generation=%s AND revision=%s AND state='planned'",
             (context.original.attempt_id, context.original.generation, prior["revision"]),
         )
         changed_work = connection.execute(
-            "UPDATE work_items SET state='reconcile',revision=revision+1 WHERE id=? AND revision=?",
+            "UPDATE work_items SET state='reconcile',revision=revision+1 WHERE id=%s AND revision=%s",
             (context.original.work_item_id, work["revision"]),
         )
         assert changed_attempt.rowcount == changed_work.rowcount == 1
@@ -225,7 +227,7 @@ def _prepare_revised_attempt(context: DecisionContext) -> VerifiedAttempt:
         expected_grant_revision=context.grant.revision,
         provider="mock_cli",
         requested_permissions=Permissions(
-            tools={"Read"}, paths={str(context.repository.path.parent)}
+            tools={"Read"}, paths={str(context.repository.filesystem_home)}
         ),
     )
     reconciled = context.repository.get_work(context.original.work_item_id)
@@ -259,8 +261,8 @@ def _prepare_revised_attempt(context: DecisionContext) -> VerifiedAttempt:
     with context.repository.transaction() as connection:
         context.repository._verify(connection)
         updated = connection.execute(
-            "UPDATE work_items SET contract_id=?,snapshot_id=?,revision=revision+1 "
-            "WHERE id=? AND revision=?",
+            "UPDATE work_items SET contract_id=%s,snapshot_id=%s,revision=revision+1 "
+            "WHERE id=%s AND revision=%s",
             (contract.id, contract.snapshot.id, context.original.work_item_id, before_revision),
         )
         assert updated.rowcount == 1
@@ -268,7 +270,7 @@ def _prepare_revised_attempt(context: DecisionContext) -> VerifiedAttempt:
     with context.repository.read_snapshot() as connection:
         original_binding = connection.execute(
             "SELECT contract_id,snapshot_id,contract_hash FROM work_dispatch_bindings "
-            "WHERE attempt_id=? AND generation=?",
+            "WHERE attempt_id=%s AND generation=%s",
             (context.original.attempt_id, context.original.generation),
         ).fetchone()
     assert original_binding is not None
@@ -278,7 +280,7 @@ def _prepare_revised_attempt(context: DecisionContext) -> VerifiedAttempt:
         context.original.contract_hash,
     )
     with pytest.raises(ContractConflict):
-        WorkContracts(WorkRepository(context.repository.path)).revalidate_order(
+        WorkContracts(WorkRepository(context.repository.target)).revalidate_order(
             context.original.attempt_id, generation=context.original.generation
         )
 
@@ -355,7 +357,7 @@ def test_repeated_decision_preserves_original_audit_and_consumes_effect_once(tmp
     assert not _consume_and_apply(service, context.actor, repeated, context.original, effects)
     assert effects.applied == [(first.id, EFFECT)]
 
-    restored = module.WorkDecisions(WorkRepository(context.repository.path)).get(first.id)
+    restored = module.WorkDecisions(WorkRepository(context.repository.target)).get(first.id)
     assert restored.actor_id == context.actor.id
     assert restored.created_at == first.created_at
     assert restored.contract_hash == context.original.contract_hash
@@ -407,7 +409,7 @@ def test_revoked_decision_blocks_new_effect_and_retains_durable_audit(tmp_path):
         _consume_and_apply(service, context.actor, decision, context.original, effects)
 
     assert effects.applied == []
-    restored = module.WorkDecisions(WorkRepository(context.repository.path)).get(decision.id)
+    restored = module.WorkDecisions(WorkRepository(context.repository.target)).get(decision.id)
     assert restored.id == decision.id
     assert restored.actor_id == context.actor.id
     assert restored.contract_hash == context.original.contract_hash
@@ -462,7 +464,7 @@ def test_two_concurrent_consumers_claim_one_local_effect_once(tmp_path):
     )
 
     def consume():
-        return module.WorkDecisions(WorkRepository(context.repository.path)).consume_effect(
+        return module.WorkDecisions(WorkRepository(context.repository.target)).consume_effect(
             principal=context.actor,
             decision_id=decision.id,
             attempt_id=context.original.attempt_id,
@@ -477,7 +479,7 @@ def test_two_concurrent_consumers_claim_one_local_effect_once(tmp_path):
     with context.repository.read_snapshot() as connection:
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_human_decision_claims WHERE decision_id=?",
+                "SELECT count(*) FROM work_human_decision_claims WHERE decision_id=%s",
                 (decision.id,),
             ).fetchone()[0]
             == 1
@@ -544,7 +546,7 @@ def test_consumed_effect_survives_later_revocation_but_other_effects_do_not(tmp_
     with context.repository.read_snapshot() as connection:
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_human_decision_claims WHERE decision_id=?",
+                "SELECT count(*) FROM work_human_decision_claims WHERE decision_id=%s",
                 (decision.id,),
             ).fetchone()[0]
             == 1
@@ -592,7 +594,7 @@ def test_invalid_principal_revoked_grant_and_expired_lease_cannot_claim(tmp_path
     lease_decision = _decide(lease_service, expired_lease.actor, expired_lease.original)
     with expired_lease.repository.transaction() as connection:
         connection.execute(
-            "UPDATE work_attempts SET lease_expires_at=? WHERE id=?",
+            "UPDATE work_attempts SET lease_expires_at=%s WHERE id=%s",
             (time.time() - 1, expired_lease.original.attempt_id),
         )
     with pytest.raises(ContractConflict):
@@ -610,7 +612,7 @@ def test_invalid_principal_revoked_grant_and_expired_lease_cannot_claim(tmp_path
         with repository.read_snapshot() as connection:
             assert (
                 connection.execute(
-                    "SELECT count(*) FROM work_human_decision_claims WHERE decision_id=?",
+                    "SELECT count(*) FROM work_human_decision_claims WHERE decision_id=%s",
                     (decision.id,),
                 ).fetchone()[0]
                 == 0
@@ -626,7 +628,7 @@ def test_original_actor_can_revoke_historical_decision_without_live_binding(tmp_
 
     with context.repository.transaction() as connection:
         connection.execute(
-            "UPDATE work_attempts SET lease_expires_at=? WHERE id=?",
+            "UPDATE work_attempts SET lease_expires_at=%s WHERE id=%s",
             (time.time() - 1, context.original.attempt_id),
         )
     WorkAuthority(context.repository).revoke(
@@ -647,7 +649,7 @@ def test_original_actor_can_revoke_historical_decision_without_live_binding(tmp_
     with context.repository.read_snapshot() as connection:
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_human_decision_revocations WHERE decision_id=?",
+                "SELECT count(*) FROM work_human_decision_revocations WHERE decision_id=%s",
                 (decision.id,),
             ).fetchone()[0]
             == 1
@@ -664,7 +666,7 @@ def test_non_owner_cannot_claim_another_principals_durable_decision(tmp_path):
     )
 
     with pytest.raises(AuthorityDenied):
-        module.WorkDecisions(WorkRepository(context.repository.path)).consume_effect(
+        module.WorkDecisions(WorkRepository(context.repository.target)).consume_effect(
             principal=outsider,
             decision_id=decision.id,
             attempt_id=context.original.attempt_id,
@@ -675,69 +677,56 @@ def test_non_owner_cannot_claim_another_principals_durable_decision(tmp_path):
     with context.repository.read_snapshot() as connection:
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_human_decision_claims WHERE decision_id=?",
+                "SELECT count(*) FROM work_human_decision_claims WHERE decision_id=%s",
                 (decision.id,),
             ).fetchone()[0]
             == 0
         )
 
 
-def test_v17_migration_preserves_rows_and_verifies_decision_history_schema(tmp_path):
-    """Break caught: v18 mutates prior history or accepts altered immutable schema."""
+def test_native_bootstrap_preserves_rows_and_verifies_decision_history_schema(tmp_path):
     repository_module = importlib.import_module("cli_agent_orchestrator.clients.work_repository")
-    path = tmp_path / "v17-work.sqlite3"
-    repository = WorkRepository(path)
-    with sqlite3.connect(path) as connection:
-        for version in range(1, 18):
-            for statement in repository_module._MIGRATIONS[version]:
-                connection.execute(statement)
-            if version == 16:
-                repository._initialize_inbox_store_context(connection)
-            connection.execute(
-                "INSERT INTO work_migrations VALUES (?,?,?,?)",
-                (version, repository_module._CHECKSUMS[version], float(version), "verified"),
+    repository = WorkRepository(DatabaseTarget.from_settings(), filesystem_home=tmp_path)
+    job = repository.create_job(
+        project_id="project", principal_id="owner", allowed_providers=[], grant_id="root-grant"
+    )
+    with repository.connection() as connection:
+        prior_ledger = [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT * FROM _cao_schema_migrations ORDER BY component,version"
             )
-        connection.execute(
-            "INSERT INTO work_jobs "
-            "(id,project_id,principal_id,allowed_providers,grant_id,created_at) "
-            "VALUES ('v17-job','project','owner','[]','root-grant',1)"
+        ]
+        prior_job = tuple(
+            connection.execute("SELECT * FROM work_jobs WHERE id=%s", (job["id"],)).fetchone()
         )
-        prior_ledger = connection.execute(
-            "SELECT * FROM work_migrations WHERE version<=17 ORDER BY version"
-        ).fetchall()
-        prior_job = connection.execute("SELECT * FROM work_jobs WHERE id='v17-job'").fetchone()
-
-    repository.initialize()
+    bootstrap_scope(repository.target)
     repository.verify_schema()
-    with sqlite3.connect(path) as connection:
+    with repository.connection() as connection:
+        assert [
+            tuple(row)
+            for row in connection.execute(
+                "SELECT * FROM _cao_schema_migrations ORDER BY component,version"
+            )
+        ] == prior_ledger
         assert (
-            connection.execute(
-                "SELECT * FROM work_migrations WHERE version<=17 ORDER BY version"
-            ).fetchall()
-            == prior_ledger
+            tuple(
+                connection.execute("SELECT * FROM work_jobs WHERE id=%s", (job["id"],)).fetchone()
+            )
+            == prior_job
         )
-        assert (
-            connection.execute("SELECT * FROM work_jobs WHERE id='v17-job'").fetchone() == prior_job
-        )
-        assert connection.execute(
-            "SELECT version FROM work_migrations ORDER BY version"
-        ).fetchall() == [(number,) for number in range(1, repository_module.SCHEMA_VERSION + 1)]
-        assert connection.execute(
-            "SELECT name FROM sqlite_master WHERE name='work_human_decision_claims'"
-        ).fetchone() == ("work_human_decision_claims",)
-        connection.execute("DROP TRIGGER work_human_decisions_immutable_update")
+    with connect(repository.target.migration_target()) as owner:
+        owner.execute("DROP TRIGGER work_human_decisions_immutable_update ON work_human_decisions")
     with pytest.raises(repository_module.SchemaMismatch):
         repository.verify_schema()
 
 
-def test_v18_migration_ledger_rejects_altered_history(tmp_path):
-    """Break caught: an altered v18 ledger is trusted after an additive upgrade."""
+def test_native_migration_ledger_rejects_altered_history(tmp_path):
     repository_module = importlib.import_module("cli_agent_orchestrator.clients.work_repository")
-    path = tmp_path / "altered-v18-ledger.sqlite3"
-    repository = WorkRepository(path)
-    repository.initialize()
-    with sqlite3.connect(path) as connection:
-        connection.execute("UPDATE work_migrations SET checksum='altered' WHERE version=18")
-
+    repository = WorkRepository(DatabaseTarget.from_settings(), filesystem_home=tmp_path)
+    with connect(repository.target.migration_target()) as owner:
+        owner.execute(
+            "UPDATE _cao_schema_migrations SET checksum='altered' WHERE component='work' AND version=1"
+        )
     with pytest.raises(repository_module.SchemaMismatch):
         repository.verify_schema()

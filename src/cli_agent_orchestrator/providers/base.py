@@ -25,9 +25,18 @@ import re
 import secrets
 import time
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.providers.mcp_interactions import (
+    NativeInteractionObservation,
+    exposes_required_interaction_tools,
+    is_bundled_cao_mcp_entry,
+    observe_manual_native_wait,
+    overlay_interaction_capability_file,
+)
+from cli_agent_orchestrator.utils.mcp_tool_policy import MCP_TOOL_PROFILE_ENV
 
 if TYPE_CHECKING:
     from cli_agent_orchestrator.models.agent_profile import AgentProfile
@@ -112,6 +121,10 @@ class BaseProvider(ABC):
         _allowed_tools: CAO-vocabulary tool names this agent is allowed to use
     """
 
+    # Set only by adapters which write an isolated MCP config and overlay the
+    # runtime-issued capability path on the bundled CAO server entry.
+    supports_interaction_mcp_overlay = False
+
     @classmethod
     def operation_capabilities(cls, operation: str) -> Dict[str, Any]:
         """Describe an operation conservatively, without probing or authorizing it.
@@ -187,6 +200,95 @@ class BaseProvider(ABC):
         self._pending_turn_generation: Optional[str] = None
         self._pending_prepared_input: Optional[str] = None
         self._restored_turn_receipt = False
+        # The runtime writes an opaque, owner-only capability file and gives
+        # providers only its path. Provider config writers overlay it only on
+        # the bundled cao-mcp-server entry; the token itself never enters
+        # provider env, argv, or a general MCP configuration field.
+        self._interaction_capability_file: Optional[str] = None
+
+    def set_interaction_capability_file(self, path: str | Path | None) -> None:
+        """Install the private source-capability file path before initialize()."""
+        if path is None:
+            self._interaction_capability_file = None
+            return
+        value = str(path)
+        if not value or not Path(value).is_absolute():
+            raise ValueError("interaction capability file path must be absolute")
+        self._interaction_capability_file = value
+
+    @property
+    def interaction_capability_file(self) -> Optional[str]:
+        """Private path for the bundled CAO MCP config overlay, if authorized."""
+        return self._interaction_capability_file
+
+    def interaction_mcp_servers(self, mcp_servers: Any) -> Dict[str, Any]:
+        """Return a copied MCP map with only CAO's protected path overlaid.
+
+        Every adapter uses this at its final profile-to-provider config
+        boundary. It also strips a profile-supplied capability path when this
+        terminal has no runtime-issued capability.
+        """
+        result = overlay_interaction_capability_file(mcp_servers, self._interaction_capability_file)
+        for config in result.values():
+            if not isinstance(config, dict):
+                continue
+            has_policy = any(
+                MCP_TOOL_PROFILE_ENV in (config.get(field) or {})
+                for field in ("env", "environment")
+            )
+            if has_policy and not isinstance(config.get("command"), str):
+                raise ValueError("CAO MCP tool profile requires a text command for this adapter")
+        return result
+
+    def interaction_source_configured(self, mcp_servers: Any) -> bool:
+        """Whether CAO MCP can receive the source and required pull tools."""
+        return (
+            self.supports_interaction_mcp_overlay
+            and isinstance(mcp_servers, dict)
+            and any(
+                is_bundled_cao_mcp_entry(name, config)
+                and exposes_required_interaction_tools(config)
+                for name, config in mcp_servers.items()
+                if isinstance(name, str) and isinstance(config, dict)
+            )
+        )
+
+    @property
+    def interaction_capabilities(self) -> Dict[str, str]:
+        """Conservative support matrix for this exact provider instance."""
+        return {
+            "explicit_channel": (
+                "pull_explicit"
+                if self._interaction_capability_file and self.supports_interaction_mcp_overlay
+                else "unsupported"
+            ),
+            "native_detection": "manual_only",
+            "native_response": "manual_only",
+            "provider_version": "unknown",
+            "manual_reason": (
+                "Native dialogs have no verified version-specific response adapter; "
+                "inspect and answer them in the provider terminal."
+            ),
+        }
+
+    def observe_native_interaction(
+        self,
+        status: TerminalStatus,
+        visible_screen: Sequence[str],
+    ) -> Optional[NativeInteractionObservation]:
+        """Return a bounded manual-only signal for a provider-reported wait.
+
+        Subclasses may override this only with provider-owned structured
+        evidence. The default never parses prose, exposes options, or provides
+        a native answer target.
+        """
+        return observe_manual_native_wait(
+            status,
+            visible_screen,
+            terminal_id=self.terminal_id,
+            session_name=self.session_name,
+            window_name=self.window_name,
+        )
 
     @property
     def shell_baseline(self) -> Optional[str]:

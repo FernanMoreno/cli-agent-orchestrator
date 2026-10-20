@@ -10,10 +10,10 @@ import hmac
 import json
 import re
 import secrets
-import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 
+from cli_agent_orchestrator.clients.postgres import DatabaseError
 from cli_agent_orchestrator.clients.work_repository import (
     SchemaMismatch,
     WorkConflict,
@@ -61,6 +61,14 @@ def _identity(value: str, label: str, *, maximum: int = 128) -> str:
     return value
 
 
+def _launch_tool(value: str) -> str:
+    """Accept explicit MCP names; admission still checks exact contract permission."""
+    if isinstance(value, str) and value.startswith("@"):
+        _identity(value[1:], "launch tool", maximum=127)
+        return value
+    return _identity(value, "launch tool")
+
+
 def _canonical(value: object) -> str:
     return json.dumps(
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
@@ -102,7 +110,7 @@ class LaunchIntent:
             raise ValueError("invalid launch message")
         if type(self.allowed_tools) is not tuple:
             raise ValueError("launch tools must be an explicit tuple")
-        tools = tuple(sorted({_identity(tool, "launch tool") for tool in self.allowed_tools}))
+        tools = tuple(sorted({_launch_tool(tool) for tool in self.allowed_tools}))
         object.__setattr__(self, "allowed_tools", tools)
 
     def canonical(self) -> dict[str, object]:
@@ -541,7 +549,7 @@ class LaunchRuntime:
                 retryable=False,
                 required_action="refresh_launch_context",
             ) from error
-        except (SchemaMismatch, sqlite3.Error) as error:
+        except (SchemaMismatch, DatabaseError) as error:
             raise self._error(
                 "launch_store_unavailable",
                 "Verified work store is unavailable.",
@@ -634,7 +642,7 @@ class LaunchRuntime:
                 retryable=False,
                 required_action="resolve_launch_again",
             ) from error
-        except (SchemaMismatch, sqlite3.Error) as error:
+        except (SchemaMismatch, DatabaseError) as error:
             raise self._error(
                 "launch_store_unavailable",
                 "Verified work store is unavailable.",

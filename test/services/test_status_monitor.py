@@ -6,6 +6,7 @@ backends (tmux) it returns the pushed pipeline status; for event-inbox backends
 provider's native status. These tests pin both paths.
 """
 
+import copy
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -2650,9 +2651,14 @@ class TestRound9ObservationOwnership:
         provider = MagicMock()
         provider.supports_screen_detection = True
         sm = self._turn_one_done(provider)
-        sm._detect_screen = self._dispatch_turn_two_while_reading(
-            sm, provider, TerminalStatus.COMPLETED
+        screen_read = self._dispatch_turn_two_while_reading(sm, provider, TerminalStatus.COMPLETED)
+        sm._detect_screen_snapshot = lambda *args: (
+            screen_read(*args),
+            ["retained turn 1 frame"],
         )
+        # This test covers status ownership; native interaction observation is
+        # an independent consumer of the same snapshot.
+        sm._observe_native_interaction = MagicMock()
         sm._on_screen_quiescent("t1", provider)  # no loop: detects inline
         assert sm.turn_state("t1") == (2, 1)
         assert sm._last_status["t1"] == TerminalStatus.PROCESSING
@@ -2783,7 +2789,7 @@ class TestRound9ReadBeganBeforeWork:
     def _work_lands_during_read(self, sm, verdict):
         def read(*_args):
             sm._apply_detection("t1", TerminalStatus.PROCESSING)  # turn 2's first work
-            return verdict  # ...but this read rendered the retained turn-1 frame
+            return verdict  # ...but this read rendered the retained turn-1 frame.
 
         return read
 
@@ -2791,12 +2797,20 @@ class TestRound9ReadBeganBeforeWork:
         provider = MagicMock()
         provider.supports_screen_detection = True
         sm = self._turn_two_sent(provider)
-        sm._detect_screen = self._work_lands_during_read(sm, TerminalStatus.COMPLETED)
+        screen_read = self._work_lands_during_read(sm, TerminalStatus.COMPLETED)
+        sm._detect_screen_snapshot = lambda *args: (
+            screen_read(*args),
+            ["retained turn 1 frame"],
+        )
+        sm._observe_native_interaction = MagicMock()
         sm._on_screen_quiescent("t1", provider)
         assert sm.turn_state("t1") == (2, 1)
         assert sm._last_status["t1"] == TerminalStatus.PROCESSING
         # The next read, begun after the work was seen, closes the turn.
-        sm._detect_screen = lambda *_: TerminalStatus.COMPLETED
+        sm._detect_screen_snapshot = lambda *_: (
+            TerminalStatus.COMPLETED,
+            ["turn 2 completed screen"],
+        )
         sm._on_screen_quiescent("t1", provider)
         assert sm.turn_state("t1") == (2, 2)
 
@@ -3309,3 +3323,309 @@ class TestRound10DispatchSteps:
         finally:
             for p in patches:
                 p.stop()
+
+
+@pytest.mark.offline_database
+class TestSameTurnPostSendBoundary:
+    @pytest.fixture(autouse=True)
+    def _default_to_local_terminal_placement(self, monkeypatch):
+        monkeypatch.setattr(
+            "cli_agent_orchestrator.services.remote_terminal_service.placement",
+            lambda _terminal_id: None,
+        )
+
+    @staticmethod
+    def _state(sm):
+        return sm._turn.get("t1", 0), sm._turn_done.get("t1", 0)
+
+    def test_it_moves_a_preexisting_ready_state_to_processing_without_opening_a_turn(self):
+        sm = StatusMonitor()
+        provider = MagicMock()
+        sm._last_status["t1"] = TerminalStatus.COMPLETED
+
+        turn = sm.notify_input_sent("t1", real_send=True)
+        sm.clear_rolling_buffer("t1", provider, turn=turn)
+        sm.notify_input_delivered("t1")
+        before = (
+            self._state(sm),
+            sm._turn_started["t1"],
+            sm._buffer_epochs["t1"],
+            sm._turn_delivered_at["t1"],
+            sm._capture_generation["t1"],
+        )
+
+        assert sm._last_status["t1"] == TerminalStatus.COMPLETED
+        assert sm.notify_input_in_flight("t1", turn) is True
+
+        assert sm._last_status["t1"] == TerminalStatus.PROCESSING
+        assert (
+            self._state(sm),
+            sm._turn_started["t1"],
+            sm._buffer_epochs["t1"],
+            sm._turn_delivered_at["t1"],
+            sm._capture_generation["t1"],
+        ) == before
+
+    def test_it_preserves_completion_already_observed_for_the_same_turn(self):
+        sm = StatusMonitor()
+        provider = MagicMock()
+        sm._last_status["t1"] = TerminalStatus.IDLE
+        turn = sm.notify_input_sent("t1", real_send=True)
+        sm.clear_rolling_buffer("t1", provider, turn=turn)
+        sm.notify_input_delivered("t1")
+        epoch = sm._buffer_epochs["t1"]
+        sm._apply_detection(
+            "t1",
+            TerminalStatus.PROCESSING,
+            provider=provider,
+            cleared_buffer_turn=turn,
+            buffer_epoch=epoch,
+        )
+        sm._apply_detection(
+            "t1",
+            TerminalStatus.COMPLETED,
+            provider=provider,
+            cleared_buffer_turn=turn,
+            buffer_epoch=epoch,
+        )
+        before = (
+            self._state(sm),
+            sm._turn_started["t1"],
+            sm._buffer_epochs["t1"],
+            sm._turn_delivered_at["t1"],
+            sm._capture_generation["t1"],
+        )
+
+        assert self._state(sm) == (turn, turn)
+        assert sm.notify_input_in_flight("t1", turn) is True
+
+        assert sm._last_status["t1"] == TerminalStatus.COMPLETED
+        assert (
+            self._state(sm),
+            sm._turn_started["t1"],
+            sm._buffer_epochs["t1"],
+            sm._turn_delivered_at["t1"],
+            sm._capture_generation["t1"],
+        ) == before
+
+    def test_stale_turn_cannot_apply_its_post_send_boundary_to_a_newer_turn(self):
+        sm = StatusMonitor()
+        provider = MagicMock()
+        sm._last_status["t1"] = TerminalStatus.IDLE
+        first = sm.notify_input_sent("t1", real_send=True)
+        sm.clear_rolling_buffer("t1", provider, turn=first)
+        sm.notify_input_delivered("t1")
+        first_epoch = sm._buffer_epochs["t1"]
+        sm._apply_detection(
+            "t1",
+            TerminalStatus.PROCESSING,
+            provider=provider,
+            cleared_buffer_turn=first,
+            buffer_epoch=first_epoch,
+        )
+        sm._apply_detection(
+            "t1",
+            TerminalStatus.COMPLETED,
+            provider=provider,
+            cleared_buffer_turn=first,
+            buffer_epoch=first_epoch,
+        )
+        second = sm.notify_input_sent("t1", real_send=True)
+        sm.clear_rolling_buffer("t1", provider, turn=second)
+        sm.notify_input_delivered("t1")
+        before = (
+            self._state(sm),
+            sm._turn_started["t1"],
+            sm._buffer_epochs["t1"],
+            sm._turn_delivered_at["t1"],
+            sm._capture_generation["t1"],
+        )
+
+        assert sm.notify_input_in_flight("t1", first) is False
+        assert sm._last_status["t1"] == TerminalStatus.COMPLETED
+        assert (
+            self._state(sm),
+            sm._turn_started["t1"],
+            sm._buffer_epochs["t1"],
+            sm._turn_delivered_at["t1"],
+            sm._capture_generation["t1"],
+        ) == before
+
+        assert sm.notify_input_in_flight("t1", second) is True
+        assert sm._last_status["t1"] == TerminalStatus.PROCESSING
+        assert self._state(sm) == (second, first)
+
+    @pytest.mark.parametrize("turn_completed", [6, 7], ids=["in-flight", "completed-fast"])
+    def test_remote_boundary_accepts_exact_current_projection_without_local_mutation(
+        self, turn_completed
+    ):
+        sm = StatusMonitor()
+        terminal_id = "remote-term"
+        sm._turn[terminal_id] = 3
+        sm._turn_done[terminal_id] = 3
+        sm._turn_started[terminal_id] = 2.0
+        sm._buffers[terminal_id] = "local sentinel"
+        sm._buffer_epochs[terminal_id] = 4
+        sm._last_status[terminal_id] = TerminalStatus.COMPLETED
+        local_fields = (
+            "_turn",
+            "_turn_done",
+            "_turn_started",
+            "_buffers",
+            "_buffer_epochs",
+            "_turn_delivered_at",
+            "_capture_generation",
+            "_last_status",
+            "_pending_stale_capture",
+            "_confirmed_stale_capture_commit",
+            "_last_stale_capture_check",
+            "_buffer_changed_at",
+        )
+        before = {name: copy.deepcopy(getattr(sm, name)) for name in local_fields}
+        projection = {
+            "turn_sequence": 7,
+            "turn_completed": turn_completed,
+            "status": "completed" if turn_completed == 7 else "processing",
+        }
+
+        with (
+            patch(
+                "cli_agent_orchestrator.services.remote_terminal_service.placement",
+                return_value={"runtime_id": "rt"},
+            ),
+            patch(
+                "cli_agent_orchestrator.services.remote_terminal_service.terminal_projection",
+                return_value=projection,
+            ) as get_projection,
+            patch("cli_agent_orchestrator.services.status_monitor.bus.publish") as publish,
+        ):
+            assert sm.notify_input_in_flight(terminal_id, 7) is True
+
+        get_projection.assert_called_once_with(terminal_id)
+        publish.assert_not_called()
+        assert {name: getattr(sm, name) for name in local_fields} == before
+
+    @pytest.mark.parametrize(
+        "projection",
+        [
+            None,
+            [],
+            {"turn_completed": 6},
+            {"turn_sequence": True, "turn_completed": 0},
+            {"turn_sequence": 7.0, "turn_completed": 6},
+            {"turn_sequence": 7},
+            {"turn_sequence": 7, "turn_completed": True},
+            {"turn_sequence": 7, "turn_completed": 6.0},
+            {"turn_sequence": 7, "turn_completed": 8},
+            {"turn_sequence": 7, "turn_completed": -1},
+        ],
+        ids=[
+            "missing-projection",
+            "non-mapping-projection",
+            "missing-turn",
+            "boolean-turn",
+            "float-turn",
+            "missing-completion",
+            "boolean-completion",
+            "float-completion",
+            "completion-ahead-of-turn",
+            "negative-completion",
+        ],
+    )
+    def test_remote_boundary_fails_closed_for_missing_or_malformed_projection(self, projection):
+        sm = StatusMonitor()
+        with (
+            patch(
+                "cli_agent_orchestrator.services.remote_terminal_service.placement",
+                return_value={"runtime_id": "rt"},
+            ),
+            patch(
+                "cli_agent_orchestrator.services.remote_terminal_service.terminal_projection",
+                return_value=projection,
+            ),
+        ):
+            assert sm.notify_input_in_flight("remote-term", 7) is False
+
+    def test_remote_boundary_rejects_projection_overtaken_by_newer_turn(self):
+        sm = StatusMonitor()
+        with (
+            patch(
+                "cli_agent_orchestrator.services.remote_terminal_service.placement",
+                return_value={"runtime_id": "rt"},
+            ),
+            patch(
+                "cli_agent_orchestrator.services.remote_terminal_service.terminal_projection",
+                return_value={"turn_sequence": 8, "turn_completed": 7, "status": "processing"},
+            ),
+        ):
+            assert sm.notify_input_in_flight("remote-term", 7) is False
+
+    @pytest.mark.parametrize("failure_stage", ["placement", "projection"])
+    def test_remote_boundary_fails_closed_when_authority_lookup_raises(self, failure_stage):
+        sm = StatusMonitor()
+        if failure_stage == "placement":
+            placement = patch(
+                "cli_agent_orchestrator.services.remote_terminal_service.placement",
+                side_effect=RuntimeError("placement unavailable"),
+            )
+            projection = patch(
+                "cli_agent_orchestrator.services.remote_terminal_service.terminal_projection",
+                return_value={"turn_sequence": 7, "turn_completed": 6},
+            )
+        else:
+            placement = patch(
+                "cli_agent_orchestrator.services.remote_terminal_service.placement",
+                return_value={"runtime_id": "rt"},
+            )
+            projection = patch(
+                "cli_agent_orchestrator.services.remote_terminal_service.terminal_projection",
+                side_effect=RuntimeError("projection unavailable"),
+            )
+
+        with placement, projection:
+            assert sm.notify_input_in_flight("remote-term", 7) is False
+
+    def test_stale_boundary_waiting_on_the_lock_cannot_clobber_a_new_dispatch(self):
+        sm = StatusMonitor()
+        provider = MagicMock()
+        sm._last_status["t1"] = TerminalStatus.IDLE
+        first = sm.notify_input_sent("t1", real_send=True)
+        sm.clear_rolling_buffer("t1", provider, turn=first)
+        sm.notify_input_delivered("t1")
+        first_epoch = sm._buffer_epochs["t1"]
+        sm._apply_detection(
+            "t1",
+            TerminalStatus.PROCESSING,
+            provider=provider,
+            cleared_buffer_turn=first,
+            buffer_epoch=first_epoch,
+        )
+        sm._apply_detection(
+            "t1",
+            TerminalStatus.COMPLETED,
+            provider=provider,
+            cleared_buffer_turn=first,
+            buffer_epoch=first_epoch,
+        )
+        attempting = threading.Event()
+        result = []
+
+        def publish_stale_boundary():
+            attempting.set()
+            result.append(sm.notify_input_in_flight("t1", first))
+
+        with sm._lock:
+            worker = threading.Thread(target=publish_stale_boundary)
+            worker.start()
+            assert attempting.wait(timeout=1)
+            second = sm.notify_input_sent("t1", real_send=True)
+            sm.clear_rolling_buffer("t1", provider, turn=second)
+            sm.notify_input_delivered("t1")
+
+        worker.join(timeout=1)
+        assert not worker.is_alive()
+        assert result == [False]
+        assert sm._last_status["t1"] == TerminalStatus.COMPLETED
+        assert self._state(sm) == (second, first)
+        assert sm.notify_input_in_flight("t1", second) is True
+        assert sm._last_status["t1"] == TerminalStatus.PROCESSING

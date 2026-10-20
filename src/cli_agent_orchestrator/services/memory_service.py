@@ -1,4 +1,4 @@
-"""Memory service for CAO memory system (Phase 2 — wiki + SQLite metadata)."""
+"""Memory service for CAO memory system (Phase 2 — wiki + PostgreSQL metadata)."""
 
 import asyncio
 import fcntl
@@ -26,6 +26,9 @@ from cli_agent_orchestrator.services.legacy_memory_access import (
     audited_legacy,
     propagate_legacy_policy_failure,
 )
+from cli_agent_orchestrator.services.legacy_memory_audit_repository import (
+    _LegacyMemoryAuditWorkRepository,
+)
 from cli_agent_orchestrator.services.memory_archive.base import ExportReport, ImportReport
 from cli_agent_orchestrator.services.memory_format import (
     normalize_memory_tags,
@@ -52,6 +55,8 @@ from cli_agent_orchestrator.utils.path_validation import (
 )
 
 if TYPE_CHECKING:
+    from sqlalchemy import Table
+
     from cli_agent_orchestrator.services.vault.config import VaultConfig, VaultSpec
 
 logger = logging.getLogger(__name__)
@@ -131,7 +136,7 @@ class MemoryPartialWriteError(RuntimeError):
         self.file_path = file_path
         self.completed_phases = ["wiki", "index"]
         super().__init__(
-            "Memory content and index were saved, but SQLite metadata could not be updated. "
+            "Memory content and index were saved, but PostgreSQL metadata could not be updated. "
             f"Run `{self.repair_command}`."
         )
 
@@ -360,9 +365,9 @@ def resolve_project_id(cwd: Optional[Path]) -> str:
 
 
 class MemoryService:
-    """Memory service backed by wiki markdown files and SQLite metadata.
+    """Memory service backed by wiki markdown files and PostgreSQL metadata.
 
-    Wiki files remain the content store. SQLite mirrors metadata
+    Wiki files remain the content store. PostgreSQL mirrors metadata
     (key, scope, type, tags, file_path, timestamps) for fast filtered
     lookup. ``index.md`` is regenerated as a human-readable view.
     """
@@ -462,22 +467,25 @@ class MemoryService:
 
     def _legacy_repository(self):
         """Prepare the actual metadata database once, outside SQLAlchemy transactions."""
-        from cli_agent_orchestrator.clients.work_repository import WorkRepository
-
         if self._legacy_audit_repository is None:
             with self._get_db_session() as session:
                 bind = session.get_bind()
                 url = bind.url
                 if session.in_transaction():
                     raise RuntimeError("legacy audit preparation requires an idle session")
-                if (
-                    url.get_backend_name() != "sqlite"
-                    or not url.database
-                    or url.database == ":memory:"
-                ):
-                    raise RuntimeError("legacy memory requires persistent SQLite audit storage")
-                path = Path(url.database)
-            repository = WorkRepository(path)
+                if url.get_backend_name() != "postgresql":
+                    raise RuntimeError("legacy memory requires native PostgreSQL audit storage")
+                from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+
+                target = DatabaseTarget.from_settings()
+                from cli_agent_orchestrator.services.knowledge_policy import KnowledgeAccessDenied
+
+                with bind.connect() as metadata_connection:
+                    if metadata_connection.info.get("cao_target_identity") != target.identity:
+                        raise KnowledgeAccessDenied(
+                            "metadata database belongs to another authority"
+                        )
+            repository = _LegacyMemoryAuditWorkRepository(target)
             repository.initialize()
             self._legacy_audit_repository = repository
         return self._legacy_audit_repository
@@ -509,7 +517,7 @@ class MemoryService:
             yield operation_id
 
     # -------------------------------------------------------------------------
-    # SQLite metadata operations
+    # PostgreSQL metadata operations
     # -------------------------------------------------------------------------
 
     def _get_db_session(self) -> Any:
@@ -558,61 +566,61 @@ class MemoryService:
         "computed, none found" and IS written (distinct from None so the
         second pass doesn't retry endlessly).
         """
+
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
         from cli_agent_orchestrator.clients.database import MemoryMetadataModel
 
-        with self._get_db_session() as db:
-            existing = (
-                db.query(MemoryMetadataModel)
-                .filter(
-                    MemoryMetadataModel.key == key,
-                    MemoryMetadataModel.scope == scope,
-                    MemoryMetadataModel.source_kind == source_kind,
-                    (
-                        MemoryMetadataModel.scope_id == scope_id
-                        if scope_id is not None
-                        else MemoryMetadataModel.scope_id.is_(None)
-                    ),
-                )
-                .first()
+        table = cast("Table", MemoryMetadataModel.__table__)
+        values = {
+            "id": str(uuid.uuid4()),
+            "key": key,
+            "memory_type": memory_type,
+            "scope": scope,
+            "scope_id": scope_id,
+            "source_kind": source_kind,
+            "file_path": file_path,
+            "tags": tags,
+            "source_provider": source_provider,
+            "source_terminal_id": source_terminal_id,
+            "token_estimate": token_estimate,
+            "last_compiled_at": last_compiled_at,
+            "related_keys": related_keys,
+        }
+        updates: dict[str, str | int | datetime | None] = {
+            "memory_type": memory_type,
+            "tags": tags,
+            "file_path": file_path,
+            "token_estimate": token_estimate,
+        }
+        if not preserve_provenance:
+            updates.update(
+                source_provider=source_provider,
+                source_terminal_id=source_terminal_id,
             )
-            if existing:
-                existing.memory_type = memory_type
-                existing.tags = tags
-                existing.file_path = file_path
-                if not preserve_provenance:
-                    existing.source_provider = source_provider
-                    existing.source_terminal_id = source_terminal_id
-                existing.token_estimate = token_estimate
-                if last_compiled_at is not None:
-                    # A compile write: pin updated_at to the same instant so
-                    # the staleness check (last_compiled_at >= updated_at)
-                    # sees the topic as freshly compiled, not perpetually
-                    # stale by the microseconds between two now() calls.
-                    existing.updated_at = last_compiled_at
-                    existing.last_compiled_at = last_compiled_at
-                else:
-                    existing.updated_at = datetime.now(timezone.utc)
-                if related_keys is not None:
-                    existing.related_keys = related_keys
-                db.commit()
-            else:
-                row = MemoryMetadataModel(
-                    id=str(uuid.uuid4()),
-                    key=key,
-                    memory_type=memory_type,
-                    scope=scope,
-                    scope_id=scope_id,
-                    source_kind=source_kind,
-                    file_path=file_path,
-                    tags=tags,
-                    source_provider=source_provider,
-                    source_terminal_id=source_terminal_id,
-                    token_estimate=token_estimate,
-                    last_compiled_at=last_compiled_at,
-                    related_keys=related_keys,
+        if last_compiled_at is not None:
+            updates["last_compiled_at"] = last_compiled_at
+        if related_keys is not None:
+            updates["related_keys"] = related_keys
+
+        with self._get_db_session() as db:
+            updates["updated_at"] = (
+                last_compiled_at if last_compiled_at is not None else datetime.now(timezone.utc)
+            )
+            statement = pg_insert(table).values(**values)
+            if scope_id is None:
+                statement = statement.on_conflict_do_update(
+                    index_elements=(table.c.key, table.c.scope, table.c.source_kind),
+                    index_where=table.c.scope_id.is_(None),
+                    set_=updates,
                 )
-                db.add(row)
-                db.commit()
+            else:
+                statement = statement.on_conflict_do_update(
+                    constraint="uq_memory_key_scope",
+                    set_=updates,
+                )
+            db.execute(statement)
+            db.commit()
 
     def _delete_metadata(
         self, key: str, scope: str, scope_id: Optional[str], *, source_kind: str = "native"
@@ -953,7 +961,7 @@ class MemoryService:
         importer can count it.
 
         Raises ``MemoryDisabledError`` when ``memory.enabled`` is False
-        (U5 / SC-6) — no filesystem or SQLite writes happen.
+        (U5 / SC-6) — no filesystem or PostgreSQL writes happen.
         """
         if not _is_memory_enabled():
             raise MemoryDisabledError(MEMORY_DISABLED_MESSAGE)
@@ -1207,7 +1215,7 @@ class MemoryService:
             action = "updated" if is_update else "created"
             self._update_index(scope, scope_id, key, memory_type, tags, content, timestamp, action)
 
-            # Mirror metadata into SQLite. Token estimate is char-based
+            # Mirror metadata into PostgreSQL. Token estimate is char-based
             # (len(content) / 4) — a coarse proxy used by the context-budget
             # planner; it differs from the word-based estimate written into
             # index.md, which is purely a human-readable hint.
@@ -1231,7 +1239,7 @@ class MemoryService:
                 )
             except Exception as e:
                 logger.error(
-                    "Memory metadata SQLite upsert failed after durable writes "
+                    "Memory metadata PostgreSQL upsert failed after durable writes "
                     "(key=%s scope=%s scope_id=%s)",
                     key,
                     scope,
@@ -1418,24 +1426,28 @@ class MemoryService:
         vault: Any = None,
     ) -> None:
         """Refuse a write that would create same-key native and vault memories."""
+
+        from sqlalchemy import select
+
         from cli_agent_orchestrator.clients.database import MemoryMetadataModel
 
+        table = MemoryMetadataModel.__table__
         other_source_kind = "vault" if target_source_kind == "native" else "native"
-        with self._get_db_session() as db:
-            existing = (
-                db.query(MemoryMetadataModel)
-                .filter(
-                    MemoryMetadataModel.key == key,
-                    MemoryMetadataModel.scope == scope,
-                    MemoryMetadataModel.source_kind == other_source_kind,
-                    (
-                        MemoryMetadataModel.scope_id == scope_id
-                        if scope_id is not None
-                        else MemoryMetadataModel.scope_id.is_(None)
-                    ),
-                )
-                .first()
+        identity_predicate = (
+            table.c.scope_id == scope_id if scope_id is not None else table.c.scope_id.is_(None)
+        )
+        statement = (
+            select(table.c.id)
+            .where(
+                table.c.key == key,
+                table.c.scope == scope,
+                table.c.source_kind == other_source_kind,
+                identity_predicate,
             )
+            .limit(1)
+        )
+        with self._get_db_session() as db:
+            existing = db.execute(statement).first()
         native_file_exists = (
             target_source_kind == "vault" and self.get_wiki_path(scope, scope_id, key).exists()
         )
@@ -2005,8 +2017,8 @@ class MemoryService:
     ) -> list:
         """Build the candidate-key set fed to ``find_related``.
 
-        Pulls all keys from SQLite metadata for the same scope/scope_id —
-        ``index.md`` is derived state, SQLite is source of truth. Excludes
+        Pulls all keys from PostgreSQL metadata for the same scope/scope_id —
+        ``index.md`` is derived state, PostgreSQL is source of truth. Excludes
         the topic key (self-reference). Caps at the 200 most-recently
         updated rows.
         """
@@ -2100,7 +2112,7 @@ class MemoryService:
         """Return ``{key: related_keys_raw}`` for the given keys in scope.
 
         Enriches recall/injection primaries (built from wiki files, which
-        carry no cross-reference data) with their SQLite ``related_keys``
+        carry no cross-reference data) with their PostgreSQL ``related_keys``
         cell. Missing rows are simply absent from the returned dict —
         callers iterate via ``.get(k)``.
         """
@@ -2176,10 +2188,10 @@ class MemoryService:
             return None
 
     def _effective_scope_id(self, memory: Memory) -> Optional[str]:
-        """Resolve the SQLite scope_id for a wiki-parsed Memory.
+        """Resolve the PostgreSQL scope_id for a wiki-parsed Memory.
 
         Memories built from wiki files carry ``scope_id`` only for session/
-        agent scopes (embedded in the path). Project rows in SQLite store the
+        agent scopes (embedded in the path). Project rows in PostgreSQL store the
         project hash, which for a parsed Memory must be recovered from the
         file's container directory (``<base>/<project-hash>/wiki/...``).
         """
@@ -2693,7 +2705,7 @@ class MemoryService:
         ``recency`` is the byte-identical Phase 1/2 path: the per-source
         sorts in ``_metadata_recall``/``_bm25_search`` already produced that
         order, so we leave ``results`` untouched and only slice. ``score``/
-        ``usage`` enrich ``access_count`` from SQLite (recall builds Memory
+        ``usage`` enrich ``access_count`` from PostgreSQL (recall builds Memory
         objects from wiki files, which carry no usage data), compute the
         composite, then apply a stable scope-precedence pass so scope
         dominance holds in every mode.
@@ -2812,21 +2824,21 @@ class MemoryService:
         ]
 
     def _identity(self, m) -> tuple:
-        """Full memory identity ``(key, scope, scope_id, source_kind)`` matching SQLite.
+        """Full memory identity ``(key, scope, scope_id, source_kind)`` matching PostgreSQL.
 
         Matches the metadata table's uniqueness constraint. Used to key usage
         enrich/increment and the composite-score dict so same-slug memories
         from different scopes or backends never collide.
 
         Uses ``_effective_scope_id`` (not raw ``m.scope_id``) so PROJECT rows
-        — whose parsed Memory carries ``scope_id=None`` but whose SQLite row
+        — whose parsed Memory carries ``scope_id=None`` but whose PostgreSQL row
         stores the project hash — match correctly. Mirrors the recovery the
         related-key expansion already performs.
         """
         return (m.key, m.scope, self._effective_scope_id(m), getattr(m, "source_kind", "native"))
 
     def _enrich_access_counts(self, memories: list) -> None:
-        """Populate ``access_count`` on Memory objects from SQLite.
+        """Populate ``access_count`` on Memory objects from PostgreSQL.
 
         Recall builds Memory objects by parsing wiki markdown files, which do
         not carry usage data; the scoring/usage sort needs ``access_count``
@@ -2856,7 +2868,7 @@ class MemoryService:
     def _increment_access_count(self, memories: list) -> None:
         """Batch UPDATE access_count and last_accessed_at.
 
-        60s rate-limit via server-side ``julianday("now")``,
+        60s rate-limit via PostgreSQL's server-side ``clock_timestamp()``,
         not caller clock. Each row increments at most once per recall and at
         most once per 60s. Filtered rows still appear in results — only the
         increment is suppressed.
@@ -2866,6 +2878,8 @@ class MemoryService:
         """
         if not memories:
             return
+        from datetime import timedelta
+
         from sqlalchemy import and_, func, or_, update
 
         from cli_agent_orchestrator.clients.database import MemoryMetadataModel
@@ -2873,7 +2887,7 @@ class MemoryService:
         # Match on full identity including source_kind, not bare key — the
         # table's uniqueness constraint. A partial UPDATE would bump rows
         # from another backend with the same key and scope.
-        # OR-of-ANDs is used over tuple_().in_() because SQLite tuple-IN
+        # OR-of-ANDs keeps the full scoped identity explicit; tuple-IN
         # compares scope_id with ``=``, which never matches the NULL that
         # global rows carry; ``.is_(None)`` is required for those.
         identities = {self._identity(m) for m in memories}
@@ -2899,13 +2913,13 @@ class MemoryService:
                 .where(
                     or_(
                         MemoryMetadataModel.last_accessed_at.is_(None),
-                        func.julianday("now") - func.julianday(MemoryMetadataModel.last_accessed_at)
-                        >= 60.0 / 86400.0,
+                        MemoryMetadataModel.last_accessed_at
+                        <= func.clock_timestamp() - timedelta(seconds=60),
                     )
                 )
                 .values(
                     access_count=MemoryMetadataModel.access_count + 1,
-                    last_accessed_at=func.datetime("now"),
+                    last_accessed_at=func.clock_timestamp(),
                 )
             )
             db.execute(stmt)
@@ -3681,7 +3695,7 @@ class MemoryService:
         Otherwise it is resolved from terminal_context.
 
         Raises ``MemoryDisabledError`` when ``memory.enabled`` is False
-        (U5 / SC-6) — no filesystem or SQLite writes happen.
+        (U5 / SC-6) — no filesystem or PostgreSQL writes happen.
         """
         if not _is_memory_enabled():
             raise MemoryDisabledError(MEMORY_DISABLED_MESSAGE)
@@ -3729,13 +3743,13 @@ class MemoryService:
         """Remove only CAO-owned native state, without binding resolution."""
         wiki_path = self.get_wiki_path(scope, scope_id, key)
         if not wiki_path.exists():
-            # Drop any stale SQLite row so metadata stays consistent
+            # Drop any stale PostgreSQL row so metadata stays consistent
             # with the wiki even when the file vanished out-of-band.
             try:
                 self._delete_metadata(key, scope, scope_id)
             except Exception as e:
                 propagate_legacy_policy_failure(e)
-                logger.warning(f"Memory metadata SQLite delete failed (key={key}): {e}")
+                logger.warning(f"Memory metadata PostgreSQL delete failed (key={key}): {e}")
             # Purge only native-produced relationships. Vault-origin rows are
             # deliberately retained with their vault metadata projection.
             self._purge_relationships(key, scope, scope_id)
@@ -3751,12 +3765,12 @@ class MemoryService:
         now_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         self._update_index(scope, scope_id, key, "", "", "", now_ts, "remove")
 
-        # Drop the SQLite metadata row alongside the file.
+        # Drop the PostgreSQL metadata row alongside the file.
         try:
             self._delete_metadata(key, scope, scope_id)
         except Exception as e:
             propagate_legacy_policy_failure(e)
-            logger.warning(f"Memory metadata SQLite delete failed (key={key}): {e}")
+            logger.warning(f"Memory metadata PostgreSQL delete failed (key={key}): {e}")
 
         # Drop the typed relationship rows too (issue #511 / PR #524 review):
         # the file, the index entry and the metadata row are all gone, so any
@@ -4057,7 +4071,7 @@ class MemoryService:
                     scope_memories.append(memory)
 
             # One-level cross-reference expansion. Looks up ``related_keys``
-            # for primary entries via SQLite (source of truth, not the
+            # for primary entries via PostgreSQL (source of truth, not the
             # rendered ``## See Also`` markdown), expands within the same
             # scope budget, dedups + cycle-blocks via ``visited``, and caps
             # the total related articles added across this entire context

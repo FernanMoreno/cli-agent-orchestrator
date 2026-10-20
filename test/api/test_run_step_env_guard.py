@@ -278,29 +278,9 @@ class TestScriptStepCompletion:
     }
 
     @pytest.fixture(autouse=True)
-    def _isolated_journal(self, tmp_path, monkeypatch):
-        """Point the workflow journal at a temp DB (issue #583).
-
-        These are the only tests in this file that register a live
-        ``ScriptRunRecord``, so they are the only ones that both WRITE durable
-        journal rows (``settlement-rewire``) and READ them back before dispatch
-        (``run-step-replay-branch``). Against the developer's real database the
-        first run leaves a settled row under these fixed run ids, and the next run
-        of the same test is then correctly HALTED by the replay gate (409) instead
-        of reaching the transition under test — passing once and failing forever
-        after. Scoped to this class so the rest of the file keeps its existing
-        environment.
-        """
-        from cli_agent_orchestrator.clients.database import (
-            _migrate_workflow_run,
-            _migrate_workflow_run_step,
-        )
-
-        monkeypatch.setattr(
-            "cli_agent_orchestrator.constants.DATABASE_FILE", tmp_path / "wf.db", raising=True
-        )
-        _migrate_workflow_run()
-        _migrate_workflow_run_step()
+    def _isolated_journal(self, isolated_memory_db):
+        """Use the shared per-test PostgreSQL schema for script-run journal state."""
+        return isolated_memory_db
 
     def _register_script_record(self, run_id):
         from cli_agent_orchestrator.models.workflow_runtime import RunState

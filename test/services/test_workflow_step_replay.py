@@ -20,9 +20,8 @@ Covers ``workflow_service.replay_single_step``:
   predecessor (ValueError), corrupt snapshot (ResumeCorruptError)
 - a step that fails is reported in the payload, never raised
 
-``run_agent_step`` is mocked — no real terminals. The journal points at a temp
-SQLite DB via the patched DATABASE_FILE; the two migrators create the tables in a
-fixture. Runs are seeded through the journal DAL directly (not by driving the
+``run_agent_step`` is mocked — no real terminals. The per-test PostgreSQL fixture installs
+the registered journal and Work schemas. Runs are seeded through the journal DAL directly (not by driving the
 engine), so each test states exactly the recorded state it replays against.
 """
 
@@ -31,18 +30,12 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import sqlite3
-from pathlib import Path
 from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock
 
 import pytest
 
-from cli_agent_orchestrator.clients.database import (
-    _migrate_workflow_run,
-    _migrate_workflow_run_step,
-)
-from cli_agent_orchestrator.clients.work_repository import WorkRepository
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget, connect
 from cli_agent_orchestrator.models.terminal import AgentStepResult, TerminalStatus
 from cli_agent_orchestrator.models.workflow import (
     InputDecl,
@@ -53,9 +46,14 @@ from cli_agent_orchestrator.models.workflow import (
 )
 from cli_agent_orchestrator.models.workflow_runtime import StepOutputRecord
 from cli_agent_orchestrator.providers.base import OutputExtractionError
-from cli_agent_orchestrator.services import agent_step, workflow_journal
+from cli_agent_orchestrator.services import (
+    agent_step,
+    remote_terminal_service,
+    workflow_journal,
+)
 from cli_agent_orchestrator.services import workflow_service as ws
 from cli_agent_orchestrator.services.agent_step import StepExecutionError
+from cli_agent_orchestrator.services.status_monitor import StatusMonitor
 from cli_agent_orchestrator.services.step_output_store import record_step_output
 
 _SCHEMA = {"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}
@@ -71,17 +69,12 @@ def _derived_key(step_mock: AsyncMock) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _patched_journal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Point the journal at a temp DB, create the tables, clean the registry/store."""
-    db_path = tmp_path / "wf.db"
-    monkeypatch.setattr("cli_agent_orchestrator.constants.DATABASE_FILE", db_path, raising=True)
-    WorkRepository(db_path).initialize()
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
+def _patched_journal():
+    """Use the isolated PostgreSQL target; clean process-local registry/store state."""
     ws.run_registry.clear()
     ws._active_drives.clear()
     ws.step_output_store._store.clear()
-    yield db_path
+    yield
     ws.run_registry.clear()
     ws._active_drives.clear()
     ws.step_output_store._store.clear()
@@ -297,10 +290,10 @@ async def test_replay_commits_its_own_contract_before_terminal_allocation(
     _seed_run()
 
     async def create(*_args, **_kwargs):
-        with sqlite3.connect(_patched_journal) as connection:
+        with workflow_journal._connect() as connection:
             rows = connection.execute(
                 "SELECT generation,contract_json FROM work_step_contracts "
-                "WHERE run_id=? AND step_id=? AND generation<>?",
+                "WHERE run_id=%s AND step_id=%s AND generation<>%s",
                 (_RUN_ID, "s2", "1"),
             ).fetchall()
         assert len(rows) == 1, "replay reached terminal allocation without its own contract"
@@ -323,8 +316,10 @@ async def test_replay_damaged_contract_store_never_reaches_terminal(monkeypatch,
 
     def validate_source_then_damage(*args, **kwargs):
         real_history(*args, **kwargs)
-        with sqlite3.connect(_patched_journal) as connection:
-            connection.execute("DROP TRIGGER work_step_contracts_immutable_update")
+        with connect(DatabaseTarget.from_settings("main").migration_target()) as connection:
+            connection.execute(
+                "DROP TRIGGER work_step_contracts_immutable_update ON work_step_contracts"
+            )
 
     monkeypatch.setattr(
         workflow_journal, "assert_yaml_contract_history", validate_source_then_damage
@@ -341,26 +336,67 @@ async def test_replay_redelivery_rechecks_its_contract_before_another_prompt(
     monkeypatch, _patched_journal
 ):
     """A damaged replay contract blocks redelivery, not the first sent prompt."""
+    # Exercise the actual monitor sequence without retaining singleton state.
+    isolated_monitor = StatusMonitor()
+    monkeypatch.setattr(agent_step, "status_monitor", isolated_monitor)
+    monkeypatch.setattr(agent_step.terminal_service, "status_monitor", isolated_monitor)
+    monkeypatch.setattr(remote_terminal_service, "placement", lambda _terminal_id: None)
     _seed_run()
     sent = []
     redelivered = []
+    replay_generation = []
 
     async def create(*_args, **_kwargs):
+        with workflow_journal._connect() as connection:
+            row = connection.execute(
+                "SELECT generation FROM work_step_contracts "
+                "WHERE run_id=%s AND step_id=%s AND generation LIKE %s",
+                (_RUN_ID, "s2", "replay:%"),
+            ).fetchone()
+        assert row is not None, "replay allocated a terminal before its contract"
+        replay_generation.append(row[0])
         return type("Terminal", (), {"id": "replay-terminal"})()
 
-    def send(*_args, **_kwargs):
+    def send(terminal_id, *_args, **_kwargs):
+        # Match terminal_service.send_input: open the dispatch before transport,
+        # then return the exact integer sequence to the caller.
+        turn_sequence = agent_step.status_monitor.notify_input_sent(terminal_id, real_send=True)
         sent.append(True)
-        with sqlite3.connect(_patched_journal) as connection:
-            connection.execute("DROP TRIGGER work_step_contracts_immutable_update")
+        with connect(DatabaseTarget.from_settings("main").migration_target()) as connection:
+            with connection.transaction():
+                connection.execute(
+                    "DROP TRIGGER work_step_contracts_immutable_update ON work_step_contracts"
+                )
+                row = connection.execute(
+                    "SELECT contract_json FROM work_step_contracts "
+                    "WHERE run_id=%s AND step_id=%s AND generation=%s AND attempt_number=1",
+                    (_RUN_ID, "s2", replay_generation[0]),
+                ).fetchone()
+                assert row is not None
+                contract = json.loads(row[0])
+                contract["call_fingerprint"] = "f" * 64
+                connection.execute(
+                    "UPDATE work_step_contracts SET contract_json=%s "
+                    "WHERE run_id=%s AND step_id=%s AND generation=%s AND attempt_number=1",
+                    (
+                        json.dumps(contract, sort_keys=True, separators=(",", ":")),
+                        _RUN_ID,
+                        "s2",
+                        replay_generation[0],
+                    ),
+                )
+                connection.execute(
+                    "CREATE TRIGGER work_step_contracts_immutable_update "
+                    "BEFORE UPDATE ON work_step_contracts FOR EACH ROW "
+                    "EXECUTE FUNCTION work_trigger_f01b0febd3a764674b0a()"
+                )
+        return turn_sequence
 
     monkeypatch.setattr(agent_step.terminal_service, "create_terminal", create)
     monkeypatch.setattr(agent_step.terminal_service, "get_terminal_metadata", lambda _: {})
     monkeypatch.setattr(agent_step.terminal_service, "send_input", send)
     monkeypatch.setattr(agent_step.frozen_run_memory, "frozen_memory_for", lambda *_: None)
     monkeypatch.setattr(agent_step, "wait_until_status", AsyncMock(return_value=True))
-    monkeypatch.setattr(
-        agent_step.status_monitor, "notify_input_sent", lambda *_args, **_kwargs: None
-    )
     monkeypatch.setattr(agent_step.status_monitor, "get_status", lambda _: TerminalStatus.IDLE)
     monkeypatch.setattr(
         agent_step.terminal_service, "probe_post_turn_receipt_result", lambda _: None

@@ -19,6 +19,7 @@ import asyncio
 import inspect
 import logging
 import time
+from test.postgres.orm import configured_orm_engine
 from typing import Any, List
 
 import pytest
@@ -168,7 +169,7 @@ class TestU17PlanCases:
         monkeypatch.setattr(wiki_compiler, "compile", _tracker)
 
         # Drive a store() through MemoryService and confirm wiki_compiler.compile
-        # is NOT invoked. We do not need to wire SQLite — just exercise the
+        # is NOT invoked. We do not need to wire PostgreSQL — just exercise the
         # branch in store() that consults compile_mode.
         from datetime import datetime, timezone
 
@@ -177,9 +178,7 @@ class TestU17PlanCases:
         from cli_agent_orchestrator.clients.database import Base
         from cli_agent_orchestrator.services.memory_service import MemoryService
 
-        engine = create_engine(
-            f"sqlite:///{tmp_path / 'metadata.db'}", connect_args={"check_same_thread": False}
-        )
+        engine = configured_orm_engine()
         Base.metadata.create_all(bind=engine)
         svc = MemoryService(
             base_dir=tmp_path / "memory", db_engine=engine
@@ -797,9 +796,7 @@ class TestT10ModeFlagBypass:
         from cli_agent_orchestrator.clients.database import Base
         from cli_agent_orchestrator.services.memory_service import MemoryService
 
-        engine = create_engine(
-            f"sqlite:///{tmp_path / 'metadata.db'}", connect_args={"check_same_thread": False}
-        )
+        engine = configured_orm_engine()
         Base.metadata.create_all(bind=engine)
         svc = MemoryService(base_dir=tmp_path / "memory", db_engine=engine)
         ctx = {

@@ -11,6 +11,7 @@ each widening happens after the resolver returns.
 import logging
 import shlex
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -29,10 +30,7 @@ class TestEmptyPolicySurvivesThePersistenceBoundary:
     @pytest.fixture
     def db(self, tmp_path, monkeypatch):
         db_path = tmp_path / "terminals.db"
-        engine = create_engine(
-            f"sqlite:///{db_path}",
-            connect_args={"check_same_thread": False},
-        )
+        engine = configured_orm_engine()
         Base.metadata.create_all(bind=engine)
         local_session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         monkeypatch.setattr("cli_agent_orchestrator.clients.database.SessionLocal", local_session)

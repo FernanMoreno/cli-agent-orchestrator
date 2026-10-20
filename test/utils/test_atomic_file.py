@@ -393,6 +393,9 @@ def _hold_lock_in_subprocess(
 
 
 @pytest.mark.skipif(os.name != "posix", reason="fcntl.flock is POSIX-only")
+# The PG fixture changes CAO_HOME_DIR after imports; the spawned process then
+# computes a different LOCK_DIR even though this test never accesses a database.
+@pytest.mark.offline_database
 def test_second_writer_blocked_by_subprocess_holding_lock(tmp_path: Path) -> None:
     """Multi-process coverage of the lock: a real OS subprocess acquires and
     holds the CAO-owned lockfile via flock (the same mechanism

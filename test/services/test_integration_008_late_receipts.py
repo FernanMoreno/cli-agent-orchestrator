@@ -1,6 +1,7 @@
 """Late evidence is observed once per durable slot without repeating tasks."""
 
 from concurrent.futures import ThreadPoolExecutor
+from test.postgres.orm import configured_orm_engine
 from threading import Barrier
 from unittest.mock import patch
 
@@ -16,9 +17,7 @@ HASH = "b" * 64
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'late.sqlite'}", connect_args={"check_same_thread": False}
-    )
+    engine = configured_orm_engine()
     db.Base.metadata.create_all(engine)
     monkeypatch.setattr(db, "SessionLocal", sessionmaker(bind=engine))
     db.create_terminal("supervisor", "cao-session", "0", "codex", "developer")

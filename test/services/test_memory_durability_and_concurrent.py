@@ -7,7 +7,7 @@
   index writes.
 
 Concurrency uses ``multiprocessing`` (not threads) to exercise the OS-level
-flock across separate file descriptors AND separate SQLite connections.
+flock across separate file descriptors AND separate PostgreSQL sessions.
 Tests that require ``fcntl`` are skipped on platforms without it (Windows).
 
 No wall-clock ``sleep`` is used for synchronization — every rendezvous is a
@@ -21,6 +21,7 @@ import multiprocessing as mp
 import re
 import sys
 from pathlib import Path
+from test.postgres.orm import configured_orm_engine
 from typing import Any
 
 import pytest
@@ -46,7 +47,7 @@ def _run(coro: Any) -> Any:
 
 
 def _make_engine(db_path: Path) -> Any:
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = configured_orm_engine()
     Base.metadata.create_all(bind=engine)
     return engine
 
@@ -139,9 +140,7 @@ def _worker_store(
 ) -> None:
     """Subprocess worker: barrier-gated call to ``store()`` with its own key."""
     try:
-        engine = create_engine(
-            f"sqlite:///{db_path_str}", connect_args={"check_same_thread": False}
-        )
+        engine = configured_orm_engine()
         Base.metadata.create_all(bind=engine)
 
         svc = MemoryService(base_dir=Path(base_dir_str), db_engine=engine)

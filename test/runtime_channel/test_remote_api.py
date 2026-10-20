@@ -27,14 +27,14 @@ async def test_output_transport_error_has_its_original_http_classification(
     assert caught.value.detail["delivery_may_have_occurred"] is (expected == 504)
 
 
-def test_actual_websocket_route_authentication_and_epoch_reconnect(tmp_path, monkeypatch):
+@pytest.mark.postgres
+def test_actual_websocket_route_authentication_and_epoch_reconnect(
+    postgres_runtime_channel, monkeypatch
+):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from sqlalchemy import create_engine
     from starlette.websockets import WebSocketDisconnect
 
-    from cli_agent_orchestrator.clients import database
-    from cli_agent_orchestrator.clients.runtime_channel_schema import RemoteBase
     from cli_agent_orchestrator.runtime_channel import server
     from cli_agent_orchestrator.runtime_channel.protocol import (
         PROTOCOL_VERSION,
@@ -44,11 +44,6 @@ def test_actual_websocket_route_authentication_and_epoch_reconnect(tmp_path, mon
     )
     from cli_agent_orchestrator.runtime_channel.registry import runtime_registry
 
-    engine = create_engine(
-        f'sqlite:///{tmp_path / "central.sqlite"}', connect_args={"check_same_thread": False}
-    )
-    RemoteBase.metadata.create_all(engine)
-    monkeypatch.setattr(database, "engine", engine)
     monkeypatch.setattr(server, "runtime_token", lambda: "isolated-token")
     app = FastAPI()
     app.include_router(server.router)
@@ -77,4 +72,3 @@ def test_actual_websocket_route_authentication_and_epoch_reconnect(tmp_path, mon
     finally:
         runtime_registry._runtimes.clear()
         runtime_registry._placement.clear()
-        engine.dispose()

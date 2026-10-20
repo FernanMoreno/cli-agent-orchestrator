@@ -20,10 +20,11 @@ from cli_agent_orchestrator.services.beads_assignment_service import BeadsAssign
 @pytest.fixture
 def beads_work(coordinator_context, monkeypatch):
     f = coordinator_context
-    from cli_agent_orchestrator.clients.beads_work_schema import initialize
+    from cli_agent_orchestrator.clients.postgres.migrations import verify_component
+    from cli_agent_orchestrator.clients.workflows_postgres_schema import BEADS_WORK_MIGRATIONS
 
-    with f.context.repo.transaction() as connection:
-        initialize(connection)
+    with f.context.repo.read_snapshot() as connection:
+        verify_component(connection, BEADS_WORK_MIGRATIONS)
     info = f.context.root.stat()
     workspace = beads_service.BeadsWorkspace(
         "repo", f.context.root, "modern", (info.st_dev, info.st_ino), "a" * 64

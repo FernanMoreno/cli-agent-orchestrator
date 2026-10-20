@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass
+from test.postgres.orm import configured_orm_engine
 
 import pytest
 from click.testing import CliRunner
-from sqlalchemy import create_engine, text
+from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
@@ -52,11 +54,49 @@ class _Lifecycle:
     config: dict[str, VaultConfig]
 
 
+@contextmanager
+def _reject_receipt_write(engine, *, operation: str, field: str, value: str, message: str):
+    """Raise a real PostgreSQL constraint error at the selected ORM write.
+
+    Runtime roles cannot modify the verified catalog. Replace just the targeted
+    statement with a server error, so the real ORM transaction must roll back
+    its preceding relationship changes.
+    """
+    faults = []
+    error_statement = {
+        "receipt insert failed": (
+            "DO $$ BEGIN RAISE EXCEPTION 'receipt insert failed' " "USING ERRCODE = '23514'; END $$"
+        ),
+        "receipt rollback failed": (
+            "DO $$ BEGIN RAISE EXCEPTION 'receipt rollback failed' "
+            "USING ERRCODE = '23514'; END $$"
+        ),
+    }[message]
+
+    def reject(connection, cursor, statement, parameters, context, executemany):
+        writes_receipt = (
+            statement.lstrip().upper().startswith(operation)
+            and "vault_migration_receipt" in statement
+        )
+        if writes_receipt and any(
+            bound.get(field) == value for bound in context.compiled_parameters
+        ):
+            faults.append(True)
+            return error_statement, {}
+        return statement, parameters
+
+    event.listen(engine, "before_cursor_execute", reject, retval=True)
+    try:
+        yield faults
+    finally:
+        event.remove(engine, "before_cursor_execute", reject)
+
+
 def _lifecycle(tmp_path, monkeypatch) -> _Lifecycle:
     lock_dir = tmp_path / "locks"
     monkeypatch.setattr(atomic_file, "LOCK_DIR", lock_dir)
     monkeypatch.setattr(vault_lock, "LOCK_DIR", lock_dir)
-    engine = create_engine(f"sqlite:///{tmp_path / 'state.db'}")
+    engine = configured_orm_engine()
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     monkeypatch.setattr(reconcile_module, "SessionLocal", Session)
@@ -577,28 +617,26 @@ def test_receipt_transaction_failure_rolls_back_edge_supersession(tmp_path, monk
         "human",
         status="proposal",
     )
-    with state.session() as db:
-        db.execute(
-            text(
-                "CREATE TRIGGER fail_migrated_receipt "
-                "BEFORE INSERT ON vault_migration_receipt "
-                "WHEN NEW.cao_key = 'migrated' "
-                "BEGIN SELECT RAISE(ABORT, 'receipt insert failed'); END"
-            )
-        )
-        db.commit()
     state.config["value"] = VaultConfig(enabled=True, vaults=[state.vault])
 
-    report = migrate.migrate_scope(
-        state.service,
-        state.vault,
-        state.binding,
-        scope="global",
-        scope_id=None,
-        apply=True,
-        relationship_service=relationships,
-    )
+    with _reject_receipt_write(
+        state.service._db_engine,
+        operation="INSERT INTO",
+        field="cao_key",
+        value="migrated",
+        message="receipt insert failed",
+    ) as faults:
+        report = migrate.migrate_scope(
+            state.service,
+            state.vault,
+            state.binding,
+            scope="global",
+            scope_id=None,
+            apply=True,
+            relationship_service=relationships,
+        )
 
+    assert faults == [True]
     assert report.failed == 1
     assert "receipt insert failed" in report.errors["migrated"]
     with state.session() as db:
@@ -1233,22 +1271,22 @@ def test_receipt_rollback_transaction_failure_restores_no_edge(tmp_path, monkeyp
     _migrate(state)
     with state.session() as db:
         receipt_id = db.query(VaultMigrationReceiptModel).one().receipt_id
-        db.execute(
-            text(
-                "CREATE TRIGGER fail_receipt_rollback "
-                "BEFORE UPDATE OF status ON vault_migration_receipt "
-                "WHEN NEW.status = 'rolled_back' "
-                "BEGIN SELECT RAISE(ABORT, 'receipt rollback failed'); END"
-            )
-        )
-        db.commit()
     repair = MemoryReconciliationService(
         base_dir=state.service.base_dir,
         db_engine=state.service._db_engine,
     )
 
-    with pytest.raises(IntegrityError, match="receipt rollback failed"):
-        repair.reconcile(apply=True, receipt_id=receipt_id)
+    with _reject_receipt_write(
+        state.service._db_engine,
+        operation="UPDATE",
+        field="status",
+        value="rolled_back",
+        message="receipt rollback failed",
+    ) as faults:
+        with pytest.raises(IntegrityError, match="receipt rollback failed") as failure:
+            repair.reconcile(apply=True, receipt_id=receipt_id)
+    assert failure.value.orig.sqlstate == "23514"
+    assert faults == [True]
 
     with state.session() as db:
         assert db.get(MemoryRelationshipModel, edge.id).status == "superseded"

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.models.work_origin import WorkflowStepResultV1
 from cli_agent_orchestrator.services import workflow_journal
 from cli_agent_orchestrator.services.work_origin import OriginDenied
@@ -80,7 +84,7 @@ def _work_state(
 
 
 def _projector(tmp_path, *, binding, accepted, work_state=None):
-    repository = SimpleNamespace(path=tmp_path / "work.sqlite")
+    repository = WorkRepository(DatabaseTarget.from_settings("main"))
 
     class Origins:
         def __init__(self):
@@ -235,9 +239,11 @@ def test_projector_ignores_non_pending_steps(tmp_path, monkeypatch):
 
 
 def test_projector_rejects_dependencies_from_different_work_stores(tmp_path):
-    repository = SimpleNamespace(path=tmp_path / "work.sqlite")
+    target = DatabaseTarget.from_settings("main")
+    repository = WorkRepository(target)
+    other_store = WorkRepository(replace(target, store_id=str(uuid4())))
     origins = SimpleNamespace(
-        repository=SimpleNamespace(path=tmp_path / "other.sqlite"),
+        repository=other_store,
         read_step_binding=lambda **_identity: None,
     )
     service = SimpleNamespace(

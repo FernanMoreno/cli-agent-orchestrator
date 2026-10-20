@@ -2428,10 +2428,10 @@ class TestSendInput:
             "tmux_window": "developer-abcd",
         }
         mock_provider = mock_pm.get_provider.return_value
-        mock_provider.blocks_orchestrated_input_while_waiting_user_answer = True
+        mock_provider.blocks_orchestrated_input_while_waiting_user_answer = False
         mock_status_monitor.get_status.return_value = TerminalStatus.WAITING_USER_ANSWER
 
-        with pytest.raises(TerminalInputBlockedError, match="waiting for a user answer"):
+        with pytest.raises(TerminalInputBlockedError, match="Automated task input is blocked"):
             send_input("test1234", "new task", orchestration_type="assign")
 
         mock_tmux.send_keys.assert_not_called()
@@ -2451,13 +2451,13 @@ class TestSendInput:
             "tmux_window": "developer-abcd",
         }
         mock_provider = mock_pm.get_provider.return_value
-        mock_provider.blocks_orchestrated_input_while_waiting_user_answer = True
+        mock_provider.blocks_orchestrated_input_while_waiting_user_answer = False
         mock_status_monitor.get_status.return_value = TerminalStatus.WAITING_USER_ANSWER
 
         with pytest.raises(TerminalInputBlockedError) as exc_info:
             send_input("test1234", "new task", orchestration_type=OrchestrationType.SEND_MESSAGE)
 
-        assert "sending automated task input" in str(exc_info.value)
+        assert "Automated task input is blocked" in str(exc_info.value)
         mock_tmux.send_keys.assert_not_called()
         mock_update.assert_not_called()
 

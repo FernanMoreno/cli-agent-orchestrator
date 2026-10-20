@@ -207,14 +207,14 @@ class TestInstallCommand:
         mock_install.assert_not_called()
 
     def test_install_failure_prints_error(self, runner: CliRunner) -> None:
-        """Service failures should be surfaced as CLI errors without raising."""
+        """Service failures must reach shell callers as nonzero CLI errors."""
         with patch(
             "cli_agent_orchestrator.cli.commands.install.install_agent",
             return_value=InstallResult(success=False, message="Source not found: missing"),
         ):
             result = runner.invoke(install, ["missing"])
 
-        assert result.exit_code == 0
+        assert result.exit_code != 0
         assert "Error: Source not found: missing" in result.output
 
     def test_install_invalid_env_format_returns_click_error(self, runner: CliRunner) -> None:

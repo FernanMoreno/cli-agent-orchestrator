@@ -1,51 +1,226 @@
-"""Cancellation trees keep logical winners and cleanup observations separate."""
+"""PostgreSQL cancellation trees keep logical winners and cleanup separate."""
 
 import hashlib
+import time
 from concurrent.futures import ThreadPoolExecutor
-from test.clients.test_work_repository import (
-    legacy_admit,
-    legacy_v21_store,
-    migrate_legacy_v21_store,
-)
 from threading import Barrier, Event
+from types import SimpleNamespace
 
 import pytest
+
+pytestmark = pytest.mark.postgres
+
+from test.services.test_work_lineage_origin import (
+    _delivery_adapter,
+    _managed_handoff,
+    _modules,
+    _NoEffectBackend,
+)
 
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 from cli_agent_orchestrator.services.work_service import WorkService
 
 
-def _new_store(tmp_path, *, legacy=False):
-    path = tmp_path / "work-cancellation.sqlite3"
-    repository = legacy_v21_store(path) if legacy else WorkRepository(path)
-    if not legacy:
-        repository.initialize()
+@pytest.fixture
+def work_store(tmp_path, postgres_targets):
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
+    from cli_agent_orchestrator.models.work_contract import (
+        ContractPermissions,
+        ContractResources,
+        ContractSnapshot,
+        EffectiveWorkContract,
+    )
+    from cli_agent_orchestrator.security import auth
+    from cli_agent_orchestrator.services.delegation_snapshot import (
+        DelegationSnapshots,
+        ResolvedSnapshot,
+    )
+    from cli_agent_orchestrator.services.knowledge_policy import KnowledgePolicy
+    from cli_agent_orchestrator.services.work_authority import Permissions, WorkAuthority
+    from cli_agent_orchestrator.services.work_scheduler import WorkScheduler
+
+    target = postgres_targets.main
+    bootstrap_scope(target)
+    repository = WorkRepository(target, filesystem_home=postgres_targets.home)
+    repository.initialize()
+    WorkScheduler(repository).configure(
+        capacity=4, max_queue=100, aging_seconds=10, expected_policy_revision=0
+    )
+    models, admission_module, origin_module = _modules()
+    owner = auth._verified_principal(
+        "https://issuer.test", "cancellation-owner", [auth.SCOPE_ADMIN], "jwt"
+    )
+    child = auth._verified_principal(
+        "https://issuer.test", "cancellation-child", [auth.SCOPE_WRITE], "jwt"
+    )
+    receiver = auth._verified_principal(
+        "https://issuer.test", "cancellation-receiver", [auth.SCOPE_WRITE], "jwt"
+    )
     job = repository.create_job(
         project_id="project",
-        principal_id="operator",
+        principal_id=owner.id,
         allowed_providers=["mock_cli"],
-        grant_id="grant",
-        budget={},
+        grant_id="cancellation-root",
+        budget={"scheduler_units": 100},
     )
+    authority = WorkAuthority(repository)
+    root = authority.issue_root(
+        owner,
+        job_id=job["id"],
+        providers={"mock_cli"},
+        permissions=Permissions(tools={"knowledge.read"}, paths={str(tmp_path)}),
+        expires_at=time.time() + 600,
+    )
+    child_grant = authority.delegate(
+        owner,
+        parent_grant_id=root.id,
+        expected_parent_revision=root.revision,
+        child_principal=child,
+        providers={"mock_cli"},
+        permissions=Permissions(tools={"knowledge.read"}, paths={str(tmp_path)}),
+        expires_at=time.time() + 300,
+    )
+    receiver_grant = authority.delegate(
+        owner,
+        parent_grant_id=root.id,
+        expected_parent_revision=root.revision,
+        child_principal=receiver,
+        providers={"mock_cli"},
+        permissions=Permissions(tools={"knowledge.read"}, paths={str(tmp_path)}),
+        expires_at=time.time() + 300,
+    )
+    snapshot = DelegationSnapshots(
+        repository,
+        policy=KnowledgePolicy(repository, job["id"], root.id, root.revision),
+    ).freeze(
+        principal=owner,
+        job_id=job["id"],
+        contract_id="cancellation-parent-contract",
+        binding_key="cancellation-parent-snapshot",
+        request_hash="a" * 64,
+        scope="project",
+        scope_id="project",
+        resolver=lambda _connection, _principal: ResolvedSnapshot("cancellation parent"),
+    )
+    parent_contract = EffectiveWorkContract(
+        id="cancellation-parent-contract",
+        operation_kind="inbox",
+        provider="mock_cli",
+        backend="test",
+        permissions=ContractPermissions(paths=(str(tmp_path),)),
+        resources=ContractResources(
+            checkout_root=str(tmp_path), write_paths=(str(tmp_path / "parent"),), units=1
+        ),
+        snapshot=ContractSnapshot(
+            state="present", id=snapshot.id, delivered_hash=snapshot.delivered_hash
+        ),
+    )
+    admission = admission_module.WorkAdmission(
+        repository,
+        backends={"test": _NoEffectBackend()},
+        delivery_adapters={("inbox", 1): _delivery_adapter()},
+    )
+    parent = admission.admit(
+        principal=owner,
+        job_id=job["id"],
+        idempotency_key="cancellation-parent",
+        request_hash="b" * 64,
+        grant_id=root.id,
+        expected_grant_revision=root.revision,
+        contract=parent_contract,
+        lease_seconds=300,
+    )
+    origin_authority = origin_module.WorkOriginAuthority(repository)
+    child_subject = origin_authority.register_subject(
+        owner,
+        verified_subject=child,
+        kind="child",
+        issuer_id=owner.id,
+        expected_revision=0,
+    )
+    child_authorization = origin_authority.authorize(
+        owner,
+        subject=child,
+        origin_kind="child",
+        grant_id=child_grant.id,
+        grant_revision=child_grant.revision,
+        actions={"admit_child", "execute"},
+        expires_at=time.time() + 120,
+        expected_revision=0,
+    )
+    receiver_subject = origin_authority.register_subject(
+        owner,
+        verified_subject=receiver,
+        kind="receiver",
+        issuer_id=owner.id,
+        expected_revision=0,
+    )
+    receiver_authorization = origin_authority.authorize(
+        owner,
+        subject=receiver,
+        origin_kind="receiver",
+        grant_id=receiver_grant.id,
+        grant_revision=receiver_grant.revision,
+        actions={"task_received"},
+        expires_at=time.time() + 120,
+        expected_revision=0,
+    )
+    child_contract = parent_contract.model_copy(
+        update={
+            "id": "cancellation-child-contract",
+            "resources": parent_contract.resources.model_copy(
+                update={"write_paths": (str(tmp_path / "child"),)}
+            ),
+        }
+    )
+    context = SimpleNamespace(
+        models=models,
+        admission=admission,
+        origin_module=origin_module,
+        repository=repository,
+        owner=owner,
+        job=job,
+        parent=parent,
+        child=child,
+        child_grant=child_grant,
+        child_subject=child_subject,
+        child_authorization=child_authorization,
+        receiver=receiver,
+        receiver_grant=receiver_grant,
+        receiver_subject=receiver_subject,
+        receiver_authorization=receiver_authorization,
+        child_contract=child_contract,
+        root_used=False,
+    )
+    repository._cancellation_context = context
     return repository, job
 
 
 def _admit(repository, job, key, *, parent_work_item_id=None):
-    request = dict(
-        operation_kind="launch",
-        idempotency_key=key,
-        request_hash=hashlib.sha256(f"request:{key}".encode()).hexdigest(),
-        contract_id=f"contract-{key}",
-        snapshot_id=None,
-        provider="mock_cli",
-        actor_id="operator",
-        lease_seconds=60,
-        parent_work_item_id=parent_work_item_id,
-    )
-    if repository.__dict__.get("_legacy_v21"):
-        return legacy_admit(repository, job, **request)
-    return repository.admit_work(job_id=job["id"], **request)
+    context = repository._cancellation_context
+    if parent_work_item_id is None and not context.root_used:
+        context.root_used = True
+        return context.parent
+    # Cancellation tests exercise repair of durable ancestry imported before
+    # managed-lineage admission. Seed this explicitly legacy tree through the
+    # repository's trusted boundary; public admission must still reject it.
+    with repository.transaction() as connection:
+        work = repository._admit_work(
+            connection,
+            job_id=job["id"],
+            operation_kind="launch",
+            idempotency_key=key,
+            request_hash=hashlib.sha256(f"request:{key}".encode()).hexdigest(),
+            contract_id=f"contract-{key}",
+            snapshot_id=None,
+            provider="mock_cli",
+            actor_id=context.owner.id,
+            lease_seconds=60,
+            parent_work_item_id=parent_work_item_id,
+        )
+    assert work["lineage_protocol"] == "legacy"
+    return work
 
 
 def _transition(repository, work, target, *, event_id):
@@ -150,15 +325,15 @@ def _replay_cancellation(repository, before_cancel, *, event_id):
     )
 
 
-def _legacy_cancelled_tree(repository, job, monkeypatch):
-    """Persist a tree made by the pre-T054 root-only cancellation behavior."""
-    parent = _running(repository, _admit(repository, job, "legacy-parent"))
+def _root_only_cancelled_tree(repository, job, monkeypatch):
+    """Model a pre-cascade cancellation using the current native schema."""
+    parent = _running(repository, _admit(repository, job, "root-only-parent"))
     child = _running(
-        repository, _admit(repository, job, "legacy-child", parent_work_item_id=parent["id"])
+        repository, _admit(repository, job, "root-only-child", parent_work_item_id=parent["id"])
     )
     grandchild = _running(
         repository,
-        _admit(repository, job, "legacy-grandchild", parent_work_item_id=child["id"]),
+        _admit(repository, job, "root-only-grandchild", parent_work_item_id=child["id"]),
     )
     succeeded_child, result = _succeeded(
         repository,
@@ -167,15 +342,14 @@ def _legacy_cancelled_tree(repository, job, monkeypatch):
             _admit(
                 repository,
                 job,
-                "legacy-succeeded-child",
+                "root-only-succeeded-child",
                 parent_work_item_id=parent["id"],
             ),
         ),
     )
     before_cancel = repository.get_work(parent["id"])
     monkeypatch.setattr(repository, "_cancel_descendants", lambda *args, **kwargs: None)
-    _cancel(repository, parent, event_id="legacy-parent-cancel")
-    migrate_legacy_v21_store(repository)
+    _cancel(repository, parent, event_id="root-only-parent-cancel")
     return dict(
         parent=parent,
         child=child,
@@ -183,7 +357,7 @@ def _legacy_cancelled_tree(repository, job, monkeypatch):
         succeeded_child=succeeded_child,
         result=result,
         before_cancel=before_cancel,
-        event_id="legacy-parent-cancel",
+        event_id="root-only-parent-cancel",
     )
 
 
@@ -194,8 +368,8 @@ def _tree_snapshot(repository, job_id, *work_item_ids):
     )
 
 
-def test_parent_cancellation_cascades_live_descendants_and_preserves_succeeded_child(tmp_path):
-    repository, job = _new_store(tmp_path, legacy=True)
+def test_parent_cancellation_cascades_live_descendants_and_preserves_succeeded_child(work_store):
+    repository, job = work_store
     parent = _running(repository, _admit(repository, job, "parent"))
     live_child = _running(
         repository, _admit(repository, job, "live-child", parent_work_item_id=parent["id"])
@@ -213,8 +387,6 @@ def test_parent_cancellation_cascades_live_descendants_and_preserves_succeeded_c
             _admit(repository, job, "succeeded-child", parent_work_item_id=parent["id"]),
         ),
     )
-    migrate_legacy_v21_store(repository)
-
     cancelled_parent = _cancel(repository, parent, event_id="parent-cancel")
 
     assert cancelled_parent["state"] == "cancelled"
@@ -235,18 +407,17 @@ def test_parent_cancellation_cascades_live_descendants_and_preserves_succeeded_c
                     """SELECT count(*)
                     FROM work_transition_receipts AS receipt
                     JOIN work_events AS event ON event.event_id=receipt.event_id
-                    WHERE receipt.work_item_id=? AND event.event_type='attempt.cancelled'""",
+                    WHERE receipt.work_item_id=%s AND event.event_type='attempt.cancelled'""",
                     (work_item_id,),
                 ).fetchone()[0]
                 == 1
             )
 
 
-def test_cancelled_child_cleanup_stays_pending_until_external_confirmation(tmp_path):
-    repository, job = _new_store(tmp_path, legacy=True)
+def test_cancelled_child_cleanup_stays_pending_until_external_confirmation(work_store):
+    repository, job = work_store
     parent = _running(repository, _admit(repository, job, "parent"))
     child = _running(repository, _admit(repository, job, "child", parent_work_item_id=parent["id"]))
-    migrate_legacy_v21_store(repository)
     _cancel(repository, parent, event_id="parent-cancel")
     child_after_cancel = repository.get_work(child["id"])
     assert child_after_cancel["state"] == "cancelled"
@@ -258,7 +429,7 @@ def test_cancelled_child_cleanup_stays_pending_until_external_confirmation(tmp_p
         assert allow_confirmation.wait(timeout=5), "test cleanup confirmation was not released"
         return True
 
-    restarted_service = WorkService(WorkRepository(repository.path))
+    restarted_service = WorkService(WorkRepository(repository.target))
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(
             restarted_service.cleanup_attempt,
@@ -270,7 +441,7 @@ def test_cancelled_child_cleanup_stays_pending_until_external_confirmation(tmp_p
             assert cleanup_started.wait(
                 timeout=5
             ), "cleanup callback did not observe durable pending"
-            pending = WorkRepository(repository.path).get_work(child["id"])
+            pending = WorkRepository(repository.target).get_work(child["id"])
             assert pending["state"] == "cancelled"
             assert pending["accepted_result_id"] is None
             assert pending["attempts"][-1]["cleanup_state"] == "pending"
@@ -283,11 +454,10 @@ def test_cancelled_child_cleanup_stays_pending_until_external_confirmation(tmp_p
     assert completed["attempts"][-1]["cleanup_state"] == "complete"
 
 
-def test_cancel_and_result_finish_race_obeys_sqlite_commit_winner(tmp_path):
-    repository, job = _new_store(tmp_path, legacy=True)
+def test_cancel_and_result_finish_race_obeys_postgres_commit_winner(work_store):
+    repository, job = work_store
     parent = _running(repository, _admit(repository, job, "parent"))
     child = _running(repository, _admit(repository, job, "child", parent_work_item_id=parent["id"]))
-    migrate_legacy_v21_store(repository)
     result = _record_result(repository, child)
     stale_child = repository.get_work(child["id"])
     start, cancellation_committed = Barrier(2), Event()
@@ -295,7 +465,7 @@ def test_cancel_and_result_finish_race_obeys_sqlite_commit_winner(tmp_path):
     def cancel_parent():
         start.wait(timeout=5)
         try:
-            return _cancel(WorkRepository(repository.path), parent, event_id="parent-cancel")
+            return _cancel(WorkRepository(repository.target), parent, event_id="parent-cancel")
         finally:
             cancellation_committed.set()
 
@@ -306,7 +476,7 @@ def test_cancel_and_result_finish_race_obeys_sqlite_commit_winner(tmp_path):
         ), "cancellation commit did not release finisher"
         try:
             return _transition(
-                WorkRepository(repository.path),
+                WorkRepository(repository.target),
                 stale_child,
                 "finished",
                 event_id="child-finish",
@@ -334,10 +504,12 @@ def test_cancel_and_result_finish_race_obeys_sqlite_commit_winner(tmp_path):
     assert len(child_cancelled) == 1
 
 
-def test_restart_replay_repairs_legacy_cancelled_tree_without_rewriting_root(tmp_path, monkeypatch):
-    repository, job = _new_store(tmp_path, legacy=True)
-    legacy = _legacy_cancelled_tree(repository, job, monkeypatch)
-    reopened = WorkRepository(repository.path)
+def test_restart_replay_repairs_root_only_cancelled_tree_without_rewriting_root(
+    work_store, monkeypatch
+):
+    repository, job = work_store
+    legacy = _root_only_cancelled_tree(repository, job, monkeypatch)
+    reopened = WorkRepository(repository.target)
     root_before_recovery = reopened.get_work(legacy["parent"]["id"])
     root_events_before_recovery = _events_for(
         reopened, job["id"], legacy["parent"]["id"], "attempt.cancelled"
@@ -359,12 +531,12 @@ def test_restart_replay_repairs_legacy_cancelled_tree_without_rewriting_root(tmp
 
 
 def test_explicit_recovery_is_idempotent_and_rejects_invalid_root_identity_or_generation(
-    tmp_path, monkeypatch
+    work_store, monkeypatch
 ):
-    repository, job = _new_store(tmp_path, legacy=True)
-    legacy = _legacy_cancelled_tree(repository, job, monkeypatch)
+    repository, job = work_store
+    legacy = _root_only_cancelled_tree(repository, job, monkeypatch)
     parent_attempt = legacy["parent"]["attempts"][-1]
-    reopened = WorkRepository(repository.path)
+    reopened = WorkRepository(repository.target)
     root_before_recovery = reopened.get_work(legacy["parent"]["id"])
 
     recovered = reopened.reconcile_cancelled_descendants(
@@ -389,7 +561,7 @@ def test_explicit_recovery_is_idempotent_and_rejects_invalid_root_identity_or_ge
         legacy["succeeded_child"]["id"],
     )
     assert (
-        WorkRepository(repository.path).reconcile_cancelled_descendants(
+        WorkRepository(repository.target).reconcile_cancelled_descendants(
             work_item_id=legacy["parent"]["id"],
             attempt_id=parent_attempt["id"],
             generation=parent_attempt["generation"],
@@ -399,7 +571,7 @@ def test_explicit_recovery_is_idempotent_and_rejects_invalid_root_identity_or_ge
     )
     assert (
         _tree_snapshot(
-            WorkRepository(repository.path),
+            WorkRepository(repository.target),
             job["id"],
             legacy["parent"]["id"],
             legacy["child"]["id"],
@@ -447,9 +619,9 @@ def test_explicit_recovery_is_idempotent_and_rejects_invalid_root_identity_or_ge
     assert _tree_snapshot(reopened, job["id"], active_parent["id"]) == active_before
 
 
-def test_recovery_commit_fences_historical_result_finish(tmp_path, monkeypatch):
-    repository, job = _new_store(tmp_path, legacy=True)
-    legacy = _legacy_cancelled_tree(repository, job, monkeypatch)
+def test_recovery_commit_fences_historical_result_finish(work_store, monkeypatch):
+    repository, job = work_store
+    legacy = _root_only_cancelled_tree(repository, job, monkeypatch)
     result = _record_result(repository, repository.get_work(legacy["child"]["id"]))
     stale_child = repository.get_work(legacy["child"]["id"])
     parent_attempt = legacy["parent"]["attempts"][-1]
@@ -458,7 +630,7 @@ def test_recovery_commit_fences_historical_result_finish(tmp_path, monkeypatch):
     def recover():
         start.wait(timeout=5)
         try:
-            return WorkRepository(repository.path).reconcile_cancelled_descendants(
+            return WorkRepository(repository.target).reconcile_cancelled_descendants(
                 work_item_id=legacy["parent"]["id"],
                 attempt_id=parent_attempt["id"],
                 generation=parent_attempt["generation"],
@@ -472,10 +644,10 @@ def test_recovery_commit_fences_historical_result_finish(tmp_path, monkeypatch):
         assert recovery_committed.wait(timeout=5), "recovery commit did not release finisher"
         try:
             return _transition(
-                WorkRepository(repository.path),
+                WorkRepository(repository.target),
                 stale_child,
                 "finished",
-                event_id="legacy-child-finish",
+                event_id="root-only-child-finish",
             )
         except WorkConflict as error:
             return error

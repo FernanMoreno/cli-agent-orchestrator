@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from cli_agent_orchestrator.clients.beads import BeadsClient, BeadsError, Task
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 
 
 @dataclass(frozen=True)
@@ -327,7 +328,7 @@ def metadata_operation(
     material = [workspace.revision, *workspace.identity, action, values, task_id, expected_hash]
     digest = hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
     lock_identity = "beads-" + hashlib.sha256(str(workspace.root).encode()).hexdigest()
-    with terminal_dispatch_lock(constants.DATABASE_FILE, lock_identity):
+    with terminal_dispatch_lock(DatabaseTarget.from_settings(scope="main"), lock_identity):
         previous = _get_operation(identity, digest)
         if previous is not None:
             return previous
@@ -442,7 +443,9 @@ def bulk_create(
     from cli_agent_orchestrator import constants
     from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
-    with terminal_dispatch_lock(constants.DATABASE_FILE, "beads-bulk-" + identity):
+    with terminal_dispatch_lock(
+        DatabaseTarget.from_settings(scope="main"), "beads-bulk-" + identity
+    ):
         retained = _get_operation(identity, material_hash)
         if retained is not None and retained["state"] == "applied":
             return retained

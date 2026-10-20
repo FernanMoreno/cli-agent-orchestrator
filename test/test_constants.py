@@ -589,12 +589,28 @@ class TestPipeLivenessCheckIntervalClamp:
 class TestCaoHomeDir:
     """Tests for CAO home directory constants."""
 
-    def test_cao_home_dir_is_under_aws_cli_agent_orchestrator(self):
-        """Test that CAO_HOME_DIR is under ~/.aws/cli-agent-orchestrator."""
-        from cli_agent_orchestrator.constants import CAO_HOME_DIR
+    def test_cao_home_dir_is_under_aws_cli_agent_orchestrator(self, tmp_path):
+        """Check the default beneath an isolated home without using operator state."""
+        import os
+        import subprocess
+        import sys
 
-        expected = Path.home() / ".aws" / "cli-agent-orchestrator"
-        assert CAO_HOME_DIR == expected
+        private_home = tmp_path / "isolated-default-home"
+        child_env = os.environ.copy()
+        child_env.pop("CAO_HOME_DIR", None)
+        child_env["CAO_TEST_PRIVATE_HOME"] = str(private_home)
+        script = """
+import os
+from pathlib import Path
+
+private_home = Path(os.environ.pop("CAO_TEST_PRIVATE_HOME"))
+Path.home = classmethod(lambda _cls: private_home)
+assert "CAO_HOME_DIR" not in os.environ
+import cli_agent_orchestrator.constants as constants
+
+assert constants.CAO_HOME_DIR == private_home / ".aws" / "cli-agent-orchestrator"
+"""
+        subprocess.run([sys.executable, "-c", script], check=True, env=child_env)
 
     def test_cao_home_dir_is_pathlib_path(self):
         """Test that CAO_HOME_DIR is a Path object."""
@@ -667,11 +683,25 @@ class TestCaoHomeDirEnvOverride:
             return constants_module, settings_module
 
     @pytest.fixture(autouse=True)
-    def _restore_default_constants(self):
+    def _restore_default_constants(self, tmp_path, monkeypatch):
         # Reloading under an override mutates the shared modules in place; reload
         # them back to their original-env state after each test so the override
         # cannot leak into tests (here or in other files) that import directly.
         import os
+
+        private_home = tmp_path / "isolated-path-home"
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: private_home))
+        real_expanduser = os.path.expanduser
+
+        def expanduser_in_private_home(path):
+            value = os.fspath(path)
+            if value == "~":
+                return str(private_home)
+            if value.startswith("~/"):
+                return str(private_home / value[2:])
+            return real_expanduser(value)
+
+        monkeypatch.setattr(os.path, "expanduser", expanduser_in_private_home)
 
         original_value = os.environ.get("CAO_HOME_DIR")
         yield

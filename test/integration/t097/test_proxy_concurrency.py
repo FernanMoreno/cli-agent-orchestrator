@@ -132,7 +132,7 @@ def _provision_second_selection(
     )
     with repository.read_snapshot() as connection:
         project_id = connection.execute(
-            "SELECT project_id FROM work_jobs WHERE id=?", (first_binding.job_id,)
+            "SELECT project_id FROM work_jobs WHERE id=%s", (first_binding.job_id,)
         ).fetchone()[0]
     snapshot = DelegationSnapshots(repository, policy=policy).freeze(
         principal=principal,

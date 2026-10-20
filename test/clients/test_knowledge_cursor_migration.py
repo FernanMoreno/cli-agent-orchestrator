@@ -1,62 +1,71 @@
-"""The recovery cursor table is an additive, verified work-store migration."""
+"""Native Work migrations preserve knowledge heads and cursor constraints."""
 
-import sqlite3
-from test.clients.test_work_migrations import repository_module
-from test.fixtures.work_store import work_store_paths  # noqa: F401
+from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.postgres
 
-def test_recovery_cursor_migration_preserves_v16_history_and_scope_immutability(work_store_paths):
-    """Would fail if installing operational cursors rewrote durable knowledge heads."""
-    module = repository_module()
-    path = work_store_paths.database
-    store = module.WorkRepository(path)
-    with sqlite3.connect(path) as connection:
-        for version in range(1, 17):
-            for statement in module._MIGRATIONS[version]:
-                connection.execute(statement)
-            if version == 16:
-                store._initialize_inbox_store_context(connection)
-            connection.execute(
-                "INSERT INTO work_migrations VALUES (?,?,?,?)",
-                (version, module._CHECKSUMS[version], float(version), "verified"),
-            )
+
+def test_native_work_migration_preserves_knowledge_and_installs_cursor_constraints(
+    postgres_targets,
+):
+    from cli_agent_orchestrator.clients.database import CORE_MIGRATIONS
+    from cli_agent_orchestrator.clients.postgres.connection import connect
+    from cli_agent_orchestrator.clients.postgres.migrations import (
+        migrate_component,
+        verify_component,
+    )
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
+    from cli_agent_orchestrator.clients.work_postgres_schema import WORK_POSTGRES_MIGRATIONS
+
+    target = postgres_targets.main
+    migrate_component(target, CORE_MIGRATIONS)
+    migrate_component(target, WORK_POSTGRES_MIGRATIONS[:1])
+
+    with connect(target) as connection, connection.transaction():
         connection.execute(
-            "INSERT INTO work_knowledge_records VALUES ('historic','project','project',1,1)"
+            "INSERT INTO work_knowledge_records (id,scope,scope_id,head_revision,version) "
+            "VALUES (%s,%s,%s,%s,%s)",
+            ("historic", "project", "project", 1, 1),
         )
-        connection.execute(
-            "INSERT INTO work_principals VALUES ('owner','issuer','subject','jwt',1)"
-        )
-        connection.execute(
-            "INSERT INTO work_knowledge_revisions VALUES "
-            "('historic',1,'owner',NULL,NULL,NULL,?,?,'[]',0.8,300,'historic',0,0,0,NULL,1)",
-            ("a" * 64, "b" * 64),
-        )
-        before = {
-            "records": connection.execute("SELECT * FROM work_knowledge_records").fetchall(),
-            "revisions": connection.execute("SELECT * FROM work_knowledge_revisions").fetchall(),
-        }
-    store.initialize()
-    store.verify_schema()
-    with sqlite3.connect(path) as connection:
-        assert (
-            connection.execute("SELECT * FROM work_knowledge_records").fetchall()
-            == before["records"]
-        )
-        assert (
-            connection.execute("SELECT * FROM work_knowledge_revisions").fetchall()
-            == before["revisions"]
-        )
-        assert connection.execute(
-            "SELECT version FROM work_migrations WHERE version=17"
-        ).fetchone() == (17,)
-        assert connection.execute(
-            "SELECT name FROM sqlite_master WHERE name='work_knowledge_cursors'"
-        ).fetchone() == ("work_knowledge_cursors",)
-        with pytest.raises(sqlite3.IntegrityError, match="scope is immutable"):
-            connection.execute(
-                "UPDATE work_knowledge_records SET scope_id='other' WHERE id='historic'"
-            )
-        with pytest.raises(sqlite3.IntegrityError, match="history is immutable"):
-            connection.execute("UPDATE work_knowledge_revisions SET content='changed'")
+
+    bootstrap_scope(target, seed_work=False)
+
+    with connect(target, readonly=True) as connection:
+        verify_component(connection, WORK_POSTGRES_MIGRATIONS)
+        row = connection.execute(
+            "SELECT id,scope,scope_id,head_revision,version "
+            "FROM work_knowledge_records WHERE id=%s",
+            ("historic",),
+        ).fetchone()
+        cursor = connection.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema=%s AND table_name=%s ORDER BY ordinal_position",
+            (target.schema, "work_knowledge_cursors"),
+        ).fetchall()
+        foreign_keys = connection.execute(
+            "SELECT count(*) FROM pg_constraint c "
+            "JOIN pg_class t ON t.oid=c.conrelid "
+            "JOIN pg_namespace n ON n.oid=t.relnamespace "
+            "WHERE n.nspname=%s AND t.relname=%s AND c.contype='f'",
+            (target.schema, "work_knowledge_cursors"),
+        ).fetchone()[0]
+
+    assert tuple(row) == ("historic", "project", "project", 1, 1)
+    assert {item[0] for item in cursor} >= {
+        "token_hash",
+        "principal_id",
+        "scope",
+        "scope_id",
+        "job_id",
+        "grant_id",
+        "grant_revision",
+        "checkpoint",
+        "last_record_id",
+        "last_revision",
+        "limit_value",
+        "expires_at",
+        "created_at",
+    }
+    assert foreign_keys == 3

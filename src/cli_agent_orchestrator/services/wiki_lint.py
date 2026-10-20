@@ -2,7 +2,7 @@
 
 Pure-read auditor producing a list of ``LintIssue`` records. Detectors:
 
-- ``orphan_page`` — wiki files on disk missing from index.md AND SQLite.
+- ``orphan_page`` — wiki files on disk missing from index.md AND metadata.
 - ``contradiction`` — pairwise LLM check between articles sharing a tag.
 - ``stale_claim`` — file paths / symbols referenced in articles that no
   longer exist under the repo root.
@@ -302,7 +302,7 @@ def _detect_orphan_pages(
                 description=(
                     "wiki file has projection drift "
                     f"(scope={scope}, index={'present' if in_index else 'missing'}, "
-                    f"sqlite={'present' if in_database else 'missing'})"
+                    f"metadata={'present' if in_database else 'missing'})"
                 ),
                 severity="warning",
                 scope_id=scope_id,

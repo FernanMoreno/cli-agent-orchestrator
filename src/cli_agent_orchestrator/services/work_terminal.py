@@ -2,28 +2,15 @@
 
 from __future__ import annotations
 
-import errno
 import hashlib
-import os
-import stat
+import struct
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
-from pathlib import Path
-from types import ModuleType
 from typing import Callable, ParamSpec, TypeVar, cast
 
-from cli_agent_orchestrator import constants
-
-fcntl: ModuleType | None
-try:
-    import fcntl as _fcntl
-
-    fcntl = _fcntl
-except ImportError:  # pragma: no cover - exercised only on non-Unix platforms
-    fcntl = None
-
+from cli_agent_orchestrator.clients.postgres import Connection, DatabaseTarget, connect
 from cli_agent_orchestrator.constants import SESSION_PREFIX
 from cli_agent_orchestrator.utils.terminal import validate_tmux_name
 
@@ -40,100 +27,65 @@ class TerminalDispatchLockError(RuntimeError):
 
 
 class _TerminalDispatchLock:
-    def __init__(self, database_path, terminal_id):
-        self.database_path = database_path
+    def __init__(self, target, terminal_id):
+        self.target = target
         self.terminal_id = terminal_id
         self._entered = False
-        self._fd = None
+        self._connection: Connection | None = None
+        self._lock_key: int | None = None
 
     def __enter__(self):
         if self._entered:
             raise RuntimeError("terminal dispatch lock context cannot be reused")
         self._entered = True
-        if fcntl is None:
-            raise TerminalDispatchLockError("terminal dispatch requires interprocess flock support")
         if not isinstance(self.terminal_id, str) or not self.terminal_id:
             raise ValueError("terminal dispatch lock requires a terminal id")
+        if not isinstance(self.target, DatabaseTarget):
+            raise ValueError("terminal dispatch lock requires an explicit PostgreSQL target")
+        target = self.target
+        identity = "\0".join(map(str, (*target.identity, self.terminal_id)))
+        lock_key = struct.unpack(">q", hashlib.sha256(identity.encode("utf-8")).digest()[:8])[0]
+        connection = connect(target)
         try:
-            canonical_database_path = Path(self.database_path).resolve(strict=False)
-        except (TypeError, OSError, RuntimeError) as error:
-            raise ValueError("terminal dispatch database path is invalid") from error
-
-        key = f"{canonical_database_path}\0{self.terminal_id}"
-        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
-        lock_directory = Path(constants.LOCK_DIR)
-        lock_path = lock_directory / f"terminal-dispatch-{digest}.lock"
-        flags = os.O_RDWR | os.O_CREAT
-        flags |= getattr(os, "O_CLOEXEC", 0)
-        flags |= getattr(os, "O_NOFOLLOW", 0)
-
-        try:
-            lock_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-            if lock_directory.is_symlink() or not lock_directory.is_dir():
-                raise TerminalDispatchLockError("terminal dispatch lock directory is unsafe")
-            os.chmod(lock_directory, 0o700)
-            lock_fd = os.open(lock_path, flags, 0o600)
-        except TerminalDispatchLockError:
-            raise
-        except OSError as error:
-            raise TerminalDispatchLockError(
-                "terminal dispatch lock could not be created safely"
-            ) from error
-
-        try:
-            os.fchmod(lock_fd, 0o600)
-            if not stat.S_ISREG(os.fstat(lock_fd).st_mode):
-                raise TerminalDispatchLockError("terminal dispatch lock file is unsafe")
             deadline = time.monotonic() + _TERMINAL_DISPATCH_LOCK_TIMEOUT_SECONDS
             while True:
-                try:
-                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = connection.execute(
+                    "SELECT pg_try_advisory_lock(%s)", (lock_key,)
+                ).fetchone()
+                if acquired is not None and acquired[0]:
                     break
-                except OSError as error:
-                    if error.errno not in (errno.EACCES, errno.EAGAIN):
-                        raise TerminalDispatchLockError(
-                            "terminal dispatch lock could not be acquired"
-                        ) from error
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise TimeoutError(
-                            "timed out waiting for terminal dispatch lock"
-                        ) from error
-                    time.sleep(min(_TERMINAL_DISPATCH_LOCK_POLL_SECONDS, remaining))
-            self._fd = lock_fd
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("timed out waiting for terminal dispatch lock")
+                time.sleep(min(_TERMINAL_DISPATCH_LOCK_POLL_SECONDS, remaining))
+            self._connection = connection
+            self._lock_key = lock_key
             return self
         except BaseException:
-            try:
-                os.close(lock_fd)
-            except OSError:
-                pass
+            connection.close()
             raise
 
     def release(self):
-        """Release the flock once; safe for explicit release plus context exit."""
-        lock_fd = self._fd
-        if lock_fd is None:
+        """Release the advisory lock once; safe for explicit release plus context exit."""
+        connection = self._connection
+        lock_key = self._lock_key
+        if connection is None or lock_key is None:
             return
-        self._fd = None
+        self._connection = None
+        self._lock_key = None
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            connection.execute("SELECT pg_advisory_unlock(%s)", (lock_key,))
         finally:
-            os.close(lock_fd)
+            connection.close()
 
     def __exit__(self, _exc_type, _exc, _traceback):
         self.release()
         return False
 
 
-def terminal_dispatch_lock(database_path, terminal_id):
-    """Hold a strict interprocess lock for one canonical store/terminal pair.
-
-    Lock files live in CAO's private lock directory and are intentionally kept
-    after release: unlinking a flock inode can let two processes lock different
-    files for the same terminal. The same helper is used by ordinary terminal
-    sends and registered Work dispatch so both paths derive exactly one key.
-    """
-    return _TerminalDispatchLock(database_path, terminal_id)
+def terminal_dispatch_lock(target: DatabaseTarget, terminal_id):
+    """Hold a PostgreSQL advisory lock for one logical store/terminal pair."""
+    return _TerminalDispatchLock(target, terminal_id)
 
 
 def release_terminal_dispatch_lock(terminal_id):
@@ -156,7 +108,9 @@ def with_terminal_dispatch_lock(
 
     @wraps(function)
     def wrapped(terminal_id, *args, **kwargs) -> _TerminalResult:
-        with terminal_dispatch_lock(constants.DATABASE_FILE, terminal_id) as lock:
+        with terminal_dispatch_lock(
+            DatabaseTarget.from_settings(scope="main"), terminal_id
+        ) as lock:
             token = _active_terminal_dispatch_lock.set((terminal_id, lock))
             try:
                 return function(terminal_id, *args, **kwargs)

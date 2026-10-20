@@ -80,7 +80,11 @@ class TerminalInputBlockedError(Exception):
         message: str,
         *,
         action: Literal[
-            "answer_user_prompt", "reconcile", "inspect", "wait_for_quota"
+            "answer_user_prompt",
+            "reconcile",
+            "inspect",
+            "wait_for_quota",
+            "wait_for_interaction",
         ] = "answer_user_prompt",
         delivery_may_have_occurred: bool = False,
     ) -> None:

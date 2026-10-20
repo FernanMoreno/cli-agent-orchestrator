@@ -279,9 +279,427 @@ def _has_verified_work_launch_authority(route) -> bool:
     return get_work_launch_principal in calls
 
 
+def _dependency_calls(route):
+    """Return the exact callables in a route's FastAPI dependency graph."""
+    calls = set()
+    stack = list(getattr(getattr(route, "dependant", None), "dependencies", []))
+    while stack:
+        dependency = stack.pop()
+        call = getattr(dependency, "call", None)
+        if call is not None:
+            calls.add(call)
+        stack.extend(getattr(dependency, "dependencies", []))
+    return calls
+
+
+def _ascii_token_guard_is_live(function) -> bool:
+    """Pin the shared ASCII precheck used before constant-time token comparison."""
+    import hmac
+
+    from cli_agent_orchestrator.security import local_token
+
+    helper = local_token.ascii_token_matches
+    if getattr(function, "__globals__", {}).get("ascii_token_matches") is not helper:
+        return False
+    helper_globals = getattr(helper, "__globals__", {})
+    helper_hmac = helper_globals.get("hmac")
+    if (
+        helper_hmac is not hmac
+        or getattr(helper_hmac, "compare_digest", None) is not hmac.compare_digest
+    ):
+        return False
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(helper))).body
+    except (OSError, TypeError, IndexError, SyntaxError):
+        return False
+    if len(tree) != 1 or not isinstance(tree[0], ast.FunctionDef):
+        return False
+    definition = tree[0]
+    if definition.name != "ascii_token_matches" or definition.decorator_list:
+        return False
+    arguments = definition.args
+    if (
+        [argument.arg for argument in arguments.args] != ["presented", "expected"]
+        or arguments.posonlyargs
+        or arguments.vararg is not None
+        or arguments.kwonlyargs
+        or arguments.kwarg is not None
+        or arguments.defaults
+        or arguments.kw_defaults
+    ):
+        return False
+    statements = list(definition.body)
+    if (
+        statements
+        and isinstance(statements[0], ast.Expr)
+        and isinstance(statements[0].value, ast.Constant)
+        and isinstance(statements[0].value.value, str)
+    ):
+        statements.pop(0)
+    if len(statements) != 1 or not isinstance(statements[0], ast.Return):
+        return False
+    expression = statements[0].value
+    if not isinstance(expression, ast.BoolOp) or not isinstance(expression.op, ast.And):
+        return False
+    checks = expression.values
+    if len(checks) != 3:
+        return False
+
+    def is_isascii_call(node, argument_name):
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "isascii"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == argument_name
+            and not node.args
+            and not node.keywords
+        )
+
+    comparison = checks[2]
+    return (
+        is_isascii_call(checks[0], "presented")
+        and is_isascii_call(checks[1], "expected")
+        and isinstance(comparison, ast.Call)
+        and isinstance(comparison.func, ast.Attribute)
+        and comparison.func.attr == "compare_digest"
+        and isinstance(comparison.func.value, ast.Name)
+        and comparison.func.value.id == "hmac"
+        and len(comparison.args) == 2
+        and all(isinstance(argument, ast.Name) for argument in comparison.args)
+        and [argument.id for argument in comparison.args] == ["presented", "expected"]
+        and not comparison.keywords
+    )
+
+
+def _interaction_route_contract(route):
+    """Recognize only the explicit interaction handlers and their live guards.
+
+    Interaction routes use a sealed human Principal plus an in-handler scope
+    check, or a source capability validated by the database service. The route
+    table alone is not authority: this map also checks the exact handler,
+    executed guard, service method, and service-side source validator.
+    """
+    from cli_agent_orchestrator.api import interactions
+    from cli_agent_orchestrator.services.interactions import service as interaction_service
+
+    human_routes = {
+        ("GET", "/interactions"): (interactions.list_interactions, "SCOPE_READ", "list_metadata"),
+        (
+            "PUT",
+            "/interactions/sources/{terminal_id}/content-owner",
+        ): (
+            interactions.designate_interaction_content_owner,
+            "SCOPE_ADMIN",
+            "designate_content_owner",
+        ),
+        (
+            "GET",
+            "/interactions/{question_id}",
+        ): (interactions.get_interaction, "SCOPE_READ", "get_detail"),
+        (
+            "POST",
+            "/interactions/{question_id}/delegation",
+        ): (interactions.delegate_interaction_question, "SCOPE_WRITE", "delegate_question"),
+        (
+            "DELETE",
+            "/interactions/{question_id}/delegation",
+        ): (interactions.revoke_interaction_delegation, "SCOPE_WRITE", "revoke_delegation"),
+        (
+            "POST",
+            "/interactions/{question_id}/answers",
+        ): (interactions.accept_interaction_answer, "SCOPE_WRITE", "accept_answer"),
+        (
+            "POST",
+            "/interactions/{question_id}/cancel",
+        ): (interactions.cancel_interaction, "SCOPE_WRITE", "cancel"),
+        (
+            "POST",
+            "/interactions/{question_id}/reconcile",
+        ): (interactions.reconcile_interaction, "SCOPE_WRITE", "reconcile"),
+        (
+            "GET",
+            "/interactions/{question_id}/history",
+        ): (interactions.interaction_history, "SCOPE_READ", "history"),
+        ("GET", "/interaction-wait-graph"): (
+            interactions.interaction_wait_graph,
+            "SCOPE_READ",
+            "wait_graph",
+        ),
+    }
+    agent_routes = {
+        ("POST", "/agent/interactions/groups"): (
+            interactions.create_interaction_group,
+            "create_group",
+        ),
+        ("GET", "/agent/interactions"): (interactions.agent_list_interactions, "agent_list"),
+        (
+            "GET",
+            "/agent/interactions/{question_id}",
+        ): (interactions.agent_get_interaction, "agent_get"),
+        (
+            "POST",
+            "/agent/interactions/{question_id}/answers",
+        ): (interactions.agent_answer_interaction, "agent_answer"),
+        (
+            "POST",
+            "/agent/interactions/{question_id}/escalate",
+        ): (interactions.escalate_interaction, "escalate"),
+        (
+            "POST",
+            "/agent/interactions/groups/{group_id}/wait",
+        ): (interactions.wait_for_interaction_answers, "wait_for_answers"),
+        (
+            "POST",
+            "/agent/interactions/groups/{group_id}/ack",
+        ): (interactions.acknowledge_interaction_answers, "acknowledge_answers"),
+    }
+
+    methods = getattr(route, "methods", None) or set()
+    if len(methods) != 1:
+        return False
+    method = next(iter(methods))
+    key = (method, getattr(route, "path", None))
+    function = getattr(route, "endpoint", None)
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(function))).body[0]
+    except (OSError, TypeError, IndexError):
+        return False
+    if not isinstance(tree, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    statements = list(tree.body)
+    if (
+        statements
+        and isinstance(statements[0], ast.Expr)
+        and isinstance(statements[0].value, ast.Constant)
+        and isinstance(statements[0].value.value, str)
+    ):
+        statements.pop(0)
+
+    if key in human_routes:
+        expected_function, expected_scope, expected_service_method = human_routes[key]
+        if function is not expected_function:
+            return False
+        dependencies = _dependency_calls(route)
+        if (
+            interactions._human_principal not in dependencies
+            or auth.get_current_principal not in dependencies
+            or not _interaction_human_guard_is_live()
+        ):
+            return False
+        if not statements or not isinstance(statements[0], ast.Expr):
+            return False
+        scope_call = statements[0].value
+        if not (
+            isinstance(scope_call, ast.Call)
+            and isinstance(scope_call.func, ast.Name)
+            and scope_call.func.id == "_scope"
+            and len(scope_call.args) == 2
+            and isinstance(scope_call.args[0], ast.Name)
+            and scope_call.args[0].id == "principal"
+            and isinstance(scope_call.args[1], ast.Name)
+            and scope_call.args[1].id == expected_scope
+        ):
+            return False
+        return _interaction_service_call(tree, expected_service_method, "principal")
+
+    if key == ("GET", "/interaction-capabilities"):
+        if function is not interactions.interaction_capabilities:
+            return False
+        # This read endpoint has two explicit branches: a source capability is
+        # validated by the service, while the human path requires a sealed
+        # Principal and applies the read/write/admin scope rule.
+        source = "".join(inspect.getsource(function).split())
+        return (
+            all(
+                marker in source
+                for marker in (
+                    "ifcapability:",
+                    "service.authenticate_agent,capability",
+                    'get_current_principal(request,request.headers.get("Authorization"))',
+                    "is_verified_principal(principal)",
+                    "_scope(principal,SCOPE_READ)",
+                    "get_local_bearer()",
+                )
+            )
+            and "service_token" in source
+            and "ascii_token_matches(presented,service_token)" in source
+            and _ascii_token_guard_is_live(function)
+            and _interaction_service_call(tree, "capabilities", "actor")
+        )
+
+    if key in agent_routes:
+        expected_function, expected_service_method = agent_routes[key]
+        if function is not expected_function:
+            return False
+        if not _interaction_service_call(tree, expected_service_method, "capability"):
+            return False
+        # The endpoint must obtain the credential from the dedicated request
+        # header itself (directly or in the local `capability` assignment).
+        capability_is_bound = any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_capability"
+            and len(node.args) == 1
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == "request"
+            for statement in statements
+            for node in ast.walk(statement)
+        )
+        if not capability_is_bound:
+            return False
+        service_method = getattr(interaction_service.InteractionService, expected_service_method)
+        service_tree = ast.parse(textwrap.dedent(inspect.getsource(service_method))).body[0]
+        validator = (
+            "authenticate_agent"
+            if expected_service_method == "agent_get"
+            else "_current_source_by_capability"
+        )
+        return (
+            any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == validator
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "self"
+                for node in ast.walk(service_tree)
+            )
+            and _interaction_capability_validators_are_live()
+        )
+
+    return False
+
+
+def _interaction_service_call(tree, expected_method: str, actor_name: str) -> bool:
+    """Check the endpoint passes the expected trusted actor to `_invoke`."""
+    for statement in tree.body:
+        for node in ast.walk(statement):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "_invoke"
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and node.args[1].value == expected_method
+            ):
+                continue
+            actor = (
+                node.args[2]
+                if len(node.args) >= 3
+                else next(
+                    (keyword.value for keyword in node.keywords if keyword.arg == "actor"),
+                    None,
+                )
+            )
+            if isinstance(actor, ast.Name) and actor.id == actor_name:
+                return True
+            if (
+                actor_name == "capability"
+                and isinstance(actor, ast.Call)
+                and isinstance(actor.func, ast.Name)
+                and actor.func.id == "_capability"
+                and len(actor.args) == 1
+                and isinstance(actor.args[0], ast.Name)
+                and actor.args[0].id == "request"
+            ):
+                return True
+    if actor_name == "capability":
+        # `create_interaction_group` assigns the header value once, then passes
+        # that local into the service invocation.
+        assigned = any(
+            isinstance(statement, (ast.Assign, ast.AnnAssign))
+            and isinstance(statement.value, ast.Call)
+            and isinstance(statement.value.func, ast.Name)
+            and statement.value.func.id == "_capability"
+            for statement in tree.body
+        )
+        if assigned:
+            return any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "_invoke"
+                and len(node.args) >= 3
+                and isinstance(node.args[1], ast.Constant)
+                and node.args[1].value == expected_method
+                and isinstance(node.args[2], ast.Name)
+                and node.args[2].id == "capability"
+                for statement in tree.body
+                for node in ast.walk(statement)
+            )
+    return False
+
+
+def _interaction_capability_validators_are_live() -> bool:
+    """Pin capability hashing, revocation, source binding, and install checks."""
+    from cli_agent_orchestrator.api import interactions
+    from cli_agent_orchestrator.services.interactions import service as interaction_service
+
+    header_extractor = "".join(inspect.getsource(interactions._capability).split())
+    current_source = "".join(
+        inspect.getsource(
+            interaction_service.InteractionService._current_source_by_capability
+        ).split()
+    )
+    validate_source = "".join(
+        inspect.getsource(interaction_service.InteractionService._validate_source_row).split()
+    )
+    return (
+        all(
+            marker in header_extractor
+            for marker in (
+                "request.headers.get(_AGENT_CAPABILITY_HEADER)",
+                "ifnotcapability:raiseHTTPException(status_code=401",
+                "iflen(capability)>512:raiseHTTPException(status_code=401",
+            )
+        )
+        and all(
+            marker in current_source
+            for marker in (
+                "capability_hash(token)",
+                "WHEREcapability_hash=%s",
+                "require_capability=True",
+            )
+        )
+        and all(
+            marker in validate_source
+            for marker in (
+                'source["revoked_at"]',
+                'source["capability_available"]',
+                'source["incarnation_id"]',
+                'source["allowed_tool_fingerprint"]',
+                "self._validate_work(connection,source)",
+            )
+        )
+    )
+
+
+def _interaction_human_guard_is_live() -> bool:
+    """Pin the sealed-Principal dependency and prohibit either bearer as identity."""
+    from cli_agent_orchestrator.api import interactions
+
+    dependency = inspect.signature(interactions._human_principal).parameters["principal"].default
+    source = "".join(inspect.getsource(interactions._human_principal).split())
+    return (
+        getattr(dependency, "dependency", None) is auth.get_current_principal
+        and "is_verified_principal(principal)" in source
+        and "request.headers.get(_AGENT_CAPABILITY_HEADER)" in source
+        and "get_local_bearer()" in source
+        and "ascii_token_matches(presented,service_token)" in source
+        and _ascii_token_guard_is_live(interactions._human_principal)
+    )
+
+
+def _has_interaction_authority(route) -> bool:
+    return bool(_interaction_route_contract(route))
+
+
 def _has_verified_work_read_authority(route) -> bool:
     """These exact handlers enforce read scope and owner inside WorkQueries."""
-    if getattr(route, "endpoint", None) not in {work_routes.get_work, work_routes.get_work_events}:
+    if getattr(route, "endpoint", None) not in {
+        work_routes.get_work,
+        work_routes.get_work_events,
+        work_routes.stream_work_messages,
+    }:
         return False
     stack = list(getattr(route.dependant, "dependencies", []))
     while stack:
@@ -317,6 +735,7 @@ def test_every_mutating_route_is_scope_or_verified_work_authority_gated():
             or _has_verified_workflow_capability_authority(route)
             or _has_manual_transport_authority(route)
             or _has_local_peer_authority(route)
+            or _has_interaction_authority(route)
         ):
             missing.append(f"{sorted(mutating)} {route.path}")
     assert not missing, (
@@ -373,19 +792,6 @@ _OPEN_READS = {
 }
 
 
-def _has_verified_work_read_authority(route) -> bool:
-    """These exact handlers enforce read scope and owner inside WorkQueries."""
-    if getattr(route, "endpoint", None) not in {work_routes.get_work, work_routes.get_work_events}:
-        return False
-    stack = list(getattr(route.dependant, "dependencies", []))
-    while stack:
-        dep = stack.pop()
-        if getattr(dep, "call", None) is auth.get_current_principal:
-            return True
-        stack.extend(getattr(dep, "dependencies", []))
-    return False
-
-
 def _api_get_routes():
     """Every GET route that FastAPI resolved a dependency tree for.
 
@@ -419,6 +825,7 @@ def test_every_disclosure_bearing_get_route_is_gated_or_explicitly_open():
             or _has_verified_work_read_authority(route)
             or _has_manual_transport_authority(route)
             or _has_local_peer_authority(route)
+            or _has_interaction_authority(route)
         )
         and route.path not in _OPEN_READS
     ]
@@ -461,6 +868,117 @@ def test_plugins_list_is_gated_and_not_exempted():
     assert matches, "GET /plugins is not registered"
     assert _has_scope_dependency(matches[0]), "GET /plugins lost its scope dependency"
     assert "/plugins" not in _OPEN_READS, "GET /plugins must not be exempted from the read floor"
+
+
+def test_interaction_authority_audit_covers_exact_live_routes():
+    """Every interaction read/mutation is recognized by its executed authority path."""
+    interaction_routes = [
+        route
+        for route in app.routes
+        if getattr(route, "path", "").startswith("/interactions")
+        or getattr(route, "path", "").startswith("/agent/interactions")
+        or getattr(route, "path", None) in {"/interaction-capabilities", "/interaction-wait-graph"}
+    ]
+    assert len(interaction_routes) == 18
+    assert all(_has_interaction_authority(route) for route in interaction_routes)
+    for route in interaction_routes:
+        if "GET" in (getattr(route, "methods", None) or set()):
+            assert route.path not in _OPEN_READS
+
+
+def test_interaction_authority_audit_rejects_wrong_live_guard(monkeypatch):
+    """The scanner follows a changed guard instead of blessing a route name."""
+    from cli_agent_orchestrator.api import interactions
+
+    human_route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/interactions/{question_id}/cancel"
+    )
+    agent_route = next(
+        route for route in app.routes if getattr(route, "path", None) == "/agent/interactions"
+    )
+    assert _has_interaction_authority(human_route)
+    assert _has_interaction_authority(agent_route)
+    original_getsource = inspect.getsource
+    human_source = original_getsource(interactions.cancel_interaction)
+    agent_source = original_getsource(interactions.agent_list_interactions)
+
+    monkeypatch.setattr(
+        inspect,
+        "getsource",
+        lambda endpoint: (
+            human_source.replace("_scope(principal, SCOPE_WRITE)", "_scope(principal, SCOPE_READ)")
+            if endpoint is interactions.cancel_interaction
+            else (
+                agent_source.replace("_capability(request)", "request.headers.get('Authorization')")
+                if endpoint is interactions.agent_list_interactions
+                else original_getsource(endpoint)
+            )
+        ),
+    )
+    assert not _has_interaction_authority(human_route)
+    assert not _has_interaction_authority(agent_route)
+
+
+def test_interaction_authority_audit_rejects_unsafe_ascii_token_helper(monkeypatch):
+    """The source audit must reject a helper that compares Unicode directly."""
+    from cli_agent_orchestrator.api import interactions
+    from cli_agent_orchestrator.security import local_token
+
+    human_route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/interactions/{question_id}/cancel"
+    )
+    capabilities_route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/interaction-capabilities"
+        and "GET" in (getattr(route, "methods", None) or set())
+    )
+    assert _has_interaction_authority(human_route)
+    assert _has_interaction_authority(capabilities_route)
+
+    original_getsource = inspect.getsource
+    weakened_helper = """\
+def ascii_token_matches(presented: str, expected: str) -> bool:
+    return hmac.compare_digest(presented, expected)
+"""
+    monkeypatch.setattr(
+        inspect,
+        "getsource",
+        lambda target: (
+            weakened_helper
+            if target is local_token.ascii_token_matches
+            else original_getsource(target)
+        ),
+    )
+    assert not _has_interaction_authority(human_route)
+    assert not _has_interaction_authority(capabilities_route)
+
+
+def test_interaction_authority_audit_rejects_rebound_ascii_token_helper(monkeypatch):
+    """Live routes must stay bound to the canonical token guard."""
+    from cli_agent_orchestrator.api import interactions
+
+    human_route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/interactions/{question_id}/cancel"
+    )
+    capabilities_route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/interaction-capabilities"
+        and "GET" in (getattr(route, "methods", None) or set())
+    )
+    assert _has_interaction_authority(human_route)
+    assert _has_interaction_authority(capabilities_route)
+
+    monkeypatch.setattr(interactions, "ascii_token_matches", lambda presented, expected: False)
+    assert not _has_interaction_authority(human_route)
+    assert not _has_interaction_authority(capabilities_route)
 
 
 def _override_scopes(scopes):
@@ -516,6 +1034,172 @@ def test_admin_token_cannot_delete_local_legacy_memory(client, auth_on):
     resp = client.delete("/memory/some-key")
     assert resp.status_code == 403
     assert resp.json()["detail"]["code"] == "legacy_memory_local_only"
+
+
+def _enable_signed_interaction_jwts(monkeypatch, jwt_factory):
+    """Enable the real Principal/JWT path with this test's local signing key."""
+    from cryptography.hazmat.primitives import serialization
+
+    monkeypatch.setenv("AUTH0_DOMAIN", jwt_factory.domain)
+    monkeypatch.setenv("AUTH0_AUDIENCE", jwt_factory.audience)
+    monkeypatch.delenv("CAO_AUTH_JWKS_URI", raising=False)
+    monkeypatch.delenv("CAO_AUTH_LOCAL_TOKEN_FILE", raising=False)
+    public_key = serialization.load_pem_private_key(
+        jwt_factory.private_pem, password=None
+    ).public_key()
+
+    class _SigningKey:
+        key = public_key
+
+    class _JwksClient:
+        def get_signing_key_from_jwt(self, _token):
+            return _SigningKey()
+
+    auth.get_jwks_cache().clear()
+    monkeypatch.setattr(auth.get_jwks_cache(), "get_client", lambda _uri: _JwksClient())
+
+
+def test_interaction_human_routes_enforce_verified_jwt_scopes_and_reject_machine_bearer(
+    client, monkeypatch, jwt_factory
+):
+    """Real JWT identities get only their explicit interaction read/write scopes."""
+    _enable_signed_interaction_jwts(monkeypatch, jwt_factory)
+    monkeypatch.delenv("CAO_AUTH_LOCAL_TOKEN", raising=False)
+
+    assert client.get("/interactions").status_code == 401
+
+    no_interaction_scope = jwt_factory.mint(
+        scopes="cao:metrics", extra_claims={"sub": "scope-coverage-human"}
+    )
+    response = client.get(
+        "/interactions", headers={"Authorization": f"Bearer {no_interaction_scope}"}
+    )
+    assert response.status_code == 403
+
+    read_token = jwt_factory.mint(
+        scopes=auth.SCOPE_READ, extra_claims={"sub": "scope-coverage-human"}
+    )
+    read_headers = {"Authorization": f"Bearer {read_token}"}
+    read_response = client.get("/interactions", headers=read_headers)
+    assert read_response.status_code not in (401, 403)
+
+    read_cannot_write = client.post(
+        "/interactions/d97001ba-d4ed-4c78-b3b9-22fa8c77631d/cancel",
+        headers={**read_headers, "If-Match": '"1"'},
+        json={"reason": "scope enforcement check"},
+    )
+    assert read_cannot_write.status_code == 403
+
+    read_cannot_designate_owner = client.put(
+        "/interactions/sources/ac010001/content-owner",
+        headers=read_headers,
+        json={
+            "expected_incarnation_id": "scope-check-incarnation",
+            "reason": "scope enforcement check",
+        },
+    )
+    assert read_cannot_designate_owner.status_code == 403
+
+    write_token = jwt_factory.mint(
+        scopes=auth.SCOPE_WRITE, extra_claims={"sub": "scope-coverage-human"}
+    )
+    write_headers = {"Authorization": f"Bearer {write_token}"}
+    write_can_read = client.get("/interactions", headers=write_headers)
+    assert write_can_read.status_code not in (401, 403)
+    write_can_cancel = client.post(
+        "/interactions/d97001ba-d4ed-4c78-b3b9-22fa8c77631d/cancel",
+        headers={**write_headers, "If-Match": '"1"'},
+        json={"reason": "scope enforcement check"},
+    )
+    assert write_can_cancel.status_code != 403
+
+    # The configured MCP bearer is a transport credential, even when it is a
+    # syntactically valid JWT with read scope. It is not a human Principal and
+    # cannot replace the source-bound interaction capability on agent routes.
+    monkeypatch.setenv("CAO_AUTH_LOCAL_TOKEN", read_token)
+    machine_on_human_route = client.get("/interactions", headers=read_headers)
+    assert machine_on_human_route.status_code == 403
+    machine_on_agent_route = client.get("/agent/interactions", headers=read_headers)
+    assert machine_on_agent_route.status_code == 401
+
+
+@pytest.mark.postgres
+def test_interaction_agent_capability_is_source_bound_through_real_service(
+    client, monkeypatch, postgres_interaction_store
+):
+    """A live source capability cannot read another source's private question."""
+    from uuid import uuid4
+
+    from cli_agent_orchestrator.api.main import app as main_app
+    from cli_agent_orchestrator.clients import database
+    from cli_agent_orchestrator.services.interactions.models import (
+        CreateGroupRequest,
+        QuestionInput,
+    )
+
+    for name in (
+        "AUTH0_DOMAIN",
+        "AUTH0_AUDIENCE",
+        "CAO_AUTH_AUDIENCE",
+        "CAO_AUTH_JWKS_URI",
+        "CAO_AUTH_LOCAL_TOKEN",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    # Bind the same fully migrated PostgreSQL service used to seed these rows.
+    assert client.get("/health").status_code == 200
+    service = postgres_interaction_store.service
+    monkeypatch.setattr(main_app.state, "interaction_service", service, raising=False)
+
+    owner = auth._verified_principal(
+        "https://scope-coverage.test", "interaction-owner", [auth.SCOPE_ADMIN], "jwt"
+    )
+    source_ids = []
+    for suffix in ("first", "second"):
+        terminal_id = uuid4().hex[:8]
+        session_name = f"scope-interaction-{suffix}-{uuid4().hex[:8]}"
+        incarnation_id = f"scope-interaction-{suffix}-{uuid4().hex}"
+        database.create_terminal(
+            terminal_id,
+            session_name,
+            "worker",
+            "codex",
+            allowed_tools=["@cao-mcp-server"],
+            session_incarnation_id=incarnation_id,
+            new_session_incarnation=True,
+        )
+        issued = service.register_source(
+            terminal_id=terminal_id,
+            incarnation_id=incarnation_id,
+            session_name=session_name,
+            provider="codex",
+            principal=owner,
+        )
+        source_ids.append(issued)
+
+    question_group = service.create_group(
+        source_ids[1].token,
+        CreateGroupRequest(
+            questions=[
+                QuestionInput(
+                    kind="text",
+                    prompt="private source-bound question",
+                    required=True,
+                )
+            ]
+        ),
+        "scope-coverage-source-bound-question-0001",
+    )
+    question_id = question_group.questions[0]["question_id"]
+
+    missing_capability = client.get(f"/agent/interactions/{question_id}")
+    assert missing_capability.status_code == 401
+    unrelated_capability = client.get(
+        f"/agent/interactions/{question_id}",
+        headers={"X-CAO-Interaction-Capability": source_ids[0].token},
+    )
+    assert unrelated_capability.status_code == 403
+    assert "private source-bound question" not in unrelated_capability.text
 
 
 # ---------------------------------------------------------------------------
@@ -846,7 +1530,11 @@ def test_owned_reads_require_verified_identity_and_are_never_open():
     from types import SimpleNamespace
 
     routes = {route.path: route for route in _api_get_routes()}
-    for path in ("/work-items/{work_item_id}", "/jobs/{job_id}/events"):
+    for path in (
+        "/work-items/{work_item_id}",
+        "/jobs/{job_id}/events",
+        "/jobs/{job_id}/messages/stream",
+    ):
         route = routes[path]
         assert path not in _OPEN_READS
         assert _has_verified_work_read_authority(route)
@@ -1051,7 +1739,10 @@ def test_manual_authority_routes_are_never_open_read_exemptions():
             assert route.path not in _OPEN_READS
 
 
-def test_registered_local_peer_with_pinned_grant_rejects_invalid_signature(monkeypatch, tmp_path):
+@pytest.mark.postgres
+def test_registered_local_peer_with_pinned_grant_rejects_invalid_signature(
+    monkeypatch, tmp_path, postgres_targets
+):
     """Matching registry identity and action grants cannot bypass signature verification."""
     import base64
     import hashlib
@@ -1067,6 +1758,8 @@ def test_registered_local_peer_with_pinned_grant_rejects_invalid_signature(monke
 
     from cli_agent_orchestrator.api import local_coordination_routes
     from cli_agent_orchestrator.clients import database
+    from cli_agent_orchestrator.clients.database import core_migrations
+    from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
     from cli_agent_orchestrator.services import local_peer_registry
     from cli_agent_orchestrator.services.local_peer_identity import (
         LocalProcessIdentity,
@@ -1074,11 +1767,13 @@ def test_registered_local_peer_with_pinned_grant_rejects_invalid_signature(monke
         public_key_text,
     )
 
+    migrate_component(postgres_targets.main, core_migrations())
+    migrate_component(postgres_targets.peer, local_peer_registry.LOCAL_PEER_MIGRATIONS)
+
     directory = tmp_path / "local-peers"
     monkeypatch.setattr(local_peer_registry, "LOCAL_PEER_DIR", directory)
-    monkeypatch.setattr(
-        local_peer_registry, "LOCAL_PEER_REGISTRY_FILE", directory / "registry.sqlite3"
-    )
+    monkeypatch.setattr(local_peer_registry, "_database_target", lambda: postgres_targets.peer)
+    local_peer_registry._verify_target.cache_clear()
     identity = LocalProcessIdentity(
         instance_id=str(uuid4()),
         process_generation=str(uuid4()),

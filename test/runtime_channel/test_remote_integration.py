@@ -1,30 +1,27 @@
-"""Production remote seams use real SQLite claims before native effects."""
+"""Production remote seams use native PostgreSQL claims before native effects."""
 
 import time
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import create_engine
 
+from cli_agent_orchestrator.clients.postgres import connect
 from cli_agent_orchestrator.runtime_channel.bridge import Bridge
 from cli_agent_orchestrator.runtime_channel.protocol import Command, CommandType
 from cli_agent_orchestrator.runtime_channel.store import RemoteOperationStore
 
+pytestmark = pytest.mark.postgres
+
 
 @pytest.fixture
-def journal(tmp_path, monkeypatch):
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'remote.sqlite'}", connect_args={"check_same_thread": False}
-    )
-    store = RemoteOperationStore(engine)
-    store.create_schema()
+def journal(postgres_runtime_channel, monkeypatch):
+    store = RemoteOperationStore(postgres_runtime_channel)
     from unittest.mock import Mock
 
     from cli_agent_orchestrator.backends import registry
 
     monkeypatch.setattr(registry, "get_backend", lambda: Mock())
-    yield store
-    engine.dispose()
+    return store
 
 
 @pytest.mark.asyncio
@@ -78,20 +75,21 @@ async def test_bridge_expired_or_replaced_identity_never_executes(journal):
     bridge.execute.assert_not_awaited()
 
 
-def test_bridge_bootstrap_has_receipt_and_lifecycle_tables_without_work_authority(
-    tmp_path, monkeypatch
+def test_bridge_bootstrap_verifies_receipt_and_lifecycle_tables_without_work_authority(
+    postgres_core_runtime,
 ):
-    from sqlalchemy import inspect
-
     from cli_agent_orchestrator.clients import database
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'bootstrap.sqlite'}")
-    monkeypatch.setattr(database, "engine", engine)
-    from cli_agent_orchestrator import constants
-
-    monkeypatch.setattr(constants, "DATABASE_FILE", tmp_path / "bootstrap.sqlite")
+    target = postgres_core_runtime
     database.init_runtime_db()
-    tables = set(inspect(engine).get_table_names())
+    with connect(target, readonly=True) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema=%s",
+                (target.schema,),
+            ).fetchall()
+        }
     assert {
         "terminals",
         "session_incarnations",
@@ -101,14 +99,25 @@ def test_bridge_bootstrap_has_receipt_and_lifecycle_tables_without_work_authorit
         "remote_operations",
     } <= tables
     assert "work_attempts" not in tables
-    engine.dispose()
 
 
-def test_remote_input_routes_without_local_provider_or_backend(monkeypatch):
+def test_remote_input_routes_without_local_provider_or_backend(postgres_core_runtime, monkeypatch):
+    from test.postgres.fixtures import make_orm_engine
     from unittest.mock import Mock
 
+    from sqlalchemy.orm import sessionmaker
+
+    from cli_agent_orchestrator.clients import database
+    from cli_agent_orchestrator.clients.interaction_repository import INTERACTION_MIGRATIONS
+    from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
     from cli_agent_orchestrator.services import remote_terminal_service as remote
     from cli_agent_orchestrator.services import terminal_service
+
+    target = postgres_core_runtime
+    migrate_component(target, INTERACTION_MIGRATIONS)
+    engine = make_orm_engine(target)
+    monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=engine))
 
     metadata = {
         "id": "term",
@@ -127,6 +136,7 @@ def test_remote_input_routes_without_local_provider_or_backend(monkeypatch):
     assert call.call_args.kwargs == {}
     assert call.call_args.args[2]["task_delivery"] is True
     backend.assert_not_called()
+    engine.dispose()
 
 
 def test_runtime_router_is_registered_before_static_mount():
@@ -156,6 +166,7 @@ def test_native_write_rechecks_epoch_after_provider_wait(journal):
     native.send_keys.assert_not_called()
 
 
+@pytest.mark.offline_database
 def test_remote_session_delete_never_probes_or_kills_local_session(monkeypatch):
     from unittest.mock import Mock
 

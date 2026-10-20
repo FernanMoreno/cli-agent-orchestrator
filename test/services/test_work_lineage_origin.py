@@ -1,16 +1,20 @@
-"""T019 v22 managed lineage is server-internal, exact and fail-closed."""
+"""T019 managed lineage is server-internal, exact and fail-closed."""
 
 import importlib
 import json
 import time
+from contextlib import contextmanager
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
+from uuid import uuid4
 
 import pytest
+from psycopg import sql
 
 from cli_agent_orchestrator.backends.tmux_backend import TmuxBackend
-from cli_agent_orchestrator.clients.work_repository import WorkRepository
+from cli_agent_orchestrator.clients.postgres import connect
+from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.models.work_contract import (
     ContractPermissions,
     ContractResources,
@@ -37,6 +41,15 @@ from cli_agent_orchestrator.services.work_delivery import DeliveryAdapter
 from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
 from cli_agent_orchestrator.services.work_scheduler import WorkScheduler
 
+pytestmark = pytest.mark.postgres
+
+
+@pytest.fixture(autouse=True)
+def _provision_work_postgres_schema(postgres_targets):
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
+
+    bootstrap_scope(postgres_targets.main)
+
 
 class _InboxPayload(FrozenContractModel):
     message: str
@@ -48,6 +61,33 @@ class _NoEffectBackend(TmuxBackend):
 
     def create_session(self, *_args, **_kwargs):
         raise AssertionError("lineage admission must not create a native child")
+
+
+def _drop_trigger(connection, trigger_name):
+    row = connection.execute(
+        "SELECT relation.relname, pg_get_triggerdef(trigger.oid) AS definition "
+        "FROM pg_trigger AS trigger "
+        "JOIN pg_class AS relation ON relation.oid=trigger.tgrelid "
+        "JOIN pg_namespace AS namespace ON namespace.oid=relation.relnamespace "
+        "WHERE namespace.nspname=%s AND trigger.tgname=%s "
+        "AND NOT trigger.tgisinternal",
+        (connection.target.schema, trigger_name),
+    ).fetchone()
+    assert row is not None, f"expected trigger {trigger_name} to be installed"
+    connection.execute(
+        sql.SQL("DROP TRIGGER {} ON {}").format(
+            sql.Identifier(trigger_name), sql.Identifier(row["relname"])
+        )
+    )
+    return row["definition"]
+
+
+@contextmanager
+def _owner_transaction(repository):
+    """Use migration credentials only for deliberate trigger-bypass corruption tests."""
+    with connect(repository.target.migration_target()) as connection:
+        with connection.transaction():
+            yield connection
 
 
 def _delivery_adapter():
@@ -83,7 +123,7 @@ def _counts(repository):
 def _lineage_integrity(repository, attempt):
     with repository.read_snapshot() as connection:
         return connection.execute(
-            "SELECT * FROM work_lineage_integrity WHERE child_attempt_id=? AND child_generation=?",
+            "SELECT * FROM work_lineage_integrity WHERE child_attempt_id=%s AND child_generation=%s",
             (attempt["id"], attempt["generation"]),
         ).fetchone()
 
@@ -134,7 +174,7 @@ def test_managed_lineage_intent_preserves_immutable_v2_executable_contract():
 
 def _managed_context(tmp_path):
     models, admission_module, origin_module = _modules()
-    repository = WorkRepository(tmp_path / "lineage.sqlite3")
+    repository = WorkRepository(tmp_path / "lineage")
     repository.initialize()
     WorkScheduler(repository).configure(
         capacity=4, max_queue=100, aging_seconds=10, expected_policy_revision=0
@@ -265,6 +305,7 @@ def _managed_context(tmp_path):
         }
     )
     return SimpleNamespace(
+        root=tmp_path,
         models=models,
         admission=admission,
         origin_module=origin_module,
@@ -437,11 +478,11 @@ def test_authenticated_task_receipt_only_acknowledges_its_exact_managed_delivery
         before_history = (
             connection.execute(
                 "SELECT nonce,receipt_hash FROM work_task_received_receipts "
-                "WHERE attempt_id=? AND generation=?",
+                "WHERE attempt_id=%s AND generation=%s",
                 (attempt["id"], attempt["generation"]),
             ).fetchall(),
             connection.execute(
-                "SELECT event_id,event_type,actor_id FROM work_events WHERE attempt_id=? "
+                "SELECT event_id,event_type,actor_id FROM work_events WHERE attempt_id=%s "
                 "ORDER BY sequence",
                 (attempt["id"],),
             ).fetchall(),
@@ -451,17 +492,17 @@ def test_authenticated_task_receipt_only_acknowledges_its_exact_managed_delivery
         after_history = (
             connection.execute(
                 "SELECT nonce,receipt_hash FROM work_task_received_receipts "
-                "WHERE attempt_id=? AND generation=?",
+                "WHERE attempt_id=%s AND generation=%s",
                 (attempt["id"], attempt["generation"]),
             ).fetchall(),
             connection.execute(
-                "SELECT event_id,event_type,actor_id FROM work_events WHERE attempt_id=? "
+                "SELECT event_id,event_type,actor_id FROM work_events WHERE attempt_id=%s "
                 "ORDER BY sequence",
                 (attempt["id"],),
             ).fetchall(),
         )
     assert after_history == before_history
-    reopened = service_module.WorkService(WorkRepository(context.repository.path))
+    reopened = service_module.WorkService(WorkRepository(context.repository.target))
     assert reopened.record_task_received(receipt)["attempts"][0]["state"] == "acknowledged"
     redeliveries = []
     assert (
@@ -474,6 +515,47 @@ def test_authenticated_task_receipt_only_acknowledges_its_exact_managed_delivery
         == "acknowledged"
     )
     assert redeliveries == []
+
+
+def test_work_service_repository_ownership_uses_database_target_identity(managed_context):
+    context = managed_context
+    service_module = importlib.import_module("cli_agent_orchestrator.services.work_service")
+    origins = context.origin_module.WorkOrigins(context.repository)
+
+    # Filesystem artifact roots may differ while both repositories address the
+    # same durable database identity.
+    same_target_different_home = WorkRepository(
+        context.repository.target, filesystem_home=context.root / "alternate-artifacts"
+    )
+    service_module.WorkService(same_target_different_home, origins=origins)
+
+    # A path-compatible repository with a different store identity must not be
+    # accepted as the same authority source.
+    foreign_target = replace(context.repository.target, store_id=uuid4().hex)
+    foreign_repository = WorkRepository(foreign_target)
+    with pytest.raises(ValueError, match="task receipt origin"):
+        service_module.WorkService(foreign_repository, origins=origins)
+
+    credential_module = importlib.import_module(
+        "cli_agent_orchestrator.services.work_attempt_credential"
+    )
+    credentials = credential_module.WorkAttemptCredentials(context.repository)
+    with connect(foreign_target) as connection:
+        with connection.transaction():
+            with pytest.raises(credential_module.WorkAttemptCredentialRejected):
+                credentials.issue_in_transaction(connection, None, expected_attempt_revision=1)
+
+    foreign_scheduler = WorkScheduler(foreign_repository)
+    with pytest.raises(WorkConflict, match="scheduler must use this work repository"):
+        service_module.WorkService(context.repository).retry_work(
+            "unused",
+            scheduler=foreign_scheduler,
+            expected_revision=1,
+            provider="provider",
+            evidence=None,
+            actor_id="operator",
+            lease_seconds=1,
+        )
 
 
 def test_task_receipt_issued_before_receiver_revocation_never_acknowledges(managed_context):
@@ -520,14 +602,14 @@ def test_task_receipt_issued_before_receiver_revocation_never_acknowledges(manag
     with context.repository.read_snapshot() as connection:
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_task_received_receipts WHERE attempt_id=?",
+                "SELECT count(*) FROM work_task_received_receipts WHERE attempt_id=%s",
                 (attempt["id"],),
             ).fetchone()[0]
             == 0
         )
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_events WHERE attempt_id=? "
+                "SELECT count(*) FROM work_events WHERE attempt_id=%s "
                 "AND event_type='attempt.acknowledged'",
                 (attempt["id"],),
             ).fetchone()[0]
@@ -573,35 +655,23 @@ async def test_registered_dispatch_uses_paired_origin_runtime_for_receiver_ack(m
     with context.repository.read_snapshot() as connection:
         acceptance = connection.execute(
             "SELECT delivery_id,delivery_hash FROM work_task_receiver_acceptances "
-            "WHERE attempt_id=? AND generation=1",
+            "WHERE attempt_id=%s AND generation=1",
             (child["attempts"][0]["id"],),
         ).fetchone()
         assert acceptance is not None
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_task_received_receipts WHERE attempt_id=?",
+                "SELECT count(*) FROM work_task_received_receipts WHERE attempt_id=%s",
                 (child["attempts"][0]["id"],),
             ).fetchone()[0]
             == 1
         )
 
 
-def test_v21_legacy_child_migrates_to_v22_and_replays_through_public_admission(
-    tmp_path, monkeypatch
-):
-    """A migrated legacy child replays exactly, even after its parent has ended."""
+def test_legacy_child_replays_through_public_admission_after_parent_ends(tmp_path):
+    """A legacy child replays exactly, even after its parent has ended."""
     repository_module = importlib.import_module("cli_agent_orchestrator.clients.work_repository")
-    verified_schema = repository_module.WorkRepository._verify
-
-    def verify_v21(connection, *, version=None):
-        return verified_schema(connection, version=21 if version is None else version)
-
-    def verify_v22(connection, *, version=None):
-        return verified_schema(connection, version=22 if version is None else version)
-
-    monkeypatch.setattr(repository_module, "SCHEMA_VERSION", 21)
-    monkeypatch.setattr(repository_module.WorkRepository, "_verify", staticmethod(verify_v21))
-    repository = repository_module.WorkRepository(tmp_path / "legacy-v21.sqlite3")
+    repository = repository_module.WorkRepository(tmp_path / "legacy-child")
     repository.initialize()
     WorkScheduler(repository).configure(
         capacity=4, max_queue=100, aging_seconds=10, expected_policy_revision=0
@@ -696,7 +766,7 @@ def test_v21_legacy_child_migrates_to_v22_and_replays_through_public_admission(
         lease_seconds=120,
         parent_work_item_id=parent["id"],
     )
-    # This is a historical v21 write: no v22 lineage table or marker exists yet.
+    # A legacy child has no managed-origin binding or integrity companion.
     with repository.transaction() as connection:
         child = repository._admit_work(connection, **request)
         attempt = child["attempts"][0]
@@ -725,34 +795,24 @@ def test_v21_legacy_child_migrates_to_v22_and_replays_through_public_admission(
         )
     with repository.transaction() as connection:
         connection.execute(
-            "UPDATE work_attempts SET state='failed',revision=revision+1 WHERE id=?",
+            "UPDATE work_attempts SET state='failed',revision=revision+1 WHERE id=%s",
             (parent["attempts"][0]["id"],),
         )
         connection.execute(
-            "UPDATE work_items SET state='failed',revision=revision+1 WHERE id=?",
+            "UPDATE work_items SET state='failed',revision=revision+1 WHERE id=%s",
             (parent["id"],),
         )
-    with repository.connection() as connection:
-        assert {row[1] for row in connection.execute("PRAGMA table_info(work_items)")}.isdisjoint(
-            {"lineage_protocol"}
-        )
-
-    monkeypatch.setattr(repository_module, "SCHEMA_VERSION", 22)
-    monkeypatch.setattr(repository_module.WorkRepository, "_verify", staticmethod(verify_v22))
     repository.initialize()
     with repository.read_snapshot() as connection:
         assert (
             connection.execute(
-                "SELECT lineage_protocol FROM work_items WHERE id=?", (child["id"],)
+                "SELECT lineage_protocol FROM work_items WHERE id=%s", (child["id"],)
             ).fetchone()[0]
             == "legacy"
         )
         assert (
             connection.execute("SELECT count(*) FROM work_child_origin_bindings").fetchone()[0] == 0
         )
-    monkeypatch.setattr(repository_module, "SCHEMA_VERSION", 23)
-    monkeypatch.setattr(repository_module.WorkRepository, "_verify", staticmethod(verified_schema))
-    repository.initialize()
     with repository.read_snapshot() as connection:
         assert connection.execute("SELECT count(*) FROM work_lineage_integrity").fetchone()[0] == 0
     before = _counts(repository)
@@ -885,7 +945,8 @@ def test_managed_lineage_commits_exact_binding_delivery_queue_and_replays_one_id
     assert _counts(context.repository) == (2, 2, 2, 1, 1, 2)
     with context.repository.read_snapshot() as connection:
         child = connection.execute(
-            "SELECT lineage_protocol,parent_work_item_id FROM work_items WHERE id=?", (first["id"],)
+            "SELECT lineage_protocol,parent_work_item_id FROM work_items WHERE id=%s",
+            (first["id"],),
         ).fetchone()
         binding = connection.execute("SELECT * FROM work_child_origin_bindings").fetchone()
         projection = connection.execute(
@@ -910,19 +971,20 @@ def test_managed_lineage_commits_exact_binding_delivery_queue_and_replays_one_id
     assert projection["state"] == "planned"
 
 
-def _assert_v23_lineage_integrity_is_installed(repository_module):
-    assert repository_module.SCHEMA_VERSION >= 23
-    assert any(
-        statement.startswith("CREATE TABLE work_lineage_integrity")
-        for statement in repository_module._MIGRATIONS[23]
-    )
+def _assert_lineage_integrity_is_installed(repository):
+    with repository.read_snapshot() as connection:
+        assert (
+            connection.execute(
+                "SELECT to_regclass('work_lineage_integrity') IS NOT NULL"
+            ).fetchone()[0]
+            is True
+        )
 
 
-def test_v23_managed_lineage_persists_and_reopens_exact_integrity_companion(managed_context):
-    """A new managed child is authoritative only with its immutable v23 companion."""
-    repository_module = importlib.import_module("cli_agent_orchestrator.clients.work_repository")
-    _assert_v23_lineage_integrity_is_installed(repository_module)
+def test_managed_lineage_persists_and_reopens_exact_integrity_companion(managed_context):
+    """A managed child is authoritative only with its immutable integrity companion."""
     context = managed_context
+    _assert_lineage_integrity_is_installed(context.repository)
     child = context.admission.admit_managed_lineage(_managed_handoff(context, key="v23-positive"))
     attempt = child["attempts"][0]
     integrity = _lineage_integrity(context.repository, attempt)
@@ -941,7 +1003,7 @@ def test_v23_managed_lineage_persists_and_reopens_exact_integrity_companion(mana
         == attempt["id"]
     )
 
-    reopened = WorkRepository(context.repository.path)
+    reopened = WorkRepository(context.repository.target)
     reopened.initialize()
     assert (
         WorkContracts(reopened)
@@ -964,13 +1026,12 @@ def test_v23_managed_lineage_persists_and_reopens_exact_integrity_companion(mana
         "authorization_expired",
     ),
 )
-def test_v23_revalidation_requires_exact_live_child_and_receiver_authority(
+def test_revalidation_requires_exact_live_child_and_receiver_authority(
     managed_context, monkeypatch, mutation
 ):
     """A fingerprint never makes stale child or receiver authority current again."""
-    repository_module = importlib.import_module("cli_agent_orchestrator.clients.work_repository")
-    _assert_v23_lineage_integrity_is_installed(repository_module)
     context = managed_context
+    _assert_lineage_integrity_is_installed(context.repository)
     child = context.admission.admit_managed_lineage(
         _managed_handoff(context, key=f"v23-authority-{mutation}")
     )
@@ -1048,9 +1109,10 @@ def test_v23_revalidation_requires_exact_live_child_and_receiver_authority(
 
 
 @pytest.mark.parametrize("role", ("child", "receiver"))
-def test_v23_replay_rejects_authorization_grant_contradiction(managed_context, role):
+def test_replay_rejects_authorization_grant_contradiction(managed_context, role):
     """Replay cannot reuse a binding after its selected authorization changes grant."""
     context = managed_context
+    _assert_lineage_integrity_is_installed(context.repository)
     child = context.admission.admit_managed_lineage(
         _managed_handoff(context, key=f"v23-replay-grant-{role}")
     )
@@ -1071,15 +1133,11 @@ def test_v23_replay_rejects_authorization_grant_contradiction(managed_context, r
         ),
         expires_at=time.time() + 300,
     )
-    with context.repository.transaction() as connection:
-        trigger = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type='trigger' "
-            "AND name='work_origin_authorizations_immutable_update'"
-        ).fetchone()[0]
-        connection.execute("DROP TRIGGER work_origin_authorizations_immutable_update")
+    with _owner_transaction(context.repository) as connection:
+        trigger = _drop_trigger(connection, "work_origin_authorizations_immutable_update")
         connection.execute(
-            "UPDATE work_origin_authorizations SET grant_id=?, grant_revision=? "
-            "WHERE subject_id=? AND origin_kind=? AND revision=?",
+            "UPDATE work_origin_authorizations SET grant_id=%s, grant_revision=%s "
+            "WHERE subject_id=%s AND origin_kind=%s AND revision=%s",
             (
                 alternate.id,
                 alternate.revision,
@@ -1105,27 +1163,22 @@ def test_v23_replay_rejects_authorization_grant_contradiction(managed_context, r
     assert child["id"] == context.repository.get_work(child["id"])["id"]
 
 
-def test_v23_integrity_fingerprint_rejects_coherent_active_receiver_swap(managed_context):
+def test_integrity_fingerprint_rejects_coherent_active_receiver_swap(managed_context):
     """Another active same-job receiver cannot replace the receiver originally admitted."""
-    repository_module = importlib.import_module("cli_agent_orchestrator.clients.work_repository")
-    _assert_v23_lineage_integrity_is_installed(repository_module)
     context = managed_context
+    _assert_lineage_integrity_is_installed(context.repository)
     child = context.admission.admit_managed_lineage(_managed_handoff(context, key="v23-swap"))
     attempt = child["attempts"][0]
     receiver, subject, authorization = _alternate_subject(
         context, name="v23-other-receiver", kind="receiver", actions={"task_received"}
     )
-    with context.repository.transaction() as connection:
-        trigger = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type='trigger' "
-            "AND name='work_child_origin_bindings_immutable_update'"
-        ).fetchone()[0]
-        connection.execute("DROP TRIGGER work_child_origin_bindings_immutable_update")
+    with _owner_transaction(context.repository) as connection:
+        trigger = _drop_trigger(connection, "work_child_origin_bindings_immutable_update")
         connection.execute(
-            "UPDATE work_child_origin_bindings SET receiver_subject_id=?, "
-            "receiver_subject_revision=?, receiver_authorization_revision=?, "
-            "receiver_grant_id=?, receiver_grant_revision=? "
-            "WHERE child_attempt_id=? AND child_generation=?",
+            "UPDATE work_child_origin_bindings SET receiver_subject_id=%s, "
+            "receiver_subject_revision=%s, receiver_authorization_revision=%s, "
+            "receiver_grant_id=%s, receiver_grant_revision=%s "
+            "WHERE child_attempt_id=%s AND child_generation=%s",
             (
                 receiver.id,
                 subject.revision,
@@ -1144,16 +1197,8 @@ def test_v23_integrity_fingerprint_rejects_coherent_active_receiver_swap(managed
         )
 
 
-def test_v22_managed_history_has_no_v23_companion_and_cannot_replay(tmp_path, monkeypatch):
-    """Migrating a managed v22 row preserves history but never promotes its authority."""
-    repository_module = importlib.import_module("cli_agent_orchestrator.clients.work_repository")
-    verified_schema = repository_module.WorkRepository._verify
-
-    def verify_v22(connection, *, version=None):
-        return verified_schema(connection, version=22 if version is None else version)
-
-    monkeypatch.setattr(repository_module, "SCHEMA_VERSION", 22)
-    monkeypatch.setattr(repository_module.WorkRepository, "_verify", staticmethod(verify_v22))
+def test_managed_lineage_without_integrity_companion_fails_closed(tmp_path, monkeypatch):
+    """A managed row without its immutable integrity companion is never replayed."""
     context = _managed_context(tmp_path)
     origins = context.origin_module.WorkOrigins(context.repository)
     monkeypatch.setattr(origins, "_persist_integrity", lambda *_args: None)
@@ -1162,9 +1207,6 @@ def test_v22_managed_history_has_no_v23_companion_and_cannot_replay(tmp_path, mo
     )
     attempt = child["attempts"][0]
 
-    monkeypatch.setattr(repository_module, "SCHEMA_VERSION", 23)
-    monkeypatch.setattr(repository_module.WorkRepository, "_verify", staticmethod(verified_schema))
-    context.repository.initialize()
     assert _lineage_integrity(context.repository, attempt) is None
     with pytest.raises(ContractConflict, match="integrity"):
         WorkContracts(context.repository).revalidate_order(
@@ -1176,21 +1218,16 @@ def test_v22_managed_history_has_no_v23_companion_and_cannot_replay(tmp_path, mo
         )
 
 
-def test_v23_managed_without_companion_fails_closed_but_legacy_stays_readable(managed_context):
-    """No v22 managed row is promoted merely because the v23 table now exists."""
-    repository_module = importlib.import_module("cli_agent_orchestrator.clients.work_repository")
-    _assert_v23_lineage_integrity_is_installed(repository_module)
+def test_managed_without_companion_fails_closed_but_legacy_stays_readable(managed_context):
+    """No managed row is promoted merely because the companion table exists."""
     context = managed_context
+    _assert_lineage_integrity_is_installed(context.repository)
     child = context.admission.admit_managed_lineage(_managed_handoff(context, key="v23-missing"))
     attempt = child["attempts"][0]
-    with context.repository.transaction() as connection:
-        trigger = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type='trigger' "
-            "AND name='work_lineage_integrity_immutable_delete'"
-        ).fetchone()[0]
-        connection.execute("DROP TRIGGER work_lineage_integrity_immutable_delete")
+    with _owner_transaction(context.repository) as connection:
+        trigger = _drop_trigger(connection, "work_lineage_integrity_immutable_delete")
         connection.execute(
-            "DELETE FROM work_lineage_integrity WHERE child_attempt_id=? AND child_generation=?",
+            "DELETE FROM work_lineage_integrity WHERE child_attempt_id=%s AND child_generation=%s",
             (attempt["id"], attempt["generation"]),
         )
         connection.execute(trigger)
@@ -1202,11 +1239,10 @@ def test_v23_managed_without_companion_fails_closed_but_legacy_stays_readable(ma
     assert context.repository.get_work(context.parent["id"])["lineage_protocol"] == "legacy"
 
 
-def test_v23_integrity_insert_failure_rolls_back_every_managed_row(managed_context, monkeypatch):
-    """The companion is in the same SQLite commit as binding, delivery, projection, and queue."""
-    repository_module = importlib.import_module("cli_agent_orchestrator.clients.work_repository")
-    _assert_v23_lineage_integrity_is_installed(repository_module)
+def test_integrity_insert_failure_rolls_back_every_managed_row(managed_context, monkeypatch):
+    """The companion is in the same PostgreSQL transaction as the managed rows."""
     context = managed_context
+    _assert_lineage_integrity_is_installed(context.repository)
     origins = context.origin_module.WorkOrigins(context.repository)
     before = _counts(context.repository)
     original = origins._persist_integrity
@@ -1231,7 +1267,7 @@ def test_managed_lineage_never_substitutes_the_latest_parent_attempt(managed_con
         connection.execute(
             "INSERT INTO work_attempts "
             "(id,work_item_id,attempt_number,generation,provider,lease_expires_at,created_at) "
-            "VALUES ('lineage-parent-replacement',?,2,2,'mock_cli',?,?)",
+            "VALUES ('lineage-parent-replacement',%s,2,2,'mock_cli',%s,%s)",
             (context.parent["id"], time.time() + 300, time.time()),
         )
     before = _counts(context.repository)
@@ -1501,14 +1537,10 @@ def test_managed_lineage_contradictory_binding_and_cycle_fail_closed(managed_con
     context = managed_context
     child = context.admission.admit_managed_lineage(_managed_handoff(context))
     attempt = child["attempts"][0]
-    with context.repository.transaction() as connection:
-        trigger = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type='trigger' "
-            "AND name='work_child_origin_bindings_immutable_update'"
-        ).fetchone()[0]
-        connection.execute("DROP TRIGGER work_child_origin_bindings_immutable_update")
+    with _owner_transaction(context.repository) as connection:
+        trigger = _drop_trigger(connection, "work_child_origin_bindings_immutable_update")
         connection.execute(
-            "UPDATE work_child_origin_bindings SET child_contract_hash=?",
+            "UPDATE work_child_origin_bindings SET child_contract_hash=%s",
             ("0" * 64,),
         )
         connection.execute(trigger)
@@ -1517,21 +1549,17 @@ def test_managed_lineage_contradictory_binding_and_cycle_fail_closed(managed_con
             attempt["id"], generation=attempt["generation"]
         )
 
-    with context.repository.transaction() as connection:
-        trigger = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type='trigger' "
-            "AND name='work_child_origin_bindings_immutable_update'"
-        ).fetchone()[0]
-        connection.execute("DROP TRIGGER work_child_origin_bindings_immutable_update")
+    with _owner_transaction(context.repository) as connection:
+        trigger = _drop_trigger(connection, "work_child_origin_bindings_immutable_update")
         connection.execute(
             "UPDATE work_child_origin_bindings SET child_contract_hash=("
             "SELECT contract_hash FROM work_dispatch_bindings "
-            "WHERE attempt_id=? AND generation=?)",
+            "WHERE attempt_id=%s AND generation=%s)",
             (attempt["id"], attempt["generation"]),
         )
         connection.execute(trigger)
         connection.execute(
-            "UPDATE work_items SET parent_work_item_id=? WHERE id=?",
+            "UPDATE work_items SET parent_work_item_id=%s WHERE id=%s",
             (child["id"], context.parent["id"]),
         )
     with pytest.raises(ContractConflict):
@@ -1573,7 +1601,7 @@ def test_managed_lineage_reopen_preserves_planned_evidence_without_sending(manag
     """Reopening only reads planned lineage/delivery evidence; it never runs the adapter."""
     context = managed_context
     child = context.admission.admit_managed_lineage(_managed_handoff(context, key="reopen"))
-    reopened = WorkRepository(context.repository.path)
+    reopened = WorkRepository(context.repository.target)
     reopened.initialize()
     recovered = reopened.get_work(child["id"])
     assert recovered["attempts"][0]["state"] == "planned"
@@ -1605,26 +1633,17 @@ def test_managed_lineage_missing_or_contradictory_marker_fails_contract_revalida
     context = managed_context
     child = context.admission.admit_managed_lineage(_managed_handoff(context))
     attempt = child["attempts"][0]
-    with context.repository.transaction() as connection:
+    with _owner_transaction(context.repository) as connection:
         if "bindings" in mutation:
-            integrity_trigger = connection.execute(
-                "SELECT sql FROM sqlite_master WHERE type='trigger' "
-                "AND name='work_lineage_integrity_immutable_delete'"
-            ).fetchone()[0]
-            connection.execute("DROP TRIGGER work_lineage_integrity_immutable_delete")
+            integrity_trigger = _drop_trigger(connection, "work_lineage_integrity_immutable_delete")
             connection.execute("DELETE FROM work_lineage_integrity")
             connection.execute(integrity_trigger)
-            projection_trigger = connection.execute(
-                "SELECT sql FROM sqlite_master WHERE type='trigger' "
-                "AND name='work_lineage_projection_intents_immutable_delete'"
-            ).fetchone()[0]
-            connection.execute("DROP TRIGGER work_lineage_projection_intents_immutable_delete")
+            projection_trigger = _drop_trigger(
+                connection, "work_lineage_projection_intents_immutable_delete"
+            )
             connection.execute("DELETE FROM work_lineage_projection_intents")
             connection.execute(projection_trigger)
-        trigger_sql = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?", (trigger_name,)
-        ).fetchone()[0]
-        connection.execute(f"DROP TRIGGER {trigger_name}")
+        trigger_sql = _drop_trigger(connection, trigger_name)
         connection.execute(mutation)
         connection.execute(trigger_sql)
 
@@ -1673,7 +1692,7 @@ def test_attempt_credential_keeps_only_digest_and_rechecks_live_grant(managed_co
         authenticated = owner.authenticate_in_transaction(connection, issued.secret)
         row = connection.execute(
             "SELECT credential_sha256 FROM work_attempt_credentials "
-            "WHERE attempt_id=? AND generation=?",
+            "WHERE attempt_id=%s AND generation=%s",
             (sent_attempt["id"], sent_attempt["generation"]),
         ).fetchone()
 
@@ -1812,12 +1831,12 @@ def test_dispatch_durably_issues_secret_fd_before_delivery(managed_context):
     with context.repository.read_snapshot() as connection:
         credential = connection.execute(
             "SELECT credential_sha256,attempt_revision FROM work_attempt_credentials "
-            "WHERE attempt_id=? AND generation=?",
+            "WHERE attempt_id=%s AND generation=%s",
             (attempt["id"], attempt["generation"]),
         ).fetchone()
         assert (
             connection.execute(
-                "SELECT state FROM work_attempts WHERE id=?", (attempt["id"],)
+                "SELECT state FROM work_attempts WHERE id=%s", (attempt["id"],)
             ).fetchone()[0]
             == "sent"
         )
@@ -1864,26 +1883,59 @@ def test_receiver_credential_acknowledges_exact_delivery_atomically(managed_cont
         "params": {"name": "cao.work.task_received", "arguments": {}},
     }
 
-    with context.repository.transaction() as connection:
-        connection.execute("""CREATE TRIGGER reject_t019_ack BEFORE UPDATE OF state ON work_attempts
-               WHEN NEW.state='acknowledged'
-               BEGIN SELECT RAISE(ABORT, 'injected ACK failure'); END""")
+    with _owner_transaction(context.repository) as connection:
+        connection.execute(
+            sql.SQL(
+                "CREATE FUNCTION {}.reject_t019_ack() RETURNS trigger "
+                "LANGUAGE plpgsql AS $$ BEGIN "
+                "IF NEW.state='acknowledged' THEN "
+                "RAISE EXCEPTION 'injected ACK failure'; END IF; "
+                "RETURN NEW; END $$"
+            ).format(sql.Identifier(connection.target.schema))
+        )
+        connection.execute(
+            sql.SQL(
+                "CREATE TRIGGER reject_t019_ack BEFORE UPDATE OF state ON {}.work_attempts "
+                "FOR EACH ROW EXECUTE FUNCTION {}.reject_t019_ack()"
+            ).format(
+                sql.Identifier(connection.target.schema),
+                sql.Identifier(connection.target.schema),
+            )
+        )
     rejected = origins.handle_mcp_request(
         request, attempt_credential, receiver_credential=receiver_credential
     )
     assert "error" in rejected
-    assert context.repository.get_work(child["id"])["attempts"][0]["state"] == "sent"
-    with context.repository.read_snapshot() as connection:
+    # The injected trigger intentionally changes the component fingerprint, so
+    # inspect the rollback result through the migration connection until its
+    # DDL has been removed. Runtime repository reads must fail closed meanwhile.
+    with _owner_transaction(context.repository) as connection:
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_task_receiver_acceptances WHERE attempt_id=?",
+                "SELECT state FROM work_attempts WHERE id=%s", (attempt["id"],)
+            ).fetchone()["state"]
+            == "sent"
+        )
+    with _owner_transaction(context.repository) as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_task_receiver_acceptances WHERE attempt_id=%s",
                 (attempt["id"],),
             ).fetchone()[0]
             == 0
         )
 
-    with context.repository.transaction() as connection:
-        connection.execute("DROP TRIGGER reject_t019_ack")
+    with _owner_transaction(context.repository) as connection:
+        connection.execute(
+            sql.SQL("DROP TRIGGER reject_t019_ack ON {}.work_attempts").format(
+                sql.Identifier(connection.target.schema)
+            )
+        )
+        connection.execute(
+            sql.SQL("DROP FUNCTION {}.reject_t019_ack()").format(
+                sql.Identifier(connection.target.schema)
+            )
+        )
     acknowledged = origins.handle_mcp_request(
         request, attempt_credential, receiver_credential=receiver_credential
     )
@@ -1892,14 +1944,14 @@ def test_receiver_credential_acknowledges_exact_delivery_atomically(managed_cont
     with context.repository.read_snapshot() as connection:
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_task_receiver_acceptances WHERE attempt_id=?",
+                "SELECT count(*) FROM work_task_receiver_acceptances WHERE attempt_id=%s",
                 (attempt["id"],),
             ).fetchone()[0]
             == 1
         )
         assert (
             connection.execute(
-                "SELECT count(*) FROM work_task_received_receipts WHERE attempt_id=?",
+                "SELECT count(*) FROM work_task_received_receipts WHERE attempt_id=%s",
                 (attempt["id"],),
             ).fetchone()[0]
             == 1
