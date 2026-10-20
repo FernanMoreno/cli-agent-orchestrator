@@ -42,3 +42,9 @@ The unchanged isolated test subsequently passed once normally and once under cPr
 The four preserved Apps bundles passed the JIT scan and size preflight. Another Claude diagnosis failed on session quota and is not recorded as completed. Luna's read-only review identified measurement limitations and did not approve a performance change. At this documentation freeze, the complete eight-worker comparison required by Spec021/T083 had not run on the next sealed tree; no pending gate is closed by this paragraph.
 
 The next publication comparison preserves the normal hook marker exclusions (`e2e` and `integration`) with eight workers. It cannot be presented as unfiltered T083 acceptance, and T083/T076 remain open.
+
+## Completed attempt 7 — normal pre-push selection
+
+The sealed tree `d0dd2e3a0240049af5070a144c092e0c8156f15a` completed the normal eight-worker backend selection in 3,020.04 seconds: **18,263 passed, one failed, 83 skipped, 120 warnings and 71 successful subtests**. The sole failure remained `test_roundtrip_runs_under_one_second`, at **2.200422219990287 seconds** against `< 1.0`. Initial available memory was 8,270 MiB. The source, assertions, coverage options and project marker exclusions were unchanged. This is a completed publication-hook comparison, not unfiltered T083 or provider acceptance.
+
+The displayed 87% coverage is rounded; the statement counts yield 86.913605%, which does not establish the separate global 87% floor. JUnit SHA-256: `0cbf7f0e8cebd38d3bf3e0191f4eaca19d7097271977cf2e1313b41fb87a87b7`. Husky rejected the actual push with exit 1 before JIT/size execution. No bypass, successful push, demonstrated performance cause or performance correction is recorded. The preserved serial and parallel failures remain open evidence; see [the updated NFR record](../021-postgresql-persistence/publication-nfr-20261020.md).

@@ -1,6 +1,6 @@
 # Codex: análisis y pendientes
 
-Publicación, 2026-10-20: la ejecución serial del gate común reprodujo el NFR de memoria a 1,010 s frente al límite de 1 s. Es un diagnóstico parcial del backend, separado de los perfiles y recorridos Codex. [Resultados y límites de evidencia](../specs/021-postgresql-persistence/publication-nfr-20261020.md).
+Publicación, 2026-10-20: el gate común reprodujo el NFR de memoria a 1,010 s en el diagnóstico serial y a 2,200 s en la ejecución completa con ocho trabajadores, frente al límite de 1 s. Esta última terminó con 18.263 pruebas correctas, una fallida y 83 omitidas; el push fue rechazado. Es evidencia del backend, separado de los perfiles y recorridos Codex. [Resultados y límites de evidencia](../specs/021-postgresql-persistence/publication-nfr-20261020.md).
 
 Fecha de revisión: 2026-10-20. Lista de trabajo, sin activación de herramientas ni cambios de permisos. No se aplica la división v1/v2 de OpenCode: aquí se debe registrar la versión concreta del CLI probado.
 

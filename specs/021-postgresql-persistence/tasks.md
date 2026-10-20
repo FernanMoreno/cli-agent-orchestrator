@@ -458,3 +458,9 @@ one failure and 65 skips. Two focused diagnostic processes passed; no cause
 or product correction is demonstrated. Preserve the failed receipt and see
 [the publication NFR record](publication-nfr-20261020.md). The complete
 eight-worker T083 comparison, cold cohort and aggregate gates remain separate.
+
+The subsequent normal eight-worker hook completed: 18,263 passed, one failed,
+83 skipped and 71 successful subtests in 3,020.04 s. The unchanged T081 timer
+failed at 2.200422219990287 s. Its displayed 87% coverage rounds 86.913605%;
+neither that display nor the marker-filtered selection establishes T083.
+The push was rejected; T076/T081/T083 remain open, with no performance fix.

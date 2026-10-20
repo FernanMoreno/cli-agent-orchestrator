@@ -25,3 +25,13 @@ FR-044 remains unchanged: fresh verification of all nine manifest families, 21 W
 At this documentation freeze, the complete unfiltered eight-worker backend comparison specified by T083 had not run on the next sealed tree. It must retain every assertion and ordinary coverage option and report failures/skips honestly. A passing comparison would not retrospectively pass this serial diagnostic, prove its cause, replace three independent cold covered runs, or close T076/T081/T083 by itself. No QEMU, historical reconciliation or live provider job is authorized by this diagnostic.
 
 The next publication attempt uses eight workers with the normal hook selection, which excludes `e2e` and `integration` through project addopts. It is a controlled comparison of the publication gate, not the unfiltered T083 run. These are distinct requirements; T083/T076 remain open even if that hook passes.
+
+## Completed normal-hook comparison: attempt 7
+
+The next sealed tree was `d0dd2e3a0240049af5070a144c092e0c8156f15a`. Its normal pre-push backend selection completed with eight workers and `loadfile` scheduling, unchanged project marker exclusions and coverage, the same locked all-extras environment and the same verified PostgreSQL container. Initial available memory was 8,270 MiB. This is not the unfiltered T083 selection.
+
+The result was **18,263 passed, one failed, 83 skipped, 120 warnings and 71 successful subtests in 3,020.04 seconds**. The sole failure was the unchanged round-trip assertion at **2.200422219990287 seconds**, against `< 1.0`. The source did not change during execution. This reproduces the loaded failure; it does not identify its cause. The whole suite completed without a diagnostic interrupt.
+
+The coverage table displayed 87% after rounding: 79,021 statements and 10,341 misses give **86.913605%** statement coverage. That rounded display must not be used as evidence that the separate 87% global floor passed. The normal hook does not enforce that global floor. T076/T081/T083 remain open.
+
+The preserved JUnit SHA-256 is `0cbf7f0e8cebd38d3bf3e0191f4eaca19d7097271977cf2e1313b41fb87a87b7`. The actual Git push returned 1 because Husky's Python step failed; JIT and size checks were not reached in that hook. Their prior separate preflight passes remain separate evidence. No hook was bypassed and no successful push occurred. There is no new performance correction that would justify repeating this unchanged publication attempt.
