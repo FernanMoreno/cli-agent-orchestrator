@@ -1,0 +1,18 @@
+Original evidence: /tmp/spec008-kas-production-final.log
+Original SHA256: 4d7cc8922352c09d8d45e1d6df49eacd5af726a83633052020b306e3b346a1f4
+Original bytes: 1233
+Retained final tail; not a new execution or complete transcript.
+
+........................................................................ [ 24%]
+........................................................................ [ 48%]
+........................................................................ [ 72%]
+........................................................................ [ 96%]
+...........                                                              [100%]
+=============================== warnings summary ===============================
+../../../../../Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323
+../../../../../Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323
+  /mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+299 passed, 2 warnings in 37.69s

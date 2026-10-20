@@ -1,0 +1,13 @@
+{
+  "provider": "copilot_cli",
+  "root": "/var/tmp/cao-spec008-repair-copilot-r1wu1iny",
+  "status": "initialization_unavailable",
+  "notes_before": "9540bfae64b96d11a5d146ca2008d733b816518fa5b8c56f5e7597941d97ca59",
+  "install_http": 200,
+  "create_http": 500,
+  "error": {
+    "detail": "Failed to create session: Copilot executable probe failed (exit 127): /mnt/c/Users/ferna/AppData/Roaming/Code/User/globalStorage/github.copilot-chat/copilotCli/copilot: 2: exec: /c/Users/ferna/AppData/Roaming/Code/User/globalStorage/github.copilot-chat/copilotCli/copilot.bat: not found"
+  },
+  "notes_preserved": true,
+  "closed": true
+}

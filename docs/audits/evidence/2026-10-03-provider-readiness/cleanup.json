@@ -1,0 +1,12 @@
+{
+  "owned_copilot_sessions_removed": [
+    "0e6eb665-7322-43c9-b1fb-75ed6c3cdad2",
+    "80bdbc58-02cc-4e29-9a39-489d24eb9179"
+  ],
+  "empty_test_tmux_server_closed": true,
+  "native_credential_copies_removed": true,
+  "installation_binaries_retained": true,
+  "temporary_root_absent": true,
+  "temporary_pointer_absent": true,
+  "notes_after_sha256": "9540bfae64b96d11a5d146ca2008d733b816518fa5b8c56f5e7597941d97ca59"
+}

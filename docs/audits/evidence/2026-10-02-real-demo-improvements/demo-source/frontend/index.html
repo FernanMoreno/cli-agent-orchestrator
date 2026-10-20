@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mis Notas</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="contenedor">
+    <h1>Mis Notas</h1>
+    <div id="error" class="error" role="alert" hidden></div>
+    <form id="form-nota">
+      <label for="input-nota" class="sr-only">Texto de la nueva nota</label>
+      <input type="text" id="input-nota" placeholder="Escribe una nota..." maxlength="2000" required>
+      <button type="submit" id="btn-agregar">Añadir</button>
+    </form>
+    <div class="controles">
+      <div class="campo">
+        <label for="buscar-nota">Buscar</label>
+        <input type="search" id="buscar-nota" placeholder="Buscar por texto...">
+      </div>
+      <div class="campo">
+        <label for="filtro-notas">Filtro</label>
+        <select id="filtro-notas">
+          <option value="todas">Todas</option>
+          <option value="pendientes">Pendientes</option>
+          <option value="completadas">Completadas</option>
+        </select>
+      </div>
+    </div>
+    <p id="contadores" class="contadores" aria-live="polite">Total: 0 · Pendientes: 0</p>
+    <ul id="lista-notas"></ul>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

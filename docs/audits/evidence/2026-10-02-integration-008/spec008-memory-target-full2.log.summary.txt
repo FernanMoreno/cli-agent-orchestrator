@@ -1,0 +1,15 @@
+Original evidence: /tmp/spec008-memory-target-full2.log
+Original SHA256: 92eec96693c988ba0550ba8ad8b65a5a988dace5b3f7fc266e3485075166ad93
+Original bytes: 986
+This is a retained tail, not a new execution or a complete transcript.
+
+........................................................................ [ 74%]
+.........................                                                [100%]
+=============================== warnings summary ===============================
+test/services/test_integration_008_memory_review.py::test_marker_concurrent_resolution_publishes_one_private_identity
+test/services/test_integration_008_memory_review.py::test_marker_concurrent_resolution_publishes_one_private_identity
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+97 passed, 2 warnings in 25.17s

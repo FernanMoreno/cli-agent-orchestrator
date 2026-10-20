@@ -1,0 +1,2613 @@
+{
+  "root": "/var/tmp/cao-spec008-autonomy-mqwb6edp",
+  "project": "/mnt/c/users/ferna/onedrive/escritorio/cao-turn-recovery-demo-20261002-f9086a25",
+  "branch": "main",
+  "port": 45789,
+  "started_at": 1790933277.9151824,
+  "phases": [
+    {
+      "number": 1,
+      "kind": "normal",
+      "status": "invalid_harness_early_teardown",
+      "initial_orders": 1,
+      "snapshots": [
+        {
+          "at": "2026-10-02T09:28:24Z",
+          "children": [],
+          "turns": [
+            {
+              "terminal_id": "15bb3f62",
+              "generation": "aabab0a2a29ad9a0b0e6faf662f6fd95",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:28:21.925109"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "15bb3f62",
+              "generation": "aabab0a2a29ad9a0b0e6faf662f6fd95",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:28:21.925109",
+              "verified_at": null
+            }
+          ],
+          "messages": [],
+          "intents": [],
+          "terminals": [
+            {
+              "id": "15bb3f62",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-1",
+              "tmux_window": "auto-supervisor-80ff",
+              "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+            }
+          ]
+        },
+        {
+          "at": "2026-10-02T09:28:44Z",
+          "children": [
+            {
+              "id": "c9c4200f-e9c0-479c-9e9d-03584d934e00",
+              "parent_terminal_id": "15bb3f62",
+              "terminal_id": "a83f35d4",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "state": "planned",
+              "error_kind": null,
+              "settled_at": null
+            }
+          ],
+          "turns": [
+            {
+              "terminal_id": "15bb3f62",
+              "generation": "aabab0a2a29ad9a0b0e6faf662f6fd95",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:28:21.925109"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "15bb3f62",
+              "generation": "aabab0a2a29ad9a0b0e6faf662f6fd95",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:28:21.925109",
+              "verified_at": null
+            }
+          ],
+          "messages": [],
+          "intents": [
+            {
+              "assignment_id": "assignment_d239d778b511d2ddec4d599544b5b010bf6b0b6483199e69430509d67f652f64",
+              "parent_terminal_id": "15bb3f62",
+              "operation_key": "mqwb6edp-1-assign-auto-api",
+              "state": "submitted",
+              "request_hash": "051f3f1e234be7f42815473c713bada582792abd60387e7977c1f429f0aa8dc3"
+            }
+          ],
+          "terminals": [
+            {
+              "id": "15bb3f62",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-1",
+              "tmux_window": "auto-supervisor-80ff",
+              "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+            },
+            {
+              "id": "a83f35d4",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "tmux_session": "cao-auto-mqwb6edp-1",
+              "tmux_window": "auto-api-f00a",
+              "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+            }
+          ]
+        },
+        {
+          "at": "2026-10-02T09:28:54Z",
+          "children": [
+            {
+              "id": "c9c4200f-e9c0-479c-9e9d-03584d934e00",
+              "parent_terminal_id": "15bb3f62",
+              "terminal_id": "a83f35d4",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "state": "running",
+              "error_kind": null,
+              "settled_at": null
+            },
+            {
+              "id": "a439cd2c-87fb-4b57-aeb1-da5b0d96b9c6",
+              "parent_terminal_id": "15bb3f62",
+              "terminal_id": "599f1a53",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "state": "planned",
+              "error_kind": null,
+              "settled_at": null
+            }
+          ],
+          "turns": [
+            {
+              "terminal_id": "15bb3f62",
+              "generation": "aabab0a2a29ad9a0b0e6faf662f6fd95",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:28:21.925109"
+            },
+            {
+              "terminal_id": "a83f35d4",
+              "generation": "8e7fd655ede5e657f75fc85dbb4d4a51",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:28:51.584494"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "15bb3f62",
+              "generation": "aabab0a2a29ad9a0b0e6faf662f6fd95",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:28:21.925109",
+              "verified_at": null
+            },
+            {
+              "terminal_id": "a83f35d4",
+              "generation": "8e7fd655ede5e657f75fc85dbb4d4a51",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:28:51.584494",
+              "verified_at": null
+            }
+          ],
+          "messages": [],
+          "intents": [
+            {
+              "assignment_id": "assignment_d239d778b511d2ddec4d599544b5b010bf6b0b6483199e69430509d67f652f64",
+              "parent_terminal_id": "15bb3f62",
+              "operation_key": "mqwb6edp-1-assign-auto-api",
+              "state": "submitted",
+              "request_hash": "051f3f1e234be7f42815473c713bada582792abd60387e7977c1f429f0aa8dc3"
+            },
+            {
+              "assignment_id": "assignment_83cce52c1cae29b45e29a38c518a48561bb224df840160de9b526516b06e9cf9",
+              "parent_terminal_id": "15bb3f62",
+              "operation_key": "mqwb6edp-1-assign-auto-web",
+              "state": "submitted",
+              "request_hash": "d8663478bab5df7bf8c51d967d83ab9f2f44f7e514a5f7746aaa97e45867981b"
+            }
+          ],
+          "terminals": [
+            {
+              "id": "15bb3f62",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-1",
+              "tmux_window": "auto-supervisor-80ff",
+              "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+            },
+            {
+              "id": "599f1a53",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "tmux_session": "cao-auto-mqwb6edp-1",
+              "tmux_window": "auto-web-5272",
+              "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+            },
+            {
+              "id": "a83f35d4",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "tmux_session": "cao-auto-mqwb6edp-1",
+              "tmux_window": "auto-api-f00a",
+              "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+            }
+          ]
+        },
+        {
+          "at": "2026-10-02T09:28:59Z",
+          "children": [
+            {
+              "id": "c9c4200f-e9c0-479c-9e9d-03584d934e00",
+              "parent_terminal_id": "15bb3f62",
+              "terminal_id": "a83f35d4",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "state": "running",
+              "error_kind": null,
+              "settled_at": null
+            },
+            {
+              "id": "a439cd2c-87fb-4b57-aeb1-da5b0d96b9c6",
+              "parent_terminal_id": "15bb3f62",
+              "terminal_id": "599f1a53",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "state": "running",
+              "error_kind": null,
+              "settled_at": null
+            }
+          ],
+          "turns": [
+            {
+              "terminal_id": "15bb3f62",
+              "generation": "aabab0a2a29ad9a0b0e6faf662f6fd95",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:28:21.925109"
+            },
+            {
+              "terminal_id": "a83f35d4",
+              "generation": "8e7fd655ede5e657f75fc85dbb4d4a51",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:28:51.584494"
+            },
+            {
+              "terminal_id": "599f1a53",
+              "generation": "2b07dde483ea91838c9b3408b5ae94a6",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:28:56.288166"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "15bb3f62",
+              "generation": "aabab0a2a29ad9a0b0e6faf662f6fd95",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:28:21.925109",
+              "verified_at": null
+            },
+            {
+              "terminal_id": "599f1a53",
+              "generation": "2b07dde483ea91838c9b3408b5ae94a6",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:28:56.288166",
+              "verified_at": null
+            },
+            {
+              "terminal_id": "a83f35d4",
+              "generation": "8e7fd655ede5e657f75fc85dbb4d4a51",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:28:51.584494",
+              "verified_at": null
+            }
+          ],
+          "messages": [
+            {
+              "id": 1,
+              "sender_id": "15bb3f62",
+              "receiver_id": "a83f35d4",
+              "message": "ID real de auto-web (frontend): 599f1a53. Envíale tu PEER_CONTRACT con send_message y espera su PEER_ACK en un turno posterior. Tu ID: a83f35d4. Resultados finales a mí (supervisor) por CAO.\n\n[Message from terminal 15bb3f62. Use send_message MCP tool for any follow-up work.]",
+              "status": "pending",
+              "created_at": "2026-10-02 11:28:54.609002"
+            }
+          ],
+          "intents": [
+            {
+              "assignment_id": "assignment_d239d778b511d2ddec4d599544b5b010bf6b0b6483199e69430509d67f652f64",
+              "parent_terminal_id": "15bb3f62",
+              "operation_key": "mqwb6edp-1-assign-auto-api",
+              "state": "submitted",
+              "request_hash": "051f3f1e234be7f42815473c713bada582792abd60387e7977c1f429f0aa8dc3"
+            },
+            {
+              "assignment_id": "assignment_83cce52c1cae29b45e29a38c518a48561bb224df840160de9b526516b06e9cf9",
+              "parent_terminal_id": "15bb3f62",
+              "operation_key": "mqwb6edp-1-assign-auto-web",
+              "state": "submitted",
+              "request_hash": "d8663478bab5df7bf8c51d967d83ab9f2f44f7e514a5f7746aaa97e45867981b"
+            }
+          ],
+          "terminals": [
+            {
+              "id": "15bb3f62",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-1",
+              "tmux_window": "auto-supervisor-80ff",
+              "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+            },
+            {
+              "id": "599f1a53",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "tmux_session": "cao-auto-mqwb6edp-1",
+              "tmux_window": "auto-web-5272",
+              "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+            },
+            {
+              "id": "a83f35d4",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "tmux_session": "cao-auto-mqwb6edp-1",
+              "tmux_window": "auto-api-f00a",
+              "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+            }
+          ]
+        },
+        {
+          "at": "2026-10-02T09:29:04Z",
+          "children": [
+            {
+              "id": "c9c4200f-e9c0-479c-9e9d-03584d934e00",
+              "parent_terminal_id": "15bb3f62",
+              "terminal_id": "a83f35d4",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "state": "running",
+              "error_kind": null,
+              "settled_at": null
+            },
+            {
+              "id": "a439cd2c-87fb-4b57-aeb1-da5b0d96b9c6",
+              "parent_terminal_id": "15bb3f62",
+              "terminal_id": "599f1a53",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "state": "running",
+              "error_kind": null,
+              "settled_at": null
+            }
+          ],
+          "turns": [
+            {
+              "terminal_id": "15bb3f62",
+              "generation": "aabab0a2a29ad9a0b0e6faf662f6fd95",
+              "state": "verified",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": "2026-10-02 09:29:00.079628",
+              "updated_at": "2026-10-02 09:29:00.110881"
+            },
+            {
+              "terminal_id": "a83f35d4",
+              "generation": "8e7fd655ede5e657f75fc85dbb4d4a51",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:28:51.584494"
+            },
+            {
+              "terminal_id": "599f1a53",
+              "generation": "2b07dde483ea91838c9b3408b5ae94a6",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:28:56.288166"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "15bb3f62",
+              "generation": "aabab0a2a29ad9a0b0e6faf662f6fd95",
+              "phase": "result_verified",
+              "created_at": "2026-10-02 09:28:21.925109",
+              "verified_at": "2026-10-02 09:29:00.110881"
+            },
+            {
+              "terminal_id": "599f1a53",
+              "generation": "2b07dde483ea91838c9b3408b5ae94a6",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:28:56.288166",
+              "verified_at": null
+            },
+            {
+              "terminal_id": "a83f35d4",
+              "generation": "8e7fd655ede5e657f75fc85dbb4d4a51",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:28:51.584494",
+              "verified_at": null
+            }
+          ],
+          "messages": [
+            {
+              "id": 1,
+              "sender_id": "15bb3f62",
+              "receiver_id": "a83f35d4",
+              "message": "ID real de auto-web (frontend): 599f1a53. Envíale tu PEER_CONTRACT con send_message y espera su PEER_ACK en un turno posterior. Tu ID: a83f35d4. Resultados finales a mí (supervisor) por CAO.\n\n[Message from terminal 15bb3f62. Use send_message MCP tool for any follow-up work.]",
+              "status": "pending",
+              "created_at": "2026-10-02 11:28:54.609002"
+            }
+          ],
+          "intents": [
+            {
+              "assignment_id": "assignment_d239d778b511d2ddec4d599544b5b010bf6b0b6483199e69430509d67f652f64",
+              "parent_terminal_id": "15bb3f62",
+              "operation_key": "mqwb6edp-1-assign-auto-api",
+              "state": "submitted",
+              "request_hash": "051f3f1e234be7f42815473c713bada582792abd60387e7977c1f429f0aa8dc3"
+            },
+            {
+              "assignment_id": "assignment_83cce52c1cae29b45e29a38c518a48561bb224df840160de9b526516b06e9cf9",
+              "parent_terminal_id": "15bb3f62",
+              "operation_key": "mqwb6edp-1-assign-auto-web",
+              "state": "submitted",
+              "request_hash": "d8663478bab5df7bf8c51d967d83ab9f2f44f7e514a5f7746aaa97e45867981b"
+            }
+          ],
+          "terminals": [
+            {
+              "id": "15bb3f62",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-1",
+              "tmux_window": "auto-supervisor-80ff",
+              "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+            },
+            {
+              "id": "599f1a53",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "tmux_session": "cao-auto-mqwb6edp-1",
+              "tmux_window": "auto-web-5272",
+              "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+            },
+            {
+              "id": "a83f35d4",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "tmux_session": "cao-auto-mqwb6edp-1",
+              "tmux_window": "auto-api-f00a",
+              "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+            }
+          ]
+        }
+      ],
+      "fault": null,
+      "started_at": "2026-10-02T09:28:09Z",
+      "supervisor_id": "15bb3f62",
+      "session_name": "cao-auto-mqwb6edp-1",
+      "completion_marker": "AUTONOMY_COMPLETE_mqwb6edp_1",
+      "initial_prompt": "Proyecto existente: /mnt/c/users/ferna/onedrive/escritorio/cao-turn-recovery-demo-20261002-f9086a25. Añade edición del texto de notas existentes, conservando su ID y estado done, validación 1..2000 tras recorte, y un control accesible Editar/Guardar/Cancelar en cada nota. PATCH debe seguir admitiendo done y ahora permitir text; las peticiones vacías o con valores inválidos se rechazan sin modificar datos. Coordina implementación con auto-api y auto-web, intercambio real de contrato y revisión/validación. No indiques éxito hasta pruebas reales. Preserva notes.json original, no commits/push ni agentes adicionales. Tú debes decidir reparto, instrucciones y coordinación. Usa dos trabajadores exactamente, perfiles auto-api y auto-web. Termina con AUTONOMY_COMPLETE_mqwb6edp_1 sólo después de comprobar los dos recibos succeeded y pruebas correctas. No supongas que el operador ayudará ni lanzará tareas de trabajadores. Cada turno debe terminar con su recibo CAO auténtico.",
+      "initial_http_status": 200,
+      "latest": {
+        "at": "2026-10-02T09:29:04Z",
+        "children": [
+          {
+            "id": "c9c4200f-e9c0-479c-9e9d-03584d934e00",
+            "parent_terminal_id": "15bb3f62",
+            "terminal_id": "a83f35d4",
+            "provider": "codex",
+            "agent_profile": "auto-api",
+            "state": "running",
+            "error_kind": null,
+            "settled_at": null
+          },
+          {
+            "id": "a439cd2c-87fb-4b57-aeb1-da5b0d96b9c6",
+            "parent_terminal_id": "15bb3f62",
+            "terminal_id": "599f1a53",
+            "provider": "opencode_cli",
+            "agent_profile": "auto-web",
+            "state": "running",
+            "error_kind": null,
+            "settled_at": null
+          }
+        ],
+        "turns": [
+          {
+            "terminal_id": "15bb3f62",
+            "generation": "aabab0a2a29ad9a0b0e6faf662f6fd95",
+            "state": "verified",
+            "attempts": 0,
+            "reason": null,
+            "completion_detected_at": "2026-10-02 09:29:00.079628",
+            "updated_at": "2026-10-02 09:29:00.110881"
+          },
+          {
+            "terminal_id": "a83f35d4",
+            "generation": "8e7fd655ede5e657f75fc85dbb4d4a51",
+            "state": "pending",
+            "attempts": 0,
+            "reason": null,
+            "completion_detected_at": null,
+            "updated_at": "2026-10-02 09:28:51.584494"
+          },
+          {
+            "terminal_id": "599f1a53",
+            "generation": "2b07dde483ea91838c9b3408b5ae94a6",
+            "state": "pending",
+            "attempts": 0,
+            "reason": null,
+            "completion_detected_at": null,
+            "updated_at": "2026-10-02 09:28:56.288166"
+          }
+        ],
+        "receipts": [
+          {
+            "terminal_id": "15bb3f62",
+            "generation": "aabab0a2a29ad9a0b0e6faf662f6fd95",
+            "phase": "result_verified",
+            "created_at": "2026-10-02 09:28:21.925109",
+            "verified_at": "2026-10-02 09:29:00.110881"
+          },
+          {
+            "terminal_id": "599f1a53",
+            "generation": "2b07dde483ea91838c9b3408b5ae94a6",
+            "phase": "sent",
+            "created_at": "2026-10-02 09:28:56.288166",
+            "verified_at": null
+          },
+          {
+            "terminal_id": "a83f35d4",
+            "generation": "8e7fd655ede5e657f75fc85dbb4d4a51",
+            "phase": "sent",
+            "created_at": "2026-10-02 09:28:51.584494",
+            "verified_at": null
+          }
+        ],
+        "messages": [
+          {
+            "id": 1,
+            "sender_id": "15bb3f62",
+            "receiver_id": "a83f35d4",
+            "message": "ID real de auto-web (frontend): 599f1a53. Envíale tu PEER_CONTRACT con send_message y espera su PEER_ACK en un turno posterior. Tu ID: a83f35d4. Resultados finales a mí (supervisor) por CAO.\n\n[Message from terminal 15bb3f62. Use send_message MCP tool for any follow-up work.]",
+            "status": "pending",
+            "created_at": "2026-10-02 11:28:54.609002"
+          }
+        ],
+        "intents": [
+          {
+            "assignment_id": "assignment_d239d778b511d2ddec4d599544b5b010bf6b0b6483199e69430509d67f652f64",
+            "parent_terminal_id": "15bb3f62",
+            "operation_key": "mqwb6edp-1-assign-auto-api",
+            "state": "submitted",
+            "request_hash": "051f3f1e234be7f42815473c713bada582792abd60387e7977c1f429f0aa8dc3"
+          },
+          {
+            "assignment_id": "assignment_83cce52c1cae29b45e29a38c518a48561bb224df840160de9b526516b06e9cf9",
+            "parent_terminal_id": "15bb3f62",
+            "operation_key": "mqwb6edp-1-assign-auto-web",
+            "state": "submitted",
+            "request_hash": "d8663478bab5df7bf8c51d967d83ab9f2f44f7e514a5f7746aaa97e45867981b"
+          }
+        ],
+        "terminals": [
+          {
+            "id": "15bb3f62",
+            "provider": "claude_code",
+            "agent_profile": "auto-supervisor",
+            "tmux_session": "cao-auto-mqwb6edp-1",
+            "tmux_window": "auto-supervisor-80ff",
+            "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+          },
+          {
+            "id": "599f1a53",
+            "provider": "opencode_cli",
+            "agent_profile": "auto-web",
+            "tmux_session": "cao-auto-mqwb6edp-1",
+            "tmux_window": "auto-web-5272",
+            "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+          },
+          {
+            "id": "a83f35d4",
+            "provider": "codex",
+            "agent_profile": "auto-api",
+            "tmux_session": "cao-auto-mqwb6edp-1",
+            "tmux_window": "auto-api-f00a",
+            "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+          }
+        ],
+        "supervisor_results": [
+          {
+            "generation": "aabab0a2a29ad9a0b0e6faf662f6fd95",
+            "state": "verified",
+            "result_text": "Ambos trabajadores quedaron asignados. Aún no hay nada implementado ni probado, así que no declaro éxito.\n\n- auto-api (Codex, backend y pruebas): terminal a83f35d4. Asignación assignment_d239d778…, estado submitted.\n- auto-web (OpenCode, frontend): terminal 599f1a53. Asignación assignment_83cce52c…, estado submitted.\n- Mi terminal (supervisor): 15bb3f62.\n\nYa le envié a auto-api el ID de auto-web. auto-api debe mandarle el PEER_CONTRACT, y auto-web responder con PEER_ACK. Los resultados me llegan por CAO.\n\nnotes.json tiene hash md5 74936d0b7a43a5d9df82c89e6a34d4af y debe conservarlo.\n\nCuando lleguen los resultados, revisaré el código real y los recibos de ambos hijos, y ejecutaré las pruebas. Solo entonces emitiré AUTONOMY_COMPLETE_mqwb6edp_1."
+          }
+        ]
+      },
+      "ended_at": "2026-10-02T09:29:04Z",
+      "final": {
+        "at": "2026-10-02T09:29:04Z",
+        "children": [
+          {
+            "id": "c9c4200f-e9c0-479c-9e9d-03584d934e00",
+            "parent_terminal_id": "15bb3f62",
+            "terminal_id": "a83f35d4",
+            "provider": "codex",
+            "agent_profile": "auto-api",
+            "state": "running",
+            "error_kind": null,
+            "settled_at": null
+          },
+          {
+            "id": "a439cd2c-87fb-4b57-aeb1-da5b0d96b9c6",
+            "parent_terminal_id": "15bb3f62",
+            "terminal_id": "599f1a53",
+            "provider": "opencode_cli",
+            "agent_profile": "auto-web",
+            "state": "running",
+            "error_kind": null,
+            "settled_at": null
+          }
+        ],
+        "turns": [
+          {
+            "terminal_id": "15bb3f62",
+            "generation": "aabab0a2a29ad9a0b0e6faf662f6fd95",
+            "state": "verified",
+            "attempts": 0,
+            "reason": null,
+            "completion_detected_at": "2026-10-02 09:29:00.079628",
+            "updated_at": "2026-10-02 09:29:00.110881"
+          },
+          {
+            "terminal_id": "a83f35d4",
+            "generation": "8e7fd655ede5e657f75fc85dbb4d4a51",
+            "state": "pending",
+            "attempts": 0,
+            "reason": null,
+            "completion_detected_at": null,
+            "updated_at": "2026-10-02 09:28:51.584494"
+          },
+          {
+            "terminal_id": "599f1a53",
+            "generation": "2b07dde483ea91838c9b3408b5ae94a6",
+            "state": "pending",
+            "attempts": 0,
+            "reason": null,
+            "completion_detected_at": null,
+            "updated_at": "2026-10-02 09:28:56.288166"
+          }
+        ],
+        "receipts": [
+          {
+            "terminal_id": "15bb3f62",
+            "generation": "aabab0a2a29ad9a0b0e6faf662f6fd95",
+            "phase": "result_verified",
+            "created_at": "2026-10-02 09:28:21.925109",
+            "verified_at": "2026-10-02 09:29:00.110881"
+          },
+          {
+            "terminal_id": "599f1a53",
+            "generation": "2b07dde483ea91838c9b3408b5ae94a6",
+            "phase": "sent",
+            "created_at": "2026-10-02 09:28:56.288166",
+            "verified_at": null
+          },
+          {
+            "terminal_id": "a83f35d4",
+            "generation": "8e7fd655ede5e657f75fc85dbb4d4a51",
+            "phase": "sent",
+            "created_at": "2026-10-02 09:28:51.584494",
+            "verified_at": null
+          }
+        ],
+        "messages": [
+          {
+            "id": 1,
+            "sender_id": "15bb3f62",
+            "receiver_id": "a83f35d4",
+            "message": "ID real de auto-web (frontend): 599f1a53. Envíale tu PEER_CONTRACT con send_message y espera su PEER_ACK en un turno posterior. Tu ID: a83f35d4. Resultados finales a mí (supervisor) por CAO.\n\n[Message from terminal 15bb3f62. Use send_message MCP tool for any follow-up work.]",
+            "status": "pending",
+            "created_at": "2026-10-02 11:28:54.609002"
+          }
+        ],
+        "intents": [
+          {
+            "assignment_id": "assignment_d239d778b511d2ddec4d599544b5b010bf6b0b6483199e69430509d67f652f64",
+            "parent_terminal_id": "15bb3f62",
+            "operation_key": "mqwb6edp-1-assign-auto-api",
+            "state": "submitted",
+            "request_hash": "051f3f1e234be7f42815473c713bada582792abd60387e7977c1f429f0aa8dc3"
+          },
+          {
+            "assignment_id": "assignment_83cce52c1cae29b45e29a38c518a48561bb224df840160de9b526516b06e9cf9",
+            "parent_terminal_id": "15bb3f62",
+            "operation_key": "mqwb6edp-1-assign-auto-web",
+            "state": "submitted",
+            "request_hash": "d8663478bab5df7bf8c51d967d83ab9f2f44f7e514a5f7746aaa97e45867981b"
+          }
+        ],
+        "terminals": [
+          {
+            "id": "15bb3f62",
+            "provider": "claude_code",
+            "agent_profile": "auto-supervisor",
+            "tmux_session": "cao-auto-mqwb6edp-1",
+            "tmux_window": "auto-supervisor-80ff",
+            "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+          },
+          {
+            "id": "599f1a53",
+            "provider": "opencode_cli",
+            "agent_profile": "auto-web",
+            "tmux_session": "cao-auto-mqwb6edp-1",
+            "tmux_window": "auto-web-5272",
+            "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+          },
+          {
+            "id": "a83f35d4",
+            "provider": "codex",
+            "agent_profile": "auto-api",
+            "tmux_session": "cao-auto-mqwb6edp-1",
+            "tmux_window": "auto-api-f00a",
+            "session_incarnation_id": "979ce25548e745f889c5d9a53342443e"
+          }
+        ],
+        "supervisor_results": [
+          {
+            "generation": "aabab0a2a29ad9a0b0e6faf662f6fd95",
+            "state": "verified",
+            "result_text": "Ambos trabajadores quedaron asignados. Aún no hay nada implementado ni probado, así que no declaro éxito.\n\n- auto-api (Codex, backend y pruebas): terminal a83f35d4. Asignación assignment_d239d778…, estado submitted.\n- auto-web (OpenCode, frontend): terminal 599f1a53. Asignación assignment_83cce52c…, estado submitted.\n- Mi terminal (supervisor): 15bb3f62.\n\nYa le envié a auto-api el ID de auto-web. auto-api debe mandarle el PEER_CONTRACT, y auto-web responder con PEER_ACK. Los resultados me llegan por CAO.\n\nnotes.json tiene hash md5 74936d0b7a43a5d9df82c89e6a34d4af y debe conservarlo.\n\nCuando lleguen los resultados, revisaré el código real y los recibos de ambos hijos, y ejecutaré las pruebas. Solo entonces emitiré AUTONOMY_COMPLETE_mqwb6edp_1."
+          }
+        ]
+      },
+      "checks": {
+        "exactly_two_children": true,
+        "expected_providers": true,
+        "children_succeeded": false,
+        "peer_contract_delivered": false,
+        "peer_ack_delivered": false,
+        "both_results_delivered_to_supervisor": false,
+        "all_messages_delivered": false,
+        "no_duplicate_assignment": true,
+        "notes_unchanged": true
+      },
+      "cleanup_http_status": 200
+    },
+    {
+      "number": 2,
+      "kind": "late_receipt",
+      "status": "invalid_harness_early_teardown",
+      "initial_orders": 1,
+      "snapshots": [
+        {
+          "at": "2026-10-02T09:29:18Z",
+          "children": [],
+          "turns": [
+            {
+              "terminal_id": "15c7a11d",
+              "generation": "aaea6b421771700a754646ea5bd1e1ed",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:29:15.791273"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "15c7a11d",
+              "generation": "aaea6b421771700a754646ea5bd1e1ed",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:29:15.791273",
+              "verified_at": null
+            }
+          ],
+          "messages": [],
+          "intents": [],
+          "terminals": [
+            {
+              "id": "15c7a11d",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-2",
+              "tmux_window": "auto-supervisor-a0d1",
+              "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+            }
+          ]
+        },
+        {
+          "at": "2026-10-02T09:29:23Z",
+          "children": [],
+          "turns": [
+            {
+              "terminal_id": "15c7a11d",
+              "generation": "aaea6b421771700a754646ea5bd1e1ed",
+              "state": "verifying",
+              "attempts": 2,
+              "reason": "receipt_result_unverifiable",
+              "completion_detected_at": "2026-10-02 09:29:20.171014",
+              "updated_at": "2026-10-02 09:29:22.322221"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "15c7a11d",
+              "generation": "aaea6b421771700a754646ea5bd1e1ed",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:29:15.791273",
+              "verified_at": null
+            }
+          ],
+          "messages": [],
+          "intents": [],
+          "terminals": [
+            {
+              "id": "15c7a11d",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-2",
+              "tmux_window": "auto-supervisor-a0d1",
+              "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+            }
+          ]
+        },
+        {
+          "at": "2026-10-02T09:29:28Z",
+          "children": [],
+          "turns": [
+            {
+              "terminal_id": "15c7a11d",
+              "generation": "aaea6b421771700a754646ea5bd1e1ed",
+              "state": "reconcile",
+              "attempts": 3,
+              "reason": "receipt_result_unverifiable",
+              "completion_detected_at": "2026-10-02 09:29:20.171014",
+              "updated_at": "2026-10-02 09:29:26.350229"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "15c7a11d",
+              "generation": "aaea6b421771700a754646ea5bd1e1ed",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:29:15.791273",
+              "verified_at": null
+            }
+          ],
+          "messages": [],
+          "intents": [],
+          "terminals": [
+            {
+              "id": "15c7a11d",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-2",
+              "tmux_window": "auto-supervisor-a0d1",
+              "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+            }
+          ]
+        },
+        {
+          "at": "2026-10-02T09:29:38Z",
+          "children": [
+            {
+              "id": "6a98db9b-9c33-4f92-9107-3a4b4cf61264",
+              "parent_terminal_id": "15c7a11d",
+              "terminal_id": "88adbaaa",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "state": "planned",
+              "error_kind": null,
+              "settled_at": null
+            }
+          ],
+          "turns": [
+            {
+              "terminal_id": "15c7a11d",
+              "generation": "aaea6b421771700a754646ea5bd1e1ed",
+              "state": "reconcile",
+              "attempts": 3,
+              "reason": "receipt_result_unverifiable",
+              "completion_detected_at": "2026-10-02 09:29:20.171014",
+              "updated_at": "2026-10-02 09:29:26.350229"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "15c7a11d",
+              "generation": "aaea6b421771700a754646ea5bd1e1ed",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:29:15.791273",
+              "verified_at": null
+            }
+          ],
+          "messages": [],
+          "intents": [
+            {
+              "assignment_id": "assignment_8ce7ae983054a189212295ce4a20d16100102ed443bee985aab283fd5ad351e7",
+              "parent_terminal_id": "15c7a11d",
+              "operation_key": "stats-mqwb6edp-api-v1",
+              "state": "submitted",
+              "request_hash": "719917c1c9f4e897d27e3fc97093541deb759b5be315d7ec85288fe7a2113130"
+            }
+          ],
+          "terminals": [
+            {
+              "id": "15c7a11d",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-2",
+              "tmux_window": "auto-supervisor-a0d1",
+              "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+            },
+            {
+              "id": "88adbaaa",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "tmux_session": "cao-auto-mqwb6edp-2",
+              "tmux_window": "auto-api-f656",
+              "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+            }
+          ]
+        },
+        {
+          "at": "2026-10-02T09:29:43Z",
+          "children": [
+            {
+              "id": "6a98db9b-9c33-4f92-9107-3a4b4cf61264",
+              "parent_terminal_id": "15c7a11d",
+              "terminal_id": "88adbaaa",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "state": "running",
+              "error_kind": null,
+              "settled_at": null
+            },
+            {
+              "id": "2672981e-d5fe-4f5a-b3d6-e64ba79d7f85",
+              "parent_terminal_id": "15c7a11d",
+              "terminal_id": "b493cc82",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "state": "planned",
+              "error_kind": null,
+              "settled_at": null
+            }
+          ],
+          "turns": [
+            {
+              "terminal_id": "15c7a11d",
+              "generation": "aaea6b421771700a754646ea5bd1e1ed",
+              "state": "reconcile",
+              "attempts": 3,
+              "reason": "receipt_result_unverifiable",
+              "completion_detected_at": "2026-10-02 09:29:20.171014",
+              "updated_at": "2026-10-02 09:29:26.350229"
+            },
+            {
+              "terminal_id": "88adbaaa",
+              "generation": "a79d114b5e5838906669663e2338d000",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:29:41.571498"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "15c7a11d",
+              "generation": "aaea6b421771700a754646ea5bd1e1ed",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:29:15.791273",
+              "verified_at": null
+            },
+            {
+              "terminal_id": "88adbaaa",
+              "generation": "a79d114b5e5838906669663e2338d000",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:29:41.571498",
+              "verified_at": null
+            }
+          ],
+          "messages": [
+            {
+              "id": 2,
+              "sender_id": "15c7a11d",
+              "receiver_id": "88adbaaa",
+              "message": "Info del supervisor: el ID real de tu pareja auto-web es b493cc82. Envíale PEER_CONTRACT allí.\n\n[Message from terminal 15c7a11d. Use send_message MCP tool for any follow-up work.]",
+              "status": "pending",
+              "created_at": "2026-10-02 11:29:43.276990"
+            }
+          ],
+          "intents": [
+            {
+              "assignment_id": "assignment_8ce7ae983054a189212295ce4a20d16100102ed443bee985aab283fd5ad351e7",
+              "parent_terminal_id": "15c7a11d",
+              "operation_key": "stats-mqwb6edp-api-v1",
+              "state": "submitted",
+              "request_hash": "719917c1c9f4e897d27e3fc97093541deb759b5be315d7ec85288fe7a2113130"
+            },
+            {
+              "assignment_id": "assignment_bd1e501891af0cdfebbf3482dd602e9923fa98bf2387f78d32afac235e064aa5",
+              "parent_terminal_id": "15c7a11d",
+              "operation_key": "stats-mqwb6edp-web-v1",
+              "state": "submitted",
+              "request_hash": "2ddc389002dc6973784c5330e382c0fb038fc5022878798c518d18d6b0a87e05"
+            }
+          ],
+          "terminals": [
+            {
+              "id": "15c7a11d",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-2",
+              "tmux_window": "auto-supervisor-a0d1",
+              "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+            },
+            {
+              "id": "88adbaaa",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "tmux_session": "cao-auto-mqwb6edp-2",
+              "tmux_window": "auto-api-f656",
+              "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+            },
+            {
+              "id": "b493cc82",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "tmux_session": "cao-auto-mqwb6edp-2",
+              "tmux_window": "auto-web-b3ae",
+              "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+            }
+          ]
+        },
+        {
+          "at": "2026-10-02T09:29:48Z",
+          "children": [
+            {
+              "id": "6a98db9b-9c33-4f92-9107-3a4b4cf61264",
+              "parent_terminal_id": "15c7a11d",
+              "terminal_id": "88adbaaa",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "state": "running",
+              "error_kind": null,
+              "settled_at": null
+            },
+            {
+              "id": "2672981e-d5fe-4f5a-b3d6-e64ba79d7f85",
+              "parent_terminal_id": "15c7a11d",
+              "terminal_id": "b493cc82",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "state": "reconcile",
+              "error_kind": "receipt_delivery_uncertain",
+              "settled_at": "2026-10-02 09:29:46.931038"
+            }
+          ],
+          "turns": [
+            {
+              "terminal_id": "15c7a11d",
+              "generation": "aaea6b421771700a754646ea5bd1e1ed",
+              "state": "reconcile",
+              "attempts": 3,
+              "reason": "receipt_result_unverifiable",
+              "completion_detected_at": "2026-10-02 09:29:20.171014",
+              "updated_at": "2026-10-02 09:29:26.350229"
+            },
+            {
+              "terminal_id": "88adbaaa",
+              "generation": "a79d114b5e5838906669663e2338d000",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:29:41.571498"
+            },
+            {
+              "terminal_id": "b493cc82",
+              "generation": "ab176c1b25e62a611c3818877a08671b",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:29:44.860412"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "15c7a11d",
+              "generation": "aaea6b421771700a754646ea5bd1e1ed",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:29:15.791273",
+              "verified_at": null
+            },
+            {
+              "terminal_id": "88adbaaa",
+              "generation": "a79d114b5e5838906669663e2338d000",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:29:41.571498",
+              "verified_at": null
+            },
+            {
+              "terminal_id": "b493cc82",
+              "generation": "ab176c1b25e62a611c3818877a08671b",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:29:44.860412",
+              "verified_at": null
+            }
+          ],
+          "messages": [
+            {
+              "id": 2,
+              "sender_id": "15c7a11d",
+              "receiver_id": "88adbaaa",
+              "message": "Info del supervisor: el ID real de tu pareja auto-web es b493cc82. Envíale PEER_CONTRACT allí.\n\n[Message from terminal 15c7a11d. Use send_message MCP tool for any follow-up work.]",
+              "status": "pending",
+              "created_at": "2026-10-02 11:29:43.276990"
+            },
+            {
+              "id": 3,
+              "sender_id": "15c7a11d",
+              "receiver_id": "b493cc82",
+              "message": "Info del supervisor: tu pareja auto-api es 88adbaaa (confirmado). Tu ID es b493cc82.\n\n[Message from terminal 15c7a11d. Use send_message MCP tool for any follow-up work.]",
+              "status": "delivered",
+              "created_at": "2026-10-02 11:29:44.124125"
+            },
+            {
+              "id": 4,
+              "sender_id": "b493cc82",
+              "receiver_id": "15c7a11d",
+              "message": "Worker b493cc82 may already have received its assigned task, but CAO cannot safely prove delivery state. It remains live for reconciliation: inspect its output and receipt state first; do not use answer_user_prompt and do not re-send the task automatically.",
+              "status": "pending",
+              "created_at": "2026-10-02 11:29:46.939030"
+            }
+          ],
+          "intents": [
+            {
+              "assignment_id": "assignment_8ce7ae983054a189212295ce4a20d16100102ed443bee985aab283fd5ad351e7",
+              "parent_terminal_id": "15c7a11d",
+              "operation_key": "stats-mqwb6edp-api-v1",
+              "state": "submitted",
+              "request_hash": "719917c1c9f4e897d27e3fc97093541deb759b5be315d7ec85288fe7a2113130"
+            },
+            {
+              "assignment_id": "assignment_bd1e501891af0cdfebbf3482dd602e9923fa98bf2387f78d32afac235e064aa5",
+              "parent_terminal_id": "15c7a11d",
+              "operation_key": "stats-mqwb6edp-web-v1",
+              "state": "submitted",
+              "request_hash": "2ddc389002dc6973784c5330e382c0fb038fc5022878798c518d18d6b0a87e05"
+            }
+          ],
+          "terminals": [
+            {
+              "id": "15c7a11d",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-2",
+              "tmux_window": "auto-supervisor-a0d1",
+              "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+            },
+            {
+              "id": "88adbaaa",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "tmux_session": "cao-auto-mqwb6edp-2",
+              "tmux_window": "auto-api-f656",
+              "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+            },
+            {
+              "id": "b493cc82",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "tmux_session": "cao-auto-mqwb6edp-2",
+              "tmux_window": "auto-web-b3ae",
+              "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+            }
+          ]
+        },
+        {
+          "at": "2026-10-02T09:30:08Z",
+          "children": [
+            {
+              "id": "6a98db9b-9c33-4f92-9107-3a4b4cf61264",
+              "parent_terminal_id": "15c7a11d",
+              "terminal_id": "88adbaaa",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "state": "running",
+              "error_kind": null,
+              "settled_at": null
+            },
+            {
+              "id": "2672981e-d5fe-4f5a-b3d6-e64ba79d7f85",
+              "parent_terminal_id": "15c7a11d",
+              "terminal_id": "b493cc82",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "state": "reconcile",
+              "error_kind": "receipt_delivery_uncertain",
+              "settled_at": "2026-10-02 09:29:46.931038"
+            }
+          ],
+          "turns": [
+            {
+              "terminal_id": "15c7a11d",
+              "generation": "aaea6b421771700a754646ea5bd1e1ed",
+              "state": "reconcile",
+              "attempts": 3,
+              "reason": "receipt_result_unverifiable",
+              "completion_detected_at": "2026-10-02 09:29:20.171014",
+              "updated_at": "2026-10-02 09:29:26.350229"
+            },
+            {
+              "terminal_id": "88adbaaa",
+              "generation": "a79d114b5e5838906669663e2338d000",
+              "state": "verifying",
+              "attempts": 2,
+              "reason": "receipt_result_unverifiable",
+              "completion_detected_at": "2026-10-02 09:30:05.325718",
+              "updated_at": "2026-10-02 09:30:07.434851"
+            },
+            {
+              "terminal_id": "b493cc82",
+              "generation": "ab176c1b25e62a611c3818877a08671b",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:29:44.860412"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "15c7a11d",
+              "generation": "aaea6b421771700a754646ea5bd1e1ed",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:29:15.791273",
+              "verified_at": null
+            },
+            {
+              "terminal_id": "88adbaaa",
+              "generation": "a79d114b5e5838906669663e2338d000",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:29:41.571498",
+              "verified_at": null
+            },
+            {
+              "terminal_id": "b493cc82",
+              "generation": "ab176c1b25e62a611c3818877a08671b",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:29:44.860412",
+              "verified_at": null
+            }
+          ],
+          "messages": [
+            {
+              "id": 2,
+              "sender_id": "15c7a11d",
+              "receiver_id": "88adbaaa",
+              "message": "Info del supervisor: el ID real de tu pareja auto-web es b493cc82. Envíale PEER_CONTRACT allí.\n\n[Message from terminal 15c7a11d. Use send_message MCP tool for any follow-up work.]",
+              "status": "pending",
+              "created_at": "2026-10-02 11:29:43.276990"
+            },
+            {
+              "id": 3,
+              "sender_id": "15c7a11d",
+              "receiver_id": "b493cc82",
+              "message": "Info del supervisor: tu pareja auto-api es 88adbaaa (confirmado). Tu ID es b493cc82.\n\n[Message from terminal 15c7a11d. Use send_message MCP tool for any follow-up work.]",
+              "status": "delivered",
+              "created_at": "2026-10-02 11:29:44.124125"
+            },
+            {
+              "id": 4,
+              "sender_id": "b493cc82",
+              "receiver_id": "15c7a11d",
+              "message": "Worker b493cc82 may already have received its assigned task, but CAO cannot safely prove delivery state. It remains live for reconciliation: inspect its output and receipt state first; do not use answer_user_prompt and do not re-send the task automatically.",
+              "status": "pending",
+              "created_at": "2026-10-02 11:29:46.939030"
+            }
+          ],
+          "intents": [
+            {
+              "assignment_id": "assignment_8ce7ae983054a189212295ce4a20d16100102ed443bee985aab283fd5ad351e7",
+              "parent_terminal_id": "15c7a11d",
+              "operation_key": "stats-mqwb6edp-api-v1",
+              "state": "submitted",
+              "request_hash": "719917c1c9f4e897d27e3fc97093541deb759b5be315d7ec85288fe7a2113130"
+            },
+            {
+              "assignment_id": "assignment_bd1e501891af0cdfebbf3482dd602e9923fa98bf2387f78d32afac235e064aa5",
+              "parent_terminal_id": "15c7a11d",
+              "operation_key": "stats-mqwb6edp-web-v1",
+              "state": "submitted",
+              "request_hash": "2ddc389002dc6973784c5330e382c0fb038fc5022878798c518d18d6b0a87e05"
+            }
+          ],
+          "terminals": [
+            {
+              "id": "15c7a11d",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-2",
+              "tmux_window": "auto-supervisor-a0d1",
+              "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+            },
+            {
+              "id": "88adbaaa",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "tmux_session": "cao-auto-mqwb6edp-2",
+              "tmux_window": "auto-api-f656",
+              "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+            },
+            {
+              "id": "b493cc82",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "tmux_session": "cao-auto-mqwb6edp-2",
+              "tmux_window": "auto-web-b3ae",
+              "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+            }
+          ]
+        },
+        {
+          "at": "2026-10-02T09:30:13Z",
+          "children": [
+            {
+              "id": "6a98db9b-9c33-4f92-9107-3a4b4cf61264",
+              "parent_terminal_id": "15c7a11d",
+              "terminal_id": "88adbaaa",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "state": "reconcile",
+              "error_kind": "receipt_result_unverifiable",
+              "settled_at": "2026-10-02 09:30:11.487415"
+            },
+            {
+              "id": "2672981e-d5fe-4f5a-b3d6-e64ba79d7f85",
+              "parent_terminal_id": "15c7a11d",
+              "terminal_id": "b493cc82",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "state": "reconcile",
+              "error_kind": "receipt_delivery_uncertain",
+              "settled_at": "2026-10-02 09:29:46.931038"
+            }
+          ],
+          "turns": [
+            {
+              "terminal_id": "15c7a11d",
+              "generation": "aaea6b421771700a754646ea5bd1e1ed",
+              "state": "verified",
+              "attempts": 3,
+              "reason": null,
+              "completion_detected_at": "2026-10-02 09:29:20.171014",
+              "updated_at": "2026-10-02 09:30:09.529563"
+            },
+            {
+              "terminal_id": "88adbaaa",
+              "generation": "a79d114b5e5838906669663e2338d000",
+              "state": "reconcile",
+              "attempts": 3,
+              "reason": "receipt_result_unverifiable",
+              "completion_detected_at": "2026-10-02 09:30:05.325718",
+              "updated_at": "2026-10-02 09:30:11.481449"
+            },
+            {
+              "terminal_id": "b493cc82",
+              "generation": "ab176c1b25e62a611c3818877a08671b",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:29:44.860412"
+            },
+            {
+              "terminal_id": "15c7a11d",
+              "generation": "030294d2ef1d9b2e7f7bec6c9dd34e5d",
+              "state": "verifying",
+              "attempts": 1,
+              "reason": "receipt_result_unverifiable",
+              "completion_detected_at": "2026-10-02 09:30:09.732703",
+              "updated_at": "2026-10-02 09:30:12.187588"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "15c7a11d",
+              "generation": "030294d2ef1d9b2e7f7bec6c9dd34e5d",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:30:09.558144",
+              "verified_at": null
+            },
+            {
+              "terminal_id": "88adbaaa",
+              "generation": "a79d114b5e5838906669663e2338d000",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:29:41.571498",
+              "verified_at": null
+            },
+            {
+              "terminal_id": "b493cc82",
+              "generation": "ab176c1b25e62a611c3818877a08671b",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:29:44.860412",
+              "verified_at": null
+            }
+          ],
+          "messages": [
+            {
+              "id": 2,
+              "sender_id": "15c7a11d",
+              "receiver_id": "88adbaaa",
+              "message": "Info del supervisor: el ID real de tu pareja auto-web es b493cc82. Envíale PEER_CONTRACT allí.\n\n[Message from terminal 15c7a11d. Use send_message MCP tool for any follow-up work.]",
+              "status": "pending",
+              "created_at": "2026-10-02 11:29:43.276990"
+            },
+            {
+              "id": 3,
+              "sender_id": "15c7a11d",
+              "receiver_id": "b493cc82",
+              "message": "Info del supervisor: tu pareja auto-api es 88adbaaa (confirmado). Tu ID es b493cc82.\n\n[Message from terminal 15c7a11d. Use send_message MCP tool for any follow-up work.]",
+              "status": "delivered",
+              "created_at": "2026-10-02 11:29:44.124125"
+            },
+            {
+              "id": 4,
+              "sender_id": "b493cc82",
+              "receiver_id": "15c7a11d",
+              "message": "Worker b493cc82 may already have received its assigned task, but CAO cannot safely prove delivery state. It remains live for reconciliation: inspect its output and receipt state first; do not use answer_user_prompt and do not re-send the task automatically.",
+              "status": "delivered",
+              "created_at": "2026-10-02 11:29:46.939030"
+            }
+          ],
+          "intents": [
+            {
+              "assignment_id": "assignment_8ce7ae983054a189212295ce4a20d16100102ed443bee985aab283fd5ad351e7",
+              "parent_terminal_id": "15c7a11d",
+              "operation_key": "stats-mqwb6edp-api-v1",
+              "state": "submitted",
+              "request_hash": "719917c1c9f4e897d27e3fc97093541deb759b5be315d7ec85288fe7a2113130"
+            },
+            {
+              "assignment_id": "assignment_bd1e501891af0cdfebbf3482dd602e9923fa98bf2387f78d32afac235e064aa5",
+              "parent_terminal_id": "15c7a11d",
+              "operation_key": "stats-mqwb6edp-web-v1",
+              "state": "submitted",
+              "request_hash": "2ddc389002dc6973784c5330e382c0fb038fc5022878798c518d18d6b0a87e05"
+            }
+          ],
+          "terminals": [
+            {
+              "id": "15c7a11d",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-2",
+              "tmux_window": "auto-supervisor-a0d1",
+              "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+            },
+            {
+              "id": "88adbaaa",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "tmux_session": "cao-auto-mqwb6edp-2",
+              "tmux_window": "auto-api-f656",
+              "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+            },
+            {
+              "id": "b493cc82",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "tmux_session": "cao-auto-mqwb6edp-2",
+              "tmux_window": "auto-web-b3ae",
+              "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+            }
+          ]
+        }
+      ],
+      "fault": {
+        "type": "receipt_visibility_refusal",
+        "terminal_id": "88adbaaa",
+        "armed_at": "2026-10-02T09:29:43Z",
+        "released": false,
+        "reconcile_observed_at": "2026-10-02T09:30:13Z"
+      },
+      "started_at": "2026-10-02T09:29:05Z",
+      "supervisor_id": "15c7a11d",
+      "session_name": "cao-auto-mqwb6edp-2",
+      "completion_marker": "AUTONOMY_COMPLETE_mqwb6edp_2",
+      "initial_prompt": "Proyecto existente: /mnt/c/users/ferna/onedrive/escritorio/cao-turn-recovery-demo-20261002-f9086a25. Añade estadísticas: GET /api/stats devuelve total, pending y completed calculados del mismo almacenamiento, y la interfaz muestra los tres contadores coherentes también después de añadir/editar/marcar/eliminar. Coordina auto-api y auto-web, intercambio real de contrato y prueba aislada de datos. El entorno puede demorar evidencia de un recibo; conserva identidades y no repitas tareas ante incertidumbre. Preserva notes.json original, no commits/push ni agentes adicionales. Tú debes decidir reparto, instrucciones y coordinación. Usa dos trabajadores exactamente, perfiles auto-api y auto-web. Termina con AUTONOMY_COMPLETE_mqwb6edp_2 sólo después de comprobar los dos recibos succeeded y pruebas correctas. No supongas que el operador ayudará ni lanzará tareas de trabajadores. Cada turno debe terminar con su recibo CAO auténtico.",
+      "initial_http_status": 200,
+      "latest": {
+        "at": "2026-10-02T09:30:13Z",
+        "children": [
+          {
+            "id": "6a98db9b-9c33-4f92-9107-3a4b4cf61264",
+            "parent_terminal_id": "15c7a11d",
+            "terminal_id": "88adbaaa",
+            "provider": "codex",
+            "agent_profile": "auto-api",
+            "state": "reconcile",
+            "error_kind": "receipt_result_unverifiable",
+            "settled_at": "2026-10-02 09:30:11.487415"
+          },
+          {
+            "id": "2672981e-d5fe-4f5a-b3d6-e64ba79d7f85",
+            "parent_terminal_id": "15c7a11d",
+            "terminal_id": "b493cc82",
+            "provider": "opencode_cli",
+            "agent_profile": "auto-web",
+            "state": "reconcile",
+            "error_kind": "receipt_delivery_uncertain",
+            "settled_at": "2026-10-02 09:29:46.931038"
+          }
+        ],
+        "turns": [
+          {
+            "terminal_id": "15c7a11d",
+            "generation": "aaea6b421771700a754646ea5bd1e1ed",
+            "state": "verified",
+            "attempts": 3,
+            "reason": null,
+            "completion_detected_at": "2026-10-02 09:29:20.171014",
+            "updated_at": "2026-10-02 09:30:09.529563"
+          },
+          {
+            "terminal_id": "88adbaaa",
+            "generation": "a79d114b5e5838906669663e2338d000",
+            "state": "reconcile",
+            "attempts": 3,
+            "reason": "receipt_result_unverifiable",
+            "completion_detected_at": "2026-10-02 09:30:05.325718",
+            "updated_at": "2026-10-02 09:30:11.481449"
+          },
+          {
+            "terminal_id": "b493cc82",
+            "generation": "ab176c1b25e62a611c3818877a08671b",
+            "state": "pending",
+            "attempts": 0,
+            "reason": null,
+            "completion_detected_at": null,
+            "updated_at": "2026-10-02 09:29:44.860412"
+          },
+          {
+            "terminal_id": "15c7a11d",
+            "generation": "030294d2ef1d9b2e7f7bec6c9dd34e5d",
+            "state": "verifying",
+            "attempts": 1,
+            "reason": "receipt_result_unverifiable",
+            "completion_detected_at": "2026-10-02 09:30:09.732703",
+            "updated_at": "2026-10-02 09:30:12.187588"
+          }
+        ],
+        "receipts": [
+          {
+            "terminal_id": "15c7a11d",
+            "generation": "030294d2ef1d9b2e7f7bec6c9dd34e5d",
+            "phase": "sent",
+            "created_at": "2026-10-02 09:30:09.558144",
+            "verified_at": null
+          },
+          {
+            "terminal_id": "88adbaaa",
+            "generation": "a79d114b5e5838906669663e2338d000",
+            "phase": "sent",
+            "created_at": "2026-10-02 09:29:41.571498",
+            "verified_at": null
+          },
+          {
+            "terminal_id": "b493cc82",
+            "generation": "ab176c1b25e62a611c3818877a08671b",
+            "phase": "sent",
+            "created_at": "2026-10-02 09:29:44.860412",
+            "verified_at": null
+          }
+        ],
+        "messages": [
+          {
+            "id": 2,
+            "sender_id": "15c7a11d",
+            "receiver_id": "88adbaaa",
+            "message": "Info del supervisor: el ID real de tu pareja auto-web es b493cc82. Envíale PEER_CONTRACT allí.\n\n[Message from terminal 15c7a11d. Use send_message MCP tool for any follow-up work.]",
+            "status": "pending",
+            "created_at": "2026-10-02 11:29:43.276990"
+          },
+          {
+            "id": 3,
+            "sender_id": "15c7a11d",
+            "receiver_id": "b493cc82",
+            "message": "Info del supervisor: tu pareja auto-api es 88adbaaa (confirmado). Tu ID es b493cc82.\n\n[Message from terminal 15c7a11d. Use send_message MCP tool for any follow-up work.]",
+            "status": "delivered",
+            "created_at": "2026-10-02 11:29:44.124125"
+          },
+          {
+            "id": 4,
+            "sender_id": "b493cc82",
+            "receiver_id": "15c7a11d",
+            "message": "Worker b493cc82 may already have received its assigned task, but CAO cannot safely prove delivery state. It remains live for reconciliation: inspect its output and receipt state first; do not use answer_user_prompt and do not re-send the task automatically.",
+            "status": "delivered",
+            "created_at": "2026-10-02 11:29:46.939030"
+          }
+        ],
+        "intents": [
+          {
+            "assignment_id": "assignment_8ce7ae983054a189212295ce4a20d16100102ed443bee985aab283fd5ad351e7",
+            "parent_terminal_id": "15c7a11d",
+            "operation_key": "stats-mqwb6edp-api-v1",
+            "state": "submitted",
+            "request_hash": "719917c1c9f4e897d27e3fc97093541deb759b5be315d7ec85288fe7a2113130"
+          },
+          {
+            "assignment_id": "assignment_bd1e501891af0cdfebbf3482dd602e9923fa98bf2387f78d32afac235e064aa5",
+            "parent_terminal_id": "15c7a11d",
+            "operation_key": "stats-mqwb6edp-web-v1",
+            "state": "submitted",
+            "request_hash": "2ddc389002dc6973784c5330e382c0fb038fc5022878798c518d18d6b0a87e05"
+          }
+        ],
+        "terminals": [
+          {
+            "id": "15c7a11d",
+            "provider": "claude_code",
+            "agent_profile": "auto-supervisor",
+            "tmux_session": "cao-auto-mqwb6edp-2",
+            "tmux_window": "auto-supervisor-a0d1",
+            "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+          },
+          {
+            "id": "88adbaaa",
+            "provider": "codex",
+            "agent_profile": "auto-api",
+            "tmux_session": "cao-auto-mqwb6edp-2",
+            "tmux_window": "auto-api-f656",
+            "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+          },
+          {
+            "id": "b493cc82",
+            "provider": "opencode_cli",
+            "agent_profile": "auto-web",
+            "tmux_session": "cao-auto-mqwb6edp-2",
+            "tmux_window": "auto-web-b3ae",
+            "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+          }
+        ],
+        "supervisor_results": [
+          {
+            "generation": "030294d2ef1d9b2e7f7bec6c9dd34e5d",
+            "state": "verifying",
+            "result_text": null
+          },
+          {
+            "generation": "aaea6b421771700a754646ea5bd1e1ed",
+            "state": "verified",
+            "result_text": "He asignado las dos tareas y ahora termino este turno sin esperar a los workers. Todavía no hay resultados.\n\n- auto-api (Codex): terminal 88adbaaa. Debe implementar GET /api/stats, actualizar CONTRACT.md y README.md, y añadir pruebas con un notes.json temporal.\n- auto-web (OpenCode): terminal b493cc82. Debe mostrar los contadores Total, Pendientes y Completadas, y refrescarlos tras cada operación.\n- Estado de las asignaciones: ambas están admitidas (submitted), con inicialización y entrega pendientes. No las he repetido.\n- Claves de operación: stats-mqwb6edp-api-v1 y stats-mqwb6edp-web-v1.\n- Coordinación: les envié sus IDs reales y deben intercambiarse PEER_CONTRACT y PEER_ACK por CAO. Los resultados me llegarán por inbox.\n- notes.json: el hash original es 9540bfae64b96d11a5d146ca2008d733b816518fa5b8c56f5e7597941d97ca59. Lo compararé al final.\n- Cierre: todavía no declaro AUTONOMY_COMPLETE_mqwb6edp_2. Primero revisaré el código real, los recibos de ambos hijos y las pruebas."
+          }
+        ]
+      },
+      "ended_at": "2026-10-02T09:30:13Z",
+      "final": {
+        "at": "2026-10-02T09:30:13Z",
+        "children": [
+          {
+            "id": "6a98db9b-9c33-4f92-9107-3a4b4cf61264",
+            "parent_terminal_id": "15c7a11d",
+            "terminal_id": "88adbaaa",
+            "provider": "codex",
+            "agent_profile": "auto-api",
+            "state": "reconcile",
+            "error_kind": "receipt_result_unverifiable",
+            "settled_at": "2026-10-02 09:30:11.487415"
+          },
+          {
+            "id": "2672981e-d5fe-4f5a-b3d6-e64ba79d7f85",
+            "parent_terminal_id": "15c7a11d",
+            "terminal_id": "b493cc82",
+            "provider": "opencode_cli",
+            "agent_profile": "auto-web",
+            "state": "reconcile",
+            "error_kind": "receipt_delivery_uncertain",
+            "settled_at": "2026-10-02 09:29:46.931038"
+          }
+        ],
+        "turns": [
+          {
+            "terminal_id": "15c7a11d",
+            "generation": "aaea6b421771700a754646ea5bd1e1ed",
+            "state": "verified",
+            "attempts": 3,
+            "reason": null,
+            "completion_detected_at": "2026-10-02 09:29:20.171014",
+            "updated_at": "2026-10-02 09:30:09.529563"
+          },
+          {
+            "terminal_id": "88adbaaa",
+            "generation": "a79d114b5e5838906669663e2338d000",
+            "state": "reconcile",
+            "attempts": 3,
+            "reason": "receipt_result_unverifiable",
+            "completion_detected_at": "2026-10-02 09:30:05.325718",
+            "updated_at": "2026-10-02 09:30:11.481449"
+          },
+          {
+            "terminal_id": "b493cc82",
+            "generation": "ab176c1b25e62a611c3818877a08671b",
+            "state": "pending",
+            "attempts": 0,
+            "reason": null,
+            "completion_detected_at": null,
+            "updated_at": "2026-10-02 09:29:44.860412"
+          },
+          {
+            "terminal_id": "15c7a11d",
+            "generation": "030294d2ef1d9b2e7f7bec6c9dd34e5d",
+            "state": "verifying",
+            "attempts": 1,
+            "reason": "receipt_result_unverifiable",
+            "completion_detected_at": "2026-10-02 09:30:09.732703",
+            "updated_at": "2026-10-02 09:30:12.187588"
+          }
+        ],
+        "receipts": [
+          {
+            "terminal_id": "15c7a11d",
+            "generation": "030294d2ef1d9b2e7f7bec6c9dd34e5d",
+            "phase": "sent",
+            "created_at": "2026-10-02 09:30:09.558144",
+            "verified_at": null
+          },
+          {
+            "terminal_id": "88adbaaa",
+            "generation": "a79d114b5e5838906669663e2338d000",
+            "phase": "sent",
+            "created_at": "2026-10-02 09:29:41.571498",
+            "verified_at": null
+          },
+          {
+            "terminal_id": "b493cc82",
+            "generation": "ab176c1b25e62a611c3818877a08671b",
+            "phase": "sent",
+            "created_at": "2026-10-02 09:29:44.860412",
+            "verified_at": null
+          }
+        ],
+        "messages": [
+          {
+            "id": 2,
+            "sender_id": "15c7a11d",
+            "receiver_id": "88adbaaa",
+            "message": "Info del supervisor: el ID real de tu pareja auto-web es b493cc82. Envíale PEER_CONTRACT allí.\n\n[Message from terminal 15c7a11d. Use send_message MCP tool for any follow-up work.]",
+            "status": "pending",
+            "created_at": "2026-10-02 11:29:43.276990"
+          },
+          {
+            "id": 3,
+            "sender_id": "15c7a11d",
+            "receiver_id": "b493cc82",
+            "message": "Info del supervisor: tu pareja auto-api es 88adbaaa (confirmado). Tu ID es b493cc82.\n\n[Message from terminal 15c7a11d. Use send_message MCP tool for any follow-up work.]",
+            "status": "delivered",
+            "created_at": "2026-10-02 11:29:44.124125"
+          },
+          {
+            "id": 4,
+            "sender_id": "b493cc82",
+            "receiver_id": "15c7a11d",
+            "message": "Worker b493cc82 may already have received its assigned task, but CAO cannot safely prove delivery state. It remains live for reconciliation: inspect its output and receipt state first; do not use answer_user_prompt and do not re-send the task automatically.",
+            "status": "delivered",
+            "created_at": "2026-10-02 11:29:46.939030"
+          }
+        ],
+        "intents": [
+          {
+            "assignment_id": "assignment_8ce7ae983054a189212295ce4a20d16100102ed443bee985aab283fd5ad351e7",
+            "parent_terminal_id": "15c7a11d",
+            "operation_key": "stats-mqwb6edp-api-v1",
+            "state": "submitted",
+            "request_hash": "719917c1c9f4e897d27e3fc97093541deb759b5be315d7ec85288fe7a2113130"
+          },
+          {
+            "assignment_id": "assignment_bd1e501891af0cdfebbf3482dd602e9923fa98bf2387f78d32afac235e064aa5",
+            "parent_terminal_id": "15c7a11d",
+            "operation_key": "stats-mqwb6edp-web-v1",
+            "state": "submitted",
+            "request_hash": "2ddc389002dc6973784c5330e382c0fb038fc5022878798c518d18d6b0a87e05"
+          }
+        ],
+        "terminals": [
+          {
+            "id": "15c7a11d",
+            "provider": "claude_code",
+            "agent_profile": "auto-supervisor",
+            "tmux_session": "cao-auto-mqwb6edp-2",
+            "tmux_window": "auto-supervisor-a0d1",
+            "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+          },
+          {
+            "id": "88adbaaa",
+            "provider": "codex",
+            "agent_profile": "auto-api",
+            "tmux_session": "cao-auto-mqwb6edp-2",
+            "tmux_window": "auto-api-f656",
+            "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+          },
+          {
+            "id": "b493cc82",
+            "provider": "opencode_cli",
+            "agent_profile": "auto-web",
+            "tmux_session": "cao-auto-mqwb6edp-2",
+            "tmux_window": "auto-web-b3ae",
+            "session_incarnation_id": "bb4ee805ab984aaaaa77567ae6883219"
+          }
+        ],
+        "supervisor_results": [
+          {
+            "generation": "030294d2ef1d9b2e7f7bec6c9dd34e5d",
+            "state": "verifying",
+            "result_text": null
+          },
+          {
+            "generation": "aaea6b421771700a754646ea5bd1e1ed",
+            "state": "verified",
+            "result_text": "He asignado las dos tareas y ahora termino este turno sin esperar a los workers. Todavía no hay resultados.\n\n- auto-api (Codex): terminal 88adbaaa. Debe implementar GET /api/stats, actualizar CONTRACT.md y README.md, y añadir pruebas con un notes.json temporal.\n- auto-web (OpenCode): terminal b493cc82. Debe mostrar los contadores Total, Pendientes y Completadas, y refrescarlos tras cada operación.\n- Estado de las asignaciones: ambas están admitidas (submitted), con inicialización y entrega pendientes. No las he repetido.\n- Claves de operación: stats-mqwb6edp-api-v1 y stats-mqwb6edp-web-v1.\n- Coordinación: les envié sus IDs reales y deben intercambiarse PEER_CONTRACT y PEER_ACK por CAO. Los resultados me llegarán por inbox.\n- notes.json: el hash original es 9540bfae64b96d11a5d146ca2008d733b816518fa5b8c56f5e7597941d97ca59. Lo compararé al final.\n- Cierre: todavía no declaro AUTONOMY_COMPLETE_mqwb6edp_2. Primero revisaré el código real, los recibos de ambos hijos y las pruebas."
+          }
+        ]
+      },
+      "checks": {
+        "exactly_two_children": true,
+        "expected_providers": true,
+        "children_succeeded": false,
+        "peer_contract_delivered": false,
+        "peer_ack_delivered": false,
+        "both_results_delivered_to_supervisor": false,
+        "all_messages_delivered": false,
+        "no_duplicate_assignment": true,
+        "notes_unchanged": true,
+        "late_fault_exercised": false,
+        "genuine_native_witness_observed": true
+      },
+      "cleanup_http_status": 200
+    },
+    {
+      "number": 3,
+      "kind": "restart",
+      "status": "invalid_profile_and_restart_during_initialization",
+      "initial_orders": 1,
+      "snapshots": [
+        {
+          "at": "2026-10-02T09:30:27Z",
+          "children": [],
+          "turns": [
+            {
+              "terminal_id": "bca4be62",
+              "generation": "547caa7cd23d4052ebe65f1a67a2f361",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:30:24.588983"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "bca4be62",
+              "generation": "547caa7cd23d4052ebe65f1a67a2f361",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:30:24.588983",
+              "verified_at": null
+            }
+          ],
+          "messages": [],
+          "intents": [],
+          "terminals": [
+            {
+              "id": "bca4be62",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-3",
+              "tmux_window": "auto-supervisor-3b80",
+              "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+            }
+          ]
+        },
+        {
+          "at": "2026-10-02T09:30:47Z",
+          "children": [
+            {
+              "id": "47aa0d80-506d-42ba-a7e9-d6a682e06b7b",
+              "parent_terminal_id": "bca4be62",
+              "terminal_id": "9b6253e8",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "state": "planned",
+              "error_kind": null,
+              "settled_at": null
+            }
+          ],
+          "turns": [
+            {
+              "terminal_id": "bca4be62",
+              "generation": "547caa7cd23d4052ebe65f1a67a2f361",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:30:24.588983"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "bca4be62",
+              "generation": "547caa7cd23d4052ebe65f1a67a2f361",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:30:24.588983",
+              "verified_at": null
+            }
+          ],
+          "messages": [],
+          "intents": [
+            {
+              "assignment_id": "assignment_aa1563e9d13cb10f958656a37102c2c226f7aa87e14d84e2f89e7946e1f8d4d6",
+              "parent_terminal_id": "bca4be62",
+              "operation_key": "mqwb6edp_3-api-clear-completed",
+              "state": "submitted",
+              "request_hash": "894b8f70531ac4572e0a7824c1c66f1176ead67adc18403abdf60b8e667270aa"
+            }
+          ],
+          "terminals": [
+            {
+              "id": "9b6253e8",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "tmux_session": "cao-auto-mqwb6edp-3",
+              "tmux_window": "auto-api-f1c7",
+              "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+            },
+            {
+              "id": "bca4be62",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-3",
+              "tmux_window": "auto-supervisor-3b80",
+              "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+            }
+          ]
+        },
+        {
+          "at": "2026-10-02T09:30:52Z",
+          "children": [
+            {
+              "id": "47aa0d80-506d-42ba-a7e9-d6a682e06b7b",
+              "parent_terminal_id": "bca4be62",
+              "terminal_id": "9b6253e8",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "state": "running",
+              "error_kind": null,
+              "settled_at": null
+            },
+            {
+              "id": "1e735504-8332-4637-b75e-b5bef223c88a",
+              "parent_terminal_id": "bca4be62",
+              "terminal_id": "0ad1d039",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "state": "planned",
+              "error_kind": null,
+              "settled_at": null
+            }
+          ],
+          "turns": [
+            {
+              "terminal_id": "bca4be62",
+              "generation": "547caa7cd23d4052ebe65f1a67a2f361",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:30:24.588983"
+            },
+            {
+              "terminal_id": "9b6253e8",
+              "generation": "2ae6572570782cae7167242ba278930a",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:30:50.247736"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "9b6253e8",
+              "generation": "2ae6572570782cae7167242ba278930a",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:30:50.247736",
+              "verified_at": null
+            },
+            {
+              "terminal_id": "bca4be62",
+              "generation": "547caa7cd23d4052ebe65f1a67a2f361",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:30:24.588983",
+              "verified_at": null
+            }
+          ],
+          "messages": [
+            {
+              "id": 5,
+              "sender_id": "bca4be62",
+              "receiver_id": "9b6253e8",
+              "message": "Coordinador: el terminal ID de auto-web es 0ad1d039. Envíale tu PEER_CONTRACT ahí (send_message receiver_id=0ad1d039).\n\n[Message from terminal bca4be62. Use send_message MCP tool for any follow-up work.]",
+              "status": "pending",
+              "created_at": "2026-10-02 11:30:51.827527"
+            }
+          ],
+          "intents": [
+            {
+              "assignment_id": "assignment_aa1563e9d13cb10f958656a37102c2c226f7aa87e14d84e2f89e7946e1f8d4d6",
+              "parent_terminal_id": "bca4be62",
+              "operation_key": "mqwb6edp_3-api-clear-completed",
+              "state": "submitted",
+              "request_hash": "894b8f70531ac4572e0a7824c1c66f1176ead67adc18403abdf60b8e667270aa"
+            },
+            {
+              "assignment_id": "assignment_ac2c3c6ca53a6bded3294b4d17a200029eb732021069d742f8f7ae0b6d5dda05",
+              "parent_terminal_id": "bca4be62",
+              "operation_key": "mqwb6edp_3-web-clear-completed",
+              "state": "submitted",
+              "request_hash": "4119b5c85f1badd773201e970ed62bdf846babba39734f79d4ee3413cfd319a9"
+            }
+          ],
+          "terminals": [
+            {
+              "id": "0ad1d039",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "tmux_session": "cao-auto-mqwb6edp-3",
+              "tmux_window": "auto-web-4538",
+              "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+            },
+            {
+              "id": "9b6253e8",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "tmux_session": "cao-auto-mqwb6edp-3",
+              "tmux_window": "auto-api-f1c7",
+              "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+            },
+            {
+              "id": "bca4be62",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-3",
+              "tmux_window": "auto-supervisor-3b80",
+              "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+            }
+          ]
+        },
+        {
+          "at": "2026-10-02T09:34:56Z",
+          "children": [
+            {
+              "id": "47aa0d80-506d-42ba-a7e9-d6a682e06b7b",
+              "parent_terminal_id": "bca4be62",
+              "terminal_id": "9b6253e8",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "state": "running",
+              "error_kind": null,
+              "settled_at": null
+            },
+            {
+              "id": "1e735504-8332-4637-b75e-b5bef223c88a",
+              "parent_terminal_id": "bca4be62",
+              "terminal_id": "0ad1d039",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "state": "planned",
+              "error_kind": null,
+              "settled_at": null
+            }
+          ],
+          "turns": [
+            {
+              "terminal_id": "bca4be62",
+              "generation": "547caa7cd23d4052ebe65f1a67a2f361",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:30:24.588983"
+            },
+            {
+              "terminal_id": "9b6253e8",
+              "generation": "2ae6572570782cae7167242ba278930a",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:30:50.247736"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "9b6253e8",
+              "generation": "2ae6572570782cae7167242ba278930a",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:30:50.247736",
+              "verified_at": null
+            },
+            {
+              "terminal_id": "bca4be62",
+              "generation": "547caa7cd23d4052ebe65f1a67a2f361",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:30:24.588983",
+              "verified_at": null
+            }
+          ],
+          "messages": [
+            {
+              "id": 5,
+              "sender_id": "bca4be62",
+              "receiver_id": "9b6253e8",
+              "message": "Coordinador: el terminal ID de auto-web es 0ad1d039. Envíale tu PEER_CONTRACT ahí (send_message receiver_id=0ad1d039).\n\n[Message from terminal bca4be62. Use send_message MCP tool for any follow-up work.]",
+              "status": "pending",
+              "created_at": "2026-10-02 11:30:51.827527"
+            },
+            {
+              "id": 6,
+              "sender_id": "9b6253e8",
+              "receiver_id": "bca4be62",
+              "message": "Implementación terminada. Archivos cambiados: api/server.py, test_api.py y CONTRACT.md (español). DELETE /api/notes/completed se resuelve antes de DELETE individual, elimina únicamente done=true, conserva todas las pendientes y responde 200 {\"deleted_count\":N}, también N=0 sin completadas. Mantiene lock y escritura atómica; POST, PATCH y DELETE individual conservados. Prueba ejecutada: python -m unittest -v test_api.py. Resultado: 7 pruebas OK en 6.193 s, con servidor HTTP real en puerto libre y notes.json temporal aislado. No modifiqué notes.json del proyecto ni frontend. No recibí todavía el ID real de auto-web ni PEER_ACK; enviaré PEER_CONTRACT en cuanto llegue su ID, en un turno posterior.\n\n[Message from terminal 9b6253e8. Use send_message MCP tool for any follow-up work.]",
+              "status": "pending",
+              "created_at": "2026-10-02 11:33:34.844637"
+            }
+          ],
+          "intents": [
+            {
+              "assignment_id": "assignment_aa1563e9d13cb10f958656a37102c2c226f7aa87e14d84e2f89e7946e1f8d4d6",
+              "parent_terminal_id": "bca4be62",
+              "operation_key": "mqwb6edp_3-api-clear-completed",
+              "state": "submitted",
+              "request_hash": "894b8f70531ac4572e0a7824c1c66f1176ead67adc18403abdf60b8e667270aa"
+            },
+            {
+              "assignment_id": "assignment_ac2c3c6ca53a6bded3294b4d17a200029eb732021069d742f8f7ae0b6d5dda05",
+              "parent_terminal_id": "bca4be62",
+              "operation_key": "mqwb6edp_3-web-clear-completed",
+              "state": "submitted",
+              "request_hash": "4119b5c85f1badd773201e970ed62bdf846babba39734f79d4ee3413cfd319a9"
+            }
+          ],
+          "terminals": [
+            {
+              "id": "0ad1d039",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "tmux_session": "cao-auto-mqwb6edp-3",
+              "tmux_window": "auto-web-4538",
+              "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+            },
+            {
+              "id": "9b6253e8",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "tmux_session": "cao-auto-mqwb6edp-3",
+              "tmux_window": "auto-api-f1c7",
+              "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+            },
+            {
+              "id": "bca4be62",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-3",
+              "tmux_window": "auto-supervisor-3b80",
+              "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+            }
+          ]
+        }
+      ],
+      "fault": {
+        "type": "server_restart",
+        "before": {
+          "at": "2026-10-02T09:30:52Z",
+          "children": [
+            {
+              "id": "47aa0d80-506d-42ba-a7e9-d6a682e06b7b",
+              "parent_terminal_id": "bca4be62",
+              "terminal_id": "9b6253e8",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "state": "running",
+              "error_kind": null,
+              "settled_at": null
+            },
+            {
+              "id": "1e735504-8332-4637-b75e-b5bef223c88a",
+              "parent_terminal_id": "bca4be62",
+              "terminal_id": "0ad1d039",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "state": "planned",
+              "error_kind": null,
+              "settled_at": null
+            }
+          ],
+          "turns": [
+            {
+              "terminal_id": "bca4be62",
+              "generation": "547caa7cd23d4052ebe65f1a67a2f361",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:30:24.588983"
+            },
+            {
+              "terminal_id": "9b6253e8",
+              "generation": "2ae6572570782cae7167242ba278930a",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:30:50.247736"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "9b6253e8",
+              "generation": "2ae6572570782cae7167242ba278930a",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:30:50.247736",
+              "verified_at": null
+            },
+            {
+              "terminal_id": "bca4be62",
+              "generation": "547caa7cd23d4052ebe65f1a67a2f361",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:30:24.588983",
+              "verified_at": null
+            }
+          ],
+          "messages": [
+            {
+              "id": 5,
+              "sender_id": "bca4be62",
+              "receiver_id": "9b6253e8",
+              "message": "Coordinador: el terminal ID de auto-web es 0ad1d039. Envíale tu PEER_CONTRACT ahí (send_message receiver_id=0ad1d039).\n\n[Message from terminal bca4be62. Use send_message MCP tool for any follow-up work.]",
+              "status": "pending",
+              "created_at": "2026-10-02 11:30:51.827527"
+            }
+          ],
+          "intents": [
+            {
+              "assignment_id": "assignment_aa1563e9d13cb10f958656a37102c2c226f7aa87e14d84e2f89e7946e1f8d4d6",
+              "parent_terminal_id": "bca4be62",
+              "operation_key": "mqwb6edp_3-api-clear-completed",
+              "state": "submitted",
+              "request_hash": "894b8f70531ac4572e0a7824c1c66f1176ead67adc18403abdf60b8e667270aa"
+            },
+            {
+              "assignment_id": "assignment_ac2c3c6ca53a6bded3294b4d17a200029eb732021069d742f8f7ae0b6d5dda05",
+              "parent_terminal_id": "bca4be62",
+              "operation_key": "mqwb6edp_3-web-clear-completed",
+              "state": "submitted",
+              "request_hash": "4119b5c85f1badd773201e970ed62bdf846babba39734f79d4ee3413cfd319a9"
+            }
+          ],
+          "terminals": [
+            {
+              "id": "0ad1d039",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "tmux_session": "cao-auto-mqwb6edp-3",
+              "tmux_window": "auto-web-4538",
+              "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+            },
+            {
+              "id": "9b6253e8",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "tmux_session": "cao-auto-mqwb6edp-3",
+              "tmux_window": "auto-api-f1c7",
+              "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+            },
+            {
+              "id": "bca4be62",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-3",
+              "tmux_window": "auto-supervisor-3b80",
+              "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+            }
+          ],
+          "supervisor_results": [
+            {
+              "generation": "547caa7cd23d4052ebe65f1a67a2f361",
+              "state": "pending",
+              "result_text": null
+            }
+          ]
+        },
+        "started_at": "2026-10-02T09:30:52Z",
+        "after": {
+          "at": "2026-10-02T09:34:56Z",
+          "children": [
+            {
+              "id": "47aa0d80-506d-42ba-a7e9-d6a682e06b7b",
+              "parent_terminal_id": "bca4be62",
+              "terminal_id": "9b6253e8",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "state": "running",
+              "error_kind": null,
+              "settled_at": null
+            },
+            {
+              "id": "1e735504-8332-4637-b75e-b5bef223c88a",
+              "parent_terminal_id": "bca4be62",
+              "terminal_id": "0ad1d039",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "state": "planned",
+              "error_kind": null,
+              "settled_at": null
+            }
+          ],
+          "turns": [
+            {
+              "terminal_id": "bca4be62",
+              "generation": "547caa7cd23d4052ebe65f1a67a2f361",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:30:24.588983"
+            },
+            {
+              "terminal_id": "9b6253e8",
+              "generation": "2ae6572570782cae7167242ba278930a",
+              "state": "pending",
+              "attempts": 0,
+              "reason": null,
+              "completion_detected_at": null,
+              "updated_at": "2026-10-02 09:30:50.247736"
+            }
+          ],
+          "receipts": [
+            {
+              "terminal_id": "9b6253e8",
+              "generation": "2ae6572570782cae7167242ba278930a",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:30:50.247736",
+              "verified_at": null
+            },
+            {
+              "terminal_id": "bca4be62",
+              "generation": "547caa7cd23d4052ebe65f1a67a2f361",
+              "phase": "sent",
+              "created_at": "2026-10-02 09:30:24.588983",
+              "verified_at": null
+            }
+          ],
+          "messages": [
+            {
+              "id": 5,
+              "sender_id": "bca4be62",
+              "receiver_id": "9b6253e8",
+              "message": "Coordinador: el terminal ID de auto-web es 0ad1d039. Envíale tu PEER_CONTRACT ahí (send_message receiver_id=0ad1d039).\n\n[Message from terminal bca4be62. Use send_message MCP tool for any follow-up work.]",
+              "status": "pending",
+              "created_at": "2026-10-02 11:30:51.827527"
+            },
+            {
+              "id": 6,
+              "sender_id": "9b6253e8",
+              "receiver_id": "bca4be62",
+              "message": "Implementación terminada. Archivos cambiados: api/server.py, test_api.py y CONTRACT.md (español). DELETE /api/notes/completed se resuelve antes de DELETE individual, elimina únicamente done=true, conserva todas las pendientes y responde 200 {\"deleted_count\":N}, también N=0 sin completadas. Mantiene lock y escritura atómica; POST, PATCH y DELETE individual conservados. Prueba ejecutada: python -m unittest -v test_api.py. Resultado: 7 pruebas OK en 6.193 s, con servidor HTTP real en puerto libre y notes.json temporal aislado. No modifiqué notes.json del proyecto ni frontend. No recibí todavía el ID real de auto-web ni PEER_ACK; enviaré PEER_CONTRACT en cuanto llegue su ID, en un turno posterior.\n\n[Message from terminal 9b6253e8. Use send_message MCP tool for any follow-up work.]",
+              "status": "pending",
+              "created_at": "2026-10-02 11:33:34.844637"
+            }
+          ],
+          "intents": [
+            {
+              "assignment_id": "assignment_aa1563e9d13cb10f958656a37102c2c226f7aa87e14d84e2f89e7946e1f8d4d6",
+              "parent_terminal_id": "bca4be62",
+              "operation_key": "mqwb6edp_3-api-clear-completed",
+              "state": "submitted",
+              "request_hash": "894b8f70531ac4572e0a7824c1c66f1176ead67adc18403abdf60b8e667270aa"
+            },
+            {
+              "assignment_id": "assignment_ac2c3c6ca53a6bded3294b4d17a200029eb732021069d742f8f7ae0b6d5dda05",
+              "parent_terminal_id": "bca4be62",
+              "operation_key": "mqwb6edp_3-web-clear-completed",
+              "state": "submitted",
+              "request_hash": "4119b5c85f1badd773201e970ed62bdf846babba39734f79d4ee3413cfd319a9"
+            }
+          ],
+          "terminals": [
+            {
+              "id": "0ad1d039",
+              "provider": "opencode_cli",
+              "agent_profile": "auto-web",
+              "tmux_session": "cao-auto-mqwb6edp-3",
+              "tmux_window": "auto-web-4538",
+              "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+            },
+            {
+              "id": "9b6253e8",
+              "provider": "codex",
+              "agent_profile": "auto-api",
+              "tmux_session": "cao-auto-mqwb6edp-3",
+              "tmux_window": "auto-api-f1c7",
+              "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+            },
+            {
+              "id": "bca4be62",
+              "provider": "claude_code",
+              "agent_profile": "auto-supervisor",
+              "tmux_session": "cao-auto-mqwb6edp-3",
+              "tmux_window": "auto-supervisor-3b80",
+              "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+            }
+          ],
+          "supervisor_results": [
+            {
+              "generation": "547caa7cd23d4052ebe65f1a67a2f361",
+              "state": "pending",
+              "result_text": null
+            }
+          ]
+        },
+        "ended_at": "2026-10-02T09:34:56Z",
+        "controller_incident_extended_downtime": true
+      },
+      "started_at": "2026-10-02T09:30:14Z",
+      "supervisor_id": "bca4be62",
+      "session_name": "cao-auto-mqwb6edp-3",
+      "completion_marker": "AUTONOMY_COMPLETE_mqwb6edp_3",
+      "initial_prompt": "Proyecto existente: /mnt/c/users/ferna/onedrive/escritorio/cao-turn-recovery-demo-20261002-f9086a25. Añade limpieza de notas completadas: DELETE /api/notes/completed devuelve deleted_count, conserva todas las pendientes y funciona también si no hay completadas. Añade botón accesible Limpiar completadas con confirmación y actualización de lista/contadores. Conserva DELETE individual y edición. Coordina auto-api y auto-web, intercambio real de contrato y pruebas aisladas. El servidor CAO puede reiniciarse durante el trabajo; usa los mismos trabajadores y mensajes pendientes, sin reasignación ni repetir implementación. Preserva notes.json original, no commits/push ni agentes adicionales. Tú debes decidir reparto, instrucciones y coordinación. Usa dos trabajadores exactamente, perfiles auto-api y auto-web. Termina con AUTONOMY_COMPLETE_mqwb6edp_3 sólo después de comprobar los dos recibos succeeded y pruebas correctas. No supongas que el operador ayudará ni lanzará tareas de trabajadores. Cada turno debe terminar con su recibo CAO auténtico.",
+      "initial_http_status": 200,
+      "latest": {
+        "at": "2026-10-02T09:34:56Z",
+        "children": [
+          {
+            "id": "47aa0d80-506d-42ba-a7e9-d6a682e06b7b",
+            "parent_terminal_id": "bca4be62",
+            "terminal_id": "9b6253e8",
+            "provider": "codex",
+            "agent_profile": "auto-api",
+            "state": "running",
+            "error_kind": null,
+            "settled_at": null
+          },
+          {
+            "id": "1e735504-8332-4637-b75e-b5bef223c88a",
+            "parent_terminal_id": "bca4be62",
+            "terminal_id": "0ad1d039",
+            "provider": "opencode_cli",
+            "agent_profile": "auto-web",
+            "state": "planned",
+            "error_kind": null,
+            "settled_at": null
+          }
+        ],
+        "turns": [
+          {
+            "terminal_id": "bca4be62",
+            "generation": "547caa7cd23d4052ebe65f1a67a2f361",
+            "state": "pending",
+            "attempts": 0,
+            "reason": null,
+            "completion_detected_at": null,
+            "updated_at": "2026-10-02 09:30:24.588983"
+          },
+          {
+            "terminal_id": "9b6253e8",
+            "generation": "2ae6572570782cae7167242ba278930a",
+            "state": "pending",
+            "attempts": 0,
+            "reason": null,
+            "completion_detected_at": null,
+            "updated_at": "2026-10-02 09:30:50.247736"
+          }
+        ],
+        "receipts": [
+          {
+            "terminal_id": "9b6253e8",
+            "generation": "2ae6572570782cae7167242ba278930a",
+            "phase": "sent",
+            "created_at": "2026-10-02 09:30:50.247736",
+            "verified_at": null
+          },
+          {
+            "terminal_id": "bca4be62",
+            "generation": "547caa7cd23d4052ebe65f1a67a2f361",
+            "phase": "sent",
+            "created_at": "2026-10-02 09:30:24.588983",
+            "verified_at": null
+          }
+        ],
+        "messages": [
+          {
+            "id": 5,
+            "sender_id": "bca4be62",
+            "receiver_id": "9b6253e8",
+            "message": "Coordinador: el terminal ID de auto-web es 0ad1d039. Envíale tu PEER_CONTRACT ahí (send_message receiver_id=0ad1d039).\n\n[Message from terminal bca4be62. Use send_message MCP tool for any follow-up work.]",
+            "status": "pending",
+            "created_at": "2026-10-02 11:30:51.827527"
+          },
+          {
+            "id": 6,
+            "sender_id": "9b6253e8",
+            "receiver_id": "bca4be62",
+            "message": "Implementación terminada. Archivos cambiados: api/server.py, test_api.py y CONTRACT.md (español). DELETE /api/notes/completed se resuelve antes de DELETE individual, elimina únicamente done=true, conserva todas las pendientes y responde 200 {\"deleted_count\":N}, también N=0 sin completadas. Mantiene lock y escritura atómica; POST, PATCH y DELETE individual conservados. Prueba ejecutada: python -m unittest -v test_api.py. Resultado: 7 pruebas OK en 6.193 s, con servidor HTTP real en puerto libre y notes.json temporal aislado. No modifiqué notes.json del proyecto ni frontend. No recibí todavía el ID real de auto-web ni PEER_ACK; enviaré PEER_CONTRACT en cuanto llegue su ID, en un turno posterior.\n\n[Message from terminal 9b6253e8. Use send_message MCP tool for any follow-up work.]",
+            "status": "pending",
+            "created_at": "2026-10-02 11:33:34.844637"
+          }
+        ],
+        "intents": [
+          {
+            "assignment_id": "assignment_aa1563e9d13cb10f958656a37102c2c226f7aa87e14d84e2f89e7946e1f8d4d6",
+            "parent_terminal_id": "bca4be62",
+            "operation_key": "mqwb6edp_3-api-clear-completed",
+            "state": "submitted",
+            "request_hash": "894b8f70531ac4572e0a7824c1c66f1176ead67adc18403abdf60b8e667270aa"
+          },
+          {
+            "assignment_id": "assignment_ac2c3c6ca53a6bded3294b4d17a200029eb732021069d742f8f7ae0b6d5dda05",
+            "parent_terminal_id": "bca4be62",
+            "operation_key": "mqwb6edp_3-web-clear-completed",
+            "state": "submitted",
+            "request_hash": "4119b5c85f1badd773201e970ed62bdf846babba39734f79d4ee3413cfd319a9"
+          }
+        ],
+        "terminals": [
+          {
+            "id": "0ad1d039",
+            "provider": "opencode_cli",
+            "agent_profile": "auto-web",
+            "tmux_session": "cao-auto-mqwb6edp-3",
+            "tmux_window": "auto-web-4538",
+            "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+          },
+          {
+            "id": "9b6253e8",
+            "provider": "codex",
+            "agent_profile": "auto-api",
+            "tmux_session": "cao-auto-mqwb6edp-3",
+            "tmux_window": "auto-api-f1c7",
+            "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+          },
+          {
+            "id": "bca4be62",
+            "provider": "claude_code",
+            "agent_profile": "auto-supervisor",
+            "tmux_session": "cao-auto-mqwb6edp-3",
+            "tmux_window": "auto-supervisor-3b80",
+            "session_incarnation_id": "b261b1cfac1348eca30fb7b39a6f786c"
+          }
+        ],
+        "supervisor_results": [
+          {
+            "generation": "547caa7cd23d4052ebe65f1a67a2f361",
+            "state": "pending",
+            "result_text": null
+          }
+        ]
+      },
+      "invalid_reason": "Supervisor policy lacked fs_write and inherited into both workers; restart occurred before second child received its task.",
+      "cleanup_http_status": 200
+    }
+  ],
+  "operator_corrective_messages": 0,
+  "operator_verify_calls": 0,
+  "operator_retry_calls": 0,
+  "notes_before_sha256": "9540bfae64b96d11a5d146ca2008d733b816518fa5b8c56f5e7597941d97ca59",
+  "fault_instrumentation": "Private sitecustomize only refuses receipt verification for one selected native terminal; never generates receipt/output and never changes product source.",
+  "harness_incident": {
+    "cause": "substring completion check accepted a future-tense mention of the marker, although supervisor explicitly withheld success",
+    "invalid_attempts": [
+      1,
+      2
+    ],
+    "controller_replaced_without_new_order_to_active_phase": 3,
+    "operator_model_corrections": 0
+  },
+  "credential_copies_removed": true,
+  "status": "invalid_test_setup"
+}

@@ -1,0 +1,208 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 40px 20px;
+}
+
+.contenedor {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  padding: 30px;
+  width: 100%;
+  max-width: 500px;
+}
+
+h1 {
+  color: #333;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+#form-nota {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+#input-nota {
+  flex: 1;
+  padding: 12px 15px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 16px;
+  transition: border-color 0.3s;
+}
+
+#input-nota:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+#form-nota button {
+  padding: 12px 24px;
+  background: #667eea;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+#form-nota button:hover {
+  background: #5a6fd6;
+}
+
+#lista-notas {
+  list-style: none;
+}
+
+#lista-notas li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid #f0f0f0;
+  transition: background 0.2s;
+}
+
+#lista-notas li:hover {
+  background: #fafafa;
+}
+
+#lista-notas li:last-child {
+  border-bottom: none;
+}
+
+#lista-notas li.completada .texto-nota {
+  text-decoration: line-through;
+  color: #999;
+}
+
+#lista-notas li input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  accent-color: #667eea;
+}
+
+#lista-notas li .texto-nota {
+  flex: 1;
+  font-size: 16px;
+  color: #333;
+  word-break: break-word;
+}
+
+#lista-notas li .eliminar {
+  background: none;
+  border: none;
+  color: #e74c3c;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+#lista-notas li .eliminar:hover {
+  background: #fdecea;
+}
+
+.cargando {
+  text-align: center;
+  color: #888;
+  padding: 20px;
+  font-style: italic;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.error {
+  background: #fdecea;
+  color: #b3261e;
+  border: 1px solid #f5c6c0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+.controles {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.controles .campo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 140px;
+}
+
+.controles label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #555;
+}
+
+.controles input,
+.controles select {
+  padding: 10px 12px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 15px;
+  background: #fff;
+  transition: border-color 0.3s;
+}
+
+.controles input:focus,
+.controles select:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.contadores {
+  font-size: 14px;
+  color: #666;
+  margin-bottom: 10px;
+  text-align: right;
+}
+
+#form-nota button:disabled {
+  background: #a5b0e8;
+  cursor: not-allowed;
+}
+
+#lista-notas li input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+}
+
+#lista-notas li .eliminar:disabled {
+  color: #ccc;
+  cursor: not-allowed;
+  background: none;
+}

@@ -1,0 +1,34 @@
+[
+  {
+    "terminal_id": "b826dc57",
+    "duration_markers": [
+      {
+        "offset": 43012,
+        "line": "auto-web \u00b7 Kimi K3 \u00b7 5m 57s"
+      }
+    ],
+    "authentic_receipt_lines": [
+      {
+        "offset": 91596,
+        "after_last_duration_marker": true
+      }
+    ],
+    "final_footer": "auto-web \u00b7 Kimi K3 \u00b7 75.8K (7%) \u00b7 OpenCode Go \u00b7 $0.03 \u00b7 ctrl+p menu"
+  },
+  {
+    "terminal_id": "3b56848c",
+    "duration_markers": [
+      {
+        "offset": 25104,
+        "line": "auto-web \u00b7 Kimi K3 \u00b7 5m 57s"
+      }
+    ],
+    "authentic_receipt_lines": [
+      {
+        "offset": 34400,
+        "after_last_duration_marker": true
+      }
+    ],
+    "final_footer": "auto-web \u00b7 Kimi K3 \u00b7 51.3K (5%) \u00b7 OpenCode Go \u00b7 $0.03 \u00b7 ctrl+p menu"
+  }
+]

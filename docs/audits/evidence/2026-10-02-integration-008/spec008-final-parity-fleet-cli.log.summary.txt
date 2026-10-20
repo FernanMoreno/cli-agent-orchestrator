@@ -1,0 +1,8 @@
+Original evidence: /tmp/spec008-final-parity-fleet-cli.log
+Original SHA256: 1f68c000b9563665d24529d429fa79cde784fbfb474f9f6c2f97e628f51f5874
+Original bytes: 180
+This is a retained tail, not a new execution or a complete transcript.
+
+........................................................................ [ 77%]
+.....................                                                    [100%]
+93 passed in 17.24s

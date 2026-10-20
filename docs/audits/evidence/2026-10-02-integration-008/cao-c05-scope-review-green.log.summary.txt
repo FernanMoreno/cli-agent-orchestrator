@@ -1,0 +1,14 @@
+Original evidence: /tmp/cao-c05-scope-review-green.log
+Original SHA256: f0ef80ababf9ea228e59fd7b46ecd30ebb8780729bc397a90f94fe3b4733b0c3
+Original bytes: 833
+This is a retained tail, not a new execution or a complete transcript.
+
+....                                                                     [100%]
+=============================== warnings summary ===============================
+cao_c05_scope_review_tests.py::test_revoked_pre_drive_run_is_settled_not_stranded
+cao_c05_scope_review_tests.py::test_revoked_pre_drive_run_is_settled_not_stranded
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+4 passed, 2 warnings in 14.78s

@@ -1,0 +1,26 @@
+{
+  "artifacts": {
+    "provider-availability.json": "4c418d44062b11979ef894b1376d3cbf81b799b08869cbd914354c4934b24f4f",
+    "copilot-cao-before.json": "86ac8f7b655f6f0d0243a899e1da425cfa5070f9f5342c38143871d693ebbf7e",
+    "copilot-cao-footer-only.json": "3665b46badb3b8c1deb589d3171279234c726368f7c01af78e70f46f13c07cb0",
+    "copilot-cao-history-probe.json": "5a77862bd912bc7600c7686a7528639d5799faabd5462bb5de9c0cc13117a64d",
+    "copilot-cao-status-probe.json": "da4c6dca4f790627dc43672671d103c8ef19a80897b81a7650a439e1311a08a2",
+    "copilot-cao-result.json": "2b524e4850ab120608addbcd5522b877282f79c6e9c98cf7a6a5abce3937e96c",
+    "copilot-cao-check.py": "c57c5a6e22fe29a79cdf06fef5f4b21ce7bafa0651af5a7010222b1973753b41",
+    "copilot-cao-check.log": "9940441595a1db7a9ed08eb49d022031dfddbe47c3a32e41ca27d2902e1ab4f3",
+    "copilot-red.log": "191363faa887cd1f289f7f00e448806e774129af333a3a32aaeab0476ff9e848",
+    "copilot-repaint-red.log": "d20b1592ec5d6dc6a40e973d0c58fbe4cfe5f1423f855b6e3f5a75e69ee2d474",
+    "copilot-final.log": "3c974ed4ab5ec14a7170f5594fa50f911991ea207f1e24d4daa76db59f173885",
+    "final-gate-final.log": "451ff0ec8662e3635ec5505b41185a29d163fdb7ee8591c09b8f655eea5cf68d",
+    "provider-contracts.log": "a1c7552e6346d95cd673118db270817795a9850a903d658b013bc340466ac318",
+    "composition-final.log": "0f4c80ea3b83b3852fe6c9e779dff0c734ef2daccb9854eeb5c2116df46f078d",
+    "graph-impact.txt": "29f74e563d2b5304a8119f480706f8a19c0fbe111e6f579c8be118bde70266e7",
+    "hermes-native-smoke.log": "e4a8e638e601c984b598ffeec7586f227e86ee2f90be8109425825ebae420502",
+    "hermes-demo-smoke.log": "4ad56b1dafab8a6acd30fa0159c072a0cb733858b67a5510a0e376320e8be3db",
+    "graph-refresh.log": "8fd96eece1f3ca8ca520470832e1614e8f223f7f42b1bcf835a7a44bd4c4f468",
+    "cleanup.json": "12c0bb2b699d8a78ee5a7e13675d23c907c74d4bf0206514b579bf1f9a1db386"
+  },
+  "scope": "Installation and Copilot native readiness only; no blanket provider acceptance",
+  "excluded": "Credentials, private cloned homes, databases and unsanitized raw diagnostics",
+  "native_original_startup_stream_sha256": "0f5c1d6e64080097cde3ae824bdfa54419d837e4593815adb445a446b5e02443"
+}

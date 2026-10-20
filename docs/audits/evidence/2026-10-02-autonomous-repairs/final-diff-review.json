@@ -1,0 +1,34 @@
+{
+  "branch": "main",
+  "reviewed_boundaries": [
+    "provider receipt/parser",
+    "initial task admission",
+    "dispatch through sent CAS",
+    "generation-fenced verification and result settlement",
+    "restart backend identity/incarnation",
+    "FIFO and lifespan draining",
+    "MCP numeric parser",
+    "soft permission vocabulary",
+    "Claude optional post-turn UI versus final reply",
+    "current receipt admission versus interim tool/commentary frames"
+  ],
+  "syntax_checked_files": [
+    "providers/codex.py",
+    "providers/base.py",
+    "providers/gemini_cli.py",
+    "providers/opencode_cli.py",
+    "providers/copilot_cli.py",
+    "providers/manager.py",
+    "services/terminal_service.py",
+    "services/terminal_observation_recovery.py",
+    "services/status_monitor.py",
+    "services/fifo_reader.py",
+    "clients/database.py",
+    "mcp_server/server.py",
+    "utils/tool_mapping.py",
+    "providers/claude_code.py"
+  ],
+  "production_source_matches_native_and_graph": true,
+  "unrelated_dirty_work_preserved": true,
+  "no_commit_push_merge": true
+}

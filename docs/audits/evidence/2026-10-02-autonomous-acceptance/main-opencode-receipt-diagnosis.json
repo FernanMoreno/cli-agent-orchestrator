@@ -1,0 +1,64 @@
+[
+  {
+    "session_id": "ses_f04046918ffeOxavkEZBfPX2Vg",
+    "title": "Frontend note editing with accessible controls and PATCH validation",
+    "expected_receipt_count": 1,
+    "assistant_receipt_count": 1,
+    "matches_expected": true,
+    "exact_receipt_line_matches": true,
+    "finish_states": [
+      {
+        "finish": "tool-calls",
+        "completed": 1790934983048
+      },
+      {
+        "finish": "tool-calls",
+        "completed": 1790935021808
+      },
+      {
+        "finish": "stop",
+        "completed": 1790935040571
+      }
+    ]
+  },
+  {
+    "session_id": "ses_f03f1e943ffes5yrjZO6UbzL91",
+    "title": "Contadores de estad\u00edsticas en interfaz frontend",
+    "expected_receipt_count": 1,
+    "assistant_receipt_count": 1,
+    "matches_expected": true,
+    "exact_receipt_line_matches": true,
+    "finish_states": [
+      {
+        "finish": "tool-calls",
+        "completed": 1790935600852
+      },
+      {
+        "finish": "tool-calls",
+        "completed": 1790935614837
+      },
+      {
+        "finish": "stop",
+        "completed": 1790935622886
+      }
+    ]
+  },
+  {
+    "session_id": "ses_f03df67beffe0OkWdFkBg13QLG",
+    "title": "A\u00f1adir bot\u00f3n para limpiar notas completadas con confirmaci\u00f3n y avisos accesibles",
+    "expected_receipt_count": 1,
+    "assistant_receipt_count": 0,
+    "matches_expected": false,
+    "exact_receipt_line_matches": false,
+    "finish_states": [
+      {
+        "finish": "tool-calls",
+        "completed": 1790936408743
+      },
+      {
+        "finish": "tool-calls",
+        "completed": 1790936418909
+      }
+    ]
+  }
+]

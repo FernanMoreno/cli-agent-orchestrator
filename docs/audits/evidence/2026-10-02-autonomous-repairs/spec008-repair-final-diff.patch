@@ -1,0 +1,942 @@
+diff --git a/src/cli_agent_orchestrator/providers/base.py b/src/cli_agent_orchestrator/providers/base.py
+index 190aa202..15294674 100644
+--- a/src/cli_agent_orchestrator/providers/base.py
++++ b/src/cli_agent_orchestrator/providers/base.py
+@@ -73,6 +73,30 @@ class OutputExtractionError(ValueError):
+     """
+ 
+ 
++class OutputExtractionRejected(OutputExtractionError):
++    """A deliberate refusal to publish extracted content.
++
++    Raised when the extractor *found* the response region and refused to publish
++    what was in it — the turn produced only private reasoning, or every candidate
++    row was chrome, a user echo, or reasoning.
++
++    The distinction is a security boundary, not a taxonomy nicety. A missing
++    marker is worth retrying with a wider capture and may legitimately degrade to
++    a labelled raw-transcript fallback. A deliberate rejection must do neither:
++    the raw pane contains the very content that was refused, so substituting it
++    silently republishes private reasoning as the agent's answer. Callers that
++    escalate or fall back on :class:`OutputExtractionError` must re-raise this
++    subtype unchanged.
++
++    Subclasses :class:`OutputExtractionError` so existing callers that handle the
++    broader type keep working and the API boundary still maps it away from 404.
++    """
++
++
++class TurnResultUnavailableError(OutputExtractionError):
++    """Expected absence of proof for an active receipt, distinct from I/O failure."""
++
++
+ class BaseProvider(ABC):
+     """Abstract base class for CLI tool providers.
+ 
+@@ -356,21 +380,29 @@ class BaseProvider(ABC):
+                 "sending another task"
+             )
+         receipt = f"{_TURN_RECEIPT_PREFIX}{secrets.token_hex(_TURN_RECEIPT_BYTES)}"
+-        prepared = (
++        prepared = self._format_turn_receipt_input(message, receipt)
++        self._pending_turn_receipt = receipt
++        self._pending_turn_receipt_sha256 = hashlib.sha256(receipt.encode("utf-8")).hexdigest()
++        self._pending_turn_generation = secrets.token_hex(_TURN_RECEIPT_BYTES)
++        self._pending_prepared_input = prepared
++        self._restored_turn_receipt = False
++        return prepared
++
++    def _format_turn_receipt_input(self, message: str, receipt: str) -> str:
++        """Keep identity and final-reply instructions identical across adapters."""
++        return (
+             f"{message.rstrip()}\n\n"
+             "CAO completion receipt requirement: this delivery contract takes precedence "
+             "over any incompatible output-format instruction in the task. After you have "
+             "fully completed the task and written a concise final result, write one final line containing "
+             f"exactly this receipt: {receipt}\n"
++            f"Your own CAO terminal ID is {self.terminal_id}; the assigning terminal is a different actor. "
++            "Print the receipt in your final visible terminal reply even if you already sent results "
++            "with send_message. A receipt in a callback, tool argument, or reasoning does not complete "
++            "this turn. Do not include the receipt in messages to other terminals.\n"
+             "Do not quote or emit that receipt before the task is complete, and do not "
+             "perform further tool calls after it."
+         )
+-        self._pending_turn_receipt = receipt
+-        self._pending_turn_receipt_sha256 = hashlib.sha256(receipt.encode("utf-8")).hexdigest()
+-        self._pending_turn_generation = secrets.token_hex(_TURN_RECEIPT_BYTES)
+-        self._pending_prepared_input = prepared
+-        self._restored_turn_receipt = False
+-        return prepared
+ 
+     def prepared_input_for_redelivery(self) -> Optional[str]:
+         """Return the exact active-turn paste text for a safe full redelivery.
+@@ -457,6 +489,14 @@ class BaseProvider(ABC):
+         if self.requires_turn_receipt is True and not self._restored_turn_receipt:
+             self.mark_turn_receipt_result_verified()
+ 
++    def mark_turn_receipt_cancelled(self) -> None:
++        """Release local input fencing after a confirmed durable cancellation.
++
++        This clears only provider memory; it never verifies a result or changes
++        durable receipt state. The recovery service owns proof of pane reset.
++        """
++        self.mark_turn_receipt_result_verified()
++
+     def receipt_result_terminal_status(
+         self,
+         transcript: str,
+@@ -971,3 +1011,62 @@ class BaseProvider(ABC):
+     def _update_status(self, status: TerminalStatus) -> None:
+         """Update internal status."""
+         self._status = status
++
++    def record_dispatched_message(self, message: str) -> None:
++        """Record the exact text being delivered after the input boundary is armed.
++
++        Providers may use this to attribute partial terminal redraws to the
++        current dispatch. Recording text alone is never execution evidence.
++        """
++
++    def mark_redelivery_received(self) -> None:
++        """Notify the provider that CAO re-delivered the SAME logical dispatch.
++
++        ``terminal_service.redeliver_dropped_message`` re-sends a prompt the TUI
++        never accepted (a dropped paste, or an Enter that was swallowed). That is
++        a second *delivery attempt* of the dispatch already announced by
++        :meth:`mark_input_received`, not a new logical turn: the caller is still
++        waiting for the same task it dispatched, so a provider that counts turns
++        — or derives any turn identity from that count — must not believe a new
++        turn began. A provider with no such distinction needs no override.
++
++        The default delegates to :meth:`mark_input_received` so every provider
++        whose bookkeeping does not separate delivery attempts from logical turns
++        keeps exactly its previous behavior on the redelivery path.
++        """
++        self.mark_input_received()
++
++    @property
++    def allow_raw_transcript_fallback(self) -> bool:
++        """Whether LAST output may degrade to the provider raw terminal pane.
++
++        The historical service behavior is permissive because several providers
++        have no private sub-channels in their rendered transcript. Providers
++        whose pane can contain non-publishable channels must override this to
++        False. Extraction retries still widen normally; only the raw-pane
++        substitution after exhaustion is disabled.
++        """
++
++        return True
++
++    def shows_turn_work(self, buffer: str) -> Optional[bool]:
++        """Whether a raw buffer cleared at dispatch shows this turn actually running.
++
++        ``None`` (the default) means the provider declares no such signal, and any
++        PROCESSING verdict counts as the turn having started. A provider that
++        returns a bool owns the answer for turns opened by a real send: only
++        ``True`` marks the turn started, so a PROCESSING verdict that a repaint of
++        the previous answer can also produce (kiro's "no idle prompt yet"
++        fallback) no longer does. Called on the raw rolling buffer only, never on
++        a retained source. Must be pure: it is evaluated against the monitor's own
++        pinned snapshot, so no provider state can carry a stale poll's view into
++        the next turn.
++
++        Returning True also lets a fast reply close at once when its work sign and
++        answer arrive in one chunk. Without the signal such a reply waits for
++        StatusMonitor's TURN_START_BACKSTOP_S. Declare it only for a sign that
++        quoted answer text cannot reproduce (see kiro_cli's TUI_LIVE_WORK_PATTERN):
++        PR #812's review showed that arrival time, word matches and
++        provider-remembered answer identity all admit a replayed old answer.
++        """
++        return None
+diff --git a/src/cli_agent_orchestrator/providers/codex.py b/src/cli_agent_orchestrator/providers/codex.py
+index 7baf69c5..46ecdf80 100644
+--- a/src/cli_agent_orchestrator/providers/codex.py
++++ b/src/cli_agent_orchestrator/providers/codex.py
+@@ -14,7 +14,7 @@ from cli_agent_orchestrator.agent_plugins.mcp_mapping import CODEX_BARE_KEY
+ from cli_agent_orchestrator.backends.registry import get_backend
+ from cli_agent_orchestrator.constants import CAO_HOME_DIR
+ from cli_agent_orchestrator.models.terminal import TerminalStatus
+-from cli_agent_orchestrator.providers.base import BaseProvider
++from cli_agent_orchestrator.providers.base import _TURN_RECEIPT_PATTERN, BaseProvider
+ from cli_agent_orchestrator.services.settings_service import get_server_settings
+ from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+ from cli_agent_orchestrator.utils.mcp_resolution import resolve_mcp_server_config
+@@ -1161,97 +1161,100 @@ class CodexProvider(BaseProvider):
+         # end of this method. See the long comment at its assignment site for why.
+         developer_instructions_fragment: Optional[str] = None
+ 
++        system_prompt = (
++            profile.system_prompt
++            if profile is not None and profile.system_prompt is not None
++            else ""
++        )
+         if profile is not None:
+-            system_prompt = profile.system_prompt if profile.system_prompt is not None else ""
+             system_prompt = self._apply_skill_prompt(system_prompt)
+ 
+-            # Prepend security constraints for soft enforcement (Codex has no
+-            # native tool restriction mechanism). Only applied when tool
+-            # restrictions are active (not unrestricted "*").
+-            if self._allowed_tools and "*" not in self._allowed_tools:
+-                from cli_agent_orchestrator.constants import SECURITY_PROMPT
+-
+-                tools_list = ", ".join(self._allowed_tools)
+-                tool_constraint = f"\nYou only have access to these tools: {tools_list}\n"
+-                system_prompt = SECURITY_PROMPT + tool_constraint + system_prompt
+-
+-            if system_prompt:
+-                # Codex accepts developer_instructions via -c config override.
+-                # This is injected as a developer role message before AGENTS.md content.
+-                # Escape backslashes, double quotes, and newlines for TOML basic string.
+-                # Newlines must become literal \n to prevent tmux send_keys from
+-                # splitting the command across multiple lines.
+-                #
+-                # The escaped value is written to a CAO-owned temp file and referenced via a
+-                # shell command substitution ($(cat <file>)) instead of being inlined directly,
+-                # so the LAUNCH LINE ITSELF (what actually gets typed/pasted into the tmux pane)
+-                # stays short regardless of how long the instructions text is. A real profile
+-                # combining a security preamble, the caller's own system prompt, and the full
+-                # skill-list prompt (see _apply_skill_prompt) commonly produces several KB of
+-                # escaped text -- observed live at 8+KB. At launch time the pane is still a bare
+-                # shell (codex has not started yet), which correctly does not get bracketed-paste
+-                # framing (see clients/tmux.py's BRACKETED_PASTE_INCOMPATIBLE_SHELLS) since a bare
+-                # shell does not understand those escape sequences. But WITHOUT that framing, a
+-                # single pasted/typed line longer than the tty's canonical-mode line-length limit
+-                # (MAX_CANON, 4096 bytes on Linux) is silently truncated/dropped by the kernel's
+-                # tty line discipline before the shell ever sees a complete, valid command --
+-                # this manifests as the shell hanging at an unclosed-quote continuation prompt
+-                # forever (confirmed live: zero codex process ever spawned under the pane's shell,
+-                # even after an explicit trailing Enter), until CAO's own init-timeout eventually
+-                # fires with a generic "Codex initialization timed out" that gives no hint of the
+-                # real cause. $(cat <file>) is expanded internally by the shell BEFORE exec'ing
+-                # codex -- that internal expansion is not subject to the tty's per-line INPUT
+-                # limit at all, only the typed/pasted command line is. Wrapped in double quotes
+-                # (not left bare, not single-quoted) so the substitution still happens (command
+-                # substitution is disabled inside single quotes) while word-splitting/globbing of
+-                # the substituted content is suppressed (it is not inside single quotes either).
+-                # The file's own content is `_toml_scalar`'s output verbatim, already including
+-                # its own surrounding TOML double-quotes -- appended as a raw, deliberately
+-                # UNquoted-by-shlex fragment after the main shlex.join() below (shlex.join would
+-                # otherwise single-quote the whole "developer_instructions=$(cat ...)" fragment as
+-                # one opaque token, disabling the substitution it depends on).
+-                #
+-                # Same underlying instructions/skills length problem does not affect Claude Code
+-                # or Kimi CLI providers -- both already write the system prompt to a temp file and
+-                # pass a short file-path flag instead of inlining it (see claude_code.py's
+-                # --append-system-prompt-file, kimi_cli.py's system_prompt_path: YAML field).
+-                # Codex has no direct equivalent of that "arbitrary absolute path" flag (its only
+-                # file-loading mechanism, --profile, resolves names relative to $CODEX_HOME, which
+-                # this provider has no reliable way to resolve per-account from here) -- this
+-                # command-substitution approach reaches the same practical outcome (a short launch
+-                # line) without needing that.
+-                #
+-                # Deliberate, documented shell-scope trade-off (not an oversight): $(...) command
+-                # substitution is POSIX and works identically on every shell CAO's own
+-                # BRACKETED_PASTE_INCOMPATIBLE_SHELLS (constants.py) already tracks as a shell
+-                # class *except* csh/tcsh, which use `cmd` backticks instead and do not recognize
+-                # `$(` as substitution syntax at all -- launching codex from a pane whose bare
+-                # shell is csh/tcsh would break outright with this fragment malformed/rejected by
+-                # the shell, not merely degrade. bash/zsh/dash/sh/ksh/mksh/ash/fish are all fine.
+-                # No code here detects or special-cases the pane's shell before writing this
+-                # fragment (unlike BRACKETED_PASTE_INCOMPATIBLE_SHELLS' own runtime
+-                # #{pane_current_command} probe) -- csh/tcsh support, if ever needed, is scoped
+-                # out of this fix rather than silently assumed to already work.
+-                #
+-                # Not covering here (disclosed, not silently assumed away): the other -c overrides
+-                # below (per-MCP-server config, codexConfig) are NOT routed through this same
+-                # mechanism and remain inlined directly -- they are typically far smaller than
+-                # developer_instructions, but a profile configuring many MCP servers could in
+-                # theory still accumulate enough inline -c overrides to hit the same limit. Left
+-                # as a known, scoped-out follow-up rather than expanding this fix's surface.
+-                developer_instructions_file = self._developer_instructions_file_path()
+-                developer_instructions_file.parent.mkdir(parents=True, exist_ok=True)
+-                # Open with mode 0o600 baked into the O_CREAT call itself (rather than
+-                # write_text() followed by a separate chmod()) so the file is never
+-                # briefly world/group-readable between creation and permission-tightening --
+-                # the permissions are correct from the very first byte written.
+-                fd = os.open(
+-                    developer_instructions_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
+-                )
+-                with os.fdopen(fd, "w", encoding="utf-8") as f:
+-                    f.write(_toml_scalar(system_prompt))
+-                developer_instructions_fragment = f'-c "developer_instructions=$(cat {shlex.quote(str(developer_instructions_file))})"'
++        # Prepend security constraints for soft enforcement (Codex has no
++        # native tool restriction mechanism). Only applied when tool
++        # restrictions are active (not unrestricted "*").
++        if self._allowed_tools is not None and "*" not in self._allowed_tools:
++            from cli_agent_orchestrator.constants import SECURITY_PROMPT
++            from cli_agent_orchestrator.utils.tool_mapping import tool_constraint_instruction
++
++            tool_constraint = f"\n{tool_constraint_instruction(self._allowed_tools)}\n"
++            system_prompt = SECURITY_PROMPT + tool_constraint + system_prompt
++
++        if system_prompt:
++            # Codex accepts developer_instructions via -c config override.
++            # This is injected as a developer role message before AGENTS.md content.
++            # Escape backslashes, double quotes, and newlines for TOML basic string.
++            # Newlines must become literal \n to prevent tmux send_keys from
++            # splitting the command across multiple lines.
++            #
++            # The escaped value is written to a CAO-owned temp file and referenced via a
++            # shell command substitution ($(cat <file>)) instead of being inlined directly,
++            # so the LAUNCH LINE ITSELF (what actually gets typed/pasted into the tmux pane)
++            # stays short regardless of how long the instructions text is. A real profile
++            # combining a security preamble, the caller's own system prompt, and the full
++            # skill-list prompt (see _apply_skill_prompt) commonly produces several KB of
++            # escaped text -- observed live at 8+KB. At launch time the pane is still a bare
++            # shell (codex has not started yet), which correctly does not get bracketed-paste
++            # framing (see clients/tmux.py's BRACKETED_PASTE_INCOMPATIBLE_SHELLS) since a bare
++            # shell does not understand those escape sequences. But WITHOUT that framing, a
++            # single pasted/typed line longer than the tty's canonical-mode line-length limit
++            # (MAX_CANON, 4096 bytes on Linux) is silently truncated/dropped by the kernel's
++            # tty line discipline before the shell ever sees a complete, valid command --
++            # this manifests as the shell hanging at an unclosed-quote continuation prompt
++            # forever (confirmed live: zero codex process ever spawned under the pane's shell,
++            # even after an explicit trailing Enter), until CAO's own init-timeout eventually
++            # fires with a generic "Codex initialization timed out" that gives no hint of the
++            # real cause. $(cat <file>) is expanded internally by the shell BEFORE exec'ing
++            # codex -- that internal expansion is not subject to the tty's per-line INPUT
++            # limit at all, only the typed/pasted command line is. Wrapped in double quotes
++            # (not left bare, not single-quoted) so the substitution still happens (command
++            # substitution is disabled inside single quotes) while word-splitting/globbing of
++            # the substituted content is suppressed (it is not inside single quotes either).
++            # The file's own content is `_toml_scalar`'s output verbatim, already including
++            # its own surrounding TOML double-quotes -- appended as a raw, deliberately
++            # UNquoted-by-shlex fragment after the main shlex.join() below (shlex.join would
++            # otherwise single-quote the whole "developer_instructions=$(cat ...)" fragment as
++            # one opaque token, disabling the substitution it depends on).
++            #
++            # Same underlying instructions/skills length problem does not affect Claude Code
++            # or Kimi CLI providers -- both already write the system prompt to a temp file and
++            # pass a short file-path flag instead of inlining it (see claude_code.py's
++            # --append-system-prompt-file, kimi_cli.py's system_prompt_path: YAML field).
++            # Codex has no direct equivalent of that "arbitrary absolute path" flag (its only
++            # file-loading mechanism, --profile, resolves names relative to $CODEX_HOME, which
++            # this provider has no reliable way to resolve per-account from here) -- this
++            # command-substitution approach reaches the same practical outcome (a short launch
++            # line) without needing that.
++            #
++            # Deliberate, documented shell-scope trade-off (not an oversight): $(...) command
++            # substitution is POSIX and works identically on every shell CAO's own
++            # BRACKETED_PASTE_INCOMPATIBLE_SHELLS (constants.py) already tracks as a shell
++            # class *except* csh/tcsh, which use `cmd` backticks instead and do not recognize
++            # `$(` as substitution syntax at all -- launching codex from a pane whose bare
++            # shell is csh/tcsh would break outright with this fragment malformed/rejected by
++            # the shell, not merely degrade. bash/zsh/dash/sh/ksh/mksh/ash/fish are all fine.
++            # No code here detects or special-cases the pane's shell before writing this
++            # fragment (unlike BRACKETED_PASTE_INCOMPATIBLE_SHELLS' own runtime
++            # #{pane_current_command} probe) -- csh/tcsh support, if ever needed, is scoped
++            # out of this fix rather than silently assumed to already work.
++            #
++            # Not covering here (disclosed, not silently assumed away): the other -c overrides
++            # below (per-MCP-server config, codexConfig) are NOT routed through this same
++            # mechanism and remain inlined directly -- they are typically far smaller than
++            # developer_instructions, but a profile configuring many MCP servers could in
++            # theory still accumulate enough inline -c overrides to hit the same limit. Left
++            # as a known, scoped-out follow-up rather than expanding this fix's surface.
++            developer_instructions_file = self._developer_instructions_file_path()
++            developer_instructions_file.parent.mkdir(parents=True, exist_ok=True)
++            # Open with mode 0o600 baked into the O_CREAT call itself (rather than
++            # write_text() followed by a separate chmod()) so the file is never
++            # briefly world/group-readable between creation and permission-tightening --
++            # the permissions are correct from the very first byte written.
++            fd = os.open(developer_instructions_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
++            with os.fdopen(fd, "w", encoding="utf-8") as f:
++                f.write(_toml_scalar(system_prompt))
++            developer_instructions_fragment = f'-c "developer_instructions=$(cat {shlex.quote(str(developer_instructions_file))})"'
+ 
++        if profile is not None:
+             # Add MCP servers via -c config overrides (per-session, no global config changes).
+             # Each server field is set via dotted path: mcp_servers.<name>.<field>=<value>
+             if profile.mcpServers:
+@@ -1701,6 +1704,40 @@ class CodexProvider(BaseProvider):
+             if re.search(TUI_PROGRESS_PATTERN, tail_output, re.MULTILINE):
+                 return TerminalStatus.PROCESSING
+ 
++            if self.pending_turn_receipt_state() is not None:
++                # Commentary and a temporarily absent spinner share the idle
++                # composer with a final reply. Do not spend the receipt's
++                # bounded verification budget on these intermediate redraws.
++                response_region = (
++                    clean_output[last_user.start() : cutoff_pos]
++                    if last_user
++                    else clean_output[:cutoff_pos]
++                )
++                if _find_response_marker(response_region) is None:
++                    return TerminalStatus.PROCESSING
++                try:
++                    result = self.extract_last_message_from_script(clean_output)
++                except ValueError:
++                    return TerminalStatus.PROCESSING
++                if self._result_has_active_receipt(result):
++                    return TerminalStatus.COMPLETED
++                # A genuine final reply without its receipt must still enter
++                # reconciliation. Bind the native finished marker to the
++                # current echoed contract so retained old answers cannot do so.
++                current = clean_output[last_user.start() : cutoff_pos] if last_user else ""
++                marker = _find_assistant_marker(current)
++                if marker is not None:
++                    contract = current[: marker.start()]
++                    tokens = re.findall(r"CAO-TURN-RECEIPT-[0-9a-f]{32}", contract)
++                    bound = any(self._result_has_active_receipt(token) for token in tokens)
++                    finished = re.search(
++                        r"(?m)^[^\w\n]*Worked for\s+(?:\d+[hms]\s*)+",
++                        current[marker.start() :],
++                    )
++                    if bound and finished:
++                        return TerminalStatus.COMPLETED
++                return TerminalStatus.PROCESSING
++
+             # Consider COMPLETED only if we see an assistant marker (skipping
+             # MCP tool-call markers) after the last user message. Without the
+             # tool-call filter, "• Called <server>.<tool>(...)" emitted before
+@@ -1939,12 +1976,15 @@ class CodexProvider(BaseProvider):
+         input or output.
+         """
+         before_dialog = _transcript_before_active_rate_limit_dialog(transcript)
+-        receipt = self._pending_turn_receipt
+-        if not before_dialog or receipt is None:
++        if not before_dialog or self.pending_turn_receipt_state() is None:
+             return None
+ 
+         clean_output = strip_terminal_escapes(before_dialog)
+-        receipt_matches = list(re.finditer(rf"(?m)^{re.escape(receipt)}$", clean_output))
++        receipt_matches = [
++            match
++            for match in _TURN_RECEIPT_PATTERN.finditer(clean_output)
++            if self._result_has_active_receipt(match.group(0))
++        ]
+         if not receipt_matches:
+             return None
+         receipt_match = receipt_matches[-1]
+diff --git a/src/cli_agent_orchestrator/providers/copilot_cli.py b/src/cli_agent_orchestrator/providers/copilot_cli.py
+index 8df949e0..a0188609 100644
+--- a/src/cli_agent_orchestrator/providers/copilot_cli.py
++++ b/src/cli_agent_orchestrator/providers/copilot_cli.py
+@@ -140,10 +140,16 @@ class CopilotCliProvider(BaseProvider):
+                     check=False,
+                     capture_output=True,
+                     text=True,
++                    timeout=10,
+                 )
++                if result.returncode != 0:
++                    detail = (result.stderr or result.stdout or "no diagnostic output").strip()
++                    raise RuntimeError(
++                        f"Copilot executable probe failed (exit {result.returncode}): {detail}"
++                    )
+                 self._copilot_help_text_cache = result.stdout or ""
+-            except (OSError, subprocess.SubprocessError):
+-                self._copilot_help_text_cache = ""
++            except (OSError, subprocess.SubprocessError) as exc:
++                raise RuntimeError(f"Copilot executable probe failed: {exc}") from exc
+         return flag in self._copilot_help_text_cache
+ 
+     async def _wait_for_shell_ready(
+diff --git a/src/cli_agent_orchestrator/providers/gemini_cli.py b/src/cli_agent_orchestrator/providers/gemini_cli.py
+index 98433d58..121d1cc2 100644
+--- a/src/cli_agent_orchestrator/providers/gemini_cli.py
++++ b/src/cli_agent_orchestrator/providers/gemini_cli.py
+@@ -862,15 +862,7 @@ class GeminiCliProvider(BaseProvider):
+                 "sending another task"
+             )
+         receipt = f"{_TURN_RECEIPT_PREFIX}{secrets.token_hex(_TURN_RECEIPT_BYTES)}"
+-        prepared = (
+-            f"{message.rstrip()}\n\n"
+-            "CAO completion receipt requirement: this delivery contract takes precedence "
+-            "over any incompatible output-format instruction in the task. After you have "
+-            "fully completed the task and written a concise final result, write one final line containing "
+-            f"exactly this receipt: {receipt}\n"
+-            "Do not quote or emit that receipt before the task is complete, and do not "
+-            "perform further tool calls after it."
+-        )
++        prepared = self._format_turn_receipt_input(message, receipt)
+         self._pending_turn_receipt = receipt
+         self._pending_turn_receipt_sha256 = hashlib.sha256(receipt.encode("utf-8")).hexdigest()
+         # Keep generation distinct from the receipt hash so the database can
+diff --git a/src/cli_agent_orchestrator/services/fifo_reader.py b/src/cli_agent_orchestrator/services/fifo_reader.py
+index 8c367b70..5d006ab0 100644
+--- a/src/cli_agent_orchestrator/services/fifo_reader.py
++++ b/src/cli_agent_orchestrator/services/fifo_reader.py
+@@ -3,9 +3,12 @@
+ Publisher: terminal.{id}.output
+ """
+ 
++import codecs
++import errno
+ import logging
+ import os
+ import select
++import stat
+ import threading
+ import time
+ from typing import Callable, Dict, Optional, Tuple
+@@ -54,6 +57,44 @@ PaneProbe = Callable[[], str]  # returns the live pane content (tmux capture-pan
+ RearmPipe = Callable[[], None]  # re-attaches pipe-pane (stop then start, NOT a bare toggle)
+ 
+ 
++def _ensure_fifo(fifo_path) -> None:
++    """Create ``fifo_path`` as an owner-only FIFO, or accept an existing FIFO.
++
++    ``os.mkfifo`` is exclusive by nature (it fails with EEXIST rather than
++    replacing anything), so a leftover FIFO from an earlier run is kept while a
++    regular file or a symlink planted at the predictable path is refused.
++    ``lstat`` rather than ``stat``: a symlink AT the path is the thing to
++    refuse, whatever it points to. The mode is 0600 on top of the 0700
++    ``FIFO_DIR``; the tmux pipe-pane writer runs as the same user.
++    """
++    try:
++        os.mkfifo(fifo_path, 0o600)
++    except FileExistsError:
++        pass
++    if not stat.S_ISFIFO(os.lstat(fifo_path).st_mode):
++        raise OSError(errno.EEXIST, f"{fifo_path} exists and is not a FIFO; refusing to use it")
++
++
++def _open_fifo(fifo_path, flags: int) -> int:
++    """``os.open`` the FIFO with ``O_NOFOLLOW`` and confirm the descriptor is a FIFO.
++
++    Closes the window between :func:`_ensure_fifo` and the open: a symlink
++    swapped in meanwhile fails the open (ELOOP), and anything that is not a
++    FIFO once opened is closed and refused instead of being read from or
++    written to.
++    """
++    # O_NOFOLLOW is POSIX.1-2008; every platform with os.mkfifo that CAO runs
++    # on (Linux, macOS, the BSDs) has it.
++    fd = os.open(str(fifo_path), flags | os.O_NOFOLLOW)
++    try:
++        if not stat.S_ISFIFO(os.fstat(fd).st_mode):
++            raise OSError(errno.EEXIST, f"{fifo_path} is not a FIFO; refusing to use it")
++    except BaseException:
++        os.close(fd)
++        raise
++    return fd
++
++
+ class FifoManager:
+     """Manages FIFO lifecycle: create named pipe, start reader thread, stop and cleanup.
+ 
+@@ -148,6 +189,20 @@ class FifoManager:
+ 
+         FIFO_DIR.mkdir(parents=True, exist_ok=True)
+ 
++    def has_reader(self, terminal_id: str) -> bool:
++        """Whether this process already owns a live reader for the terminal."""
++        with self._lock:
++            thread = self._threads.get(terminal_id)
++            stop_flag = self._readers.get(terminal_id)
++            return thread is not None and thread.is_alive() and stop_flag is not None and not stop_flag.is_set()
++
++    def stop_all_readers(self) -> bool:
++        """Drain this process's output readers without stopping native agents."""
++        with self._lock:
++            terminal_ids = list(self._readers)
++        results = [self.stop_reader(terminal_id) for terminal_id in terminal_ids]
++        return all(results)
++
+     def create_reader(
+         self,
+         terminal_id: str,
+@@ -169,8 +224,7 @@ class FifoManager:
+             if terminal_id in self._readers:
+                 return
+ 
+-            if not fifo_path.exists():
+-                os.mkfifo(fifo_path)
++            _ensure_fifo(fifo_path)
+ 
+             stop_flag = threading.Event()
+             thread = threading.Thread(
+@@ -187,7 +241,7 @@ class FifoManager:
+             self._last_data_at[terminal_id] = now
+             self._registered_at[terminal_id] = now
+             self._ever_delivered[terminal_id] = False
+-            if enroll:
++            if pane_probe is not None and rearm is not None:
+                 self._pane_probe[terminal_id] = pane_probe
+                 self._rearm[terminal_id] = rearm
+             thread.start()
+@@ -197,18 +251,28 @@ class FifoManager:
+ 
+         logger.info("Started FIFO reader for terminal %s", terminal_id)
+ 
+-    def stop_reader(self, terminal_id: str) -> None:
++    def stop_reader(self, terminal_id: str) -> bool:
+         """Stop the reader thread (if running) and delete the FIFO file.
+ 
+-        The unlink is best-effort and runs even when no in-memory reader is
+-        tracked for ``terminal_id`` — e.g. retention cleanup iterating DB
+-        terminals after a server restart, where ``_readers`` is empty but stale
+-        ``*.fifo`` files may still be on disk. Without it those files would
+-        accumulate unbounded.
++        Returns True only when the tracked reader has actually exited and the
++        FIFO path is gone. Most callers ignore this — they tear down for side
++        effects — but the deferred-init tombstone reclaimer uses it as a hard
++        completeness signal, so a leaked reader thread or an unremovable file
++        keeps the runtime cleanup retryable instead of being recorded as done.
++        Timed-out readers remain tracked, with their stop flags set, until a
++        later call observes their exit. They cannot be replaced in the meantime.
++
++        The unlink is best-effort about the ABSENT case and runs even when no
++        in-memory reader is tracked for ``terminal_id`` — e.g. retention cleanup
++        iterating DB terminals after a server restart, where ``_readers`` is
++        empty but stale ``*.fifo`` files may still be on disk. Without it those
++        files would accumulate unbounded.
+         """
+         with self._lock:
+-            stop_flag = self._readers.pop(terminal_id, None)
+-            thread = self._threads.pop(terminal_id, None)
++            stop_flag = self._readers.get(terminal_id)
++            thread = self._threads.get(terminal_id)
++            if stop_flag is not None:
++                stop_flag.set()
+             # Drop watchdog bookkeeping so a re-created terminal starts clean and
+             # the watchdog stops probing a gone pane.
+             self._pane_probe.pop(terminal_id, None)
+@@ -233,33 +297,52 @@ class FifoManager:
+         # actually torn down at process shutdown (api/main.py's lifespan).
+         fifo_path = FIFO_DIR / f"{terminal_id}.fifo"
+ 
+-        if stop_flag and thread:
++        complete = True
++        if thread is not None:
+             # The reader never blocks in open()/read() (non-blocking fd +
+-            # select with a timeout), so setting the flag is sufficient — it is
+-            # observed within one poll interval. No write-side "wakeup" open is
++            # select with a timeout), so setting the flag is sufficient once
++            # any in-flight publish finishes. No write-side "wakeup" open is
+             # needed; the old wakeup raced with the reader's reopen cycle and
+             # could strand the thread forever in a blocking FIFO open on an
+             # unlinked inode (issue #382).
+-            stop_flag.set()
+             thread.join(timeout=2.0)
+             if thread.is_alive():
+-                # Never silent: a leaked reader thread was how #382's wedge
+-                # built up. With the non-blocking loop this should not happen.
++                # A slow in-flight publish can outlast the join even though
++                # FIFO I/O is non-blocking. Keep it tracked for the next stop.
+                 logger.warning(
+                     "FIFO reader thread for terminal %s did not exit "
+-                    "within 2s; leaking a daemon thread",
++                    "within 2s; retaining it for cleanup retry",
+                     terminal_id,
+                 )
++                complete = False
+             else:
+                 logger.info("Stopped FIFO reader for terminal %s", terminal_id)
+ 
+-        # Best-effort unlink regardless of whether a reader was tracked — when
+-        # none is tracked there is no active reader holding the FIFO, so removing
+-        # a stale file on disk is safe.
+-        try:
+-            fifo_path.unlink()
+-        except OSError:
+-            pass
++        with self._lock:
++            # Another stop may have finished this generation and a subsequent
++            # create may have replaced it while we joined. Never remove that
++            # replacement's references or FIFO, or report it as reclaimed.
++            if (
++                self._readers.get(terminal_id) is not stop_flag
++                or self._threads.get(terminal_id) is not thread
++            ):
++                return False
++            if complete:
++                self._readers.pop(terminal_id, None)
++                self._threads.pop(terminal_id, None)
++
++            # Unlink even for an untracked stale FIFO or a pending stop. Keep
++            # this under the creation lock so a new reader cannot claim the
++            # path between dropping the exited reader and removing its FIFO.
++            try:
++                fifo_path.unlink()
++            except FileNotFoundError:
++                pass
++            except OSError as exc:
++                complete = False
++                logger.warning("Failed to remove FIFO for terminal %s: %s", terminal_id, exc)
++
++        return complete
+ 
+     def _reader_loop(self, terminal_id: str, fifo_path, stop_flag: threading.Event) -> None:
+         """Read chunks from FIFO and publish to the event bus.
+@@ -303,14 +386,15 @@ class FifoManager:
+         read_fd = -1
+         keepalive_fd = -1
+         pending = bytearray()
++        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+         # Time at which the currently-accumulating batch started.
+         batch_start = 0.0
+         try:
+             # Non-blocking read open of a FIFO succeeds immediately (POSIX),
+             # writer attached or not.
+-            read_fd = os.open(str(fifo_path), os.O_RDONLY | os.O_NONBLOCK)
++            read_fd = _open_fifo(fifo_path, os.O_RDONLY | os.O_NONBLOCK)
+             # With our read end open, a non-blocking write open cannot ENXIO.
+-            keepalive_fd = os.open(str(fifo_path), os.O_WRONLY | os.O_NONBLOCK)
++            keepalive_fd = _open_fifo(fifo_path, os.O_WRONLY | os.O_NONBLOCK)
+ 
+             while not stop_flag.is_set():
+                 # Wait at most _COALESCE_WINDOW so we always flush pending data
+@@ -334,19 +418,16 @@ class FifoManager:
+                         # schedule below — the watchdog cares whether the FIFO
+                         # delivered data, not whether/when a batch flushed.
+                         #
+-                        # Guarded by membership rather than unconditional: if
+-                        # stop_reader already popped this terminal (torn down
+-                        # while this thread was mid-read, before it noticed
+-                        # stop_flag), writing here would resurrect a dict entry
+-                        # nothing will ever clean up again — a slow leak across
+-                        # create/stop churn. The check-then-write must happen
+-                        # under _lock as one critical section: a stop_reader()
+-                        # pop between an unlocked check and the assignment
+-                        # could still resurrect the entry (round-3 Copilot
+-                        # review on #397). Cheap and non-blocking either way —
+-                        # this is a plain dict write, not the slow tmux probe.
++                        # Only the current, active reader may update watchdog
++                        # state. stop_reader keeps timed-out readers tracked
++                        # but drops their liveness state immediately; a late
++                        # read must not resurrect it. Check the generation and
++                        # stop flag under the same lock as teardown and writes.
+                         with self._lock:
+-                            if terminal_id in self._readers:
++                            if (
++                                self._readers.get(terminal_id) is stop_flag
++                                and not stop_flag.is_set()
++                            ):
+                                 self._last_data_at[terminal_id] = time.monotonic()
+                                 self._ever_delivered[terminal_id] = True
+                         if not pending:
+@@ -363,7 +444,9 @@ class FifoManager:
+                     or len(pending) >= _COALESCE_MAX_BYTES
+                     or not readable
+                 ):
+-                    bus.publish(topic, {"data": pending.decode("utf-8", errors="replace")})
++                    text = decoder.decode(pending)
++                    if text:
++                        bus.publish(topic, {"data": text})
+                     pending.clear()
+         except Exception as e:
+             if not stop_flag.is_set():
+@@ -371,11 +454,12 @@ class FifoManager:
+         finally:
+             # Flush any unpublished bytes so the last frame of a torn-down
+             # terminal isn't lost — status/log consumers may need it.
+-            if pending:
+-                try:
+-                    bus.publish(topic, {"data": pending.decode("utf-8", errors="replace")})
+-                except Exception:
+-                    pass
++            try:
++                text = decoder.decode(pending, final=True)
++                if text:
++                    bus.publish(topic, {"data": text})
++            except Exception:
++                pass
+             for fd in (read_fd, keepalive_fd):
+                 if fd >= 0:
+                     try:
+diff --git a/src/cli_agent_orchestrator/utils/tool_mapping.py b/src/cli_agent_orchestrator/utils/tool_mapping.py
+index 16183412..bb3b66ad 100644
+--- a/src/cli_agent_orchestrator/utils/tool_mapping.py
++++ b/src/cli_agent_orchestrator/utils/tool_mapping.py
+@@ -71,6 +71,28 @@ TOOL_MAPPING: Dict[str, Dict[str, List[str]]] = {
+         ],
+         "web_fetch": ["WebFetch", "WebSearch"],
+     },
++    # Kiro CLI. The agent JSON's ``tools`` field is AVAILABILITY (a tool not
++    # listed does not exist for the agent); ``allowedTools`` only names tools
++    # that run without an approval prompt. CAO writes the resolved policy into
++    # ``tools`` at install time (``kiro_agent_tools``). Both spellings of each
++    # built-in are listed: kiro-cli 2.25 names them read/write/shell/glob/grep
++    # and still accepts the older fs_read/fs_write/execute_bash as aliases;
++    # 2.22 documented the older names. A name a version does not know is
++    # silently ignored, so listing both keeps the grant identical on either.
++    # Privilege-equivalence, as for Claude Code above: ``subagent`` spawns an
++    # agent with its own tool set and ``use_aws`` runs AWS CLI calls, so both
++    # gate with execute_bash; ``code`` can write files (pattern_rewrite), so it
++    # gates with fs_write; ``knowledge`` reads and indexes files, so fs_read.
++    # goal/introspect/todo_list are the harmless chrome ``@builtin`` grants
++    # (KIRO_BUILTIN_CHROME). Measured on kiro-cli 2.25.0, 2026-09-29.
++    "kiro_cli": {
++        "execute_bash": ["execute_bash", "shell", "subagent", "use_aws"],
++        "fs_read": ["fs_read", "read", "knowledge"],
++        "fs_write": ["fs_write", "write", "code"],
++        "fs_list": ["glob", "grep"],
++        "fs_*": ["fs_read", "read", "knowledge", "fs_write", "write", "code", "glob", "grep"],
++        "web_fetch": ["web_fetch", "web_search"],
++    },
+     # Antigravity CLI (agy) shares Google's gemini-style tool vocabulary
+     # (write_file/read_file/run_shell_command/...). Restrictions are enforced
+     # softly via the injected security prompt (see SOFT_ENFORCEMENT_PROVIDERS).
+@@ -101,14 +123,19 @@ for _provider, _mapping in TOOL_MAPPING.items():
+ 
+ 
+ def _get_role_defaults(role: str) -> List[str] | None:
+-    """Look up allowedTools for a role (built-in or custom from settings)."""
+-    from cli_agent_orchestrator.constants import ROLE_TOOL_DEFAULTS
++    """Look up allowedTools for a role: settings.json first, then the built-ins.
+ 
+-    # Check built-in roles first
+-    if role in ROLE_TOOL_DEFAULTS:
+-        return list(ROLE_TOOL_DEFAULTS[role])
++    Operator configuration outranks shipped defaults, the same rule by which an
++    explicit ``allowedTools`` outranks ``role``. The order matters when a name
++    exists in both places: a saved ``workflow_scout`` policy of ``["fs_read",
++    "fs_list"]`` must keep resolving to that list after CAO ships a built-in of
++    the same name, not gain ``execute_bash`` on upgrade. A settings role that
++    shadows a built-in is logged by name so the override is visible.
+ 
+-    # Check custom roles from settings.json
++    Every role resolution now reads settings.json, where built-ins used to
++    resolve without touching disk; custom roles already paid that read.
++    """
++    from cli_agent_orchestrator.constants import ROLE_TOOL_DEFAULTS
+     from cli_agent_orchestrator.services.settings_service import _load
+ 
+     settings = _load()
+@@ -119,9 +146,17 @@ def _get_role_defaults(role: str) -> List[str] | None:
+     else:
+         # Legacy flat format: {"roles": {...}}
+         custom_roles = settings.get("roles", {})
+-    if role in custom_roles:
++    if isinstance(custom_roles, dict) and role in custom_roles:
++        if role in ROLE_TOOL_DEFAULTS:
++            logger.warning(
++                f"Role {role!r} is defined in settings.json and shadows the built-in "
++                "role of the same name; the settings.json definition is used."
++            )
+         return list(custom_roles[role])
+ 
++    if role in ROLE_TOOL_DEFAULTS:
++        return list(ROLE_TOOL_DEFAULTS[role])
++
+     return None
+ 
+ 
+@@ -134,10 +169,21 @@ def resolve_allowed_tools(
+ 
+     Resolution order:
+     1. profile_allowed_tools (explicit in profile or --allowed-tools CLI)
+-    2. Role-based defaults (built-in or custom from settings.json)
+-    3. Unrestricted ["*"] (backward compatible — no role/allowedTools = no restrictions)
+-
+-    MCP server names from the profile are appended as @server_name.
++    2. Role defaults: a custom role from settings.json, else the built-in of that name
++    3. Developer defaults when role and allowedTools are both omitted
++
++    An unrecognized role raises ValueError. A typo must not be more
++    privileged than omitting the field.
++
++    MCP server names are appended as ``@server_name`` to a list CAO chose, so
++    declaring a server in ``mcpServers`` is enough to use it. They are NOT
++    appended to an explicit ``profile_allowed_tools``: that list is the
++    operator's complete spec, and appending to it meant a profile could not
++    withhold a server it had to declare in order to configure (issue #772).
++    ``cli/commands/launch.py`` never routed ``--allowed-tools`` through here, so
++    the two spellings ``docs/tool-restrictions.md`` calls priority 2 and 3
++    resolved the same list to different policies, the lower-priority one being
++    the more permissive. An operator who wants the grant names it in the list.
+     """
+     if profile_allowed_tools is not None:
+         allowed = list(profile_allowed_tools)
+@@ -146,20 +192,19 @@ def resolve_allowed_tools(
+         if role_defaults is not None:
+             allowed = role_defaults
+         else:
+-            logger.warning(
+-                "Unknown role '%s' — falling back to unrestricted. "
+-                "Define custom roles in settings.json under 'roles'.",
+-                role,
++            raise ValueError(
++                f"Unknown role {role!r}. Define it in settings.json under "
++                "'roles', or omit role for developer defaults."
+             )
+-            allowed = ["*"]
+     else:
+         # No role, no allowedTools — default to developer (secure default)
+         from cli_agent_orchestrator.constants import ROLE_TOOL_DEFAULTS
+ 
+         allowed = list(ROLE_TOOL_DEFAULTS["developer"])
+ 
+-    # Append MCP server tools if not already present
+-    if mcp_server_names and "*" not in allowed:
++    # Append MCP server tools if not already present. Skipped for an explicit
++    # allowedTools, which is the operator's own list and outranks this default.
++    if mcp_server_names and profile_allowed_tools is None and "*" not in allowed:
+         for server_name in mcp_server_names:
+             tool_ref = f"@{server_name}"
+             if tool_ref not in allowed:
+@@ -244,6 +289,38 @@ def granted_mcp_servers(
+     return sorted(granted)
+ 
+ 
++#: Kiro built-ins that ``@builtin`` grants on the ``tools`` axis: the ones that
++#: can neither run commands, write files nor reach the network. On Kiro a bare
++#: ``@builtin`` in ``tools`` means EVERY built-in, shell included, so it must
++#: not pass through as written (the reviewer default would gain a shell).
++KIRO_BUILTIN_CHROME: List[str] = ["goal", "introspect", "todo_list"]
++
++
++def kiro_agent_tools(allowed: List[str]) -> List[str]:
++    """Translate a resolved CAO allowlist into Kiro's ``tools`` availability list.
++
++    ``["*"]`` stays ``["*"]``. Otherwise each CAO capability becomes the Kiro
++    built-ins it maps to (both spellings, see ``TOOL_MAPPING["kiro_cli"]``),
++    ``@builtin`` becomes the harmless chrome only, and any other ``@`` entry
++    (``@server`` or ``@server/tool``) passes through: Kiro reads those forms
++    itself. An empty allowlist yields an empty ``tools`` list, which in Kiro
++    is an agent with no tools -- the deny-everything a profile asked for.
++    Sorted, so two installs of the same profile write the same bytes.
++    """
++    if "*" in allowed:
++        return ["*"]
++    mapping = TOOL_MAPPING["kiro_cli"]
++    tools: Set[str] = set()
++    for cao_tool in allowed:
++        if cao_tool == "@builtin":
++            tools.update(KIRO_BUILTIN_CHROME)
++        elif cao_tool.startswith("@"):
++            tools.add(cao_tool)
++        else:
++            tools.update(mapping.get(cao_tool, ()))
++    return sorted(tools)
++
++
+ def get_disallowed_tools(provider: str, allowed: List[str]) -> List[str]:
+     """Given CAO allowedTools, return provider-native tool names to BLOCK.
+ 
+@@ -297,6 +374,34 @@ def get_allowed_tools(provider: str, allowed: List[str]) -> List[str]:
+     return sorted(allowed_native)
+ 
+ 
++def tool_constraint_instruction(allowed: List[str]) -> str:
++    """The tool sentence injected into a soft-enforcement provider's prompt.
++
++    One rule for the providers in ``SOFT_ENFORCEMENT_PROVIDERS``, which have no
++    native restriction mechanism and carry their policy as prompt text. Six
++    call sites wrote this sentence by hand and five of them built it by joining
++    the list, so an empty ``allowed`` produced "You only have access to these
++    tools: " with nothing after the colon. An empty list is a deliberate
++    deny-all and has to say so in words.
++
++    Callers own the surrounding whitespace, which differs between them, and are
++    responsible for the ``is not None`` and ``"*"`` checks: this is the wording,
++    not the policy.
++    """
++    if not allowed:
++        return "You may not use any tools. Do not attempt to call one."
++    return (
++        f"CAO allowed tool permissions: {', '.join(allowed)}. "
++        "CAO names such as fs_read, fs_write, fs_list, fs_* and execute_bash are "
++        "permission categories, not literal runtime tool names. Use available native tools "
++        "matching the granted categories: file reads, writes/edits, listing/search and shell "
++        "execution respectively; fs_* includes all file categories. Other tool names and MCP "
++        "references retain their exact scopes. Do not use a native tool outside the granted "
++        "categories. Do not infer that a capability is missing merely because its native tool "
++        "has a different name, and do not search unrelated plugin tools as a substitute."
++    )
++
++
+ def format_tool_summary(allowed: List[str]) -> str:
+     """Format allowedTools into a human-readable summary for the confirmation prompt.
+ 

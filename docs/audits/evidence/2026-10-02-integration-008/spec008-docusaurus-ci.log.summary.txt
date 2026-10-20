@@ -1,0 +1,7 @@
+Original evidence: /tmp/spec008-docusaurus-ci.log
+Original SHA256: b0cf28c4b671b1fafdefced1fec4ecdaf08b79310f173b967eee7e1ee17908d9
+Original bytes: 27
+This is a retained tail, not a new execution or a complete transcript.
+
+
+added 1300 packages in 2m

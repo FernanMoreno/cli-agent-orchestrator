@@ -1,0 +1,43 @@
+Original evidence: /tmp/cao-c07-closure-gate.log
+Original SHA256: 9149eb17fd81ee9b8687e043135b833d43f662a9096013280a1f59723c47f857
+Original bytes: 3605
+This is a retained tail, not a new execution or a complete transcript.
+
+........................................................................ [ 24%]
+........................................................................ [ 48%]
+........................................................................ [ 73%]
+........................................................................ [ 97%]
+......                                                                   [100%]
+=============================== warnings summary ===============================
+../../../../../Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+../../../../../Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  /mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+../../../../../Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323
+../../../../../Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323
+  /mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+../../../../../Users/ferna/OneDrive/Escritorio/CAOS/test/api/conftest.py:6
+  /mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/test/api/conftest.py:6: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    from cli_agent_orchestrator.api.main import app
+
+test/services/test_integration_008_coordinator.py::test_real_trusted_process_acceptance_automatically_continues_exact_next_step[False]
+  /mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/websockets/legacy/__init__.py:6: DeprecationWarning: websockets.legacy is deprecated; see https://websockets.readthedocs.io/en/stable/howto/upgrade.html for upgrade instructions
+    warnings.warn(  # deprecated in 14.0 - 2024-11-09
+
+test/services/test_integration_008_coordinator.py::test_real_trusted_process_acceptance_automatically_continues_exact_next_step[False]
+  /mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/uvicorn/protocols/websockets/websockets_impl.py:17: DeprecationWarning: websockets.server.WebSocketServerProtocol is deprecated
+    from websockets.server import WebSocketServerProtocol
+
+test/api/test_integration_008_beads_work_review.py::test_configured_auth_scopes_and_binding_owner_fail_before_effect
+  /mnt/c/users/ferna/onedrive/escritorio/caos/test/conftest.py:57: AuthlibDeprecationWarning: authlib.jose module is deprecated, please use joserfc instead.
+  It will be compatible before version 2.0.0.
+    from authlib.jose import JsonWebKey
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+294 passed, 8 warnings in 101.34s (0:01:41)

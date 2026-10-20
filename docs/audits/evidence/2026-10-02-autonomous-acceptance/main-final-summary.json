@@ -1,0 +1,211 @@
+{
+  "overall": "failed",
+  "main_phases": [
+    {
+      "number": 1,
+      "kind": "normal",
+      "status": "failed",
+      "checks": {
+        "exactly_two_children": true,
+        "expected_providers": true,
+        "children_succeeded": false,
+        "peer_contract_delivered": true,
+        "peer_ack_delivered": true,
+        "both_results_delivered_to_supervisor": true,
+        "all_messages_delivered": false,
+        "no_duplicate_assignment": true,
+        "notes_unchanged": true
+      },
+      "cleanup_http_status": 200,
+      "final_children": [
+        {
+          "id": "ed4dbe1b-1968-4a66-b477-a01becf6c4a1",
+          "parent_terminal_id": "1dbcc288",
+          "terminal_id": "6d9d19c8",
+          "provider": "codex",
+          "agent_profile": "auto-api",
+          "state": "succeeded",
+          "error_kind": null,
+          "settled_at": "2026-10-02 09:42:59.434108"
+        },
+        {
+          "id": "d4093b28-c10c-4521-8e4f-b7500c08ecb4",
+          "parent_terminal_id": "1dbcc288",
+          "terminal_id": "b826dc57",
+          "provider": "opencode_cli",
+          "agent_profile": "auto-web",
+          "state": "reconcile",
+          "error_kind": "receipt_result_unverifiable",
+          "settled_at": "2026-10-02 09:45:30.891189"
+        }
+      ],
+      "pending_messages": 2
+    },
+    {
+      "number": 2,
+      "kind": "late_receipt",
+      "status": "failed",
+      "checks": {
+        "exactly_two_children": true,
+        "expected_providers": true,
+        "children_succeeded": false,
+        "peer_contract_delivered": false,
+        "peer_ack_delivered": false,
+        "both_results_delivered_to_supervisor": true,
+        "all_messages_delivered": true,
+        "no_duplicate_assignment": true,
+        "notes_unchanged": true,
+        "late_fault_exercised": true,
+        "genuine_native_witness_observed": false
+      },
+      "cleanup_http_status": 200,
+      "final_children": [
+        {
+          "id": "bd656125-57e4-4eb7-91b8-41bb947cc247",
+          "parent_terminal_id": "de7b89db",
+          "terminal_id": "5be94996",
+          "provider": "codex",
+          "agent_profile": "auto-api",
+          "state": "reconcile",
+          "error_kind": "receipt_result_unverifiable",
+          "settled_at": "2026-10-02 09:59:45.328761"
+        },
+        {
+          "id": "f432abd5-2165-4d55-84d6-4d862e36fec4",
+          "parent_terminal_id": "de7b89db",
+          "terminal_id": "3b56848c",
+          "provider": "opencode_cli",
+          "agent_profile": "auto-web",
+          "state": "reconcile",
+          "error_kind": "receipt_result_unverifiable",
+          "settled_at": "2026-10-02 10:05:43.225429"
+        }
+      ],
+      "pending_messages": 0
+    },
+    {
+      "number": 3,
+      "kind": "restart",
+      "status": "failed",
+      "checks": {
+        "exactly_two_children": true,
+        "expected_providers": true,
+        "children_succeeded": false,
+        "peer_contract_delivered": false,
+        "peer_ack_delivered": false,
+        "both_results_delivered_to_supervisor": false,
+        "all_messages_delivered": false,
+        "no_duplicate_assignment": true,
+        "notes_unchanged": true,
+        "restart_exercised": true,
+        "identities_retained": true
+      },
+      "cleanup_http_status": 200,
+      "final_children": [
+        {
+          "id": "42767d04-630b-474a-adce-e87fc7d2b50e",
+          "parent_terminal_id": "c8873c52",
+          "terminal_id": "570c5bfb",
+          "provider": "codex",
+          "agent_profile": "auto-api",
+          "state": "running",
+          "error_kind": null,
+          "settled_at": null
+        },
+        {
+          "id": "2d9b580e-4bf9-47ca-b3a5-e5fc299baeaa",
+          "parent_terminal_id": "c8873c52",
+          "terminal_id": "378398ef",
+          "provider": "opencode_cli",
+          "agent_profile": "auto-web",
+          "state": "running",
+          "error_kind": null,
+          "settled_at": null
+        }
+      ],
+      "pending_messages": 3
+    }
+  ],
+  "authentic_late": {
+    "status": "failed",
+    "checks": {
+      "exactly_two_children": true,
+      "expected_providers": true,
+      "children_succeeded": false,
+      "peer_contract_delivered": true,
+      "peer_ack_delivered": true,
+      "both_results_delivered_to_supervisor": true,
+      "all_messages_delivered": false,
+      "no_duplicate_assignment": true,
+      "notes_unchanged": true,
+      "late_fault_exercised": true,
+      "genuine_native_witness_observed": true
+    },
+    "children": [
+      {
+        "id": "774b4007-442c-4a71-bea9-924b38fbbad5",
+        "parent_terminal_id": "7b55df4d",
+        "terminal_id": "4ace8d36",
+        "provider": "codex",
+        "agent_profile": "auto-api",
+        "state": "succeeded",
+        "error_kind": null,
+        "settled_at": "2026-10-02 10:19:49.545771"
+      },
+      {
+        "id": "2aaa077d-e167-4131-8ce3-6b65174973d9",
+        "parent_terminal_id": "7b55df4d",
+        "terminal_id": "2aa0a415",
+        "provider": "opencode_cli",
+        "agent_profile": "auto-web",
+        "state": "reconcile",
+        "error_kind": "receipt_result_unverifiable",
+        "settled_at": "2026-10-02 10:20:36.678723"
+      }
+    ],
+    "cleanup_http_status": 200
+  },
+  "independent": [
+    {
+      "phase": 1,
+      "http": {
+        "exit_code": 0
+      },
+      "unit": {
+        "exit_code": 0,
+        "test_count": 10
+      },
+      "syntax": {
+        "exit_code": 0
+      }
+    },
+    {
+      "phase": 2,
+      "http": {
+        "exit_code": 1
+      },
+      "unit": {
+        "exit_code": 0,
+        "test_count": 10
+      },
+      "syntax": {
+        "exit_code": 0
+      }
+    },
+    {
+      "phase": 3,
+      "http": {
+        "exit_code": 1
+      },
+      "unit": {
+        "exit_code": 0,
+        "test_count": 12
+      },
+      "syntax": {
+        "exit_code": 0
+      }
+    }
+  ],
+  "browser_matches_final_source": true,
+  "controllers_closed": true
+}

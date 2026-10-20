@@ -1,0 +1,50 @@
+Original evidence: /tmp/cao-final-parity-python.log
+Original SHA256: d4607d619808db159530e003fee78cf548017d0c23b83e1e648fdb2209371380
+Original bytes: 8395
+This is a retained tail, not a new execution or a complete transcript.
+
+
+>   ???
+E   AttributeError: 'NoneType' object has no attribute 'kwargs'
+
+/mnt/c/Users/ferna/Documents/Codex/2026-09-16/n/work/cli-agent-orchestrator-fork/test/mcp_server/test_elastic_workers.py:428: AttributeError
+___________ test_assign_elastic_calls_overlap_instead_of_serialising ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x77eaedf7cb60>
+
+>   ???
+E   assert False
+E    +  where False = all(<generator object test_assign_elastic_calls_overlap_instead_of_serialising.<locals>.<genexpr> at 0x77eaede3ac20>)
+
+/mnt/c/Users/ferna/Documents/Codex/2026-09-16/n/work/cli-agent-orchestrator-fork/test/mcp_server/test_elastic_workers.py:477: AssertionError
+=============================== warnings summary ===============================
+../../../../../Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+../../../../../Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  /mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+../../../../../Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323
+../../../../../Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323
+  /mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+../../../../../Users/ferna/OneDrive/Escritorio/CAOS/test/api/conftest.py:6
+  /mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/test/api/conftest.py:6: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    from cli_agent_orchestrator.api.main import app
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED test/mcp_server/test_elastic_workers.py::test_assign_elastic_provisions_then_assigns
+FAILED test/mcp_server/test_elastic_workers.py::test_assign_elastic_deferred_failure_reports_terminal_ended
+FAILED test/mcp_server/test_elastic_workers.py::test_assign_elastic_omits_provider_so_the_broker_default_wins
+FAILED test/mcp_server/test_elastic_workers.py::test_assign_elastic_forwards_an_explicit_provider
+FAILED test/mcp_server/test_elastic_workers.py::test_assign_elastic_warns_the_worker_not_to_speak_first
+FAILED test/mcp_server/test_elastic_workers.py::test_assign_elastic_releases_when_assignment_fails
+FAILED test/mcp_server/test_elastic_workers.py::test_assign_remote_does_not_wait_by_default
+FAILED test/mcp_server/test_elastic_workers.py::test_assign_remote_waits_before_it_posts_the_task
+FAILED test/mcp_server/test_elastic_workers.py::test_assign_elastic_asks_the_assignment_to_wait_for_its_new_worker
+FAILED test/mcp_server/test_elastic_workers.py::test_assign_elastic_calls_overlap_instead_of_serialising
+10 failed, 508 passed, 5 warnings in 94.40s (0:01:34)

@@ -1,0 +1,14 @@
+Original evidence: /tmp/spec008-final-remote-registry-review.log
+Original SHA256: 7326bdfd520cb6e11a0c090424863b4403884fa0db913510e55892dcef4c60ec
+Original bytes: 907
+Retained final tail; not a new execution or complete transcript.
+
+...                                                                      [100%]
+=============================== warnings summary ===============================
+test/runtime_channel/test_remote_cleanup_identity.py::test_old_compensation_preserves_same_id_unrelated_local_terminal
+test/runtime_channel/test_remote_cleanup_identity.py::test_old_compensation_preserves_same_id_unrelated_local_terminal
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+3 passed, 2 warnings in 10.22s

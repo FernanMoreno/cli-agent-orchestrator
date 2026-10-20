@@ -1,0 +1,12 @@
+[
+  {
+    "provider": "claude_code",
+    "status": "passed",
+    "native_receipt_verified": true
+  },
+  {
+    "provider": "codex",
+    "status": "passed",
+    "native_receipt_verified": true
+  }
+]

@@ -1,0 +1,34 @@
+Original evidence: /tmp/spec008-mcp-all-current-green.log
+Original SHA256: 3ab6a8ff31e4982bc322783a353ff64153b502eb0c1a2364604033768d24f8c6
+Original bytes: 2527
+Retained final tail; not a new execution or complete transcript.
+
+........................................................................ [ 11%]
+........................................................................ [ 23%]
+........................................................................ [ 34%]
+........................................................................ [ 46%]
+........................................................................ [ 58%]
+........................................................................ [ 69%]
+........................................................................ [ 81%]
+........................................................................ [ 93%]
+...........................................                              [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323
+.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+test/mcp_server/test_work_launch_authority.py:15
+  /mnt/c/users/ferna/onedrive/escritorio/caos/test/mcp_server/test_work_launch_authority.py:15: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    from cli_agent_orchestrator.api import main as api_main
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+619 passed, 18 deselected, 5 warnings in 399.10s (0:06:39)

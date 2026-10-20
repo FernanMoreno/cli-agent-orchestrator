@@ -1,0 +1,650 @@
+{
+  "cao-final-fork-parity-review.md": {
+    "original": "/tmp/cao-final-fork-parity-review.md",
+    "sha256": "a0ae85802b5cae703f88c055617b7fa2a7b83833e12628d4f6ad72ebf8675872",
+    "bytes": 12718,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-final-fork-parity-review.md"
+  },
+  "cao-integration-consumers-review.md": {
+    "original": "/tmp/cao-integration-consumers-review.md",
+    "sha256": "13edd7bd0ccebf1229c55eee6c8b8ff6f538054c715fe069d007cc4d0a0a9d76",
+    "bytes": 11013,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-integration-consumers-review.md"
+  },
+  "spec008-tui-unit.log.summary.txt": {
+    "original": "/tmp/spec008-tui-unit.log",
+    "sha256": "0c5c2326311d032e78406e2d5b0b0b604c89024650947097cfb2c90013d81cb0",
+    "bytes": 19116,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-tui-unit.log.summary.txt"
+  },
+  "spec008-catalog-green.log.summary.txt": {
+    "original": "/tmp/spec008-catalog-green.log",
+    "sha256": "b4c2c3a85335a008385690466d6e91164026c0891bc8106ab5e9e4d28cd4fd80",
+    "bytes": 99,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-catalog-green.log.summary.txt"
+  },
+  "cao-final-parity-web.log.summary.txt": {
+    "original": "/tmp/cao-final-parity-web.log",
+    "sha256": "4aeeeffae35ac5061b4b2ec8ff3fc7e506c2223305db4544e1f36b7e31828d0c",
+    "bytes": 1758,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-final-parity-web.log.summary.txt"
+  },
+  "cao-final-parity-python.log.summary.txt": {
+    "original": "/tmp/cao-final-parity-python.log",
+    "sha256": "d4607d619808db159530e003fee78cf548017d0c23b83e1e648fdb2209371380",
+    "bytes": 8395,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-final-parity-python.log.summary.txt"
+  },
+  "cao-c05-scope-review.md": {
+    "original": "/tmp/cao-c05-scope-review.md",
+    "sha256": "e91acdaa93d4478e920d074d658ae4523348ef911f68015104feefaffb70c244",
+    "bytes": 13265,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c05-scope-review.md"
+  },
+  "spec008-authoring-plan-final.log.summary.txt": {
+    "original": "/tmp/spec008-authoring-plan-final.log",
+    "sha256": "27f1cfc5dc800ba2b7ce364406cd353a2b3920a0737b54c75c7fd44d1051843c",
+    "bytes": 2013,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-authoring-plan-final.log.summary.txt"
+  },
+  "cao-c05-scope-review-green.log.summary.txt": {
+    "original": "/tmp/cao-c05-scope-review-green.log",
+    "sha256": "f0ef80ababf9ea228e59fd7b46ecd30ebb8780729bc397a90f94fe3b4733b0c3",
+    "bytes": 833,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c05-scope-review-green.log.summary.txt"
+  },
+  "cao-final-parity-memory.log.summary.txt": {
+    "original": "/tmp/cao-final-parity-memory.log",
+    "sha256": "d12adc159fcaaaedcc0fa73d65527442cc705c3ed4c3834a0ff8715c5a2c0346",
+    "bytes": 954,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-final-parity-memory.log.summary.txt"
+  },
+  "cao-c05-beads-work-review-final.log.summary.txt": {
+    "original": "/tmp/cao-c05-beads-work-review-final.log",
+    "sha256": "d1ecc72f1d98827cdf4e12558ccd20a33020b3439925f7ee7476004aeac1d108",
+    "bytes": 2211,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c05-beads-work-review-final.log.summary.txt"
+  },
+  "cao-c05-beads-progress-review.md": {
+    "original": "/tmp/cao-c05-beads-progress-review.md",
+    "sha256": "889cd14ea53e5372ffa928baa258ceef8d493dee5b20f8dcc31d6b28fcfa6e23",
+    "bytes": 5211,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c05-beads-progress-review.md"
+  },
+  "cao-c05-beads-progress-review-complete13.log.summary.txt": {
+    "original": "/tmp/cao-c05-beads-progress-review-complete13.log",
+    "sha256": "2584f08ef19f4cd2d60718fd73c544f1a8798b80f01c5b4ea9138e2a42b802d0",
+    "bytes": 2213,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c05-beads-progress-review-complete13.log.summary.txt"
+  },
+  "spec008-full-api-current-final.log.summary.txt": {
+    "original": "/tmp/spec008-full-api-current-final.log",
+    "sha256": "4621cb12a81402aa8efb257992fb86338b507a94cc2046ba5743167e1fa2158f",
+    "bytes": 4550,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-full-api-current-final.log.summary.txt"
+  },
+  "spec008-web-final-all-current.log.summary.txt": {
+    "original": "/tmp/spec008-web-final-all-current.log",
+    "sha256": "d62c60d1274743010942f257475d4ed705db310151f75636a82135cd3608366d",
+    "bytes": 9006,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-web-final-all-current.log.summary.txt"
+  },
+  "cao-integration-graph-implementation.md": {
+    "original": "/tmp/cao-integration-graph-implementation.md",
+    "sha256": "7d8cfca2f101fdd56ae5dae1ed74bc25b8b0ee223d92185a20034fcddf340c72",
+    "bytes": 7892,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-integration-graph-implementation.md"
+  },
+  "spec008-graph-final-v2.log.summary.txt": {
+    "original": "/tmp/spec008-graph-final-v2.log",
+    "sha256": "3825291f87c29fd6218c86b0db61acbf37486509852e8e739f0a677d0627e4e4",
+    "bytes": 2367,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-graph-final-v2.log.summary.txt"
+  },
+  "cao-c06-kas-review.md": {
+    "original": "/tmp/cao-c06-kas-review.md",
+    "sha256": "04dc9798b1c11bfa639bf00f5c89fe28627b1f62bef6b6d580e663b768924077",
+    "bytes": 6176,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c06-kas-review.md"
+  },
+  "spec008-kas-proof-final.log.summary.txt": {
+    "original": "/tmp/spec008-kas-proof-final.log",
+    "sha256": "b89b386b0ccca4410b9230d8eebc5eb26f7621aac910fb979bcb627e519dab64",
+    "bytes": 5554,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-kas-proof-final.log.summary.txt"
+  },
+  "spec008-kas-lifecycle-final.log.summary.txt": {
+    "original": "/tmp/spec008-kas-lifecycle-final.log",
+    "sha256": "2916222216306e71dad9ced81d14b8d5e35c90460c7263c46282df0f54b3ea46",
+    "bytes": 1006,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-kas-lifecycle-final.log.summary.txt"
+  },
+  "cao-t052-memory-review.md": {
+    "original": "/tmp/cao-t052-memory-review.md",
+    "sha256": "009faa1c4c737c0c495d2d1c950ca0b7974857828e31f206798e0c89a33f4fb6",
+    "bytes": 7370,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-t052-memory-review.md"
+  },
+  "spec008-memory-target-full2.log.summary.txt": {
+    "original": "/tmp/spec008-memory-target-full2.log",
+    "sha256": "92eec96693c988ba0550ba8ad8b65a5a988dace5b3f7fc266e3485075166ad93",
+    "bytes": 986,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-memory-target-full2.log.summary.txt"
+  },
+  "spec008-memory-review-composition-final.log.summary.txt": {
+    "original": "/tmp/spec008-memory-review-composition-final.log",
+    "sha256": "3c8cd3a90dd9397580cd3cd6e69a44e3272bfaf7219802d15ccdbb2d1c0968aa",
+    "bytes": 1558,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-memory-review-composition-final.log.summary.txt"
+  },
+  "spec008-prhealth-current-failures.log.summary.txt": {
+    "original": "/tmp/spec008-prhealth-current-failures.log",
+    "sha256": "77a906ab3f5f0ea7a43fae3300526b4b2818696eb763dbc09bfa42c52e3c579f",
+    "bytes": 889,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-prhealth-current-failures.log.summary.txt"
+  },
+  "cao-c05-mcp-c08-release-review.md": {
+    "original": "/tmp/cao-c05-mcp-c08-release-review.md",
+    "sha256": "a970fb37e7df05027be1935b501bf5435abd85e6b64e6f35af705903a64007bd",
+    "bytes": 2919,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c05-mcp-c08-release-review.md"
+  },
+  "spec008-release-green.log.summary.txt": {
+    "original": "/tmp/spec008-release-green.log",
+    "sha256": "5762ba96cb66883c8aee0be1927a43362217924dda21ad99d547edc08f8105c4",
+    "bytes": 99,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-release-green.log.summary.txt"
+  },
+  "cao-c06-fleet-review.md": {
+    "original": "/tmp/cao-c06-fleet-review.md",
+    "sha256": "02e3d061fc3b489d00ce450eab24e7379f37a2220576abb356d33760b3e5bc3b",
+    "bytes": 10964,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c06-fleet-review.md"
+  },
+  "spec008-fleet-web-all-final.log.summary.txt": {
+    "original": "/tmp/spec008-fleet-web-all-final.log",
+    "sha256": "a3173fb61d9cc06123ae9e6fd6aecb3a4dd8525a01730a73298c360e294b062c",
+    "bytes": 8999,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-fleet-web-all-final.log.summary.txt"
+  },
+  "cao-final-parity-entrypoint.log.summary.txt": {
+    "original": "/tmp/cao-final-parity-entrypoint.log",
+    "sha256": "98a9e4170ad676ae4de3292cb7587cca792c9ac730aa1ae0d758380a7942afe3",
+    "bytes": 713,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-final-parity-entrypoint.log.summary.txt"
+  },
+  "spec008-elastic-fixture-final2.log.summary.txt": {
+    "original": "/tmp/spec008-elastic-fixture-final2.log",
+    "sha256": "777de9da457f4baa052a289814180e8d094f464f204b2e4317dcc7b8bda4811e",
+    "bytes": 808,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-elastic-fixture-final2.log.summary.txt"
+  },
+  "spec008-elastic-readiness-green.log.summary.txt": {
+    "original": "/tmp/spec008-elastic-readiness-green.log",
+    "sha256": "9f1e4902e242256dfa38fe1e819d22068845ac6d69ceed197bb633a086bc1b8c",
+    "bytes": 807,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-elastic-readiness-green.log.summary.txt"
+  },
+  "spec008-final-parity-fleet-cli.log.summary.txt": {
+    "original": "/tmp/spec008-final-parity-fleet-cli.log",
+    "sha256": "1f68c000b9563665d24529d429fa79cde784fbfb474f9f6c2f97e628f51f5874",
+    "bytes": 180,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-final-parity-fleet-cli.log.summary.txt"
+  },
+  "spec008-final-deployment-source-proof.log.summary.txt": {
+    "original": "/tmp/spec008-final-deployment-source-proof.log",
+    "sha256": "41aa88c68b071defb16ad05d6aeb3e21e0133752a4f4a1e44f81b9fc83b7bedd",
+    "bytes": 232,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-final-deployment-source-proof.log.summary.txt"
+  },
+  "cao-c04-execution-review.md": {
+    "original": "/tmp/cao-c04-execution-review.md",
+    "sha256": "6e88472f979672d2b6175261ce03a28fbff77e0180071d3e32302aa24aae7dc9",
+    "bytes": 5957,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c04-execution-review.md"
+  },
+  "spec008-broker-actual-serializer.log.summary.txt": {
+    "original": "/tmp/spec008-broker-actual-serializer.log",
+    "sha256": "7a16f9baddde46271f471beaf051331de52117a2674143128ea2cd71f35b0c98",
+    "bytes": 24771,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-broker-actual-serializer.log.summary.txt"
+  },
+  "spec008-core-final-batch.log.summary.txt": {
+    "original": "/tmp/spec008-core-final-batch.log",
+    "sha256": "2b1f70e68c700d231757d7255fe83b1d1406a2360f7c90a50a4b1a9074cad681",
+    "bytes": 100,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-core-final-batch.log.summary.txt"
+  },
+  "spec008-workflow-targeted-v2.log.summary.txt": {
+    "original": "/tmp/spec008-workflow-targeted-v2.log",
+    "sha256": "5ab6e681785cf25b122ad60d6af8df27351f35e9e716ffdd74d0e35f92c7aab6",
+    "bytes": 1342,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-workflow-targeted-v2.log.summary.txt"
+  },
+  "cao-integration-core-review.md": {
+    "original": "/tmp/cao-integration-core-review.md",
+    "sha256": "5e95a1d59c3268fb8bbe4084c81735be58176643b9396a19cfcafa7b403be027",
+    "bytes": 9333,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-integration-core-review.md"
+  },
+  "cao-integration-policy-review.md": {
+    "original": "/tmp/cao-integration-policy-review.md",
+    "sha256": "10d9238d7327713ae8c2eb249049a8e048aa2f617ce6855e22dc2e382bbafc33",
+    "bytes": 4362,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-integration-policy-review.md"
+  },
+  "spec008-policy-root-green.log.summary.txt": {
+    "original": "/tmp/spec008-policy-root-green.log",
+    "sha256": "2a6885d17008ea10afa030e58edfbe84cd26ca21093632b5d5fe30d9ea278b00",
+    "bytes": 2093,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-policy-root-green.log.summary.txt"
+  },
+  "spec008-policy-parser-final.log.summary.txt": {
+    "original": "/tmp/spec008-policy-parser-final.log",
+    "sha256": "f87aedb65d2fe28b18eb99898f17854b301c90d760b85a0f8d64e8ec4a69c7b5",
+    "bytes": 969,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-policy-parser-final.log.summary.txt"
+  },
+  "spec008-opencode-parser-green.log.summary.txt": {
+    "original": "/tmp/spec008-opencode-parser-green.log",
+    "sha256": "e32762081cd61b93789c880081d49068467dc43706b2d856084774cbbedd58fb",
+    "bytes": 960,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-opencode-parser-green.log.summary.txt"
+  },
+  "cao-c07-assignment-review.md": {
+    "original": "/tmp/cao-c07-assignment-review.md",
+    "sha256": "54ce9810fdae66c78b7fda84778374876e2df23e39bd15880759a20fb8be2745",
+    "bytes": 18105,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c07-assignment-review.md"
+  },
+  "cao-c07-whole-assignment-final.log.summary.txt": {
+    "original": "/tmp/cao-c07-whole-assignment-final.log",
+    "sha256": "16b0a47e45b1e386392934c9f750b91943dd0258bd3a7de7598ee9d3f2192997",
+    "bytes": 2728,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c07-whole-assignment-final.log.summary.txt"
+  },
+  "cao-c07-elastic-managed-preflight.log.summary.txt": {
+    "original": "/tmp/cao-c07-elastic-managed-preflight.log",
+    "sha256": "d8194e73c6ed13c70970f040a6185f450e9d274ee0c6c53d33bf0ff3c255b0f5",
+    "bytes": 1866,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c07-elastic-managed-preflight.log.summary.txt"
+  },
+  "cao-c07-assignment-composition-final.log.summary.txt": {
+    "original": "/tmp/cao-c07-assignment-composition-final.log",
+    "sha256": "c3332d238031d2ed7f1fed4eee6efcb9f15659616515b5e0605701f407b2acbd",
+    "bytes": 1558,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c07-assignment-composition-final.log.summary.txt"
+  },
+  "cao-c07-late-observer-review.md": {
+    "original": "/tmp/cao-c07-late-observer-review.md",
+    "sha256": "857ac42ce48742108a910c71330452e9873ae685ab7e6d1b901d5b7bca3cc0a5",
+    "bytes": 4147,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c07-late-observer-review.md"
+  },
+  "spec008-late-review-fix.log.summary.txt": {
+    "original": "/tmp/spec008-late-review-fix.log",
+    "sha256": "2c17e9968effddaa458b8081eb242941e755fb967bb79e4a2f8fad408e07ee81",
+    "bytes": 807,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-late-review-fix.log.summary.txt"
+  },
+  "spec008-late-inventory-green.log.summary.txt": {
+    "original": "/tmp/spec008-late-inventory-green.log",
+    "sha256": "c19099bd798849f6364f38a9f9ad3e47c47f46cde960dd6be6f08aec11216a0c",
+    "bytes": 889,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-late-inventory-green.log.summary.txt"
+  },
+  "cao-c07-continuation-review.md": {
+    "original": "/tmp/cao-c07-continuation-review.md",
+    "sha256": "5a4f267a012573f1ff6e6798791a93bb5932d479667ba84fb5aaab4e317266bb",
+    "bytes": 10797,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c07-continuation-review.md"
+  },
+  "cao-c07-closure-gate.log.summary.txt": {
+    "original": "/tmp/cao-c07-closure-gate.log",
+    "sha256": "9149eb17fd81ee9b8687e043135b833d43f662a9096013280a1f59723c47f857",
+    "bytes": 3605,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c07-closure-gate.log.summary.txt"
+  },
+  "cao-c07-continuation-review-final-current.log.summary.txt": {
+    "original": "/tmp/cao-c07-continuation-review-final-current.log",
+    "sha256": "d80938338eb264bd6932e5de7cd982a5320012ea178a3c552b8b77178b4ecada",
+    "bytes": 2076,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c07-continuation-review-final-current.log.summary.txt"
+  },
+  "cao-c06-remote-review.md": {
+    "original": "/tmp/cao-c06-remote-review.md",
+    "sha256": "261f35e95042a9e3ab6407f68edc6fc70d34190f6e67920050cbe9ef304d78c4",
+    "bytes": 8613,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c06-remote-review.md"
+  },
+  "cao-c06-remote-causal-delete-review.log.summary.txt": {
+    "original": "/tmp/cao-c06-remote-causal-delete-review.log",
+    "sha256": "010944f6f732c915fbc3205784c846c263454333de6d5d196ca1e5d1f234083d",
+    "bytes": 3821,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c06-remote-causal-delete-review.log.summary.txt"
+  },
+  "cao-c06-remote-review-composition-final.log.summary.txt": {
+    "original": "/tmp/cao-c06-remote-review-composition-final.log",
+    "sha256": "448d3bb5ad17a4eeb6b2b29a67ec4b5e798cb93050f2aba28ae7b4080bd5cb70",
+    "bytes": 1558,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-c06-remote-review-composition-final.log.summary.txt"
+  },
+  "cao-g04-operations-review.md": {
+    "original": "/tmp/cao-g04-operations-review.md",
+    "sha256": "e016eb9de642a56b5dea19b4dc517a49958a6b31bea2586017105bfef8874d78",
+    "bytes": 6378,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-g04-operations-review.md"
+  },
+  "cao-t057-final-gate.log.summary.txt": {
+    "original": "/tmp/cao-t057-final-gate.log",
+    "sha256": "d08e6f96681033f5dcdf9325e1f830d20716fc538ec4c7cb88aff527107e4941",
+    "bytes": 2013,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-t057-final-gate.log.summary.txt"
+  },
+  "cao-g04-operations-final.log.summary.txt": {
+    "original": "/tmp/cao-g04-operations-final.log",
+    "sha256": "260b229e85edd50deab29d98f247dcfeee575d255c9d7ecc0568add68dff65ea",
+    "bytes": 2143,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-g04-operations-final.log.summary.txt"
+  },
+  "spec008-docusaurus-ci.log.summary.txt": {
+    "original": "/tmp/spec008-docusaurus-ci.log",
+    "sha256": "b0cf28c4b671b1fafdefced1fec4ecdaf08b79310f173b967eee7e1ee17908d9",
+    "bytes": 27,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-docusaurus-ci.log.summary.txt"
+  },
+  "spec008-docusaurus-build.log.summary.txt": {
+    "original": "/tmp/spec008-docusaurus-build.log",
+    "sha256": "16f239fd648bdb720b8e34ae777d2702b25641982cbadab761d540d02d8b04d1",
+    "bytes": 483,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-docusaurus-build.log.summary.txt"
+  },
+  "spec008-upstream-hardening-and-contributing.log.summary.txt": {
+    "original": "/tmp/spec008-upstream-hardening-and-contributing.log",
+    "sha256": "aafdffe728ec8d644a50c617436eb54cfbcbea5d49950af6dbc0752f8212cc1a",
+    "bytes": 1256,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-upstream-hardening-and-contributing.log.summary.txt"
+  },
+  "spec008-fleet-resources-final.log.summary.txt": {
+    "original": "/tmp/spec008-fleet-resources-final.log",
+    "sha256": "0d445e0c3b40a00d72c3149f4ef3f42b1a592d0e98c7948f68f9213218fc244c",
+    "bytes": 988,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-fleet-resources-final.log.summary.txt"
+  },
+  "cao-final-remote-publication-review.md": {
+    "original": "/tmp/cao-final-remote-publication-review.md",
+    "sha256": "c986257abe910c1d572fe98ff411d31006755e922228d15a51cb55fb13602375",
+    "bytes": 7003,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-final-remote-publication-review.md"
+  },
+  "spec008-final-coverage-consistency-review.md": {
+    "original": "/tmp/spec008-final-coverage-consistency-review.md",
+    "sha256": "44e881bf093c93942ba4a8b7ca0c4c2f02f471d0a94b829cf23095c6ee4a9377",
+    "bytes": 6375,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-final-coverage-consistency-review.md"
+  },
+  "spec008-apps-event-browser-diagnosis.md": {
+    "original": "/tmp/spec008-apps-event-browser-diagnosis.md",
+    "sha256": "8a6e6585fd1fbd0ef8ca2525d60dc601660ff02df37a973f81b27b89333009b2",
+    "bytes": 4468,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-apps-event-browser-diagnosis.md"
+  },
+  "cao-marked-workflows-fixture-report.md": {
+    "original": "/tmp/cao-marked-workflows-fixture-report.md",
+    "sha256": "bfb1f53e61ee5efe7ef5f5ec3b173300da19cf0a1629fda6a25a42cc15086649",
+    "bytes": 2399,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/cao-marked-workflows-fixture-report.md"
+  },
+  "spec008-services-final-complete.log.summary.txt": {
+    "original": "/tmp/spec008-services-final-complete.log",
+    "sha256": "514ab13dddd61b4e150d197581e010a96ada11b0fcfa392f27cd346bdf2f1953",
+    "bytes": 14819,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-services-final-complete.log.summary.txt"
+  },
+  "spec008-api-final-all-green.log.summary.txt": {
+    "original": "/tmp/spec008-api-final-all-green.log",
+    "sha256": "ef9ea0d0a339214b0b8326a2a216e31a80a09e829d8574fa09778a4050201afb",
+    "bytes": 5756,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-api-final-all-green.log.summary.txt"
+  },
+  "spec008-first-half-final-clean.log.summary.txt": {
+    "original": "/tmp/spec008-first-half-final-clean.log",
+    "sha256": "209b0fc81c951c8fe2d4d8ed5c8732fe0db921baacca43d5f03a165e96317e69",
+    "bytes": 8984,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-first-half-final-clean.log.summary.txt"
+  },
+  "spec008-providers-current-all.log.summary.txt": {
+    "original": "/tmp/spec008-providers-current-all.log",
+    "sha256": "5423adddd32fa3646ac8dfa15c7cab29ce19381b5173e80905f9d64f763a6c81",
+    "bytes": 3486,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-providers-current-all.log.summary.txt"
+  },
+  "spec008-plugins-all-current-green.log.summary.txt": {
+    "original": "/tmp/spec008-plugins-all-current-green.log",
+    "sha256": "d69427176237a129bba6025fe9cd2ded14a6f53a2a26b1dc6f2624b50e745c9d",
+    "bytes": 3567,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-plugins-all-current-green.log.summary.txt"
+  },
+  "spec008-mcp-all-current-green.log.summary.txt": {
+    "original": "/tmp/spec008-mcp-all-current-green.log",
+    "sha256": "3ab6a8ff31e4982bc322783a353ff64153b502eb0c1a2364604033768d24f8c6",
+    "bytes": 2527,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-mcp-all-current-green.log.summary.txt"
+  },
+  "spec008-runtime-final-complete.log.summary.txt": {
+    "original": "/tmp/spec008-runtime-final-complete.log",
+    "sha256": "5148ac4907a20998fafe64c8e9e03a49e20c3c58cb380562bcaf770bd3727b82",
+    "bytes": 1921,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-runtime-final-complete.log.summary.txt"
+  },
+  "spec008-marked-all-integration.log.summary.txt": {
+    "original": "/tmp/spec008-marked-all-integration.log",
+    "sha256": "8a49784a23314d922b40d604796c56ae8295d536a472b1a832d17b7dc7a45481",
+    "bytes": 2333,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-marked-all-integration.log.summary.txt"
+  },
+  "spec008-web-production-current.log.summary.txt": {
+    "original": "/tmp/spec008-web-production-current.log",
+    "sha256": "c7f8c43c77442c4b98db13c9afe2798e4568d270ad573057af3ab85f29021098",
+    "bytes": 1124,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-web-production-current.log.summary.txt"
+  },
+  "spec008-web-browser-with-library.log.summary.txt": {
+    "original": "/tmp/spec008-web-browser-with-library.log",
+    "sha256": "904f48ccc763afbdfcd5a8eed50803efe3b7909d168d4c8f3229c9d7f2e9fc15",
+    "bytes": 2589,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-web-browser-with-library.log.summary.txt"
+  },
+  "spec008-apps-final-unit.log.summary.txt": {
+    "original": "/tmp/spec008-apps-final-unit.log",
+    "sha256": "1193a6320d265e164b509d932711295b5014adfc696f82958843f33e51bfeb52",
+    "bytes": 319,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-apps-final-unit.log.summary.txt"
+  },
+  "spec008-apps-final-typecheck.log.summary.txt": {
+    "original": "/tmp/spec008-apps-final-typecheck.log",
+    "sha256": "98097a10fa637e332ce9bd9e7296f8fde8494a9239bebf0a0b1481890c30f773",
+    "bytes": 72,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-apps-final-typecheck.log.summary.txt"
+  },
+  "spec008-apps-native-browser-green.log.summary.txt": {
+    "original": "/tmp/spec008-apps-native-browser-green.log",
+    "sha256": "f07687bb2c71627ddd370e5b415d5504d5e24d11943666abf454eabb4d87f51d",
+    "bytes": 4346,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-apps-native-browser-green.log.summary.txt"
+  },
+  "spec008-rust-current-all.log.summary.txt": {
+    "original": "/tmp/spec008-rust-current-all.log",
+    "sha256": "990d036077f743f0e615ee19d650eb4fe1b34fd289a6711f7ad524a702a5733b",
+    "bytes": 22900,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-rust-current-all.log.summary.txt"
+  },
+  "spec008-rust-clippy-final-complete.log.summary.txt": {
+    "original": "/tmp/spec008-rust-clippy-final-complete.log",
+    "sha256": "f792d25d6cccd1d6325f5642b5ced6abebc88d8dc37acfbc97766e4058902767",
+    "bytes": 72,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-rust-clippy-final-complete.log.summary.txt"
+  },
+  "spec008-composition-final-complete.log.summary.txt": {
+    "original": "/tmp/spec008-composition-final-complete.log",
+    "sha256": "0a596c213e640546ec2626b3d2bc7e3f54bbf28a41645b0562eb0f519ae315fa",
+    "bytes": 1558,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-composition-final-complete.log.summary.txt"
+  },
+  "spec008-format-final-black.log.summary.txt": {
+    "original": "/tmp/spec008-format-final-black.log",
+    "sha256": "17ba6214a30a92ad51b9dd8b988eed5c2b5e3039a2f8145230ca011190ce8e17",
+    "bytes": 59,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-format-final-black.log.summary.txt"
+  },
+  "spec008-format-final-isort.log.summary.txt": {
+    "original": "/tmp/spec008-format-final-isort.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-format-final-isort.log.summary.txt"
+  },
+  "spec008-diff-final-check.log.summary.txt": {
+    "original": "/tmp/spec008-diff-final-check.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-diff-final-check.log.summary.txt"
+  },
+  "spec008-final-remote-independent-review.log.summary.txt": {
+    "original": "/tmp/spec008-final-remote-independent-review.log",
+    "sha256": "d6faa8cdcd2067a47840b7d2fb4ea7c7742f6618ec187b6a7521a86c9f4b4abc",
+    "bytes": 1852,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-final-remote-independent-review.log.summary.txt"
+  },
+  "spec008-final-remote-registry-review.log.summary.txt": {
+    "original": "/tmp/spec008-final-remote-registry-review.log",
+    "sha256": "7326bdfd520cb6e11a0c090424863b4403884fa0db913510e55892dcef4c60ec",
+    "bytes": 907,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-final-remote-registry-review.log.summary.txt"
+  },
+  "spec008-real-bridge-final.log.summary.txt": {
+    "original": "/tmp/spec008-real-bridge-final.log",
+    "sha256": "2387d9b25cfa1e93794d77ea87ddc3dcf77975511fbf5c017e3da1656a508cd1",
+    "bytes": 264,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-real-bridge-final.log.summary.txt"
+  },
+  "spec008-kas-production-final.log.summary.txt": {
+    "original": "/tmp/spec008-kas-production-final.log",
+    "sha256": "4d7cc8922352c09d8d45e1d6df49eacd5af726a83633052020b306e3b346a1f4",
+    "bytes": 1233,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-kas-production-final.log.summary.txt"
+  },
+  "spec008-kas-http-green.log.summary.txt": {
+    "original": "/tmp/spec008-kas-http-green.log",
+    "sha256": "54ccb50b995929f0f18628a2c37db46fdf299be9525a8dfb937742dda118301c",
+    "bytes": 2073,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-kas-http-green.log.summary.txt"
+  },
+  "spec008-final-service-fixes-final.log.summary.txt": {
+    "original": "/tmp/spec008-final-service-fixes-final.log",
+    "sha256": "dfabc32d8f1799c12b09bd07745add05a30a7c57eafee030ea08d2dc1893c1b9",
+    "bytes": 2047,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-final-service-fixes-final.log.summary.txt"
+  },
+  "spec008-final-service-fixes-prepared.log.summary.txt": {
+    "original": "/tmp/spec008-final-service-fixes-prepared.log",
+    "sha256": "dd5165a8009a7cde3545ebb4fe08608e307c30f85fa61ce89f81c9fb61dedb9a",
+    "bytes": 1284,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-final-service-fixes-prepared.log.summary.txt"
+  },
+  "spec008-last-test-migrations-green.log.summary.txt": {
+    "original": "/tmp/spec008-last-test-migrations-green.log",
+    "sha256": "79a65b83cd9aea9d141ae2dcbd840aadf79b2ce83df03ab3bd57c6dd2e335be9",
+    "bytes": 808,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-last-test-migrations-green.log.summary.txt"
+  },
+  "spec008-last-three-final.log.summary.txt": {
+    "original": "/tmp/spec008-last-three-final.log",
+    "sha256": "ca2682fec5fb8a781c406f86fd912e9a9510fabb4eaa49d87c90a63082310c79",
+    "bytes": 2813,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-last-three-final.log.summary.txt"
+  },
+  "spec008-final-deadline-independent-isolated.log.summary.txt": {
+    "original": "/tmp/spec008-final-deadline-independent-isolated.log",
+    "sha256": "0fc3e831fa96ca49d8daf2bad6d0996467d937e2e2995672f65b3caa047ebf51",
+    "bytes": 1262,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-final-deadline-independent-isolated.log.summary.txt"
+  },
+  "spec008-graphify-linux-final.log.summary.txt": {
+    "original": "/tmp/spec008-graphify-linux-final.log",
+    "sha256": "2f110834771561a9953d667ce23322bd6e661bf1c2f45a8bf97cca44f0ccf422",
+    "bytes": 392,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-graphify-linux-final.log.summary.txt"
+  },
+  "spec008-docs-parity-green.log.summary.txt": {
+    "original": "/tmp/spec008-docs-parity-green.log",
+    "sha256": "79332c2b988a432ab20cef163c7ea9abbdfa85e878846bd00a4a96a07ec518f7",
+    "bytes": 272,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-docs-parity-green.log.summary.txt"
+  },
+  "spec008-final-recovery-consent-fixture-green.log.summary.txt": {
+    "original": "/tmp/spec008-final-recovery-consent-fixture-green.log",
+    "sha256": "06aaf37e3fbcb8cbc88132c542bb7d57013dd4f7ef77da7e28bef63c041ae970",
+    "bytes": 2017,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-final-recovery-consent-fixture-green.log.summary.txt"
+  },
+  "spec008-final-service-regression-diagnosis.md": {
+    "original": "/tmp/spec008-final-service-regression-diagnosis.md",
+    "sha256": "524ca9c60f291ce86e832cfb00b0bcfc6d2d8f9765ab82d3dd7b519daadf428d",
+    "bytes": 6492,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-final-service-regression-diagnosis.md"
+  },
+  "spec008-final-recovery-regressions-diagnosis.md": {
+    "original": "/tmp/spec008-final-recovery-regressions-diagnosis.md",
+    "sha256": "c1944d76f942b91cb3afca7659f75942445be371d1a701b2af496cb0407bc903",
+    "bytes": 4942,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-final-recovery-regressions-diagnosis.md"
+  },
+  "spec008-last-test-migrations.md": {
+    "original": "/tmp/spec008-last-test-migrations.md",
+    "sha256": "9288756c2580990555bb21108a950fd689c71ff03e462f7ec07dc3a07160e979",
+    "bytes": 3027,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-last-test-migrations.md"
+  },
+  "spec008-last-three-service-diagnosis.md": {
+    "original": "/tmp/spec008-last-three-service-diagnosis.md",
+    "sha256": "e5bdfda84f37e9de2bf194ee4e0644af4b1f5e609db77c08fa805a9f229aa8c4",
+    "bytes": 5290,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-last-three-service-diagnosis.md"
+  },
+  "spec008-final-deadline-review.md": {
+    "original": "/tmp/spec008-final-deadline-review.md",
+    "sha256": "6f5c776cbc7df0c35546c495ded7128ffc1df21bde581e364c60bd17220e3ea4",
+    "bytes": 3772,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-final-deadline-review.md"
+  },
+  "spec008-examples-clean-final.log.summary.txt": {
+    "original": "/tmp/spec008-examples-clean-final.log",
+    "sha256": "7a4d0f2fd3f8ce585df83e4f3166c566b28d2c1f2929750ef6989bbca8b07ab6",
+    "bytes": 818,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-examples-clean-final.log.summary.txt"
+  },
+  "spec008-format-closure-black.log.summary.txt": {
+    "original": "/tmp/spec008-format-closure-black.log",
+    "sha256": "17ba6214a30a92ad51b9dd8b988eed5c2b5e3039a2f8145230ca011190ce8e17",
+    "bytes": 59,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-format-closure-black.log.summary.txt"
+  },
+  "spec008-format-closure-isort.log.summary.txt": {
+    "original": "/tmp/spec008-format-closure-isort.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-format-closure-isort.log.summary.txt"
+  },
+  "spec008-diff-closure-check.log.summary.txt": {
+    "original": "/tmp/spec008-diff-closure-check.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-diff-closure-check.log.summary.txt"
+  },
+  "spec008-apps-native-descriptor-green.log.summary.txt": {
+    "original": "/tmp/spec008-apps-native-descriptor-green.log",
+    "sha256": "bd54506c6e88c9749513fda6606528bd186cc494465f11abdf4dde6eb2aceb2a",
+    "bytes": 100,
+    "retained": "docs/audits/evidence/2026-10-02-integration-008/spec008-apps-native-descriptor-green.log.summary.txt"
+  }
+}

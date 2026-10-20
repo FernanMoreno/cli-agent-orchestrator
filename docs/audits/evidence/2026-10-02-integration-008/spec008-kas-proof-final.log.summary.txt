@@ -1,0 +1,50 @@
+Original evidence: /tmp/spec008-kas-proof-final.log
+Original SHA256: b89b386b0ccca4410b9230d8eebc5eb26f7621aac910fb979bcb627e519dab64
+Original bytes: 5554
+This is a retained tail, not a new execution or a complete transcript.
+
+tmp_path = PosixPath('/tmp/pytest-of-felni/pytest-376/test_existing_artifact_symlink0')
+
+    def test_existing_artifact_symlink_or_public_file_never_counts_as_private_proof(tmp_path):
+        profile = AgentProfile(name='review', description='Review', engine='kas', allowedTools=[])
+        path = install_runtime_kas_profile('1234abcd', profile, directory=tmp_path)
+        path.chmod(0o644)
+        with pytest.raises(ValueError):
+            install_runtime_kas_profile('1234abcd', profile, directory=tmp_path)
+        path.chmod(0o600)
+        other = tmp_path / 'other'
+        path.rename(other)
+        path.symlink_to(other)
+        with pytest.raises(ValueError):
+>           install_runtime_kas_profile('1234abcd', profile, directory=tmp_path)
+
+test/services/test_integration_008_kas_runtime_profile.py:69: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/cli_agent_orchestrator/services/kiro_profiles.py:195: in install_runtime_kas_profile
+    _publish_private_runtime_text(path, rendered)
+src/cli_agent_orchestrator/services/kiro_profiles.py:232: in _publish_private_runtime_text
+    if _read_private_runtime_text(path) != rendered:
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/pytest-of-felni/pytest-376/test_existing_artifact_symlink0/cao-runtime-1234abcd.kas.json')
+
+    def _read_private_runtime_text(path: Path) -> str:
+        """Open a bounded private regular file without following links or blocking on FIFOs."""
+        import stat
+>       descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       OSError: [Errno 40] Too many levels of symbolic links: '/tmp/pytest-of-felni/pytest-376/test_existing_artifact_symlink0/cao-runtime-1234abcd.kas.json'
+
+src/cli_agent_orchestrator/services/kiro_profiles.py:207: OSError
+=============================== warnings summary ===============================
+../../../../../Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323
+test/providers/test_integration_008_kas_launch_review.py::test_fresh_kas_initialize_uses_exact_private_grant
+  /mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED test/providers/test_integration_008_kas_launch_review.py::test_kas_launch_cannot_override_frozen_model_identity
+FAILED test/services/test_integration_008_kas_runtime_profile.py::test_existing_artifact_symlink_or_public_file_never_counts_as_private_proof
+2 failed, 15 passed, 2 warnings in 12.80s

@@ -1,0 +1,1085 @@
+{
+  "files": {
+    "spec008-repair-archive.py": {
+      "source": "/tmp/spec008-repair-archive.py",
+      "original_sha256": "831afb01b92ffd5918485406e3fbab1eddcdf1d63b2b11df69f7f868f22e3010",
+      "archived_sha256": "831afb01b92ffd5918485406e3fbab1eddcdf1d63b2b11df69f7f868f22e3010",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-composition-contract.log": {
+      "source": "/tmp/spec008-repair-composition-contract.log",
+      "original_sha256": "0f4c80ea3b83b3852fe6c9e779dff0c734ef2daccb9854eeb5c2116df46f078d",
+      "archived_sha256": "0f4c80ea3b83b3852fe6c9e779dff0c734ef2daccb9854eeb5c2116df46f078d",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-graph-final.log": {
+      "source": "/tmp/spec008-repair-graph-final.log",
+      "original_sha256": "efc82cc770a962399747a1ec73887e68302000ea37e308d34455e7e4d558b797",
+      "archived_sha256": "efc82cc770a962399747a1ec73887e68302000ea37e308d34455e7e4d558b797",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-contract-native.log": {
+      "source": "/tmp/spec008-repair-contract-native.log",
+      "original_sha256": "c503c5a096ef447c153d5e110e716f9813745dd54cdbc3184e63596d107ea035",
+      "archived_sha256": "c503c5a096ef447c153d5e110e716f9813745dd54cdbc3184e63596d107ea035",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-contract-native.py": {
+      "source": "/tmp/spec008-repair-contract-native.py",
+      "original_sha256": "5fbc72ec5daffe29c948918079580064b5e75f2b853959d606265d02eaf633b1",
+      "archived_sha256": "5fbc72ec5daffe29c948918079580064b5e75f2b853959d606265d02eaf633b1",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-contract-final.log": {
+      "source": "/tmp/spec008-repair-contract-final.log",
+      "original_sha256": "3b55115da28dff8f051725571fa02f59020f174fd5e76a2a5f71241af49c2d76",
+      "archived_sha256": "3b55115da28dff8f051725571fa02f59020f174fd5e76a2a5f71241af49c2d76",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-identity-red.log": {
+      "source": "/tmp/spec008-repair-identity-red.log",
+      "original_sha256": "94aa1eccacf96b128547dd0f91a259afe95fbdd6c8877cde98d0368a37722866",
+      "archived_sha256": "94aa1eccacf96b128547dd0f91a259afe95fbdd6c8877cde98d0368a37722866",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-authentic.log": {
+      "source": "/tmp/spec008-repair-authentic.log",
+      "original_sha256": "153ac9bdd2639de8dc0a226f918fa85abbf2aa3af3f07b92e5c14ade2dcfdd6e",
+      "archived_sha256": "153ac9bdd2639de8dc0a226f918fa85abbf2aa3af3f07b92e5c14ade2dcfdd6e",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-graph-ext4.log": {
+      "source": "/tmp/spec008-repair-graph-ext4.log",
+      "original_sha256": "75854c8e667c22dbc9759e71f82aaf88a76b42b2ffdc39ab77ff2aba6328a02e",
+      "archived_sha256": "75854c8e667c22dbc9759e71f82aaf88a76b42b2ffdc39ab77ff2aba6328a02e",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-final-observation.log": {
+      "source": "/tmp/spec008-repair-final-observation.log",
+      "original_sha256": "16a894990010801294cc5d6969643a930cad64031234197eb1deb3f511a7a844",
+      "archived_sha256": "16a894990010801294cc5d6969643a930cad64031234197eb1deb3f511a7a844",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-native-replay.json": {
+      "source": "/tmp/spec008-repair-native-replay.json",
+      "original_sha256": "9c83f2ba27da6d842dba1e11aa17ef21aa864bd8bc2063f4b078874ecf638d4e",
+      "archived_sha256": "9c83f2ba27da6d842dba1e11aa17ef21aa864bd8bc2063f4b078874ecf638d4e",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-replay.py": {
+      "source": "/tmp/spec008-repair-replay.py",
+      "original_sha256": "c0a6054fab05caf2b2a93f36896112baa5208bab226344e50c7dcd05349b21a0",
+      "archived_sha256": "c0a6054fab05caf2b2a93f36896112baa5208bab226344e50c7dcd05349b21a0",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-graph.log": {
+      "source": "/tmp/spec008-repair-graph.log",
+      "original_sha256": "a35017852792540cf4872b9423889e6684cd2162ab9b836e60183b8521bec606",
+      "archived_sha256": "a35017852792540cf4872b9423889e6684cd2162ab9b836e60183b8521bec606",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-composition-final.log": {
+      "source": "/tmp/spec008-repair-composition-final.log",
+      "original_sha256": "0f4c80ea3b83b3852fe6c9e779dff0c734ef2daccb9854eeb5c2116df46f078d",
+      "archived_sha256": "0f4c80ea3b83b3852fe6c9e779dff0c734ef2daccb9854eeb5c2116df46f078d",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-copilot-postfix.log": {
+      "source": "/tmp/spec008-repair-copilot-postfix.log",
+      "original_sha256": "b4791849f8c14be8deed49b7f2a37fe414f15613e258c74978afb1537dc08117",
+      "archived_sha256": "b4791849f8c14be8deed49b7f2a37fe414f15613e258c74978afb1537dc08117",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-order-verified.log": {
+      "source": "/tmp/spec008-repair-order-verified.log",
+      "original_sha256": "412b8248ed619a6de2e911628f4ee09cea08896fe6afaa8bae259b7062e46cb9",
+      "archived_sha256": "412b8248ed619a6de2e911628f4ee09cea08896fe6afaa8bae259b7062e46cb9",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-ordered-native.log": {
+      "source": "/tmp/spec008-repair-ordered-native.log",
+      "original_sha256": "9bef45b78d375121259d38264b3e853caa62ddf531ff81bd9866d91823f97fcd",
+      "archived_sha256": "9bef45b78d375121259d38264b3e853caa62ddf531ff81bd9866d91823f97fcd",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-ordered-native.py": {
+      "source": "/tmp/spec008-repair-ordered-native.py",
+      "original_sha256": "8648106b6ed195bed82d377da4d294538e5b203442d23f10d0c1198fb0d4ab0e",
+      "archived_sha256": "8648106b6ed195bed82d377da4d294538e5b203442d23f10d0c1198fb0d4ab0e",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-order-final.log": {
+      "source": "/tmp/spec008-repair-order-final.log",
+      "original_sha256": "2a26af58f43701d77a3cec517b33fb261fbafe560174e642e528c919d256478e",
+      "archived_sha256": "2a26af58f43701d77a3cec517b33fb261fbafe560174e642e528c919d256478e",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-copilot-red.log": {
+      "source": "/tmp/spec008-repair-copilot-red.log",
+      "original_sha256": "41a196dc5d0490f47454528902a6210110db45cbf672dedfbe6cf9841b80b728",
+      "archived_sha256": "41a196dc5d0490f47454528902a6210110db45cbf672dedfbe6cf9841b80b728",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-order-integration.log": {
+      "source": "/tmp/spec008-repair-order-integration.log",
+      "original_sha256": "66ba2a5fcf17814c75a7ff2ce129bf11bed71fdc44d9868f91d873dc1ab7ffd5",
+      "archived_sha256": "66ba2a5fcf17814c75a7ff2ce129bf11bed71fdc44d9868f91d873dc1ab7ffd5",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-order-green2.log": {
+      "source": "/tmp/spec008-repair-order-green2.log",
+      "original_sha256": "4abd484740b4794980e0782a37bfaf29a771037e57b40e531bee57073580a524",
+      "archived_sha256": "4abd484740b4794980e0782a37bfaf29a771037e57b40e531bee57073580a524",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-order-green.log": {
+      "source": "/tmp/spec008-repair-order-green.log",
+      "original_sha256": "f417df072ba8ab50490bcfa3d0a1f6a614887ba95530526ce8334f391dcfa833",
+      "archived_sha256": "f417df072ba8ab50490bcfa3d0a1f6a614887ba95530526ce8334f391dcfa833",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-order-red2.log": {
+      "source": "/tmp/spec008-repair-order-red2.log",
+      "original_sha256": "684e1475030031aea89281a0f7f8fe2ea971f4fcf93a815373ff3f52487c284f",
+      "archived_sha256": "684e1475030031aea89281a0f7f8fe2ea971f4fcf93a815373ff3f52487c284f",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-order-red.log": {
+      "source": "/tmp/spec008-repair-order-red.log",
+      "original_sha256": "71f55ccd1c1217444fbec5d2a70c7d2f0b2a0e12073a1c5fd3a4c94c67bc5667",
+      "archived_sha256": "71f55ccd1c1217444fbec5d2a70c7d2f0b2a0e12073a1c5fd3a4c94c67bc5667",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-copilot-native.log": {
+      "source": "/tmp/spec008-repair-copilot-native.log",
+      "original_sha256": "c65e8eb0c2bddf8d5ba725dd231546fb585e49da2ba853000919938d1f772e1c",
+      "archived_sha256": "c65e8eb0c2bddf8d5ba725dd231546fb585e49da2ba853000919938d1f772e1c",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-copilot-native.py": {
+      "source": "/tmp/spec008-repair-copilot-native.py",
+      "original_sha256": "9dad4fd1a17ce1796e067fb315909504a8838da3e6019271034fc7c8eec89250",
+      "archived_sha256": "9dad4fd1a17ce1796e067fb315909504a8838da3e6019271034fc7c8eec89250",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-composition.log": {
+      "source": "/tmp/spec008-repair-composition.log",
+      "original_sha256": "0f4c80ea3b83b3852fe6c9e779dff0c734ef2daccb9854eeb5c2116df46f078d",
+      "archived_sha256": "0f4c80ea3b83b3852fe6c9e779dff0c734ef2daccb9854eeb5c2116df46f078d",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-final-native.log": {
+      "source": "/tmp/spec008-repair-final-native.log",
+      "original_sha256": "3478a1cc0c22dc8957fb664a788423af3f2f704e47935455bdc83ec38f995692",
+      "archived_sha256": "3478a1cc0c22dc8957fb664a788423af3f2f704e47935455bdc83ec38f995692",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-final-native.py": {
+      "source": "/tmp/spec008-repair-final-native.py",
+      "original_sha256": "5d68a0ee8af877502b49cb002f049753c82e76ac02961b1fa2705584730bf479",
+      "archived_sha256": "5d68a0ee8af877502b49cb002f049753c82e76ac02961b1fa2705584730bf479",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-opencode-viewport-green.log": {
+      "source": "/tmp/spec008-repair-opencode-viewport-green.log",
+      "original_sha256": "86a65b4bdb82fd63d4488ed9cd80c50d06535a7194117db04ca8837152028527",
+      "archived_sha256": "86a65b4bdb82fd63d4488ed9cd80c50d06535a7194117db04ca8837152028527",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-viewport-red.log": {
+      "source": "/tmp/spec008-repair-viewport-red.log",
+      "original_sha256": "2bd58e9f18af2760af311561496cf06bf759316bddc86b5d308877d0f6689b7c",
+      "archived_sha256": "2bd58e9f18af2760af311561496cf06bf759316bddc86b5d308877d0f6689b7c",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-demo-browser2.log": {
+      "source": "/tmp/spec008-repair-demo-browser2.log",
+      "original_sha256": "bd3e99ca458e2044b64079d808bfed1c6fa8e8f178d65c41e414aef51853ca07",
+      "archived_sha256": "bd3e99ca458e2044b64079d808bfed1c6fa8e8f178d65c41e414aef51853ca07",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-demo-http.log": {
+      "source": "/tmp/spec008-repair-demo-http.log",
+      "original_sha256": "44e042ff135d040eb445ca19b0e3387881b1f9f8b206c14c670bb81f6117a3b1",
+      "archived_sha256": "44e042ff135d040eb445ca19b0e3387881b1f9f8b206c14c670bb81f6117a3b1",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-demo-browser.log": {
+      "source": "/tmp/spec008-repair-demo-browser.log",
+      "original_sha256": "341876234872c1997b0b85a93613905e45894904c020969a3508d931d8d6ef9b",
+      "archived_sha256": "341876234872c1997b0b85a93613905e45894904c020969a3508d931d8d6ef9b",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-demo-functional.py": {
+      "source": "/tmp/spec008-repair-demo-functional.py",
+      "original_sha256": "2f7eaa59258d1d968efd41638f4ab7495741fc0ea932d0e2544c1935c4a93dc1",
+      "archived_sha256": "2f7eaa59258d1d968efd41638f4ab7495741fc0ea932d0e2544c1935c4a93dc1",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-demo-browser.cjs": {
+      "source": "/tmp/spec008-repair-demo-browser.cjs",
+      "original_sha256": "e2f69097620be77e58bf761ec7c3f0dffcfa4c2b23ed1b8c8cbb11f4d0ec3b16",
+      "archived_sha256": "e2f69097620be77e58bf761ec7c3f0dffcfa4c2b23ed1b8c8cbb11f4d0ec3b16",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-demo-serve.py": {
+      "source": "/tmp/spec008-repair-demo-serve.py",
+      "original_sha256": "75c57a8047142591644108073e452d3ee48a65c7a671d34d62231307c7f27ea6",
+      "archived_sha256": "75c57a8047142591644108073e452d3ee48a65c7a671d34d62231307c7f27ea6",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-broad.log": {
+      "source": "/tmp/spec008-repair-broad.log",
+      "original_sha256": "641f70493c3eb66693b6713076539a851918179cd0fc39a246848ee2023f3538",
+      "archived_sha256": "641f70493c3eb66693b6713076539a851918179cd0fc39a246848ee2023f3538",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-browser-dependency.log": {
+      "source": "/tmp/spec008-repair-browser-dependency.log",
+      "original_sha256": "ba69af5bb2916c0abbc28e9d23d3e01e072b32b7eecffe99340926d951bfe618",
+      "archived_sha256": "ba69af5bb2916c0abbc28e9d23d3e01e072b32b7eecffe99340926d951bfe618",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-quota-label-red.log": {
+      "source": "/tmp/spec008-repair-quota-label-red.log",
+      "original_sha256": "f2cf72af0e69ff308ae246782874811f01d40a5eaf35ee73fc86f970db39cdd1",
+      "archived_sha256": "f2cf72af0e69ff308ae246782874811f01d40a5eaf35ee73fc86f970db39cdd1",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-native.log": {
+      "source": "/tmp/spec008-repair-native.log",
+      "original_sha256": "ff54ea8eb62f934d50bfd44fc80ccc589e0e3c59145acd990d7d8feb06f269d9",
+      "archived_sha256": "ff54ea8eb62f934d50bfd44fc80ccc589e0e3c59145acd990d7d8feb06f269d9",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-native.py": {
+      "source": "/tmp/spec008-repair-native.py",
+      "original_sha256": "997ce1c47fa77174f2f79aebcbbb6c871f49e8391646110e79ffadde9873a643",
+      "archived_sha256": "997ce1c47fa77174f2f79aebcbbb6c871f49e8391646110e79ffadde9873a643",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-opencode-final.log": {
+      "source": "/tmp/spec008-repair-opencode-final.log",
+      "original_sha256": "b3661ab1bdd54ea390cc763500e6da07c8123ea757d36caaedf1be45f6e6fd1a",
+      "archived_sha256": "b3661ab1bdd54ea390cc763500e6da07c8123ea757d36caaedf1be45f6e6fd1a",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-echo-red.log": {
+      "source": "/tmp/spec008-repair-echo-red.log",
+      "original_sha256": "ae3d6806312978be437e9436f9808c5991d86f64c8f5a6c1b88d40f4479a7722",
+      "archived_sha256": "ae3d6806312978be437e9436f9808c5991d86f64c8f5a6c1b88d40f4479a7722",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-observation-green5.log": {
+      "source": "/tmp/spec008-repair-observation-green5.log",
+      "original_sha256": "3da53e7ba7d04ed31a9fecc975a57c19912222264568ac32ec63dc7883b3c269",
+      "archived_sha256": "3da53e7ba7d04ed31a9fecc975a57c19912222264568ac32ec63dc7883b3c269",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-demo-green.log": {
+      "source": "/tmp/spec008-repair-demo-green.log",
+      "original_sha256": "4d46e7e2f9d070090f7e741b1c26cac119854cac2140afb2b9ebc28ac165dbc1",
+      "archived_sha256": "4d46e7e2f9d070090f7e741b1c26cac119854cac2140afb2b9ebc28ac165dbc1",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-observation-green4.log": {
+      "source": "/tmp/spec008-repair-observation-green4.log",
+      "original_sha256": "5e25fd4a99dc017baa699ca0d00690c606b60fec4208d3b315d0d14bfd255509",
+      "archived_sha256": "5e25fd4a99dc017baa699ca0d00690c606b60fec4208d3b315d0d14bfd255509",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-observation-green3.log": {
+      "source": "/tmp/spec008-repair-observation-green3.log",
+      "original_sha256": "309ba04ec70e0afcce2d0b933f6269d81a5d974e74531d52513850756cbcc3fd",
+      "archived_sha256": "309ba04ec70e0afcce2d0b933f6269d81a5d974e74531d52513850756cbcc3fd",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-demo-red.log": {
+      "source": "/tmp/spec008-repair-demo-red.log",
+      "original_sha256": "6975d8c5f069e04e3acfd6162ea4f44ee57599a85dc147685f1af975d1ab95a0",
+      "archived_sha256": "6975d8c5f069e04e3acfd6162ea4f44ee57599a85dc147685f1af975d1ab95a0",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-variant-read-red.log": {
+      "source": "/tmp/spec008-repair-variant-read-red.log",
+      "original_sha256": "d0b54e76641097bf03d865a3bc640dabd9c96d3cf5a994ab77079e693d39b238",
+      "archived_sha256": "d0b54e76641097bf03d865a3bc640dabd9c96d3cf5a994ab77079e693d39b238",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-observation-green2.log": {
+      "source": "/tmp/spec008-repair-observation-green2.log",
+      "original_sha256": "4e64a54264472cf7e8700d701ea4cc938bb72318c5e9cf7b0725c8b6c2ddbef3",
+      "archived_sha256": "4e64a54264472cf7e8700d701ea4cc938bb72318c5e9cf7b0725c8b6c2ddbef3",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-observation-green.log": {
+      "source": "/tmp/spec008-repair-observation-green.log",
+      "original_sha256": "33372e9b7a56ed6be9fc3be2580f813f1447a713829ebc30b72014e7d87d63a1",
+      "archived_sha256": "33372e9b7a56ed6be9fc3be2580f813f1447a713829ebc30b72014e7d87d63a1",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-observation-red.log": {
+      "source": "/tmp/spec008-repair-observation-red.log",
+      "original_sha256": "0e33f81434ae902d0b7b8a1515266b7ddeab5efb60e6bc4435c2da2a60515726",
+      "archived_sha256": "0e33f81434ae902d0b7b8a1515266b7ddeab5efb60e6bc4435c2da2a60515726",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-provider-green.log": {
+      "source": "/tmp/spec008-repair-provider-green.log",
+      "original_sha256": "c652e64a6487beb7bf13c8b46c58fb6f5b76b8d4e2c4a1c0d3fb98b1a44b6a35",
+      "archived_sha256": "c652e64a6487beb7bf13c8b46c58fb6f5b76b8d4e2c4a1c0d3fb98b1a44b6a35",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-dialect-red.log": {
+      "source": "/tmp/spec008-repair-dialect-red.log",
+      "original_sha256": "213a3eccccdd6c0433f34850ab62e6cce11ebed4d6a087885066a6352697f5ef",
+      "archived_sha256": "213a3eccccdd6c0433f34850ab62e6cce11ebed4d6a087885066a6352697f5ef",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-opencode-green.log": {
+      "source": "/tmp/spec008-repair-opencode-green.log",
+      "original_sha256": "e7a2b19f5f8746f50f1cc3265f376ae687aaaba29dfaa66fb6a4a09f628756f7",
+      "archived_sha256": "e7a2b19f5f8746f50f1cc3265f376ae687aaaba29dfaa66fb6a4a09f628756f7",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-opencode-red.log": {
+      "source": "/tmp/spec008-repair-opencode-red.log",
+      "original_sha256": "0a252693a579cadd3fccb42ee6b1d162383db6d8db3b6c43f6d0deddccef1f55",
+      "archived_sha256": "7508d2c29a464e45979bed08bb1b558f4cbd3b6939976deceab3740de49c4cd2",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-contract-b_ti8nz3/public-results.json": {
+      "source": "/var/tmp/cao-spec008-repair-contract-b_ti8nz3/public-results.json",
+      "original_sha256": "b56a123906f9f0c515d2c7d2fbe688feec3959128433ae849c0443ec58ccc418",
+      "archived_sha256": "b56a123906f9f0c515d2c7d2fbe688feec3959128433ae849c0443ec58ccc418",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-contract-b_ti8nz3/receipt-gate.json": {
+      "source": "/var/tmp/cao-spec008-repair-contract-b_ti8nz3/receipt-gate.json",
+      "original_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "archived_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-copilot-r1wu1iny/result.json": {
+      "source": "/var/tmp/cao-spec008-repair-copilot-r1wu1iny/result.json",
+      "original_sha256": "0094e8a1a27f76eacc40683322d2000984737191af75c74641b456b52a3646f3",
+      "archived_sha256": "0094e8a1a27f76eacc40683322d2000984737191af75c74641b456b52a3646f3",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-final-kr3wz1mk/public-results.json": {
+      "source": "/var/tmp/cao-spec008-repair-final-kr3wz1mk/public-results.json",
+      "original_sha256": "bc5be5723f82b931eac8144eb1a1df8a627532d8b6238c72ed441699e589aa9a",
+      "archived_sha256": "826042b216744c9293717affb7923b0bed46e7adde4e6c8e02c2d65730fd8bf1",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-final-kr3wz1mk/receipt-gate.json": {
+      "source": "/var/tmp/cao-spec008-repair-final-kr3wz1mk/receipt-gate.json",
+      "original_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "archived_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-final-kr3wz1mk/eec170fb.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-final-kr3wz1mk/.aws/cli-agent-orchestrator/logs/terminal/eec170fb.scrollback",
+      "original_sha256": "23ee79b5c48477ae9654be6f5b620295db5213881a2473e6f26714af0eb67df5",
+      "archived_sha256": "1020689af26945a90cd62c96c5e4f9b984e8ed7dcdd1c54e39be28a5d731a50f",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-final-kr3wz1mk/441fcd30.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-final-kr3wz1mk/.aws/cli-agent-orchestrator/logs/terminal/441fcd30.scrollback",
+      "original_sha256": "e477a26d4a2435d1d193f08d6052095a77a79ee880b0e19b24629d9cce470f32",
+      "archived_sha256": "543c9b1b941e19b51b0d2df743fe9e54b57d6f589c6d9b7cf677a4114349d9d9",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-final-kr3wz1mk/bad68ccc.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-final-kr3wz1mk/.aws/cli-agent-orchestrator/logs/terminal/bad68ccc.scrollback",
+      "original_sha256": "18d26b65438a807f7470046df2d6f067231cdabf3641b080794f4ca586aab46b",
+      "archived_sha256": "1730fdcbd4292e37d99a69fc783c5681644fba58e85015881c014665de30f462",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-final-kr3wz1mk/074e5d7a.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-final-kr3wz1mk/.aws/cli-agent-orchestrator/logs/terminal/074e5d7a.scrollback",
+      "original_sha256": "e604877d44548ab4fa5cada731b029f131edd4215d71b84f17639d2cf2cc42fa",
+      "archived_sha256": "dfc0e59c94c9eb5b18cc0982bccc1e80fb926dba8bddb6905b21227daf4830ea",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-final-kr3wz1mk/6020fe62.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-final-kr3wz1mk/.aws/cli-agent-orchestrator/logs/terminal/6020fe62.scrollback",
+      "original_sha256": "a5ae5b0c3d2a1e5ff918512299cde412cc50083731379c25082dd59cadf765ef",
+      "archived_sha256": "14ed6d69acb1c999158193a48d27db0b495935049bbf1fd3eea5db8980d96b44",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-final-kr3wz1mk/0075b27e.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-final-kr3wz1mk/.aws/cli-agent-orchestrator/logs/terminal/0075b27e.scrollback",
+      "original_sha256": "9b7a24b3ced22497ae16f68350966b0099bbed856ceb57324bfcb496906c61c6",
+      "archived_sha256": "aca7529d1fab1d4e5e63c871d8578996609f0f1d285acfb660e3e621f22481b1",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-native-vvd9akof/public-results.json": {
+      "source": "/var/tmp/cao-spec008-repair-native-vvd9akof/public-results.json",
+      "original_sha256": "f86a2946956b89fcaf5a110196693a3a7c415c673d7644c6c52404a0050bd94d",
+      "archived_sha256": "f86a2946956b89fcaf5a110196693a3a7c415c673d7644c6c52404a0050bd94d",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-native-vvd9akof/receipt-gate.json": {
+      "source": "/var/tmp/cao-spec008-repair-native-vvd9akof/receipt-gate.json",
+      "original_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "archived_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-native-vvd9akof/13cd2e73.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-native-vvd9akof/.aws/cli-agent-orchestrator/logs/terminal/13cd2e73.scrollback",
+      "original_sha256": "26a128d87de9a4038ef123b6cb19971521474b7902c464a1df5a122e56e52250",
+      "archived_sha256": "49c08038597e8190e3512f7d07feeaffdf075a50dbcd7907d2418157871d79b5",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-native-vvd9akof/cf829139.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-native-vvd9akof/.aws/cli-agent-orchestrator/logs/terminal/cf829139.scrollback",
+      "original_sha256": "281313a9a83003b9feb8c7f8fecac47cc9f0725038a95317661cc4981c48381c",
+      "archived_sha256": "4a330136f084deca822f92e1732a1b406dfb9c98224222d62b0206d5d008c365",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-native-vvd9akof/fc0b09ad.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-native-vvd9akof/.aws/cli-agent-orchestrator/logs/terminal/fc0b09ad.scrollback",
+      "original_sha256": "1a0bfe2fd86c456d5a85b709734a7a6c002cc86835e829770f7b9aed77ad456f",
+      "archived_sha256": "f3a1176d587af119db212a4597dff6c735b4292c77c037cdd9afd21c75d8f7e5",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-ordered-v7tmwct5/public-results.json": {
+      "source": "/var/tmp/cao-spec008-repair-ordered-v7tmwct5/public-results.json",
+      "original_sha256": "d6c88918c0b543db1cdb85de402c3c0f30149dbd8b7af5ede61582faa635f263",
+      "archived_sha256": "7a57f7b84070f1685994551d2a5d27edbdb3f7eb0171a6bf4a6e1f3c9bb83118",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-ordered-v7tmwct5/receipt-fault-events.jsonl": {
+      "source": "/var/tmp/cao-spec008-repair-ordered-v7tmwct5/receipt-fault-events.jsonl",
+      "original_sha256": "ae0a0289c5f47255f4f163dc19ecfbf5e29ce556b8a8de3391eeef84b958973c",
+      "archived_sha256": "ae0a0289c5f47255f4f163dc19ecfbf5e29ce556b8a8de3391eeef84b958973c",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-ordered-v7tmwct5/receipt-gate.json": {
+      "source": "/var/tmp/cao-spec008-repair-ordered-v7tmwct5/receipt-gate.json",
+      "original_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "archived_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-ordered-v7tmwct5/live-opencode-capture.txt": {
+      "source": "/var/tmp/cao-spec008-repair-ordered-v7tmwct5/live-opencode-capture.txt",
+      "original_sha256": "75e6ef7aacc8490c824be4dbb325d008bc352ace953c9a9862f35e9a769ed099",
+      "archived_sha256": "8ae9ce1422eb546ff889dd41dec3a21fa39549fab8f3a5a5c1ce4acd063710bb",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-ordered-v7tmwct5/f6e94cef.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-ordered-v7tmwct5/.aws/cli-agent-orchestrator/logs/terminal/f6e94cef.scrollback",
+      "original_sha256": "6ad1aded1115e6ef59756f39814144ca993d95a9111904bd0be7d59cb34c6e3a",
+      "archived_sha256": "30e630afca68e28dbcc456fe923a5fec4a50df91a8c4ba6c60eca086a9640b12",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-ordered-v7tmwct5/2221bc7c.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-ordered-v7tmwct5/.aws/cli-agent-orchestrator/logs/terminal/2221bc7c.scrollback",
+      "original_sha256": "a1b8d0ce1868a03b3f0127a01dd264a6845c8fc0a81a6ae57679a7f67d982f9f",
+      "archived_sha256": "310bbe071889b6565a74c77c2ce2d209f27beee1f9bbee16221224b29d508c27",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-ordered-v7tmwct5/e76d2de7.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-ordered-v7tmwct5/.aws/cli-agent-orchestrator/logs/terminal/e76d2de7.scrollback",
+      "original_sha256": "2d6020fbb3bd83cc47f07c7f85842d5109fe3ed718773a8f48a78c93bf7258e1",
+      "archived_sha256": "c3f60fc84b5f8c0925a116997546e2194bf2f659510d3c3a0c870941034f7f47",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-ordered-v7tmwct5/14d5d851.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-ordered-v7tmwct5/.aws/cli-agent-orchestrator/logs/terminal/14d5d851.scrollback",
+      "original_sha256": "4dca86c596d21244ab808d63efb1842f2f7b337e0d3495b7137896fd29891072",
+      "archived_sha256": "2fc7c46aea3761bcb47ae45bf3c64ffb28a6cd4e9932f7ff7328c8f517a6d32a",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-ordered-v7tmwct5/af41f427.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-ordered-v7tmwct5/.aws/cli-agent-orchestrator/logs/terminal/af41f427.scrollback",
+      "original_sha256": "5e50cc762de7218ea055d195a748ba5176cdda0cb23b8b615a58e37dd727f02b",
+      "archived_sha256": "e3b80b2f8e5aae4db9e59e26356ce908daebc483c48f76dd4f27364fd42a5fc6",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-ordered-v7tmwct5/425860d1.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-ordered-v7tmwct5/.aws/cli-agent-orchestrator/logs/terminal/425860d1.scrollback",
+      "original_sha256": "af1f8c2a7ab5c333892c193cb3b3eff80318a176ae29defd76b2c7183e20f3b8",
+      "archived_sha256": "c5cbf3b45ff767988b77565eeadcc2e35e4309fb52558ba4d74fd25099dfbc16",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-demo-xxtpurmt/browser-server.json": {
+      "source": "/var/tmp/cao-spec008-repair-demo-xxtpurmt/browser-server.json",
+      "original_sha256": "76ba50da1eda48db954092158f8daca115b9dc6057ff911258ebce9a162fa5db",
+      "archived_sha256": "76ba50da1eda48db954092158f8daca115b9dc6057ff911258ebce9a162fa5db",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-copilot-l61p5vfb/result.json": {
+      "source": "/var/tmp/cao-spec008-repair-copilot-l61p5vfb/result.json",
+      "original_sha256": "f00bd05783a0d5edaf784ca96bf758a1c4047636f581cf439f5370f83cf2892c",
+      "archived_sha256": "f00bd05783a0d5edaf784ca96bf758a1c4047636f581cf439f5370f83cf2892c",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-composition-last.log": {
+      "source": "/tmp/spec008-repair-composition-last.log",
+      "original_sha256": "0f4c80ea3b83b3852fe6c9e779dff0c734ef2daccb9854eeb5c2116df46f078d",
+      "archived_sha256": "0f4c80ea3b83b3852fe6c9e779dff0c734ef2daccb9854eeb5c2116df46f078d",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-last-contract.log": {
+      "source": "/tmp/spec008-repair-last-contract.log",
+      "original_sha256": "6a169426ace57367717f89c36a24dc07f2dc3bac21b1783b71c50070bdf31b15",
+      "archived_sha256": "6a169426ace57367717f89c36a24dc07f2dc3bac21b1783b71c50070bdf31b15",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-final-acceptance.log": {
+      "source": "/tmp/spec008-repair-final-acceptance.log",
+      "original_sha256": "51511570b65405bbe1533eba657b8d86cdb5756abe5888c95e462c708d9d9743",
+      "archived_sha256": "51511570b65405bbe1533eba657b8d86cdb5756abe5888c95e462c708d9d9743",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-final-acceptance.py": {
+      "source": "/tmp/spec008-repair-final-acceptance.py",
+      "original_sha256": "99397479bec1d00534ac789a87a55b5561b3d1018806c3017accdecf67964a71",
+      "archived_sha256": "99397479bec1d00534ac789a87a55b5561b3d1018806c3017accdecf67964a71",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-numeric-green2.log": {
+      "source": "/tmp/spec008-repair-numeric-green2.log",
+      "original_sha256": "7d817586b6dc0a4fe225673e2a2964ff1b39ae5f19464915e43b72891bf59171",
+      "archived_sha256": "7d817586b6dc0a4fe225673e2a2964ff1b39ae5f19464915e43b72891bf59171",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-numeric-green.log": {
+      "source": "/tmp/spec008-repair-numeric-green.log",
+      "original_sha256": "45144f8eac34f0e73837010e6c90687b0201ac966b780777080043eb0697ab7c",
+      "archived_sha256": "45144f8eac34f0e73837010e6c90687b0201ac966b780777080043eb0697ab7c",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-numeric-red.log": {
+      "source": "/tmp/spec008-repair-numeric-red.log",
+      "original_sha256": "4e74858b7c231a0c61f524293a48e523b6b7ea780ee44fb70f132faadf847adc",
+      "archived_sha256": "4e74858b7c231a0c61f524293a48e523b6b7ea780ee44fb70f132faadf847adc",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-demo-final.log": {
+      "source": "/tmp/spec008-repair-demo-final.log",
+      "original_sha256": "02760ad00d6ba4de55740d7d56d5d18c78882ce95915456371f6397ca4a2e6a6",
+      "archived_sha256": "02760ad00d6ba4de55740d7d56d5d18c78882ce95915456371f6397ca4a2e6a6",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-format.log": {
+      "source": "/tmp/spec008-repair-format.log",
+      "original_sha256": "9fd00908cfe5867852c1ece6d26e7ca0ced5bbd9650f4061309f66ebb96395ac",
+      "archived_sha256": "9fd00908cfe5867852c1ece6d26e7ca0ced5bbd9650f4061309f66ebb96395ac",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-provider-availability.json": {
+      "source": "/tmp/spec008-repair-provider-availability.json",
+      "original_sha256": "b3819fbf3f004579edb1f07af9fe80f9923b0c8f29df484a59a1df0655040c3a",
+      "archived_sha256": "b3819fbf3f004579edb1f07af9fe80f9923b0c8f29df484a59a1df0655040c3a",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-contract-b_ti8nz3/receipt-fault-events.jsonl": {
+      "source": "/var/tmp/cao-spec008-repair-contract-b_ti8nz3/receipt-fault-events.jsonl",
+      "original_sha256": "335f5010be689426a242cfae7dd1b6363914fd69b2ff8f21bec11520f4835130",
+      "archived_sha256": "335f5010be689426a242cfae7dd1b6363914fd69b2ff8f21bec11520f4835130",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-contract-b_ti8nz3/live-opencode-capture.txt": {
+      "source": "/var/tmp/cao-spec008-repair-contract-b_ti8nz3/live-opencode-capture.txt",
+      "original_sha256": "1e8f24096a99aa5551016c4dd0b60c227d4d3169533637d08ccb7517795a440d",
+      "archived_sha256": "dabacc94d7e6fb37797eb3e6dbffcd3d442fda7c027253dcfe9c04b277e6e54a",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-contract-b_ti8nz3/f1941815.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-contract-b_ti8nz3/.aws/cli-agent-orchestrator/logs/terminal/f1941815.scrollback",
+      "original_sha256": "41361cc28911c378b13046fc7822aa5696f62a6132349d37bbe31ff80a83cc01",
+      "archived_sha256": "f739d38619706cf42e18420def46bea9837c7638422d38c8c3af789ebde9366e",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-contract-b_ti8nz3/c7bcc6a3.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-contract-b_ti8nz3/.aws/cli-agent-orchestrator/logs/terminal/c7bcc6a3.scrollback",
+      "original_sha256": "fc030e49dbee4e787ac7cbb34f9c8da35bd8eed05f2d1799e5e545aed2e13710",
+      "archived_sha256": "1b2a75964bd72b273e73e98162582269c6face80f7ace3ecd2d6187d420bdedc",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-contract-b_ti8nz3/85d0cc21.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-contract-b_ti8nz3/.aws/cli-agent-orchestrator/logs/terminal/85d0cc21.scrollback",
+      "original_sha256": "b4e95cd527fa04c344fdf24569593ecf97d86e6cd74bad9a9306986912637387",
+      "archived_sha256": "9e208d7051aa4526f0ff6c835b2c3f043569f686e747fceba9a92fa1253cb29f",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-contract-b_ti8nz3/70942986.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-contract-b_ti8nz3/.aws/cli-agent-orchestrator/logs/terminal/70942986.scrollback",
+      "original_sha256": "b3ed205ab0336fc5e172cec6628b8828cfceabbf5bfc102bd72c208719de5a61",
+      "archived_sha256": "5793ebc3d68ab19b9896d0dd4ea2fea26c12020ad28d46b0ae7d8c4df0a5020e",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-contract-b_ti8nz3/f1a3a5cf.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-contract-b_ti8nz3/.aws/cli-agent-orchestrator/logs/terminal/f1a3a5cf.scrollback",
+      "original_sha256": "cb31487e8659e5d7835ffd6727ea2e5465d1149a39f24809cbda36c6dab6319c",
+      "archived_sha256": "3198d15dba07711d1f443d0244389137d8203087b68363a23aaa33c53b2aadf0",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-contract-b_ti8nz3/83bbe197.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-contract-b_ti8nz3/.aws/cli-agent-orchestrator/logs/terminal/83bbe197.scrollback",
+      "original_sha256": "e2793d791237788c5b1ed09423e75f2b322b53f386b01e81b662ed2f52f52591",
+      "archived_sha256": "0a80b73febe46ef8a162214ea26b27449a1ae38a1ad9652901ead88ffe0dfb0c",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-1mcr49xq/public-results.json": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-1mcr49xq/public-results.json",
+      "original_sha256": "a10cdae88264dcaa455834547890ae6f94144b024886882d9cc1c8f2519392a9",
+      "archived_sha256": "a10cdae88264dcaa455834547890ae6f94144b024886882d9cc1c8f2519392a9",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-1mcr49xq/receipt-gate.json": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-1mcr49xq/receipt-gate.json",
+      "original_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "archived_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-pre-dispatch-native.log": {
+      "source": "/tmp/spec008-repair-pre-dispatch-native.log",
+      "original_sha256": "fb766fbc792b71159f3ac9f6642c24474f7d72f721a6507b15a0eec25f944695",
+      "archived_sha256": "fb766fbc792b71159f3ac9f6642c24474f7d72f721a6507b15a0eec25f944695",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-closure-tests.log": {
+      "source": "/tmp/spec008-repair-closure-tests.log",
+      "original_sha256": "28e8dad65b0aa829c708bce5c8c917c826c6c42f72b0847d276f4569a1a7ff3d",
+      "archived_sha256": "28e8dad65b0aa829c708bce5c8c917c826c6c42f72b0847d276f4569a1a7ff3d",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-dispatch-green2.log": {
+      "source": "/tmp/spec008-repair-dispatch-green2.log",
+      "original_sha256": "3d444a90395941eeb86493e91ee9ffcbe8cc5919424bf40d50b4460d1e1961e4",
+      "archived_sha256": "3d444a90395941eeb86493e91ee9ffcbe8cc5919424bf40d50b4460d1e1961e4",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-composer-red.log": {
+      "source": "/tmp/spec008-repair-composer-red.log",
+      "original_sha256": "ca47b5beb9121f6bf205c298889c2af0300f6198f3204bd689ca38925d5f0fe5",
+      "archived_sha256": "ca47b5beb9121f6bf205c298889c2af0300f6198f3204bd689ca38925d5f0fe5",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-dispatch-green.log": {
+      "source": "/tmp/spec008-repair-dispatch-green.log",
+      "original_sha256": "081668fd1d84779edafc12c91febbc09f1abf6e97595bcfc6ae9b5a12de9266a",
+      "archived_sha256": "081668fd1d84779edafc12c91febbc09f1abf6e97595bcfc6ae9b5a12de9266a",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-dispatch-red.log": {
+      "source": "/tmp/spec008-repair-dispatch-red.log",
+      "original_sha256": "19b648649388b4eeda935ad9ac9003305bbc6ef2c890a0edc68cdd66423ea557",
+      "archived_sha256": "19b648649388b4eeda935ad9ac9003305bbc6ef2c890a0edc68cdd66423ea557",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-graph-last.log": {
+      "source": "/tmp/spec008-repair-graph-last.log",
+      "original_sha256": "fd1695d3c82b050523d1a1dd0f8f392395ad436bb7ede65fad875296ccb90fa0",
+      "archived_sha256": "fd1695d3c82b050523d1a1dd0f8f392395ad436bb7ede65fad875296ccb90fa0",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-1mcr49xq/receipt-fault-events.jsonl": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-1mcr49xq/receipt-fault-events.jsonl",
+      "original_sha256": "55c48de10f13e8c3e0f0af41889b042b41602af1907e2bf2db17b52338c1bda4",
+      "archived_sha256": "55c48de10f13e8c3e0f0af41889b042b41602af1907e2bf2db17b52338c1bda4",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-1mcr49xq/live-codex-capture.txt": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-1mcr49xq/live-codex-capture.txt",
+      "original_sha256": "35fdff65044e4a10cc32774725d1371bf548d94bb256c027d92a1be3348aca13",
+      "archived_sha256": "a0be019fa975da94345ac2c5395a5e4cf15561ae61dfde0215d5d12d92d9408c",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-1mcr49xq/e46c1687.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-1mcr49xq/.aws/cli-agent-orchestrator/logs/terminal/e46c1687.scrollback",
+      "original_sha256": "11a85a9b60b22833d033db05a46952c962c48a1e7401a9ffed21053f7e30520b",
+      "archived_sha256": "e759bce515a7fbd42486019d3510c4d0c74e5cb8de813714fb01ec10418e8cbb",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-1mcr49xq/075ffa64.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-1mcr49xq/.aws/cli-agent-orchestrator/logs/terminal/075ffa64.scrollback",
+      "original_sha256": "2a0f3045be16270b81a1d35c689e5e837723d988edeb4e36baa90033ac34795f",
+      "archived_sha256": "f8501b7de53e5e13b8e725168ad802bdd6f43489e02f04b8f08ad7825fc593ec",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-1mcr49xq/9d9fe1af.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-1mcr49xq/.aws/cli-agent-orchestrator/logs/terminal/9d9fe1af.scrollback",
+      "original_sha256": "cdf428d9ee131f847289aa939a1d24e21ac89ba542ce6f3339bf5e747c1cbe73",
+      "archived_sha256": "f3d829f94569cb1730228dc8d2d762702bcf38f6e02f2d843e900c035a254333",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-1mcr49xq/2e3fd6f8.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-1mcr49xq/.aws/cli-agent-orchestrator/logs/terminal/2e3fd6f8.scrollback",
+      "original_sha256": "7d3c634479962acdea27bedd4c965e293abc1558102edb0db140af435b860e17",
+      "archived_sha256": "5e808b404b23a51e984ed459a8112f8610ca01dac460e5b9e850ad970cbe93ef",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-1mcr49xq/886e8b46.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-1mcr49xq/.aws/cli-agent-orchestrator/logs/terminal/886e8b46.scrollback",
+      "original_sha256": "95afa105fe203073265623296705e73ff665d006a8adbfe2ef60b5ca169f7840",
+      "archived_sha256": "5563e7dbfdccc7586e9093e606f16724f567294597652c334f5998908d33ae87",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-1mcr49xq/0e103ba0.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-1mcr49xq/.aws/cli-agent-orchestrator/logs/terminal/0e103ba0.scrollback",
+      "original_sha256": "ab4ebb931122949745eb8bb77ec7f4e0bde3e0c862fdce40da5c26650282775e",
+      "archived_sha256": "5fc28bafa54002838fc3c97c34b648d4626ef22942fb402eb57069459eacf768",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-pre-soft-native.log": {
+      "source": "/tmp/spec008-repair-pre-soft-native.log",
+      "original_sha256": "02da878c546db0575e52685ad47e356938275101bf96aa339cc4035ebb5c9a73",
+      "archived_sha256": "02da878c546db0575e52685ad47e356938275101bf96aa339cc4035ebb5c9a73",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-soft-smoke.log": {
+      "source": "/tmp/spec008-repair-soft-smoke.log",
+      "original_sha256": "e99ff2ec7352120c6563d9ffefeb7c0be3ea08e5f069b6ec9a14dcec83d7347a",
+      "archived_sha256": "e99ff2ec7352120c6563d9ffefeb7c0be3ea08e5f069b6ec9a14dcec83d7347a",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-soft-green.log": {
+      "source": "/tmp/spec008-repair-soft-green.log",
+      "original_sha256": "c7194dbd9bd1711539299efe2a6eb31314a701896bf0ec965af15ccf8cd2088b",
+      "archived_sha256": "c7194dbd9bd1711539299efe2a6eb31314a701896bf0ec965af15ccf8cd2088b",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-soft-red.log": {
+      "source": "/tmp/spec008-repair-soft-red.log",
+      "original_sha256": "f0ecf03aa4cfe0952faf54d945545f612a484773cc63228022641c70438bf30d",
+      "archived_sha256": "f0ecf03aa4cfe0952faf54d945545f612a484773cc63228022641c70438bf30d",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-dispatch-all3.log": {
+      "source": "/tmp/spec008-repair-dispatch-all3.log",
+      "original_sha256": "9edeb9a41ea619864e89288b7f0860cb825883c8924603cc6a3a87b82341558a",
+      "archived_sha256": "9edeb9a41ea619864e89288b7f0860cb825883c8924603cc6a3a87b82341558a",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-graph-closure.log": {
+      "source": "/tmp/spec008-repair-graph-closure.log",
+      "original_sha256": "e07531e61059ef022d150cb8d1cbf988bd8c09c47a8ec06e27f69a202d5c7f81",
+      "archived_sha256": "e07531e61059ef022d150cb8d1cbf988bd8c09c47a8ec06e27f69a202d5c7f81",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-dispatch-all2.log": {
+      "source": "/tmp/spec008-repair-dispatch-all2.log",
+      "original_sha256": "023e5287a58d5e7f4ce9af63a34c66215dde088fc9f670dbe85bc83532f9eb2d",
+      "archived_sha256": "023e5287a58d5e7f4ce9af63a34c66215dde088fc9f670dbe85bc83532f9eb2d",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-dispatch-all.log": {
+      "source": "/tmp/spec008-repair-dispatch-all.log",
+      "original_sha256": "b7c7692e88f696dc74a1dd310c7012ae7a9a816af2a3a1933a704d26750955e5",
+      "archived_sha256": "b7c7692e88f696dc74a1dd310c7012ae7a9a816af2a3a1933a704d26750955e5",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-composition-closure.log": {
+      "source": "/tmp/spec008-repair-composition-closure.log",
+      "original_sha256": "0f4c80ea3b83b3852fe6c9e779dff0c734ef2daccb9854eeb5c2116df46f078d",
+      "archived_sha256": "0f4c80ea3b83b3852fe6c9e779dff0c734ef2daccb9854eeb5c2116df46f078d",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-aqi_9x4s/public-results.json": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-aqi_9x4s/public-results.json",
+      "original_sha256": "f31c7f74cfb3a9581d480aa6a0d031f6372487e79a95210a6970537ef64c80a9",
+      "archived_sha256": "f31c7f74cfb3a9581d480aa6a0d031f6372487e79a95210a6970537ef64c80a9",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-aqi_9x4s/receipt-gate.json": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-aqi_9x4s/receipt-gate.json",
+      "original_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "archived_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-aqi_9x4s/ea0afce6.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-aqi_9x4s/.aws/cli-agent-orchestrator/logs/terminal/ea0afce6.scrollback",
+      "original_sha256": "b6e80fe213ea3442503bb115059a4279186695b6363abfdd72d08024bf56da25",
+      "archived_sha256": "1890dab554ee101472205e7e6beadc73ca45b77fdacc4f5d49cebddd17a9627a",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-aqi_9x4s/e74693b9.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-aqi_9x4s/.aws/cli-agent-orchestrator/logs/terminal/e74693b9.scrollback",
+      "original_sha256": "e534bf8fc7cb3c91bf38618f6236ee0f2915e12a63cac07321d647210b10c649",
+      "archived_sha256": "c66c72b2c050f47bca2d5b6c0445265b76ce384ed975a14737efad9acb07c943",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-aqi_9x4s/1965142c.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-aqi_9x4s/.aws/cli-agent-orchestrator/logs/terminal/1965142c.scrollback",
+      "original_sha256": "0fec0a2c7ac90d9bf9d43b2e8bb356de66870f7e5f04196a7861da04c60ae27b",
+      "archived_sha256": "31f333f10dcb44ab15f1f2c8029efc2f140e843857fc9d82b2d540e222419497",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-graph-soft.log": {
+      "source": "/tmp/spec008-repair-graph-soft.log",
+      "original_sha256": "ad9b877e80a7a82de8b5e3400bfceb53a8e4be332991cb1b16a0562d0aace486",
+      "archived_sha256": "ad9b877e80a7a82de8b5e3400bfceb53a8e4be332991cb1b16a0562d0aace486",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-8kfmr77_/public-results.json": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-8kfmr77_/public-results.json",
+      "original_sha256": "47da085e7d47d55bbbf90eef4bde55124d2f0d3e511def008f8b6b04187b4ad9",
+      "archived_sha256": "47da085e7d47d55bbbf90eef4bde55124d2f0d3e511def008f8b6b04187b4ad9",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-8kfmr77_/receipt-gate.json": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-8kfmr77_/receipt-gate.json",
+      "original_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "archived_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-final-diff.patch": {
+      "source": "/tmp/spec008-repair-final-diff.patch",
+      "original_sha256": "d3613b08610aa1e927d2b37ff2a2c5ecb6c9a499cf9cb71956fdbf64091f376f",
+      "archived_sha256": "d3613b08610aa1e927d2b37ff2a2c5ecb6c9a499cf9cb71956fdbf64091f376f",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-composition-soft.log": {
+      "source": "/tmp/spec008-repair-composition-soft.log",
+      "original_sha256": "0f4c80ea3b83b3852fe6c9e779dff0c734ef2daccb9854eeb5c2116df46f078d",
+      "archived_sha256": "0f4c80ea3b83b3852fe6c9e779dff0c734ef2daccb9854eeb5c2116df46f078d",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-8kfmr77_/receipt-fault-events.jsonl": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-8kfmr77_/receipt-fault-events.jsonl",
+      "original_sha256": "09bc31d1e7b0037d54debc986dc563e70510bdf36724b1077ca5f2cda0bdbe19",
+      "archived_sha256": "09bc31d1e7b0037d54debc986dc563e70510bdf36724b1077ca5f2cda0bdbe19",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-8kfmr77_/live-codex-capture.txt": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-8kfmr77_/live-codex-capture.txt",
+      "original_sha256": "498c5bc7702103ab91ab6e2f40ff806dc1396862fce49e2b61d1b0d2ad2fbc5a",
+      "archived_sha256": "26de6d48f9e2d0d9c238018be831c37f1e2ec8db343fe447ae2f4d20ac68c75c",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-8kfmr77_/216b34a4.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-8kfmr77_/.aws/cli-agent-orchestrator/logs/terminal/216b34a4.scrollback",
+      "original_sha256": "773aa483e2cce64e1b91621785628aa0380e7cd7f3d84fc61a572100a7014265",
+      "archived_sha256": "8fa717a899ae00ae6be7d10f85c6a587134bee9545b662b8f6a1cd446c0ab940",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-8kfmr77_/b6c72b0f.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-8kfmr77_/.aws/cli-agent-orchestrator/logs/terminal/b6c72b0f.scrollback",
+      "original_sha256": "588468a4a2fa10191e4e211173fd8012717452c21d97ac4ccc5b2c0d431e2d0b",
+      "archived_sha256": "c3f2a1326b01f8bfaaf1fd676f23056386c00a2d28f0472f484bdcdd88843d38",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-8kfmr77_/46fca01b.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-8kfmr77_/.aws/cli-agent-orchestrator/logs/terminal/46fca01b.scrollback",
+      "original_sha256": "8d888cbaaf71b41fc7e9011d4f30557c2daf47b5af848b7d80d50ccbd1c4ce2b",
+      "archived_sha256": "4c802fdc849af633865c349e04c3b1fa9d44b71e89d1ffbde0c6904c04fea54a",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-pre-claude-native.log": {
+      "source": "/tmp/spec008-repair-pre-claude-native.log",
+      "original_sha256": "5172d6acc67777bd4fc33aa56d7f5734924e8fa8e36ce026cf39dede285413aa",
+      "archived_sha256": "5172d6acc67777bd4fc33aa56d7f5734924e8fa8e36ce026cf39dede285413aa",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-claude-smoke.log": {
+      "source": "/tmp/spec008-repair-claude-smoke.log",
+      "original_sha256": "ee60463eec141821c353bdf3b8c0075eb99ec5bbaf813f556f9a9882fbf87c8a",
+      "archived_sha256": "ee60463eec141821c353bdf3b8c0075eb99ec5bbaf813f556f9a9882fbf87c8a",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-native-final-gate.log": {
+      "source": "/tmp/spec008-repair-native-final-gate.log",
+      "original_sha256": "67147c575f29c3b0908ecc710a69ed07b81342a8c1a31347f0b6ed1626d24b5e",
+      "archived_sha256": "67147c575f29c3b0908ecc710a69ed07b81342a8c1a31347f0b6ed1626d24b5e",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-claude-panel-red.log": {
+      "source": "/tmp/spec008-repair-claude-panel-red.log",
+      "original_sha256": "35eebc387a31871d5b625b442a60b2df476135d0941fbbc2cd854c5575b457d6",
+      "archived_sha256": "35eebc387a31871d5b625b442a60b2df476135d0941fbbc2cd854c5575b457d6",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-claude-green.log": {
+      "source": "/tmp/spec008-repair-claude-green.log",
+      "original_sha256": "58951377ca80c76def51bddacdfd7fd1acf38d95ea2e2b81d0a1bb2676b48849",
+      "archived_sha256": "58951377ca80c76def51bddacdfd7fd1acf38d95ea2e2b81d0a1bb2676b48849",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-claude-red.log": {
+      "source": "/tmp/spec008-repair-claude-red.log",
+      "original_sha256": "d447ff180bd7452e2e29890913b89541ea00d06601fc0cc4c256a61231e9e242",
+      "archived_sha256": "d447ff180bd7452e2e29890913b89541ea00d06601fc0cc4c256a61231e9e242",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-8kfmr77_/live-claude-capture.txt": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-8kfmr77_/live-claude-capture.txt",
+      "original_sha256": "e9ca5edbc7f3d4357d2ca6877bd7f876035af22b49a7411d6f19d25bdee51258",
+      "archived_sha256": "297a6b7741b4eda8ad456760893e5a7967e928b70163d828488a6490b6c521b3",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-8kfmr77_/954637c1.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-8kfmr77_/.aws/cli-agent-orchestrator/logs/terminal/954637c1.scrollback",
+      "original_sha256": "9382ef88c2cb62bd366f843f28bd36d97dbd15f3dddfc41bc20c9f7a59fdddc3",
+      "archived_sha256": "e5eaff64530fa70c835dc66843582e6c1551473c617baa56781bf90cdecf43ac",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-8kfmr77_/b6c75df0.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-8kfmr77_/.aws/cli-agent-orchestrator/logs/terminal/b6c75df0.scrollback",
+      "original_sha256": "22964fc983c2db06ede8024ea3427472b40f383730fd2cbe82b71d9eff32dc02",
+      "archived_sha256": "2e9e8b3cc6e67148c45401c5b5d31590f976b8e4471e0ac529e309bac38bfd7e",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-8kfmr77_/37f698d6.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-8kfmr77_/.aws/cli-agent-orchestrator/logs/terminal/37f698d6.scrollback",
+      "original_sha256": "f3f49a132c7f84fe1cae3e9288998d0320d8fdf3de75c2a3088132171f52e58f",
+      "archived_sha256": "4a4dbbb50afbb1549041ccbaebc0480a87b02f15a44136ab3cb99f5eaef19767",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-pre-interim-native.log": {
+      "source": "/tmp/spec008-repair-pre-interim-native.log",
+      "original_sha256": "a63bd9966bd4fbd9afb63b4fcd521267adc1e175b2868718c363df8e83a49f5c",
+      "archived_sha256": "a63bd9966bd4fbd9afb63b4fcd521267adc1e175b2868718c363df8e83a49f5c",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-claude-final-smoke.log": {
+      "source": "/tmp/spec008-repair-claude-final-smoke.log",
+      "original_sha256": "26f5aead0b1e49abfe94d44c8d64003f0b5810a075ddcbc41363ad3224ff4a4e",
+      "archived_sha256": "26f5aead0b1e49abfe94d44c8d64003f0b5810a075ddcbc41363ad3224ff4a4e",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-claude-closure.log": {
+      "source": "/tmp/spec008-repair-claude-closure.log",
+      "original_sha256": "19e7cf91bca5bfeac6744a4bda495ce44e145e461ee880d5ef53c7bf7c19c854",
+      "archived_sha256": "19e7cf91bca5bfeac6744a4bda495ce44e145e461ee880d5ef53c7bf7c19c854",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-missing-panel-red2.log": {
+      "source": "/tmp/spec008-repair-missing-panel-red2.log",
+      "original_sha256": "c7514e96cc4e6e457c858d28603da214372a6d64ad1a108ebdc39c68f1af0823",
+      "archived_sha256": "c7514e96cc4e6e457c858d28603da214372a6d64ad1a108ebdc39c68f1af0823",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-missing-panel-red.log": {
+      "source": "/tmp/spec008-repair-missing-panel-red.log",
+      "original_sha256": "524d2ecfba5d3ab699fd956d6f742f6d8e8c1604d0db020c0ddc51d008c31fef",
+      "archived_sha256": "524d2ecfba5d3ab699fd956d6f742f6d8e8c1604d0db020c0ddc51d008c31fef",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-final-proof.log": {
+      "source": "/tmp/spec008-repair-final-proof.log",
+      "original_sha256": "571617b638dd5834b1d8f6d37008cba84a51056fd9bf40064aae349037f0e482",
+      "archived_sha256": "571617b638dd5834b1d8f6d37008cba84a51056fd9bf40064aae349037f0e482",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-claude-interim-red.log": {
+      "source": "/tmp/spec008-repair-claude-interim-red.log",
+      "original_sha256": "d52de21b64f16c6331c3890c68cc2c0d96011c2ef97aadebe3d3081d74a9c095",
+      "archived_sha256": "d52de21b64f16c6331c3890c68cc2c0d96011c2ef97aadebe3d3081d74a9c095",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-graph-native-final.log": {
+      "source": "/tmp/spec008-repair-graph-native-final.log",
+      "original_sha256": "1317ea8b5af6ac06bb8b2bef3def52ccb938ff8dd8931fa3777ca47253eba28c",
+      "archived_sha256": "1317ea8b5af6ac06bb8b2bef3def52ccb938ff8dd8931fa3777ca47253eba28c",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-composition-native-final.log": {
+      "source": "/tmp/spec008-repair-composition-native-final.log",
+      "original_sha256": "0f4c80ea3b83b3852fe6c9e779dff0c734ef2daccb9854eeb5c2116df46f078d",
+      "archived_sha256": "0f4c80ea3b83b3852fe6c9e779dff0c734ef2daccb9854eeb5c2116df46f078d",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-t941s849/public-results.json": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-t941s849/public-results.json",
+      "original_sha256": "930c13e4dc40e06fce16ba5997b27d95620477bd3f6ca64b8c31dad73e457982",
+      "archived_sha256": "930c13e4dc40e06fce16ba5997b27d95620477bd3f6ca64b8c31dad73e457982",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-t941s849/receipt-fault-events.jsonl": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-t941s849/receipt-fault-events.jsonl",
+      "original_sha256": "e8c6a3dd008303ded0cdf2e0a3568246691d558dcc86576932978ffe5720b753",
+      "archived_sha256": "e8c6a3dd008303ded0cdf2e0a3568246691d558dcc86576932978ffe5720b753",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-t941s849/receipt-gate.json": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-t941s849/receipt-gate.json",
+      "original_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "archived_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-t941s849/7f692e82.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-t941s849/.aws/cli-agent-orchestrator/logs/terminal/7f692e82.scrollback",
+      "original_sha256": "aa08dbb68cabcdb877ddfd9c2c0b9aa3fa24851f51f1d8cc124e8255f7ceb821",
+      "archived_sha256": "ebfcabf67f4a1f83d1f61b32c0b77b7ecd47abdbaf87e61c78a26f660df92a02",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-t941s849/fef6e581.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-t941s849/.aws/cli-agent-orchestrator/logs/terminal/fef6e581.scrollback",
+      "original_sha256": "4c15aaaee58dad278de7dc2e6ea33d71d1f39f7e7cdaaf0eb670cd5714ae8c7b",
+      "archived_sha256": "76d53101360206dd0d5a17df9530447090ca7f76c3097dc9b2a51387b033dd5a",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-t941s849/a6d46ca2.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-t941s849/.aws/cli-agent-orchestrator/logs/terminal/a6d46ca2.scrollback",
+      "original_sha256": "1318a8c4bbde953dda3255f8202197f98016a5e1043b96bd77b777883e87f31c",
+      "archived_sha256": "0a0648f737bbf1807bd1c7b7c24a03179d82f3250f5784ff32448fe67973988e",
+      "receipt_and_credential_redaction": true
+    },
+    "spec008-repair-composition-final-proof.log": {
+      "source": "/tmp/spec008-repair-composition-final-proof.log",
+      "original_sha256": "0f4c80ea3b83b3852fe6c9e779dff0c734ef2daccb9854eeb5c2116df46f078d",
+      "archived_sha256": "0f4c80ea3b83b3852fe6c9e779dff0c734ef2daccb9854eeb5c2116df46f078d",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-d4a8nezi/public-results.json": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-d4a8nezi/public-results.json",
+      "original_sha256": "0872fd8a5b86212e48ff20c7fa2574acc5eb5cc61201f86a0bfca5a1dac4fdd8",
+      "archived_sha256": "0872fd8a5b86212e48ff20c7fa2574acc5eb5cc61201f86a0bfca5a1dac4fdd8",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-d4a8nezi/receipt-fault-events.jsonl": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-d4a8nezi/receipt-fault-events.jsonl",
+      "original_sha256": "e80852a66fc912eb8cb6215ab92d7f761af31b8964a3f3c014ce29af26fc46ad",
+      "archived_sha256": "e80852a66fc912eb8cb6215ab92d7f761af31b8964a3f3c014ce29af26fc46ad",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-d4a8nezi/receipt-gate.json": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-d4a8nezi/receipt-gate.json",
+      "original_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "archived_sha256": "7410be1a1dec3ea052e3dbfb62c5896880cc53d98149b928eeef1cbfa1a5a2be",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-d4a8nezi/0e4e993d.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-d4a8nezi/.aws/cli-agent-orchestrator/logs/terminal/0e4e993d.scrollback",
+      "original_sha256": "2372764ab1a26c501b6093af4490f875f022df163d16cd71f564cbfc3bfe0675",
+      "archived_sha256": "09a31697135d040f89c8cdd19a8bc4d0d586d8b75e6ad6a308785bda34555d49",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-d4a8nezi/7906a45e.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-d4a8nezi/.aws/cli-agent-orchestrator/logs/terminal/7906a45e.scrollback",
+      "original_sha256": "fbd6137c35c7140fbc969340279f65592608341308ec98ca484780a69deab5fc",
+      "archived_sha256": "f931dc03209726c17e8eedb4068ff59e80a27d7fcc80184d3f91d6c26228c7b3",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-d4a8nezi/53eac0a1.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-d4a8nezi/.aws/cli-agent-orchestrator/logs/terminal/53eac0a1.scrollback",
+      "original_sha256": "675e6612265019a440f97e7343b2133b74e3708e3ec319c5288b4b071435ade1",
+      "archived_sha256": "f247402c664019e70ba9863017378ec5338694e216f59de5ee198c56aa75bc23",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-d4a8nezi/22a36d16.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-d4a8nezi/.aws/cli-agent-orchestrator/logs/terminal/22a36d16.scrollback",
+      "original_sha256": "7f24df9331561f94a3a305e1f3185ae5e7b788ff85fdc15e8ff46706a7c029ca",
+      "archived_sha256": "e8ffc5bca707454a388667fcf2cc363cf2fe5c69f6671fbf8926a6006c13cfc5",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-d4a8nezi/3d89b85a.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-d4a8nezi/.aws/cli-agent-orchestrator/logs/terminal/3d89b85a.scrollback",
+      "original_sha256": "ccee718f75e65de772210271ebf6a110012a365862d126f5a8ebd4f2e58dbc3f",
+      "archived_sha256": "ea9a7dc5f8940d2d03d17113335e51735c79c8e735155c765cf2f6963cbd3276",
+      "receipt_and_credential_redaction": true
+    },
+    "cao-spec008-repair-acceptance-d4a8nezi/7ba77601.scrollback": {
+      "source": "/var/tmp/cao-spec008-repair-acceptance-d4a8nezi/.aws/cli-agent-orchestrator/logs/terminal/7ba77601.scrollback",
+      "original_sha256": "c9369237fc261aa5464ef784d3bcaed16f40b13eb0672bb9abee68c88aae439e",
+      "archived_sha256": "3911badae5b084a6068a2ab82b951b5405c2bc041926d745ae6c82fe8392a454",
+      "receipt_and_credential_redaction": true
+    }
+  },
+  "policy": "All controllers, own sessions and test servers are closed. Preserve hashes and sanitized logs/results/replay scripts; exclude credentials, complete native databases and raw ANSI terminal streams. Original temporary sources were removed after archival."
+}

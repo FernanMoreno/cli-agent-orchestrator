@@ -1,0 +1,26 @@
+Original evidence: /tmp/cao-c07-continuation-review-final-current.log
+Original SHA256: d80938338eb264bd6932e5de7cd982a5320012ea178a3c552b8b77178b4ecada
+Original bytes: 2076
+This is a retained tail, not a new execution or a complete transcript.
+
+..........                                                               [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323
+.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+test/services/test_integration_008_continuation_review.py::test_real_private_fd_barrier_records_process_before_any_work_effect
+  /mnt/c/users/ferna/onedrive/escritorio/caos/test/services/test_integration_008_coordinator.py:34: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    from cli_agent_orchestrator.api.main import _compose_managed_workflow_runtime
+
+test/services/test_integration_008_continuation_review.py::test_real_private_fd_barrier_records_process_before_any_work_effect
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/websockets/legacy/__init__.py:6: DeprecationWarning: websockets.legacy is deprecated; see https://websockets.readthedocs.io/en/stable/howto/upgrade.html for upgrade instructions
+    warnings.warn(  # deprecated in 14.0 - 2024-11-09
+
+test/services/test_integration_008_continuation_review.py::test_real_private_fd_barrier_records_process_before_any_work_effect
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/uvicorn/protocols/websockets/websockets_impl.py:17: DeprecationWarning: websockets.server.WebSocketServerProtocol is deprecated
+    from websockets.server import WebSocketServerProtocol
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+10 passed, 5 warnings in 33.31s

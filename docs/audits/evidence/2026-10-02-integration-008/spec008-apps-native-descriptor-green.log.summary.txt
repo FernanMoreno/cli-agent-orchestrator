@@ -1,0 +1,7 @@
+Original: /tmp/spec008-apps-native-descriptor-green.log
+SHA256: bd54506c6e88c9749513fda6606528bd186cc494465f11abdf4dde6eb2aceb2a
+Original bytes: 100
+Retained last 45 lines of the original completed execution; not a new execution.
+
+..................................                                       [100%]
+34 passed in 13.08s

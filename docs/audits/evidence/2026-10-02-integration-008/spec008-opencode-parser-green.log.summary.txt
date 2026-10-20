@@ -1,0 +1,15 @@
+Original evidence: /tmp/spec008-opencode-parser-green.log
+Original SHA256: e32762081cd61b93789c880081d49068467dc43706b2d856084774cbbedd58fb
+Original bytes: 960
+This is a retained tail, not a new execution or a complete transcript.
+
+........................................................................ [ 79%]
+...................                                                      [100%]
+=============================== warnings summary ===============================
+test/providers/test_opencode_cli_unit.py::TestWorkspaceAccess::test_opencode_cli_in_workspace_access_set
+test/providers/test_opencode_cli_unit.py::TestWorkspaceAccess::test_opencode_cli_in_workspace_access_set
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+91 passed, 2 warnings in 11.57s

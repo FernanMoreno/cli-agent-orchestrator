@@ -1,0 +1,50 @@
+Original evidence: /tmp/spec008-apps-native-browser-green.log
+Original SHA256: f07687bb2c71627ddd370e5b415d5504d5e24d11943666abf454eabb4d87f51d
+Original bytes: 4346
+Retained final tail; not a new execution or complete transcript.
+
+[WebServer] 
+[WebServer]  WARN  inlineDynamicImports option is ignored because codeSplitting: false is set.
+[WebServer] 
+[WebServer] npm notice run cao-mcp-apps@0.1.0 build:events
+[WebServer] npm notice run vite build -c vite.config.events.ts
+[WebServer] (node:537988) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 
+[WebServer]  WARN  inlineDynamicImports option is ignored because codeSplitting: false is set.
+[WebServer] 
+[WebServer] npm notice run cao-mcp-apps@0.1.0 build:graph
+[WebServer] npm notice run vite build -c vite.config.graph.ts
+[WebServer] (node:538100) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] 
+[WebServer]  WARN  inlineDynamicImports option is ignored because codeSplitting: false is set.
+[WebServer] 
+[WebServer] (node:538181) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 7 tests using 7 workers
+
+(node:538226) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:538208) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:538232) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:538206) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:538207) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:538220) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:538219) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  2 [chromium] › e2e/dashboard.spec.ts:50:3 › dashboard E2E › 19.7 — the dashboard auto-refreshes on the 30s cycle (207ms)
+  ✓  4 [chromium] › e2e/agent.spec.ts:20:3 › agent E2E › 19.5 — opening an agent detail renders the terminal-log region (246ms)
+  ✓  3 [chromium] › e2e/dashboard.spec.ts:35:3 › dashboard E2E › 19.6 — stopping an agent transitions its status to stopped (236ms)
+  ✓  7 [chromium] › e2e/dashboard.spec.ts:22:3 › dashboard E2E › 19.3 — launching an agent adds a new card (212ms)
+  ✓  5 [chromium] › e2e/agent.spec.ts:33:3 › agent E2E › 19.12 — an oversized task payload is rejected before submit (321ms)
+  ✓  6 [chromium] › e2e/event-stream.spec.ts:15:3 › event-stream E2E › 19.4 — sending a task updates the event stream live (336ms)
+  ✓  1 [chromium] › e2e/dashboard.spec.ts:83:3 › dashboard E2E › 19.8 — host teardown releases the View's listeners (485ms)
+
+  7 passed (2.6m)

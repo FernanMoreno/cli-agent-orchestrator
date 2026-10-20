@@ -1,0 +1,13 @@
+{
+  "artifact_sha256": "281313a9a83003b9feb8c7f8fecac47cc9f0725038a95317661cc4981c48381c",
+  "offline_replay_only": true,
+  "records": [
+    {
+      "receipt_digest": "51986725e7331571ac84fe4a596dd87b070e224fb493a7e5f6f46553b3f9fff8",
+      "status": "completed",
+      "witness": "completed",
+      "result_sha256": "0dd5fcccd3d450dc677ebfdcdf2c37b617f4808fe59b98db2c908de941a45c1c",
+      "stale_transport_response": false
+    }
+  ]
+}

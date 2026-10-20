@@ -1,0 +1,14 @@
+Original evidence: /tmp/spec008-last-test-migrations-green.log
+Original SHA256: 79a65b83cd9aea9d141ae2dcbd840aadf79b2ce83df03ab3bd57c6dd2e335be9
+Original bytes: 808
+Retained final tail; not a new execution or complete transcript.
+
+..........................................                               [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323
+.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+42 passed, 2 warnings in 52.86s

@@ -1,0 +1,28 @@
+Original evidence: /tmp/spec008-web-production-current.log
+Original SHA256: c7f8c43c77442c4b98db13c9afe2798e4568d270ad573057af3ab85f29021098
+Original bytes: 1124
+Retained final tail; not a new execution or complete transcript.
+
+npm notice run cao-web@0.1.0 build
+npm notice run tsc && vite build
+vite v8.0.16 building client environment for production...
+[2K
+transforming...✓ 1768 modules transformed.
+rendering chunks...
+computing gzip size...
+../src/cli_agent_orchestrator/web_ui/index.html                   0.81 kB │ gzip:   0.47 kB
+../src/cli_agent_orchestrator/web_ui/assets/index-CgHe9a_w.css   37.57 kB │ gzip:   7.53 kB
+../src/cli_agent_orchestrator/web_ui/assets/index-B5c_7Xoq.js   891.28 kB │ gzip: 232.05 kB
+
+[33m[PLUGIN_TIMINGS] [0mYour build spent significant time in plugins. Here is a breakdown:
+  - rolldown:vite-resolve (61%)
+  - vite:build-html (30%)
+  - vite:css (6%)
+See https://rolldown.rs/options/checks#plugintimings for more details.
+
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 19.15s

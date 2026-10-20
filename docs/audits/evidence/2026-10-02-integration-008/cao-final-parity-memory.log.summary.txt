@@ -1,0 +1,15 @@
+Original evidence: /tmp/cao-final-parity-memory.log
+Original SHA256: d12adc159fcaaaedcc0fa73d65527442cc705c3ed4c3834a0ff8715c5a2c0346
+Original bytes: 954
+This is a retained tail, not a new execution or a complete transcript.
+
+........................................................................ [ 78%]
+....................                                                     [100%]
+=============================== warnings summary ===============================
+test/services/test_memory_service_phase2.py::TestStoreInsertsSqliteRow::test_store_inserts_sqlite_row
+test/services/test_memory_service_phase2.py::TestStoreInsertsSqliteRow::test_store_inserts_sqlite_row
+  /mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+92 passed, 2 warnings in 34.49s

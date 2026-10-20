@@ -1,0 +1,18 @@
+[
+  {
+    "terminal_id": "b826dc57",
+    "snapshot_sha256": "cc9ff280c45496b78d5ddc81938941709334de239d5b4e01b5482d116a1d5380",
+    "status": "completed",
+    "duration_markers": 1,
+    "receipt_lines": 1,
+    "extraction": "passed"
+  },
+  {
+    "terminal_id": "3b56848c",
+    "snapshot_sha256": "37a00507ab67e8f3b6cfa2fc8179037b987d1630b6de95d5ba1854d8cb9a8ce1",
+    "status": "completed",
+    "duration_markers": 1,
+    "receipt_lines": 1,
+    "extraction": "passed"
+  }
+]

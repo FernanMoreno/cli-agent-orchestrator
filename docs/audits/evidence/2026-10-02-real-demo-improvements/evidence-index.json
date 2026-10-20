@@ -1,0 +1,92 @@
+{
+  "public-results.json": {
+    "original": "/var/tmp/cao-spec008-demo-improvements-bo9kcdfz/public-results.json",
+    "retained": "docs/audits/evidence/2026-10-02-real-demo-improvements/public-results.json",
+    "bytes": 5141,
+    "sha256": "bb6c82332fdc5cf9593b2776c4636eea995e705ca8f3e33f3f6218fbc3045c2c"
+  },
+  "http-proof.json": {
+    "original": "/var/tmp/cao-spec008-demo-improvements-bo9kcdfz/http-proof.json",
+    "retained": "docs/audits/evidence/2026-10-02-real-demo-improvements/http-proof.json",
+    "bytes": 611,
+    "sha256": "0fab61623166a41e8307a267c1e78dc3ebed014b306a17cd2d3e50ed6862b401"
+  },
+  "browser-proof.json": {
+    "original": "/var/tmp/cao-spec008-demo-improvements-bo9kcdfz/browser-proof.json",
+    "retained": "docs/audits/evidence/2026-10-02-real-demo-improvements/browser-proof.json",
+    "bytes": 834,
+    "sha256": "f5569bbea29f235381c34228fdadac71e5c5a40f6b4d719c3c7453f6837a15a2"
+  },
+  "tested-cao-source.json": {
+    "original": "/var/tmp/cao-spec008-demo-improvements-bo9kcdfz/tested-cao-source.json",
+    "retained": "docs/audits/evidence/2026-10-02-real-demo-improvements/tested-cao-source.json",
+    "bytes": 49261,
+    "sha256": "8ec2cb58bd3ad582c42f6be5942ddc646f301f5203fb3c2f1f0ded9bdb3180e2"
+  },
+  "turn-observations.json": {
+    "original": "/var/tmp/cao-spec008-demo-improvements-bo9kcdfz/turn-observations.json",
+    "retained": "docs/audits/evidence/2026-10-02-real-demo-improvements/turn-observations.json",
+    "bytes": 1272,
+    "sha256": "ac78ad0b9b562626524f841641414ef0e941ef25ed3720bc83ca0deaf7d9d2d6"
+  },
+  "demo-improved.png": {
+    "original": "/var/tmp/cao-spec008-demo-improvements-bo9kcdfz/demo-improved.png",
+    "retained": "docs/audits/evidence/2026-10-02-real-demo-improvements/demo-improved.png",
+    "bytes": 340776,
+    "sha256": "8a451af440d6ef84f8c4801eb245d221aa116416134bfc6dba9f132ac9917d72"
+  },
+  "spec008-real-demo-improvements.log": {
+    "original": "/tmp/spec008-real-demo-improvements.log",
+    "retained": "docs/audits/evidence/2026-10-02-real-demo-improvements/spec008-real-demo-improvements.log",
+    "bytes": 344,
+    "sha256": "ebe4dc6cb45f1063562022d1758f6a4f78734b3da10c76f7606219009e982bfa"
+  },
+  "spec008-real-demo-unit-final.log": {
+    "original": "/tmp/spec008-real-demo-unit-final.log",
+    "retained": "docs/audits/evidence/2026-10-02-real-demo-improvements/spec008-real-demo-unit-final.log",
+    "bytes": 601,
+    "sha256": "aa6214087b1e199710b8d88d33befbc26938a4569f02290d8a64d2b19525a289"
+  },
+  "spec008-real-demo-http-final.log": {
+    "original": "/tmp/spec008-real-demo-http-final.log",
+    "retained": "docs/audits/evidence/2026-10-02-real-demo-improvements/spec008-real-demo-http-final.log",
+    "bytes": 3439,
+    "sha256": "f21dd9e3ff436945e6e738e85662cd5647f12f4b46d691c591a5502b8bb893a5"
+  },
+  "spec008-real-demo-browser-final.log": {
+    "original": "/tmp/spec008-real-demo-browser-final.log",
+    "retained": "docs/audits/evidence/2026-10-02-real-demo-improvements/spec008-real-demo-browser-final.log",
+    "bytes": 692,
+    "sha256": "3719f49997caa76066e588266c404c45442dfa9957f33e8a36aaff8d8b74a3f0"
+  },
+  "spec008-real-demo-syntax-final.log": {
+    "original": "/tmp/spec008-real-demo-syntax-final.log",
+    "retained": "docs/audits/evidence/2026-10-02-real-demo-improvements/spec008-real-demo-syntax-final.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "spec008-real-demo-improvements.py": {
+    "original": "/tmp/spec008-real-demo-improvements.py",
+    "retained": "docs/audits/evidence/2026-10-02-real-demo-improvements/spec008-real-demo-improvements.py",
+    "bytes": 7440,
+    "sha256": "9c54aad3539e841a206561059a81b1c82aaa04f29c2e2cfde9377cd217a7d64d"
+  },
+  "spec008-real-demo-http-proof.py": {
+    "original": "/tmp/spec008-real-demo-http-proof.py",
+    "retained": "docs/audits/evidence/2026-10-02-real-demo-improvements/spec008-real-demo-http-proof.py",
+    "bytes": 2939,
+    "sha256": "2a104d1f56b94a2402d9cf1f24d1b68eebce00864e6c70e64fc5fb20d84521ee"
+  },
+  "spec008-real-demo-browser.cjs": {
+    "original": "/tmp/spec008-real-demo-browser.cjs",
+    "retained": "docs/audits/evidence/2026-10-02-real-demo-improvements/spec008-real-demo-browser.cjs",
+    "bytes": 5363,
+    "sha256": "e0066bc6a331db0934e4a062504c10dafe9c8ce44cb662b350ecd1a35446fea9"
+  },
+  "spec008-real-demo-serve.py": {
+    "original": "/tmp/spec008-real-demo-serve.py",
+    "retained": "docs/audits/evidence/2026-10-02-real-demo-improvements/spec008-real-demo-serve.py",
+    "bytes": 896,
+    "sha256": "3bcc29c38c647da518d211c8c509583b98a38ab426d87a88f1bdf8a75317ecd7"
+  }
+}

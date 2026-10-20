@@ -1,0 +1,28 @@
+{
+  "url": "http://127.0.0.1:45919",
+  "checks": [
+    "health",
+    "static /",
+    "static /app.js",
+    "static /styles.css",
+    "invalid text str 0",
+    "invalid text str 2",
+    "invalid text NoneType 0",
+    "invalid text int 0",
+    "invalid text str 2001",
+    "create",
+    "trim and shape",
+    "PATCH boolean",
+    "invalid PATCH",
+    "persisted completion",
+    "DELETE",
+    "repeat DELETE missing",
+    "24 simultaneous creations",
+    "no lost update",
+    "disk matches HTTP",
+    "malformed JSON"
+  ],
+  "real_http": true,
+  "fixture_data_separate_from_project": true,
+  "status": "passed"
+}

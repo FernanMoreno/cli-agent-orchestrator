@@ -1,0 +1,32 @@
+{
+  "status": "passed",
+  "checks": [
+    "accessible search",
+    "accessible filter",
+    "POST Alpha navegador real",
+    "POST Beta navegador real",
+    "two visible notes",
+    "PATCH completion",
+    "checkbox persists reload",
+    "case insensitive search",
+    "pending filter",
+    "completed filter",
+    "total and pending counters",
+    "DELETE button",
+    "one after delete",
+    "error keeps input",
+    "visible error",
+    "POST Recuperar tras error",
+    "input clears only after success",
+    "POST <img src=x onerror=\"window.demoXSS=1\">",
+    "XSS uses textContent",
+    "pending submit disabled",
+    "no duplicate submit",
+    "one persisted submit",
+    "no browser runtime errors"
+  ],
+  "errors": [],
+  "real_chromium": true,
+  "url": "http://127.0.0.1:46015",
+  "fixture_data_separate_from_project": true
+}

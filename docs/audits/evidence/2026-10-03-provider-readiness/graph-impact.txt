@@ -1,0 +1,21 @@
+Graph: graphify-out/graph.json (30458 nodes) | Traversal: BFS depth=2 | Start: ['CopilotCliProvider._accept_trust_prompts: one poll, idle prompt near end.', 'CopilotCliProvider', 'Initialize the inbox service. Args: socket_path: Path to herdr socket. None =…', 'endpoint_contract.rs', 'get', 'has_jq()', 'Idle-gap semantics in KimiCliProvider._handle_startup_dialog.', 'InboxService', '.initialize()', '._has_idle_prompt_near_end()', 'prompt', 'service', 'STATUS'] | 699 nodes found
+
+[!] TRUNCATED: showing 16 of 699 nodes (~650-token budget). The answer may be among the 683 cut nodes — raise the token budget (CLI: --budget) or narrow the query (e.g. context_filter=['call'], or get_node for a specific symbol).
+
+NODE CopilotCliProvider._accept_trust_prompts: one poll, idle prompt near end. [src=test/providers/test_startup_handler_nonblocking.py loc=L124 community=test_startup_handler_nonblocking.py]
+NODE CopilotCliProvider [src=src/cli_agent_orchestrator/providers/copilot_cli.py loc=L54 community=CopilotCliProvider]
+NODE Initialize the inbox service. Args: socket_path: Path to herdr socket. None =… [src=src/cli_agent_orchestrator/services/herdr_inbox_service.py loc=L49 community=._default_socket_path]
+NODE endpoint_contract.rs [src=tui/tests/endpoint_contract.rs loc=L1 community=endpoint_contract.rs]
+NODE get [src= loc= community=api/main.py]
+NODE has_jq() [src=.specify/scripts/bash/common.sh loc=L234 community=common.sh]
+NODE Idle-gap semantics in KimiCliProvider._handle_startup_dialog. [src=test/providers/test_startup_prompt_idle_gap.py loc=L270 community=._make]
+NODE InboxService [src=src/cli_agent_orchestrator/services/inbox_service.py loc=L36 community=InboxService]
+NODE .initialize() [src=src/cli_agent_orchestrator/providers/claude_code.py loc=L1024 community=logging.py]
+NODE ._has_idle_prompt_near_end() [src=src/cli_agent_orchestrator/providers/copilot_cli.py loc=L393 community=.get_status]
+NODE prompt [src=src/cli_agent_orchestrator/schemas/agent_profile.schema.json loc=L135 community=properties]
+NODE service [src=examples/aidlc-portfolio/skills/aidlc-portfolio/assets/schemas/project.schema.json loc=L43 community=enum]
+NODE STATUS [src=cao_mcp_apps/src/shared/status.generated.ts loc=L18 community=shared/types.ts]
+NODE TerminalStatus [src=src/cli_agent_orchestrator/models/terminal.py loc=L14 community=TerminalStatus]
+NODE ClaudeCodeProvider [src=src/cli_agent_orchestrator/providers/claude_code.py loc=L297 community=ClaudeCodeProvider]
+NODE get_backend() [src=src/cli_agent_orchestrator/backends/registry.py loc=L19 community=logging.py]
+... (truncated — 683 more nodes cut by ~650-token budget. Narrow with context_filter=['call'] or use get_node for a specific symbol)

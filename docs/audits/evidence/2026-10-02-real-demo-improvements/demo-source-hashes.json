@@ -1,0 +1,38 @@
+{
+  "api/server.py": {
+    "before_sha256": "adfc2d61c578615318558ba95e475de1ccb8e700e4103d2e2add40b27219bd48",
+    "after_sha256": "cef517f0ee327513f75a388f9b62d6c5730b6445225c3e0a56e9029ae3430f36"
+  },
+  "frontend/app.js": {
+    "before_sha256": "6b5da3e4caa82c6299304f8a4c52128f735dfd4dd722b3354e035d46661da889",
+    "after_sha256": "13c485b0ccc1eee7fdd7b148a303385ac1732677ac974a214828a2120f848eed"
+  },
+  "frontend/index.html": {
+    "before_sha256": "a8a5986fdbca4b652f2a196b933ffb86fbbc9c994f36046903d7f414013611a4",
+    "after_sha256": "b3411474a7ffc39c9d480a2774fb733310d9f220488a1213a1c7911a1e83811d"
+  },
+  "frontend/styles.css": {
+    "before_sha256": "35c2397e2b1eb653177a45710f38282deada8adc57709135c16c3a4385f0943c",
+    "after_sha256": "7d420b4a47f8f00fd6c348d1626c15df32fb66d92006247f9af14e83cdaa5a10"
+  },
+  "test_api.py": {
+    "before_sha256": null,
+    "after_sha256": "5b60c36bfd74beda347f1c63ddf7323e23c8b0ac5a47e6351e6c4e905066da14"
+  },
+  "CONTRACT.md": {
+    "before_sha256": "eaddc515fd97345a92bcfccfeb0971b62684a9ec285f0f5ef81ce5e2207ae948",
+    "after_sha256": "b3cab5d163f212553ce57864301b15e4aff7ebfb835ec80afce0d740e75ce956"
+  },
+  "README.md": {
+    "before_sha256": "ae792d1db04062d4de5872e860e1ae1116d9ca49ebef2107cb7b4e41842b809e",
+    "after_sha256": "df2bd63805eece34b2854abc216292a52dd148758d08841fca323984ace90126"
+  },
+  "UI_IMPROVEMENTS.md": {
+    "before_sha256": null,
+    "after_sha256": "aa9788f44a61fc0998c56c1c3ed1f38d055978529e78ceb7a4ce06b9ad9787c7"
+  },
+  "IMPROVEMENTS_REVIEW.md": {
+    "before_sha256": null,
+    "after_sha256": "3ac73f1e0746410285a2ddcdadc685a560db5d9d8cb0b4cab3a2be3423b41ff3"
+  }
+}

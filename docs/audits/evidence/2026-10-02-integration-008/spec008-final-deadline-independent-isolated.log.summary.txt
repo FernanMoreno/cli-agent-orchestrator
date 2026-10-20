@@ -1,0 +1,18 @@
+Original evidence: /tmp/spec008-final-deadline-independent-isolated.log
+Original SHA256: 0fc3e831fa96ca49d8daf2bad6d0996467d937e2e2995672f65b3caa047ebf51
+Original bytes: 1262
+Retained final tail; not a new execution or complete transcript.
+
+.                                                                        [100%]
+=============================== warnings summary ===============================
+cao_final_deadline_review_tests.py::test_delayed_attach_anchors_exact_budget_to_durable_journal
+cao_final_deadline_review_tests.py::test_delayed_attach_anchors_exact_budget_to_durable_journal
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+cao_final_deadline_review_tests.py::test_delayed_attach_anchors_exact_budget_to_durable_journal
+  /mnt/c/users/ferna/onedrive/escritorio/caos/test/services/test_integration_008_coordinator.py:53: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    from cli_agent_orchestrator.api.main import _compose_managed_workflow_runtime
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 3 warnings in 17.03s

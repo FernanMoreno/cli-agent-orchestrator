@@ -1,0 +1,5 @@
+Original: /tmp/spec008-diff-closure-check.log
+SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+Original bytes: 0
+Retained last 45 lines of the original completed execution; not a new execution.
+

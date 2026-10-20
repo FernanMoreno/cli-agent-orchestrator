@@ -1,0 +1,7 @@
+Original: /tmp/spec008-format-closure-black.log
+SHA256: 17ba6214a30a92ad51b9dd8b988eed5c2b5e3039a2f8145230ca011190ce8e17
+Original bytes: 59
+Retained last 45 lines of the original completed execution; not a new execution.
+
+All done! ✨ 🍰 ✨
+1126 files would be left unchanged.

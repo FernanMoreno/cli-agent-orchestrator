@@ -1,0 +1,8 @@
+Original evidence: /tmp/spec008-final-deployment-source-proof.log
+Original SHA256: 41aa88c68b071defb16ad05d6aeb3e21e0133752a4f4a1e44f81b9fc83b7bedd
+Original bytes: 232
+This is a retained tail, not a new execution or a complete transcript.
+
+PASS exact frozen latest source: 22 EKS files;4 intentional stronger broker/panel files excluded
+PASS gp3 manifests owned storageclass +WaitForFirstConsumer+Retain+encrypted
+No cluster/client serialization/provider effect performed

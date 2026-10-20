@@ -1,0 +1,18 @@
+Original evidence: /tmp/spec008-docusaurus-build.log
+Original SHA256: 16f239fd648bdb720b8e34ae777d2702b25641982cbadab761d540d02d8b04d1
+Original bytes: 483
+Retained final tail; not a new execution or complete transcript.
+
+npm notice run docusaurus@0.0.0 prebuild
+npm notice run npm run build-courses
+npm notice run docusaurus@0.0.0 build-courses
+npm notice run bash course-src/build.sh
+Building courses...
+  built course/index.html
+  built course-advanced/index.html
+Done.
+npm notice run docusaurus@0.0.0 build
+npm notice run docusaurus build
+[INFO] [en] Creating an optimized production build...
+[SUCCESS] Generated static files in "build".
+[INFO] Use `npm run serve` command to test your build locally.

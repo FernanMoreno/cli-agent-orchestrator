@@ -1,0 +1,16 @@
+Original evidence: /tmp/spec008-apps-final-unit.log
+Original SHA256: 1193a6320d265e164b509d932711295b5014adfc696f82958843f33e51bfeb52
+Original bytes: 319
+Retained final tail; not a new execution or complete transcript.
+
+npm notice run cao-mcp-apps@0.1.0 test
+npm notice run vitest run
+
+ RUN  v4.1.11 /mnt/c/users/ferna/onedrive/escritorio/caos/cao_mcp_apps
+
+
+ Test Files  12 passed (12)
+      Tests  84 passed (84)
+   Start at  09:08:27
+   Duration  25.00s (transform 4.13s, setup 38.93s, import 11.96s, tests 900ms, environment 132.54s)
+

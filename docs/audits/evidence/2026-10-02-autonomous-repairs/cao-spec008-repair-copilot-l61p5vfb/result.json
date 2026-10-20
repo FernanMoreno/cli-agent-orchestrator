@@ -1,0 +1,13 @@
+{
+  "provider": "copilot_cli",
+  "root": "/var/tmp/cao-spec008-repair-copilot-l61p5vfb",
+  "status": "initialization_unavailable",
+  "notes_before": "9540bfae64b96d11a5d146ca2008d733b816518fa5b8c56f5e7597941d97ca59",
+  "install_http": 200,
+  "create_http": 500,
+  "error": {
+    "detail": "Failed to create session: Copilot initialization timed out after 60 seconds"
+  },
+  "notes_preserved": true,
+  "closed": true
+}

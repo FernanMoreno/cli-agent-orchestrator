@@ -1,0 +1,18 @@
+[
+  {
+    "status": "passed",
+    "transport": "real_websocket",
+    "provider": "mock_cli",
+    "durable_launch_count": 1,
+    "operations": [
+      "launch",
+      "input",
+      "output",
+      "working_directory",
+      "key",
+      "exit",
+      "delete",
+      "inspect"
+    ]
+  }
+]

@@ -1,0 +1,7 @@
+Original evidence: /tmp/spec008-apps-final-typecheck.log
+Original SHA256: 98097a10fa637e332ce9bd9e7296f8fde8494a9239bebf0a0b1481890c30f773
+Original bytes: 72
+Retained final tail; not a new execution or complete transcript.
+
+npm notice run cao-mcp-apps@0.1.0 typecheck
+npm notice run tsc --noEmit

@@ -1,0 +1,16 @@
+[
+  {
+    "terminal_id": "b826dc57",
+    "result_length": 37603,
+    "receipt_candidates": 1,
+    "receipt_full_line_count": 0,
+    "result_tail": " uses Path.cwd()/notes.json \u2014 running from\na different cwd with a temp notes.json and copied frontend... The tests do exactly that (temp dir). But test_api.py must not be modified; running it is allowed? \"You own frontend files and UI documentation, not api/\nserver.py, tests or notes.json\" \u2014 owning \u2260 running. Running tests doesn't modify them (they use temp files). Running python3 -m unittest is a verification\n\nTransport: The operation timed out."
+  },
+  {
+    "terminal_id": "3b56848c",
+    "result_length": 19918,
+    "receipt_candidates": 1,
+    "receipt_full_line_count": 0,
+    "result_tail": " progress. PEER_CONTRACT/PEER_ACK exchange hasn't happened because PEER_CONTRACT was never sent.\n\nSo the peer terminal 5be94996 is gone (deleted after failed start). My send_message failed with \"Terminal not found\" \u2014 consistent.\n\nMy instructions say: \"Si ya env\u00edas ahora un mensaje a 5be94996 con 'PEER_ACK_PENDING' y tu ID real, bien.\" \u2014 I tried, it failed because the terminal doesn't exist. I should retry once\n\nTransport: The operation timed out."
+  }
+]

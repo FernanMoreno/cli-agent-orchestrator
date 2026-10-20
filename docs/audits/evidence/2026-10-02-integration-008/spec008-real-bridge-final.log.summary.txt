@@ -1,0 +1,11 @@
+Original evidence: /tmp/spec008-real-bridge-final.log
+Original SHA256: 2387d9b25cfa1e93794d77ea87ddc3dcf77975511fbf5c017e3da1656a508cd1
+Original bytes: 264
+Retained final tail; not a new execution or complete transcript.
+
+real_websocket_hello_ready
+actual_remote_mock_cli_launched
+network_input_output_directory_key_and_durable_operation_verified
+remote_exit_and_exact_delete_verified
+owned_processes_stopped
+public_evidence /tmp/cao-spec008-network-bridge-5y636yoq/public-results.json

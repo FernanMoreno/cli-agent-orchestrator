@@ -1,0 +1,41 @@
+[
+  {
+    "phase": 1,
+    "http": {
+      "exit_code": 0
+    },
+    "unit": {
+      "exit_code": 0,
+      "test_count": 10
+    },
+    "syntax": {
+      "exit_code": 0
+    }
+  },
+  {
+    "phase": 2,
+    "http": {
+      "exit_code": 1
+    },
+    "unit": {
+      "exit_code": 0,
+      "test_count": 10
+    },
+    "syntax": {
+      "exit_code": 0
+    }
+  },
+  {
+    "phase": 3,
+    "http": {
+      "exit_code": 1
+    },
+    "unit": {
+      "exit_code": 0,
+      "test_count": 12
+    },
+    "syntax": {
+      "exit_code": 0
+    }
+  }
+]

@@ -1,0 +1,9 @@
+[
+  {
+    "session_id": "ses_f03e447b3ffeiW0POCQSk66em7",
+    "expected_count": 1,
+    "assistant_count": 1,
+    "matches_expected": true,
+    "final_finish": "stop"
+  }
+]

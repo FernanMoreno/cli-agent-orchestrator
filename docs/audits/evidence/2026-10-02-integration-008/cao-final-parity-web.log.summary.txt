@@ -1,0 +1,27 @@
+Original evidence: /tmp/cao-final-parity-web.log
+Original SHA256: 4aeeeffae35ac5061b4b2ec8ff3fc7e506c2223305db4544e1f36b7e31828d0c
+Original bytes: 1758
+This is a retained tail, not a new execution or a complete transcript.
+
+npm notice run cao-web@0.1.0 test
+npm notice run vitest run --run src/test/profiles-panel.test.tsx src/test/profile-editor.test.tsx src/test/profile-create-modal.test.tsx
+
+ RUN  v4.1.11 /mnt/c/users/ferna/onedrive/escritorio/caos/web
+
+Error: Not implemented: HTMLCanvasElement.prototype.getContext (without installing the canvas npm package)
+    at module.exports (/mnt/c/users/ferna/onedrive/escritorio/caos/web/node_modules/jsdom/lib/jsdom/browser/not-implemented.js:9:17)
+    at HTMLCanvasElementImpl.getContext (/mnt/c/users/ferna/onedrive/escritorio/caos/web/node_modules/jsdom/lib/jsdom/living/nodes/HTMLCanvasElement-impl.js:42:5)
+    at HTMLCanvasElement.getContext (/mnt/c/users/ferna/onedrive/escritorio/caos/web/node_modules/jsdom/lib/jsdom/living/generated/HTMLCanvasElement.js:131:58)
+    at /mnt/c/users/ferna/onedrive/escritorio/caos/web/node_modules/@xterm/xterm/lib/xterm.js:1:139388
+    at Object.4103 (/mnt/c/users/ferna/onedrive/escritorio/caos/web/node_modules/@xterm/xterm/lib/xterm.js:1:140608)
+    at i (/mnt/c/users/ferna/onedrive/escritorio/caos/web/node_modules/@xterm/xterm/lib/xterm.js:1:483441)
+    at Object.1433 (/mnt/c/users/ferna/onedrive/escritorio/caos/web/node_modules/@xterm/xterm/lib/xterm.js:1:84053)
+    at i (/mnt/c/users/ferna/onedrive/escritorio/caos/web/node_modules/@xterm/xterm/lib/xterm.js:1:483441)
+    at Object.3955 (/mnt/c/users/ferna/onedrive/escritorio/caos/web/node_modules/@xterm/xterm/lib/xterm.js:1:71424)
+    at i (/mnt/c/users/ferna/onedrive/escritorio/caos/web/node_modules/@xterm/xterm/lib/xterm.js:1:483441) undefined
+
+ Test Files  3 passed (3)
+      Tests  88 passed (88)
+   Start at  06:06:07
+   Duration  26.47s (transform 5.83s, setup 7.16s, import 11.76s, tests 3.52s, environment 28.21s)
+

@@ -1,0 +1,7 @@
+Original evidence: /tmp/spec008-catalog-green.log
+Original SHA256: b4c2c3a85335a008385690466d6e91164026c0891bc8106ab5e9e4d28cd4fd80
+Original bytes: 99
+This is a retained tail, not a new execution or a complete transcript.
+
+....                                                                     [100%]
+4 passed in 23.42s

@@ -1,0 +1,9 @@
+{
+  "terminal_id": "2aa0a415",
+  "snapshot_sha256": "f322e3a4dec7af6fdf00ee55715ccda4134dd5920722c27a7e33df78270b36b6",
+  "status": "completed",
+  "duration_markers": 1,
+  "native_receipt_lines": 1,
+  "extracted_receipt_lines": 0,
+  "result_tail": "says \"Env\u00edale por CAO un mensaje que empiece con PEER_CONTRACT\" and final result to supervisor. I can do\nboth, then the receipt line.\n\nTransport: The operation timed out."
+}

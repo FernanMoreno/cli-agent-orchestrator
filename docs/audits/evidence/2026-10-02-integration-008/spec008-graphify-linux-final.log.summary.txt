@@ -1,0 +1,11 @@
+Original evidence: /tmp/spec008-graphify-linux-final.log
+Original SHA256: 2f110834771561a9953d667ce23322bd6e661bf1c2f45a8bf97cca44f0ccf422
+Original bytes: 392
+Retained final tail; not a new execution or complete transcript.
+
+Re-extracting code files in src (no LLM needed)...
+  AST extraction: 7/7 uncached files (100%)
+[graphify watch] Rebuilt (no clustering): 12955 nodes, 34735 edges
+[graphify watch] graph.json updated in src/graphify-out
+Code graph updated. For doc/paper/image changes run /graphify --update in your AI assistant.
+Tip: set GEMINI_API_KEY or GOOGLE_API_KEY to use Gemini for semantic extraction.

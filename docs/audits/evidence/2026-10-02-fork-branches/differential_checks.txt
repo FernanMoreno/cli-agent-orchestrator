@@ -1,0 +1,10 @@
+CURRENT unknown role: ['*']
+UPSTREAM unknown role: ValueError (refused)
+CURRENT explicit allowedTools empty + MCP: ['@cao-mcp-server']
+UPSTREAM explicit allowedTools empty + MCP: []
+CURRENT workflow refusal: run-step returned HTTP 409
+UPSTREAM workflow refusal: run-step returned HTTP 409 (decision_required): review existing attempt
+CURRENT graph caller cancelled: builds= 2 cancelled builds= 1
+CURRENT graph detached task API exists: False
+CURRENT OpenCode v1 spaced agent marker: False
+UPSTREAM OpenCode v1 spaced agent marker: True

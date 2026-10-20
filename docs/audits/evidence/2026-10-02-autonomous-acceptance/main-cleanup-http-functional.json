@@ -1,0 +1,24 @@
+{
+  "checks": {
+    "stats_endpoint": {
+      "passed": false,
+      "http_status": 404
+    },
+    "cleanup_deleted_count_one": {
+      "passed": true,
+      "http_status": 200,
+      "response": {
+        "deleted_count": 1
+      }
+    },
+    "pending_preserved": {
+      "passed": true
+    },
+    "cleanup_idempotent": {
+      "passed": true
+    }
+  },
+  "source_sha256": "a9c3c87b3b4419680b50c11ec152f5ed8869296e846d5840f4abb0571ef0b87f",
+  "separate_fixture_data": true,
+  "status": "failed"
+}

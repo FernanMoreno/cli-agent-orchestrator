@@ -1,0 +1,9 @@
+Original evidence: /tmp/spec008-docs-parity-green.log
+Original SHA256: 79332c2b988a432ab20cef163c7ea9abbdfa85e878846bd00a4a96a07ec518f7
+Original bytes: 272
+Retained final tail; not a new execution or complete transcript.
+
+........................................................................ [ 36%]
+........................................................................ [ 73%]
+...sss.............................................                      [100%]
+192 passed, 3 skipped in 48.19s

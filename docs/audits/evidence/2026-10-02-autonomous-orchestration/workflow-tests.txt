@@ -1,0 +1,16 @@
+........................................................................ [ 26%]
+........................................................................ [ 52%]
+........................................................................ [ 79%]
+........................................................                 [100%]
+=============================== warnings summary ===============================
+test/services/test_workflow_service.py::test_drive_failure_journals_error_that_resolver_infers_timeout
+test/services/test_workflow_service.py::test_drive_failure_journals_error_that_resolver_infers_timeout
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+test/services/test_workflow_service.py::test_drive_failure_journals_error_that_resolver_infers_timeout
+  /mnt/c/users/ferna/onedrive/escritorio/caos/test/services/test_workflow_service.py:1155: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    from cli_agent_orchestrator.api.main import _resolve_error_kind
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+272 passed, 3 warnings in 47.17s

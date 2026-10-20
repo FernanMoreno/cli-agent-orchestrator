@@ -1,0 +1,50 @@
+Original evidence: /tmp/spec008-first-half-final-clean.log
+Original SHA256: 209b0fc81c951c8fe2d4d8ed5c8732fe0db921baacca43d5f03a165e96317e69
+Original bytes: 8984
+Retained final tail; not a new execution or complete transcript.
+
+.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+test/graph/test_api_routes.py:20
+test/graph/test_api_routes.py:20
+test/graph/test_api_routes.py:20
+test/graph/test_api_routes.py:20
+  /mnt/c/users/ferna/onedrive/escritorio/caos/test/graph/test_api_routes.py:20: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    from cli_agent_orchestrator.api import main as api_main
+
+test/backends/test_herdr_inbox_service.py::TestHerdrInboxServiceSubscription::test_subscribe_all_events_sends_single_broadcast_message
+test/backends/test_herdr_inbox_service.py::TestHerdrInboxServiceReconnect::test_reconnect_resubscribe_sends_single_call_for_all_panes
+test/backends/test_herdr_inbox_service.py::TestHerdrInboxServiceSingleSubscribePerConnection::test_socket_setup_issues_exactly_one_subscribe
+  /mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/src/cli_agent_orchestrator/services/herdr_inbox_service.py:1379: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    self._writer.write(data)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+test/graph/test_api_routes.py::test_post_export_secret_gate_422_and_sink_not_called
+test/graph/test_api_routes.py::test_post_export_secret_gate_sees_through_a_hidden_character[U+200B]
+test/graph/test_api_routes.py::test_post_export_secret_gate_sees_through_a_hidden_character[U+FEFF]
+test/graph/test_api_routes.py::test_post_export_secret_gate_keeps_key_context
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/fastapi/routing.py:328: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    return await dependant.call(**values)
+
+test/integration/test_work_admission.py: 4 warnings
+test/integration/test_work_dispatch.py: 10 warnings
+  /home/felni/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=546023) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    self.pid = os.fork()
+
+test/cli/test_main.py::TestCliMain::test_cli_version_fallback_when_package_not_found
+  /mnt/c/Users/ferna/Documents/Codex/2026-09-16/n/work/cli-agent-orchestrator-fork/test/cli/test_main.py:129: PytestMockWarning: Mocks returned by pytest-mock do not need to be used as context managers. The mocker fixture automatically undoes mocking at the end of a test. This warning can be ignored if it was triggered by mocking a context manager. https://pytest-mock.readthedocs.io/en/latest/usage.html#usage-as-context-manager
+
+test/integration/test_knowledge_multinode.py::test_two_processes_share_sqlite_authority_across_conflict_and_reconnect
+test/integration/test_knowledge_multinode.py::test_two_processes_share_sqlite_authority_across_conflict_and_reconnect
+test/integration/test_knowledge_multinode.py::test_two_processes_share_sqlite_authority_across_conflict_and_reconnect
+  /home/felni/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=546033) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    self.pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2999 passed, 21 skipped, 45 warnings in 589.06s (0:09:49)

@@ -1,0 +1,12 @@
+{
+  "provider": "copilot_cli",
+  "started_at": 1790986282.890581,
+  "checks": {},
+  "turns": [],
+  "profile_install_http": 200,
+  "create_http": 500,
+  "create_error": "{\"detail\":\"Failed to create session: Copilot initialization timed out after 60 seconds\"}",
+  "error_type": "HTTPError",
+  "credential_copies_removed": true,
+  "ended_at": 1790986360.102619
+}

@@ -1,0 +1,7 @@
+Original evidence: /tmp/spec008-format-final-black.log
+Original SHA256: 17ba6214a30a92ad51b9dd8b988eed5c2b5e3039a2f8145230ca011190ce8e17
+Original bytes: 59
+Retained final tail; not a new execution or complete transcript.
+
+All done! ✨ 🍰 ✨
+1126 files would be left unchanged.

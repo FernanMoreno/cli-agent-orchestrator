@@ -1,0 +1,51 @@
+{
+  "branch": "main",
+  "native_phases": [
+    {
+      "kind": "late_receipt",
+      "status": "passed",
+      "checks": {
+        "exactly_two_children": true,
+        "expected_providers": true,
+        "children_succeeded": true,
+        "peer_contract_delivered": true,
+        "peer_ack_delivered": true,
+        "both_results_delivered_to_supervisor": true,
+        "all_messages_delivered": true,
+        "no_duplicate_assignment": true,
+        "notes_unchanged": true,
+        "late_fault_exercised": true,
+        "genuine_native_witness_observed": true
+      },
+      "cleanup_http_status": 200
+    },
+    {
+      "kind": "restart",
+      "status": "passed",
+      "checks": {
+        "exactly_two_children": true,
+        "expected_providers": true,
+        "children_succeeded": true,
+        "peer_contract_delivered": true,
+        "peer_ack_delivered": true,
+        "both_results_delivered_to_supervisor": true,
+        "all_messages_delivered": true,
+        "no_duplicate_assignment": true,
+        "notes_unchanged": true,
+        "restart_exercised": true,
+        "identities_retained": true
+      },
+      "cleanup_http_status": 200
+    }
+  ],
+  "operator_corrective_messages": 0,
+  "operator_verify_calls": 0,
+  "operator_retry_calls": 0,
+  "native_controller_closed": true,
+  "credential_copies_removed": true,
+  "source_files_match_native_and_graph": 385,
+  "notes_sha256_unchanged": "9540bfae64b96d11a5d146ca2008d733b816518fa5b8c56f5e7597941d97ca59",
+  "own_temporary_prefixes_absent": true,
+  "own_test_tmux_server_absent": true,
+  "final_diff_check": "passed"
+}

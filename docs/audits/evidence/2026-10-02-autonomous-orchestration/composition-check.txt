@@ -1,0 +1,40 @@
+
+==================================================
+ SYSTEM COMPOSITION CHECK V2
+==================================================
+Proyecto : caos
+Repo     : /mnt/c/Users/ferna/OneDrive/Escritorio/CAOS
+
+
+[Python] Architecture: Import Linter
+
+╔══╗─────────▶╔╗ ╔╗      ╔╗◀───┐
+╚╣╠╝◀─────┐  ╔╝╚╗║║────▶╔╝╚╗   │
+ ║║   ╔══╦══╦╩╗╔╝║║  ╔╦═╩╗╔╝╔═╦══╗
+ ║║╔══╣╔╗║╔╗║╔╣║ ║║ ╔╬╣╔╗║║ ║│║╔═╝
+╔╣╠╣║║║╚╝║╚╝║║║╚╗║╚═╝║║║║║╚╗║═╣║
+╚══╩╩╩╣╔═╩══╩╝╚═╝╚═══╩╩╝╚╩═╩╩═╩╝
+  └──▶║║                    ▲ 
+      ╚╝────────────────────┘
+
+
+---------
+Contracts
+---------
+
+Analyzed 336 files, 1345 dependencies.
+--------------------------------------
+
+Sibling packages must remain acyclic KEPT
+Domain models must not depend on application or infrastructure KEPT
+Work reducer must not depend on entrypoints or effect owners KEPT
+Workflow projection must not directly import entrypoints or execution runtimes KEPT
+Work repository must not depend on entrypoints or effect runtimes KEPT
+
+Contracts: 5 kept, 0 broken.
+
+  [OK] Composition checks: PASS
+Final review:
+  project-composition-review caos claude
+  project-composition-review caos codex
+  project-composition-review caos opencode

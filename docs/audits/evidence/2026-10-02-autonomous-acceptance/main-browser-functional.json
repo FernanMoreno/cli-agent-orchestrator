@@ -1,0 +1,12 @@
+{
+  "real_chromium": true,
+  "checks": [
+    "add Pendiente autonomía"
+  ],
+  "errors": [
+    "btnBorrarCompletadas is not defined"
+  ],
+  "fixture_data_separate": true,
+  "status": "failed",
+  "error": "locator.waitFor: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('Pendiente autonomía', { exact: true }) to be visible\u001b[22m\n"
+}

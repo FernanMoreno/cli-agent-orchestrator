@@ -1,0 +1,6 @@
+Original evidence: /tmp/spec008-format-final-isort.log
+Original SHA256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+Original bytes: 0
+Retained final tail; not a new execution or complete transcript.
+
+

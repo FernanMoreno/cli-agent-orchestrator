@@ -1,0 +1,11 @@
+DB outage observation 1 attempts 0 reconciled False retry_delay 0.01
+DB outage observation 2 attempts 0 reconciled False retry_delay 0.01
+DB outage observation 3 attempts 0 reconciled False retry_delay 0.01
+DB outage observation 4 attempts 0 reconciled False retry_delay 0.01
+DB outage observation 5 attempts 0 reconciled False retry_delay 0.01
+Late receipt scheduled? True new worker count 0
+Picker prior restart 'completed the requested task\n[synthetic receipt]' TerminalStatus.WAITING_USER_ANSWER
+Picker after restart None None hash still matches True
+First provider lookup failed restoration
+Second lookup reads DB count 1 cached active receipt None blocks input False
+LAST with durable pending and cached empty receipt: 'Historical answer WITHOUT active receipt' settle calls 0

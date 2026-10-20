@@ -1,0 +1,48 @@
+Original evidence: /tmp/cao-c06-remote-causal-delete-review.log
+Original SHA256: 010944f6f732c915fbc3205784c846c263454333de6d5d196ca1e5d1f234083d
+Original bytes: 3821
+This is a retained tail, not a new execution or a complete transcript.
+
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+____ test_actual_public_exact_delete_unknown_preserves_uncertainty_and_rows ____
+
+wire = {'central': <cli_agent_orchestrator.runtime_channel.store.RemoteOperationStore object at 0x70329074dc10>, 'connection'...sqlite)], 'journal': <cli_agent_orchestrator.runtime_channel.store.RemoteOperationStore object at 0x70329074dc70>, ...}
+client = <test.api.conftest.TestClientWithHost object at 0x70329074d760>
+
+    @pytest.mark.asyncio
+    async def test_actual_public_exact_delete_unknown_preserves_uncertainty_and_rows(wire,client):
+        from cli_agent_orchestrator.backends.base import TerminalCleanupResult,TerminalCleanupOutcome
+        terminal=await launch(wire)
+        wire['native'].cleanup_terminal_exact.return_value=TerminalCleanupResult(TerminalCleanupOutcome.UNKNOWN)
+        response=await asyncio.to_thread(client.delete,'/terminals/'+terminal.id)
+>       assert response.status_code==504,response.text
+E       AssertionError: {"detail":{"code":"remote_command_failed","message":"Exact remote terminal teardown remains uncertain","action":"inspect","delivery_may_have_occurred":false}}
+E       assert 502 == 504
+E        +  where 502 = <Response [502 Bad Gateway]>.status_code
+
+/tmp/cao_c06_remote_review_tests.py:255: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  cli_agent_orchestrator.services.terminal_service:terminal_service.py:1694 Terminal ccb9e0c1: provider 'codex' cannot enforce tool restrictions (prompt) but profile 'review' requests []. Treat this worker as unrestricted; for enforced restrictions use claude_code, kiro_cli, copilot_cli, opencode_cli, grok_cli.
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323
+.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+../../../../../Users/ferna/OneDrive/Escritorio/CAOS/test/api/conftest.py:6
+  /mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/test/api/conftest.py:6: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    from cli_agent_orchestrator.api.main import app
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED ../../../../../../../tmp/cao_c06_remote_review_tests.py::test_actual_public_exact_delete_unknown_preserves_uncertainty_and_rows
+1 failed, 1 passed, 14 deselected, 5 warnings in 24.13s

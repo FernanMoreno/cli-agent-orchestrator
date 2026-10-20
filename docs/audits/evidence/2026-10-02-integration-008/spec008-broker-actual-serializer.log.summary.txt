@@ -1,0 +1,50 @@
+Original evidence: /tmp/spec008-broker-actual-serializer.log
+Original SHA256: 7a16f9baddde46271f471beaf051331de52117a2674143128ea2cd71f35b0c98
+Original bytes: 24771
+Retained final tail; not a new execution or complete transcript.
+
+PASS a listed path on an unlisted method is refused
+PASS an encoded dot segment is refused
+PASS nothing refused ever reached the worker
+PASS unauthenticated proxy call is rejected
+PASS a malformed worker id is refused
+PASS logs return the container output
+PASS logs are served as text
+PASS tail_lines is capped at the broker's ceiling
+PASS unauthenticated log read is rejected
+PASS operator routes resolve the recorded leased pod, not the first pod
+PASS a missing recorded pod is reported instead of routing to its replacement
+PASS a losing operator pod-identity claim refuses its stale candidate
+PASS a settled survivor remains readable for diagnosis
+PASS logs remain readable for a settled survivor
+PASS writes to a settled survivor are refused with its verdict
+PASS a settled worker with no pod answers with its verdict
+PASS a worker with no lease row is still reachable
+PASS a worker with no pod IP is refused, not dialled
+PASS disconnecting a log follow shuts down the blocked upstream promptly
+PASS disconnect during log acquisition closes the late response
+PASS log response-header acquisition has a finite timeout
+PASS an established quiet log follow has no socket read timeout
+PASS the timeout extractor works on a real urllib3 response
+PASS a real established follow still delivers its line
+PASS health is readable
+PASS the sessions list is readable
+PASS a terminal is readable
+PASS an inbox is readable
+PASS input is writable
+PASS not proxied: GET /internal/memory/recall
+PASS not proxied: GET /settings
+PASS not proxied: GET /workflows
+PASS not proxied: POST /sessions
+PASS not proxied: POST /terminals/abc12345/inbox/messages
+PASS not proxied: DELETE /sessions/foo
+PASS not proxied: GET /sessions/foo/terminals/extra
+PASS not proxied: GET /
+PASS broker refuses to start with a passthrough var unset
+PASS orphan sweep deletes a leaseless worker past WORKER_TIMEOUT
+PASS orphan sweep takes the worker's Service with it
+PASS orphan sweep spares a leaseless worker inside WORKER_TIMEOUT
+PASS replacement pod does not reset an orphaned Deployment's timeout
+PASS orphan sweep never touches a worker with a live lease, at any age
+
+FAILURES: none

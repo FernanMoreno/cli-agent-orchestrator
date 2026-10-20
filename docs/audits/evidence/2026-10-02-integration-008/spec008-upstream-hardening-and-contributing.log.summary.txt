@@ -1,0 +1,19 @@
+Original evidence: /tmp/spec008-upstream-hardening-and-contributing.log
+Original SHA256: aafdffe728ec8d644a50c617436eb54cfbcbea5d49950af6dbc0752f8212cc1a
+Original bytes: 1256
+This is a retained tail, not a new execution or a complete transcript.
+
+........................................................................ [ 18%]
+........................................................................ [ 37%]
+........................................................................ [ 55%]
+........................................................................ [ 74%]
+....................................................sss................. [ 92%]
+............................                                             [100%]
+=============================== warnings summary ===============================
+test/services/test_secret_gate.py::test_scan_for_secrets_positive[aws_access_key]
+test/services/test_secret_gate.py::test_scan_for_secrets_positive[aws_access_key]
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+385 passed, 3 skipped, 2 warnings in 71.85s (0:01:11)

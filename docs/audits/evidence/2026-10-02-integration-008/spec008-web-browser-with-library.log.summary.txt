@@ -1,0 +1,31 @@
+Original evidence: /tmp/spec008-web-browser-with-library.log
+Original SHA256: 904f48ccc763afbdfcd5a8eed50803efe3b7909d168d4c8f3229c9d7f2e9fc15
+Original bytes: 2589
+Retained final tail; not a new execution or complete transcript.
+
+npm notice run cao-web@0.1.0 test:e2e
+npm notice run playwright test --max-failures=3
+
+Running 17 tests using 1 worker
+
+(node:522675) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   1 e2e/browser-login.spec.ts:77:1 › clean login, generic credential failures, real HttpOnly cookie and no script secrets (2.5s)
+  ✓   2 e2e/browser-login.spec.ts:99:1 › eight hour continuity, three expired leases, concurrent tabs and server restart (14.6s)
+  ✓   3 e2e/browser-login.spec.ts:124:1 › remembered cookie survives actual Chromium process close and same profile reopen (1.4s)
+  ✓   4 e2e/browser-login.spec.ts:143:1 › temporary cookie authorizes reload but new clean browser session requires login (1.3s)
+  ✓   5 e2e/browser-login.spec.ts:160:1 › current logout preserves other session; logout all and password change revoke peers (6.9s)
+  ✓   6 e2e/browser-login.spec.ts:185:1 › offline preserves cookie and reconnect restores authority (1.1s)
+  ✓   7 e2e/browser-login.spec.ts:198:1 › foreign-origin effects and malformed credential bodies fail without disclosure (1.1s)
+  ✓   8 e2e/browser-login.spec.ts:213:1 › idle polling and renew cannot extend temporary lifetime; clock rollback fails closed (2.4s)
+  ✓   9 e2e/browser-login.spec.ts:229:1 › silent real SSE stream closes within five seconds of committed logout (2.9s)
+  ✓  10 e2e/browser-login.spec.ts:256:1 › stale logout cannot revoke or overwrite a newly logged-in cookie (2.0s)
+  ✓  11 e2e/browser-login.spec.ts:272:1 › concurrent bad logins hit server throttle and local recovery remains available (3.8s)
+  ✓  12 e2e/browser-login.spec.ts:288:1 › real terminal WebSocket handles traffic then revokes within five seconds without stopping agent (3.0s)
+  ✓  13 e2e/browser-login.spec.ts:315:1 › real personal backup and restore invalidate remembered cookies and preserve account (3.1s)
+  ✓  14 e2e/browser-login.spec.ts:328:1 › busy real SQLite fails closed without deleting the cookie and recovers after unlocking (1.6s)
+  ✓  15 e2e/browser-login.spec.ts:340:1 › functional activity preserves idle while absolute deadline still terminates remembered session (1.5s)
+  ✓  16 e2e/browser-login.spec.ts:354:1 › cookie refusal at the browser network boundary explains failure without JavaScript secret fallback (1.0s)
+  ✓  17 e2e/browser-setup.spec.ts:37:1 › authorized web setup connects the main dashboard and survives server restart (16.1s)
+
+  17 passed (1.7m)

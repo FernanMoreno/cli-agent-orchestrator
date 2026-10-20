@@ -1,0 +1,80 @@
+[
+  {
+    "executable": "claude",
+    "path": "/home/felni/.local/bin/claude",
+    "returncode": 0,
+    "version_output": "2.1.287 (Claude Code)"
+  },
+  {
+    "executable": "codex",
+    "path": "/home/felni/.local/bin/codex",
+    "returncode": 0,
+    "version_output": "codex-cli 0.160.0"
+  },
+  {
+    "executable": "opencode",
+    "path": "/home/felni/.opencode/bin/opencode",
+    "returncode": 0,
+    "version_output": "opencode v2.0.18"
+  },
+  {
+    "executable": "copilot",
+    "path": "/home/felni/.nvm/versions/node/v24.19.0/bin/copilot",
+    "returncode": 0,
+    "version_output": "GitHub Copilot CLI 1.0.91.\nRun 'copilot update' to check for updates."
+  },
+  {
+    "executable": "kiro-cli",
+    "path": "/home/felni/.local/bin/kiro-cli",
+    "returncode": 0,
+    "version_output": "kiro-cli 2.27.1"
+  },
+  {
+    "executable": "hermes",
+    "path": "/home/felni/.local/bin/hermes",
+    "returncode": 0,
+    "version_output": "Hermes Agent v0.21.5+6138.g2c239f1 (2026.9.24) \u00b7 upstream 2c239f19\nInstall directory: /home/felni/.hermes/hermes-agent\nInstall method: git\nPython: 3.14.7\nOpenAI SDK: 2.24.0\nUp to date"
+  },
+  {
+    "executable": "kimi",
+    "path": "/home/felni/.local/bin/kimi",
+    "returncode": 0,
+    "version_output": "2.1.1"
+  },
+  {
+    "executable": "agent",
+    "path": "/home/felni/.local/bin/agent",
+    "returncode": 0,
+    "version_output": "2026.10.01-e373342"
+  },
+  {
+    "executable": "agy",
+    "path": "/home/felni/.local/bin/agy",
+    "returncode": 0,
+    "version_output": "1.2.15"
+  },
+  {
+    "executable": "gemini",
+    "path": "/home/felni/.nvm/versions/node/v24.19.0/bin/gemini",
+    "returncode": 0,
+    "version_output": "0.62.0"
+  },
+  {
+    "executable": "omp",
+    "path": "/home/felni/.local/bin/omp",
+    "returncode": 0,
+    "version_output": "omp/18.4.12"
+  },
+  {
+    "executable": "grok",
+    "path": "/home/felni/.local/bin/grok",
+    "returncode": 0,
+    "version_output": "grok 1.0.46 (2765805b9442)"
+  },
+  {
+    "executable": "mcode",
+    "path": "/home/felni/.nvm/versions/node/v24.19.0/bin/mcode",
+    "returncode": 0,
+    "version_output": "0.6.2"
+  }
+]

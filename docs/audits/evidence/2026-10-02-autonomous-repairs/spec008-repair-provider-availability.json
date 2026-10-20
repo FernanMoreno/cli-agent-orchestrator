@@ -1,0 +1,93 @@
+[
+  {
+    "provider": "kiro_cli",
+    "binary": "kiro-cli",
+    "found_on_path": false,
+    "native_prerequisite": "not installed",
+    "requires_turn_receipt": false
+  },
+  {
+    "provider": "claude_code",
+    "binary": "claude",
+    "found_on_path": true,
+    "native_prerequisite": "available for native acceptance",
+    "requires_turn_receipt": true
+  },
+  {
+    "provider": "codex",
+    "binary": "codex",
+    "found_on_path": true,
+    "native_prerequisite": "available for native acceptance",
+    "requires_turn_receipt": true
+  },
+  {
+    "provider": "hermes",
+    "binary": "hermes",
+    "found_on_path": false,
+    "native_prerequisite": "not installed",
+    "requires_turn_receipt": false
+  },
+  {
+    "provider": "kimi_cli",
+    "binary": "kimi",
+    "found_on_path": false,
+    "native_prerequisite": "not installed",
+    "requires_turn_receipt": false
+  },
+  {
+    "provider": "copilot_cli",
+    "binary": "copilot",
+    "found_on_path": true,
+    "native_prerequisite": "broken Windows shim (exit 127)",
+    "requires_turn_receipt": false
+  },
+  {
+    "provider": "opencode_cli",
+    "binary": "opencode",
+    "found_on_path": true,
+    "native_prerequisite": "available for native acceptance",
+    "requires_turn_receipt": true
+  },
+  {
+    "provider": "cursor_cli",
+    "binary": "agent",
+    "found_on_path": false,
+    "native_prerequisite": "not installed",
+    "requires_turn_receipt": false
+  },
+  {
+    "provider": "antigravity_cli",
+    "binary": "agy",
+    "found_on_path": false,
+    "native_prerequisite": "not installed",
+    "requires_turn_receipt": false
+  },
+  {
+    "provider": "gemini_cli",
+    "binary": "gemini",
+    "found_on_path": false,
+    "native_prerequisite": "not installed",
+    "requires_turn_receipt": true
+  },
+  {
+    "provider": "omp",
+    "binary": "omp",
+    "found_on_path": false,
+    "native_prerequisite": "not installed",
+    "requires_turn_receipt": false
+  },
+  {
+    "provider": "grok_cli",
+    "binary": "grok",
+    "found_on_path": false,
+    "native_prerequisite": "not installed",
+    "requires_turn_receipt": false
+  },
+  {
+    "provider": "mcode",
+    "binary": "mcode",
+    "found_on_path": false,
+    "native_prerequisite": "not installed",
+    "requires_turn_receipt": false
+  }
+]

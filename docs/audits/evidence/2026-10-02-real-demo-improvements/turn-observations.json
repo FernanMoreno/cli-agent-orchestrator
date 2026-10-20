@@ -1,0 +1,56 @@
+[
+  {
+    "time": "2026-10-02T09:05:02Z",
+    "terminal_id": "196cf299",
+    "provider": "claude_code",
+    "state": "none",
+    "reason": null,
+    "generation": null,
+    "attempts": 0
+  },
+  {
+    "time": "2026-10-02T09:05:02Z",
+    "terminal_id": "2382a4dc",
+    "provider": "codex",
+    "state": "verified",
+    "reason": null,
+    "generation": "dd01346e42531056dbd7c99fd7c7b109",
+    "attempts": 3
+  },
+  {
+    "time": "2026-10-02T09:05:02Z",
+    "terminal_id": "7226308e",
+    "provider": "opencode_cli",
+    "state": "pending",
+    "reason": null,
+    "generation": "d92ad076b0f19d94f32a313584a9f337",
+    "attempts": 0
+  },
+  {
+    "time": "2026-10-02T09:08:53Z",
+    "terminal_id": "7226308e",
+    "provider": "opencode_cli",
+    "state": "verified",
+    "reason": null,
+    "generation": "d92ad076b0f19d94f32a313584a9f337",
+    "attempts": 0
+  },
+  {
+    "time": "2026-10-02T09:08:58Z",
+    "terminal_id": "ed4cdf5e",
+    "provider": "claude_code",
+    "state": "none",
+    "reason": null,
+    "generation": null,
+    "attempts": 0
+  },
+  {
+    "time": "2026-10-02T09:09:08Z",
+    "terminal_id": "ed4cdf5e",
+    "provider": "claude_code",
+    "state": "pending",
+    "reason": null,
+    "generation": "d5073998a8d790049b0719a4e0f97d78",
+    "attempts": 0
+  }
+]

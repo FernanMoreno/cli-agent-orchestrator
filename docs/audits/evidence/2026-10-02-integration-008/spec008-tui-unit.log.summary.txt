@@ -1,0 +1,50 @@
+Original evidence: /tmp/spec008-tui-unit.log
+Original SHA256: 0c5c2326311d032e78406e2d5b0b0b604c89024650947097cfb2c90013d81cb0
+Original bytes: 19116
+This is a retained tail, not a new execution or a complete transcript.
+
+test types::integration_008_turn_contract::receipt_projection_survives_terminal_decode ... ok
+test types::tests::agents_serialises_as_agent_profile ... ok
+test types::tests::all_six_terminal_statuses_round_trip ... ok
+test types::tests::env_vars_serialisation_order_is_deterministic ... ok
+test types::tests::none_optionals_are_omitted_from_serialised_output ... ok
+test renderer::tests::a_failed_picker_line_carries_error ... ok
+test types::tests::profile_has_exactly_the_eight_projected_keys ... ok
+test types::tests::profile_has_no_provider_field ... ok
+test renderer::tests::the_focused_fold_header_carries_the_focus_role ... ok
+test types::tests::unknown_terminal_status_wire_value_deserialises_to_unknown ... ok
+test work_status_generated::tests::generated_work_status_semantics_are_lookupable ... ok
+test types::tests::work_view_deserializes_v1_projection_and_rejects_unknown_schema_version ... ok
+test server::tests::an_unloadable_profile_is_returned_and_only_non_profiles_are_filtered ... ok
+test types::tests::projections_deserialise_from_realistic_payloads ... ok
+test renderer::tests::a_scrolled_form_states_that_more_is_off_screen_and_a_short_one_does_not ... ok
+test renderer::tests::every_revealed_region_is_reachable_at_the_minimum_supported_size ... ok
+test server::tests::this_module_spawns_no_subprocess_and_has_no_cli_fallback ... ok
+test renderer::tests::unavailable_or_invalid_work_observation_renders_unknown_counts_not_zero ... ok
+test renderer::tests::fixture_work_states_render_their_labels_counts_and_semantic_roles ... ok
+test renderer::tests::every_dim_marker_dims_its_marker_and_not_its_row ... ok
+test server::tests::env_vars_travel_in_the_body_and_never_in_the_query_string ... ok
+test results_pane::tests::output_renders_incrementally_before_the_stream_ends ... ok
+test server::tests::operator_supplied_values_are_percent_encoded_in_query_and_path ... ok
+test server::tests::providers_are_returned_whether_or_not_the_binary_is_installed ... ok
+test server::tests::run_streams_the_response_body_and_substitutes_path_placeholders ... ok
+test server::tests::personal_bearer_is_sent_without_exposing_it_in_debug ... ok
+test server::tests::personal_bearer_is_also_sent_for_streamed_commands ... ok
+test server::tests::the_launch_message_travels_in_the_body_and_never_in_the_query_string ... ok
+test renderer::tests::fixture_work_transitions_replay_all_fifteen_edges_and_render_each_target ... ok
+test server::tests::the_outgoing_query_key_is_agent_profile_not_agents ... ok
+test server::tests::the_terminal_projection_reads_the_window_name_from_name ... ok
+test server::tests::work_reads_v1_projection_using_exact_encoded_path_and_checks_identity ... ok
+test server::tests::blank_optionals_are_absent_from_the_actual_request ... ok
+test server::tests::health_decodes_the_two_projected_fields_and_ignores_the_others ... ok
+test server::tests::all_eight_profile_fields_round_trip_through_this_client ... ok
+test server::tests::a_malformed_payload_is_a_decode_error_carrying_its_cause ... ok
+test server::tests::create_session_accepts_201_and_maps_422_to_validation ... ok
+test server::tests::an_absent_status_decodes_and_a_404_is_not_found ... ok
+test server::tests::the_body_carries_whichever_of_the_two_body_fields_are_present ... ok
+test server::tests::work_rejects_unknown_versions_and_preserves_http_and_network_errors ... ok
+test server::tests::find_profiles_matches_case_insensitively_across_the_four_fields ... ok
+test server::tests::an_unreachable_server_names_the_address_it_tried ... ok
+
+test result: ok. 221 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 30.04s
+

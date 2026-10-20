@@ -1,0 +1,7 @@
+[
+  {
+    "provider": "opencode_cli",
+    "status": "failed",
+    "error_type": "AssertionError"
+  }
+]

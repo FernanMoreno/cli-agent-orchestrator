@@ -1,0 +1,28 @@
+Original evidence: /tmp/cao-final-parity-entrypoint.log
+Original SHA256: 98a9e4170ad676ae4de3292cb7587cca792c9ac730aa1ae0d758380a7942afe3
+Original bytes: 713
+This is a retained tail, not a new execution or a complete transcript.
+
+seed tar built: 6 entries
+
+PASS seed applied
+PASS cao init skipped
+PASS install skipped (seeded)
+PASS server still exec'd
+PASS wrong-provider pin reinstalls
+PASS mismatched home refuses the seed
+PASS mismatched home runs cao init
+PASS mismatched home installs
+PASS non-empty state refuses the seed
+PASS pre-existing state preserved
+PASS absent seed falls through to init
+PASS blocking mode warms both tiers
+PASS blocking mode warms tiers concurrently
+PASS blocking mode warms BEFORE the server starts
+PASS each tier's output is reported separately
+PASS background mode announces itself
+PASS background mode starts the server BEFORE warming
+PASS mode 0 skips warming
+PASS non-bedrock skips warming
+
+FAILURES: none

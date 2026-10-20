@@ -1,0 +1,36 @@
+Original evidence: /tmp/cao-c07-whole-assignment-final.log
+Original SHA256: 16b0a47e45b1e386392934c9f750b91943dd0258bd3a7de7598ee9d3f2192997
+Original bytes: 2728
+This is a retained tail, not a new execution or a complete transcript.
+
+................................                                         [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323
+.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+../../../../../Users/ferna/OneDrive/Escritorio/CAOS/test/api/conftest.py:6
+  /mnt/c/Users/ferna/OneDrive/Escritorio/CAOS/test/api/conftest.py:6: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    from cli_agent_orchestrator.api.main import app
+
+cao_c07_remote_assignment_review_tests.py::test_same_key_callback_session_message_material_conflicts[callback_url-https://other.example/cao]
+  /mnt/c/users/ferna/onedrive/escritorio/caos/.venv/lib/python3.12/site-packages/pydantic/main.py:463: UserWarning: Pydantic serializer warnings:
+    PydanticSerializationUnexpectedValue(Expected `<class 'pydantic.networks.HttpUrl'>` but got `<class 'str'>` with value `'https://other.example/cao'` - serialized value may not be as expected.)
+    return self.__pydantic_serializer__.to_python(
+
+cao_c07_remote_assignment_review_tests.py::test_fresh_http_authority_scope_and_owner_projection
+  /mnt/c/users/ferna/onedrive/escritorio/caos/test/conftest.py:57: AuthlibDeprecationWarning: authlib.jose module is deprecated, please use joserfc instead.
+  It will be compatible before version 2.0.0.
+    from authlib.jose import JsonWebKey
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+32 passed, 7 warnings in 25.50s

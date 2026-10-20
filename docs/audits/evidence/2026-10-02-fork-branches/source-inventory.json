@@ -1,0 +1,5093 @@
+[
+  {
+    "branch": "aipm-native-governance",
+    "sha": "7c258a8c1b4ffe6fcc5e9d8d12562afdb36b3a04",
+    "date": "2026-09-22T14:23:21+02:00",
+    "subject": "feat(orchestration): harden provider lifecycle",
+    "local_only": 40,
+    "branch_only": 0,
+    "paths": []
+  },
+  {
+    "branch": "codex/t097-remediation",
+    "sha": "26b1bd3b634c98798b209c822f355c6782c9dbe8",
+    "date": "2026-09-28T14:38:40+02:00",
+    "subject": "feat(work): add gated Bubblewrap backend",
+    "local_only": 31,
+    "branch_only": 0,
+    "paths": []
+  },
+  {
+    "branch": "main",
+    "sha": "87e2d5f354374ea8acc685275e749992df51cdbd",
+    "date": "2026-10-01T15:45:16+02:00",
+    "subject": "fix(test): isolate child pytest options",
+    "local_only": 0,
+    "branch_only": 0,
+    "paths": []
+  },
+  {
+    "branch": "origin",
+    "sha": "87e2d5f354374ea8acc685275e749992df51cdbd",
+    "date": "2026-10-01T15:45:16+02:00",
+    "subject": "fix(test): isolate child pytest options",
+    "local_only": 0,
+    "branch_only": 0,
+    "paths": []
+  },
+  {
+    "branch": "origin/aipm-native-governance",
+    "sha": "7c258a8c1b4ffe6fcc5e9d8d12562afdb36b3a04",
+    "date": "2026-09-22T14:23:21+02:00",
+    "subject": "feat(orchestration): harden provider lifecycle",
+    "local_only": 40,
+    "branch_only": 0,
+    "paths": []
+  },
+  {
+    "branch": "origin/dev-3.0release",
+    "sha": "948c3d8004faa9f2f61b1c65dcde19291d7e072b",
+    "date": "2026-09-13T10:13:42+10:00",
+    "subject": "feat(workflow): replay one step of a recorded run (#673)",
+    "local_only": 47,
+    "branch_only": 0,
+    "paths": []
+  },
+  {
+    "branch": "origin/feat/321-cao-tui",
+    "sha": "d6d309f4c07f6c6ccd6f886e00eaee17f54b2cdd",
+    "date": "2026-07-29T13:05:09+10:00",
+    "subject": "fix(tui): address the PR #516 human review round",
+    "local_only": 169,
+    "branch_only": 5,
+    "paths": [
+      "CODEBASE.md",
+      "README.md",
+      "docs/control-planes.md",
+      "docs/tui.md",
+      "pyproject.toml",
+      "src/cli_agent_orchestrator/cli/commands/tui.py",
+      "src/cli_agent_orchestrator/cli/main.py",
+      "src/cli_agent_orchestrator/tui/__init__.py",
+      "src/cli_agent_orchestrator/tui/app.py",
+      "src/cli_agent_orchestrator/tui/command_builder.py",
+      "src/cli_agent_orchestrator/tui/command_catalog.py",
+      "src/cli_agent_orchestrator/tui/completion.py",
+      "src/cli_agent_orchestrator/tui/navigation.py",
+      "src/cli_agent_orchestrator/tui/path_input.py",
+      "src/cli_agent_orchestrator/tui/profiles_view.py",
+      "src/cli_agent_orchestrator/tui/provider_preflight.py",
+      "src/cli_agent_orchestrator/tui/runner.py",
+      "src/cli_agent_orchestrator/tui/server_client.py",
+      "src/cli_agent_orchestrator/tui/views.py",
+      "test/cli/commands/test_tui.py",
+      "test/tui/__init__.py",
+      "test/tui/conftest.py",
+      "test/tui/test_app.py",
+      "test/tui/test_app_review_round.py",
+      "test/tui/test_command_builder.py",
+      "test/tui/test_command_catalog.py",
+      "test/tui/test_completion.py",
+      "test/tui/test_hermeticity_tripwire.py",
+      "test/tui/test_navigation.py",
+      "test/tui/test_path_input.py",
+      "test/tui/test_profiles_view.py",
+      "test/tui/test_provider_preflight.py",
+      "test/tui/test_runner.py",
+      "test/tui/test_server_client.py",
+      "test/tui/test_thin_shell_boundary.py",
+      "uv.lock"
+    ],
+    "missing_source_files": [
+      "src/cli_agent_orchestrator/tui/__init__.py",
+      "src/cli_agent_orchestrator/tui/app.py",
+      "src/cli_agent_orchestrator/tui/command_builder.py",
+      "src/cli_agent_orchestrator/tui/command_catalog.py",
+      "src/cli_agent_orchestrator/tui/completion.py",
+      "src/cli_agent_orchestrator/tui/navigation.py",
+      "src/cli_agent_orchestrator/tui/path_input.py",
+      "src/cli_agent_orchestrator/tui/profiles_view.py",
+      "src/cli_agent_orchestrator/tui/provider_preflight.py",
+      "src/cli_agent_orchestrator/tui/runner.py",
+      "src/cli_agent_orchestrator/tui/server_client.py",
+      "src/cli_agent_orchestrator/tui/views.py"
+    ],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/cli/commands/tui.py",
+        0,
+        13
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/main.py",
+        3,
+        4
+      ]
+    ],
+    "commits": [
+      "d6d309f4 fix(tui): address the PR #516 human review round",
+      "bf755872 fix(tui): wire arrow keys to the model and guard first paint",
+      "a89382f4 fix(tui): address Copilot review on #516",
+      "bce3ed41 fix(tui): wire the composition root and handle catalog errors",
+      "ff389526 feat(tui): add `cao tui` guided terminal UI front door"
+    ]
+  },
+  {
+    "branch": "origin/feat/510-web-profile-management",
+    "sha": "3e1a548f386a265929965462f337ccfbd9d1e44e",
+    "date": "2026-07-27T16:27:57+10:00",
+    "subject": "fix(security): validate template name inline so CodeQL sees the guard",
+    "local_only": 176,
+    "branch_only": 2,
+    "paths": [
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/services/agent_scaffold.py",
+      "test/api/test_api_profiles_management.py",
+      "test/api/test_scope_coverage.py",
+      "test/services/test_agent_scaffold.py",
+      "web/src/App.tsx",
+      "web/src/api.ts",
+      "web/src/components/AgentPanel.tsx",
+      "web/src/components/CreateProfileWizard.tsx",
+      "web/src/components/CustomSelect.tsx",
+      "web/src/components/DashboardHome.tsx",
+      "web/src/components/EditCloneModal.tsx",
+      "web/src/components/ProfileForm.tsx",
+      "web/src/components/ProfilesBrowser.tsx",
+      "web/src/test/createWizard.test.tsx",
+      "web/src/test/createWizardApi.test.ts",
+      "web/src/test/editClone.test.tsx",
+      "web/src/test/editCloneApi.test.ts",
+      "web/src/test/profileApi.test.ts",
+      "web/src/test/profilesBrowser.test.tsx",
+      "web/src/test/profilesNav.test.tsx"
+    ],
+    "missing_source_files": [
+      "web/src/components/CreateProfileWizard.tsx",
+      "web/src/components/EditCloneModal.tsx",
+      "web/src/components/ProfileForm.tsx",
+      "web/src/components/ProfilesBrowser.tsx",
+      "web/src/test/createWizard.test.tsx",
+      "web/src/test/createWizardApi.test.ts",
+      "web/src/test/editClone.test.tsx",
+      "web/src/test/editCloneApi.test.ts",
+      "web/src/test/profileApi.test.ts",
+      "web/src/test/profilesBrowser.test.tsx",
+      "web/src/test/profilesNav.test.tsx"
+    ],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        79,
+        334
+      ],
+      [
+        "src/cli_agent_orchestrator/services/agent_scaffold.py",
+        0,
+        5
+      ],
+      [
+        "web/src/App.tsx",
+        0,
+        1
+      ],
+      [
+        "web/src/api.ts",
+        23,
+        82
+      ],
+      [
+        "web/src/components/AgentPanel.tsx",
+        0,
+        4
+      ],
+      [
+        "web/src/components/CustomSelect.tsx",
+        3,
+        9
+      ],
+      [
+        "web/src/components/DashboardHome.tsx",
+        1,
+        4
+      ]
+    ],
+    "commits": [
+      "3e1a548f fix(security): validate template name inline so CodeQL sees the guard",
+      "4dd9115b feat(web): add agent-profile management to the Web UI"
+    ]
+  },
+  {
+    "branch": "origin/feat/583-bolt3-conversational-",
+    "sha": "4d3e50d64194431adfd8e596069c6f9d89300a72",
+    "date": "2026-09-17T09:00:47+10:00",
+    "subject": "feat(workflow): harden plan binding and launch admission",
+    "local_only": 47,
+    "branch_only": 19,
+    "paths": [
+      ".github/workflows/ci.yml",
+      "docs/workflow-scripts-authoring-guide.md",
+      "docs/workflows.md",
+      "examples/workflow/tests/conftest.py",
+      "skills/cao-workflow/SKILL.md",
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/cli/commands/workflow.py",
+      "src/cli_agent_orchestrator/clients/database.py",
+      "src/cli_agent_orchestrator/constants.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/mcp_server/utils.py",
+      "src/cli_agent_orchestrator/models/workflow.py",
+      "src/cli_agent_orchestrator/security/auth.py",
+      "src/cli_agent_orchestrator/services/approval_gate.py",
+      "src/cli_agent_orchestrator/services/execution_manifest.py",
+      "src/cli_agent_orchestrator/services/execution_scope.py",
+      "src/cli_agent_orchestrator/services/frozen_memory_snapshot.py",
+      "src/cli_agent_orchestrator/services/launch_material.py",
+      "src/cli_agent_orchestrator/services/launch_policy.py",
+      "src/cli_agent_orchestrator/services/memory_service.py",
+      "src/cli_agent_orchestrator/services/plan_identifier.py",
+      "src/cli_agent_orchestrator/services/private_plan_snapshot.py",
+      "src/cli_agent_orchestrator/services/scope_admission.py",
+      "src/cli_agent_orchestrator/services/settings_service.py",
+      "src/cli_agent_orchestrator/services/step_output_store.py",
+      "src/cli_agent_orchestrator/services/workflow_journal.py",
+      "src/cli_agent_orchestrator/services/workflow_spec_service.py",
+      "src/cli_agent_orchestrator/skills/cao-workflow/SKILL.md",
+      "src/cli_agent_orchestrator/utils/agent_profiles.py",
+      "src/cli_agent_orchestrator/utils/atomic_file.py",
+      "src/cli_agent_orchestrator/utils/orchestration.py",
+      "src/cli_agent_orchestrator/utils/profile_value_resolution.py",
+      "test/api/test_approval_refusal_detail.py",
+      "test/api/test_authoring_sequence_proof.py",
+      "test/api/test_failure_classification.py",
+      "test/api/test_failure_classification_surfaces.py",
+      "test/api/test_launch_admission_errors.py",
+      "test/api/test_workflow_authoring_client_auth.py",
+      "test/api/test_workflow_lifecycle_integration.py",
+      "test/api/test_workflow_run_surface_tier.py",
+      "test/api/test_workflow_runs.py",
+      "test/api/test_workflow_spec_authoring_endpoints.py",
+      "test/api/test_workflow_validate_source_form.py",
+      "test/cli/commands/test_workflow_approval_refusal.py",
+      "test/cli/commands/test_workflow_authoring_verbs.py",
+      "test/clients/test_database.py",
+      "test/fixtures/cao_server.py",
+      "test/mcp_server/test_authoring_tools.py",
+      "test/mcp_server/test_utils.py",
+      "test/security/test_auth.py",
+      "test/services/test_approval_gate.py",
+      "test/services/test_approval_gate_integration.py",
+      "test/services/test_approval_operation.py",
+      "test/services/test_approval_store.py",
+      "test/services/test_execution_scope.py",
+      "test/services/test_frozen_context_proof.py",
+      "test/services/test_frozen_memory_snapshot.py",
+      "test/services/test_launch_material.py",
+      "test/services/test_launch_policy.py",
+      "test/services/test_plan_identifier.py",
+      "test/services/test_plan_v2_identity.py",
+      "test/services/test_private_plan_snapshot.py",
+      "test/services/test_recovery_decision_intake.py",
+      "test/services/test_scope_admission.py",
+      "test/services/test_script_runner.py",
+      "test/services/test_settings_service.py",
+      "test/services/test_settings_unreadable.py",
+      "test/services/test_step_output_store.py",
+      "test/services/test_workflow_spec_concurrency.py",
+      "test/services/test_workflow_spec_create_update.py",
+      "test/services/test_workflow_spec_service_connection.py",
+      "test/services/test_workflow_spec_stale_update.py",
+      "test/services/test_workflow_spec_write_containment.py",
+      "test/test_authoring_sequence_is_documented.py",
+      "test/test_command_catalog_counts_are_not_stale.py",
+      "test/test_detail_readers_tolerate_every_shape.py",
+      "test/test_workflows_doc_surface_is_not_stale.py",
+      "test/utils/test_atomic_file.py",
+      "test/utils/test_profile_value_resolution.py",
+      "tui/src/catalog.rs",
+      "tui/src/server.rs"
+    ],
+    "missing_source_files": [
+      "src/cli_agent_orchestrator/services/execution_scope.py",
+      "src/cli_agent_orchestrator/services/frozen_memory_snapshot.py",
+      "src/cli_agent_orchestrator/services/launch_material.py",
+      "src/cli_agent_orchestrator/services/launch_policy.py",
+      "src/cli_agent_orchestrator/services/private_plan_snapshot.py",
+      "src/cli_agent_orchestrator/services/scope_admission.py",
+      "src/cli_agent_orchestrator/utils/profile_value_resolution.py"
+    ],
+    "line_presence": [
+      [
+        "examples/workflow/tests/conftest.py",
+        0,
+        5
+      ],
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        50,
+        281
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/commands/workflow.py",
+        19,
+        229
+      ],
+      [
+        "src/cli_agent_orchestrator/clients/database.py",
+        17,
+        211
+      ],
+      [
+        "src/cli_agent_orchestrator/constants.py",
+        0,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/server.py",
+        24,
+        199
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/utils.py",
+        0,
+        7
+      ],
+      [
+        "src/cli_agent_orchestrator/models/workflow.py",
+        1,
+        21
+      ],
+      [
+        "src/cli_agent_orchestrator/security/auth.py",
+        1,
+        7
+      ],
+      [
+        "src/cli_agent_orchestrator/services/approval_gate.py",
+        0,
+        34
+      ],
+      [
+        "src/cli_agent_orchestrator/services/execution_manifest.py",
+        4,
+        152
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_service.py",
+        56,
+        119
+      ],
+      [
+        "src/cli_agent_orchestrator/services/plan_identifier.py",
+        6,
+        219
+      ],
+      [
+        "src/cli_agent_orchestrator/services/settings_service.py",
+        5,
+        75
+      ],
+      [
+        "src/cli_agent_orchestrator/services/step_output_store.py",
+        0,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/services/workflow_journal.py",
+        0,
+        5
+      ],
+      [
+        "src/cli_agent_orchestrator/services/workflow_spec_service.py",
+        21,
+        357
+      ],
+      [
+        "src/cli_agent_orchestrator/skills/cao-workflow/SKILL.md",
+        1,
+        65
+      ],
+      [
+        "src/cli_agent_orchestrator/utils/agent_profiles.py",
+        5,
+        21
+      ],
+      [
+        "src/cli_agent_orchestrator/utils/atomic_file.py",
+        13,
+        45
+      ],
+      [
+        "src/cli_agent_orchestrator/utils/orchestration.py",
+        4,
+        19
+      ],
+      [
+        "tui/src/catalog.rs",
+        10,
+        30
+      ],
+      [
+        "tui/src/server.rs",
+        0,
+        3
+      ]
+    ],
+    "commits": [
+      "4d3e50d6 feat(workflow): harden plan binding and launch admission",
+      "fed4713e Address review feedback on workflow authoring boundaries",
+      "97c7db43 fix(workflow): anchor name validation and order the write guard (#583)",
+      "d98a9cce docs(workflow): correct the two verb/tool counts this Bolt made false (#583)",
+      "66268272 ci(workflow): enforce NFR-3's 80% coverage floor where it is meaningful (#583)",
+      "5477f7f6 docs(workflow): make the authoring surfaces true at this Bolt (#583)",
+      "6c30150c test(workflow): prove FR-10's Pass criteria and FR-8 end to end (#583)",
+      "1265e03b feat(workflow): make FR-10's authoring sequence operable end to end (#583)",
+      "3305434e feat(mcp): add the four conversational-authoring workflow tools (#583)",
+      "a422ad95 feat(workflow): classify a failed run by what to do next (#583 Bolt 3 unit 8)",
+      "99043107 feat(workflow): add cao workflow create and update (#583 Bolt 3 unit 6)",
+      "d7a2737e feat(workflow): enforce plan approval by default (#583 Bolt 3 unit 5)",
+      "83bbe159 feat(workflow): reject a stale spec update, closing FR-8 (#583 Bolt 3 unit 4)",
+      "fca008bc feat(workflow): add create/update operations for Python specs (#583 Bolt 3 unit 3)",
+      "a9109801 feat(workflow): add the only guarded spec write path (#583 Bolt 3 unit 2)",
+      "ef245762 feat(workflow): make the spec-index busy_timeout explicit (#583 Bolt 3 unit 1)"
+    ]
+  },
+  {
+    "branch": "origin/feat/583-bolt3-conversational-authoring",
+    "sha": "e6512dd65d1d67e27b2216e191a0c656d209ccb8",
+    "date": "2026-09-14T10:31:56+10:00",
+    "subject": "Merge main into PR #699 and resolve workflow conflicts",
+    "local_only": 47,
+    "branch_only": 18,
+    "paths": [
+      ".github/workflows/ci.yml",
+      "docs/workflow-scripts-authoring-guide.md",
+      "docs/workflows.md",
+      "examples/workflow/tests/conftest.py",
+      "skills/cao-workflow/SKILL.md",
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/cli/commands/workflow.py",
+      "src/cli_agent_orchestrator/constants.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/models/workflow.py",
+      "src/cli_agent_orchestrator/services/approval_gate.py",
+      "src/cli_agent_orchestrator/services/settings_service.py",
+      "src/cli_agent_orchestrator/services/step_output_store.py",
+      "src/cli_agent_orchestrator/services/workflow_spec_service.py",
+      "src/cli_agent_orchestrator/skills/cao-workflow/SKILL.md",
+      "src/cli_agent_orchestrator/utils/orchestration.py",
+      "test/api/test_approval_refusal_detail.py",
+      "test/api/test_authoring_sequence_proof.py",
+      "test/api/test_failure_classification.py",
+      "test/api/test_failure_classification_surfaces.py",
+      "test/api/test_workflow_lifecycle_integration.py",
+      "test/api/test_workflow_run_surface_tier.py",
+      "test/api/test_workflow_runs.py",
+      "test/api/test_workflow_spec_authoring_endpoints.py",
+      "test/api/test_workflow_validate_source_form.py",
+      "test/cli/commands/test_workflow_approval_refusal.py",
+      "test/cli/commands/test_workflow_authoring_verbs.py",
+      "test/fixtures/cao_server.py",
+      "test/mcp_server/test_authoring_tools.py",
+      "test/services/test_approval_gate.py",
+      "test/services/test_approval_gate_integration.py",
+      "test/services/test_approval_operation.py",
+      "test/services/test_approval_store.py",
+      "test/services/test_frozen_context_proof.py",
+      "test/services/test_recovery_decision_intake.py",
+      "test/services/test_script_runner.py",
+      "test/services/test_settings_service.py",
+      "test/services/test_settings_unreadable.py",
+      "test/services/test_step_output_store.py",
+      "test/services/test_workflow_spec_create_update.py",
+      "test/services/test_workflow_spec_service_connection.py",
+      "test/services/test_workflow_spec_stale_update.py",
+      "test/services/test_workflow_spec_write_containment.py",
+      "test/test_authoring_sequence_is_documented.py",
+      "test/test_command_catalog_counts_are_not_stale.py",
+      "test/test_detail_readers_tolerate_every_shape.py",
+      "test/test_workflows_doc_surface_is_not_stale.py",
+      "tui/src/catalog.rs",
+      "tui/src/server.rs"
+    ],
+    "missing_source_files": [],
+    "line_presence": [
+      [
+        "examples/workflow/tests/conftest.py",
+        0,
+        5
+      ],
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        49,
+        270
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/commands/workflow.py",
+        16,
+        200
+      ],
+      [
+        "src/cli_agent_orchestrator/constants.py",
+        0,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/server.py",
+        21,
+        181
+      ],
+      [
+        "src/cli_agent_orchestrator/models/workflow.py",
+        1,
+        21
+      ],
+      [
+        "src/cli_agent_orchestrator/services/approval_gate.py",
+        0,
+        34
+      ],
+      [
+        "src/cli_agent_orchestrator/services/settings_service.py",
+        5,
+        75
+      ],
+      [
+        "src/cli_agent_orchestrator/services/step_output_store.py",
+        0,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/services/workflow_spec_service.py",
+        17,
+        303
+      ],
+      [
+        "src/cli_agent_orchestrator/skills/cao-workflow/SKILL.md",
+        1,
+        63
+      ],
+      [
+        "src/cli_agent_orchestrator/utils/orchestration.py",
+        4,
+        19
+      ],
+      [
+        "tui/src/catalog.rs",
+        10,
+        30
+      ],
+      [
+        "tui/src/server.rs",
+        0,
+        3
+      ]
+    ],
+    "commits": [
+      "fed4713e Address review feedback on workflow authoring boundaries",
+      "97c7db43 fix(workflow): anchor name validation and order the write guard (#583)",
+      "d98a9cce docs(workflow): correct the two verb/tool counts this Bolt made false (#583)",
+      "66268272 ci(workflow): enforce NFR-3's 80% coverage floor where it is meaningful (#583)",
+      "5477f7f6 docs(workflow): make the authoring surfaces true at this Bolt (#583)",
+      "6c30150c test(workflow): prove FR-10's Pass criteria and FR-8 end to end (#583)",
+      "1265e03b feat(workflow): make FR-10's authoring sequence operable end to end (#583)",
+      "3305434e feat(mcp): add the four conversational-authoring workflow tools (#583)",
+      "a422ad95 feat(workflow): classify a failed run by what to do next (#583 Bolt 3 unit 8)",
+      "99043107 feat(workflow): add cao workflow create and update (#583 Bolt 3 unit 6)",
+      "d7a2737e feat(workflow): enforce plan approval by default (#583 Bolt 3 unit 5)",
+      "83bbe159 feat(workflow): reject a stale spec update, closing FR-8 (#583 Bolt 3 unit 4)",
+      "fca008bc feat(workflow): add create/update operations for Python specs (#583 Bolt 3 unit 3)",
+      "a9109801 feat(workflow): add the only guarded spec write path (#583 Bolt 3 unit 2)",
+      "ef245762 feat(workflow): make the spec-index busy_timeout explicit (#583 Bolt 3 unit 1)"
+    ]
+  },
+  {
+    "branch": "origin/feat/644-obsidian-vault-knowledge-source",
+    "sha": "4f7c8cdb9558abe56da76ab1ceb3b60396db8ad5",
+    "date": "2026-09-17T14:32:33+10:00",
+    "subject": "fix(vault): add CodeQL-recognized path containment",
+    "local_only": 70,
+    "branch_only": 65,
+    "paths": [
+      "docs/configuration.md",
+      "docs/issues/644-obsidian-vault-knowledge-source/adr-001-typed-relationship-representation.md",
+      "docs/issues/644-obsidian-vault-knowledge-source/adr-002-vault-cardinality.md",
+      "docs/issues/644-obsidian-vault-knowledge-source/adr-003-read-and-write-surface.md",
+      "docs/issues/644-obsidian-vault-knowledge-source/adr-004-supported-markdown-boundary.md",
+      "docs/issues/644-obsidian-vault-knowledge-source/adr-005-index-vs-injection-policies.md",
+      "docs/issues/644-obsidian-vault-knowledge-source/adr-006-identity-and-change-detection.md",
+      "docs/issues/644-obsidian-vault-knowledge-source/adr-007-configuration-surface.md",
+      "docs/issues/644-obsidian-vault-knowledge-source/design.md",
+      "docs/issues/644-obsidian-vault-knowledge-source/implementation-boundaries.md",
+      "docs/issues/644-obsidian-vault-knowledge-source/test-strategy.md",
+      "docs/issues/644-obsidian-vault-knowledge-source/traceability.md",
+      "docs/memory.md",
+      "docs/obsidian-vault.md",
+      "docs/settings.md",
+      "examples/obsidian-vault-demo/README.md",
+      "examples/obsidian-vault-demo/vault-demo.sh",
+      "skills/cao-memory/SKILL.md",
+      "src/cli_agent_orchestrator/agent_store/memory_manager.md",
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/cli/commands/memory.py",
+      "src/cli_agent_orchestrator/clients/database.py",
+      "src/cli_agent_orchestrator/graph/cache.py",
+      "src/cli_agent_orchestrator/graph/providers/memory.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/models/memory.py",
+      "src/cli_agent_orchestrator/models/relationship.py",
+      "src/cli_agent_orchestrator/services/audit_log.py",
+      "src/cli_agent_orchestrator/services/cleanup_service.py",
+      "src/cli_agent_orchestrator/services/config_service.py",
+      "src/cli_agent_orchestrator/services/memory_append.py",
+      "src/cli_agent_orchestrator/services/memory_archive/okf.py",
+      "src/cli_agent_orchestrator/services/memory_gateway.py",
+      "src/cli_agent_orchestrator/services/memory_reconciliation.py",
+      "src/cli_agent_orchestrator/services/memory_relationship_service.py",
+      "src/cli_agent_orchestrator/services/memory_service.py",
+      "src/cli_agent_orchestrator/services/promotion_service.py",
+      "src/cli_agent_orchestrator/services/settings_service.py",
+      "src/cli_agent_orchestrator/services/vault/__init__.py",
+      "src/cli_agent_orchestrator/services/vault/binding.py",
+      "src/cli_agent_orchestrator/services/vault/boundary.py",
+      "src/cli_agent_orchestrator/services/vault/config.py",
+      "src/cli_agent_orchestrator/services/vault/findings.py",
+      "src/cli_agent_orchestrator/services/vault/identity.py",
+      "src/cli_agent_orchestrator/services/vault/links.py",
+      "src/cli_agent_orchestrator/services/vault/migrate.py",
+      "src/cli_agent_orchestrator/services/vault/parser.py",
+      "src/cli_agent_orchestrator/services/vault/reader.py",
+      "src/cli_agent_orchestrator/services/vault/reconcile.py",
+      "src/cli_agent_orchestrator/services/vault/scan.py",
+      "src/cli_agent_orchestrator/services/vault/status.py",
+      "src/cli_agent_orchestrator/services/vault/vault_lock.py",
+      "src/cli_agent_orchestrator/services/vault/writer.py",
+      "src/cli_agent_orchestrator/services/wiki_healer.py",
+      "src/cli_agent_orchestrator/services/wiki_lint.py",
+      "src/cli_agent_orchestrator/skills/cao-memory/SKILL.md",
+      "test/api/test_memory_api.py",
+      "test/api/test_scope_coverage.py",
+      "test/cli/commands/test_memory.py",
+      "test/cli/commands/test_memory_repair.py",
+      "test/cli/commands/test_memory_vault.py",
+      "test/clients/test_vault_schema_migration.py",
+      "test/fixtures/vault_factory.py",
+      "test/graph/providers/test_memory_provider.py",
+      "test/graph/providers/test_memory_provider_lint_enrichment.py",
+      "test/graph/test_cache.py",
+      "test/services/test_audit_log.py",
+      "test/services/test_config_service.py",
+      "test/services/test_context_manager_agent.py",
+      "test/services/test_memory_gateway.py",
+      "test/services/test_memory_relationship_integration.py",
+      "test/services/test_memory_service.py",
+      "test/services/test_memory_service_phase2.py",
+      "test/services/test_scoring.py",
+      "test/services/test_settings_service.py",
+      "test/services/vault/test_binding.py",
+      "test/services/vault/test_boundary_refusal.py",
+      "test/services/vault/test_config.py",
+      "test/services/vault/test_export_refuses_vault.py",
+      "test/services/vault/test_findings.py",
+      "test/services/vault/test_forget_contract.py",
+      "test/services/vault/test_identity.py",
+      "test/services/vault/test_injection_counters.py",
+      "test/services/vault/test_injection_policy.py",
+      "test/services/vault/test_inline_links_reconcile.py",
+      "test/services/vault/test_links.py",
+      "test/services/vault/test_native_maintenance_guards.py",
+      "test/services/vault/test_no_enumeration_outside_scan.py",
+      "test/services/vault/test_parser.py",
+      "test/services/vault/test_rebuild_determinism.py",
+      "test/services/vault/test_reconcile.py",
+      "test/services/vault/test_scan_exclusions.py",
+      "test/services/vault/test_scan_stability.py",
+      "test/services/vault/test_scan_symlinks.py",
+      "test/services/vault/test_vault_injection_renderer.py",
+      "test/services/vault/test_vault_memory_builder.py",
+      "test/services/vault/test_vault_migrate.py",
+      "test/services/vault/test_vault_migration_lifecycle.py",
+      "test/services/vault/test_vault_reconcile_concurrency.py",
+      "test/services/vault/test_vault_status.py",
+      "test/services/vault/test_vault_store_lifecycle.py",
+      "test/services/vault/test_vault_write.py",
+      "tui/src/catalog.rs",
+      "tui/src/server.rs"
+    ],
+    "missing_source_files": [],
+    "line_presence": [
+      [
+        "examples/obsidian-vault-demo/README.md",
+        40,
+        40
+      ],
+      [
+        "examples/obsidian-vault-demo/vault-demo.sh",
+        271,
+        271
+      ],
+      [
+        "src/cli_agent_orchestrator/agent_store/memory_manager.md",
+        2,
+        2
+      ],
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        43,
+        43
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/commands/memory.py",
+        157,
+        157
+      ],
+      [
+        "src/cli_agent_orchestrator/clients/database.py",
+        235,
+        235
+      ],
+      [
+        "src/cli_agent_orchestrator/graph/cache.py",
+        52,
+        54
+      ],
+      [
+        "src/cli_agent_orchestrator/graph/providers/memory.py",
+        102,
+        102
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/server.py",
+        18,
+        18
+      ],
+      [
+        "src/cli_agent_orchestrator/models/memory.py",
+        12,
+        12
+      ],
+      [
+        "src/cli_agent_orchestrator/models/relationship.py",
+        6,
+        6
+      ],
+      [
+        "src/cli_agent_orchestrator/services/audit_log.py",
+        3,
+        3
+      ],
+      [
+        "src/cli_agent_orchestrator/services/cleanup_service.py",
+        28,
+        29
+      ],
+      [
+        "src/cli_agent_orchestrator/services/config_service.py",
+        17,
+        17
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_append.py",
+        61,
+        61
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_archive/okf.py",
+        7,
+        7
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_gateway.py",
+        4,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_reconciliation.py",
+        148,
+        148
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_relationship_service.py",
+        191,
+        197
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_service.py",
+        778,
+        781
+      ],
+      [
+        "src/cli_agent_orchestrator/services/promotion_service.py",
+        1,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/services/settings_service.py",
+        13,
+        13
+      ],
+      [
+        "src/cli_agent_orchestrator/services/vault/__init__.py",
+        1,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/services/vault/binding.py",
+        175,
+        175
+      ],
+      [
+        "src/cli_agent_orchestrator/services/vault/boundary.py",
+        37,
+        37
+      ],
+      [
+        "src/cli_agent_orchestrator/services/vault/config.py",
+        213,
+        213
+      ],
+      [
+        "src/cli_agent_orchestrator/services/vault/findings.py",
+        177,
+        177
+      ],
+      [
+        "src/cli_agent_orchestrator/services/vault/identity.py",
+        54,
+        54
+      ],
+      [
+        "src/cli_agent_orchestrator/services/vault/links.py",
+        99,
+        108
+      ],
+      [
+        "src/cli_agent_orchestrator/services/vault/migrate.py",
+        318,
+        319
+      ],
+      [
+        "src/cli_agent_orchestrator/services/vault/parser.py",
+        164,
+        164
+      ],
+      [
+        "src/cli_agent_orchestrator/services/vault/reader.py",
+        334,
+        335
+      ],
+      [
+        "src/cli_agent_orchestrator/services/vault/reconcile.py",
+        1225,
+        1225
+      ],
+      [
+        "src/cli_agent_orchestrator/services/vault/scan.py",
+        284,
+        284
+      ],
+      [
+        "src/cli_agent_orchestrator/services/vault/status.py",
+        160,
+        160
+      ],
+      [
+        "src/cli_agent_orchestrator/services/vault/vault_lock.py",
+        134,
+        134
+      ],
+      [
+        "src/cli_agent_orchestrator/services/vault/writer.py",
+        323,
+        323
+      ],
+      [
+        "src/cli_agent_orchestrator/services/wiki_healer.py",
+        10,
+        10
+      ],
+      [
+        "src/cli_agent_orchestrator/services/wiki_lint.py",
+        2,
+        2
+      ],
+      [
+        "src/cli_agent_orchestrator/skills/cao-memory/SKILL.md",
+        5,
+        5
+      ],
+      [
+        "tui/src/catalog.rs",
+        65,
+        70
+      ],
+      [
+        "tui/src/server.rs",
+        5,
+        6
+      ]
+    ],
+    "commits": [
+      "4f7c8cdb fix(vault): add CodeQL-recognized path containment",
+      "9364aa8a fix(vault): add local CodeQL path barriers",
+      "708b16fe fix(vault): expose path validation to CodeQL",
+      "d42dede4 fix(memory): harden Obsidian vault lifecycle",
+      "29119bdd fix(vault): preserve exclusion ownership across reconciliation",
+      "53f4c82c fix(vault): resolve rebuild exclusion ownership globally",
+      "29551a89 fix(vault): preserve ambiguous rebuild exclusions",
+      "73ce18c2 fix(vault): prioritize exact rebuild identity claims",
+      "1683e5c9 fix(vault): handle rebuild rename path reuse",
+      "82ee7918 fix(vault): require real hash for rename carry",
+      "78da7646 fix(vault): retain rebuild exclusions across renames",
+      "9be5b60c fix(vault): retain forgotten renamed notes on rebuild",
+      "ac17232a style(memory): satisfy code quality checks",
+      "bc5ef6b0 fix(memory): enforce recall and retention boundaries",
+      "45e587a6 fix(vault): quarantine post-rename identity collisions",
+      "69a426c9 fix(vault): report finalized projection counts",
+      "d1790711 fix(memory): keep exclusions bound to identity",
+      "dc308fb0 fix(memory): persist vault forget tombstones",
+      "f59fd664 fix(memory): retain rebuild tombstone provenance",
+      "8557ce0f fix(memory): preserve vault tombstone identities",
+      "4344a24e fix(vault): fail closed on alias lookup errors",
+      "5586dcb9 fix(deps): clear security scan findings",
+      "fc5bec6e fix(memory): close final vault review gaps",
+      "bcf5ba87 test(memory): update source resolver stub",
+      "df3258f4 test(memory): update vault transaction stubs",
+      "51043797 fix(memory): reconcile vault state atomically",
+      "2090e45b fix(memory): close vault recall review gaps",
+      "3a0e7f6a fix(memory): enforce vault architecture invariants",
+      "dc5dcf93 fix(memory): address vault review findings",
+      "a030ea99 fix(memory): address PR 674 review feedback",
+      "dac2ff84 docs(vault): add a runnable e2e harness for the Obsidian vault source",
+      "dc49a8f9 refactor(vault): name the secret-gate local for what it holds (#644)",
+      "d2cbbace docs(memory): sync the forget contract for vault-backed memory (#644)",
+      "63bd3cdf feat(api): add read-only vault status endpoint (#644)",
+      "b4fe6339 feat(vault): route managed writes and forgets through the binding (#644)",
+      "1d7c356f feat(graph): project vault membership as metadata only (#644)",
+      "f4a9aeeb docs(vault): document shipped recall and injection behaviour (#644)",
+      "a7210572 feat(vault): gate vault injection on consumer and requester identity (#644)",
+      "a7d567e8 style: format source and tests",
+      "a7f8fdfa feat(vault): serve indexed vault notes through a confined read boundary (#644)",
+      "76863166 docs(644): correct the tags and created mapping, and assign path_escapes_root a read-side owner",
+      "34af87f3 docs(memory): document the shipped Obsidian vault surface (#644)",
+      "81e342db feat(cli): add cao memory vault status, scan, reconcile, rebuild and migrate (#644)",
+      "00a776ba feat(memory): migrate native memories into the managed folder (#644)",
+      "4aeecead feat(memory): let the vault writer seed standard top-level frontmatter (#644)",
+      "d613a2e8 feat(graph): discriminate why lint enrichment is absent (#644)",
+      "55d26568 fix(memory): locate the cao block structurally, not by line prefix (#644)",
+      "6a652f56 feat(memory): add managed-folder vault writer with preserved frontmatter (#644)",
+      "9ab230a2 docs(644): reconcile design documents with what shipped",
+      "f39caa4a fix(memory): keep vault identity and provenance stable across reconciles (#644)",
+      "bae1be7e test(memory): assert vault determinism on the incremental update path (#644)",
+      "33ee530d docs(memory): correct the forget() relationship-purge comment (#644)",
+      "1c4dcfc4 fix(memory): reject dot segments in vault exclude patterns (#644)",
+      "c65e72dc feat(memory): reconcile a vault into rebuildable derived state (#644)",
+      "7914343a feat(memory): refuse native maintenance on vault-bound scopes (#644)",
+      "1071eec3 feat(memory): add confined vault scanner with fd-vetted reads (#644)",
+      "5d42315f feat(memory): add pure vault note parser, identity and link resolver (#644)",
+      "700da1d9 feat(memory): add vault configuration and finding vocabulary (#644)",
+      "805ca3a5 feat(memory): add source_kind discriminator and vault schema tables (#644)",
+      "1ac2556a docs(644): add Obsidian vault knowledge source design and ADRs"
+    ]
+  },
+  {
+    "branch": "origin/feat/beads-epic-phase1",
+    "sha": "b7a3e3e19c05bb1ff66ef45ea0d00848f5f37cbe",
+    "date": "2026-04-03T00:22:07Z",
+    "subject": "test: extensive E2E tests \u2014 bead CRUD, sessions, navigation, advanced epics",
+    "local_only": 444,
+    "branch_only": 40,
+    "paths": [
+      ".beads/.gitignore",
+      ".beads/README.md",
+      ".beads/config.yaml",
+      ".beads/interactions.jsonl",
+      ".beads/issues.jsonl",
+      ".beads/metadata.json",
+      ".gitattributes",
+      ".kiro/agents/ralph-init.json",
+      ".kiro/agents/ralph-review.json",
+      ".kiro/agents/ralph-run.json",
+      ".kiro/agents/ralph-wiggum.json",
+      ".kiro/sops/beads-init.md",
+      ".kiro/sops/beads-review.md",
+      ".kiro/sops/ralph-steering.md",
+      ".kiro/steering/ralph-context.md",
+      ".sop/planning/PRD_BEADS_INTEGRATION.md",
+      "AGENTS.md",
+      "BEADS_RALPH_WEBUI.md",
+      "CAO_UI_BUGFIXES.md",
+      "PRD-001-auto-mode-immediate-assign.md",
+      "PRD-BEADS-EPIC-ORCHESTRATION.md",
+      "PRD-CAO-DASHBOARD-FIXES.md",
+      "PRD_BEADS_INTEGRATION.md",
+      "docs/CAO_BEADS_ORCHESTRATION_PRD.md",
+      "docs/CAO_BEADS_UI_DESIGN.md",
+      "docs/PRD-Flows-UI.md",
+      "pyproject.toml",
+      "src/cli_agent_orchestrator/agent_store/master_orchestrator.md",
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/api/v2.py",
+      "src/cli_agent_orchestrator/api/web.py",
+      "src/cli_agent_orchestrator/cli/commands/launch.py",
+      "src/cli_agent_orchestrator/cli/commands/ralph.py",
+      "src/cli_agent_orchestrator/cli/commands/tasks.py",
+      "src/cli_agent_orchestrator/cli/main.py",
+      "src/cli_agent_orchestrator/clients/beads.py",
+      "src/cli_agent_orchestrator/clients/beads_real.py",
+      "src/cli_agent_orchestrator/clients/database.py",
+      "src/cli_agent_orchestrator/clients/ralph.py",
+      "src/cli_agent_orchestrator/clients/tmux.py",
+      "src/cli_agent_orchestrator/constants.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/models/session.py",
+      "src/cli_agent_orchestrator/providers/kiro_cli.py",
+      "src/cli_agent_orchestrator/services/learning_service.py",
+      "src/cli_agent_orchestrator/services/session_service.py",
+      "src/cli_agent_orchestrator/services/terminal_service.py",
+      "src/cli_agent_orchestrator/utils/context.py",
+      "src/cli_agent_orchestrator/utils/token_tracker.py",
+      "test/api/test_v2_epic_routes.py",
+      "test/api/test_v2_orchestrator.py",
+      "test/api/test_v2_routes.py",
+      "test/api/test_web_import.py",
+      "test/api/test_web_routes.py",
+      "test/clients/__init__.py",
+      "test/clients/test_beads.py",
+      "test/clients/test_beads_real.py",
+      "test/clients/test_database_bead_binding.py",
+      "test/clients/test_ralph.py",
+      "test/integration/__init__.py",
+      "test/integration/test_epic_api_workflows.py",
+      "test/integration/test_epic_workflows.py",
+      "test/mcp/__init__.py",
+      "test/mcp/test_orchestration_tools.py",
+      "test/models/__init__.py",
+      "test/models/test_session.py",
+      "test/utils/__init__.py",
+      "test/utils/test_context.py",
+      "test_client.py",
+      "uv.lock",
+      "web/.gitignore",
+      "web/e2e/app-navigation.spec.ts",
+      "web/e2e/bead-crud.spec.ts",
+      "web/e2e/cao.spec.ts",
+      "web/e2e/epic-advanced.spec.ts",
+      "web/e2e/epic-api.spec.ts",
+      "web/e2e/epic-full-workflow.spec.ts",
+      "web/e2e/epic-workflows.spec.ts",
+      "web/e2e/session-lifecycle.spec.ts",
+      "web/index.html",
+      "web/package-lock.json",
+      "web/package.json",
+      "web/postcss.config.js",
+      "web/src/App.tsx",
+      "web/src/api.ts",
+      "web/src/components/ActivityFeed.test.tsx",
+      "web/src/components/ActivityFeed.tsx",
+      "web/src/components/ActivityLog.tsx",
+      "web/src/components/AgentPanel.test.tsx",
+      "web/src/components/AgentPanel.tsx",
+      "web/src/components/BeadsPanel.test.tsx",
+      "web/src/components/BeadsPanel.tsx",
+      "web/src/components/ChatBar.tsx",
+      "web/src/components/ContextProposals.tsx",
+      "web/src/components/DashboardHome.tsx",
+      "web/src/components/ErrorBoundary.tsx",
+      "web/src/components/FlowsPanel.tsx",
+      "web/src/components/LiteTerminal.tsx",
+      "web/src/components/MessagesPanel.test.tsx",
+      "web/src/components/MessagesPanel.tsx",
+      "web/src/components/OrchestrationPanel.test.tsx",
+      "web/src/components/OrchestrationPanel.tsx",
+      "web/src/components/RalphPanel.tsx",
+      "web/src/components/TaskPanel.tsx",
+      "web/src/components/TerminalTest.tsx",
+      "web/src/components/TerminalView.test.tsx",
+      "web/src/components/TerminalView.tsx",
+      "web/src/components/starcraft/Agent.test.tsx",
+      "web/src/components/starcraft/Agent.tsx",
+      "web/src/components/starcraft/AssignmentLine.test.tsx",
+      "web/src/components/starcraft/AssignmentLine.tsx",
+      "web/src/components/starcraft/Bead.test.tsx",
+      "web/src/components/starcraft/Bead.tsx",
+      "web/src/components/starcraft/BeadQueue.test.tsx",
+      "web/src/components/starcraft/BeadQueue.tsx",
+      "web/src/components/starcraft/ContextMenu.test.tsx",
+      "web/src/components/starcraft/ContextMenu.tsx",
+      "web/src/components/starcraft/HotkeyHelp.test.tsx",
+      "web/src/components/starcraft/HotkeyHelp.tsx",
+      "web/src/components/starcraft/Map.test.tsx",
+      "web/src/components/starcraft/Map.tsx",
+      "web/src/components/starcraft/Minimap.test.tsx",
+      "web/src/components/starcraft/Minimap.tsx",
+      "web/src/components/starcraft/NewBeadModal.test.tsx",
+      "web/src/components/starcraft/NewBeadModal.tsx",
+      "web/src/components/starcraft/NewRalphModal.test.tsx",
+      "web/src/components/starcraft/NewRalphModal.tsx",
+      "web/src/components/starcraft/RalphLoop.test.tsx",
+      "web/src/components/starcraft/RalphLoop.tsx",
+      "web/src/components/starcraft/StarCraftView.test.tsx",
+      "web/src/components/starcraft/StarCraftView.tsx",
+      "web/src/components/starcraft/TerminalPanel.tsx",
+      "web/src/components/starcraft/index.ts",
+      "web/src/index.css",
+      "web/src/main.tsx",
+      "web/src/store.ts",
+      "web/src/stores/starcraftStore.test.ts",
+      "web/src/stores/starcraftStore.ts",
+      "web/src/test/setup.ts",
+      "web/tailwind.config.js",
+      "web/tsconfig.json",
+      "web/vite.config.ts"
+    ],
+    "missing_source_files": [
+      "src/cli_agent_orchestrator/agent_store/master_orchestrator.md",
+      "src/cli_agent_orchestrator/api/v2.py",
+      "src/cli_agent_orchestrator/api/web.py",
+      "src/cli_agent_orchestrator/cli/commands/ralph.py",
+      "src/cli_agent_orchestrator/cli/commands/tasks.py",
+      "src/cli_agent_orchestrator/clients/beads.py",
+      "src/cli_agent_orchestrator/clients/beads_real.py",
+      "src/cli_agent_orchestrator/clients/ralph.py",
+      "src/cli_agent_orchestrator/services/learning_service.py",
+      "src/cli_agent_orchestrator/utils/context.py",
+      "src/cli_agent_orchestrator/utils/token_tracker.py",
+      "web/src/components/ActivityFeed.test.tsx",
+      "web/src/components/ActivityFeed.tsx",
+      "web/src/components/ActivityLog.tsx",
+      "web/src/components/AgentPanel.test.tsx",
+      "web/src/components/BeadsPanel.test.tsx",
+      "web/src/components/BeadsPanel.tsx",
+      "web/src/components/ChatBar.tsx",
+      "web/src/components/ContextProposals.tsx",
+      "web/src/components/LiteTerminal.tsx",
+      "web/src/components/MessagesPanel.test.tsx",
+      "web/src/components/MessagesPanel.tsx",
+      "web/src/components/OrchestrationPanel.test.tsx",
+      "web/src/components/OrchestrationPanel.tsx",
+      "web/src/components/RalphPanel.tsx",
+      "web/src/components/TaskPanel.tsx",
+      "web/src/components/TerminalTest.tsx",
+      "web/src/components/TerminalView.test.tsx",
+      "web/src/components/starcraft/Agent.test.tsx",
+      "web/src/components/starcraft/Agent.tsx",
+      "web/src/components/starcraft/AssignmentLine.test.tsx",
+      "web/src/components/starcraft/AssignmentLine.tsx",
+      "web/src/components/starcraft/Bead.test.tsx",
+      "web/src/components/starcraft/Bead.tsx",
+      "web/src/components/starcraft/BeadQueue.test.tsx",
+      "web/src/components/starcraft/BeadQueue.tsx",
+      "web/src/components/starcraft/ContextMenu.test.tsx",
+      "web/src/components/starcraft/ContextMenu.tsx",
+      "web/src/components/starcraft/HotkeyHelp.test.tsx",
+      "web/src/components/starcraft/HotkeyHelp.tsx",
+      "web/src/components/starcraft/Map.test.tsx",
+      "web/src/components/starcraft/Map.tsx",
+      "web/src/components/starcraft/Minimap.test.tsx",
+      "web/src/components/starcraft/Minimap.tsx",
+      "web/src/components/starcraft/NewBeadModal.test.tsx",
+      "web/src/components/starcraft/NewBeadModal.tsx",
+      "web/src/components/starcraft/NewRalphModal.test.tsx",
+      "web/src/components/starcraft/NewRalphModal.tsx",
+      "web/src/components/starcraft/RalphLoop.test.tsx",
+      "web/src/components/starcraft/RalphLoop.tsx",
+      "web/src/components/starcraft/StarCraftView.test.tsx",
+      "web/src/components/starcraft/StarCraftView.tsx",
+      "web/src/components/starcraft/TerminalPanel.tsx",
+      "web/src/components/starcraft/index.ts",
+      "web/src/stores/starcraftStore.test.ts",
+      "web/src/stores/starcraftStore.ts"
+    ],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        18,
+        62
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/commands/launch.py",
+        0,
+        14
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/main.py",
+        0,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/clients/database.py",
+        37,
+        134
+      ],
+      [
+        "src/cli_agent_orchestrator/clients/tmux.py",
+        1,
+        10
+      ],
+      [
+        "src/cli_agent_orchestrator/constants.py",
+        1,
+        3
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/server.py",
+        25,
+        168
+      ],
+      [
+        "src/cli_agent_orchestrator/models/session.py",
+        0,
+        2
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/kiro_cli.py",
+        0,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/services/session_service.py",
+        4,
+        26
+      ],
+      [
+        "src/cli_agent_orchestrator/services/terminal_service.py",
+        0,
+        6
+      ],
+      [
+        "web/src/App.tsx",
+        39,
+        131
+      ],
+      [
+        "web/src/api.ts",
+        4,
+        110
+      ],
+      [
+        "web/src/components/AgentPanel.tsx",
+        15,
+        301
+      ],
+      [
+        "web/src/components/DashboardHome.tsx",
+        7,
+        54
+      ],
+      [
+        "web/src/components/ErrorBoundary.tsx",
+        9,
+        20
+      ],
+      [
+        "web/src/components/FlowsPanel.tsx",
+        10,
+        278
+      ],
+      [
+        "web/src/components/TerminalView.tsx",
+        4,
+        95
+      ],
+      [
+        "web/src/index.css",
+        3,
+        8
+      ],
+      [
+        "web/src/main.tsx",
+        4,
+        5
+      ],
+      [
+        "web/src/store.ts",
+        6,
+        79
+      ],
+      [
+        "web/src/test/setup.ts",
+        1,
+        7
+      ]
+    ],
+    "commits": [
+      "b7a3e3e1 test: extensive E2E tests \u2014 bead CRUD, sessions, navigation, advanced epics",
+      "fa9ef42c test: comprehensive integration + E2E tests for beads/epic orchestration",
+      "14f8fc48 feat: Phase 7 \u2014 frontend epic creation, progress bars, orchestrator UI",
+      "f1a9e0f7 feat: Phase 6 \u2014 master orchestrator agent profile + launch endpoint",
+      "2f0b0cff feat: Phase 5 \u2014 bead-aware MCP tools for orchestration",
+      "43f0e2c6 feat: Phase 4 \u2014 context injection from bead labels",
+      "0aeb6234 feat: Phase 3 \u2014 Epic API endpoints + bead-session wiring",
+      "987736f6 feat: Phase 2 \u2014 epic creation, dependency management, label utilities",
+      "85183138 feat: Phase 1 \u2014 bead_id binding on terminals + Task model extension",
+      "4875b519 feat(web): rebrand UI, strip unmerged features, configurable agents dir",
+      "5e2e1cb5 feat(ui): add Orchestrations panel with flow diagram",
+      "5456f8aa feat(ui): add Messages panel for inter-agent communication",
+      "3cb08520 feat(beads): add sub-bead creation and hierarchy display",
+      "ae49eec9 feat(ui): add orchestrator mode toggle and session hierarchy",
+      "d2a7d47a feat(clients): add BeadsClient wrapper for bd CLI integration",
+      "88c6d7ac feat: Add orchestration UI improvements and PRD",
+      "06a75e4f fix(beads): clear assignee field in clear_assignee_by_session",
+      "5ac7ffa8 feat(api): switch web.py to use beads_real module",
+      "4c2915d8 test(beads): add tests for workflow methods and fix --state bug",
+      "ef510b28 fix(beads): correct bd CLI flags and add CRUD tests",
+      "d5ee15a0 feat(beads): add priority and status mapping utilities",
+      "0ef961a4 feat(clients): add BeadsClient wrapper with bd CLI runner",
+      "62b06d69 Fix TypeScript errors in AgentPanel and store",
+      "143bd6b7 Implement remaining 5 bugs: AI bead generation, context monitor, model display, status accuracy, Ralph UI",
+      "56907798 Iteration 11: Verify all tests pass (135 frontend, 164 backend unit tests)",
+      "5d6993b7 Add StarCraftView integration tests, fix API test paths (135 frontend, 73 backend tests passing)",
+      "1e3cfe20 Add AssignmentLine tests (120 tests passing)",
+      "032e873c Add comprehensive tests for StarCraft UI components (115 tests passing)",
+      "30f5a98d Pre UI update - bug fixes and CRUD improvements",
+      "5b317567 Fix V2 API tests to match actual API behavior (json files, config response)",
+      "6ab80272 Fix close bead to clear assignee per PRD spec, make test client port configurable",
+      "48d58c14 Fix UI: agent info modal, beads CRUD, terminal input, API agent endpoints",
+      "0fa25b92 Fix V2 API tests - all 46 tests passing",
+      "7113b6f1 Add CORS middleware and improve agent panel UI",
+      "a27bddab Add API tests for web routes (tasks and ralph endpoints)",
+      "ee78423a Remove node_modules from tracking, add .gitignore",
+      "4fe54027 Add documentation for Beads, Ralph, and Web UI features",
+      "0895d010 Add static file serving, --from-queue launch option, and unit tests",
+      "3c9df313 Add cao tasks and cao ralph CLI commands",
+      "1d34a8cd Add BeadsClient, RalphRunner, and Web Dashboard"
+    ]
+  },
+  {
+    "branch": "origin/feat/beads-integration",
+    "sha": "521adc7e16ea278506fc7b36bf79e0c584fd331a",
+    "date": "2026-04-03T09:26:31Z",
+    "subject": "feat: beads Phase 4 \u2014 Beads tab with epic-first UI",
+    "local_only": 406,
+    "branch_only": 11,
+    "paths": [
+      ".github/workflows/ci.yml",
+      ".github/workflows/e2e-full.yml",
+      ".gitignore",
+      "DEVELOPMENT.md",
+      "README.md",
+      "src/cli_agent_orchestrator/agent_store/master_orchestrator.md",
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/clients/beads_real.py",
+      "src/cli_agent_orchestrator/clients/database.py",
+      "src/cli_agent_orchestrator/clients/tmux.py",
+      "src/cli_agent_orchestrator/constants.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/models/flow.py",
+      "src/cli_agent_orchestrator/providers/claude_code.py",
+      "src/cli_agent_orchestrator/services/flow_service.py",
+      "src/cli_agent_orchestrator/services/session_service.py",
+      "src/cli_agent_orchestrator/services/settings_service.py",
+      "src/cli_agent_orchestrator/services/terminal_service.py",
+      "src/cli_agent_orchestrator/utils/agent_profiles.py",
+      "test/api/test_api_coverage.py",
+      "test/api/test_api_endpoints.py",
+      "test/api/test_flow_api.py",
+      "test/api/test_orchestrator.py",
+      "test/api/test_settings_api.py",
+      "test/api/test_terminals.py",
+      "test/clients/test_tmux_client.py",
+      "test/mcp_server/test_orchestration_tools.py",
+      "test/providers/test_claude_code_coverage.py",
+      "test/providers/test_claude_code_unit.py",
+      "test/services/test_session_service.py",
+      "test/services/test_settings_service.py",
+      "test/services/test_terminal_service.py",
+      "test/services/test_terminal_service_coverage.py",
+      "test/test_constants.py",
+      "test/utils/test_agent_profiles.py",
+      "test/utils/test_agent_profiles_coverage.py",
+      "web/e2e/orchestrator-e2e.spec.ts",
+      "web/e2e/orchestrator-full.spec.ts",
+      "web/index.html",
+      "web/package-lock.json",
+      "web/package.json",
+      "web/playwright.config.ts",
+      "web/postcss.config.js",
+      "web/src/App.tsx",
+      "web/src/api.ts",
+      "web/src/components/AgentPanel.tsx",
+      "web/src/components/BeadsTab.tsx",
+      "web/src/components/ConfirmModal.tsx",
+      "web/src/components/CustomSelect.tsx",
+      "web/src/components/DashboardHome.tsx",
+      "web/src/components/ErrorBoundary.tsx",
+      "web/src/components/FlowsPanel.tsx",
+      "web/src/components/InboxPanel.tsx",
+      "web/src/components/OrchestratorSidebar.tsx",
+      "web/src/components/OutputViewer.tsx",
+      "web/src/components/SettingsPanel.tsx",
+      "web/src/components/StatusBadge.tsx",
+      "web/src/components/TerminalView.tsx",
+      "web/src/index.css",
+      "web/src/main.tsx",
+      "web/src/store.ts",
+      "web/src/test/api.test.ts",
+      "web/src/test/components.test.tsx",
+      "web/src/test/setup.ts",
+      "web/src/test/store.test.ts",
+      "web/tailwind.config.js",
+      "web/tsconfig.json",
+      "web/vite.config.ts"
+    ],
+    "missing_source_files": [
+      "src/cli_agent_orchestrator/agent_store/master_orchestrator.md",
+      "src/cli_agent_orchestrator/clients/beads_real.py",
+      "web/src/components/BeadsTab.tsx",
+      "web/src/components/OrchestratorSidebar.tsx"
+    ],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        205,
+        450
+      ],
+      [
+        "src/cli_agent_orchestrator/clients/database.py",
+        25,
+        57
+      ],
+      [
+        "src/cli_agent_orchestrator/clients/tmux.py",
+        5,
+        10
+      ],
+      [
+        "src/cli_agent_orchestrator/constants.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/server.py",
+        28,
+        220
+      ],
+      [
+        "src/cli_agent_orchestrator/models/flow.py",
+        1,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/claude_code.py",
+        2,
+        21
+      ],
+      [
+        "src/cli_agent_orchestrator/services/flow_service.py",
+        5,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/services/session_service.py",
+        5,
+        12
+      ],
+      [
+        "src/cli_agent_orchestrator/services/settings_service.py",
+        33,
+        47
+      ],
+      [
+        "src/cli_agent_orchestrator/services/terminal_service.py",
+        3,
+        9
+      ],
+      [
+        "src/cli_agent_orchestrator/utils/agent_profiles.py",
+        65,
+        109
+      ],
+      [
+        "web/src/App.tsx",
+        67,
+        83
+      ],
+      [
+        "web/src/api.ts",
+        74,
+        106
+      ],
+      [
+        "web/src/components/AgentPanel.tsx",
+        376,
+        381
+      ],
+      [
+        "web/src/components/ConfirmModal.tsx",
+        54,
+        56
+      ],
+      [
+        "web/src/components/CustomSelect.tsx",
+        51,
+        59
+      ],
+      [
+        "web/src/components/DashboardHome.tsx",
+        173,
+        212
+      ],
+      [
+        "web/src/components/ErrorBoundary.tsx",
+        14,
+        14
+      ],
+      [
+        "web/src/components/FlowsPanel.tsx",
+        258,
+        259
+      ],
+      [
+        "web/src/components/InboxPanel.tsx",
+        128,
+        128
+      ],
+      [
+        "web/src/components/OutputViewer.tsx",
+        83,
+        83
+      ],
+      [
+        "web/src/components/SettingsPanel.tsx",
+        43,
+        87
+      ],
+      [
+        "web/src/components/StatusBadge.tsx",
+        4,
+        35
+      ],
+      [
+        "web/src/components/TerminalView.tsx",
+        69,
+        84
+      ],
+      [
+        "web/src/index.css",
+        9,
+        9
+      ],
+      [
+        "web/src/main.tsx",
+        7,
+        7
+      ],
+      [
+        "web/src/store.ts",
+        63,
+        95
+      ],
+      [
+        "web/src/test/api.test.ts",
+        99,
+        101
+      ],
+      [
+        "web/src/test/components.test.tsx",
+        75,
+        76
+      ],
+      [
+        "web/src/test/setup.ts",
+        1,
+        1
+      ],
+      [
+        "web/src/test/store.test.ts",
+        33,
+        36
+      ]
+    ],
+    "commits": [
+      "521adc7e feat: beads Phase 4 \u2014 Beads tab with epic-first UI",
+      "5a13473b feat: beads Phase 3 \u2014 bead MCP tools for orchestrator (30 total tools)",
+      "7372aed8 feat: beads Phase 2 \u2014 API endpoints for tasks, epics, deps, assignment",
+      "1cc5249e feat: beads Phase 1 \u2014 BeadsClient + DB foundation",
+      "45ed4073 ci: add Playwright E2E tests to GitHub Actions",
+      "46f9bfc6 test: comprehensive E2E test suite \u2014 49 Playwright + 22 backend = 71 total",
+      "815778e3 fix: orchestrator auto-detects and reconnects to orphaned sessions",
+      "5d8c8204 feat: xterm.js terminal + full-screen mode for orchestrator sidebar",
+      "f271a9af test: E2E tests for master orchestrator (21 Playwright + 16 backend = 37 total)",
+      "e38eca41 feat: master orchestrator \u2014 always-on AI assistant for CAO",
+      "d609178c feat: add Web UI dashboard with configurable agent directories"
+    ]
+  },
+  {
+    "branch": "origin/feat/graph-provider-discovery",
+    "sha": "cf03055eb19f82761ae03c6c423adef76d0d8dff",
+    "date": "2026-08-11T20:24:35+10:00",
+    "subject": "docs(graph): correct cold-build measurement",
+    "local_only": 134,
+    "branch_only": 2,
+    "paths": [
+      "docs/knowledge-graph-viewing.md",
+      "src/cli_agent_orchestrator/api/main.py",
+      "test/graph/test_api_routes.py"
+    ],
+    "missing_source_files": [],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        2,
+        11
+      ]
+    ],
+    "commits": [
+      "cf03055e docs(graph): correct cold-build measurement",
+      "2caf5728 feat(graph): expose providers and retryable timeouts"
+    ]
+  },
+  {
+    "branch": "origin/feat/kiro-v3-phase1-profiles",
+    "sha": "49d39fcd66662f0831091d39f3cb269791fcb962",
+    "date": "2026-07-25T21:42:56+10:00",
+    "subject": "feat(kiro): gate KAS launch behind one fail-closed chokepoint",
+    "local_only": 185,
+    "branch_only": 8,
+    "paths": [
+      "CHANGELOG.md",
+      "docs/flows.md",
+      "docs/kiro-cli.md",
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/cli/commands/launch.py",
+      "src/cli_agent_orchestrator/cli/commands/profile.py",
+      "src/cli_agent_orchestrator/clients/database.py",
+      "src/cli_agent_orchestrator/constants.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/models/agent_profile.py",
+      "src/cli_agent_orchestrator/models/flow.py",
+      "src/cli_agent_orchestrator/models/kiro_engine.py",
+      "src/cli_agent_orchestrator/models/kiro_kas.py",
+      "src/cli_agent_orchestrator/models/kiro_launch.py",
+      "src/cli_agent_orchestrator/models/terminal.py",
+      "src/cli_agent_orchestrator/models/workflow.py",
+      "src/cli_agent_orchestrator/providers/kiro_capabilities.py",
+      "src/cli_agent_orchestrator/providers/kiro_cli.py",
+      "src/cli_agent_orchestrator/providers/manager.py",
+      "src/cli_agent_orchestrator/schemas/agent_profile.schema.json",
+      "src/cli_agent_orchestrator/services/agent_step.py",
+      "src/cli_agent_orchestrator/services/flow_service.py",
+      "src/cli_agent_orchestrator/services/install_service.py",
+      "src/cli_agent_orchestrator/services/kiro_profile_lint.py",
+      "src/cli_agent_orchestrator/services/kiro_profile_service.py",
+      "src/cli_agent_orchestrator/services/kiro_profiles.py",
+      "src/cli_agent_orchestrator/services/session_service.py",
+      "src/cli_agent_orchestrator/services/terminal_service.py",
+      "src/cli_agent_orchestrator/services/workflow_service.py",
+      "src/cli_agent_orchestrator/utils/kiro_launch_guard.py",
+      "src/cli_agent_orchestrator/utils/kiro_policy.py",
+      "test/api/test_api_endpoints.py",
+      "test/api/test_run_step.py",
+      "test/cli/commands/test_install_kas_e2e.py",
+      "test/cli/commands/test_launch.py",
+      "test/cli/test_profile_cmd.py",
+      "test/clients/test_kiro_engine_persistence.py",
+      "test/mcp_server/test_assign.py",
+      "test/models/test_kiro_engine.py",
+      "test/models/test_kiro_launch_refusal.py",
+      "test/providers/fixtures/kiro_cli_2_13_0_chat_help.txt",
+      "test/providers/fixtures/kiro_cli_2_13_0_root_help.txt",
+      "test/providers/test_kiro_capabilities.py",
+      "test/providers/test_kiro_cli_unit.py",
+      "test/providers/test_provider_manager_unit.py",
+      "test/services/conftest.py",
+      "test/services/test_agent_step.py",
+      "test/services/test_flow_service.py",
+      "test/services/test_install_service.py",
+      "test/services/test_kas_call_site_migration.py",
+      "test/services/test_kiro_engine_phase0.py",
+      "test/services/test_kiro_kas_profiles.py",
+      "test/services/test_kiro_policy_sidecar.py",
+      "test/services/test_kiro_profile_service.py",
+      "test/services/test_kiro_v2_goldens.py",
+      "test/services/test_terminal_service_full.py",
+      "test/services/test_workflow_service.py",
+      "test/test_kas_launch_chokepoint.py",
+      "test/test_kas_launch_flag.py",
+      "test/utils/test_kiro_cedar_rule_shape.py",
+      "test/utils/test_kiro_diagnostic_attribution.py",
+      "test/utils/test_kiro_launch_guard.py",
+      "test/utils/test_kiro_policy.py"
+    ],
+    "missing_source_files": [
+      "src/cli_agent_orchestrator/models/kiro_kas.py",
+      "src/cli_agent_orchestrator/models/kiro_launch.py",
+      "src/cli_agent_orchestrator/services/kiro_profile_lint.py",
+      "src/cli_agent_orchestrator/services/kiro_profile_service.py",
+      "src/cli_agent_orchestrator/services/kiro_profiles.py",
+      "src/cli_agent_orchestrator/utils/kiro_launch_guard.py",
+      "src/cli_agent_orchestrator/utils/kiro_policy.py"
+    ],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        9,
+        29
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/commands/launch.py",
+        4,
+        22
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/commands/profile.py",
+        4,
+        31
+      ],
+      [
+        "src/cli_agent_orchestrator/clients/database.py",
+        10,
+        10
+      ],
+      [
+        "src/cli_agent_orchestrator/constants.py",
+        0,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/server.py",
+        8,
+        27
+      ],
+      [
+        "src/cli_agent_orchestrator/models/agent_profile.py",
+        2,
+        9
+      ],
+      [
+        "src/cli_agent_orchestrator/models/flow.py",
+        2,
+        2
+      ],
+      [
+        "src/cli_agent_orchestrator/models/kiro_engine.py",
+        37,
+        37
+      ],
+      [
+        "src/cli_agent_orchestrator/models/terminal.py",
+        2,
+        2
+      ],
+      [
+        "src/cli_agent_orchestrator/models/workflow.py",
+        2,
+        2
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/kiro_capabilities.py",
+        257,
+        265
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/kiro_cli.py",
+        9,
+        13
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/manager.py",
+        8,
+        16
+      ],
+      [
+        "src/cli_agent_orchestrator/schemas/agent_profile.schema.json",
+        5,
+        10
+      ],
+      [
+        "src/cli_agent_orchestrator/services/agent_step.py",
+        32,
+        34
+      ],
+      [
+        "src/cli_agent_orchestrator/services/flow_service.py",
+        19,
+        19
+      ],
+      [
+        "src/cli_agent_orchestrator/services/install_service.py",
+        2,
+        10
+      ],
+      [
+        "src/cli_agent_orchestrator/services/session_service.py",
+        2,
+        2
+      ],
+      [
+        "src/cli_agent_orchestrator/services/terminal_service.py",
+        46,
+        54
+      ],
+      [
+        "src/cli_agent_orchestrator/services/workflow_service.py",
+        2,
+        2
+      ]
+    ],
+    "commits": [
+      "49d39fcd feat(kiro): gate KAS launch behind one fail-closed chokepoint",
+      "d802a4cc feat(kiro): render KAS profiles with fail-closed Cedar policy",
+      "d30b6601 ci: retrigger checks after GitHub outage",
+      "14422f0a fix(kiro): isolate invalid flow engine metadata",
+      "c5d42353 fix(kiro): close Phase 0 review gaps",
+      "da509e57 feat(kiro): add explicit engine selection"
+    ]
+  },
+  {
+    "branch": "origin/feat/memory-implementation-phase-1",
+    "sha": "f98d00b196102079282ab445738a6a8168fbce68",
+    "date": "2026-05-13T20:58:02+10:00",
+    "subject": "test: fix three pre-existing failures",
+    "local_only": 378,
+    "branch_only": 15,
+    "paths": [
+      ".gitignore",
+      "CHANGELOG.md",
+      "README.md",
+      "docs/memory.md",
+      "docs/opencode-cli.md",
+      "docs/plugins.md",
+      "examples/plugins/README.md",
+      "examples/plugins/cao-discord/README.md",
+      "examples/plugins/cao-discord/cao_discord/__init__.py",
+      "examples/plugins/cao-discord/cao_discord/plugin.py",
+      "examples/plugins/cao-discord/env.template",
+      "examples/plugins/cao-discord/pyproject.toml",
+      "examples/plugins/cao-discord/tests/__init__.py",
+      "examples/plugins/cao-discord/tests/test_plugin.py",
+      "pyproject.toml",
+      "skills/cao-plugin/SKILL.md",
+      "skills/cao-plugin/references/hook-events.md",
+      "skills/cao-plugin/references/plugin-template.md",
+      "skills/cao-session-management/SKILL.md",
+      "src/cli_agent_orchestrator/agent_store/code_supervisor.md",
+      "src/cli_agent_orchestrator/agent_store/developer.md",
+      "src/cli_agent_orchestrator/agent_store/memory_manager.md",
+      "src/cli_agent_orchestrator/agent_store/reviewer.md",
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/cli/commands/init.py",
+      "src/cli_agent_orchestrator/cli/commands/install.py",
+      "src/cli_agent_orchestrator/cli/commands/launch.py",
+      "src/cli_agent_orchestrator/cli/commands/memory.py",
+      "src/cli_agent_orchestrator/cli/commands/session.py",
+      "src/cli_agent_orchestrator/cli/commands/shutdown.py",
+      "src/cli_agent_orchestrator/cli/main.py",
+      "src/cli_agent_orchestrator/clients/database.py",
+      "src/cli_agent_orchestrator/clients/tmux.py",
+      "src/cli_agent_orchestrator/constants.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/models/inbox.py",
+      "src/cli_agent_orchestrator/models/memory.py",
+      "src/cli_agent_orchestrator/models/opencode_agent.py",
+      "src/cli_agent_orchestrator/models/provider.py",
+      "src/cli_agent_orchestrator/plugins/__init__.py",
+      "src/cli_agent_orchestrator/plugins/base.py",
+      "src/cli_agent_orchestrator/plugins/builtin/__init__.py",
+      "src/cli_agent_orchestrator/plugins/builtin/claude_code_memory.py",
+      "src/cli_agent_orchestrator/plugins/builtin/kiro_cli_memory.py",
+      "src/cli_agent_orchestrator/plugins/events.py",
+      "src/cli_agent_orchestrator/plugins/registry.py",
+      "src/cli_agent_orchestrator/providers/base.py",
+      "src/cli_agent_orchestrator/providers/claude_code.py",
+      "src/cli_agent_orchestrator/providers/codex.py",
+      "src/cli_agent_orchestrator/providers/copilot_cli.py",
+      "src/cli_agent_orchestrator/providers/gemini_cli.py",
+      "src/cli_agent_orchestrator/providers/kimi_cli.py",
+      "src/cli_agent_orchestrator/providers/kiro_cli.py",
+      "src/cli_agent_orchestrator/providers/manager.py",
+      "src/cli_agent_orchestrator/providers/opencode_cli.py",
+      "src/cli_agent_orchestrator/providers/q_cli.py",
+      "src/cli_agent_orchestrator/services/cleanup_service.py",
+      "src/cli_agent_orchestrator/services/inbox_service.py",
+      "src/cli_agent_orchestrator/services/memory_service.py",
+      "src/cli_agent_orchestrator/services/plugin_dispatch.py",
+      "src/cli_agent_orchestrator/services/session_service.py",
+      "src/cli_agent_orchestrator/services/settings_service.py",
+      "src/cli_agent_orchestrator/services/terminal_service.py",
+      "src/cli_agent_orchestrator/skills/cao-session-management/SKILL.md",
+      "src/cli_agent_orchestrator/utils/opencode_config.py",
+      "src/cli_agent_orchestrator/utils/opencode_permissions.py",
+      "src/cli_agent_orchestrator/utils/terminal.py",
+      "test/api/conftest.py",
+      "test/api/test_api_endpoints.py",
+      "test/api/test_plugin_lifespan.py",
+      "test/api/test_terminals.py",
+      "test/cli/commands/test_install_opencode.py",
+      "test/cli/commands/test_launch.py",
+      "test/cli/commands/test_memory.py",
+      "test/cli/commands/test_session.py",
+      "test/cli/commands/test_shutdown.py",
+      "test/e2e/conftest.py",
+      "test/e2e/test_assign.py",
+      "test/e2e/test_skills.py",
+      "test/mcp_server/test_assign.py",
+      "test/mcp_server/test_handoff.py",
+      "test/mcp_server/test_memory_consolidate.py",
+      "test/mcp_server/test_session_context.py",
+      "test/models/test_opencode_agent.py",
+      "test/plugins/__init__.py",
+      "test/plugins/builtin/__init__.py",
+      "test/plugins/builtin/test_claude_code_memory.py",
+      "test/plugins/builtin/test_kiro_cli_memory.py",
+      "test/plugins/test_base.py",
+      "test/plugins/test_events.py",
+      "test/plugins/test_package.py",
+      "test/plugins/test_registry.py",
+      "test/providers/fixtures/OPENCODE_FIXTURES.md",
+      "test/providers/fixtures/opencode_cli_completed.ansi.txt",
+      "test/providers/fixtures/opencode_cli_completed.txt",
+      "test/providers/fixtures/opencode_cli_idle_post_completion.ansi.txt",
+      "test/providers/fixtures/opencode_cli_idle_post_completion.txt",
+      "test/providers/fixtures/opencode_cli_idle_splash.ansi.txt",
+      "test/providers/fixtures/opencode_cli_idle_splash.txt",
+      "test/providers/fixtures/opencode_cli_permission.ansi.txt",
+      "test/providers/fixtures/opencode_cli_permission.txt",
+      "test/providers/fixtures/opencode_cli_processing.ansi.txt",
+      "test/providers/fixtures/opencode_cli_processing.txt",
+      "test/providers/test_base_provider.py",
+      "test/providers/test_claude_code_coverage.py",
+      "test/providers/test_claude_code_unit.py",
+      "test/providers/test_codex_provider_unit.py",
+      "test/providers/test_copilot_cli_unit.py",
+      "test/providers/test_extract_session_context.py",
+      "test/providers/test_gemini_cli_unit.py",
+      "test/providers/test_kimi_cli_unit.py",
+      "test/providers/test_kiro_cli_unit.py",
+      "test/providers/test_memory_injection.py",
+      "test/providers/test_opencode_cli_unit.py",
+      "test/providers/test_register_hooks.py",
+      "test/providers/test_session_context.py",
+      "test/providers/test_tmux_working_directory.py",
+      "test/services/test_bm25_search.py",
+      "test/services/test_cache_aware_injection.py",
+      "test/services/test_context_manager_agent.py",
+      "test/services/test_event_logging.py",
+      "test/services/test_inbox_service.py",
+      "test/services/test_memory_durability_and_concurrent.py",
+      "test/services/test_memory_enabled_flag.py",
+      "test/services/test_memory_per_scope_cap.py",
+      "test/services/test_memory_service.py",
+      "test/services/test_memory_service_index_roundtrip.py",
+      "test/services/test_memory_service_phase2.py",
+      "test/services/test_plugin_dispatch.py",
+      "test/services/test_plugin_event_emission.py",
+      "test/services/test_project_identity.py",
+      "test/services/test_project_identity_marker.py",
+      "test/services/test_terminal_service_coverage.py",
+      "test/services/test_terminal_service_full.py",
+      "test/test_constants.py",
+      "test/utils/test_opencode_config.py",
+      "test/utils/test_opencode_permissions.py",
+      "test/utils/test_pre_compaction_flush.py",
+      "uv.lock"
+    ],
+    "missing_source_files": [
+      "examples/plugins/cao-discord/tests/__init__.py",
+      "src/cli_agent_orchestrator/providers/q_cli.py"
+    ],
+    "line_presence": [
+      [
+        "examples/plugins/README.md",
+        5,
+        5
+      ],
+      [
+        "examples/plugins/cao-discord/README.md",
+        21,
+        22
+      ],
+      [
+        "examples/plugins/cao-discord/cao_discord/plugin.py",
+        47,
+        47
+      ],
+      [
+        "examples/plugins/cao-discord/env.template",
+        1,
+        1
+      ],
+      [
+        "examples/plugins/cao-discord/pyproject.toml",
+        11,
+        11
+      ],
+      [
+        "examples/plugins/cao-discord/tests/test_plugin.py",
+        214,
+        214
+      ],
+      [
+        "src/cli_agent_orchestrator/agent_store/code_supervisor.md",
+        5,
+        5
+      ],
+      [
+        "src/cli_agent_orchestrator/agent_store/developer.md",
+        4,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/agent_store/memory_manager.md",
+        20,
+        25
+      ],
+      [
+        "src/cli_agent_orchestrator/agent_store/reviewer.md",
+        4,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        49,
+        66
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/commands/init.py",
+        1,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/commands/install.py",
+        0,
+        29
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/commands/launch.py",
+        48,
+        54
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/commands/memory.py",
+        101,
+        106
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/commands/session.py",
+        146,
+        146
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/commands/shutdown.py",
+        21,
+        21
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/main.py",
+        4,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/clients/database.py",
+        62,
+        247
+      ],
+      [
+        "src/cli_agent_orchestrator/clients/tmux.py",
+        0,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/constants.py",
+        6,
+        14
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/server.py",
+        115,
+        248
+      ],
+      [
+        "src/cli_agent_orchestrator/models/inbox.py",
+        5,
+        5
+      ],
+      [
+        "src/cli_agent_orchestrator/models/memory.py",
+        37,
+        40
+      ],
+      [
+        "src/cli_agent_orchestrator/models/opencode_agent.py",
+        12,
+        12
+      ],
+      [
+        "src/cli_agent_orchestrator/models/provider.py",
+        1,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/__init__.py",
+        15,
+        15
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/base.py",
+        25,
+        26
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/__init__.py",
+        4,
+        5
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/claude_code_memory.py",
+        61,
+        86
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/kiro_cli_memory.py",
+        55,
+        73
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/events.py",
+        42,
+        42
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/registry.py",
+        51,
+        51
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/base.py",
+        47,
+        79
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/claude_code.py",
+        26,
+        128
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/codex.py",
+        0,
+        25
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/copilot_cli.py",
+        8,
+        29
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/gemini_cli.py",
+        0,
+        22
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/kimi_cli.py",
+        1,
+        10
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/kiro_cli.py",
+        47,
+        85
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/manager.py",
+        4,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/opencode_cli.py",
+        172,
+        207
+      ],
+      [
+        "src/cli_agent_orchestrator/services/cleanup_service.py",
+        48,
+        91
+      ],
+      [
+        "src/cli_agent_orchestrator/services/inbox_service.py",
+        6,
+        16
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_service.py",
+        555,
+        1103
+      ],
+      [
+        "src/cli_agent_orchestrator/services/plugin_dispatch.py",
+        22,
+        22
+      ],
+      [
+        "src/cli_agent_orchestrator/services/session_service.py",
+        27,
+        30
+      ],
+      [
+        "src/cli_agent_orchestrator/services/settings_service.py",
+        44,
+        80
+      ],
+      [
+        "src/cli_agent_orchestrator/services/terminal_service.py",
+        68,
+        129
+      ],
+      [
+        "src/cli_agent_orchestrator/skills/cao-session-management/SKILL.md",
+        60,
+        62
+      ],
+      [
+        "src/cli_agent_orchestrator/utils/opencode_config.py",
+        83,
+        102
+      ],
+      [
+        "src/cli_agent_orchestrator/utils/opencode_permissions.py",
+        49,
+        49
+      ],
+      [
+        "src/cli_agent_orchestrator/utils/terminal.py",
+        16,
+        40
+      ]
+    ],
+    "commits": [
+      "f98d00b1 test: fix three pre-existing failures",
+      "124c2293 feat(memory): U8 project-identity marker file",
+      "d716b22a chore: untrack aidlc-docs from git",
+      "dfedcf12 docs(memory): reconcile PR #179 feedback",
+      "a14b7568 Phase B+E: bundle memory plugins, retire hook infra",
+      "844be0cb Phase D: remove Codex stop hook",
+      "12d93efe Phase C: add cao-memory-kiro-cli plugin",
+      "e5ce7825 Phase B: add cao-memory-claude-code plugin",
+      "d16f0e5c Merge origin/main (Phase A of plugin migration)",
+      "364ab8f7 wip: phase 2.5 snapshot before pypi work",
+      "206f7446 fix the registration",
+      "23f3359b fix the registration",
+      "c928e228 fix: resolve CI failures \u2014 CodeQL path injection, formatting, asyncio compatibility",
+      "7e24834e fix registartion.py issue",
+      "f7e37e99 feat(memory): add persistent agent memory system (Phase 1)"
+    ]
+  },
+  {
+    "branch": "origin/feat/memory-import-export",
+    "sha": "094fd84eb51b90cf1491e22b59e0f4f36927f960",
+    "date": "2026-06-20T15:31:33+10:00",
+    "subject": "feat(memory): import/export portable wiki bundles (Phase 4 U2)",
+    "local_only": 287,
+    "branch_only": 1,
+    "paths": [
+      "docs/memory.md",
+      "src/cli_agent_orchestrator/cli/commands/memory.py",
+      "src/cli_agent_orchestrator/clients/database.py",
+      "src/cli_agent_orchestrator/services/_archive_format.py",
+      "src/cli_agent_orchestrator/services/audit_log.py",
+      "src/cli_agent_orchestrator/services/memory_export.py",
+      "src/cli_agent_orchestrator/services/memory_import.py",
+      "src/cli_agent_orchestrator/services/secret_gate.py",
+      "src/cli_agent_orchestrator/services/status_monitor.py",
+      "test/providers/conftest.py",
+      "test/services/test_audit_log.py",
+      "test/services/test_memory_import_export.py",
+      "test/services/test_phase4_integration.py",
+      "test/services/test_secret_gate.py"
+    ],
+    "missing_source_files": [
+      "src/cli_agent_orchestrator/services/_archive_format.py",
+      "src/cli_agent_orchestrator/services/memory_export.py",
+      "src/cli_agent_orchestrator/services/memory_import.py"
+    ],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/cli/commands/memory.py",
+        25,
+        135
+      ],
+      [
+        "src/cli_agent_orchestrator/clients/database.py",
+        6,
+        17
+      ],
+      [
+        "src/cli_agent_orchestrator/services/audit_log.py",
+        0,
+        10
+      ],
+      [
+        "src/cli_agent_orchestrator/services/secret_gate.py",
+        18,
+        23
+      ],
+      [
+        "src/cli_agent_orchestrator/services/status_monitor.py",
+        0,
+        3
+      ]
+    ],
+    "commits": [
+      "094fd84e feat(memory): import/export portable wiki bundles (Phase 4 U2)"
+    ]
+  },
+  {
+    "branch": "origin/feat/pr-health-workflow-example",
+    "sha": "50774147dddb46b156bb2edff01ae48a17a13865",
+    "date": "2026-08-01T17:30:32+10:00",
+    "subject": "fix(workflow): correct pr-health marker idempotency and lifecycle",
+    "local_only": 166,
+    "branch_only": 2,
+    "paths": [
+      "docs/flows.md",
+      "docs/workflows.md",
+      "examples/workflows/pr-health/README.md",
+      "examples/workflows/pr-health/pr-health-biweekly-apply.md",
+      "examples/workflows/pr-health/pr-health-biweekly.md",
+      "examples/workflows/pr-health/pr_health.py",
+      "examples/workflows/pr-health/pr_health_biweekly_guard.py",
+      "test/examples/test_pr_health_workflow_example.py"
+    ],
+    "missing_source_files": [
+      "examples/workflows/pr-health/README.md",
+      "examples/workflows/pr-health/pr-health-biweekly-apply.md",
+      "examples/workflows/pr-health/pr-health-biweekly.md",
+      "examples/workflows/pr-health/pr_health.py",
+      "examples/workflows/pr-health/pr_health_biweekly_guard.py"
+    ],
+    "line_presence": [],
+    "commits": [
+      "50774147 fix(workflow): correct pr-health marker idempotency and lifecycle",
+      "5b7f4939 feat(workflow): add scheduled PR health example"
+    ]
+  },
+  {
+    "branch": "origin/feat/weekly-patch-release-schedule",
+    "sha": "578fa980de04b69d9cccc9713aa5ee23b07a8d3d",
+    "date": "2026-08-22T14:01:59+10:00",
+    "subject": "fix(ci): gate scheduled releases safely",
+    "local_only": 116,
+    "branch_only": 2,
+    "paths": [
+      ".github/workflows/release.yml"
+    ],
+    "missing_source_files": [],
+    "line_presence": [],
+    "commits": [
+      "578fa980 fix(ci): gate scheduled releases safely",
+      "070f7ec9 feat(ci): add weekly scheduled patch release trigger"
+    ]
+  },
+  {
+    "branch": "origin/feature/add-k8s-containers-support",
+    "sha": "f7059f29224b37ca51ccbb3e008f3a3799a857de",
+    "date": "2026-08-19T19:26:35+10:00",
+    "subject": "fix(k8s): Ship the gp3 StorageClass with the manifests, not the IaC",
+    "local_only": 131,
+    "branch_only": 15,
+    "paths": [
+      ".dockerignore",
+      ".gitignore",
+      "README.md",
+      "docker/Dockerfile",
+      "docker/Dockerfile.provider",
+      "docker/entrypoint.sh",
+      "k8s/README.md",
+      "k8s/configmap-fleet.yaml",
+      "k8s/deployment-fleet-panel.yaml",
+      "k8s/deployment-supervisor.yaml",
+      "k8s/efs-workspace.yaml",
+      "k8s/external-secrets.example.yaml",
+      "k8s/iac/infrastructure.yaml",
+      "k8s/kustomization.yaml",
+      "k8s/namespace.yaml",
+      "k8s/networkpolicy.yaml",
+      "k8s/service-workers-headless.yaml",
+      "k8s/statefulset-workers.yaml",
+      "k8s/storageclass-gp3.yaml",
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/constants.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/models/terminal.py",
+      "src/cli_agent_orchestrator/services/install_service.py",
+      "src/cli_agent_orchestrator/services/settings_service.py",
+      "src/cli_agent_orchestrator/services/terminal_service.py",
+      "test/api/test_terminal_limit_429.py",
+      "test/mcp_server/test_remote_target.py",
+      "test/services/test_cross_node_notify.py",
+      "test/services/test_terminal_limit.py",
+      "uv.lock"
+    ],
+    "missing_source_files": [],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/constants.py",
+        3,
+        3
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/server.py",
+        72,
+        279
+      ],
+      [
+        "src/cli_agent_orchestrator/models/terminal.py",
+        10,
+        11
+      ],
+      [
+        "src/cli_agent_orchestrator/services/install_service.py",
+        3,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/services/settings_service.py",
+        22,
+        23
+      ],
+      [
+        "src/cli_agent_orchestrator/services/terminal_service.py",
+        39,
+        47
+      ]
+    ],
+    "commits": [
+      "f7059f29 fix(k8s): Ship the gp3 StorageClass with the manifests, not the IaC",
+      "50aa96ac refactor(k8s): Combine all AWS resources into one stack",
+      "d853d92e feat(k8s): Add tested VPC + EKS CloudFormation stack",
+      "7cfe127b docs(k8s): Simplify deployment guide and remove environment specifics",
+      "89b72cfe feat(k8s): Add CloudFormation stack for CAO-specific AWS resources",
+      "3a9da845 docs(k8s): Add EKS deployment runbook",
+      "84e3e4a4 feat(k8s): Run a real provider with credentials and persistent state",
+      "74530252 fix(k8s): Fix panel probes and bound egress for both roles",
+      "0afd864f fix(docker): Make image buildable and add provider layer",
+      "ae0c19f5 fix(install): Persist resolved provider into installed profile",
+      "d0b398df feat(k8s): Mount shared EFS workspace into supervisor and worker pods",
+      "9339dbe1 Revert \"feat(k8s): Bootstrap agent workspaces via git instead of volume mounts\"",
+      "8691045d feat(k8s): Bootstrap agent workspaces via git instead of volume mounts",
+      "094b3303 feat(k8s): Add cross-node placement and per-node terminal cap",
+      "d93c12c2 feat(k8s): Add Dockerfile and Kubernetes deployment support"
+    ]
+  },
+  {
+    "branch": "origin/feature/kimi-cli",
+    "sha": "598f0617c98b8d0961617f0f43945ba177b357d0",
+    "date": "2026-03-06T13:19:49+11:00",
+    "subject": "Merge remote-tracking branch 'origin/main' into feature/kimi-cli",
+    "local_only": 421,
+    "branch_only": 49,
+    "paths": [
+      ".github/workflows/test-gemini-cli-provider.yml",
+      ".github/workflows/test-kimi-cli-provider.yml",
+      "docs/ACP_Discovery.md",
+      "docs/check-inbox-design.md",
+      "docs/gemini-cli.md",
+      "docs/kimi-cli.md",
+      "docs/openclaw-integration.md",
+      "skills/README.md",
+      "skills/build-cao-provider/SKILL.md",
+      "skills/build-cao-provider/references/implementation-checklist.md",
+      "skills/build-cao-provider/references/lessons-learnt.md",
+      "skills/build-cao-provider/references/verification-checklist.md",
+      "skills/build-cao-provider/templates/ralph/AGENT.md",
+      "skills/build-cao-provider/templates/ralph/PROMPT.md",
+      "skills/build-cao-provider/templates/ralph/fix_plan.md",
+      "skills/build-cao-provider/templates/ralph/ralphrc",
+      "skills/skill-creator/LICENSE.txt",
+      "skills/skill-creator/SKILL.md",
+      "skills/skill-creator/agents/analyzer.md",
+      "skills/skill-creator/agents/comparator.md",
+      "skills/skill-creator/agents/grader.md",
+      "skills/skill-creator/assets/eval_review.html",
+      "skills/skill-creator/eval-viewer/generate_review.py",
+      "skills/skill-creator/eval-viewer/viewer.html",
+      "skills/skill-creator/references/schemas.md",
+      "skills/skill-creator/scripts/__init__.py",
+      "skills/skill-creator/scripts/aggregate_benchmark.py",
+      "skills/skill-creator/scripts/generate_report.py",
+      "skills/skill-creator/scripts/improve_description.py",
+      "skills/skill-creator/scripts/package_skill.py",
+      "skills/skill-creator/scripts/quick_validate.py",
+      "skills/skill-creator/scripts/run_eval.py",
+      "skills/skill-creator/scripts/run_loop.py",
+      "skills/skill-creator/scripts/utils.py",
+      "src/cli_agent_orchestrator/agent_store/data_analyst.md",
+      "src/cli_agent_orchestrator/agent_store/report_generator.md",
+      "src/cli_agent_orchestrator/cli/commands/launch.py",
+      "src/cli_agent_orchestrator/clients/tmux.py",
+      "src/cli_agent_orchestrator/constants.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/models/provider.py",
+      "src/cli_agent_orchestrator/providers/base.py",
+      "src/cli_agent_orchestrator/providers/gemini_cli.py",
+      "src/cli_agent_orchestrator/providers/kimi_cli.py",
+      "src/cli_agent_orchestrator/providers/manager.py",
+      "src/cli_agent_orchestrator/services/inbox_service.py",
+      "src/cli_agent_orchestrator/services/terminal_service.py",
+      "test/README.md",
+      "test/e2e/conftest.py",
+      "test/e2e/test_assign.py",
+      "test/e2e/test_handoff.py",
+      "test/e2e/test_send_message.py",
+      "test/e2e/test_supervisor_orchestration.py",
+      "test/providers/README.md",
+      "test/providers/fixtures/gemini_cli_completed_output.txt",
+      "test/providers/fixtures/gemini_cli_complex_response.txt",
+      "test/providers/fixtures/gemini_cli_error_output.txt",
+      "test/providers/fixtures/gemini_cli_idle_output.txt",
+      "test/providers/fixtures/gemini_cli_processing_output.txt",
+      "test/providers/fixtures/kimi_cli_completed_output.txt",
+      "test/providers/fixtures/kimi_cli_complex_response.txt",
+      "test/providers/fixtures/kimi_cli_error_output.txt",
+      "test/providers/fixtures/kimi_cli_idle_output.txt",
+      "test/providers/fixtures/kimi_cli_processing_output.txt",
+      "test/providers/test_gemini_cli_unit.py",
+      "test/providers/test_kimi_cli_unit.py"
+    ],
+    "missing_source_files": [
+      "src/cli_agent_orchestrator/agent_store/data_analyst.md",
+      "src/cli_agent_orchestrator/agent_store/report_generator.md"
+    ],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/cli/commands/launch.py",
+        1,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/clients/tmux.py",
+        0,
+        5
+      ],
+      [
+        "src/cli_agent_orchestrator/constants.py",
+        0,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/models/provider.py",
+        2,
+        2
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/base.py",
+        0,
+        7
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/gemini_cli.py",
+        29,
+        290
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/kimi_cli.py",
+        233,
+        275
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/manager.py",
+        5,
+        25
+      ],
+      [
+        "src/cli_agent_orchestrator/services/inbox_service.py",
+        0,
+        2
+      ],
+      [
+        "src/cli_agent_orchestrator/services/terminal_service.py",
+        0,
+        2
+      ]
+    ],
+    "commits": [
+      "4354ded0 chore: update skill-creator to latest upstream (anthropics/skills@3d59511)",
+      "bb35536d docs: expand OpenClaw integration with write tools and auth research",
+      "53bf05c9 docs: add OpenClaw integration research summary",
+      "8cb08981 docs: update assign README with all providers and message delivery model",
+      "8fcb8270 fix: supervisor busy-wait blocks inbox delivery + skills review cleanup",
+      "54edf24f docs: update build-cao-provider skill with Gemini CLI lessons",
+      "c1a357ba docs: add check_inbox design doc and ACP discovery analysis",
+      "446664b6 fix: Gemini CLI handoff timeout \u2014 post-init status must be IDLE for MCP compatibility",
+      "2f4913ec fix: send_input() using unreliable send_keys_via_paste(), switch to send_keys()",
+      "b22046b8 fix: Kimi CLI --config flag breaks OAuth, use direct config.toml write instead",
+      "0a2f4620 fix: Kimi CLI handoff timeout \u2014 MCP tool call timeout was 60s, needs 600s",
+      "41b35207 fix: Kimi CLI handoff timeout \u2014 get_status() never returned COMPLETED for long responses",
+      "b612dd78 fix: inbox watchdog log tail too small for TUI providers, add E2E round-trip tests",
+      "a63dac0c fix: inbox service never delivers messages to TUI-based providers",
+      "428fc0c3 perf: replace gemini mcp add commands with direct settings.json writes",
+      "f1411377 fix: Gemini CLI spinner detection, initialization timing, and E2E test stabilization",
+      "af5955c4 fix: use -i flag for Gemini CLI system prompt injection instead of GEMINI.md alone",
+      "ed752329 fix: Gemini CLI system prompt injection, add supervisor orchestration E2E tests",
+      "f4538a3f fix: Gemini CLI init timeout in home dir, add shell warm-up marker",
+      "8ebb17b3 fix: remove unused GENERIC_PROMPT_PATTERN from kiro_cli.py",
+      "17cf59c4 fix: use bracketed paste for TUI input, fix Gemini MCP command, centralize skills",
+      "c0bf63e8 chore: remove work/ scratch files from tracking, add to gitignore",
+      "1465a3da feat: add Gemini CLI provider with cross-provider security and exit fixes",
+      "018f5ee5 feat: add build-cao-provider skill with lessons learned from Kimi CLI",
+      "168e7e52 docs: fix outdated IDLE_PROMPT_TAIL_LINES refs, add Kimi CLI test section to provider README",
+      "2af02086 docs: re-render architecture PNG at higher resolution, update changelog",
+      "a8d623f6 fix: increase IDLE_PROMPT_TAIL_LINES to 50 for tall terminals",
+      "5e879434 fix: forward CAO_TERMINAL_ID to MCP server env in Kimi CLI provider",
+      "60d48f5b feat: add Kimi CLI provider with full test coverage and E2E tests",
+      "24e4af10 docs: simplify README quick start, remove misleading provider install section",
+      "da334316 fix: reduce window name uniqueness test from 100 to 10 to prevent flaky failures",
+      "30f73dcf docs: update docs, add --yolo flag, simplify README, fix workspace trust prompt",
+      "9c377e43 docs: add testing section to README.md with unit and E2E test instructions",
+      "d4dbefe7 style: fix black formatting and isort import ordering",
+      "79874bd0 docs: update CI workflows, test docs, and Codex example README",
+      "d31bfaef feat: fix Codex/Claude Code handoff, add E2E test suite for all providers",
+      "5f848d73 feat: fix Claude Code provider launch failures and add workspace access confirmation",
+      "d90bd1ec style: fix black formatting in test files",
+      "c7214f39 test: add comprehensive tests for cleanup and flow services",
+      "397de6dd docs: update architecture diagram to replace Amazon Q CLI with Codex",
+      "46c9e610 ci: combine unit tests and security scan into single CI workflow",
+      "0feeb7fe ci: remove scheduled run from security scan",
+      "1fb96557 ci: add Trivy security scanning and SECURITY.md",
+      "e60b86f8 build(deps): upgrade libtmux and refresh all dependencies",
+      "7a0aa49e build(deps): upgrade fastmcp to 2.14.0 and mcp to 1.23.0",
+      "609c093e docs: add comprehensive code comments and improve test coverage"
+    ]
+  },
+  {
+    "branch": "origin/fix/r3-aprime",
+    "sha": "be835e1f9aea00286c0a0fa3a0d15553aba1875a",
+    "date": "2026-08-12T19:48:02+10:00",
+    "subject": "docs: correct graph access wording",
+    "local_only": 134,
+    "branch_only": 26,
+    "paths": [
+      "docs/knowledge-graph-viewing.md",
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/graph/cache.py",
+      "src/cli_agent_orchestrator/graph/providers/base.py",
+      "src/cli_agent_orchestrator/graph/providers/memory.py",
+      "test/graph/conftest.py",
+      "test/graph/providers/test_memory_provider.py",
+      "test/graph/test_api_routes.py",
+      "test/graph/test_cache.py",
+      "test/graph/test_registries.py"
+    ],
+    "missing_source_files": [],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        5,
+        64
+      ],
+      [
+        "src/cli_agent_orchestrator/graph/cache.py",
+        6,
+        156
+      ],
+      [
+        "src/cli_agent_orchestrator/graph/providers/base.py",
+        0,
+        11
+      ],
+      [
+        "src/cli_agent_orchestrator/graph/providers/memory.py",
+        8,
+        62
+      ]
+    ],
+    "commits": [
+      "be835e1f docs: correct graph access wording",
+      "4f6eac4a docs: qualify graph access guarantees",
+      "b2e8a81b fix: protect graph timeout contract fields",
+      "87f8f01b docs: correct graph projection cost attribution",
+      "85c9f9ba docs: correct graph projection cost comments",
+      "b98dfdc5 fix: label detached projection filters",
+      "74767271 test: require built-in graph providers",
+      "fb6b2987 docs(graph): publish shipped-default projection costs",
+      "a1794726 docs(graph): publish scope-specific projection costs",
+      "60213ff1 docs(graph): document independent degradation signals",
+      "aeea2ef9 fix(graph): preserve independent degradation metadata",
+      "f29a2200 docs(graph): clarify executor shutdown versions",
+      "e193a8fb style(graph): apply black formatting",
+      "4ad72ebf fix(graph): reject invalid scopes and clarify retries",
+      "438d617b test(graph): pin lint-mode cache isolation",
+      "a401e69f fix(graph): report degraded projection paths",
+      "bdd75ecb fix(graph): bound canonical projection cache",
+      "7828120b docs(graph): correct cache contract comments",
+      "5d4c05e5 docs(graph): clarify queue rejection status",
+      "3ea8077d docs(graph): report observed cold-build range",
+      "32a56240 docs(graph): record lint cold-build cost",
+      "1010865f fix(graph): distinguish rejected queue admission",
+      "ba3a917d fix(graph): preserve retry convergence and bound queue",
+      "31073691 fix(graph): keep cold projections alive past request timeout",
+      "cf03055e docs(graph): correct cold-build measurement",
+      "2caf5728 feat(graph): expose providers and retryable timeouts"
+    ]
+  },
+  {
+    "branch": "origin/fix/r4-review-round1",
+    "sha": "e5b8bc75147e2ea502e30e839e8cb52531053951",
+    "date": "2026-08-12T19:51:20+10:00",
+    "subject": "Tighten MCP Apps diagnostics and demo docs",
+    "local_only": 134,
+    "branch_only": 23,
+    "paths": [
+      "cao_mcp_apps/README.md",
+      "docs/configuration.md",
+      "docs/mcp-apps.md",
+      "skills/cao-mcp-apps/SKILL.md",
+      "src/cli_agent_orchestrator/ext_apps/apps.py",
+      "src/cli_agent_orchestrator/mcp_server/app_surface_only.py",
+      "src/cli_agent_orchestrator/mcp_server/app_tools.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/plugins/base.py",
+      "src/cli_agent_orchestrator/plugins/builtin/mcp_apps.py",
+      "src/cli_agent_orchestrator/plugins/registry.py",
+      "src/cli_agent_orchestrator/services/config_service.py",
+      "src/cli_agent_orchestrator/skills/cao-mcp-apps/SKILL.md",
+      "test/ext_apps/test_apps.py",
+      "test/mcp_server/test_app_surface_only.py",
+      "test/plugins/builtin/test_mcp_apps.py"
+    ],
+    "missing_source_files": [
+      "src/cli_agent_orchestrator/mcp_server/app_surface_only.py"
+    ],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/ext_apps/apps.py",
+        4,
+        61
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/app_tools.py",
+        0,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/base.py",
+        0,
+        5
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/mcp_apps.py",
+        0,
+        31
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/registry.py",
+        1,
+        7
+      ],
+      [
+        "src/cli_agent_orchestrator/services/config_service.py",
+        0,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/skills/cao-mcp-apps/SKILL.md",
+        0,
+        5
+      ]
+    ],
+    "commits": [
+      "e5b8bc75 Tighten MCP Apps diagnostics and demo docs",
+      "cc3aeb13 Document graph surface in MCP Apps skill",
+      "f680053f Document MCP App graph layout",
+      "354c0818 Correct MCP Apps resource documentation",
+      "30141780 Complete MCP App artifact diagnostics",
+      "3d06b85b Harden MCP App fallback path assertion",
+      "763d6db6 Harden MCP App artifact fallback diagnostics",
+      "02be01a5 Align MCP App resource body resolution",
+      "517355c3 Freeze MCP App resource directories",
+      "a8833080 Strengthen MCP App artifact diagnostics tests",
+      "7e51fb6c Report missing MCP App artifacts",
+      "c113b523 Fix MCP Apps diagnostics and integration docs",
+      "b245e551 fix(mcp): surface app resource build posture",
+      "a17a1c11 docs(mcp): explain exact app surface matching",
+      "72313303 fix(mcp): surface apps-only security posture",
+      "7ce33768 docs(mcp): clarify event stream outage impact",
+      "ca8ddc81 fix(mcp): default deny namespaced app tools",
+      "f371c3d0 fix(mcp): align app surface listing and calls",
+      "b11756c0 test(mcp): isolate namespace delimiter invariant",
+      "c463ea83 test(mcp): pin namespaced suffix assumption",
+      "53d4cdb7 docs(mcp): record dashboard app-tool outage",
+      "7bea940e fix(mcp): address app surface review findings",
+      "1b0e9f28 feat(mcp): add app-surface-only mode"
+    ]
+  },
+  {
+    "branch": "origin/fix/redos-provider-output-parsers",
+    "sha": "48be4261ef1c089a5e7bebd39aa71e7b1e122c5c",
+    "date": "2026-09-02T10:08:46+10:00",
+    "subject": "fix: address remaining minimax ReDoS findings",
+    "local_only": 105,
+    "branch_only": 2,
+    "paths": [
+      "src/cli_agent_orchestrator/providers/codex.py",
+      "src/cli_agent_orchestrator/providers/kimi_cli.py",
+      "src/cli_agent_orchestrator/providers/minimax_code.py",
+      "test/providers/test_codex_provider_unit.py",
+      "test/providers/test_kimi_cli_unit.py",
+      "test/providers/test_minimax_code_unit.py"
+    ],
+    "missing_source_files": [],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/providers/codex.py",
+        0,
+        21
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/kimi_cli.py",
+        0,
+        29
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/minimax_code.py",
+        0,
+        5
+      ]
+    ],
+    "commits": [
+      "48be4261 fix: address remaining minimax ReDoS findings",
+      "0eceabed fix: avoid ReDoS in provider output parsers"
+    ]
+  },
+  {
+    "branch": "origin/fix/remove-some-comments",
+    "sha": "992e45944b8939c4a1df57dcce5e1e748538fd88",
+    "date": "2026-07-02T12:53:30+10:00",
+    "subject": "quickly remove some comments",
+    "local_only": 264,
+    "branch_only": 2,
+    "paths": [
+      "src/cli_agent_orchestrator/ext_apps/apps.py",
+      "src/cli_agent_orchestrator/providers/antigravity_cli.py",
+      "src/cli_agent_orchestrator/providers/base.py",
+      "src/cli_agent_orchestrator/providers/claude_code.py",
+      "src/cli_agent_orchestrator/providers/codex.py",
+      "src/cli_agent_orchestrator/providers/copilot_cli.py",
+      "src/cli_agent_orchestrator/providers/cursor_cli.py",
+      "src/cli_agent_orchestrator/providers/hermes.py",
+      "src/cli_agent_orchestrator/providers/kimi_cli.py",
+      "src/cli_agent_orchestrator/providers/kiro_cli.py",
+      "src/cli_agent_orchestrator/providers/opencode_cli.py",
+      "test/providers/test_native_status_shared.py"
+    ],
+    "missing_source_files": [],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/providers/antigravity_cli.py",
+        2,
+        3
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/base.py",
+        64,
+        74
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/claude_code.py",
+        0,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/codex.py",
+        1,
+        2
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/copilot_cli.py",
+        1,
+        2
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/cursor_cli.py",
+        2,
+        3
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/hermes.py",
+        1,
+        2
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/kimi_cli.py",
+        6,
+        7
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/kiro_cli.py",
+        8,
+        9
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/opencode_cli.py",
+        1,
+        2
+      ]
+    ],
+    "commits": [
+      "992e4594 quickly remove some comments",
+      "de0b90c9 fix(providers): read herdr native status in all providers (#359)"
+    ]
+  },
+  {
+    "branch": "origin/joeguo/eks-elastic-contrib",
+    "sha": "b33bc6aae3b4fa6a4725bb78148ba52582c973fd",
+    "date": "2026-08-25T17:54:10+10:00",
+    "subject": "test(mcp): cover the lease state machine, provider resolution, and fan-out",
+    "local_only": 105,
+    "branch_only": 23,
+    "paths": [
+      ".dockerignore",
+      ".gitignore",
+      "README.md",
+      "docker/Dockerfile",
+      "docker/Dockerfile.broker",
+      "docker/entrypoint.sh",
+      "docker/test_entrypoint.sh",
+      "k8s/README.md",
+      "k8s/broker.py",
+      "k8s/broker.yaml",
+      "k8s/deploy.sh",
+      "k8s/external-secret.yaml",
+      "k8s/iac/infrastructure.yaml",
+      "k8s/kustomization.yaml",
+      "k8s/namespace.yaml",
+      "k8s/networkpolicy.yaml",
+      "k8s/rbac.yaml",
+      "k8s/storage.yaml",
+      "k8s/storageclass-gp3.yaml",
+      "k8s/supervisor.yaml",
+      "k8s/test_broker.py",
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/constants.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/models/terminal.py",
+      "src/cli_agent_orchestrator/plugins/builtin/claude_code_memory.py",
+      "src/cli_agent_orchestrator/plugins/builtin/codex_memory.py",
+      "src/cli_agent_orchestrator/plugins/builtin/kiro_cli_memory.py",
+      "src/cli_agent_orchestrator/services/install_service.py",
+      "src/cli_agent_orchestrator/services/memory_gateway.py",
+      "src/cli_agent_orchestrator/services/memory_service.py",
+      "src/cli_agent_orchestrator/services/settings_service.py",
+      "src/cli_agent_orchestrator/services/terminal_service.py",
+      "test/api/test_terminal_limit_429.py",
+      "test/mcp_server/test_elastic_workers.py",
+      "test/mcp_server/test_remote_target.py",
+      "test/services/test_cross_node_notify.py",
+      "test/services/test_memory_gateway.py",
+      "test/services/test_terminal_limit.py",
+      "uv.lock"
+    ],
+    "missing_source_files": [],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        85,
+        90
+      ],
+      [
+        "src/cli_agent_orchestrator/constants.py",
+        3,
+        3
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/server.py",
+        192,
+        462
+      ],
+      [
+        "src/cli_agent_orchestrator/models/terminal.py",
+        10,
+        11
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/claude_code_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/codex_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/kiro_cli_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/services/install_service.py",
+        3,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_gateway.py",
+        66,
+        84
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_service.py",
+        9,
+        9
+      ],
+      [
+        "src/cli_agent_orchestrator/services/settings_service.py",
+        22,
+        23
+      ],
+      [
+        "src/cli_agent_orchestrator/services/terminal_service.py",
+        48,
+        56
+      ]
+    ],
+    "commits": [
+      "b33bc6aa test(mcp): cover the lease state machine, provider resolution, and fan-out",
+      "febe4958 feat(mcp): non-blocking elastic placement, provider from broker, readiness wait",
+      "87aca08a docs(k8s): document both provider paths, and kiro-cli's auth ceiling",
+      "361b1d1a feat(k8s): CFN stack - Pod Identity, ECR teardown, etcd envelope encryption",
+      "5c2b4f2e feat(k8s): deployable topology - kustomize, supervisor, network policy",
+      "cd67f5a2 feat(k8s): lease state machine and reaper in the worker broker",
+      "accf5122 feat(k8s): add deploy.sh and a tested container entrypoint",
+      "1ffd2127 feat(k8s): add elastic worker jobs and shared memory",
+      "c9587166 fix(k8s): Ship the gp3 StorageClass with the manifests, not the IaC",
+      "a6e9665b refactor(k8s): Combine all AWS resources into one stack",
+      "44a9d60e feat(k8s): Add tested VPC + EKS CloudFormation stack",
+      "f8651e85 docs(k8s): Simplify deployment guide and remove environment specifics",
+      "55b097ff feat(k8s): Add CloudFormation stack for CAO-specific AWS resources",
+      "e15f56f2 docs(k8s): Add EKS deployment runbook",
+      "2ba965d5 feat(k8s): Run a real provider with credentials and persistent state",
+      "d8995873 fix(k8s): Fix panel probes and bound egress for both roles",
+      "fb784132 fix(docker): Make image buildable and add provider layer",
+      "0d2012e1 fix(install): Persist resolved provider into installed profile",
+      "15da0082 feat(k8s): Mount shared EFS workspace into supervisor and worker pods",
+      "697ad979 Revert \"feat(k8s): Bootstrap agent workspaces via git instead of volume mounts\"",
+      "296e0cfe feat(k8s): Bootstrap agent workspaces via git instead of volume mounts",
+      "37d412cc feat(k8s): Add cross-node placement and per-node terminal cap",
+      "0deb1c6f feat(k8s): Add Dockerfile and Kubernetes deployment support"
+    ]
+  },
+  {
+    "branch": "origin/joeguo/eks-v2-fleet-cli",
+    "sha": "ebf9ac933d37a622355e3c3602e36a87cd83a426",
+    "date": "2026-09-11T11:38:52+10:00",
+    "subject": "fix fleet lifecycle and log follow review findings",
+    "local_only": 67,
+    "branch_only": 13,
+    "paths": [
+      "docs/configuration.md",
+      "docs/control-planes.md",
+      "examples/cao-clusters/kubernetes/eks/Dockerfile.broker",
+      "examples/cao-clusters/kubernetes/eks/README.md",
+      "examples/cao-clusters/kubernetes/eks/broker.py",
+      "examples/cao-clusters/kubernetes/eks/broker.yaml",
+      "examples/cao-clusters/kubernetes/eks/configmap-fleet.yaml",
+      "examples/cao-clusters/kubernetes/eks/deploy.sh",
+      "examples/cao-clusters/kubernetes/eks/iac/cfn-infrastructure.yaml",
+      "examples/cao-clusters/kubernetes/eks/kustomization.yaml",
+      "examples/cao-clusters/kubernetes/eks/networkpolicy.yaml",
+      "examples/cao-clusters/kubernetes/eks/panel.yaml",
+      "examples/cao-clusters/kubernetes/eks/rbac.yaml",
+      "examples/cao-clusters/kubernetes/eks/supervisor.yaml",
+      "examples/cao-clusters/kubernetes/eks/test_broker.py",
+      "src/cli_agent_orchestrator/cli/commands/fleet.py",
+      "src/cli_agent_orchestrator/cli/commands/worker.py",
+      "src/cli_agent_orchestrator/cli/main.py",
+      "src/cli_agent_orchestrator/constants.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/providers/claude_code.py",
+      "src/cli_agent_orchestrator/services/settings_service.py",
+      "src/cli_agent_orchestrator/utils/fleet.py",
+      "src/cli_agent_orchestrator/utils/orchestration.py",
+      "src/cli_agent_orchestrator/utils/terminal.py",
+      "test/cli/commands/test_fleet.py",
+      "test/cli/commands/test_worker.py",
+      "test/mcp_server/test_elastic_workers.py",
+      "test/providers/test_claude_code_unit.py",
+      "test/utils/test_fleet_client.py",
+      "tui/src/catalog.rs",
+      "tui/src/server.rs",
+      "tui/tests/no_backend_attach_call.rs"
+    ],
+    "missing_source_files": [],
+    "line_presence": [
+      [
+        "examples/cao-clusters/kubernetes/eks/Dockerfile.broker",
+        1,
+        1
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/README.md",
+        22,
+        22
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/broker.py",
+        423,
+        433
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/broker.yaml",
+        1,
+        1
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/iac/cfn-infrastructure.yaml",
+        1,
+        1
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/networkpolicy.yaml",
+        2,
+        2
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/rbac.yaml",
+        4,
+        4
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/test_broker.py",
+        488,
+        491
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/commands/fleet.py",
+        82,
+        82
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/commands/worker.py",
+        152,
+        153
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/main.py",
+        4,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/constants.py",
+        3,
+        3
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/server.py",
+        2,
+        2
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/claude_code.py",
+        1,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/services/settings_service.py",
+        2,
+        2
+      ],
+      [
+        "src/cli_agent_orchestrator/utils/fleet.py",
+        144,
+        145
+      ],
+      [
+        "src/cli_agent_orchestrator/utils/orchestration.py",
+        1,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/utils/terminal.py",
+        13,
+        13
+      ],
+      [
+        "tui/src/catalog.rs",
+        108,
+        113
+      ],
+      [
+        "tui/src/server.rs",
+        9,
+        9
+      ]
+    ],
+    "commits": [
+      "ebf9ac93 fix fleet lifecycle and log follow review findings",
+      "34a20198 fix(fleet): harden elastic worker lifecycle and CLI invariants",
+      "3e1b7f0d docs(fleet): say where a fleet comes from, and align `--yes` with the repo",
+      "d7edd017 docs(control-planes): add the remote-fleet surface",
+      "8a006b5a test(fleet): unit-test the fleet CLI and its broker client",
+      "89a8439c fix(fleet): make `shutdown --json` fail closed and exit non-zero",
+      "9943e4d2 test(eks): pin the lease ledger's one-hour retention window",
+      "419ab68d refactor(eks): name the worker scratch root after workers, not jobs",
+      "48ce25cd fix(broker): label the worker Service so the panel can actually reach it",
+      "530011f5 fix(broker): dial a worker's pod IP, not its Service, from the proxy",
+      "16dc4049 fix(eks): replace the pod deadline a Deployment cannot carry with an orphan sweep",
+      "8353c3d1 feat(cli): add `cao fleet` and `cao worker` for remote CAO clusters",
+      "dbc422b1 feat(eks): run elastic workers as Deployments instead of Jobs"
+    ]
+  },
+  {
+    "branch": "origin/joeguo/eks-v2-workshop",
+    "sha": "06c3e8889c50eeaa8b66e89e071f766eec7a7d3c",
+    "date": "2026-09-04T13:39:59+10:00",
+    "subject": "style(fleet): take the PR branch's formatting for the two CLI files",
+    "local_only": 81,
+    "branch_only": 25,
+    "paths": [
+      ".gitignore",
+      "docs/configuration.md",
+      "docs/control-planes.md",
+      "examples/cao-clusters/kubernetes/eks/Dockerfile.panel",
+      "examples/cao-clusters/kubernetes/eks/Dockerfile.panel.dockerignore",
+      "examples/cao-clusters/kubernetes/eks/README.md",
+      "examples/cao-clusters/kubernetes/eks/broker.py",
+      "examples/cao-clusters/kubernetes/eks/broker.yaml",
+      "examples/cao-clusters/kubernetes/eks/configmap-fleet.yaml",
+      "examples/cao-clusters/kubernetes/eks/deploy.sh",
+      "examples/cao-clusters/kubernetes/eks/iac/cfn-infrastructure.yaml",
+      "examples/cao-clusters/kubernetes/eks/kustomization.yaml",
+      "examples/cao-clusters/kubernetes/eks/networkpolicy.yaml",
+      "examples/cao-clusters/kubernetes/eks/panel.yaml",
+      "examples/cao-clusters/kubernetes/eks/rbac.yaml",
+      "examples/cao-clusters/kubernetes/eks/supervisor.yaml",
+      "examples/cao-clusters/kubernetes/eks/test_broker.py",
+      "examples/fleet/panel/README.md",
+      "examples/fleet/panel/app/config.py",
+      "examples/fleet/panel/app/main.py",
+      "examples/fleet/panel/pyproject.toml",
+      "examples/fleet/panel/test/conftest.py",
+      "examples/fleet/panel/test/test_api.py",
+      "examples/fleet/panel/test/test_config.py",
+      "src/cli_agent_orchestrator/cli/commands/fleet.py",
+      "src/cli_agent_orchestrator/cli/commands/worker.py",
+      "src/cli_agent_orchestrator/cli/main.py",
+      "src/cli_agent_orchestrator/constants.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/services/settings_service.py",
+      "src/cli_agent_orchestrator/utils/fleet.py",
+      "src/cli_agent_orchestrator/utils/orchestration.py",
+      "src/cli_agent_orchestrator/utils/terminal.py",
+      "test/cli/commands/test_fleet.py",
+      "test/cli/commands/test_worker.py",
+      "test/mcp_server/test_elastic_workers.py",
+      "test/utils/test_fleet_client.py",
+      "tui/src/catalog.rs",
+      "tui/src/server.rs",
+      "tui/tests/no_backend_attach_call.rs",
+      "web/src/App.tsx",
+      "web/src/api.ts",
+      "web/src/components/AgentPanel.tsx",
+      "web/src/components/DashboardHome.tsx",
+      "web/src/components/FlowsPanel.tsx",
+      "web/src/components/MemoryPanel.tsx",
+      "web/src/components/NodeSwitcher.tsx",
+      "web/src/components/SettingsPanel.tsx",
+      "web/src/components/TerminalView.tsx",
+      "web/src/components/workflow/useEventFollow.ts",
+      "web/src/store.ts",
+      "web/src/test/fleet-boot.test.tsx",
+      "web/src/test/fleet-routing.test.ts",
+      "web/src/vite-env.d.ts"
+    ],
+    "missing_source_files": [
+      "web/src/components/NodeSwitcher.tsx",
+      "web/src/test/fleet-boot.test.tsx",
+      "web/src/test/fleet-routing.test.ts"
+    ],
+    "line_presence": [
+      [
+        "examples/cao-clusters/kubernetes/eks/Dockerfile.panel",
+        0,
+        5
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/Dockerfile.panel.dockerignore",
+        0,
+        1
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/README.md",
+        25,
+        98
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/broker.py",
+        270,
+        301
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/broker.yaml",
+        1,
+        1
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/iac/cfn-infrastructure.yaml",
+        1,
+        1
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/networkpolicy.yaml",
+        4,
+        4
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/panel.yaml",
+        0,
+        5
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/rbac.yaml",
+        18,
+        25
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/supervisor.yaml",
+        0,
+        1
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/test_broker.py",
+        338,
+        351
+      ],
+      [
+        "examples/fleet/panel/README.md",
+        0,
+        74
+      ],
+      [
+        "examples/fleet/panel/app/config.py",
+        5,
+        133
+      ],
+      [
+        "examples/fleet/panel/app/main.py",
+        4,
+        183
+      ],
+      [
+        "examples/fleet/panel/pyproject.toml",
+        0,
+        1
+      ],
+      [
+        "examples/fleet/panel/test/conftest.py",
+        0,
+        5
+      ],
+      [
+        "examples/fleet/panel/test/test_api.py",
+        45,
+        369
+      ],
+      [
+        "examples/fleet/panel/test/test_config.py",
+        2,
+        140
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/commands/fleet.py",
+        64,
+        70
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/commands/worker.py",
+        149,
+        153
+      ],
+      [
+        "src/cli_agent_orchestrator/cli/main.py",
+        4,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/constants.py",
+        3,
+        3
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/server.py",
+        2,
+        2
+      ],
+      [
+        "src/cli_agent_orchestrator/services/settings_service.py",
+        2,
+        2
+      ],
+      [
+        "src/cli_agent_orchestrator/utils/fleet.py",
+        117,
+        125
+      ],
+      [
+        "src/cli_agent_orchestrator/utils/orchestration.py",
+        1,
+        1
+      ],
+      [
+        "src/cli_agent_orchestrator/utils/terminal.py",
+        13,
+        13
+      ],
+      [
+        "tui/src/catalog.rs",
+        108,
+        113
+      ],
+      [
+        "tui/src/server.rs",
+        9,
+        9
+      ],
+      [
+        "web/src/App.tsx",
+        10,
+        45
+      ],
+      [
+        "web/src/api.ts",
+        5,
+        33
+      ],
+      [
+        "web/src/components/AgentPanel.tsx",
+        0,
+        6
+      ],
+      [
+        "web/src/components/DashboardHome.tsx",
+        2,
+        5
+      ],
+      [
+        "web/src/components/FlowsPanel.tsx",
+        0,
+        5
+      ],
+      [
+        "web/src/components/MemoryPanel.tsx",
+        0,
+        2
+      ],
+      [
+        "web/src/components/SettingsPanel.tsx",
+        0,
+        2
+      ],
+      [
+        "web/src/components/TerminalView.tsx",
+        0,
+        2
+      ],
+      [
+        "web/src/components/workflow/useEventFollow.ts",
+        2,
+        2
+      ],
+      [
+        "web/src/store.ts",
+        10,
+        42
+      ]
+    ],
+    "commits": [
+      "06c3e888 style(fleet): take the PR branch's formatting for the two CLI files",
+      "82365b65 docs(fleet): say where a fleet comes from, and align `--yes` with the repo",
+      "230d75e7 docs(control-planes): add the remote-fleet surface",
+      "659d1457 test(fleet): unit-test the fleet CLI and its broker client",
+      "27317433 fix(fleet): make `shutdown --json` fail closed and exit non-zero",
+      "3c931e6f test(eks): pin the lease ledger's one-hour retention window",
+      "a31830ac Rename `cao cluster` to `cao fleet`",
+      "3009378a refactor(eks): name the worker scratch root after workers, not jobs",
+      "62263fcc fix(worker): show a terminal's status in `cao worker sessions`",
+      "6c314c75 fix(broker): label the worker Service so the panel can actually reach it",
+      "e876b8c2 fix(fleet-panel): stop the proxy being tighter than the client it serves",
+      "7f09e998 docs(fleet-panel): replace the estimated ConfigMap lag with measured numbers",
+      "9df8bd20 feat(fleet-panel): read the fleet registry from the Kubernetes API",
+      "a7bfd7b0 fix(web): refetch per-node data when the active node changes",
+      "89ac98c9 fix(web): hold the first render until fleet discovery resolves",
+      "1eca86e9 fix(fleet-panel): tell a refused terminal from an unreachable node",
+      "3bbee1ce docs(fleet-panel): say why the origin check ignores the scheme",
+      "6be2694e feat(fleet-panel): attach a browser to any node's terminal",
+      "a36579e3 feat(fleet-panel): drive any node in the fleet from the dashboard",
+      "4276387e feat(fleet-panel): serve CAO's own dashboard instead of a second UI",
+      "0f75ed52 fix(web): serve the dashboard from a path prefix",
+      "e9ea18e6 Dial a worker's pod IP, not its Service, from the broker's proxy",
+      "e1a5ccd0 fix(eks): replace the pod deadline a Deployment cannot carry with an orphan sweep",
+      "a6885a16 feat(cli): add cao cluster and cao worker for remote CAO clusters",
+      "f91b7dde feat(eks): run elastic workers as Deployments instead of Jobs"
+    ]
+  },
+  {
+    "branch": "origin/joeguo/fleet-panel-web-ui",
+    "sha": "84df3a929b32e5113ba88a8b25ba044e521ec032",
+    "date": "2026-08-30T02:15:20+10:00",
+    "subject": "fix(broker): label the worker Service so the panel can actually reach it",
+    "local_only": 89,
+    "branch_only": 51,
+    "paths": [
+      ".dockerignore",
+      ".gitignore",
+      "README.md",
+      "examples/cao-clusters/kubernetes/eks/Dockerfile",
+      "examples/cao-clusters/kubernetes/eks/Dockerfile.broker",
+      "examples/cao-clusters/kubernetes/eks/Dockerfile.panel",
+      "examples/cao-clusters/kubernetes/eks/Dockerfile.panel.dockerignore",
+      "examples/cao-clusters/kubernetes/eks/README.md",
+      "examples/cao-clusters/kubernetes/eks/broker.py",
+      "examples/cao-clusters/kubernetes/eks/broker.yaml",
+      "examples/cao-clusters/kubernetes/eks/configmap-fleet.yaml",
+      "examples/cao-clusters/kubernetes/eks/deploy.sh",
+      "examples/cao-clusters/kubernetes/eks/entrypoint.sh",
+      "examples/cao-clusters/kubernetes/eks/external-secret.yaml",
+      "examples/cao-clusters/kubernetes/eks/iac/cfn-infrastructure.yaml",
+      "examples/cao-clusters/kubernetes/eks/kustomization.yaml",
+      "examples/cao-clusters/kubernetes/eks/namespace.yaml",
+      "examples/cao-clusters/kubernetes/eks/networkpolicy.yaml",
+      "examples/cao-clusters/kubernetes/eks/panel.yaml",
+      "examples/cao-clusters/kubernetes/eks/rbac.yaml",
+      "examples/cao-clusters/kubernetes/eks/storage.yaml",
+      "examples/cao-clusters/kubernetes/eks/storageclass-gp3.yaml",
+      "examples/cao-clusters/kubernetes/eks/supervisor.yaml",
+      "examples/cao-clusters/kubernetes/eks/test_broker.py",
+      "examples/cao-clusters/kubernetes/eks/test_entrypoint.sh",
+      "examples/fleet/panel/README.md",
+      "examples/fleet/panel/app/config.py",
+      "examples/fleet/panel/app/main.py",
+      "examples/fleet/panel/pyproject.toml",
+      "examples/fleet/panel/test/conftest.py",
+      "examples/fleet/panel/test/test_api.py",
+      "examples/fleet/panel/test/test_config.py",
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/constants.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/models/terminal.py",
+      "src/cli_agent_orchestrator/plugins/builtin/claude_code_memory.py",
+      "src/cli_agent_orchestrator/plugins/builtin/codex_memory.py",
+      "src/cli_agent_orchestrator/plugins/builtin/kiro_cli_memory.py",
+      "src/cli_agent_orchestrator/providers/claude_code.py",
+      "src/cli_agent_orchestrator/services/install_service.py",
+      "src/cli_agent_orchestrator/services/memory_gateway.py",
+      "src/cli_agent_orchestrator/services/memory_service.py",
+      "src/cli_agent_orchestrator/services/settings_service.py",
+      "src/cli_agent_orchestrator/services/terminal_service.py",
+      "test/api/test_terminal_limit_429.py",
+      "test/mcp_server/test_elastic_workers.py",
+      "test/mcp_server/test_remote_target.py",
+      "test/providers/test_claude_code_coverage.py",
+      "test/providers/test_claude_code_unit.py",
+      "test/providers/test_container_wrapped.py",
+      "test/providers/test_provider_init_timeout.py",
+      "test/providers/test_startup_prompt_idle_gap.py",
+      "test/services/test_cross_node_notify.py",
+      "test/services/test_memory_gateway.py",
+      "test/services/test_terminal_limit.py",
+      "uv.lock",
+      "web/src/App.tsx",
+      "web/src/api.ts",
+      "web/src/components/AgentPanel.tsx",
+      "web/src/components/DashboardHome.tsx",
+      "web/src/components/FlowsPanel.tsx",
+      "web/src/components/MemoryPanel.tsx",
+      "web/src/components/NodeSwitcher.tsx",
+      "web/src/components/SettingsPanel.tsx",
+      "web/src/components/TerminalView.tsx",
+      "web/src/components/workflow/useEventFollow.ts",
+      "web/src/store.ts",
+      "web/src/test/fleet-boot.test.tsx",
+      "web/src/test/fleet-routing.test.ts",
+      "web/src/vite-env.d.ts"
+    ],
+    "missing_source_files": [
+      "examples/cao-clusters/kubernetes/eks/external-secret.yaml",
+      "web/src/components/NodeSwitcher.tsx",
+      "web/src/test/fleet-boot.test.tsx",
+      "web/src/test/fleet-routing.test.ts"
+    ],
+    "line_presence": [
+      [
+        "examples/cao-clusters/kubernetes/eks/Dockerfile",
+        55,
+        57
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/Dockerfile.broker",
+        8,
+        8
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/Dockerfile.panel",
+        11,
+        16
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/Dockerfile.panel.dockerignore",
+        6,
+        7
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/README.md",
+        283,
+        396
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/broker.py",
+        376,
+        443
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/broker.yaml",
+        56,
+        58
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/configmap-fleet.yaml",
+        7,
+        7
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/deploy.sh",
+        71,
+        71
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/entrypoint.sh",
+        50,
+        50
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/iac/cfn-infrastructure.yaml",
+        509,
+        513
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/kustomization.yaml",
+        19,
+        19
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/namespace.yaml",
+        2,
+        2
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/networkpolicy.yaml",
+        70,
+        70
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/panel.yaml",
+        41,
+        46
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/rbac.yaml",
+        53,
+        62
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/storage.yaml",
+        18,
+        18
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/storageclass-gp3.yaml",
+        8,
+        8
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/supervisor.yaml",
+        70,
+        71
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/test_broker.py",
+        208,
+        262
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/test_entrypoint.sh",
+        106,
+        106
+      ],
+      [
+        "examples/fleet/panel/README.md",
+        0,
+        74
+      ],
+      [
+        "examples/fleet/panel/app/config.py",
+        5,
+        133
+      ],
+      [
+        "examples/fleet/panel/app/main.py",
+        4,
+        183
+      ],
+      [
+        "examples/fleet/panel/pyproject.toml",
+        0,
+        1
+      ],
+      [
+        "examples/fleet/panel/test/conftest.py",
+        0,
+        5
+      ],
+      [
+        "examples/fleet/panel/test/test_api.py",
+        45,
+        369
+      ],
+      [
+        "examples/fleet/panel/test/test_config.py",
+        2,
+        140
+      ],
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        85,
+        90
+      ],
+      [
+        "src/cli_agent_orchestrator/constants.py",
+        3,
+        3
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/server.py",
+        192,
+        462
+      ],
+      [
+        "src/cli_agent_orchestrator/models/terminal.py",
+        11,
+        11
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/claude_code_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/codex_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/kiro_cli_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/claude_code.py",
+        58,
+        62
+      ],
+      [
+        "src/cli_agent_orchestrator/services/install_service.py",
+        3,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_gateway.py",
+        66,
+        84
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_service.py",
+        9,
+        9
+      ],
+      [
+        "src/cli_agent_orchestrator/services/settings_service.py",
+        29,
+        31
+      ],
+      [
+        "src/cli_agent_orchestrator/services/terminal_service.py",
+        52,
+        56
+      ],
+      [
+        "web/src/App.tsx",
+        10,
+        45
+      ],
+      [
+        "web/src/api.ts",
+        5,
+        33
+      ],
+      [
+        "web/src/components/AgentPanel.tsx",
+        0,
+        6
+      ],
+      [
+        "web/src/components/DashboardHome.tsx",
+        2,
+        5
+      ],
+      [
+        "web/src/components/FlowsPanel.tsx",
+        0,
+        5
+      ],
+      [
+        "web/src/components/MemoryPanel.tsx",
+        0,
+        2
+      ],
+      [
+        "web/src/components/SettingsPanel.tsx",
+        0,
+        2
+      ],
+      [
+        "web/src/components/TerminalView.tsx",
+        0,
+        2
+      ],
+      [
+        "web/src/components/workflow/useEventFollow.ts",
+        2,
+        2
+      ],
+      [
+        "web/src/store.ts",
+        10,
+        42
+      ]
+    ],
+    "commits": [
+      "84df3a92 fix(broker): label the worker Service so the panel can actually reach it",
+      "5ffaa3ee fix(fleet-panel): stop the proxy being tighter than the client it serves",
+      "99d6686a docs(fleet-panel): replace the estimated ConfigMap lag with measured numbers",
+      "89bc39af feat(fleet-panel): read the fleet registry from the Kubernetes API",
+      "b02d3bbe fix(web): refetch per-node data when the active node changes",
+      "74d0c4ae fix(web): hold the first render until fleet discovery resolves",
+      "81c25daa fix(fleet-panel): tell a refused terminal from an unreachable node",
+      "303858ce docs(fleet-panel): say why the origin check ignores the scheme",
+      "f5ee2207 feat(fleet-panel): attach a browser to any node's terminal",
+      "0463fdb6 feat(fleet-panel): drive any node in the fleet from the dashboard",
+      "4e7253fb feat(fleet-panel): serve CAO's own dashboard instead of a second UI",
+      "2ff7fa98 fix(web): serve the dashboard from a path prefix",
+      "55e2a674 docs(terminals): Say \"tracked\" where the cap counts rows, not liveness",
+      "a64e937b style(mcp): Rewrap to the configured line length",
+      "e6c8f003 feat(examples): organize and validate the EKS deployment",
+      "74549dc8 fix(k8s): Render image repositories from the stack, not a hardcoded name",
+      "52856f7c refactor(api): drop the _origin_authority wrapper, document when the scheme guard applies (#669)",
+      "c7240d92 fix(claude-code): answer startup dialogs that render after the trust prompt",
+      "89114044 Revert to Graviton nodes: the blocker was the sandbox, not the workshop",
+      "87adbfbd feat(k8s): Run the node group on x86_64 m6a rather than Graviton",
+      "b5148231 style(k8s): Keep CloudFormation descriptions ASCII",
+      "313900ad docs(k8s): Record why the secret and the workspace differ on deletion",
+      "03b0dc03 test(mcp): cover the lease state machine, provider resolution, and fan-out",
+      "7fb42da2 feat(mcp): non-blocking elastic placement, provider from broker, readiness wait",
+      "5622a9c6 docs(k8s): document both provider paths, and kiro-cli's auth ceiling",
+      "e338dcd4 feat(k8s): CFN stack - Pod Identity, ECR teardown, etcd envelope encryption",
+      "926f978c feat(k8s): deployable topology - kustomize, supervisor, network policy",
+      "aca6b5ea feat(k8s): lease state machine and reaper in the worker broker",
+      "41bcf041 feat(k8s): add deploy.sh and a tested container entrypoint",
+      "a3ffd93c fix(k8s): Create the ECR repository the panel image needs",
+      "c2731ba7 Let the broker choose the provider, and warn workers not to speak first",
+      "b054d9d6 feat(k8s): Let the broker keep the panel's fleet view current",
+      "f5882f2d feat(k8s): Restore the fleet panel with a buildable image",
+      "40118264 Let both ECR repositories be emptied on delete",
+      "1ffd2127 feat(k8s): add elastic worker jobs and shared memory",
+      "c9587166 fix(k8s): Ship the gp3 StorageClass with the manifests, not the IaC",
+      "a6e9665b refactor(k8s): Combine all AWS resources into one stack",
+      "44a9d60e feat(k8s): Add tested VPC + EKS CloudFormation stack",
+      "f8651e85 docs(k8s): Simplify deployment guide and remove environment specifics",
+      "55b097ff feat(k8s): Add CloudFormation stack for CAO-specific AWS resources",
+      "e15f56f2 docs(k8s): Add EKS deployment runbook",
+      "2ba965d5 feat(k8s): Run a real provider with credentials and persistent state",
+      "d8995873 fix(k8s): Fix panel probes and bound egress for both roles",
+      "fb784132 fix(docker): Make image buildable and add provider layer",
+      "0d2012e1 fix(install): Persist resolved provider into installed profile",
+      "15da0082 feat(k8s): Mount shared EFS workspace into supervisor and worker pods",
+      "697ad979 Revert \"feat(k8s): Bootstrap agent workspaces via git instead of volume mounts\"",
+      "296e0cfe feat(k8s): Bootstrap agent workspaces via git instead of volume mounts",
+      "37d412cc feat(k8s): Add cross-node placement and per-node terminal cap",
+      "0deb1c6f feat(k8s): Add Dockerfile and Kubernetes deployment support"
+    ]
+  },
+  {
+    "branch": "origin/joeguo/fleet-panel-web-ui-v2",
+    "sha": "b395f5a745cb1bde4e2ee36de12c0ee0a36c60a2",
+    "date": "2026-09-02T20:32:44+10:00",
+    "subject": "fix(broker): label the worker Service so the panel can actually reach it",
+    "local_only": 81,
+    "branch_only": 12,
+    "paths": [
+      ".gitignore",
+      "examples/cao-clusters/kubernetes/eks/Dockerfile.panel",
+      "examples/cao-clusters/kubernetes/eks/Dockerfile.panel.dockerignore",
+      "examples/cao-clusters/kubernetes/eks/README.md",
+      "examples/cao-clusters/kubernetes/eks/broker.py",
+      "examples/cao-clusters/kubernetes/eks/configmap-fleet.yaml",
+      "examples/cao-clusters/kubernetes/eks/networkpolicy.yaml",
+      "examples/cao-clusters/kubernetes/eks/panel.yaml",
+      "examples/cao-clusters/kubernetes/eks/rbac.yaml",
+      "examples/cao-clusters/kubernetes/eks/supervisor.yaml",
+      "examples/cao-clusters/kubernetes/eks/test_broker.py",
+      "examples/fleet/panel/README.md",
+      "examples/fleet/panel/app/config.py",
+      "examples/fleet/panel/app/main.py",
+      "examples/fleet/panel/pyproject.toml",
+      "examples/fleet/panel/test/conftest.py",
+      "examples/fleet/panel/test/test_api.py",
+      "examples/fleet/panel/test/test_config.py",
+      "web/src/App.tsx",
+      "web/src/api.ts",
+      "web/src/components/AgentPanel.tsx",
+      "web/src/components/DashboardHome.tsx",
+      "web/src/components/FlowsPanel.tsx",
+      "web/src/components/MemoryPanel.tsx",
+      "web/src/components/NodeSwitcher.tsx",
+      "web/src/components/SettingsPanel.tsx",
+      "web/src/components/TerminalView.tsx",
+      "web/src/components/workflow/useEventFollow.ts",
+      "web/src/store.ts",
+      "web/src/test/fleet-boot.test.tsx",
+      "web/src/test/fleet-routing.test.ts",
+      "web/src/vite-env.d.ts"
+    ],
+    "missing_source_files": [
+      "web/src/components/NodeSwitcher.tsx",
+      "web/src/test/fleet-boot.test.tsx",
+      "web/src/test/fleet-routing.test.ts"
+    ],
+    "line_presence": [
+      [
+        "examples/cao-clusters/kubernetes/eks/Dockerfile.panel",
+        0,
+        5
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/Dockerfile.panel.dockerignore",
+        0,
+        1
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/README.md",
+        3,
+        76
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/broker.py",
+        2,
+        3
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/networkpolicy.yaml",
+        2,
+        2
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/panel.yaml",
+        0,
+        5
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/rbac.yaml",
+        14,
+        21
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/supervisor.yaml",
+        0,
+        1
+      ],
+      [
+        "examples/cao-clusters/kubernetes/eks/test_broker.py",
+        5,
+        7
+      ],
+      [
+        "examples/fleet/panel/README.md",
+        0,
+        74
+      ],
+      [
+        "examples/fleet/panel/app/config.py",
+        5,
+        133
+      ],
+      [
+        "examples/fleet/panel/app/main.py",
+        4,
+        183
+      ],
+      [
+        "examples/fleet/panel/pyproject.toml",
+        0,
+        1
+      ],
+      [
+        "examples/fleet/panel/test/conftest.py",
+        0,
+        5
+      ],
+      [
+        "examples/fleet/panel/test/test_api.py",
+        45,
+        369
+      ],
+      [
+        "examples/fleet/panel/test/test_config.py",
+        2,
+        140
+      ],
+      [
+        "web/src/App.tsx",
+        10,
+        45
+      ],
+      [
+        "web/src/api.ts",
+        5,
+        33
+      ],
+      [
+        "web/src/components/AgentPanel.tsx",
+        0,
+        6
+      ],
+      [
+        "web/src/components/DashboardHome.tsx",
+        2,
+        5
+      ],
+      [
+        "web/src/components/FlowsPanel.tsx",
+        0,
+        5
+      ],
+      [
+        "web/src/components/MemoryPanel.tsx",
+        0,
+        2
+      ],
+      [
+        "web/src/components/SettingsPanel.tsx",
+        0,
+        2
+      ],
+      [
+        "web/src/components/TerminalView.tsx",
+        0,
+        2
+      ],
+      [
+        "web/src/components/workflow/useEventFollow.ts",
+        2,
+        2
+      ],
+      [
+        "web/src/store.ts",
+        10,
+        42
+      ]
+    ],
+    "commits": [
+      "b395f5a7 fix(broker): label the worker Service so the panel can actually reach it",
+      "6c5a8cb8 fix(fleet-panel): stop the proxy being tighter than the client it serves",
+      "569a0d2b docs(fleet-panel): replace the estimated ConfigMap lag with measured numbers",
+      "34251456 feat(fleet-panel): read the fleet registry from the Kubernetes API",
+      "2d512eca fix(web): refetch per-node data when the active node changes",
+      "c11681e0 fix(web): hold the first render until fleet discovery resolves",
+      "5cbbb1fd fix(fleet-panel): tell a refused terminal from an unreachable node",
+      "7b860733 docs(fleet-panel): say why the origin check ignores the scheme",
+      "2f98546a feat(fleet-panel): attach a browser to any node's terminal",
+      "ab30a0d0 feat(fleet-panel): drive any node in the fleet from the dashboard",
+      "30c381f6 feat(fleet-panel): serve CAO's own dashboard instead of a second UI",
+      "311edd92 fix(web): serve the dashboard from a path prefix"
+    ]
+  },
+  {
+    "branch": "origin/joeguo/fleet-panel-workshop",
+    "sha": "b6166420e88e66a8be3f6b9375d87413df463ff8",
+    "date": "2026-08-30T02:28:55+10:00",
+    "subject": "docs(fleet-panel): point the prose at this base's manifest paths",
+    "local_only": 105,
+    "branch_only": 48,
+    "paths": [
+      ".dockerignore",
+      ".gitignore",
+      "README.md",
+      "docker/Dockerfile",
+      "docker/Dockerfile.broker",
+      "docker/Dockerfile.panel",
+      "docker/Dockerfile.panel.dockerignore",
+      "docker/entrypoint.sh",
+      "docker/test_entrypoint.sh",
+      "examples/fleet/panel/README.md",
+      "examples/fleet/panel/app/config.py",
+      "examples/fleet/panel/app/main.py",
+      "examples/fleet/panel/pyproject.toml",
+      "examples/fleet/panel/test/conftest.py",
+      "examples/fleet/panel/test/test_api.py",
+      "examples/fleet/panel/test/test_config.py",
+      "k8s/README.md",
+      "k8s/broker.py",
+      "k8s/broker.yaml",
+      "k8s/configmap-fleet.yaml",
+      "k8s/deploy.sh",
+      "k8s/external-secret.yaml",
+      "k8s/iac/infrastructure.yaml",
+      "k8s/kustomization.yaml",
+      "k8s/namespace.yaml",
+      "k8s/networkpolicy.yaml",
+      "k8s/panel.yaml",
+      "k8s/rbac.yaml",
+      "k8s/storage.yaml",
+      "k8s/storageclass-gp3.yaml",
+      "k8s/supervisor.yaml",
+      "k8s/test_broker.py",
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/constants.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/models/terminal.py",
+      "src/cli_agent_orchestrator/plugins/builtin/claude_code_memory.py",
+      "src/cli_agent_orchestrator/plugins/builtin/codex_memory.py",
+      "src/cli_agent_orchestrator/plugins/builtin/kiro_cli_memory.py",
+      "src/cli_agent_orchestrator/providers/claude_code.py",
+      "src/cli_agent_orchestrator/services/install_service.py",
+      "src/cli_agent_orchestrator/services/memory_gateway.py",
+      "src/cli_agent_orchestrator/services/memory_service.py",
+      "src/cli_agent_orchestrator/services/settings_service.py",
+      "src/cli_agent_orchestrator/services/terminal_service.py",
+      "test/api/test_terminal_limit_429.py",
+      "test/mcp_server/test_elastic_workers.py",
+      "test/mcp_server/test_remote_target.py",
+      "test/providers/test_claude_code_coverage.py",
+      "test/providers/test_claude_code_unit.py",
+      "test/providers/test_container_wrapped.py",
+      "test/providers/test_provider_init_timeout.py",
+      "test/providers/test_startup_prompt_idle_gap.py",
+      "test/services/test_cross_node_notify.py",
+      "test/services/test_memory_gateway.py",
+      "test/services/test_terminal_limit.py",
+      "test/test_constants.py",
+      "uv.lock",
+      "web/src/App.tsx",
+      "web/src/api.ts",
+      "web/src/components/AgentPanel.tsx",
+      "web/src/components/DashboardHome.tsx",
+      "web/src/components/FlowsPanel.tsx",
+      "web/src/components/MemoryPanel.tsx",
+      "web/src/components/NodeSwitcher.tsx",
+      "web/src/components/SettingsPanel.tsx",
+      "web/src/components/TerminalView.tsx",
+      "web/src/components/workflow/useEventFollow.ts",
+      "web/src/store.ts",
+      "web/src/test/fleet-boot.test.tsx",
+      "web/src/test/fleet-routing.test.ts",
+      "web/src/vite-env.d.ts"
+    ],
+    "missing_source_files": [
+      "web/src/components/NodeSwitcher.tsx",
+      "web/src/test/fleet-boot.test.tsx",
+      "web/src/test/fleet-routing.test.ts"
+    ],
+    "line_presence": [
+      [
+        "examples/fleet/panel/README.md",
+        0,
+        74
+      ],
+      [
+        "examples/fleet/panel/app/config.py",
+        5,
+        133
+      ],
+      [
+        "examples/fleet/panel/app/main.py",
+        4,
+        183
+      ],
+      [
+        "examples/fleet/panel/pyproject.toml",
+        0,
+        1
+      ],
+      [
+        "examples/fleet/panel/test/conftest.py",
+        0,
+        5
+      ],
+      [
+        "examples/fleet/panel/test/test_api.py",
+        45,
+        369
+      ],
+      [
+        "examples/fleet/panel/test/test_config.py",
+        2,
+        140
+      ],
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        85,
+        90
+      ],
+      [
+        "src/cli_agent_orchestrator/constants.py",
+        10,
+        10
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/server.py",
+        192,
+        462
+      ],
+      [
+        "src/cli_agent_orchestrator/models/terminal.py",
+        10,
+        11
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/claude_code_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/codex_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/kiro_cli_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/claude_code.py",
+        40,
+        42
+      ],
+      [
+        "src/cli_agent_orchestrator/services/install_service.py",
+        3,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_gateway.py",
+        66,
+        84
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_service.py",
+        9,
+        9
+      ],
+      [
+        "src/cli_agent_orchestrator/services/settings_service.py",
+        22,
+        23
+      ],
+      [
+        "src/cli_agent_orchestrator/services/terminal_service.py",
+        48,
+        56
+      ],
+      [
+        "web/src/App.tsx",
+        10,
+        45
+      ],
+      [
+        "web/src/api.ts",
+        5,
+        33
+      ],
+      [
+        "web/src/components/AgentPanel.tsx",
+        0,
+        6
+      ],
+      [
+        "web/src/components/DashboardHome.tsx",
+        2,
+        5
+      ],
+      [
+        "web/src/components/FlowsPanel.tsx",
+        0,
+        5
+      ],
+      [
+        "web/src/components/MemoryPanel.tsx",
+        0,
+        2
+      ],
+      [
+        "web/src/components/SettingsPanel.tsx",
+        0,
+        2
+      ],
+      [
+        "web/src/components/TerminalView.tsx",
+        0,
+        2
+      ],
+      [
+        "web/src/components/workflow/useEventFollow.ts",
+        2,
+        2
+      ],
+      [
+        "web/src/store.ts",
+        10,
+        42
+      ]
+    ],
+    "commits": [
+      "b6166420 docs(fleet-panel): point the prose at this base's manifest paths",
+      "d5e110c8 fix(broker): label the worker Service so the panel can actually reach it",
+      "37773a95 fix(fleet-panel): stop the proxy being tighter than the client it serves",
+      "1b052aba docs(fleet-panel): replace the estimated ConfigMap lag with measured numbers",
+      "8ae2381b feat(fleet-panel): read the fleet registry from the Kubernetes API",
+      "66ada7d4 fix(web): refetch per-node data when the active node changes",
+      "1e1e6bec fix(web): hold the first render until fleet discovery resolves",
+      "9733371b fix(fleet-panel): tell a refused terminal from an unreachable node",
+      "58cb9cea docs(fleet-panel): say why the origin check ignores the scheme",
+      "d173b39c feat(fleet-panel): attach a browser to any node's terminal",
+      "15e7f177 feat(fleet-panel): drive any node in the fleet from the dashboard",
+      "d4c4fd6f feat(fleet-panel): serve CAO's own dashboard instead of a second UI",
+      "48ce6912 fix(web): serve the dashboard from a path prefix",
+      "74549dc8 fix(k8s): Render image repositories from the stack, not a hardcoded name",
+      "52856f7c refactor(api): drop the _origin_authority wrapper, document when the scheme guard applies (#669)",
+      "c7240d92 fix(claude-code): answer startup dialogs that render after the trust prompt",
+      "89114044 Revert to Graviton nodes: the blocker was the sandbox, not the workshop",
+      "87adbfbd feat(k8s): Run the node group on x86_64 m6a rather than Graviton",
+      "b5148231 style(k8s): Keep CloudFormation descriptions ASCII",
+      "313900ad docs(k8s): Record why the secret and the workspace differ on deletion",
+      "03b0dc03 test(mcp): cover the lease state machine, provider resolution, and fan-out",
+      "7fb42da2 feat(mcp): non-blocking elastic placement, provider from broker, readiness wait",
+      "5622a9c6 docs(k8s): document both provider paths, and kiro-cli's auth ceiling",
+      "e338dcd4 feat(k8s): CFN stack - Pod Identity, ECR teardown, etcd envelope encryption",
+      "926f978c feat(k8s): deployable topology - kustomize, supervisor, network policy",
+      "aca6b5ea feat(k8s): lease state machine and reaper in the worker broker",
+      "41bcf041 feat(k8s): add deploy.sh and a tested container entrypoint",
+      "a3ffd93c fix(k8s): Create the ECR repository the panel image needs",
+      "c2731ba7 Let the broker choose the provider, and warn workers not to speak first",
+      "b054d9d6 feat(k8s): Let the broker keep the panel's fleet view current",
+      "f5882f2d feat(k8s): Restore the fleet panel with a buildable image",
+      "40118264 Let both ECR repositories be emptied on delete",
+      "1ffd2127 feat(k8s): add elastic worker jobs and shared memory",
+      "c9587166 fix(k8s): Ship the gp3 StorageClass with the manifests, not the IaC",
+      "a6e9665b refactor(k8s): Combine all AWS resources into one stack",
+      "44a9d60e feat(k8s): Add tested VPC + EKS CloudFormation stack",
+      "f8651e85 docs(k8s): Simplify deployment guide and remove environment specifics",
+      "55b097ff feat(k8s): Add CloudFormation stack for CAO-specific AWS resources",
+      "e15f56f2 docs(k8s): Add EKS deployment runbook",
+      "2ba965d5 feat(k8s): Run a real provider with credentials and persistent state",
+      "d8995873 fix(k8s): Fix panel probes and bound egress for both roles",
+      "fb784132 fix(docker): Make image buildable and add provider layer",
+      "0d2012e1 fix(install): Persist resolved provider into installed profile",
+      "15da0082 feat(k8s): Mount shared EFS workspace into supervisor and worker pods",
+      "697ad979 Revert \"feat(k8s): Bootstrap agent workspaces via git instead of volume mounts\"",
+      "296e0cfe feat(k8s): Bootstrap agent workspaces via git instead of volume mounts",
+      "37d412cc feat(k8s): Add cross-node placement and per-node terminal cap",
+      "0deb1c6f feat(k8s): Add Dockerfile and Kubernetes deployment support"
+    ]
+  },
+  {
+    "branch": "origin/joeguo/k8s-claude-code",
+    "sha": "bff3f1a85b49b17176696f0a6eff3be61889623c",
+    "date": "2026-08-20T18:52:42+10:00",
+    "subject": "fix(k8s): make the image-tag override work on BSD sed, and fail if it does not",
+    "local_only": 131,
+    "branch_only": 22,
+    "paths": [
+      ".dockerignore",
+      ".gitignore",
+      "CHANGELOG.md",
+      "README.md",
+      "docker/Dockerfile",
+      "docker/entrypoint.sh",
+      "k8s/README.md",
+      "k8s/deploy.sh",
+      "k8s/deployment-supervisor.yaml",
+      "k8s/efs-workspace.yaml",
+      "k8s/iac/infrastructure.yaml",
+      "k8s/kustomization.yaml",
+      "k8s/namespace.yaml",
+      "k8s/networkpolicy.yaml",
+      "k8s/service-workers-headless.yaml",
+      "k8s/statefulset-workers.yaml",
+      "k8s/storageclass-gp3.yaml",
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/clients/database.py",
+      "src/cli_agent_orchestrator/constants.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/models/terminal.py",
+      "src/cli_agent_orchestrator/ops_mcp_server/models.py",
+      "src/cli_agent_orchestrator/providers/claude_code.py",
+      "src/cli_agent_orchestrator/services/agent_step.py",
+      "src/cli_agent_orchestrator/services/install_service.py",
+      "src/cli_agent_orchestrator/services/session_service.py",
+      "src/cli_agent_orchestrator/services/settings_service.py",
+      "src/cli_agent_orchestrator/services/terminal_service.py",
+      "test/api/test_flow_api.py",
+      "test/api/test_terminal_limit_429.py",
+      "test/clients/test_database.py",
+      "test/mcp_server/test_remote_target.py",
+      "test/ops_mcp_server/test_server.py",
+      "test/providers/test_claude_code_coverage.py",
+      "test/providers/test_claude_code_unit.py",
+      "test/providers/test_container_wrapped.py",
+      "test/providers/test_provider_init_timeout.py",
+      "test/providers/test_startup_prompt_idle_gap.py",
+      "test/services/test_agent_step.py",
+      "test/services/test_cross_node_notify.py",
+      "test/services/test_flow_service.py",
+      "test/services/test_kiro_engine_phase0.py",
+      "test/services/test_plugin_event_emission.py",
+      "test/services/test_session_service.py",
+      "test/services/test_terminal_limit.py",
+      "test/services/test_terminal_service_coverage.py",
+      "test/services/test_terminal_service_full.py",
+      "uv.lock"
+    ],
+    "missing_source_files": [],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        25,
+        25
+      ],
+      [
+        "src/cli_agent_orchestrator/clients/database.py",
+        10,
+        10
+      ],
+      [
+        "src/cli_agent_orchestrator/constants.py",
+        3,
+        3
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/server.py",
+        72,
+        279
+      ],
+      [
+        "src/cli_agent_orchestrator/models/terminal.py",
+        10,
+        11
+      ],
+      [
+        "src/cli_agent_orchestrator/ops_mcp_server/models.py",
+        14,
+        14
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/claude_code.py",
+        40,
+        42
+      ],
+      [
+        "src/cli_agent_orchestrator/services/agent_step.py",
+        3,
+        5
+      ],
+      [
+        "src/cli_agent_orchestrator/services/install_service.py",
+        3,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/services/session_service.py",
+        31,
+        36
+      ],
+      [
+        "src/cli_agent_orchestrator/services/settings_service.py",
+        22,
+        23
+      ],
+      [
+        "src/cli_agent_orchestrator/services/terminal_service.py",
+        53,
+        61
+      ]
+    ],
+    "commits": [
+      "bff3f1a8 fix(k8s): make the image-tag override work on BSD sed, and fail if it does not",
+      "21e90993 fix(k8s): don't let `aws configure get region` abort deploy.sh under set -e",
+      "994b155e fix(sessions): surface working_directory and agent_profile on list_sessions (#497)",
+      "137948eb fix(agent-step): clean up terminal when output extraction fails (#613)",
+      "bd1f172e fix(api): prevent YAML frontmatter injection in flow creation (RCE) (#604)",
+      "ac103ffb feat(k8s): run the fleet on Claude Code + Bedrock, drop the fleet panel",
+      "ab875322 fix(claude-code): answer startup dialogs that render after the trust prompt",
+      "f7059f29 fix(k8s): Ship the gp3 StorageClass with the manifests, not the IaC",
+      "50aa96ac refactor(k8s): Combine all AWS resources into one stack",
+      "d853d92e feat(k8s): Add tested VPC + EKS CloudFormation stack",
+      "7cfe127b docs(k8s): Simplify deployment guide and remove environment specifics",
+      "89b72cfe feat(k8s): Add CloudFormation stack for CAO-specific AWS resources",
+      "3a9da845 docs(k8s): Add EKS deployment runbook",
+      "84e3e4a4 feat(k8s): Run a real provider with credentials and persistent state",
+      "74530252 fix(k8s): Fix panel probes and bound egress for both roles",
+      "0afd864f fix(docker): Make image buildable and add provider layer",
+      "ae0c19f5 fix(install): Persist resolved provider into installed profile",
+      "d0b398df feat(k8s): Mount shared EFS workspace into supervisor and worker pods",
+      "9339dbe1 Revert \"feat(k8s): Bootstrap agent workspaces via git instead of volume mounts\"",
+      "8691045d feat(k8s): Bootstrap agent workspaces via git instead of volume mounts",
+      "094b3303 feat(k8s): Add cross-node placement and per-node terminal cap",
+      "d93c12c2 feat(k8s): Add Dockerfile and Kubernetes deployment support"
+    ]
+  },
+  {
+    "branch": "origin/joeguo/k8s-elastic",
+    "sha": "c18b29c294bd83c93105027e77aae604372596fb",
+    "date": "2026-08-20T22:48:32+10:00",
+    "subject": "Wrap the broker token: envelope-encrypt Secrets in etcd",
+    "local_only": 131,
+    "branch_only": 29,
+    "paths": [
+      ".dockerignore",
+      ".gitignore",
+      "CHANGELOG.md",
+      "README.md",
+      "docker/Dockerfile",
+      "docker/Dockerfile.broker",
+      "docker/entrypoint.sh",
+      "k8s/README.md",
+      "k8s/broker.py",
+      "k8s/broker.yaml",
+      "k8s/deploy.sh",
+      "k8s/iac/infrastructure.yaml",
+      "k8s/kustomization.yaml",
+      "k8s/namespace.yaml",
+      "k8s/networkpolicy.yaml",
+      "k8s/rbac.yaml",
+      "k8s/storage.yaml",
+      "k8s/storageclass-gp3.yaml",
+      "k8s/supervisor.yaml",
+      "k8s/test_broker.py",
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/clients/database.py",
+      "src/cli_agent_orchestrator/constants.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/models/terminal.py",
+      "src/cli_agent_orchestrator/ops_mcp_server/models.py",
+      "src/cli_agent_orchestrator/plugins/builtin/claude_code_memory.py",
+      "src/cli_agent_orchestrator/plugins/builtin/codex_memory.py",
+      "src/cli_agent_orchestrator/plugins/builtin/kiro_cli_memory.py",
+      "src/cli_agent_orchestrator/providers/claude_code.py",
+      "src/cli_agent_orchestrator/services/agent_step.py",
+      "src/cli_agent_orchestrator/services/install_service.py",
+      "src/cli_agent_orchestrator/services/memory_gateway.py",
+      "src/cli_agent_orchestrator/services/memory_service.py",
+      "src/cli_agent_orchestrator/services/session_service.py",
+      "src/cli_agent_orchestrator/services/settings_service.py",
+      "src/cli_agent_orchestrator/services/terminal_service.py",
+      "test/api/test_flow_api.py",
+      "test/api/test_terminal_limit_429.py",
+      "test/clients/test_database.py",
+      "test/mcp_server/test_elastic_workers.py",
+      "test/mcp_server/test_remote_target.py",
+      "test/ops_mcp_server/test_server.py",
+      "test/providers/test_claude_code_coverage.py",
+      "test/providers/test_claude_code_unit.py",
+      "test/providers/test_container_wrapped.py",
+      "test/providers/test_provider_init_timeout.py",
+      "test/providers/test_startup_prompt_idle_gap.py",
+      "test/services/test_agent_step.py",
+      "test/services/test_cross_node_notify.py",
+      "test/services/test_flow_service.py",
+      "test/services/test_kiro_engine_phase0.py",
+      "test/services/test_memory_gateway.py",
+      "test/services/test_plugin_event_emission.py",
+      "test/services/test_session_service.py",
+      "test/services/test_terminal_limit.py",
+      "test/services/test_terminal_service_coverage.py",
+      "test/services/test_terminal_service_full.py",
+      "uv.lock"
+    ],
+    "missing_source_files": [],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        102,
+        107
+      ],
+      [
+        "src/cli_agent_orchestrator/clients/database.py",
+        10,
+        10
+      ],
+      [
+        "src/cli_agent_orchestrator/constants.py",
+        3,
+        3
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/server.py",
+        182,
+        405
+      ],
+      [
+        "src/cli_agent_orchestrator/models/terminal.py",
+        10,
+        11
+      ],
+      [
+        "src/cli_agent_orchestrator/ops_mcp_server/models.py",
+        14,
+        14
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/claude_code_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/codex_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/kiro_cli_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/claude_code.py",
+        40,
+        42
+      ],
+      [
+        "src/cli_agent_orchestrator/services/agent_step.py",
+        3,
+        5
+      ],
+      [
+        "src/cli_agent_orchestrator/services/install_service.py",
+        3,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_gateway.py",
+        66,
+        84
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_service.py",
+        9,
+        9
+      ],
+      [
+        "src/cli_agent_orchestrator/services/session_service.py",
+        31,
+        36
+      ],
+      [
+        "src/cli_agent_orchestrator/services/settings_service.py",
+        22,
+        23
+      ],
+      [
+        "src/cli_agent_orchestrator/services/terminal_service.py",
+        62,
+        70
+      ]
+    ],
+    "commits": [
+      "c18b29c2 Wrap the broker token: envelope-encrypt Secrets in etcd",
+      "e75c407f Move the default image tag off the fixed fleet's",
+      "7fa343e0 Let both ECR repositories be emptied on delete",
+      "a35f7552 Let the broker choose the provider, and warn workers not to speak first",
+      "c9d3532f Make the elastic topology deployable on Bedrock, and supervise the lease",
+      "8f282d78 feat(k8s): add elastic worker jobs and shared memory",
+      "bff3f1a8 fix(k8s): make the image-tag override work on BSD sed, and fail if it does not",
+      "21e90993 fix(k8s): don't let `aws configure get region` abort deploy.sh under set -e",
+      "994b155e fix(sessions): surface working_directory and agent_profile on list_sessions (#497)",
+      "137948eb fix(agent-step): clean up terminal when output extraction fails (#613)",
+      "bd1f172e fix(api): prevent YAML frontmatter injection in flow creation (RCE) (#604)",
+      "ac103ffb feat(k8s): run the fleet on Claude Code + Bedrock, drop the fleet panel",
+      "ab875322 fix(claude-code): answer startup dialogs that render after the trust prompt",
+      "f7059f29 fix(k8s): Ship the gp3 StorageClass with the manifests, not the IaC",
+      "50aa96ac refactor(k8s): Combine all AWS resources into one stack",
+      "d853d92e feat(k8s): Add tested VPC + EKS CloudFormation stack",
+      "7cfe127b docs(k8s): Simplify deployment guide and remove environment specifics",
+      "89b72cfe feat(k8s): Add CloudFormation stack for CAO-specific AWS resources",
+      "3a9da845 docs(k8s): Add EKS deployment runbook",
+      "84e3e4a4 feat(k8s): Run a real provider with credentials and persistent state",
+      "74530252 fix(k8s): Fix panel probes and bound egress for both roles",
+      "0afd864f fix(docker): Make image buildable and add provider layer",
+      "ae0c19f5 fix(install): Persist resolved provider into installed profile",
+      "d0b398df feat(k8s): Mount shared EFS workspace into supervisor and worker pods",
+      "9339dbe1 Revert \"feat(k8s): Bootstrap agent workspaces via git instead of volume mounts\"",
+      "8691045d feat(k8s): Bootstrap agent workspaces via git instead of volume mounts",
+      "094b3303 feat(k8s): Add cross-node placement and per-node terminal cap",
+      "d93c12c2 feat(k8s): Add Dockerfile and Kubernetes deployment support"
+    ]
+  },
+  {
+    "branch": "origin/joeguo/k8s-elastic-perf",
+    "sha": "74c530801f5f4843a2a3f05fb8dec0a1a089e62d",
+    "date": "2026-08-22T11:21:39+10:00",
+    "subject": "Correct the zombie count in the background warm-up comment",
+    "local_only": 131,
+    "branch_only": 31,
+    "paths": [
+      ".dockerignore",
+      ".gitignore",
+      "CHANGELOG.md",
+      "README.md",
+      "docker/Dockerfile",
+      "docker/Dockerfile.broker",
+      "docker/entrypoint.sh",
+      "docker/test_entrypoint.sh",
+      "k8s/README.md",
+      "k8s/broker.py",
+      "k8s/broker.yaml",
+      "k8s/deploy.sh",
+      "k8s/iac/infrastructure.yaml",
+      "k8s/kustomization.yaml",
+      "k8s/namespace.yaml",
+      "k8s/networkpolicy.yaml",
+      "k8s/rbac.yaml",
+      "k8s/storage.yaml",
+      "k8s/storageclass-gp3.yaml",
+      "k8s/supervisor.yaml",
+      "k8s/test_broker.py",
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/clients/database.py",
+      "src/cli_agent_orchestrator/constants.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/models/terminal.py",
+      "src/cli_agent_orchestrator/ops_mcp_server/models.py",
+      "src/cli_agent_orchestrator/plugins/builtin/claude_code_memory.py",
+      "src/cli_agent_orchestrator/plugins/builtin/codex_memory.py",
+      "src/cli_agent_orchestrator/plugins/builtin/kiro_cli_memory.py",
+      "src/cli_agent_orchestrator/providers/claude_code.py",
+      "src/cli_agent_orchestrator/services/agent_step.py",
+      "src/cli_agent_orchestrator/services/install_service.py",
+      "src/cli_agent_orchestrator/services/memory_gateway.py",
+      "src/cli_agent_orchestrator/services/memory_service.py",
+      "src/cli_agent_orchestrator/services/session_service.py",
+      "src/cli_agent_orchestrator/services/settings_service.py",
+      "src/cli_agent_orchestrator/services/terminal_service.py",
+      "test/api/test_flow_api.py",
+      "test/api/test_terminal_limit_429.py",
+      "test/clients/test_database.py",
+      "test/mcp_server/test_elastic_workers.py",
+      "test/mcp_server/test_remote_target.py",
+      "test/ops_mcp_server/test_server.py",
+      "test/providers/test_claude_code_coverage.py",
+      "test/providers/test_claude_code_unit.py",
+      "test/providers/test_container_wrapped.py",
+      "test/providers/test_provider_init_timeout.py",
+      "test/providers/test_startup_prompt_idle_gap.py",
+      "test/services/test_agent_step.py",
+      "test/services/test_cross_node_notify.py",
+      "test/services/test_flow_service.py",
+      "test/services/test_kiro_engine_phase0.py",
+      "test/services/test_memory_gateway.py",
+      "test/services/test_plugin_event_emission.py",
+      "test/services/test_session_service.py",
+      "test/services/test_terminal_limit.py",
+      "test/services/test_terminal_service_coverage.py",
+      "test/services/test_terminal_service_full.py",
+      "uv.lock"
+    ],
+    "missing_source_files": [],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        102,
+        107
+      ],
+      [
+        "src/cli_agent_orchestrator/clients/database.py",
+        10,
+        10
+      ],
+      [
+        "src/cli_agent_orchestrator/constants.py",
+        3,
+        3
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/server.py",
+        192,
+        456
+      ],
+      [
+        "src/cli_agent_orchestrator/models/terminal.py",
+        10,
+        11
+      ],
+      [
+        "src/cli_agent_orchestrator/ops_mcp_server/models.py",
+        14,
+        14
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/claude_code_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/codex_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/kiro_cli_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/claude_code.py",
+        40,
+        42
+      ],
+      [
+        "src/cli_agent_orchestrator/services/agent_step.py",
+        3,
+        5
+      ],
+      [
+        "src/cli_agent_orchestrator/services/install_service.py",
+        3,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_gateway.py",
+        66,
+        84
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_service.py",
+        9,
+        9
+      ],
+      [
+        "src/cli_agent_orchestrator/services/session_service.py",
+        31,
+        36
+      ],
+      [
+        "src/cli_agent_orchestrator/services/settings_service.py",
+        22,
+        23
+      ],
+      [
+        "src/cli_agent_orchestrator/services/terminal_service.py",
+        62,
+        70
+      ]
+    ],
+    "commits": [
+      "74c53080 Correct the zombie count in the background warm-up comment",
+      "bedbd940 Cut elastic placement latency: 22s to a boot, and stop gating on the wrong thing",
+      "c18b29c2 Wrap the broker token: envelope-encrypt Secrets in etcd",
+      "e75c407f Move the default image tag off the fixed fleet's",
+      "7fa343e0 Let both ECR repositories be emptied on delete",
+      "a35f7552 Let the broker choose the provider, and warn workers not to speak first",
+      "c9d3532f Make the elastic topology deployable on Bedrock, and supervise the lease",
+      "8f282d78 feat(k8s): add elastic worker jobs and shared memory",
+      "bff3f1a8 fix(k8s): make the image-tag override work on BSD sed, and fail if it does not",
+      "21e90993 fix(k8s): don't let `aws configure get region` abort deploy.sh under set -e",
+      "994b155e fix(sessions): surface working_directory and agent_profile on list_sessions (#497)",
+      "137948eb fix(agent-step): clean up terminal when output extraction fails (#613)",
+      "bd1f172e fix(api): prevent YAML frontmatter injection in flow creation (RCE) (#604)",
+      "ac103ffb feat(k8s): run the fleet on Claude Code + Bedrock, drop the fleet panel",
+      "ab875322 fix(claude-code): answer startup dialogs that render after the trust prompt",
+      "f7059f29 fix(k8s): Ship the gp3 StorageClass with the manifests, not the IaC",
+      "50aa96ac refactor(k8s): Combine all AWS resources into one stack",
+      "d853d92e feat(k8s): Add tested VPC + EKS CloudFormation stack",
+      "7cfe127b docs(k8s): Simplify deployment guide and remove environment specifics",
+      "89b72cfe feat(k8s): Add CloudFormation stack for CAO-specific AWS resources",
+      "3a9da845 docs(k8s): Add EKS deployment runbook",
+      "84e3e4a4 feat(k8s): Run a real provider with credentials and persistent state",
+      "74530252 fix(k8s): Fix panel probes and bound egress for both roles",
+      "0afd864f fix(docker): Make image buildable and add provider layer",
+      "ae0c19f5 fix(install): Persist resolved provider into installed profile",
+      "d0b398df feat(k8s): Mount shared EFS workspace into supervisor and worker pods",
+      "9339dbe1 Revert \"feat(k8s): Bootstrap agent workspaces via git instead of volume mounts\"",
+      "8691045d feat(k8s): Bootstrap agent workspaces via git instead of volume mounts",
+      "094b3303 feat(k8s): Add cross-node placement and per-node terminal cap",
+      "d93c12c2 feat(k8s): Add Dockerfile and Kubernetes deployment support"
+    ]
+  },
+  {
+    "branch": "origin/joeguo/k8s-elastic-perf-r2",
+    "sha": "2c53b7ef6927b1d51676e8da5f86829c54e7c179",
+    "date": "2026-08-22T20:10:39+10:00",
+    "subject": "Merge origin/main into the elastic-worker perf branch",
+    "local_only": 112,
+    "branch_only": 32,
+    "paths": [
+      ".dockerignore",
+      ".gitignore",
+      "README.md",
+      "docker/Dockerfile",
+      "docker/Dockerfile.broker",
+      "docker/entrypoint.sh",
+      "docker/test_entrypoint.sh",
+      "k8s/README.md",
+      "k8s/broker.py",
+      "k8s/broker.yaml",
+      "k8s/deploy.sh",
+      "k8s/iac/infrastructure.yaml",
+      "k8s/kustomization.yaml",
+      "k8s/namespace.yaml",
+      "k8s/networkpolicy.yaml",
+      "k8s/rbac.yaml",
+      "k8s/storage.yaml",
+      "k8s/storageclass-gp3.yaml",
+      "k8s/supervisor.yaml",
+      "k8s/test_broker.py",
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/constants.py",
+      "src/cli_agent_orchestrator/mcp_server/server.py",
+      "src/cli_agent_orchestrator/models/terminal.py",
+      "src/cli_agent_orchestrator/plugins/builtin/claude_code_memory.py",
+      "src/cli_agent_orchestrator/plugins/builtin/codex_memory.py",
+      "src/cli_agent_orchestrator/plugins/builtin/kiro_cli_memory.py",
+      "src/cli_agent_orchestrator/providers/claude_code.py",
+      "src/cli_agent_orchestrator/services/install_service.py",
+      "src/cli_agent_orchestrator/services/memory_gateway.py",
+      "src/cli_agent_orchestrator/services/memory_service.py",
+      "src/cli_agent_orchestrator/services/settings_service.py",
+      "src/cli_agent_orchestrator/services/terminal_service.py",
+      "test/api/test_terminal_limit_429.py",
+      "test/mcp_server/test_elastic_workers.py",
+      "test/mcp_server/test_remote_target.py",
+      "test/providers/test_claude_code_coverage.py",
+      "test/providers/test_claude_code_unit.py",
+      "test/providers/test_container_wrapped.py",
+      "test/providers/test_provider_init_timeout.py",
+      "test/providers/test_startup_prompt_idle_gap.py",
+      "test/services/test_cross_node_notify.py",
+      "test/services/test_memory_gateway.py",
+      "test/services/test_terminal_limit.py",
+      "uv.lock"
+    ],
+    "missing_source_files": [],
+    "line_presence": [
+      [
+        "src/cli_agent_orchestrator/api/main.py",
+        85,
+        90
+      ],
+      [
+        "src/cli_agent_orchestrator/constants.py",
+        3,
+        3
+      ],
+      [
+        "src/cli_agent_orchestrator/mcp_server/server.py",
+        192,
+        460
+      ],
+      [
+        "src/cli_agent_orchestrator/models/terminal.py",
+        10,
+        11
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/claude_code_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/codex_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/plugins/builtin/kiro_cli_memory.py",
+        8,
+        8
+      ],
+      [
+        "src/cli_agent_orchestrator/providers/claude_code.py",
+        40,
+        42
+      ],
+      [
+        "src/cli_agent_orchestrator/services/install_service.py",
+        3,
+        4
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_gateway.py",
+        66,
+        84
+      ],
+      [
+        "src/cli_agent_orchestrator/services/memory_service.py",
+        9,
+        9
+      ],
+      [
+        "src/cli_agent_orchestrator/services/settings_service.py",
+        22,
+        23
+      ],
+      [
+        "src/cli_agent_orchestrator/services/terminal_service.py",
+        48,
+        56
+      ]
+    ],
+    "commits": [
+      "74c53080 Correct the zombie count in the background warm-up comment",
+      "bedbd940 Cut elastic placement latency: 22s to a boot, and stop gating on the wrong thing",
+      "c18b29c2 Wrap the broker token: envelope-encrypt Secrets in etcd",
+      "e75c407f Move the default image tag off the fixed fleet's",
+      "7fa343e0 Let both ECR repositories be emptied on delete",
+      "a35f7552 Let the broker choose the provider, and warn workers not to speak first",
+      "c9d3532f Make the elastic topology deployable on Bedrock, and supervise the lease",
+      "8f282d78 feat(k8s): add elastic worker jobs and shared memory",
+      "bff3f1a8 fix(k8s): make the image-tag override work on BSD sed, and fail if it does not",
+      "21e90993 fix(k8s): don't let `aws configure get region` abort deploy.sh under set -e",
+      "994b155e fix(sessions): surface working_directory and agent_profile on list_sessions (#497)",
+      "137948eb fix(agent-step): clean up terminal when output extraction fails (#613)",
+      "bd1f172e fix(api): prevent YAML frontmatter injection in flow creation (RCE) (#604)",
+      "ac103ffb feat(k8s): run the fleet on Claude Code + Bedrock, drop the fleet panel",
+      "ab875322 fix(claude-code): answer startup dialogs that render after the trust prompt",
+      "f7059f29 fix(k8s): Ship the gp3 StorageClass with the manifests, not the IaC",
+      "50aa96ac refactor(k8s): Combine all AWS resources into one stack",
+      "d853d92e feat(k8s): Add tested VPC + EKS CloudFormation stack",
+      "7cfe127b docs(k8s): Simplify deployment guide and remove environment specifics",
+      "89b72cfe feat(k8s): Add CloudFormation stack for CAO-specific AWS resources",
+      "3a9da845 docs(k8s): Add EKS deployment runbook",
+      "84e3e4a4 feat(k8s): Run a real provider with credentials and persistent state",
+      "74530252 fix(k8s): Fix panel probes and bound egress for both roles",
+      "0afd864f fix(docker): Make image buildable and add provider layer",
+      "ae0c19f5 fix(install): Persist resolved provider into installed profile",
+      "d0b398df feat(k8s): Mount shared EFS workspace into supervisor and worker pods",
+      "9339dbe1 Revert \"feat(k8s): Bootstrap agent workspaces via git instead of volume mounts\"",
+      "8691045d feat(k8s): Bootstrap agent workspaces via git instead of volume mounts",
+      "094b3303 feat(k8s): Add cross-node placement and per-node terminal cap",
+      "d93c12c2 feat(k8s): Add Dockerfile and Kubernetes deployment support"
+    ]
+  },
+  {
+    "branch": "origin/main",
+    "sha": "87e2d5f354374ea8acc685275e749992df51cdbd",
+    "date": "2026-10-01T15:45:16+02:00",
+    "subject": "fix(test): isolate child pytest options",
+    "local_only": 0,
+    "branch_only": 0,
+    "paths": []
+  }
+]
