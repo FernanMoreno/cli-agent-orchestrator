@@ -29,8 +29,18 @@ describe("API wrapper", () => {
       const first = await terminalSocketTicketUrl("term/one");
       mockResponse({ ticket: "single-use-two" });
       const second = await terminalSocketTicketUrl("term/one");
+      mockResponse({ ticket: "single-use-three" });
+      const guarded = await terminalSocketTicketUrl(
+        "term/one",
+        undefined,
+        "incarnation/for-question",
+      );
       expect(first).toContain("ticket=single-use-one");
       expect(second).toContain("ticket=single-use-two");
+      expect(new URL(guarded).searchParams.get("ticket")).toBe("single-use-three");
+      expect(new URL(guarded).searchParams.get("expected_incarnation_id")).toBe(
+        "incarnation/for-question",
+      );
       expect(first + second).not.toContain("operator.reusable.token");
       expect(mockFetch).toHaveBeenCalledWith(
         "/terminals/term%2Fone/ws/ticket",

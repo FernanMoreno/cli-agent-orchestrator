@@ -2,9 +2,8 @@
 
 The recommended integrated deployment is now [the automatic Docker installation](docker-installation.md):
 `./install.sh` packages the frontend, backend and login in one application container.
-Its installer migrates the state described below and disables the previous service
-only after successful health checks. Use `./install.sh status`, `start` and `stop`
-for the Docker deployment.
+Persistent state is stored in PostgreSQL scopes; local configuration and lock files remain under the deployment home.
+Use `./install.sh status`, `start` and `stop` for the Docker deployment.
 
 The following commands describe the previous host deployment, retained for rollback.
 CAO runs on this computer as a persistent user service. Interactive providers
@@ -163,48 +162,84 @@ expected revision for replacement. This static worker does not acknowledge or
 submit a model result; the Docker workflow acceptance uses a separate worker
 that implements the authenticated receipt/result protocol.
 
-## Backup and restore
+## PostgreSQL configuration, backup and restore
 
-Stop the service before taking a backup. Use a new destination each time.
-SQLite's backup API includes WAL contents and validates database integrity.
-Private keys remain private. Backups reject symlinks, sockets and devices; tmux
-sockets are stored outside the backed-up directory.
+Each installation has a private version-1 `cao/database-config.json` with `main`,
+`auth` and `peer` targets. A managed Docker installation keeps `main` and `auth`
+in separate schemas and runtime roles in one per-profile PostgreSQL database;
+the peer registry uses a separate per-user service shared by profiles. No database
+port is published to the host. Runtime credentials are in private files beneath
+`cao/postgres/secrets`; runtime roles cannot create schemas or apply migrations.
+An explicit external configuration can point to operator-managed PostgreSQL.
+There is no runtime fallback to a local embedded database.
+
+The packaged `personal_deployment.py backup` command requires the server to be
+stopped so its service lock can fence writers. It writes a private archive outside
+the deployment root. Each physical database grouping is captured with a consistent
+custom-format `pg_dump`; the manifest records scope/schema/store identity, applied
+migration checksums, dump hashes and grouping. Deployment files are included, but
+database configuration, database secrets, bearer files and browser sessions are
+not copied as files. PostgreSQL contents, including auth and peer scopes, are in
+the dumps. The app installer uses this same helper for its private pre-upgrade
+backup.
 
 ```bash
 systemctl --user stop cao-personal.service
 ~/.local/share/cao-personal-runtime/bin/python \
   ~/.local/share/cao-personal-runtime/personal_deployment.py \
-  backup /absolute/path/to/new-backup
+  backup /absolute/path/outside-the-deployment/backup
 systemctl --user start cao-personal.service
 ```
 
-Restore into a new directory; the tool refuses to overwrite an existing instance:
+For managed Docker, run the packaged helper in an administrative container with
+the profile's private network, deployment root and PostgreSQL config mounted; the
+app image and `docker_install.py` use this path for backups. The admin process
+must have network access to the configured `main` and `peer` hosts. Do not expose
+PostgreSQL ports or place passwords in command arguments or environment variables.
+
+Restore always creates a new deployment root and requires a private destination
+database config supplied separately from the archive:
 
 ```bash
 ~/.local/share/cao-personal-runtime/bin/python \
   ~/.local/share/cao-personal-runtime/personal_deployment.py \
   --root /absolute/path/to/new-instance \
-  restore /absolute/path/to/backup
+  restore /absolute/path/to/backup \
+  --database-config /absolute/path/to/private-destination-config.json
 ```
 
-A restored instance retains its issuer, key, account, operator identity and Work
-state. Restore revokes every browser session in the staging copy before publishing
-the destination, so the restored browser must log in again. The restored private
-`client.env` uses the final destination paths.
+The destination config must define all three scopes, retain the archived schema
+names and physical grouping, and point to PostgreSQL endpoints/databases distinct
+from the backup source. Every destination schema must be absent; restore refuses
+to overwrite an existing schema. Migration credentials must be available through
+private secret files, and the restore process must be attached to the destination
+database network. The tool verifies the archive hashes and migration histories,
+restores with `pg_restore` into staging, verifies the stores, then publishes the
+new root. It does not start CAO or change the source deployment.
 
-A restored instance retains its issuer and key. Its ports match the original;
-stop the original before serving the restoration on those ports. Provider
-subscription login files belong to the operator's home and are not copied into
-this deployment backup. Recheck those logins independently after moving machines.
+The main Work store keeps its logical UUID but its restored lease is revoked and
+the store enters `blocked_restore` until an operator reconciles the preserved
+history. Browser sessions are invalidated, so log in again at the restored
+instance. Issuer/account identity is retained; update local ports before serving
+the new instance alongside the source. Provider subscription credentials in the
+operator home are not part of the deployment archive and must be checked separately.
+
+Legacy embedded-store import is not supported. The retired
+`--import-sqlite` and `import-sqlite` commands are rejected before PostgreSQL
+setup or filesystem changes. Preserve an old deployment separately for archival
+or rollback; CAO will not convert it. New deployments use the PostgreSQL backup
+and restore procedure above.
 
 ## Recreate the runtime
 
 Use a Linux directory for the installed runtime. Build the wheel and native TUI
 from the selected checkout, install its frozen dependencies, and copy
 `scripts/personal_deployment.py` and `scripts/local_work_docker_demo.py` beside
-the runtime's `bin/` directory. From the source checkout, run
-`scripts/local_work_docker_demo.py` to build and check the local rootfs; pin the
-resulting `sha256:` image ID. The optional browser Docker acceptance is described
+the runtime's `bin/` directory. From the source checkout, run the local Work
+demo with a dedicated private PostgreSQL config as described in
+[`local-work-docker.md`](local-work-docker.md) to build and check the local
+rootfs; pin the resulting `sha256:` image ID. Do not pass the active operator
+database config to the demo. The optional browser Docker acceptance is described
 in `specs/004-browser-login-sessions/completion-evidence.md`.
 
 ```bash

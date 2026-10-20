@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lista de Tareas</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="contenedor">
+        <header>
+            <h1>📋 Lista de Tareas</h1>
+            <p class="subtitulo">Gestiona tus tareas diarias</p>
+        </header>
+
+        <main>
+            <!-- Formulario para crear tarea -->
+            <section class="seccion-formulario">
+                <h2>Nueva Tarea</h2>
+                <form id="formulario-tarea">
+                    <input 
+                        type="text" 
+                        id="input-titulo" 
+                        placeholder="¿Qué necesitas hacer?" 
+                        required
+                        maxlength="200"
+                    >
+                    <button type="submit" class="btn btn-crear">
+                        ➕ Crear Tarea
+                    </button>
+                </form>
+            </section>
+
+            <!-- Lista de tareas -->
+            <section class="seccion-lista">
+                <h2>Mis Tareas</h2>
+                <div id="estado-carga" class="estado-carga">Cargando tareas...</div>
+                <ul id="lista-tareas" class="lista-tareas"></ul>
+                <div id="lista-vacia" class="lista-vacia" style="display: none;">
+                    <p>No hay tareas. ¡Crea una nueva!</p>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>API: <span id="estado-api">Conectando...</span></p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

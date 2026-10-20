@@ -108,6 +108,9 @@ function routedFetch(overrides: Record<string, (url: string) => any> = {}) {
     if (/\/agents\/profiles\/[^/?]+$/.test(url)) return okJson(DETAIL);
     if (url.includes("/agents/profiles")) return okJson(CATALOG);
     if (url.includes("/memory/status")) return okJson({ enabled: false });
+    if (url.includes("/interaction-wait-graph")) return okJson({ nodes: [], edges: [] });
+    if (url.includes("/interaction-capabilities")) return okJson({ items: [] });
+    if (url.includes("/interactions")) return okJson({ items: [], next_cursor: null });
     if (url.includes("/sessions")) return okJson([]);
     return okJson([]);
   });
@@ -168,6 +171,20 @@ describe("Profiles tab navigation (stage 1)", () => {
       "aria-selected",
       "false",
     );
+  });
+
+  it("appends Questions after current tabs and preserves the existing Agents shortcut", async () => {
+    render(<App />);
+    const questionsTab = await screen.findByRole("tab", { name: /questions/i });
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs[tabs.length - 1]).toBe(questionsTab);
+    expect(screen.getByRole("tab", { name: /agents/i })).toHaveAttribute("title", "Alt+3");
+
+    fireEvent.keyDown(window, { key: "3", altKey: true });
+    expect(screen.getByRole("tab", { name: /agents/i })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(questionsTab);
+    expect(await screen.findByRole("heading", { name: "Questions" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /interaction inbox/i })).toBeInTheDocument();
   });
 });
 

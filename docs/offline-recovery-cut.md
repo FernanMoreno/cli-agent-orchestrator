@@ -3,7 +3,7 @@
 ## Status and scope
 
 T069 provides an internal, server-owned cut for capturing a private recovery
-bundle from the Work SQLite store. It records evidence about the cut and the
+bundle from the Work PostgreSQL store. It records evidence about the cut and the
 integrity of captured objects. It does not provide a product recovery workflow
 or prove that the copied Work state is a consistent, executable snapshot.
 

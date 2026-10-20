@@ -23,6 +23,8 @@ interface TerminalViewProps {
   workItemId?: string;
   /** Terminal liveness/presentation, independent from any durable work state. */
   terminalStatus?: string | null;
+  /** When opened from a question, bind the WebSocket to that exact source incarnation. */
+  expectedInteractionIncarnationId?: string;
   onClose: () => void;
 }
 
@@ -73,6 +75,7 @@ export function TerminalView({
   agentProfile,
   workItemId,
   terminalStatus,
+  expectedInteractionIncarnationId,
   onClose,
 }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -301,7 +304,11 @@ export function TerminalView({
       if (closed || epoch !== getNodeEpoch()) return;
       let url: string;
       try {
-        url = await terminalSocketTicketUrl(terminalId, selectedNodeSignal);
+        url = await terminalSocketTicketUrl(
+          terminalId,
+          selectedNodeSignal,
+          expectedInteractionIncarnationId,
+        );
       } catch {
         if (!closed && epoch === getNodeEpoch()) {
           term.write(
@@ -333,6 +340,12 @@ export function TerminalView({
           term.write(new Uint8Array(e.data));
       };
       ws.onclose = (event) => {
+        if (expectedInteractionIncarnationId && event.code === 4409) {
+          term.write(
+            "\r\n\x1b[31m[Question source incarnation changed; reconnect stopped]\x1b[0m\r\n",
+          );
+          return;
+        }
         term.write(
           "\r\n\x1b[33m[Connection closed; input is never replayed]\x1b[0m\r\n",
         );
@@ -452,7 +465,7 @@ export function TerminalView({
       ws?.close();
       term.dispose();
     };
-  }, [terminalId]);
+  }, [terminalId, expectedInteractionIncarnationId]);
 
   return (
     <div

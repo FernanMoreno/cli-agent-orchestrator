@@ -489,10 +489,10 @@ providers converge on one shared vocabulary instead of drifting apart.
 ### 3. A server-side, query-capable knowledge store
 
 Today's sinks are **export-only** — they serialize a `GraphView` to a file or
-render it, and that's the end of the line. The epic sketches a **second sink
-tier**: a *query-capable* store that a graph could be loaded into and then
-**traversed** — the kind of cross-scope, multi-hop traversal and graph analytics
-that flat SQLite can't do. Issue #348 names **AWS Neptune** as the exemplar of
+render it. PostgreSQL persists memory metadata and edges, but CAO does not expose
+a general graph traversal API. The epic sketches a **second sink tier**: a
+*query-capable* graph store for cross-scope, multi-hop traversal and graph
+analytics. Issue #348 names **AWS Neptune** as the exemplar of
 this tier in its architecture and sink comparison and still lists an unchecked
 **AWS Neptune sink (export + query; infra)** follow-up. It was not delivered by
 PRs #402, #416, #424, or #442. Its differentiating capability depends on the

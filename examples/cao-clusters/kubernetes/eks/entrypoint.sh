@@ -62,12 +62,10 @@ PORT="${CAO_API_PORT:-9889}"
 #   - the seed exists. Absent (an older image, or a plain `docker build` of an
 #     earlier Dockerfile) the code below falls through to `cao init` unchanged.
 #   - CAO_HOME_DIR is exactly the path the seed was built for. Today's seed is
-#     in fact relocatable — the DB is schema-only with zero rows and no file in
-#     it contains an absolute path — so this guard is not what makes the extract
-#     correct right now. It is here to keep that a CHECKED property rather than a
-#     coincidence: the seed carries a SQLite DB and provider context files, and
-#     the day one of them records a path, a mismatched root would fail somewhere
-#     no one traces back to a tar extract in an entrypoint.
+#     in fact relocatable: it contains only generated initial state and provider
+#     context files, with no profile-specific absolute paths. Keep this a checked
+#     property rather than a coincidence so future seed contents cannot silently
+#     become tied to the build-time root.
 #   - the state directory is empty. The supervisor's state is a PVC that
 #     survives restarts, so seeding it on a restart would clobber real work.
 #     The worker's is an emptyDir, so it is always empty and always seeded.

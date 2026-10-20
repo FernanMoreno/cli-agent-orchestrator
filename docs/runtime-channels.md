@@ -10,7 +10,7 @@ Set `CAO_RUNTIME_TOKEN_FILE` (a private file containing a shared channel token),
 or `CAO_RUNTIME_TOKEN`, on the server and bridge. Set `CAO_BRIDGE_RUNTIME_ID` to
 a stable runtime name and `CAO_BRIDGE_SERVER_URL` to
 `wss://your-server/runtime/channel`, then run `cao-bridge`. Use a private CAO home
-and SQLite store on each runtime. The token and token-file environment variables
+and PostgreSQL store on each runtime. The token and token-file environment variables
 are consumed before launching children; rotating the channel token requires a
 restart. The channel token trusts its holder as an execution runtime. It does
 not grant access to native Work-owned terminals or ordinary HTTP API scopes.

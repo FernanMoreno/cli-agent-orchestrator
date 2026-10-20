@@ -17,10 +17,10 @@ WSL y Docker ni coordinación entre computadoras.
 ## Cómo se separan las instancias
 
 Cada `cao-server` necesita su propio `CAO_HOME_DIR` y un puerto distinto. El
-directorio de perfil contiene su configuración, base de datos, identidad y
-clave privada de firma. El registro que permite descubrir procesos activos es
-compartido por el usuario local en
-`~/.aws/cli-agent-orchestrator/local-peers/registry.sqlite3`.
+directorio de perfil contiene su configuración, identidad y clave privada de
+firma. El estado de pares se guarda en el target PostgreSQL `peer`, compartido
+por el usuario local e independiente de los targets privados `main` y `auth` de
+cada perfil.
 
 Abre dos terminales y deja cada servidor ejecutándose en primer plano. Usa el
 host IPv4 loopback admitido por defecto y valores distintos de puerto y nombre:

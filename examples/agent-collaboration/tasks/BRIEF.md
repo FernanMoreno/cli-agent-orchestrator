@@ -1,0 +1,3 @@
+# Mini aplicación de tareas
+
+Construir una API de tareas y una interfaz en español para listar, crear y completar tareas. Python estándar para API, HTML/CSS/JavaScript para frontend. Mismo origen; el servidor local usa 127.0.0.1:8091. En contenedor, configurar CAO_DEMO_HOST=0.0.0.0 para que el puerto publicado pueda llegar al servidor. Datos en archivo JSON del proyecto. Claude delega usando assign a demo-api y demo-frontend. Los trabajadores hablan por send_message y acuerdan CONTRACT.md. Codex trabaja api/; OpenCode frontend/. Claude verifica integración y escribe README.md. Ningún agente escribe el trabajo del otro salvo corrección final acordada.

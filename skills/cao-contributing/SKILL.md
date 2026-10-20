@@ -139,7 +139,7 @@ pins this table to the workflow files.
 - **A test that touches CAO's own state can pass only on your machine.** If a code path
   reaches the real database, config dir, or a live session, it will be green on a
   developer box that has an initialised CAO install and red on a clean runner with
-  `sqlite3.OperationalError: no such table: terminals`. Mock the store/DB seam explicitly;
+  `sqlalchemy.exc.ProgrammingError: relation "terminals" does not exist`. Mock the store/DB seam explicitly;
   when a test exercises a service function, check what that function calls *today* — a
   rebase can introduce a new unmocked DB write into a path your test already covered.
   Verify by running under a throwaway `HOME` **and** a throwaway `CAO_HOME_DIR` —

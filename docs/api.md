@@ -420,6 +420,19 @@ not a local filesystem path.
 `next_cursor`, `high_water`, and explicit retention `gaps`. Limits are 1–1000;
 a cursor beyond the job's high water returns 409, not an empty successful page.
 
+`GET /jobs/{job_id}/messages/stream` is the job-scoped SSE view for generic
+agent messages (`cao.work.message`). It accepts `after_sequence` or the
+`Last-Event-ID` header, replays from the durable Work ledger, and continues
+polling until the client disconnects. Each `TEXT_MESSAGE_CONTENT` frame carries
+only the message id and sender/receiver work-item ids; the message body and its
+digest are never projected. Retention gaps are emitted as a `RAW` frame with
+`from_sequence` and `through_sequence`, so a client can resynchronize instead
+of treating a missing message as successful delivery. The verified principal
+and read scope are established when the stream connects; job ownership is
+revalidated on every page, including after an API restart. A quiet stream uses
+bounded exponential polling (100 ms up to 2 s) to avoid one database query per
+client every 100 ms.
+
 These new read routes require a verified principal with read, write or admin
 scope and ownership of the job. Admin scope alone does not reveal another
 principal's job. Delegated execution grants do not implicitly grant job-wide
@@ -431,7 +444,7 @@ and forwarded headers never supply identity. Missing/inaccessible work returns
 
 MCP tools `get_work_item` and `get_work_events` use these HTTP routes, forwarding
 the configured internal bearer token. Their successful envelopes contain the
-same DTO under `work` or `page`. They never access SQLite directly, translate an
+same DTO under `work` or `page`. They never bypass the repository boundary, translate an
 outage into an empty result, or retry an uncertain execution.
 
 These routes do not activate universal work admission for legacy launches,

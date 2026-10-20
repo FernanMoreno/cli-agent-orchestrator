@@ -156,3 +156,51 @@ de ficheros, red, FD, procesos y ejecución. Los tests que requieren UID 1000
 se ejecutaron como runner; mknod y FS casefold dentro del guest aislado.
 Reportes/hash por nodeid: `specs/001-verifiable-orchestration/omitted-acceptance.json`.
 No cambia la aceptación de un host de producción ni registra WORK_BACKENDS.
+
+## Reproducción de perfil para el digest de build — 2026-10-12
+
+Una reproducción fuera del guest T097 construyó dos veces Bubblewrap upstream
+`0.13.0` desde el mismo archivo fuente fijado
+(`4734237473c0e5d695e4e9034a34e43b2dbf5164655bd13fa59ae376b2b7a765`) en una
+misma ejecución OCI aislada. La imagen usada fue Ubuntu 26.10 amd64 con digest
+`sha256:b18403eb2d06baad26fe088450af83744e456d0e7c46d8319d460ce3a39e1f16`, y
+el build se ejecutó con 2 CPU y límite de memoria de 3 GiB. Las dos compilaciones
+usaron las rutas canónicas `/tmp/bwrap-source/bubblewrap-0.13.0` y
+`/tmp/caos-exec/T097/bubblewrap-build`, además de las opciones release del
+runner: `--prefix=/usr --buildtype=release -Dtests=false -Dman=disabled
+-Dselinux=disabled -Dbash_completion=disabled -Dzsh_completion=disabled`.
+
+El perfil registró GCC `15.3.0-4ubuntu1`, Meson `1.10.1-1ubuntu2`, Ninja
+`1.13.2-1`, binutils/ld.bfd `2.47-6ubuntu1`, `libcap-dev` `1:2.78-1ubuntu1`,
+libcap `2.78` y libc6 `2.44-1ubuntu2`. Las dos salidas tenían SHA-256
+`18a513db177974d371d2c1fbf9d6f8f5b2bcb43565e242e5a7b4bdc4886e4c39`; ambos
+ELF eran PIE con `libcap.so.2` y `libc.so.6` como dependencias dinámicas y
+`BIND_NOW` habilitado. El resultado es una reproducción de digest con
+procedencia registrada, no una ejecución de los casos T097 en el guest.
+
+El digest `18a513db177974d371d2c1fbf9d6f8f5b2bcb43565e242e5a7b4bdc4886e4c39`
+se añade como perfil estático explícito. No se atribuye la diferencia frente a
+los digests históricos a un único factor: las imágenes/paquetes y algunas rutas
+del build difieren, y no se dispone del binario antiguo para una comparación
+controlada. Los digests no revisados siguen rechazándose. La reproducción no
+certifica aceptación T097, no certifica otro host y no activa
+`WORK_BACKENDS`.
+
+El registro privado de la reproducción se conserva fuera del repositorio en
+`/home/felni/.cache/caos-spec021-evidence-20261012/runtime/bwrap-repro-v4/reproduce.stdout.log`
+(SHA-256 `c147ab4086d51158eb9da3c8d1c4c4c3679d765b1e84081dcf7456afa88c0a83`);
+el script que la ejecutó tiene SHA-256
+`86ae080f9fa5d3fb95de8f8d82f5f5f83740146af7ca39bde31933b5328100d`.
+
+## Partición adicional del guest — pendiente de ejecución
+
+La siguiente ejecución T097 añade una partición explícita de tres casos: la
+recuperación de un monitor muerto y los dos bloqueos de vault con rutas que
+difieren solo en mayúsculas/minúsculas. Sus node IDs están fijados en
+`test/integration/t097/extra-filesystem-selectors.txt`. El runner crea una
+imagen ext4 temporal con `casefold`, la monta dentro del guest desechable,
+activa el atributo en un directorio vacío y comprueba la resolución de ambos
+alias antes de ejecutar pytest con un `--basetemp` descendiente. La imagen y el
+mount se eliminan al terminar. Esta preparación no cambia el filesystem del
+host y no cuenta skips como éxitos. La partición está pendiente de una ejecución
+real en el guest; no se presenta como resultado pasado.

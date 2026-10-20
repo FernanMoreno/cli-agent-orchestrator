@@ -80,7 +80,7 @@ Con los tres CLI instalados y sus sesiones vigentes en el mismo WSL/Linux:
 ```
 
 El runner reutiliza `validate_collaboration_demo.py`: copia el proyecto,
-usa HOME/SQLite/tmux/puerto propios y realiza dos rondas. El modo completo
+usa HOME, target PostgreSQL, tmux y puerto propios, y realiza dos rondas. El modo completo
 añade API autenticada, mensajes reales entre trabajadores, handoff y un MCP
 externo contra un servicio HTTP privado, primero disponible y después detenido.
 El controlador da órdenes; los agentes envían sus propios mensajes.

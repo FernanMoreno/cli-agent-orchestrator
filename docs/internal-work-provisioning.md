@@ -4,7 +4,7 @@
 
 ## Principals and selector revisions
 
-The caller must pass two already authenticated `Principal` objects: `admin_context` and `subject`. Both must carry the in-process verification seal and match their durable `work_principals` registration. The administrator must have the admin scope and own the job being provisioned; the subject needs a write or admin scope. IDs, request fields, SQLite rows, or environment values cannot be used to reconstruct either principal.
+The caller must pass two already authenticated `Principal` objects: `admin_context` and `subject`. Both must carry the in-process verification seal and match their durable `work_principals` registration. The administrator must have the admin scope and own the job being provisioned; the subject needs a write or admin scope. IDs, request fields, PostgreSQL rows, or environment values cannot be used to reconstruct either principal.
 
 The logical selector is scoped to `(subject.id, selector)`, so the same selector used for another principal is independent. The service validates the selector and owns the durable provision ID and `ProvisionRef`. Creation requires `expected_revision=0`; replacement requires the exact current revision of an active provision. A replacement keeps the server-generated ID and increments its revision. A stale retry or a retired selection raises `ProvisionConflict` instead of adding another row. The revision check and insert run in the work repository transaction.
 

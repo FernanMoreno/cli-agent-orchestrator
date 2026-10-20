@@ -8,20 +8,36 @@ sin un recibo autenticado del receptor.
 ## Arranque
 
 Requiere Docker accesible por un socket Unix local, un compilador C capaz de
-crear un binario estático y las dependencias Python del proyecto instaladas en
-`.venv`. Desde la raíz del repositorio:
+crear un binario estático, PostgreSQL accesible desde el host y las dependencias
+Python del proyecto instaladas en `.venv`. Prepara primero un archivo privado de
+configuración PostgreSQL para el demo: debe definir `main`, `auth` y `peer`, con
+un esquema vacío y dedicado por ámbito, un UUID de almacén distinto y un rol de
+runtime por ámbito separado del rol de migración. La configuración y cada
+archivo de credenciales deben pertenecer al usuario actual y tener permisos
+`0600`.
+
+No uses la configuración activa del operador. El script requiere que la ruta se
+seleccione expresamente, valida que los esquemas estén vacíos y rechaza los que
+ya tengan objetos o permitan crear objetos a roles no confiables. Desde la raíz
+del repositorio:
 
 ```bash
-.venv/bin/python scripts/local_work_docker_demo.py
+.venv/bin/python scripts/local_work_docker_demo.py \
+  --database-config /absolute/path/to/private-demo-database-config.json
 ```
 
-El script crea una base SQLite y un checkout temporales, construye la imagen
-raíz, genera un emisor JWKS en loopback y un bearer firmado, provisiona el
-selector `local-docker` con los servicios internos y arranca `cao-server` sólo
-en `127.0.0.1`. Imprime la ruta de un archivo privado `client.env` y el comando
-`cao launch` que se ejecuta en otra terminal; usa exactamente esas instrucciones
-mientras el servidor siga abierto. El archivo, el bearer y la base se eliminan
-al detener el demo.
+El script copia la configuración y las credenciales a un perfil temporal
+privado, aplica las migraciones explícitas y siembra el almacén Work con las
+credenciales de migración. Después construye la imagen raíz, genera un emisor
+JWKS en loopback y un bearer firmado, provisiona el selector `local-docker` con
+los servicios internos y arranca `cao-server` sólo en `127.0.0.1`. Imprime la
+ruta de un archivo privado `client.env` y el comando `cao launch` que se ejecuta
+en otra terminal; usa exactamente esas instrucciones mientras el servidor siga
+abierto.
+
+Al detener el demo se eliminan el bearer, la clave del emisor y la copia local
+de la configuración y las credenciales. Los esquemas PostgreSQL y sus datos
+permanecen; el script no borra recursos del servidor de base de datos.
 
 El ingreso exige `CAO_WORK_LAUNCH_MODE=required` en cliente y servidor y
 `CAO_ENABLE_PUBLIC_WORK_INGRESS=true` en el servidor. El backend sólo se

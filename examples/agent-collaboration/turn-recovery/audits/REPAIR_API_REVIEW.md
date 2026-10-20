@@ -1,0 +1,3 @@
+> Historical source review/change record. It describes a bounded earlier state of this demo, not current acceptance. Compare every claim with `../CONTRACT.md` and the current code/tests.
+
+Revisión API: 13 pruebas existentes aprobadas, 0 fallidas (8,402 s). Comando: `PYTHONDONTWRITEBYTECODE=1 python -B -m unittest -v test_api`. Datos temporales y servidor HTTP real en puertos libres. Verificados CRUD, persistencia, validación, estadísticas, borrado de completadas, concurrencia y protección de rutas. Código, pruebas, documentación restante y notes.json intactos. Coordinación completada: PEER_CONTRACT enviado y recibido; PEER_ACK enviado y recibido entre 7ba77601 (API) y 3d89b85a (UI). Contratos compatibles.

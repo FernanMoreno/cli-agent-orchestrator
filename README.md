@@ -50,6 +50,8 @@ Install:
 
 - Python 3.10 or later
 - tmux 3.3 or later
+- PostgreSQL 18 with private runtime credentials and initialized CAO schemas;
+  the [Docker installer](docs/docker-installation.md) provisions a managed instance.
 - [uv](https://docs.astral.sh/uv/)
 - At least one supported provider CLI, authenticated before you launch CAO:
   [Kiro CLI](docs/kiro-cli.md), [Claude Code](docs/claude-code.md),
@@ -89,6 +91,11 @@ cao update
 See [Updating CAO](docs/updating.md) for source-aware behavior and edge cases.
 
 ## First supervisor launch
+
+Configure and bootstrap PostgreSQL before starting `cao-server`. Follow
+[PostgreSQL configuration](docs/postgresql.md) for an external database or use
+the managed Docker installer. Server startup verifies the schema using the
+runtime role; schema initialization is an explicit installer operation.
 
 The unqualified commands below use CAO's default Kiro CLI provider. If you
 installed a different provider, follow its focused guide above for the

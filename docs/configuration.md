@@ -12,7 +12,7 @@ CLI flag  >  CAO_* environment variable  >  settings.json  >  built-in default
 
 ## Data directory (`CAO_HOME_DIR`)
 
-All CAO state lives under a single base directory, `~/.aws/cli-agent-orchestrator` by default: the SQLite DB, logs, FIFOs, memory, the `agent-store` / `agent-context` profile dirs, skills, workflow scratch, and `settings.json` itself.
+CAO's local files live under a single base directory, `~/.aws/cli-agent-orchestrator` by default: logs, FIFOs, memory content, the `agent-store` / `agent-context` profile dirs, skills, workflow scratch, and `settings.json` itself. Durable application state is stored in the configured PostgreSQL targets.
 
 Set the `CAO_HOME_DIR` environment variable to relocate that entire tree:
 
@@ -540,9 +540,9 @@ subject, `kind=jwt` and configured scopes. Local password login does not replace
 an external identity provider or disable JWT enforcement.
 
 The supported personal origin is `http://127.0.0.1:<server_port>` with the explicit
-`loopback_http` transport exception. The private SQLite account/session store is
-`browser-auth.sqlite3` beside `deployment.json`. Enabled configuration with a
-missing store, invalid binding, schema or origin fails closed during startup.
+`loopback_http` transport exception. Browser accounts and sessions use the private
+PostgreSQL `auth` target configured for the deployment. Enabled configuration with
+a missing target, invalid binding, schema or origin fails closed during startup.
 Restart the service after a mode/configuration change.
 
 The default limits in seconds are `access_seconds=3600`,
@@ -557,7 +557,7 @@ for creation, password recovery, mode disablement, backup and restore.
 `CAO_MEMORY_PROJECT_MARKER=true` (or the boolean `memory.project_marker` setting)
 opts a non-Git directory into private `.cao/project_id` identity continuity.
 Explicit project IDs and normalized Git remotes retain precedence. The private
-SQLite registry recognizes directory renames; a surviving copied directory gets a
+PostgreSQL peer registry recognizes directory renames; a surviving copied directory gets a
 separate identity. Unknown, corrupt or replaced markers fall back to the existing
 path identity without adopting their contents. This feature defaults off to
 preserve existing path-based memory bindings during an upgrade. Enabling it records

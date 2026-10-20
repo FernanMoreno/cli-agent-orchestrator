@@ -21,6 +21,15 @@ describe("fleet transport ownership", () => {
     expect(terminalSocketUrl("same-id")).toContain(
       "/nodes/worker%20one/terminals/same-id/ws",
     );
+    const questionTerminal = new URL(
+      terminalSocketUrl("same-id", "single-use-ticket", "question-incarnation"),
+    );
+    expect(questionTerminal.pathname).toBe(
+      "/nodes/worker%20one/terminals/same-id/ws",
+    );
+    expect(questionTerminal.searchParams.get("expected_incarnation_id")).toBe(
+      "question-incarnation",
+    );
   });
 
   it("rejects late HTTP replies after node switch without redelivering", async () => {

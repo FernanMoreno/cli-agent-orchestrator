@@ -18,6 +18,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
+pytest_plugins = ("test.postgres.fixtures",)
+
 
 class _RunStepFakeHandler(BaseHTTPRequestHandler):
     """Records every POST body. Answers 200 with a canned RunStepResponse,
@@ -79,28 +81,39 @@ def fake_run_step_server():
 
 
 @pytest.fixture(autouse=True)
-def _temp_db(tmp_path, monkeypatch):
-    """Isolate every test from the real ``~/.aws/cli-agent-orchestrator`` DB.
+def _temp_db(monkeypatch, postgres_targets):
+    """Bind example runs to a fresh native PostgreSQL test profile.
 
-    ``run_script_workflow`` journals to the configured SQLite file — without
-    this override these tests would write into whatever CAO home the machine
-    running them has configured (mirrors the ``_temp_db`` fixture in
-    ``test/e2e/examples/test_examples_gallery_e2e.py``).
+    The workflow journal is installed by the main-scope component migrations;
+    it uses the shared PostgreSQL test fixture for persistent state.
     """
-    from cli_agent_orchestrator.clients.database import (
-        _migrate_workflow_run,
-        _migrate_workflow_run_step,
-    )
+    from test.postgres.fixtures import make_orm_engine
+
+    from sqlalchemy.orm import sessionmaker
+
+    from cli_agent_orchestrator import constants
+    from cli_agent_orchestrator.clients import database
+    from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
     from cli_agent_orchestrator.services import workflow_service
 
+    bootstrap_scope(postgres_targets.main)
+    database.engine.dispose()
+    engine = make_orm_engine(postgres_targets.main)
+    monkeypatch.setattr(database, "engine", engine)
     monkeypatch.setattr(
-        "cli_agent_orchestrator.constants.DATABASE_FILE", tmp_path / "wf.db", raising=True
+        database,
+        "SessionLocal",
+        sessionmaker(autocommit=False, autoflush=False, bind=engine),
     )
-    _migrate_workflow_run()
-    _migrate_workflow_run_step()
+    monkeypatch.setattr(
+        constants,
+        "DATABASE_FILE",
+        postgres_targets.home / "cli-agent-orchestrator.db",
+    )
     workflow_service.run_registry.clear()
     workflow_service._active_drives.clear()
-    yield
+    yield postgres_targets.main
+    engine.dispose()
 
 
 @pytest.fixture

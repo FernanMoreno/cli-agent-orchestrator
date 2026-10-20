@@ -12,6 +12,7 @@ import { WorkflowsPanel } from "./components/WorkflowsPanel";
 import { BeadsPanel } from "./components/BeadsPanel";
 import { RalphPanel } from "./components/RalphPanel";
 import { PluginsPanel } from "./components/PluginsPanel";
+import { QuestionsPanel } from "./components/QuestionsPanel";
 import { PLUGINS_TAB_ENABLED } from "./featureFlags";
 import { NodeSwitcher } from "./components/NodeSwitcher";
 import { CaoMark } from "./components/CaoMark";
@@ -38,6 +39,7 @@ import {
   Wifi,
   WifiOff,
   Package,
+  CircleHelp,
 } from "lucide-react";
 
 type TabKey =
@@ -50,7 +52,8 @@ type TabKey =
   | "workflows"
   | "plugins"
   | "beads"
-  | "ralph";
+  | "ralph"
+  | "questions";
 
 // Profiles sits between Home and Agents (#510): browsing/authoring profiles
 // precedes launching agents, and AgentPanel stays the launch picker. This was
@@ -58,11 +61,9 @@ type TabKey =
 // appended last (Memory is conditional, so keeping it last stops the numbering
 // of the always-visible tabs shifting with the memory backend's status).
 //
-// Plugins is appended after them, always. Alt+N numbers the VISIBLE tabs in
-// array order, so inserting anywhere but the end renumbers every shortcut after
-// the insertion point — which is why Memory, then Workflows, then Plugins each
-// went last rather than into a "logical" slot. (Agent Plugins, not the
-// event-plugin system — see docs/agent-plugins.md.)
+// Plugins and Questions are appended after them, always. Alt+N numbers the
+// VISIBLE tabs in array order, so appending preserves every existing shortcut.
+// (Agent Plugins, not the event-plugin system — see docs/agent-plugins.md.)
 const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: "home", label: "Home", icon: <Home size={16} /> },
   { key: "profiles", label: "Profiles", icon: <Package size={16} /> },
@@ -74,6 +75,7 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: "plugins", label: "Plugins", icon: <Puzzle size={16} /> },
   { key: "beads", label: "Tasks", icon: <CheckCircle size={16} /> },
   { key: "ralph", label: "Ralph", icon: <Workflow size={16} /> },
+  { key: "questions", label: "Questions", icon: <CircleHelp size={16} /> },
 ];
 
 function Snackbar() {
@@ -112,6 +114,10 @@ function Snackbar() {
 
 function Dashboard() {
   const [tab, setTab] = useState<TabKey>("home");
+  const [manualTerminalRequest, setManualTerminalRequest] = useState<{
+    terminalId: string;
+    incarnationId: string;
+  } | null>(null);
 
   // The ONLY way any surface changes tabs. Refuses while an in-flight
   // interaction (an authoring modal's save) holds the navigation lock:
@@ -123,6 +129,10 @@ function Dashboard() {
   const requestTabChange = (t: TabKey) => {
     if (useStore.getState().navLockCount > 0) return;
     setTab(t);
+  };
+  const openManualTerminal = (terminalId: string, incarnationId: string) => {
+    setManualTerminalRequest({ terminalId, incarnationId });
+    requestTabChange("agents");
   };
   // Default false (fail-closed): a dead backend hides the tab rather than showing a broken panel
   const [memoryEnabled, setMemoryEnabled] = useState(false);
@@ -183,13 +193,21 @@ function Dashboard() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [navLocked]);
 
-  // Keyboard shortcuts: Alt+1-N over the visible tabs
+  // Shortcuts 1-9 retain their existing meaning. Alt+0 reaches tab 10 and
+  // Alt+Shift+1 reaches tab 11 without renumbering any current destination.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.altKey && e.key >= "1" && e.key <= String(visibleTabs.length)) {
-        e.preventDefault();
-        requestTabChange(visibleTabs[parseInt(e.key) - 1].key);
-      }
+      if (!e.altKey || e.ctrlKey || e.metaKey) return;
+      const index = e.shiftKey
+        ? (e.key === "1" ? 10 : -1)
+        : e.key === "0"
+          ? 9
+          : /^[1-9]$/.test(e.key)
+            ? Number(e.key) - 1
+            : -1;
+      if (index < 0 || index >= visibleTabs.length) return;
+      e.preventDefault();
+      requestTabChange(visibleTabs[index].key);
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -264,7 +282,13 @@ function Dashboard() {
                 title={
                   navLocked && tab !== t.key
                     ? "Finish or cancel the in-flight save first"
-                    : `Alt+${i + 1}`
+                    : i < 9
+                      ? `Alt+${i + 1}`
+                      : i === 9
+                        ? "Alt+0"
+                        : i === 10
+                          ? "Alt+Shift+1"
+                          : `Tab ${i + 1}`
                 }
               >
                 {t.icon}
@@ -298,7 +322,19 @@ function Dashboard() {
               />
             )}
             {tab === "profiles" && <ProfilesPanel />}
-            {tab === "agents" && <AgentPanel />}
+            {tab === "agents" && (
+              <AgentPanel
+                manualTerminalId={manualTerminalRequest?.terminalId ?? null}
+                manualTerminalIncarnationId={manualTerminalRequest?.incarnationId ?? null}
+                onManualTerminalHandled={(terminalId, incarnationId) => {
+                  setManualTerminalRequest((current) =>
+                    current?.terminalId === terminalId && current.incarnationId === incarnationId
+                      ? null
+                      : current,
+                  );
+                }}
+              />
+            )}
             {tab === "flows" && <FlowsPanel />}
             {tab === "settings" && <SettingsPanel />}
             {tab === "memory" && <MemoryPanel />}
@@ -306,6 +342,7 @@ function Dashboard() {
             {tab === "beads" && <BeadsPanel />}
             {tab === "ralph" && <RalphPanel />}
             {tab === "plugins" && PLUGINS_TAB_ENABLED && <PluginsPanel />}
+            {tab === "questions" && <QuestionsPanel onOpenManualTerminal={openManualTerminal} />}
           </Suspense>
         </ErrorBoundary>
       </main>

@@ -189,3 +189,13 @@ Before claiming substantial work complete:
 5. `verification-before-completion` passes;
 6. only genuinely durable knowledge is persisted;
 7. no check is claimed unless it actually ran.
+
+<!-- AI-STACK ECC WORKFLOW BEGIN -->
+ECC project workflow (Codex, Claude Code and OpenCode):
+Load `.agents/skills/ai-stack-ecc-project-workflow/SKILL.md` when the user explicitly requests ECC guidance.
+Registered project: `caos`.
+ECC upstream source: use the stack-wide Git cache at `${XDG_CACHE_HOME:-$HOME/.cache}/ai-dev-stack/ecc/ECC`; project-new and project-fix refresh the official main branch for all registered projects.
+Obsidian access: use only `CLAUDE_OBSIDIAN_VAULT` injected by the launcher for this registered project.
+If that variable is unset, report that the registered vault is unavailable; never infer another path.
+The stack refreshes ECC source and this prompt only. It does not install ECC plugins or activate hooks, MCP servers, agents or scripts.
+<!-- AI-STACK ECC WORKFLOW END -->

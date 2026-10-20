@@ -428,6 +428,22 @@ raise an interrupt, resume exactly-once (idempotent), and expire on transition:
 in-host MCP Apps iframe). `TEXT_MESSAGE_CONTENT` events carry metadata (sender,
 receiver, orchestration_type) but never the message text.
 
+### Work message stream
+
+Generic agent messages use a separate durable, job-scoped SSE endpoint:
+`GET /jobs/{job_id}/messages/stream`. It is distinct from the ambient
+`/agui/v1/stream` projection. The endpoint accepts `after_sequence` or
+`Last-Event-ID`, replays retained Work events, and keeps polling the same
+PostgreSQL ledger after an API process replacement. `work.message.sent` rows are
+projected to metadata-only `TEXT_MESSAGE_CONTENT` frames containing the message
+id and sender/receiver work-item ids. Bodies, body digests, acknowledgements and
+unrelated Work events are never exposed. A retention gap is an explicit `RAW`
+frame (`from_sequence`, `through_sequence`) rather than silent loss; clients
+should advance their cursor and resynchronize their view. The principal and
+scope are verified when the stream connects, while job ownership is
+revalidated on each page. Quiet streams use bounded exponential polling from
+100 ms to 2 s.
+
 ## Troubleshooting
 
 **Connection shows an error** — check that `CAO_AGUI_ENABLED` is set (else the

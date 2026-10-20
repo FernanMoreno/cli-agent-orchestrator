@@ -32,11 +32,26 @@ Una instalación nueva abre «Crear cuenta» mediante un enlace privado temporal
 Después se inicia sesión con usuario y contraseña de al menos 10 caracteres.
 El login permanece conectado a la aplicación principal.
 
-La configuración, la clave de firma, las cuentas y las sesiones SQLite permanecen
-en `~/.local/share/cao-personal/`, montado dentro del contenedor en la misma ruta.
+La configuración de PostgreSQL, la clave de firma y los archivos privados de
+credenciales permanecen en `~/.local/share/cao-personal/`, montados dentro del
+contenedor en la misma ruta. La persistencia usa tres scopes PostgreSQL: `main`
+y `auth` ocupan esquemas y roles de runtime separados en una base por perfil;
+`peer` usa un servicio por usuario Linux compartido por sus perfiles. El servicio
+de base de datos escucha solo dentro de redes Docker privadas y no publica puertos
+al host. El rol de runtime no puede crear esquemas ni ejecutar migraciones; las
+credenciales de propietario se conservan en archivos privados para el instalador.
+Con `--database-config` se puede usar un PostgreSQL externo explícitamente.
+
 No se incluyen contraseñas, tokens, bases de datos ni credenciales en la imagen.
-La migración conserva la identidad, los permisos y las sesiones existentes.
-La carpeta debe seguir siendo privada, propiedad del mismo usuario Linux.
+Las credenciales no se pasan por argumentos ni variables de entorno. La carpeta
+de configuración debe seguir siendo privada y propiedad del mismo usuario Linux.
+No existe un backend de almacenamiento local ni fallback automático. El flujo de
+importación anterior y sus opciones retiradas `--import-sqlite` y
+`--source-stopped` se rechazan antes de preparar PostgreSQL, escribir configuración
+o modificar archivos. Conserva por separado cualquier instalación antigua que
+necesites para archivo o rollback; el instalador no la convierte. Para una
+instalación nueva, sigue el bootstrap PostgreSQL y verifica los tres scopes antes
+de arrancar CAO.
 
 También se conservan un HOME del contenedor y los sockets tmux en directorios
 hermanos `cao-personal-container-home` y `cao-personal-container-sockets`.
@@ -57,9 +72,16 @@ No borres esos directorios para actualizar o recrear el contenedor.
 
 El rollback cambia los procesos que sirven la aplicación y conserva los datos
 actuales; no revoca sesiones ni restaura destructivamente una base de datos.
-La copia privada queda disponible para recuperación manual. Las migraciones de
-esquema incompatibles requieren su propio procedimiento; no se debe sustituir
-esta imagen por una versión arbitraria antigua.
+La copia privada queda disponible para recuperación manual. Contiene dumps
+PostgreSQL consistentes por scope, manifiesto de identidades/versiones y archivos
+de despliegue, no los archivos de credenciales. El helper empaquetado de backup/
+restore exige que la restauración use una configuración destino privada, con
+servidores/bases distintos y esquemas aún inexistentes; restaura y verifica en una
+instalación nueva, invalida sesiones de navegador y deja Work bloqueado para
+reconciliación. No publica la configuración ni arranca el servicio antes de que
+la comprobación termine. Las migraciones de esquema incompatibles requieren su
+propio procedimiento; no se debe sustituir esta imagen por una versión arbitraria
+antigua.
 
 Tras volver al servicio anterior de WSL, `status`, `start` y `stop` gestionan ese
 servicio. Para pasar de nuevo a Docker, ejecuta `./install.sh`.

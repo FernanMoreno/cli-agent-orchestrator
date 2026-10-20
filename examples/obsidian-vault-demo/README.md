@@ -1,10 +1,10 @@
 # Obsidian Vault Demo
 
-A throwaway end-to-end harness for the Obsidian vault knowledge source ([issue #644](https://github.com/awslabs/cli-agent-orchestrator/issues/644), [`docs/obsidian-vault.md`](../../docs/obsidian-vault.md)). One script builds a scratch CAO home and a generated vault, indexes it, and hands you the queries to see what CAO derived — so you can open the thing in Obsidian, edit a note, and watch the index follow, in about a minute.
+A throwaway end-to-end harness for the Obsidian vault knowledge source ([issue #644](https://github.com/awslabs/cli-agent-orchestrator/issues/644), [`docs/obsidian-vault.md`](../../docs/obsidian-vault.md)). One script builds a scratch CAO home and a generated vault, indexes it in a dedicated PostgreSQL target, and shows the derived state — so you can open the thing in Obsidian, edit a note, and watch the index follow.
 
 It exists because the interesting behaviour of this feature is not unit-testable in a way that convinces a human: whether a quarantined note's body is really gone from recall, whether a dry run really wrote nothing, whether CAO's link graph agrees with Obsidian's own. Each of those is a two-command check here.
 
-**Nothing touches your real vault or your real CAO home.** `CAO_HOME_DIR` is redirected to the scratch tree for the lifetime of every command, and the vault is generated from scratch — there is no path anywhere in this example that points at a vault you already own.
+`CAO_HOME_DIR` is redirected to the scratch tree for every command, and the vault is generated from scratch. The script requires an explicit private PostgreSQL config whose three targets use loopback and demo-prefixed database/schema names. It does not inherit `CAO_DATABASE_CONFIG_FILE` or use CAO's default target. The database itself is not created or deleted by this example: use a disposable service and discard its demo schemas after you're done.
 
 ## What this demonstrates
 
@@ -22,6 +22,21 @@ It exists because the interesting behaviour of this feature is not unit-testable
 ## Usage
 
 Run it from a checkout of the branch under test — it invokes `uv run cao` from the repo root, so a `cao` on `PATH` from a released build (which has no `vault` command) is never used.
+
+Provision a disposable PostgreSQL service first, then configure its `main`,
+`auth`, and `peer` targets in a private mode-0600 JSON file. Use loopback as the
+host and names beginning with `cao_vault_demo` for each database and schema;
+the targets must have distinct schemas and store IDs. Include the migration
+credentials needed by `cao init`. The [PostgreSQL guide](../../docs/postgresql.md)
+describes the target configuration format. Point the demo to this dedicated
+config:
+
+```bash
+export CAO_VAULT_DEMO_DATABASE_CONFIG="$HOME/.config/cao-vault-demo/database-config.json"
+```
+
+The script validates that config before creating the scratch home. It rejects
+non-loopback targets and database/schema names without the demo prefix.
 
 ```bash
 cd examples/obsidian-vault-demo
@@ -73,6 +88,6 @@ Reading them in Obsidian's reading view is a reasonable substitute for reading `
 ## Notes for reviewers
 
 - `cao memory show <key>` is BM25 recall with `query=key` plus an exact-key filter, not a key lookup, so it returns "not found" for any note whose key words don't appear in its body. Behaves identically on `main`, so it isn't this feature's doing, but it makes `show` a misleading way to check whether a note landed. `state` and `recall` are the reliable ones.
-- Findings are only reachable via SQLite; there is no `cao memory vault findings` command. `state` runs those queries for you.
+- Findings have no dedicated `cao memory vault findings` command. `state` reads their detail from the demo-only PostgreSQL target.
 - A stale `CAO_TERMINAL_ID` in your shell makes every vault recall resolve zero candidates and print nothing — indistinguishable from an empty vault. The script drops it from every child process; worth knowing if you run the commands by hand instead.
 - `AKIAIOSFODNN7EXAMPLE` in the `guards` fixture is AWS's documented example key, the literal `CONTRIBUTING.md` prescribes and the only value allowlisted in `.gitleaks.toml`.

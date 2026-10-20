@@ -1,0 +1,5 @@
+__pycache__/
+tasks/data/tasks.json
+tasks/data/tasks.json.tmp
+turn-recovery/notes.json
+turn-recovery/.notes-*.json

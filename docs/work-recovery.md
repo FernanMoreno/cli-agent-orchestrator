@@ -75,8 +75,9 @@ como base del operador; la reactivación requiere un procedimiento aparte.
 
 1. Detener admisiones y escritores de la versión nueva. Confirmar por separado el
    cese de procesos externos: detener el servidor no demuestra detener un CLI.
-2. Conservar una copia consistente de SQLite y de todos los artefactos referenciados.
-   No copiar solamente el archivo principal de una DB activa con WAL.
+2. Conservar una copia consistente de los targets PostgreSQL y de todos los artefactos
+   referenciados. Usa el procedimiento de backup nativo; no copies archivos de una
+   base activa.
 3. Después de confirmar v26, operar `work_*` sólo con una versión compatible con v26.
    El verificador v25 probado rechaza el esquema v26; no se debe intentar continuar
    como si el store hubiese vuelto a v25. Las tablas legacy no se eliminan.
@@ -87,10 +88,9 @@ como base del operador; la reactivación requiere un procedimiento aparte.
 No existe downgrade SQL: no se borran tablas ni se altera el ledger o sus checksums
 para admitir una versión antigua. Si se necesita volver a v25 después del commit
 v26, sólo se usa un snapshot v25 aislado, con conciliación explícita del estado
-posterior y autorización separada conforme a T070. T070 acepta únicamente bundle
-v2/perfil 26 y no restaura snapshots v25. Nunca se hace downgrade in-place ni
-`DROP`; tampoco se restaura por conjetura ante errores. Este store usa SQLite, igual
-que el journal actual; no promete soporte PostgreSQL.
+posterior y autorización separada conforme al procedimiento de restore nativo.
+Nunca se hace downgrade in-place ni `DROP`; tampoco se restaura por conjetura ante
+errores. El Work store y el journal viven en el target PostgreSQL configurado.
 
 ## Límites operativos actuales
 
@@ -101,7 +101,8 @@ elimina. El recolector de artefactos protege referencias de resultados y worktre
 
 Las revisiones de conocimiento y sus decisiones son inmutables. Un tombstone impide
 entrega posterior mediante el servicio, pero no elimina físicamente el contenido
-histórico de SQLite ni de copias anteriores. No constituye borrado criptográfico.
+histórico del target PostgreSQL ni de copias anteriores. No constituye borrado
+criptográfico.
 
 La verificación de esquema y las pruebas de restore aislado no demuestran el cese de
 procesos externos: detener el servidor no prueba que un CLI haya terminado. Tampoco
@@ -134,19 +135,19 @@ y grants explícitos; no se convierten archivos legacy en revisiones aprobadas.
 La redacción común precede al almacenamiento y a los límites de contexto; también
 protege recuerdos históricos y contexto devuelto por el curador. Los archivos legacy
 conservan su almacenamiento y carácter no aprobado; no se convierten automáticamente
-en revisiones de conocimiento. Sus operaciones usan ahora la auditoría v13 en la
-misma SQLite de sus metadatos, incluyendo archivos, relaciones, compilación, lint,
+en revisiones de conocimiento. Sus operaciones usan ahora la auditoría v13 en el
+target PostgreSQL de sus metadatos, incluyendo archivos, relaciones, compilación, lint,
 reparación y grafos antes de consultar caché. La clave del grafo incluye las rutas
-resueltas del wiki y SQLite, además del scope y modo de lint: dos almacenes no
+resueltas del wiki y PostgreSQL, además del scope y modo de lint: dos almacenes no
 comparten una proyección aunque pidan el mismo scope. La preparación verifica/migra ese store antes del primer
-acceso por instancia; no se inventan grants ni bases paralelas. Se requiere SQLite
-persistente: una base en memoria no acredita auditoría durable.
+acceso por instancia; no se inventan grants ni bases paralelas. Se requiere un
+target PostgreSQL persistente para acreditar auditoría durable.
 
 La intención `authorized` se confirma antes del efecto o de leer contenido; después
 se registra `completed` o `failed`. Una denegación a un principal verificado registra
 `denied`; si falla esa escritura, HTTP responde disponibilidad (503), no un 403 que
 aparente decisión registrada. Los fallos de política/auditoría no se ocultan como
-enriquecimientos opcionales. SQLite y archivos no son una transacción conjunta:
+enriquecimientos opcionales. PostgreSQL y archivos no son una transacción conjunta:
 un fallo posterior al efecto deja intención durable y error explícito de resultado
 potencialmente parcial, con `operation_id`. No debe inferirse que no hubo escritura
 ni repetirse automáticamente. El log legible anterior sigue siendo secundario.
@@ -156,6 +157,6 @@ La reparación local/de arranque autoriza y audita tanto `plan` como `apply`.
 El dry-run conserva archivos, índices y metadatos de memoria; escribe únicamente
 su auditoría y prepara aditivamente el esquema durable cuando hace falta. Con
 autenticación habilitada, startup no fabrica identidad de operador para reparar.
-Lint redacta antes de truncar/enviar texto al modelo y conserva el mismo SQLite
+Lint redacta antes de truncar/enviar texto al modelo y conserva el mismo target
 para la auditoría y las relaciones derivadas. Los detectores siguen leyendo
 metadatos mediante una sesión protegida contra escrituras.

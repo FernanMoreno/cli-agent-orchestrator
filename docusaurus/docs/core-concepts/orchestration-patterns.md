@@ -109,7 +109,7 @@ Agent A ──send_message──▶ Agent B's inbox
 
 ### Behavior
 
-1. Queues a message in the target terminal's inbox (stored in SQLite with status PENDING).
+1. Queues a message in the target terminal's inbox (stored in PostgreSQL with status PENDING).
 2. If the receiver is IDLE or COMPLETED, delivery is attempted immediately.
 3. If the receiver is busy, the message stays PENDING until the InboxService detects an IDLE/COMPLETED status transition.
 4. Supports **eager delivery** for providers that buffer input during processing (e.g., Claude Code) -- set `CAO_EAGER_INBOX_DELIVERY=true`.

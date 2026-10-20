@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useStore } from '../store'
-import { api, AgentProfileInfo, ProviderInfo } from '../api'
+import { api, AgentProfileInfo, ProviderInfo, getNodeEpoch } from '../api'
 import { Bot, Play, Trash2, ChevronRight, Terminal as TermIcon, Monitor, Package, FolderOpen, Tag, Search, Mail, Plus, LogOut, Send, FileText, X } from 'lucide-react'
 import { TerminalView } from './TerminalView'
 import { ConfirmModal } from './ConfirmModal'
@@ -20,7 +20,17 @@ const SOURCE_LABELS: Record<string, string> = {
   'opencode_cli': 'OpenCode',
 }
 
-export function AgentPanel() {
+interface AgentPanelProps {
+  manualTerminalId?: string | null
+  manualTerminalIncarnationId?: string | null
+  onManualTerminalHandled?: (terminalId: string, incarnationId: string) => void
+}
+
+export function AgentPanel({
+  manualTerminalId = null,
+  manualTerminalIncarnationId = null,
+  onManualTerminalHandled,
+}: AgentPanelProps = {}) {
   const { sessions, fetchSessions, activeSession, activeSessionDetail, selectSession, createSession, deleteSession, terminalStatuses, setTerminalStatus } = useStore()
   const [provider, setProvider] = useState('kiro_cli')
   const [profile, setProfile] = useState('')
@@ -29,7 +39,12 @@ export function AgentPanel() {
   // Enter in the form inputs, which bypass the button's disabled state) from
   // firing before the `creating` state re-renders and creating a duplicate session.
   const creatingRef = useRef(false)
-  const [liveTerminal, setLiveTerminal] = useState<{ id: string; provider?: string; agentProfile?: string | null } | null>(null)
+  const [liveTerminal, setLiveTerminal] = useState<{
+    id: string;
+    provider?: string;
+    agentProfile?: string | null;
+    expectedInteractionIncarnationId?: string;
+  } | null>(null)
   const [profiles, setProfiles] = useState<AgentProfileInfo[]>([])
   const [loadingProfiles, setLoadingProfiles] = useState(true)
   const [providers, setProviders] = useState<ProviderInfo[]>([])
@@ -64,6 +79,9 @@ export function AgentPanel() {
   const { showSnackbar } = useStore()
   const [outputTerminalId, setOutputTerminalId] = useState<string | null>(null)
   const [showSpawnModal, setShowSpawnModal] = useState(false)
+  const manualRequestKey = useRef<string | null>(null)
+  const onManualTerminalHandledRef = useRef(onManualTerminalHandled)
+  onManualTerminalHandledRef.current = onManualTerminalHandled
 
   const handleDeleteTerminal = async () => {
     if (!pendingClose) return
@@ -126,6 +144,89 @@ export function AgentPanel() {
       return () => clearInterval(interval)
     }
   }, [activeSession])
+
+  useEffect(() => {
+    if (!manualTerminalId) {
+      manualRequestKey.current = null
+      return
+    }
+    const epoch = getNodeEpoch()
+    const requestKey = `${epoch}:${manualTerminalId}:${manualTerminalIncarnationId ?? ""}`
+    if (manualRequestKey.current === requestKey) return
+    manualRequestKey.current = requestKey
+    let active = true
+
+    const locateAndOpenExactTerminal = async () => {
+      const markHandled = () =>
+        onManualTerminalHandledRef.current?.(
+          manualTerminalId,
+          manualTerminalIncarnationId ?? "",
+        );
+      try {
+        if (!manualTerminalIncarnationId) {
+          throw new Error("Could not verify the source terminal incarnation. No terminal was opened.");
+        }
+        // Refresh the session index before resolving the terminal so a stale
+        // list never causes us to open a different agent by position/name.
+        await fetchSessions()
+        if (!active || epoch !== getNodeEpoch()) return
+        const current = await api.getCurrentTerminal(manualTerminalId)
+        if (!active || epoch !== getNodeEpoch()) return
+        if (current.session_incarnation_id !== manualTerminalIncarnationId) {
+          throw new Error("Source terminal incarnation changed. No terminal was opened.");
+        }
+        const detail = await api.getSession(current.session_name)
+        if (!active || epoch !== getNodeEpoch()) return
+        const terminal = detail.terminals.find((item) => item.id === manualTerminalId)
+        if (
+          detail.session.id !== current.session_name ||
+          !terminal ||
+          (terminal.session_incarnation_id != null &&
+            terminal.session_incarnation_id !== manualTerminalIncarnationId)
+        ) {
+          throw new Error(`Could not verify source terminal ${manualTerminalId}. No terminal was opened.`);
+        }
+        await selectSession(detail.session.id)
+        if (!active || epoch !== getNodeEpoch()) return
+        const confirmed = await api.getCurrentTerminal(manualTerminalId)
+        if (
+          !active ||
+          epoch !== getNodeEpoch()
+        ) return
+        if (
+          confirmed.session_incarnation_id !== manualTerminalIncarnationId ||
+          confirmed.session_name !== current.session_name
+        ) {
+          throw new Error("Source terminal incarnation changed. No terminal was opened.");
+        }
+        setLiveTerminal({
+          id: manualTerminalId,
+          provider: confirmed.provider,
+          agentProfile: confirmed.agent_profile,
+          expectedInteractionIncarnationId: manualTerminalIncarnationId,
+        })
+        showSnackbar({
+          type: 'info',
+          message: `Opened exact source terminal ${manualTerminalId}. No input was sent.`,
+        })
+        markHandled()
+      } catch (error) {
+        if (!active || epoch !== getNodeEpoch()) return
+        showSnackbar({
+          type: 'error',
+          message: error instanceof Error
+            ? error.message
+            : `Could not open source terminal ${manualTerminalId}. No input was sent.`,
+        })
+        markHandled()
+      }
+    }
+
+    void locateAndOpenExactTerminal()
+    return () => {
+      active = false
+    }
+  }, [manualTerminalId, manualTerminalIncarnationId, fetchSessions, selectSession, showSnackbar])
 
   // Poll terminal statuses for visible terminals in the session detail
   useEffect(() => {
@@ -464,6 +565,7 @@ export function AgentPanel() {
           terminalId={liveTerminal.id}
           provider={liveTerminal.provider}
           agentProfile={liveTerminal.agentProfile}
+          expectedInteractionIncarnationId={liveTerminal.expectedInteractionIncarnationId}
           onClose={() => setLiveTerminal(null)}
         />
       )}

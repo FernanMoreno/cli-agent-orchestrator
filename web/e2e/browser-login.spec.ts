@@ -315,6 +315,9 @@ test('real terminal WebSocket handles traffic then revokes within five seconds w
 test('real personal backup and restore invalidate remembered cookies and preserve account', async ({ page, context }) => {
   await login(page, true)
   const before = await cookie(context)
+  await control('advance', 8 * 3600)
+  expect((await request(page, '/auth/renew', 'POST')).status).toBe(200)
+  expect((await request(page, '/auth/session')).status).toBe(200)
   await control('restore')
   expect((await request(page, '/auth/session')).status).toBe(401)
   expect((await cookie(context)).value).toBe(before.value)
@@ -325,7 +328,7 @@ test('real personal backup and restore invalidate remembered cookies and preserv
   expect((await request(page, '/sessions')).status).toBe(200)
 })
 
-test('busy real SQLite fails closed without deleting the cookie and recovers after unlocking', async ({ page, context }) => {
+test('busy real PostgreSQL fails closed without deleting the cookie and recovers after unlocking', async ({ page, context }) => {
   await login(page, true)
   const before = await cookie(context)
   await control('lock_storage')

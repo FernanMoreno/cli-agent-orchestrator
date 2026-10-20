@@ -51,10 +51,12 @@ In GitHub: **Settings → Environments**.
 
 ### 3. Verify Web UI build works in CI
 
-Nothing to configure — the `build` job runs `npm ci && npm run build` in `web/`
-and copies `web/dist/` into `src/cli_agent_orchestrator/web_ui/` before `uv build`.
-The wheel artifact includes this per `[tool.hatch.build].artifacts` in
-`pyproject.toml`.
+Each release build job generates both frontend artifacts before packaging. In `web/`,
+`npm ci && npm run build` writes directly to
+`src/cli_agent_orchestrator/web_ui/`; Vite does not build into `web/dist/` for this
+project. In `cao_mcp_apps/`, `npm ci && npm run build:all` emits the four single-file
+views into `src/cli_agent_orchestrator/ext_apps/apps_static/`. Both generated
+directories are included by `[tool.hatch.build].artifacts` in `pyproject.toml`.
 
 ---
 

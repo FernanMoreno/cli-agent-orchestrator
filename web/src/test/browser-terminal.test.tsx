@@ -2,6 +2,7 @@ import { cleanup, render, waitFor, act } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { TerminalView } from "../components/TerminalView";
 import { initializeBrowserAuth } from "../auth";
+const terminalOutput = vi.hoisted(() => [] as string[]);
 let input: (data: string) => void;
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
@@ -9,7 +10,7 @@ vi.mock("@xterm/xterm", () => ({
     cols = 80;
     loadAddon() {}
     open() {}
-    write() {}
+    write(data: string) { terminalOutput.push(data); }
     onSelectionChange() {}
     getSelection() {
       return "";
@@ -58,6 +59,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   Socket.instances = [];
+  terminalOutput.length = 0;
 });
 it("requests a fresh scoped ticket after lease close without replaying input", async () => {
   let ticket = 0;
@@ -110,4 +112,47 @@ it("requests a fresh scoped ticket after lease close without replaying input", a
       (value) => JSON.parse(value).type === "input",
     ),
   ).toBe(false);
+});
+
+it("stops reconnecting when a question terminal reports a stale source incarnation", async () => {
+  const fetch = vi.fn(
+    async (url: string) =>
+      new Response(
+        JSON.stringify(
+          url === "/auth/config"
+            ? { mode: "disabled" }
+            : url.endsWith("/ws/ticket")
+              ? { ticket: "single-question-ticket" }
+              : {},
+        ),
+      ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  vi.stubGlobal("WebSocket", Socket);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  await initializeBrowserAuth();
+  render(
+    <TerminalView
+      terminalId="term"
+      expectedInteractionIncarnationId="question-source-incarnation"
+      onClose={() => {}}
+    />,
+  );
+  await waitFor(() => expect(Socket.instances).toHaveLength(1));
+  expect(
+    new URL(Socket.instances[0].url).searchParams.get("expected_incarnation_id"),
+  ).toBe("question-source-incarnation");
+
+  act(() => Socket.instances[0].onclose?.({ code: 4409 } as CloseEvent));
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+
+  expect(Socket.instances).toHaveLength(1);
+  expect(fetch.mock.calls.filter((call) => call[0].endsWith("/ws/ticket"))).toHaveLength(1);
+  expect(terminalOutput.join("")).toContain("Question source incarnation changed; reconnect stopped");
 });

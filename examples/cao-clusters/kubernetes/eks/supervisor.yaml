@@ -173,9 +173,9 @@ spec:
         - name: workspace
           persistentVolumeClaim:
             claimName: cao-elastic-workspace
-  # State is per pod and stays on EBS. It holds a SQLite DB, flock locks and
-  # FIFOs, all of which are unsafe over NFS - so it must not live on the shared
-  # EFS workspace even though only one supervisor writes it today.
+  # Local state is per pod and stays on EBS. It holds flock locks and FIFOs,
+  # which are unsafe over NFS, so it must not live on the shared EFS workspace
+  # even though only one supervisor writes it today.
   volumeClaimTemplates:
     - metadata:
         name: state

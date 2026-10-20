@@ -129,7 +129,7 @@ for how the surfaces compare.
                │                    │  + 6 more   │
         ┌──────┴──────┐             └─────────────┘
         │ tmux / herdr│
-        │   SQLite    │
+        │ PostgreSQL  │
         └─────────────┘
 ```
 

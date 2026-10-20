@@ -12,7 +12,7 @@ that never touches the flags behaves identically to one without the feature.
 ## The loop at a glance
 
 ```
-worker/supervisor ──report_outcome (MCP)──▶ workflow_outcomes (SQLite)
+worker/supervisor ──report_outcome (MCP)──▶ workflow_outcomes (PostgreSQL)
                                                    │
 session/package completes                          ▼
 supervisor ──handoff──▶ retrospector ──reads──▶ list_outcomes (MCP)
@@ -104,7 +104,7 @@ Surfaces:
 - **HTTP** `POST /outcomes` (write-scope gated) and
   `GET /outcomes?session_name=&agent_profile=&workflow_name=&limit=`
   (read-scope gated) — the operator surface.
-- Storage: `workflow_outcomes` table in CAO's SQLite DB, indexed by
+- Storage: `workflow_outcomes` table in CAO's `main` PostgreSQL target, indexed by
   `(session_name, created_at)` and `(agent_profile, created_at)`.
 
 ### Wiring a workflow for learning

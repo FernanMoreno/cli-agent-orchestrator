@@ -7,7 +7,7 @@ CAO's memory system gives agents persistent, cross-session storage. Agents store
 
 - **Five scopes** (`global`, `project`, `session`, `agent`, `federated`) and four type labels.
 - **Store** via the `memory_store` MCP tool; **recall / forget** via MCP tools or the `cao memory` CLI.
-- **Markdown wiki storage** with a SQLite metadata index.
+- **Markdown wiki content** with PostgreSQL metadata and relationship indexes.
 - **Search**: keyword (BM25), recency, or hybrid; results ranked by recency, a
   composite 3-factor score (BM25 + recency + usage), or usage.
 - **Cross-references** between related memories, expandable on recall.
@@ -29,21 +29,21 @@ documented in [Obsidian Vault Knowledge Source](obsidian-vault.md).
 3. **On next session start**, CAO injects matching memories as a `<cao-memory>` context block before the agent's first message
 4. **Agent recalls** with `memory_recall` when it needs to look something up explicitly
 
-## Architecture: how it works with SQLite
+## Architecture: PostgreSQL metadata and wiki content
 
 CAO keeps memory in **two coupled stores**, and it helps to know which does what:
 
 - **Markdown wiki files** — the **content** store. One file per memory key, holding
   the human-readable article and its timestamped entries (see
   [Storage Layout](#storage-layout)).
-- **SQLite** (`memory_metadata` table) — the **metadata / index** store and the
+- **PostgreSQL** (`memory_metadata` table) — the **metadata / index** store and the
   **source of truth** for metadata queries. One row per wiki file. The DB lives at
-  `~/.aws/cli-agent-orchestrator/.../cli-agent-orchestrator.db`.
+  the configured `main` target.
 
 Every `memory_store` writes **both**: it writes/updates the markdown file *and* upserts
 the matching row in `memory_metadata`. Every `memory_recall` reads **both**: BM25
 keyword search runs over the wiki **content**, while recency, usage, and the composite
-3-factor scoring read **columns from SQLite** (`last_accessed_at`, `access_count`,
+3-factor scoring read **columns from PostgreSQL** (`last_accessed_at`, `access_count`,
 `created_at`, `updated_at`, `tags`, `token_estimate`, `related_keys`, …).
 
 ```
@@ -52,7 +52,7 @@ STORE
                ├─▶ memory_store ─▶ MemoryService ─┬─▶ Markdown wiki file  (CONTENT)
   (no CLI      │   (resolves scope_id)            │   memory/.../wiki/{scope}/{key}.md
    store path) ┘                                  │
-                                                  └─▶ SQLite: memory_metadata  (upsert)
+                                                  └─▶ PostgreSQL: memory_metadata  (upsert)
                                                       (METADATA / INDEX — source of truth)
                                                       1 row/file: key, scope, scope_id,
                                                       tags, access_count, timestamps,
@@ -63,12 +63,12 @@ RECALL
                ├─▶ memory_recall ─▶ MemoryService ─┬─▶ BM25 keyword search ▶ wiki CONTENT
   cao memory   │                                   │
   list/show ───┘                                   └─▶ recency / usage / 3-factor
-                                                       ▶ SQLite metadata columns
+                                                       ▶ PostgreSQL metadata columns
                                                   │
                                                   └─▶ ranked results (metadata + content)
 ```
 
-SQLite is the index and source of truth for metadata queries; the wiki files hold the
+PostgreSQL is the index and source of truth for metadata queries; the wiki files hold the
 content. The CLI read/maintenance commands (`list`, `show`, `lint`, `compact`, `heal`)
 go through the same `MemoryService` — only **writing new memories** is MCP-exclusive.
 

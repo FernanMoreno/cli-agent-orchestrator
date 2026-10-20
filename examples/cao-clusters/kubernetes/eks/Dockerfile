@@ -243,8 +243,8 @@ RUN set -eux; \
     tar -xOf "${CAO_STATE_SEED}" state/agent-store/developer.md \
       | grep -qE "^provider:[[:space:]]*${CAO_PROFILE_PROVIDER}[[:space:]]*$"
 
-# ~/.cao holds SQLite state, logs, and installed profiles — mount a volume/PVC
-# here for persistence across container restarts.
+# ~/.cao holds local state files, logs, and installed profiles — mount a
+# volume/PVC here for persistence across container restarts.
 VOLUME ["/home/cao/.cao"]
 
 EXPOSE 9889

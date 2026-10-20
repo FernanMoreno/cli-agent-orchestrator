@@ -49,16 +49,24 @@ export interface FleetNode {
 }
 
 /** URL for the terminal's xterm WebSocket, honouring BASE. */
-export function terminalSocketUrl(terminalId: string, ticket?: string): string {
+export function terminalSocketUrl(
+  terminalId: string,
+  ticket?: string,
+  expectedIncarnationId?: string,
+): string {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  const query = ticket ? `?ticket=${encodeURIComponent(ticket)}` : "";
-  return `${protocol}//${location.host}${BASE}${nodePath(`/terminals/${encodeURIComponent(terminalId)}/ws`)}${query}`;
+  const query = new URLSearchParams();
+  if (ticket) query.set("ticket", ticket);
+  if (expectedIncarnationId)
+    query.set("expected_incarnation_id", expectedIncarnationId);
+  return `${protocol}//${location.host}${BASE}${nodePath(`/terminals/${encodeURIComponent(terminalId)}/ws`)}${query.size ? `?${query.toString()}` : ""}`;
 }
 
 /** Mint a fresh scoped ticket for each handshake; the operator bearer stays in headers. */
 export async function terminalSocketTicketUrl(
   terminalId: string,
   signal?: AbortSignal,
+  expectedIncarnationId?: string,
 ): Promise<string> {
   const epoch = nodeEpoch;
   const result = await fetchJSON<{ ticket: string }>(
@@ -68,7 +76,7 @@ export async function terminalSocketTicketUrl(
   if (epoch !== nodeEpoch) throw new Error("Node selection changed");
   if (!result?.ticket || typeof result.ticket !== "string")
     throw new Error("Invalid terminal ticket");
-  return terminalSocketUrl(terminalId, result.ticket);
+  return terminalSocketUrl(terminalId, result.ticket, expectedIncarnationId);
 }
 
 /** URL for a workflow run's SSE event stream, honouring BASE. */
@@ -93,11 +101,17 @@ export interface ApiError extends Error {
 
 export async function fetchJSON<T>(
   url: string,
-  opts?: RequestInit & { timeoutMs?: number; direct?: boolean },
+  opts?: RequestInit & {
+    timeoutMs?: number;
+    direct?: boolean;
+    /** Read Problem.code only for endpoints that use the interaction contract. */
+    captureProblemCode?: boolean;
+  },
 ): Promise<T> {
   const epoch = nodeEpoch;
   const signal = nodeSignal();
   const controller = new AbortController();
+  const { captureProblemCode, ...requestOptions } = opts ?? {};
   const timeout = setTimeout(
     () => controller.abort(),
     opts?.timeoutMs ?? 10000,
@@ -106,10 +120,10 @@ export async function fetchJSON<T>(
     const res = await browserFetch(
       `${BASE}${opts?.direct ? url : nodePath(url)}`,
       {
-        ...opts,
+        ...requestOptions,
         signal: AbortSignal.any([
           controller.signal,
-          ...(opts?.signal ? [opts.signal] : []),
+          ...(requestOptions.signal ? [requestOptions.signal] : []),
           ...(opts?.direct ? [] : [signal]),
         ]),
       },
@@ -126,6 +140,12 @@ export async function fetchJSON<T>(
       try {
         const body = await res.json();
         if (body && typeof body.detail === "string") detail = body.detail;
+        if (
+          captureProblemCode &&
+          body &&
+          typeof body.code === "string"
+        )
+          kind = body.code;
         if (body && body.detail && typeof body.detail === "object") {
           detailMeta = body.detail as Record<string, unknown>;
           if (typeof detailMeta.message === "string")
@@ -243,8 +263,18 @@ export interface TerminalMeta {
   tmux_window: string;
   provider: string;
   agent_profile: string | null;
+  session_incarnation_id?: string | null;
   created_at: string | null;
   last_active: string | null;
+}
+
+/** Fresh terminal identity lookup used before opening a question's source. */
+export interface CurrentTerminalMeta {
+  id: string;
+  session_name: string;
+  session_incarnation_id: string | null;
+  provider: string;
+  agent_profile: string | null;
 }
 
 /**
@@ -349,6 +379,195 @@ export interface InboxMessage {
   message: string;
   status: "pending" | "delivered" | "failed";
   created_at: string | null;
+}
+
+export type InteractionLifecycle =
+  | "open"
+  | "answered"
+  | "expired"
+  | "cancelled"
+  | "stale"
+  | "manual_only"
+  | "reconciled_external";
+
+export type InteractionDeliveryState =
+  | "accepted"
+  | "prepared"
+  | "claimed"
+  | "returned_to_mcp"
+  | "agent_acknowledged"
+  | "confirmed"
+  | "uncertain"
+  | "no_effect"
+  | "reconciled";
+
+export type InteractionKind =
+  | "text"
+  | "single_choice"
+  | "multi_choice"
+  | "choice_or_text"
+  | "approval"
+  | "credential"
+  | "native_unknown";
+
+export interface InteractionSource {
+  terminal_id: string;
+  incarnation_id: string;
+  provider: string;
+  provider_version: string | null;
+  execution_mode: string;
+}
+
+export interface InteractionTask {
+  work_item_id: string | null;
+  attempt_id: string | null;
+  session_name: string | null;
+}
+
+export interface InteractionRecipient {
+  kind: "human" | "supervisor" | "unassigned" | "manual";
+  label: string | null;
+  reason: string;
+}
+
+export interface InteractionGroupProgress {
+  required_answered: number;
+  required_total: number;
+  total: number;
+}
+
+export interface InteractionOption {
+  id: string;
+  label: string;
+  available: boolean;
+}
+
+/** Metadata list rows never contain prompt or answer content. */
+export interface InteractionMetadata {
+  question_id: string;
+  version: number;
+  group_id: string | null;
+  lifecycle: InteractionLifecycle;
+  delivery_state: InteractionDeliveryState | null;
+  source: InteractionSource;
+  task?: InteractionTask | null;
+  kind: InteractionKind;
+  required: boolean;
+  recipient: InteractionRecipient;
+  group_progress?: InteractionGroupProgress | null;
+  origin: "explicit" | "native";
+  can_answer: boolean;
+  manual_reason: string | null;
+  created_at: string;
+  expires_at: string | null;
+}
+
+export interface AnswerReceipt {
+  question_id: string;
+  version: number;
+  answer_id: string;
+  lifecycle: InteractionLifecycle;
+  delivery_state: InteractionDeliveryState;
+  accepted_at: string;
+  replayed: boolean;
+}
+
+/** Protected detail is fetched separately after metadata authorization. */
+export interface InteractionDetail extends InteractionMetadata {
+  prompt: string | null;
+  options: InteractionOption[];
+  allow_free_text: boolean;
+  answer_receipt: AnswerReceipt | null;
+  /** Server-derived assignment candidate. Its presence does not authorize delegation. */
+  delegation_candidate?: InteractionDelegationCandidate | null;
+  delegation?: InteractionDelegation | null;
+}
+
+export interface InteractionDelegationCandidate {
+  terminal_id: string;
+  assignment_id: string;
+  incarnation_id?: string;
+}
+
+export interface InteractionDelegation {
+  terminal_id: string;
+  assignment_id: string;
+  expires_at: string;
+  state: "active" | "revoked" | "expired";
+}
+
+export type InteractionResponse =
+  | { kind: "text"; text: string }
+  | { kind: "options"; option_ids: string[] }
+  | { kind: "free_text"; text: string };
+
+export interface InteractionListFilter {
+  status?: InteractionLifecycle[];
+  terminal_id?: string;
+  work_item_id?: string;
+  recipient?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface InteractionListResponse {
+  items: InteractionMetadata[];
+  next_cursor: string | null;
+}
+
+export interface InteractionHistoryEvent {
+  sequence: number;
+  event_type: string;
+  actor_kind: "principal" | "agent" | "system";
+  actor_label: string | null;
+  occurred_at: string;
+  safe_metadata: Record<string, unknown>;
+}
+
+export interface InteractionWaitGraphNode {
+  id: string;
+  kind: "task" | "question_group";
+  state: string;
+  label: string | null;
+}
+
+export interface InteractionWaitGraphEdge {
+  from: string;
+  to: string;
+  required: boolean;
+  cycle?: boolean;
+}
+
+export interface InteractionWaitGraph {
+  nodes: InteractionWaitGraphNode[];
+  edges: InteractionWaitGraphEdge[];
+}
+
+export interface ProviderInteractionCapability {
+  provider: string;
+  provider_version: string | null;
+  execution_mode: string;
+  emits_explicit: boolean;
+  detects_native: boolean;
+  responds_native: Array<"text" | "single_choice" | "multi_choice" | "choice_or_text" | "approval">;
+  manual_reason: string | null;
+  required_mcp_tools?: string[];
+}
+
+export interface InteractionCapabilitiesResponse {
+  items: ProviderInteractionCapability[];
+}
+
+export type InteractionReconcileOutcome =
+  | "answered_outside_cao"
+  | "no_effect_proven"
+  | "remains_uncertain"
+  | "dialog_still_open";
+
+export interface InteractionReconcileRequest {
+  outcome: InteractionReconcileOutcome;
+  evidence_code: string;
+  note?: string;
 }
 
 export interface Flow {
@@ -985,6 +1204,8 @@ export const api = {
   // Terminals
   getTerminalTurn: (id: string) =>
     fetchJSON<TerminalTurn>(`/terminals/${encodeURIComponent(id)}/turn`),
+  getCurrentTerminal: (id: string) =>
+    fetchJSON<CurrentTerminalMeta>(`/terminals/${encodeURIComponent(id)}`),
   verifyTerminalTurn: (id: string, generation: string) =>
     fetchJSON<TerminalTurn>(
       `/terminals/${encodeURIComponent(id)}/turn/verify?generation=${encodeURIComponent(generation)}`,
@@ -1069,6 +1290,148 @@ export const api = {
     fetchJSON<{ success: boolean }>(
       `/terminals/${receiverId}/inbox/messages?sender_id=${senderId}&message=${encodeURIComponent(message)}`,
       { method: "POST" },
+    ),
+
+  // ── Agent interactions ─────────────────────────────────────────────────
+  // The list is metadata-only. Prompt/answer content is fetched through the
+  // separately authorized detail route, and every mutation is fenced to the
+  // exact question version the operator reviewed.
+  listInteractions: (
+    filters: InteractionListFilter = {},
+    signal?: AbortSignal,
+  ) => {
+    const query = new URLSearchParams();
+    for (const status of filters.status ?? []) query.append("status", status);
+    if (filters.terminal_id) query.set("terminal_id", filters.terminal_id);
+    if (filters.work_item_id) query.set("work_item_id", filters.work_item_id);
+    if (filters.recipient) query.set("recipient", filters.recipient);
+    if (filters.cursor) query.set("cursor", filters.cursor);
+    if (filters.limit != null) query.set("limit", String(filters.limit));
+    return fetchJSON<InteractionListResponse>(
+      `/interactions${query.size ? `?${query.toString()}` : ""}`,
+      { ...(signal ? { signal } : {}), captureProblemCode: true },
+    );
+  },
+  getInteractionDetail: (
+    questionId: string,
+    expectedVersion?: number,
+    signal?: AbortSignal,
+  ) =>
+    fetchJSON<InteractionDetail>(
+      `/interactions/${encodeURIComponent(questionId)}${
+        expectedVersion == null
+          ? ""
+          : `?expected_version=${encodeURIComponent(String(expectedVersion))}`
+      }`,
+      { ...(signal ? { signal } : {}), captureProblemCode: true },
+    ),
+  answerInteraction: (
+    questionId: string,
+    expectedVersion: number,
+    idempotencyKey: string,
+    response: InteractionResponse,
+  ) =>
+    fetchJSON<AnswerReceipt>(
+      `/interactions/${encodeURIComponent(questionId)}/answers`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "If-Match": `"${expectedVersion}"`,
+          "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify({ expected_version: expectedVersion, response }),
+        timeoutMs: 30000,
+        captureProblemCode: true,
+      },
+    ),
+  cancelInteraction: (questionId: string, expectedVersion: number, reason: string) =>
+    fetchJSON<void>(
+      `/interactions/${encodeURIComponent(questionId)}/cancel`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "If-Match": `"${expectedVersion}"` },
+        body: JSON.stringify({ reason }),
+        captureProblemCode: true,
+      },
+    ),
+  reconcileInteraction: (
+    questionId: string,
+    expectedVersion: number,
+    reconciliation: InteractionReconcileRequest,
+  ) =>
+    fetchJSON<unknown>(
+      `/interactions/${encodeURIComponent(questionId)}/reconcile`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "If-Match": `"${expectedVersion}"` },
+        body: JSON.stringify(reconciliation),
+        captureProblemCode: true,
+      },
+    ),
+  delegateInteraction: (
+    questionId: string,
+    expectedVersion: number,
+    expectedAssignmentId: string,
+    reason: string,
+    expiresInSeconds = 60,
+  ) =>
+    fetchJSON<InteractionDetail>(
+      `/interactions/${encodeURIComponent(questionId)}/delegation`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "If-Match": `"${expectedVersion}"` },
+        body: JSON.stringify({
+          expected_assignment_id: expectedAssignmentId,
+          reason,
+          expires_in_seconds: expiresInSeconds,
+        }),
+        captureProblemCode: true,
+      },
+    ),
+  revokeInteractionDelegation: (
+    questionId: string,
+    expectedVersion: number,
+    reason: string,
+  ) =>
+    fetchJSON<InteractionDetail>(
+      `/interactions/${encodeURIComponent(questionId)}/delegation`,
+      {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", "If-Match": `"${expectedVersion}"` },
+        body: JSON.stringify({ reason }),
+        captureProblemCode: true,
+      },
+    ),
+  getInteractionHistory: (questionId: string) =>
+    fetchJSON<{ events: InteractionHistoryEvent[] }>(
+      `/interactions/${encodeURIComponent(questionId)}/history`,
+      { captureProblemCode: true },
+    ),
+  getInteractionWaitGraph: () =>
+    fetchJSON<InteractionWaitGraph>("/interaction-wait-graph", {
+      captureProblemCode: true,
+    }),
+  getInteractionCapabilities: () =>
+    fetchJSON<InteractionCapabilitiesResponse>("/interaction-capabilities", {
+      captureProblemCode: true,
+    }),
+  claimInteractionContentOwner: (
+    terminalId: string,
+    expectedIncarnationId: string,
+    reason: string,
+  ) =>
+    fetchJSON<void>(
+      `/interactions/sources/${encodeURIComponent(terminalId)}/content-owner`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          expected_incarnation_id: expectedIncarnationId,
+          reason,
+        }),
+        captureProblemCode: true,
+      },
     ),
 
   // Flows
