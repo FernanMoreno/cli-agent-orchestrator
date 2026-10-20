@@ -1,0 +1,12 @@
+{
+  "release_url": "https://github.com/anomalyco/opencode/releases/tag/v1.18.35",
+  "metadata_url": "https://api.github.com/repos/anomalyco/opencode/releases/tags/v1.18.35",
+  "version": "1.18.35",
+  "reported_version": "1.18.35",
+  "asset_url": "https://github.com/anomalyco/opencode/releases/download/v1.18.35/opencode-linux-x64-baseline.tar.gz",
+  "archive_sha256": "90c97d4a24d36437bce36f27195c9cd2e0b70ed037a04d1c6a6740eb246c2a73",
+  "official_digest_verified": true,
+  "binary_sha256": "77b2cfe4b97df6f15c3673b22100b9f79c711f25ecb9bf513bb82526b15d24fa",
+  "source_commit": "53d1eabb61e21162157817bf677da0a4ad3332e3",
+  "scope": "Official isolated binary preparation; real provider acceptance remains pending"
+}

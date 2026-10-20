@@ -110,3 +110,10 @@ Execute T035 → T036 → T037/T038 serially in main. These refine T007–T014 r
 T035 evidence: [native filter propagation](validation-t035.md): RED 28 failures/126 controls, final 193 passes across seven scoped modules, exact version-one byte/binding compatibility in 12 cases, 404-file typing, composition 5/0 and Codex-only review. T034 valid-list refusal is superseded by bound propagation; malformed refusal remains. Full OpenCode list/T007/live/global acceptance remains in progress.
 
 T036 evidence: [expanded catalog and authority](validation-t036.md): seven immutable profiles classify all 79 registered operations; 181 passing contracts, eight supplemental real-handler local refusal probes, 404-file typing, composition 5/0 and Codex-only review. Only offline/configuration/catalog/authority items are closed; OpenCode real v1/v2/message/concurrency/auth acceptance remains T037/T038.
+
+## T037 substeps: real v1 preparation and isolation
+
+- [x] T039 Pin official OpenCode v1.18.35 release/archive digest, isolated binary SHA/version and upstream source commit without global installation or credential access. This closes OC1-01 only; see [preparation evidence](validation-t037.md).
+- [ ] T040 Implement/test private v1 configuration, data/auth/cache/state/temp and overlay isolation before any model run. Preserve native v1 permission syntax, frozen/bound managed profiles and explicit interaction preflight; verify actual pinned config/agent/model/catalog without auth before live gates.
+
+T037/OC1-02–05 remain open after binary preparation. T040 precedes real v1 use because the legacy launch currently points to shared operator config/data.

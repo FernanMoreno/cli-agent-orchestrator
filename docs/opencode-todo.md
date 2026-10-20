@@ -39,7 +39,7 @@ Las tres herramientas del recorrido restringido son `cao_ask_user`, `cao_wait_fo
 
 ## Pendientes específicos de v1
 
-- [ ] OC1-01 Preparar un binario v1 con versión y procedencia fijadas, aislado del v2 instalado, sin reinstalación global.
+- [x] OC1-01 Preparar un binario v1 con versión y procedencia fijadas, aislado del v2 instalado, sin reinstalación global.
 - [ ] OC1-02 Validar instalación del perfil antes de crear terminal; comprobar agente y modelo efectivos, evitando fallback silencioso.
 - [ ] OC1-03 Ejecutar prompt Unicode, respuesta con recibo, error de proveedor, timeout, cancelación y limpieza en v1 real.
 - [ ] OC1-04 Verificar credenciales y configuración aisladas también en v1; el aislamiento de `OPENCODE_DB` de v2 no demuestra esta propiedad para v1.
@@ -147,3 +147,7 @@ Integrados siete perfiles cerrados: interacción, colaboración, `coordination`,
 La supervisión ahora exige metadatos actuales del terminal propio o de un hijo asignado directamente al llamante antes de inspeccionar/verificar/cancelar; conserva permisos del servidor, generación y autoridad Work. Coordinación mantiene el gate `assign` local con identidad/proyecto, y el cierre elástico exige trabajador configurado. Conocimiento conserva los controles existentes de ámbito, memoria y aprendizaje; escritura es un perfil separado.
 
 Pasaron **181 pruebas** de catálogo/transporte/autoridad/preflight y ocho comprobaciones suplementarias de los cuatro handlers locales sin identidad/proyecto, sin enviar tareas ni mensajes. Tipado **404 archivos**, estilo y composición **5/0**, revisión solo con Codex. Las casillas cerradas de OpenCode corresponden a implementación y contratos offline; **OC1 y la aceptación real de OC2/OC-05/06 siguen pendientes**, junto a los lanzadores externos y modalidades de autenticación. T032 aplazada no se reanudó. [Inventario completo](../specs/025-provider-mcp-profiles/catalog-inventory.md) y [evidencia/límites](../specs/025-provider-mcp-profiles/validation-t036.md).
+
+## OC1-01 — binario v1 fijado
+
+Preparado OpenCode **1.18.35** en un directorio privado, separado del v2 **2.0.18** instalado. El archivo oficial Linux x64 baseline coincide con el SHA-256 publicado por GitHub y el ejecutable devuelve exactamente `1.18.35`. No hubo instalación global, copia de credenciales ni turno de modelo. [Pin público reproducible](../specs/025-provider-mcp-profiles/opencode-v1-pin.json) y [evidencia de preparación](../specs/025-provider-mcp-profiles/validation-t037.md). OC1-02–05 siguen pendientes: la ruta v1 debe aislar configuración/datos y aplicar perfiles privados antes de ejecutar aceptación real.
