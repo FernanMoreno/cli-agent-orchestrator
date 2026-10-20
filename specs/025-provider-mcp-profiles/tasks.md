@@ -57,3 +57,7 @@ T018 → T019 → T020 is serial and implements only the identified client/prefl
 - [x] T024 Reject reserved policy env markers during native installation and add CLI coverage; document URL/--env staging and the pending preflight-call activation under T022.
 
 - [x] T025 Reproduce/fix the native catalog readiness→private service-auth publication race in test/cli/commands/test_install_opencode.py, with RED/GREEN bounded fake-clock tests in test/scripts/test_opencode_catalog_auth_wait.py. Preserve 15/45-second bounds and the failed receipt; perform one corrected pinned native check.
+
+## Publication verification across supported Python versions
+
+- [x] T026 Correct the reproduced Python 3.13 inherited Path.home descriptor assumption in test/scripts/test_interaction_runtime_environment.py; prove restoration of both the descriptor and its original owning-class behavior on Python 3.12 and 3.13. Keep HOME/CODEX_HOME privacy assertions intact. Recheck with all declared optional test features installed; distinguish the publication hook from global scalability acceptance. See [publication verification](validation-publication.md): 3/3 tests on each Python, 65/65 corrected-environment regressions, independent Luna/ECC review. The complete publication hook and global scalability gates remain separate.

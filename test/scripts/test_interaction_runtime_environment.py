@@ -1,5 +1,6 @@
 """Privacy contract for the Questions browser E2E's tmux child process."""
 
+import inspect
 import os
 from pathlib import Path
 
@@ -64,7 +65,8 @@ def test_private_path_home_keeps_runtime_paths_and_restores_path_descriptor(
 
     original_home = os.environ.get("HOME")
     original_codex_home = os.environ.get("CODEX_HOME")
-    original_home_descriptor = Path.__dict__["home"]
+    original_home_descriptor = inspect.getattr_static(Path, "home")
+    originally_owned_home = "home" in Path.__dict__
 
     with monkeypatch.context() as fixture_patch:
         # Register the raw descriptor so monkeypatch restores it after the
@@ -79,7 +81,8 @@ def test_private_path_home_keeps_runtime_paths_and_restores_path_descriptor(
         assert os.environ.get("HOME") == original_home
         assert os.environ.get("CODEX_HOME") == original_codex_home
 
-    assert Path.__dict__["home"] is original_home_descriptor
+    assert inspect.getattr_static(Path, "home") is original_home_descriptor
+    assert ("home" in Path.__dict__) == originally_owned_home
     assert os.environ.get("HOME") == original_home
     assert os.environ.get("CODEX_HOME") == original_codex_home
 
