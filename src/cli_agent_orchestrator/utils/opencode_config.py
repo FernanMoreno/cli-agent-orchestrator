@@ -128,7 +128,7 @@ def write_config(data: Dict[str, Any]) -> None:
 
 
 def validate_mcp_tool_profile_installation(cao_config: Mapping[str, Any]) -> None:
-    """Refuse policy loss until native installation has per-agent propagation."""
+    """Keep unconsumed policy and reserved markers out of shared native config."""
     has_reserved_policy = any(
         isinstance(cao_config.get(field), Mapping)
         and (

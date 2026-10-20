@@ -17,6 +17,8 @@ from cli_agent_orchestrator.utils.mcp_tool_policy import (
     MCP_TOOL_PROFILE_ENV,
     resolve_tool_profile,
 )
+from cli_agent_orchestrator.utils.opencode_policy import NATIVE_POLICY_PREFIX
+from cli_agent_orchestrator.utils.path_validation import validate_path_component
 
 _ACTIONS = {"bash": "shell", "task": "subagent", "write": "edit", "patch": "edit"}
 
@@ -224,6 +226,7 @@ def write_v2_configuration(
     source_auth: Path | None = None,
     source_credential_db: Path | None = None,
     selected_model: str | None = None,
+    selected_agent_source: tuple[str, str] | None = None,
 ):
     if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", session_id) is None:
         raise ValueError("bounded OpenCode terminal identity required")
@@ -296,8 +299,23 @@ def write_v2_configuration(
                 server["disabled"] = True
             config["mcp"]["servers"][name] = server
     mcp_server_names = set(mcp_servers) if isinstance(mcp_servers, dict) else set()
-    for path in source_agents.glob("*.md"):
-        agent = frontmatter.loads(path.read_text(encoding="utf-8"))
+    agent_paths = {path.stem: path for path in source_agents.glob("*.md")}
+    if selected_agent_source is not None:
+        selected_name, _ = selected_agent_source
+        validate_path_component(selected_name, "OpenCode agent identity")
+        agent_paths.setdefault(selected_name, source_agents / f"{selected_name}.md")
+    for name, path in agent_paths.items():
+        if selected_agent_source is not None and name == selected_agent_source[0]:
+            text = selected_agent_source[1]
+        else:
+            text = path.read_text(encoding="utf-8")
+        agent = frontmatter.loads(text)
+        if NATIVE_POLICY_PREFIX in agent.content:
+            if selected_agent_source is not None and name == selected_agent_source[0]:
+                raise ValueError("OpenCode native policy must be validated before translation")
+            # Another managed agent requires its own launch policy. It cannot
+            # inherit this terminal's child surface through an agent switch.
+            continue
         options = source_config.get("agent", {}).get(path.stem, {})
         rules = _rules(agent.metadata.get("permission"))
         # V1's global tools gate is separate from agent permission rules.

@@ -165,7 +165,43 @@ The provider detects terminal state from the tmux capture buffer (ANSI-stripped)
 
 The agent ID is the slash-sanitized form of the profile name (`/` → `__`) — the same identifier used for the installed `.md` filename and the runtime `opencode --agent <id>` argument. This keeps the filename, the `--agent` arg, and the `opencode.json` key aligned for any profile name.
 
-### Your `agent.<id>` entry is yours to edit
+### Per-agent CAO MCP tool profiles (CAO-managed v2)
+
+An agent's source profile can select an explicit tool catalog for the bundled
+CAO MCP server:
+
+```yaml
+mcpServers:
+  cao-mcp-server:
+    command: cao-mcp-server
+    cao_tool_profile: interaction
+```
+
+The supported values are `interaction` and `collaboration`. Reinstall the agent
+after changing its source profile. CAO publishes a pending native artifact before
+updating shared configuration, then marks it ready only when the selected server
+and agent grants match. A failed installation remains unlaunchable until a
+successful reinstall or refresh repairs it.
+
+At CAO-managed v2 launch, the selected policy is validated and frozen into that
+terminal's private configuration. Shared launchers keep their existing paths;
+policy markers do not leak into shared MCP configuration or the model prompt.
+The catalog selection does not grant operation authority. The historical
+interaction opt-in still restricts the child to `cao_ask_user`,
+`cao_wait_for_user_answers` and `cao_acknowledge_user_answers`, even when the
+selected catalog is `collaboration`.
+
+Managed native artifacts require CAO v2, including agents reinstalled after
+removing an explicit policy. Direct external OpenCode invocation does not enforce
+this protocol. Existing CAO v2 terminals keep their frozen policy; reinstalling
+does not hot-update them. See [T022 validation](../specs/025-provider-mcp-profiles/validation-t022.md)
+for verified behavior and pending live acceptance.
+
+### Editing your `agent.<id>` entry
+
+For an agent with an explicit managed policy, editing its bound MCP declaration
+or agent tools invalidates the installed binding. Reinstall before launching it
+again. The merge behavior below still preserves operator-owned settings.
 
 `opencode.json` is a shared file that you are expected to hand-edit, so CAO **merges
 into** `agent.<agent_id>` rather than rewriting it. A `model`, `prompt`,

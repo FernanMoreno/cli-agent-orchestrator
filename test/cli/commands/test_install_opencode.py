@@ -1177,8 +1177,8 @@ class TestOpencodeAgentListIntegration:
         )
 
 
-@pytest.mark.parametrize("profile", ["interaction", "collaboration", "unknown", None])
-def test_native_install_rejects_policy_before_changing_artifacts(
+@pytest.mark.parametrize("profile", ["unknown", None])
+def test_native_install_rejects_invalid_policy_before_changing_artifacts(
     runner: CliRunner, install_workspace: Dict[str, Any], profile
 ):
     source = install_workspace["local_store"] / "test-agent.md"
@@ -1198,7 +1198,7 @@ def test_native_install_rejects_policy_before_changing_artifacts(
     original_config = config.read_bytes()
     result = runner.invoke(install, ["test-agent", "--provider", "opencode_cli"])
     assert result.exit_code != 0
-    assert "per-agent propagation" in result.output
+    assert "tool profile" in result.output
     assert agent.read_bytes() == b"previous native agent\n"
     assert config.read_bytes() == original_config
     assert source.read_bytes() == original_source

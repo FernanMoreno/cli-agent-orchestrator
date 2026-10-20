@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 from urllib.parse import urlparse
@@ -43,8 +44,14 @@ from cli_agent_orchestrator.utils.agent_profiles import (
     _read_agent_profile_source,
     parse_agent_profile_text,
 )
+from cli_agent_orchestrator.utils.atomic_file import locked_atomic_write
 from cli_agent_orchestrator.utils.env import resolve_env_vars, set_env_var
-from cli_agent_orchestrator.utils.mcp_resolution import resolve_mcp_server_config
+from cli_agent_orchestrator.utils.mcp_resolution import (
+    CAO_MCP_SERVER_COMMAND,
+    CAO_MCP_SERVER_MODULE,
+    resolve_mcp_server_config,
+)
+from cli_agent_orchestrator.utils.mcp_tool_policy import MCP_TOOL_PROFILE_CONFIG
 from cli_agent_orchestrator.utils.opencode_config import (
     disable_mcp_server,
     ensure_skills_symlink,
@@ -59,6 +66,7 @@ from cli_agent_orchestrator.utils.opencode_config import (
     validate_mcp_tool_profile_installation,
 )
 from cli_agent_orchestrator.utils.opencode_permissions import cao_tools_to_opencode_permission
+from cli_agent_orchestrator.utils.opencode_policy import NATIVE_POLICY_PREFIX, render_native_agent
 from cli_agent_orchestrator.utils.path_validation import (
     flatten_path_separators,
     validate_path_component,
@@ -486,6 +494,52 @@ def kiro_install_predates_native_enforcement(
     return installed_kiro_tools(profile_name) == ["*"]
 
 
+def _prepare_native_profiles(
+    servers: Optional[Dict[str, Any]],
+) -> Tuple[Optional[Dict[str, Any]], Dict[str, str]]:
+    """Consume only validated policy metadata, retaining persisted command resolution."""
+    from cli_agent_orchestrator.providers.mcp_interactions import (
+        overlay_interaction_capability_file,
+    )
+
+    prepared = {}
+    profiles: Dict[str, str] = {}
+    for name, raw in (servers or {}).items():
+        config = dict(raw)
+        selected = MCP_TOOL_PROFILE_CONFIG in config
+        value = config.pop(MCP_TOOL_PROFILE_CONFIG, None)
+        validate_mcp_tool_profile_installation(config)
+        if selected:
+            if not isinstance(name, str) or not name:
+                raise ValueError("OpenCode native tool profile requires a server identity")
+            if not isinstance(value, str):
+                raise ValueError("CAO MCP tool profile must be interaction or collaboration")
+            if (
+                type(config.get("enabled", True)) is not bool
+                or type(config.get("disabled", False)) is not bool
+                or config.get("enabled") is False
+                or config.get("disabled") is True
+                or config.get("type", "stdio") not in ("stdio", "local")
+                or "url" in config
+            ):
+                raise ValueError(
+                    "OpenCode native tool profile requires an enabled local CAO server"
+                )
+            command = config.get("command")
+            args = config.get("args", []) or []
+            if not (
+                (command == CAO_MCP_SERVER_COMMAND and not args)
+                or (command == sys.executable and args == ["-m", CAO_MCP_SERVER_MODULE])
+            ):
+                raise ValueError("OpenCode native tool profile requires a canonical CAO command")
+            # The overlay proves source identity/shape. Its pinned command is
+            # deliberately not persisted into the shared legacy configuration.
+            overlay_interaction_capability_file({name: raw}, None)
+            profiles[name] = value
+        prepared[name] = config
+    return (prepared if servers is not None else None), profiles
+
+
 def install_agent(
     source: str,
     provider: Optional[str] = None,
@@ -607,6 +661,10 @@ def install_agent(
         # duplicated: review on #584 found the two had silently disagreed, because
         # this merge existed only here while five providers re-read the profile
         # from disk at launch.
+        native_profiles: Dict[str, str] = {}
+        if provider == ProviderType.OPENCODE_CLI.value:
+            profile.mcpServers, native_profiles = _prepare_native_profiles(profile.mcpServers)
+
         plugin_mcp = apply_plugin_mcp_servers(
             profile, provider=provider, persisted=True, normalize_existing=True
         )
@@ -616,6 +674,45 @@ def install_agent(
             for config in (profile.mcpServers or {}).values():
                 if isinstance(config, dict):
                     validate_mcp_tool_profile_installation(config)
+
+        mcp_server_names = grantable_server_names(profile, delivered=plugin_mcp)
+        allowed_tools = resolve_allowed_tools(profile.allowedTools, profile.role, mcp_server_names)
+        native_policy_agent = None
+        native_policy_servers = {}
+        if provider == ProviderType.OPENCODE_CLI.value:
+            native_mcp_servers = profile.mcpServers or {}
+            native_policy_servers = {
+                name: translate_mcp_server_config(native_mcp_servers[name])
+                for name in native_profiles
+            }
+            validate_path_component(profile.name, "agent profile name")
+            native_id = to_opencode_agent_id(profile.name)
+            native_file = OPENCODE_AGENTS_DIR / f"{native_id}.md"
+            body = profile.system_prompt or profile.prompt or ""
+            if NATIVE_POLICY_PREFIX in body:
+                raise ValueError("OpenCode native policy prefix is reserved")
+            was_managed = (
+                native_file.is_file()
+                and NATIVE_POLICY_PREFIX.encode("ascii") in native_file.read_bytes()
+            )
+            if native_profiles or was_managed:
+                if native_file.is_symlink():
+                    raise ValueError("OpenCode native policy artifact cannot be a symbolic link")
+                native_policy_agent = frontmatter.Post(
+                    body.rstrip(),
+                    **OpenCodeAgentConfig(
+                        description=profile.description,
+                        mode="all",
+                        permission=cao_tools_to_opencode_permission(allowed_tools),
+                    ).model_dump(exclude_none=True),
+                )
+                # This is the installation barrier: every subsequent failure
+                # leaves a visible pending artifact instead of a legacy fallback.
+                locked_atomic_write(
+                    native_file,
+                    render_native_agent(native_policy_agent, native_id, native_profiles),
+                    mode=0o600,
+                )
 
         # Record the provider we actually installed for into the LOCAL store
         # copy, so later provider resolution on this node is deterministic.
@@ -662,9 +759,6 @@ def install_agent(
         # durable answer. Dropping this argument silently reinstates the
         # auto-grant (G0) -- test_no_auto_grant.py's install-path cases fail if
         # it goes missing.
-        mcp_server_names = grantable_server_names(profile, delivered=plugin_mcp)
-        allowed_tools = resolve_allowed_tools(profile.allowedTools, profile.role, mcp_server_names)
-
         agent_file: Optional[Path] = None
         # Defence in depth. The resolved profile name is attacker-controlled, but
         # _write_context_file above has already REJECTED any name carrying a path
@@ -761,15 +855,16 @@ def install_agent(
             )
             agent_id = to_opencode_agent_id(profile.name)
             agent_file = OPENCODE_AGENTS_DIR / f"{agent_id}.md"
-            agent_file.write_text(
-                frontmatter.dumps(
-                    frontmatter.Post(
-                        body.rstrip() if body else "",
-                        **opencode_agent_config.model_dump(exclude_none=True),
-                    )
-                ),
-                encoding="utf-8",
-            )
+            if native_policy_agent is None:
+                agent_file.write_text(
+                    frontmatter.dumps(
+                        frontmatter.Post(
+                            body.rstrip() if body else "",
+                            **opencode_agent_config.model_dump(exclude_none=True),
+                        )
+                    ),
+                    encoding="utf-8",
+                )
 
             # OpenCode uses a shared opencode.json for MCP declarations. Unlike
             # Kiro/Copilot, whose per-agent files are rewritten wholesale, this
@@ -783,6 +878,24 @@ def install_agent(
                 agent_name=profile.name,
                 allowed_tools=allowed_tools,
             )
+            if native_policy_agent is not None:
+                completed_config = read_config()
+                actual_servers = completed_config.get("mcp", {})
+                if not isinstance(actual_servers, dict) or any(
+                    actual_servers.get(name) != expected
+                    for name, expected in native_policy_servers.items()
+                ):
+                    raise ValueError("OpenCode native MCP server changed during install; reinstall")
+                locked_atomic_write(
+                    agent_file,
+                    render_native_agent(
+                        native_policy_agent,
+                        agent_id,
+                        native_profiles,
+                        source_config=completed_config,
+                    ),
+                    mode=0o600,
+                )
 
         return InstallResult(
             success=True,

@@ -50,7 +50,7 @@ Exact item-by-item traceability: [numbered backlog map](backlog-map.md).
 T018 → T019 → T020 is serial and implements only the identified client/preflight boundary of T007.
 
 - [x] T021 Reproduce native install/translation dropping explicit policy; reject unsupported metadata before artifact writes and test existing artifact preservation in test/cli/commands/test_install_opencode.py.
-- [ ] T022 Design and implement strict per-agent native policy propagation with artifact binding and partial-install failure protection; preserve legacy installs and refuse unsupported v1 policy launches. T007 remains open until this succeeds.
+- [x] T022 Design and implement strict per-agent native policy propagation with artifact binding and partial-install failure protection; preserve legacy installs and refuse unsupported v1 policy launches. T007 remains open until this succeeds.
 
 - [x] T023 Correct the reproduced install CLI success-exit-on-service-failure boundary in cli/commands/install.py; strengthen test/cli/commands/test_install.py and rerun full applicable install checks.
 
@@ -67,3 +67,11 @@ T018 → T019 → T020 is serial and implements only the identified client/prefl
 - [x] T027 Reproduce missing profile-grant validation without interaction opt-in in the real v2 initialization path; cover both native layouts, complete/absent/partial grants, disabled children and multiple children. Implement validation of each effective active profiled child before backend launch, retaining cleanup and legacy unprofiled/no-opt-in behavior. Run scoped contracts, architecture/composition and independent review. T007/T022 remain open; this does not implement native policy publication or establish real-provider acceptance.
 
 T027 evidence: [final verification](validation-t027.md) records RED 6/8, the separately reproduced text-command gap, final 279 passes including 20 new cases, five architecture contracts, 403-file CI mypy, style and independent Luna approval. This closes only T027; T007/T022 and global/live acceptance remain open.
+
+## T022 implementation sequence
+
+- [x] T028 Add RED native installation/launch regressions, then implement the bounded envelope parser, renderer and content/configuration binding. Cover malformed/unknown/pending values and preserved native payload semantics.
+- [x] T029 Integrate frozen selected-agent input, managed-agent catalog isolation, private profile injection and managed-v1 refusal; prove grant/cleanup/nonmutation and TOCTOU boundaries.
+- [x] T030 Integrate atomic pending/ready native installation and managed-to-legacy recovery; retain direct translation/reserved-marker guards and normal shared command persistence. Run installation/provider/transport/refresh regressions, typing/style, architecture/composition and independent review. Close T022 only on integrated code and evidence; leave T007 and live/global gates open as applicable.
+
+T022/T028–T030 evidence: [native policy verification](validation-t022.md), with 527 passing contracts including 72 new cases, preserved RED diagnostics, 404-file typing, five architecture contracts, style and completed independent Claude design/product/correction reviews. T007 and live/global acceptance remain open.

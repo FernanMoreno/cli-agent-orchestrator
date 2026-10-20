@@ -48,6 +48,12 @@ from cli_agent_orchestrator.providers.mcp_interactions import (
 )
 from cli_agent_orchestrator.services.settings_service import get_server_settings
 from cli_agent_orchestrator.utils.mcp_tool_policy import MCP_TOOL_PROFILE_ENV
+from cli_agent_orchestrator.utils.opencode_policy import (
+    NativeToolPolicy,
+    apply_native_profiles,
+    parse_native_agent,
+    validate_native_binding,
+)
 from cli_agent_orchestrator.utils.terminal import wait_for_shell
 
 logger = logging.getLogger(__name__)
@@ -442,6 +448,8 @@ class OpenCodeCliProvider(BaseProvider):
         self._v2_database_path: Path | None = None
         self._v2_cao_mcp_server_name: str | None = None
         self._interaction_preflight_ok = False
+        self._native_agent_source: tuple[str, str] | None = None
+        self._native_tool_policy: NativeToolPolicy | None = None
         self._interaction_source_requested = bool(
             isinstance(allowed_tools, list) and "@cao-mcp-server" in allowed_tools
         )
@@ -477,9 +485,22 @@ class OpenCodeCliProvider(BaseProvider):
             self._prepare_runtime()
             if self._cli_major != 2:
                 return False
-            from cli_agent_orchestrator.utils.opencode_config import read_config
+            from cli_agent_orchestrator.utils.opencode_config import (
+                read_config,
+                to_opencode_agent_id,
+            )
 
             source_config = read_config()
+            if self._agent_profile:
+                agent_id = to_opencode_agent_id(self._agent_profile)
+                path = OPENCODE_AGENTS_DIR / f"{agent_id}.md"
+                if path.is_file():
+                    agent, policy = parse_native_agent(path.read_text(encoding="utf-8"), agent_id)
+                    if policy is not None:
+                        if path.is_symlink():
+                            return False
+                        validate_native_binding(agent, policy, source_config)
+                        source_config = apply_native_profiles(source_config, policy)
             # Use the same active-server predicate as initialization.  A
             # bundled entry that is explicitly disabled cannot receive the
             # capability overlay or answer interaction tools.
@@ -637,6 +658,8 @@ class OpenCodeCliProvider(BaseProvider):
 
     def _validate_native_profile(self) -> None:
         """Read the selected native profile without installing or rewriting it."""
+        self._native_agent_source = None
+        self._native_tool_policy = None
         if not self._agent_profile:
             if self._interaction_source_requested:
                 raise ValueError("OpenCode v2 CAO interaction requires a native agent profile")
@@ -650,9 +673,11 @@ class OpenCodeCliProvider(BaseProvider):
         try:
             if not path.is_file():
                 raise ValueError("missing native agent")
-            profile = frontmatter.loads(path.read_text(encoding="utf-8"))
+            profile, policy = parse_native_agent(path.read_text(encoding="utf-8"), agent_id)
             if profile.metadata.get("mode", "all") not in ("all", "primary", "subagent"):
                 raise ValueError("unsupported native agent mode")
+            if policy is not None and (policy.state != "ready" or path.is_symlink()):
+                raise ValueError("incomplete native policy")
         except Exception:
             raise ValueError(
                 f"OpenCode native profile {agent_id!r} is missing, unreadable, or invalid; "
@@ -660,8 +685,12 @@ class OpenCodeCliProvider(BaseProvider):
                 "--provider opencode_cli"
             ) from None
         self._agent_profile = agent_id
+        self._native_agent_source = (agent_id, frontmatter.dumps(profile))
+        self._native_tool_policy = policy
 
     async def _initialize_validated(self) -> bool:
+        if self._native_tool_policy is not None and self._cli_major != 2:
+            raise ValueError("OpenCode v1 does not support managed native MCP tool policies")
         init_timeout = get_server_settings()["provider_init_timeout"]
         if not await wait_for_shell(self.terminal_id, timeout=init_timeout):
             raise TimeoutError(f"Shell initialization timed out after {init_timeout}s")
@@ -682,6 +711,16 @@ class OpenCodeCliProvider(BaseProvider):
             os.chmod(parent, 0o700)
             self._owned_v2_config_dir = Path(tempfile.mkdtemp(prefix="terminal-", dir=parent))
             source_config = read_config()
+            if self._native_tool_policy is not None:
+                import frontmatter
+
+                assert self._native_agent_source is not None
+                validate_native_binding(
+                    frontmatter.loads(self._native_agent_source[1]),
+                    self._native_tool_policy,
+                    source_config,
+                )
+                source_config = apply_native_profiles(source_config, self._native_tool_policy)
             native_mcp = source_config.get("mcp", {})
             profiled_mcp_servers: set[str] = set()
             if isinstance(native_mcp, dict):
@@ -743,6 +782,7 @@ class OpenCodeCliProvider(BaseProvider):
                 session_id=self.terminal_id,
                 source_auth=source_auth,
                 source_credential_db=source_credential_db,
+                selected_agent_source=self._native_agent_source,
             )
             self._v2_config_dir = v2_config_dir
             if self._interaction_source_requested and self._v2_cao_mcp_server_name is not None:
