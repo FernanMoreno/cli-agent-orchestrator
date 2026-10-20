@@ -6452,6 +6452,9 @@ async def run_step(
                             "receipt_candidate_seen": e.wait_diagnostics.receipt_candidate_seen,
                             "stable_receipt_observations": e.wait_diagnostics.stable_receipt_observations,
                             "idle_extraction_attempted": e.wait_diagnostics.idle_extraction_attempted,
+                            "receipt_probe_calls": e.wait_diagnostics.receipt_probe_calls,
+                            "prompt_redelivery_attempts": e.wait_diagnostics.prompt_redelivery_attempts,
+                            "delivery_verified": e.wait_diagnostics.delivery_verified,
                         }
                     }
                     if e.wait_diagnostics is not None

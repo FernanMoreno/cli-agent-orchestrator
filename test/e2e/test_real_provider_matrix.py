@@ -1123,6 +1123,11 @@ def _safe_step_failure(response: requests.Response) -> dict[str, object]:
     diagnostics = detail.get("wait_diagnostics")
     boolean_fields = {"observed_working", "receipt_candidate_seen", "idle_extraction_attempted"}
     counter_fields = {"receipt_probe_errors", "stable_receipt_observations"}
+    legacy_fields = boolean_fields | counter_fields | {"phase", "last_status"}
+    extended_fields = {"receipt_probe_calls", "prompt_redelivery_attempts", "delivery_verified"}
+    if isinstance(diagnostics, dict) and set(diagnostics) == legacy_fields | extended_fields:
+        boolean_fields |= {"delivery_verified"}
+        counter_fields |= {"receipt_probe_calls", "prompt_redelivery_attempts"}
     if (
         isinstance(diagnostics, dict)
         and set(diagnostics) == boolean_fields | counter_fields | {"phase", "last_status"}

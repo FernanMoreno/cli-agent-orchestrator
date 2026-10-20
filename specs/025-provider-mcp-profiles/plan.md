@@ -1,5 +1,9 @@
 # Plan: provider MCP profiles
 
+## T006 observation continuation (2026-10-21)
+
+Read-only Claude consultation confirms that completion diagnostics omit the number of probe calls and recovery attempts. Trace those existing local variables through `agent_step._wait_for_completion` → `StepExecutionError` → API error projection → matrix sanitizer. Add a call counter immediately before the existing probe, expose the already tracked recovery-attempt count and delivery-verification flag only at timeout. Do not change stable-streak semantics, retry policy, deadlines or causal classification. Keep old diagnostic constructors compatible with defaults and accept exactly either legacy or extended sanitizer shapes. Test RED then GREEN with deterministic fake clocks and actual HTTP mapping; use the existing private publication environment, followed by composition and read-only peer review. A separately bounded real Claude probe must reuse verified PostgreSQL and private copied authentication, preserve operator login and report only closed diagnostics; no historical reconciliation jobs are involved. The existing broad Graphify query was truncated, so verify every important boundary directly against source. Repository specs own this incremental decision; the prior vault identity mismatch still precludes vault access.
+
 ## Technical context and constitution
 
 Python 3.12, FastMCP middleware, copied provider MCP config maps, existing stdio children. No new dependencies, schema or persistence migrations. Preserve unrelated main changes. Constitution I–V: source and executable evidence; no cleanup of existing work; spec → plan → tasks → Graphify → tests → implementation; composition and independent review before closure.

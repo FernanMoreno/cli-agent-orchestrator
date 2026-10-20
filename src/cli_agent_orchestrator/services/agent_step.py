@@ -522,6 +522,10 @@ class CompletionWaitDiagnostics:
     stable_receipt_observations: int
     idle_extraction_attempted: bool
     phase: Literal["completion"] = "completion"
+    receipt_probe_calls: int = 0
+    prompt_redelivery_attempts: int = 0
+    # The guarded recovery probe confirmed working; not a task-completion proof.
+    delivery_verified: bool = False
 
 
 class StepExecutionError(Exception):
@@ -681,6 +685,7 @@ async def _wait_for_completion(
     post_turn_receipt_candidate: Optional[str] = None
     consecutive_post_turn_receipt = 0
     receipt_probe_errors = 0
+    receipt_probe_calls = 0
     receipt_candidate_seen = False
     idle_extraction_attempted = False
     # Seeded at entry — i.e. AFTER ``send_input`` returned — so the first
@@ -738,7 +743,8 @@ async def _wait_for_completion(
         answer must survive two reads and then pass the terminal-service CAS.
         """
         nonlocal post_turn_receipt_candidate, consecutive_post_turn_receipt
-        nonlocal receipt_probe_errors, receipt_candidate_seen
+        nonlocal receipt_probe_errors, receipt_candidate_seen, receipt_probe_calls
+        receipt_probe_calls += 1
         try:
             extracted = await asyncio.to_thread(
                 terminal_service.probe_post_turn_receipt_result,
@@ -966,6 +972,9 @@ async def _wait_for_completion(
                     receipt_candidate_seen=receipt_candidate_seen,
                     stable_receipt_observations=consecutive_post_turn_receipt,
                     idle_extraction_attempted=idle_extraction_attempted,
+                    receipt_probe_calls=receipt_probe_calls,
+                    prompt_redelivery_attempts=redeliveries,
+                    delivery_verified=delivery_verified,
                 ),
             )
 

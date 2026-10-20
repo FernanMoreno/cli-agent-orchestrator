@@ -75,3 +75,9 @@ T027 evidence: [final verification](validation-t027.md) records RED 6/8, the sep
 - [x] T030 Integrate atomic pending/ready native installation and managed-to-legacy recovery; retain direct translation/reserved-marker guards and normal shared command persistence. Run installation/provider/transport/refresh regressions, typing/style, architecture/composition and independent review. Close T022 only on integrated code and evidence; leave T007 and live/global gates open as applicable.
 
 T022/T028–T030 evidence: [native policy verification](validation-t022.md), with 527 passing contracts including 72 new cases, preserved RED diagnostics, 404-file typing, five architecture contracts, style and completed independent Claude design/product/correction reviews. T007 and live/global acceptance remain open.
+
+## T006 observation continuation
+
+- [x] T031 Reproduce missing receipt-probe/recovery observations; add factual counters and verified-delivery flag through completion timeout, HTTP and closed matrix evidence, preserving legacy diagnostic shapes and all deadlines/settling semantics. Run regression/composition checks and independent review, then record a serial source-bound Claude diagnostic if resource/auth preconditions hold. This advances T006 without presuming a historical cause or full matrix acceptance.
+
+T031 evidence: [timeout observations and real diagnostic](validation-t031.md): RED 11 failures/24 passes, corrected 214 passing regressions, 404-file typing, composition 5/0 and completed read-only Claude review. Corrected real Unicode probe: HTTP 200 in 21.909 seconds, verified marker/native receipt and confirmed cleanup. The first private verifier failure is preserved. T006 remains open because the historical 504 was not reproduced.

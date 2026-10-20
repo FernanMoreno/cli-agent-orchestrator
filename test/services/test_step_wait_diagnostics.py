@@ -47,6 +47,9 @@ def test_completion_timeout_keeps_safe_observations(
         "receipt_probe_errors": errors,
         "receipt_candidate_seen": seen,
         "stable_receipt_observations": int(seen),
+        "receipt_probe_calls": 1,
+        "prompt_redelivery_attempts": 0,
+        "delivery_verified": False,
         "idle_extraction_attempted": False,
     }
     assert "秘密" not in repr(diagnostic)
@@ -87,6 +90,9 @@ def test_run_step_http_timeout_projects_only_closed_observations(monkeypatch):
         receipt_candidate_seen=False,
         stable_receipt_observations=0,
         idle_extraction_attempted=False,
+        receipt_probe_calls=3,
+        prompt_redelivery_attempts=2,
+        delivery_verified=True,
     )
     error = agent_step.StepExecutionError(
         "completion timeout",
@@ -121,6 +127,9 @@ def test_run_step_http_timeout_projects_only_closed_observations(monkeypatch):
         "receipt_probe_errors": 1,
         "receipt_candidate_seen": False,
         "stable_receipt_observations": 0,
+        "receipt_probe_calls": 3,
+        "prompt_redelivery_attempts": 2,
+        "delivery_verified": True,
         "idle_extraction_attempted": False,
     }
     assert "秘密" not in response.text
@@ -239,3 +248,129 @@ def test_idle_extraction_attempt_is_observed_without_changing_completion(monkeyp
     assert caught.value.wait_diagnostics.idle_extraction_attempted is True
     assert caught.value.wait_diagnostics.observed_working is True
     assert caught.value.wait_diagnostics.last_status is TerminalStatus.IDLE
+
+
+@pytest.mark.parametrize("recovery", [False, True, ValueError("秘密 recovery")])
+def test_timeout_records_recovery_attempt_even_when_send_fails(monkeypatch, recovery):
+    clock = {"now": 0.0, "polls": 0}
+
+    def status(_):
+        clock["polls"] += 1
+        clock["now"] = clock["polls"] * 2.0
+        return TerminalStatus.IDLE
+
+    def recover(*args, **kwargs):
+        if isinstance(recovery, Exception):
+            raise recovery
+        return recovery
+
+    monkeypatch.setattr(agent_step.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(agent_step, "_PROMPT_PICKUP_GRACE", 1)
+    monkeypatch.setattr(agent_step, "_interaction_wait_snapshot", AsyncMock(return_value=None))
+    monkeypatch.setattr(agent_step.status_monitor, "get_status", status)
+    monkeypatch.setattr(
+        agent_step.terminal_service, "probe_post_turn_receipt_result", lambda _: None
+    )
+    monkeypatch.setattr(agent_step.terminal_service, "redeliver_dropped_message", recover)
+    with pytest.raises(agent_step.StepExecutionError) as caught:
+        asyncio.run(agent_step._wait_for_completion("test1234", timeout=4, prompt="秘密 café"))
+    diagnostic = caught.value.wait_diagnostics
+    assert diagnostic.receipt_probe_calls == 2
+    assert diagnostic.receipt_probe_errors == 0
+    assert diagnostic.prompt_redelivery_attempts == 1
+    assert diagnostic.delivery_verified is (recovery is True)
+    assert diagnostic.observed_working is False
+    assert "秘密" not in repr(diagnostic)
+
+
+def test_timeout_distinguishes_unreached_probe_from_empty_result(monkeypatch):
+    monkeypatch.setattr(agent_step, "_interaction_wait_snapshot", AsyncMock(return_value=None))
+    monkeypatch.setattr(agent_step.status_monitor, "get_status", lambda _: TerminalStatus.UNKNOWN)
+    probe = AsyncMock(side_effect=AssertionError("probe must not run for UNKNOWN"))
+    monkeypatch.setattr(agent_step.terminal_service, "probe_post_turn_receipt_result", probe)
+    with pytest.raises(agent_step.StepExecutionError) as caught:
+        asyncio.run(agent_step._wait_for_completion("test1234", timeout=0))
+    assert caught.value.wait_diagnostics.receipt_probe_calls == 0
+    probe.assert_not_called()
+
+
+@pytest.mark.parametrize("legacy", [True, False])
+def test_matrix_accepts_complete_legacy_or_extended_diagnostic(legacy):
+    from test.e2e import test_real_provider_matrix as matrix
+    from types import SimpleNamespace
+
+    diagnostic = {
+        "phase": "completion",
+        "last_status": "idle",
+        "observed_working": False,
+        "receipt_probe_errors": 0,
+        "receipt_candidate_seen": False,
+        "stable_receipt_observations": 0,
+        "idle_extraction_attempted": False,
+    }
+    if not legacy:
+        diagnostic.update(
+            receipt_probe_calls=5, prompt_redelivery_attempts=2, delivery_verified=False
+        )
+    response = SimpleNamespace(
+        status_code=504, json=lambda: {"detail": {"wait_diagnostics": diagnostic}}
+    )
+    assert matrix._safe_step_failure(response)["wait_diagnostics"] == diagnostic
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"receipt_probe_calls": True},
+        {"receipt_probe_calls": -1},
+        {"receipt_probe_calls": 2**40},
+        {"prompt_redelivery_attempts": "秘密"},
+        {"delivery_verified": 1},
+        {"unknown": "秘密"},
+        {"receipt_probe_calls": None},
+    ],
+)
+def test_matrix_rejects_invalid_extended_observations(changes):
+    from test.e2e import test_real_provider_matrix as matrix
+    from types import SimpleNamespace
+
+    diagnostic = {
+        "phase": "completion",
+        "last_status": "idle",
+        "observed_working": False,
+        "receipt_probe_errors": 0,
+        "receipt_candidate_seen": False,
+        "stable_receipt_observations": 0,
+        "idle_extraction_attempted": False,
+        "receipt_probe_calls": 5,
+        "prompt_redelivery_attempts": 2,
+        "delivery_verified": False,
+        **changes,
+    }
+    response = SimpleNamespace(
+        status_code=504, json=lambda: {"detail": {"wait_diagnostics": diagnostic}}
+    )
+    assert matrix._safe_step_failure(response) == {"http_status": 504}
+
+
+@pytest.mark.parametrize(
+    "field", ["receipt_probe_calls", "prompt_redelivery_attempts", "delivery_verified"]
+)
+def test_matrix_rejects_partial_extended_shape(field):
+    from test.e2e import test_real_provider_matrix as matrix
+    from types import SimpleNamespace
+
+    diagnostic = {
+        "phase": "completion",
+        "last_status": "idle",
+        "observed_working": False,
+        "receipt_probe_errors": 0,
+        "receipt_candidate_seen": False,
+        "stable_receipt_observations": 0,
+        "idle_extraction_attempted": False,
+        field: False if field == "delivery_verified" else 1,
+    }
+    response = SimpleNamespace(
+        status_code=504, json=lambda: {"detail": {"wait_diagnostics": diagnostic}}
+    )
+    assert matrix._safe_step_failure(response) == {"http_status": 504}
