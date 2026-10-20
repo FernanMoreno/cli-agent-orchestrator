@@ -156,6 +156,13 @@ See [Inbox Delivery](inbox-delivery.md) for the full architecture, two-flag gate
 
 When a CAO profile specifies a `native_agent` field, the provider passes `--agent <name>` directly to Claude Code's native agent store (`~/.claude/agents/`). This is a thin-wrapper mode where Claude Code handles all configuration (MCP servers, hooks, tools, model).
 
+Do not combine `native_agent` with an explicit `cao_tool_profile` in the CAO
+profile's MCP entries. CAO rejects that combination because this route cannot
+apply the declared policy; it also rejects null or invalid policy selections.
+Use a full CAO profile without `native_agent` to apply CAO's protected MCP
+configuration. Native wrappers without that explicit policy keep their existing
+behavior. See [T033 verification](../specs/025-provider-mcp-profiles/validation-t033.md).
+
 If no CAO profile is found for the given agent name, the provider also falls back to `--agent <name>`, assuming it exists in the native store.
 
 ```markdown

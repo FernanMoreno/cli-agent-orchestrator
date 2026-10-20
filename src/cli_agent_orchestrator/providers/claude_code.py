@@ -12,9 +12,12 @@ import shlex
 import stat
 import threading
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from time import time as _wall_clock
 from typing import TYPE_CHECKING, Any, List, Optional
+
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from cli_agent_orchestrator.models.agent_profile import AgentProfile
@@ -38,6 +41,7 @@ from cli_agent_orchestrator.utils.mcp_resolution import (
 )
 from cli_agent_orchestrator.utils.mcp_tool_policy import (
     MCP_TOOL_FILTER_ENV,
+    MCP_TOOL_PROFILE_CONFIG,
     MCP_TOOL_PROFILE_ENV,
     encode_tool_filter,
 )
@@ -548,6 +552,14 @@ class ClaudeCodeProvider(BaseProvider):
         # Route based on profile state
         native = getattr(profile, "native_agent", None) if profile else None
         if profile is not None and isinstance(native, str) and native:
+            for server_config in (profile.mcpServers or {}).values():
+                if isinstance(server_config, BaseModel):
+                    server_config = server_config.model_dump()
+                if isinstance(server_config, Mapping) and MCP_TOOL_PROFILE_CONFIG in server_config:
+                    raise ValueError(
+                        "CAO MCP tool profiles cannot be applied with native_agent; "
+                        "use a full CAO profile"
+                    )
             # Thin wrapper: CAO profile maps to a native Claude Code agent.
             # Let Claude Code handle all config (MCP servers, hooks, tools, model)
             # -- self._model (whether sourced from an explicit per-call override

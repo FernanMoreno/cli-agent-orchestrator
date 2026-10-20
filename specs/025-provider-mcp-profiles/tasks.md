@@ -85,3 +85,9 @@ T031 evidence: [timeout observations and real diagnostic](validation-t031.md): R
 ## T007 Claude explicit filters
 
 - [ ] T032 Reproduce ineffective propagation of Claude profiled `enabled_tools`; implement a protected server-side immutable filter with strict startup parsing and empty/partial semantics, leaving legacy unprofiled behavior unchanged. Prove actual builder-to-MCP catalog/call boundaries, malformed/forged input refusal and instance isolation; run provider/native/install regressions, architecture/composition, typing/style and independent review. Keep full T007 and live acceptance open.
+
+## T007 native routing guard
+
+- [x] T033 Reproduce `native_agent` silently bypassing explicit CAO MCP policy; reject that unsupported combination before command/artifact/backend emission, including mapped and Pydantic entries and invalid/null selections. Preserve legacy native/full-CAO routing and grants. Run the new scoped guard and existing provider unit checks, typing/style/composition and Codex-only diff review. Keep T032's deferred expanded validation and full T007/live gates open.
+
+T033 evidence: [native routing policy refusal](validation-t033.md): RED 30 failures/6 compatibility passes, 243 passing tests including 36 new cases and two changed unit cases rechecked after the mock-isolation review, 404-file typing, composition 5/0, style and Codex-only review. T032 remains explicitly deferred and full T007/live/global gates remain open.

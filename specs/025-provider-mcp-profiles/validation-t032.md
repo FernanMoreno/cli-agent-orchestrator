@@ -1,5 +1,9 @@
 # T032 — Claude explicit tool filter propagation
 
+This record describes the T032 increment published as `8f951775`. Subsequent
+[T033 verification](validation-t033.md) covers an additional native-routing
+refusal; it does not resume or close T032's deferred expanded checks.
+
 ## Implemented boundary
 
 For a CAO-managed Claude MCP entry with `cao_tool_profile`, the builder now consumes a non-null `enabled_tools` list and emits only its intersection with the selected profile through a protected child variable. An empty list denies every tool. Unknown input names disappear; malformed non-null input fails before a command is returned. Null/absent filters retain the profile and do not reach Claude as client metadata. Unprofiled entries retain their previous serialization.
@@ -22,4 +26,4 @@ A deterministic bounded Graphify AST refresh captured 440 nodes and 1,160 edges 
 
 Composition review: builder configuration → protected environment → startup parsing → immutable middleware → exact catalog/dispatch. Existing handler authority, native grants and the three-tool intersection remain downstream checks. No database schema, transaction, retry, timeout, cache or migration changed. In-process positive/sentinel-negative transport verifies the changed dispatch boundary without a real database; the prepared stdio negatives deliberately invoke no allowed production handler. No model, authentication, AG-UI/restart or Work-message acceptance is inferred. The internal environment protocol is covered by producer/parser tests rather than a new external Pact contract.
 
-Verdict: **verification incomplete** for the final T032 selection. T032 remains open pending the final required checks; T007 and expanded real-provider acceptance remain open. Product code is unchanged since its preliminary 66-test pass and review. The user explicitly deferred the expanded validation after the memory refusal. Publishing this reviewed increment does not close its remaining checks. Subsequent work is Codex-only at the user's request; all recorded Claude consultations preceded that instruction.
+Verdict: **verification incomplete** for the final T032 selection. T032 remains open pending the final required checks; T007 and expanded real-provider acceptance remain open. At T032 publication, product code was unchanged since its preliminary 66-test pass and review. The user explicitly deferred the expanded validation after the memory refusal. Publishing that reviewed increment did not close its remaining checks. Subsequent work is Codex-only at the user's request; all recorded Claude consultations preceded that instruction.
