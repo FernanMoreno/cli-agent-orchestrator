@@ -510,6 +510,12 @@ def _prepare_native_profiles(
         value = config.pop(MCP_TOOL_PROFILE_CONFIG, None)
         validate_mcp_tool_profile_installation(config)
         if selected:
+            # The native envelope binds profiles, but cannot retain client filters.
+            if config.get("enabled_tools") is not None:
+                raise ValueError(
+                    "OpenCode native tool profiles do not support enabled_tools; "
+                    "omit the filter or use a provider that preserves it"
+                )
             if not isinstance(name, str) or not name:
                 raise ValueError("OpenCode native tool profile requires a server identity")
             if not isinstance(value, str):

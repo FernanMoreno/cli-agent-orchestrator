@@ -183,6 +183,13 @@ updating shared configuration, then marks it ready only when the selected server
 and agent grants match. A failed installation remains unlaunchable until a
 successful reinstall or refresh repairs it.
 
+Native installation currently supports the profile selection only. Combining an
+explicit `cao_tool_profile` with non-null `enabled_tools` is rejected before
+native/configuration publication, including empty and partial lists. An omitted
+or null filter selects the full profile. Per-agent client-filter propagation is
+still pending. The guard cannot reconstruct filters discarded by an earlier
+installation; review the original source profile before reinstalling.
+
 At CAO-managed v2 launch, the selected policy is validated and frozen into that
 terminal's private configuration. Shared launchers keep their existing paths;
 policy markers do not leak into shared MCP configuration or the model prompt.

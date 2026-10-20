@@ -91,3 +91,9 @@ T031 evidence: [timeout observations and real diagnostic](validation-t031.md): R
 - [x] T033 Reproduce `native_agent` silently bypassing explicit CAO MCP policy; reject that unsupported combination before command/artifact/backend emission, including mapped and Pydantic entries and invalid/null selections. Preserve legacy native/full-CAO routing and grants. Run the new scoped guard and existing provider unit checks, typing/style/composition and Codex-only diff review. Keep T032's deferred expanded validation and full T007/live gates open.
 
 T033 evidence: [native routing policy refusal](validation-t033.md): RED 30 failures/6 compatibility passes, 243 passing tests including 36 new cases and two changed unit cases rechecked after the mock-isolation review, 404-file typing, composition 5/0, style and Codex-only review. T032 remains explicitly deferred and full T007/live/global gates remain open.
+
+## T007 native installation explicit filter guard
+
+- [x] T034 Reproduce OpenCode native installation silently dropping profiled `enabled_tools`; refuse unsupported non-null filters before publication. Cover pure preparation, CLI failure status, fresh and already managed artifact preservation, input nonmutation and null/absent/legacy compatibility. Verify scoped serial configuration contracts, typing/style/composition and Codex-only review. Actual native filter support, T007, T032's deferred validation and live/global gates remain open.
+
+T034 evidence: [native installation filter refusal](validation-t034.md): RED 24 failures/28 controls, final 52 passes including 29 new cases, 404-file typing, composition 5/0, style and Codex-only composition review. Native filter propagation, full T007 and the deferred T032/live/global gates remain open.

@@ -297,3 +297,103 @@ def test_explicit_policy_cannot_enable_a_disabled_or_malformed_source(install_wo
     assert not result.success
     assert not install_workspace["agents_dir"].exists()
     assert not install_workspace["config_file"].exists()
+
+
+@pytest.mark.parametrize("selection", ["interaction", "collaboration"])
+@pytest.mark.parametrize(
+    "enabled", [[], ["send_message"], ["秘密 unknown"], "send_message", {}, [1]]
+)
+def test_preparation_refuses_profiled_client_filter_without_mutating_input(selection, enabled):
+    import copy
+
+    servers = {
+        "秘密-server": {
+            "command": "cao-mcp-server",
+            "cao_tool_profile": selection,
+            "enabled_tools": enabled,
+        }
+    }
+    before = copy.deepcopy(servers)
+    with pytest.raises(ValueError, match="enabled_tools") as caught:
+        install_service._prepare_native_profiles(servers)
+    assert "秘密" not in str(caught.value)
+    assert servers == before
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize(
+    "enabled", [[], ["send_message"], ["秘密 unknown"], "send_message", {}, [1]]
+)
+def test_install_refuses_profiled_filter_before_changing_owned_artifacts(
+    install_workspace, enabled, existing, tmp_path
+):
+    from click.testing import CliRunner
+
+    from cli_agent_orchestrator.cli.commands.install import install
+
+    if existing:
+        policy_source(install_workspace)
+        installed = install_service.install_agent("test-agent", provider="opencode_cli")
+        assert installed.success, installed.message
+    _write_profile(
+        install_workspace["local_store"] / "test-agent.md",
+        mcp_servers=(
+            "  cao-mcp-server:\n    command: cao-mcp-server\n"
+            "    cao_tool_profile: collaboration\n"
+            f"    enabled_tools: {json.dumps(enabled)}\n"
+        ),
+        extra_frontmatter='allowedTools: ["@cao-mcp-server"]\n',
+    )
+
+    def snapshot():
+        return {
+            str(path.relative_to(tmp_path)): (path.stat().st_mode, path.read_bytes())
+            for path in tmp_path.rglob("*")
+            if path.is_file()
+        }
+
+    before = snapshot()
+    result = CliRunner().invoke(install, ["test-agent", "--provider", "opencode_cli"])
+    assert result.exit_code != 0
+    assert "enabled_tools" in result.output
+    assert "秘密" not in result.output
+    assert snapshot() == before
+    if not existing:
+        assert not install_workspace["agents_dir"].exists()
+        assert not install_workspace["config_file"].exists()
+        assert list(install_workspace["context_dir"].iterdir()) == []
+
+
+@pytest.mark.parametrize("explicit_null", [False, True])
+def test_profiled_native_install_accepts_unspecified_client_filter(
+    install_workspace, explicit_null
+):
+    from cli_agent_orchestrator.utils.opencode_policy import (
+        parse_native_agent,
+        validate_native_binding,
+    )
+
+    _write_profile(
+        install_workspace["local_store"] / "test-agent.md",
+        mcp_servers=(
+            "  cao-mcp-server:\n    command: cao-mcp-server\n"
+            "    cao_tool_profile: collaboration\n"
+            + ("    enabled_tools: null\n" if explicit_null else "")
+        ),
+        extra_frontmatter='allowedTools: ["@cao-mcp-server"]\n',
+    )
+    result = install_service.install_agent("test-agent", provider="opencode_cli")
+    assert result.success, result.message
+    bare, policy = parse_native_agent(
+        (install_workspace["agents_dir"] / "test-agent.md").read_text(), "test-agent"
+    )
+    assert policy.profiles == {"cao-mcp-server": "collaboration"}
+    validate_native_binding(bare, policy, json.loads(install_workspace["config_file"].read_text()))
+
+
+@pytest.mark.parametrize("enabled", [[], ["send_message"], None])
+def test_unprofiled_native_preparation_preserves_legacy_filter_handling(enabled):
+    servers = {"legacy": {"command": "other-server", "enabled_tools": enabled}}
+    prepared, profiles = install_service._prepare_native_profiles(servers)
+    assert prepared == servers
+    assert profiles == {}
