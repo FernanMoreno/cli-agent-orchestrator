@@ -61,3 +61,9 @@ T018 → T019 → T020 is serial and implements only the identified client/prefl
 ## Publication verification across supported Python versions
 
 - [x] T026 Correct the reproduced Python 3.13 inherited Path.home descriptor assumption in test/scripts/test_interaction_runtime_environment.py; prove restoration of both the descriptor and its original owning-class behavior on Python 3.12 and 3.13. Keep HOME/CODEX_HOME privacy assertions intact. Recheck with all declared optional test features installed; distinguish the publication hook from global scalability acceptance. See [publication verification](validation-publication.md): 3/3 tests on each Python, 65/65 corrected-environment regressions, independent Luna/ECC review. The complete publication hook and global scalability gates remain separate.
+
+## T007 continuation: explicit-policy launch boundary
+
+- [x] T027 Reproduce missing profile-grant validation without interaction opt-in in the real v2 initialization path; cover both native layouts, complete/absent/partial grants, disabled children and multiple children. Implement validation of each effective active profiled child before backend launch, retaining cleanup and legacy unprofiled/no-opt-in behavior. Run scoped contracts, architecture/composition and independent review. T007/T022 remain open; this does not implement native policy publication or establish real-provider acceptance.
+
+T027 evidence: [final verification](validation-t027.md) records RED 6/8, the separately reproduced text-command gap, final 279 passes including 20 new cases, five architecture contracts, 403-file CI mypy, style and independent Luna approval. This closes only T027; T007/T022 and global/live acceptance remain open.

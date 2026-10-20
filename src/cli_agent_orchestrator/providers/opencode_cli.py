@@ -47,6 +47,7 @@ from cli_agent_orchestrator.providers.mcp_interactions import (
     overlay_interaction_capability_file,
 )
 from cli_agent_orchestrator.services.settings_service import get_server_settings
+from cli_agent_orchestrator.utils.mcp_tool_policy import MCP_TOOL_PROFILE_ENV
 from cli_agent_orchestrator.utils.terminal import wait_for_shell
 
 logger = logging.getLogger(__name__)
@@ -682,25 +683,41 @@ class OpenCodeCliProvider(BaseProvider):
             self._owned_v2_config_dir = Path(tempfile.mkdtemp(prefix="terminal-", dir=parent))
             source_config = read_config()
             native_mcp = source_config.get("mcp", {})
+            profiled_mcp_servers: set[str] = set()
             if isinstance(native_mcp, dict):
                 source_config = dict(source_config)
                 native_mcp = dict(native_mcp)
                 if isinstance(native_mcp.get("servers"), dict):
-                    native_mcp["servers"] = overlay_interaction_capability_file(
-                        native_mcp["servers"],
-                        self.interaction_capability_file,
-                        interaction_pull_flow_only=self._interaction_source_requested,
-                    )
+                    source_servers = native_mcp["servers"]
                 else:
                     source_servers = {
                         key: value for key, value in native_mcp.items() if isinstance(value, dict)
                     }
-                    overlaid = overlay_interaction_capability_file(
-                        source_servers,
-                        self.interaction_capability_file,
-                        interaction_pull_flow_only=self._interaction_source_requested,
-                    )
+                overlaid = overlay_interaction_capability_file(
+                    source_servers,
+                    self.interaction_capability_file,
+                    interaction_pull_flow_only=self._interaction_source_requested,
+                )
+                if isinstance(native_mcp.get("servers"), dict):
+                    native_mcp["servers"] = overlaid
+                else:
                     native_mcp.update(overlaid)
+                # An explicit surface policy requires grants even without an
+                # opted-in interaction channel. Inspect the protected overlay,
+                # which has resolved policy metadata onto canonical children.
+                profiled_mcp_servers = {
+                    name
+                    for name, server in overlaid.items()
+                    if isinstance(name, str)
+                    and isinstance(server, dict)
+                    and server.get("enabled") is not False
+                    and server.get("disabled") is not True
+                    and any(
+                        isinstance(server.get(field), dict)
+                        and MCP_TOOL_PROFILE_ENV in server[field]
+                        for field in ("env", "environment")
+                    )
+                }
                 source_config["mcp"] = native_mcp
             self._v2_cao_mcp_server_name = _find_cao_mcp_server_name(source_config)
             if self._interaction_source_requested and self._v2_cao_mcp_server_name is None:
@@ -728,17 +745,16 @@ class OpenCodeCliProvider(BaseProvider):
                 source_credential_db=source_credential_db,
             )
             self._v2_config_dir = v2_config_dir
-            validate_v2_mcp_configuration(
-                v2_config_dir,
-                agent_name=self._agent_profile,
-                server_name=(
-                    self._v2_cao_mcp_server_name if self._interaction_source_requested else None
-                ),
-            )
-            # ``server_name=None`` is intentionally a no-op: an ordinary v2
-            # terminal may carry a native MCP server without requesting CAO's
-            # explicit interaction channel.  Only a completed, requested
-            # grant validation is allowed to advertise that channel.
+            if self._interaction_source_requested and self._v2_cao_mcp_server_name is not None:
+                profiled_mcp_servers.add(self._v2_cao_mcp_server_name)
+            for server_name in sorted(profiled_mcp_servers):
+                validate_v2_mcp_configuration(
+                    v2_config_dir,
+                    agent_name=self._agent_profile,
+                    server_name=server_name,
+                )
+            # Unprofiled terminals without interaction opt-in keep their legacy
+            # behavior. A profile grant alone never advertises that channel.
             self._interaction_preflight_ok = (
                 self._interaction_source_requested and self._v2_cao_mcp_server_name is not None
             )
