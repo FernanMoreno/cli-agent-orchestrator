@@ -28,3 +28,17 @@ Private logs and JUnit records are retained under `caos-git-publish-20261020` in
 A validation checkout may be created on the Linux disk from an exact committed tree to avoid relying on the OneDrive source-import boundary that reported ENOMEM. All accepted edits and commits remain in main in the principal directory. Such validation must preserve the actual Husky wrappers, relevant built-artifact checks and tool availability, and bind its tree and runtime inputs. It does not authorize model runs, QEMU reruns, historical-job reconciliation, credential changes or package publication.
 
 T007/T022 native profile propagation, real provider acceptance, messaging/restart and global capacity/concurrency gates remain open.
+
+## Subsequent publication diagnostics — 2026-10-20
+
+Attempt 5 was terminated by a turn interruption at about 7%, before a completed suite or JUnit report. Its logs remain preserved. The next runner was detached and explicitly monitored so another turn change would not terminate its owned test process.
+
+Attempt 6 used the exact committed tree `3e05cd471d7ae12ff9b6fd13e0cb0b3ee6af07b5` on Linux disk, the locked Python 3.13.15 environment with all extras, the original coverage/selection and serial scheduling. It reproduced `test_roundtrip_runs_under_one_second` at **1.0100495500082616 seconds**, against the unchanged strict one-second limit. One SIGINT to the verified owned pytest process requested normal reporting/cleanup after that failure. Its partial result was **12,724 passed, one failed, 65 skipped, 340 deselected and 71 successful subtests in 8,868.84 seconds**. This is not a completed suite and did not publish anything.
+
+The runner retained the previous attempt number in its JUnit filename. The resulting attempt-6 XML was preserved byte-for-byte under both its original name and the corrected attempt-6 name; its timestamp, test count and duration identify the actual run. SHA-256: `7029b9c351f603bb0a3d50843d6102382acfc6bcae5e362022eddbc3939850ac`.
+
+The unchanged isolated test subsequently passed once normally and once under cProfile. These are diagnostics, not a fix or replacement for the failed full-suite timer. Source review rejected attributing aggregate SQL-builder time to the timed operation: fixture setup is included in that profile and the existing bounded LRU already reuses statement text. No product SQL, authorization, audit commit, benchmark body, timer, threshold or GC setting was changed. See [the T081 diagnostic](../021-postgresql-persistence/publication-nfr-20261020.md).
+
+The four preserved Apps bundles passed the JIT scan and size preflight. Another Claude diagnosis failed on session quota and is not recorded as completed. Luna's read-only review identified measurement limitations and did not approve a performance change. At this documentation freeze, the complete eight-worker comparison required by Spec021/T083 had not run on the next sealed tree; no pending gate is closed by this paragraph.
+
+The next publication comparison preserves the normal hook marker exclusions (`e2e` and `integration`) with eight workers. It cannot be presented as unfiltered T083 acceptance, and T083/T076 remain open.

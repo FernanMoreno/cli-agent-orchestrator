@@ -450,3 +450,11 @@ inspects `uv.lock`; `uv lock --check` passed, and the five changed Python files
 pass Black, isort and bytecode compilation.
 This closes the ACL/lockfile omission; the loaded full-backend latency failures
 and provider live gates remain separate open requirements.
+
+**Publication diagnostic (2026-10-20):** T081 remains open. The current sealed
+serial pre-push run reproduced the unchanged memory round-trip at
+1.0100495500082616 s and was interrupted for diagnosis after 12,724 passes,
+one failure and 65 skips. Two focused diagnostic processes passed; no cause
+or product correction is demonstrated. Preserve the failed receipt and see
+[the publication NFR record](publication-nfr-20261020.md). The complete
+eight-worker T083 comparison, cold cohort and aggregate gates remain separate.

@@ -1,5 +1,7 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+Publicación, 2026-10-20: la ejecución serial del gate común reprodujo el NFR de memoria a 1,010 s frente al límite de 1 s. Es un diagnóstico parcial del backend, separado de los perfiles y recorridos OpenCode. [Resultados y límites de evidencia](../specs/021-postgresql-persistence/publication-nfr-20261020.md).
+
 Fecha de revisión: 2026-10-20. Esta lista registra trabajo por hacer; no activa herramientas ni cambia permisos. Las casillas abiertas son propuestas o validaciones pendientes, no necesariamente defectos reproducidos.
 
 ## Estado y límites de la evidencia
