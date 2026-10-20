@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -19,6 +19,7 @@ import frontmatter
 from cli_agent_orchestrator.utils.mcp_resolution import CAO_MCP_SERVER_MODULE
 from cli_agent_orchestrator.utils.mcp_tool_policy import (
     MCP_TOOL_PROFILE_CONFIG,
+    resolve_tool_filter,
     resolve_tool_profile,
 )
 
@@ -33,6 +34,7 @@ class NativeToolPolicy:
     state: str
     profiles: Mapping[str, str]
     binding: str | None
+    filters: Mapping[str, frozenset[str]] = field(default_factory=lambda: MappingProxyType({}))
 
 
 def _profiles(value: Any) -> dict[str, str]:
@@ -45,6 +47,24 @@ def _profiles(value: Any) -> dict[str, str]:
         resolve_tool_profile(selection)
         result[name] = selection
     return result
+
+
+def _filters(value: Any, profiles: Mapping[str, str]) -> dict[str, frozenset[str]]:
+    if not isinstance(value, Mapping):
+        raise ValueError(_ERROR)
+    result = {}
+    for name, names in value.items():
+        if name not in profiles or not isinstance(names, list):
+            raise ValueError(_ERROR)
+        try:
+            result[name] = resolve_tool_filter(json.dumps(names), profiles[name])
+        except (ValueError, TypeError):
+            raise ValueError(_ERROR) from None
+    return result
+
+
+def _filter_payload(filters: Mapping[str, frozenset[str]]) -> dict[str, list[str]]:
+    return {name: sorted(names) for name, names in filters.items()}
 
 
 def _unique_object(pairs):
@@ -74,19 +94,20 @@ def parse_native_agent(text: str, agent_id: str):
     try:
         raw = base64.b64decode(encoded.encode("ascii"), altchars=b"-_", validate=True)
         data = json.loads(raw, object_pairs_hook=_unique_object)
-        if not isinstance(data, dict) or set(data) != {
-            "version",
-            "agent_id",
-            "state",
-            "profiles",
-            "binding",
-        }:
+        if not isinstance(data, dict) or type(data.get("version")) is not int:
             raise ValueError(_ERROR)
-        if type(data["version"]) is not int or data["version"] != 1:
+        version = data["version"]
+        if version not in (1, 2) or set(data) != (
+            {"version", "agent_id", "state", "profiles", "binding"}
+            | ({"filters"} if version == 2 else set())
+        ):
             raise ValueError(_ERROR)
         if data["agent_id"] != agent_id or data["state"] not in ("pending", "ready"):
             raise ValueError(_ERROR)
         profiles = _profiles(data["profiles"])
+        filters = _filters(data["filters"], profiles) if version == 2 else {}
+        if version == 2 and not filters:
+            raise ValueError(_ERROR)
         binding = data["binding"]
         if data["state"] == "pending":
             if binding is not None:
@@ -96,7 +117,9 @@ def parse_native_agent(text: str, agent_id: str):
     except (ValueError, TypeError, UnicodeError, KeyError) as exc:
         raise ValueError(_ERROR) from exc
     agent.content = body if separator else ""
-    return agent, NativeToolPolicy(agent_id, data["state"], MappingProxyType(profiles), binding)
+    return agent, NativeToolPolicy(
+        agent_id, data["state"], MappingProxyType(profiles), binding, MappingProxyType(filters)
+    )
 
 
 def _servers(config: Mapping[str, Any]) -> dict:
@@ -106,7 +129,13 @@ def _servers(config: Mapping[str, Any]) -> dict:
     return mcp["servers"] if isinstance(mcp.get("servers"), dict) else mcp
 
 
-def _binding(agent, agent_id: str, profiles: Mapping[str, str], config: Mapping[str, Any]) -> str:
+def _binding(
+    agent,
+    agent_id: str,
+    profiles: Mapping[str, str],
+    config: Mapping[str, Any],
+    filters: Mapping[str, frozenset[str]] | None = None,
+) -> str:
     servers = _servers(config)
     bound = {}
     for name in profiles:
@@ -134,6 +163,7 @@ def _binding(agent, agent_id: str, profiles: Mapping[str, str], config: Mapping[
                 "profiles": dict(profiles),
                 "servers": bound,
                 "agent_tools": options.get("tools"),
+                **({"filters": _filter_payload(filters)} if filters else {}),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -150,6 +180,7 @@ def render_native_agent(
     profiles: Mapping[str, str],
     *,
     source_config: Mapping[str, Any] | None = None,
+    filters: Mapping[str, list[str]] | None = None,
 ) -> str:
     """Render pending, or ready when the completed shared snapshot is supplied."""
     if NATIVE_POLICY_PREFIX in agent.content:
@@ -157,15 +188,20 @@ def render_native_agent(
     # Bind exactly the payload obtained after native frontmatter serialization.
     bare = frontmatter.loads(frontmatter.dumps(agent))
     selections = _profiles(profiles)
-    data = {
-        "version": 1,
+    selected_filters = _filters(filters if filters is not None else {}, selections)
+    data: dict[str, Any] = {
+        "version": 2 if selected_filters else 1,
         "agent_id": agent_id,
         "state": "pending" if source_config is None else "ready",
         "profiles": selections,
         "binding": (
-            None if source_config is None else _binding(bare, agent_id, selections, source_config)
+            None
+            if source_config is None
+            else _binding(bare, agent_id, selections, source_config, selected_filters)
         ),
     }
+    if selected_filters:
+        data["filters"] = _filter_payload(selected_filters)
     encoded = base64.urlsafe_b64encode(
         json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).decode("ascii")
@@ -178,7 +214,7 @@ def render_native_agent(
 
 def validate_native_binding(agent, policy: NativeToolPolicy, config: Mapping[str, Any]) -> None:
     if policy.state != "ready" or policy.binding != _binding(
-        agent, policy.agent_id, policy.profiles, config
+        agent, policy.agent_id, policy.profiles, config, policy.filters
     ):
         raise ValueError(_ERROR)
 
@@ -192,5 +228,7 @@ def apply_native_profiles(config: dict, policy: NativeToolPolicy) -> dict:
         server["command"] = [sys.executable, "-m", CAO_MCP_SERVER_MODULE]
         server.pop("args", None)
         server[MCP_TOOL_PROFILE_CONFIG] = selection
+        if name in policy.filters:
+            server["enabled_tools"] = sorted(policy.filters[name])
         servers[name] = server
     return result

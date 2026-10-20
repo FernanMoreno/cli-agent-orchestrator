@@ -14,7 +14,9 @@ import frontmatter
 from cli_agent_orchestrator.constants import _CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV
 from cli_agent_orchestrator.utils.mcp_tool_policy import (
     INTERACTION_TOOLS,
+    MCP_TOOL_FILTER_ENV,
     MCP_TOOL_PROFILE_ENV,
+    resolve_tool_filter,
     resolve_tool_profile,
 )
 from cli_agent_orchestrator.utils.opencode_policy import NATIVE_POLICY_PREFIX
@@ -92,7 +94,11 @@ def _normalize_mcp_actions(rules, server_names):
 
 
 def validate_v2_mcp_configuration(
-    destination: Path, *, agent_name: str, server_name: str | None
+    destination: Path,
+    *,
+    agent_name: str,
+    server_name: str | None,
+    require_interaction: bool = False,
 ) -> None:
     """Fail before launch when the selected OpenCode agent cannot use CAO MCP.
 
@@ -152,14 +158,21 @@ def validate_v2_mcp_configuration(
     ignored_env = server.get("env", {})
     if isinstance(ignored_env, dict) and (
         MCP_TOOL_PROFILE_ENV in ignored_env
+        or MCP_TOOL_FILTER_ENV in ignored_env
         or _CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV in ignored_env
     ):
         raise ValueError("OpenCode v2 MCP policy must use environment")
     required_tools = INTERACTION_TOOLS
     if MCP_TOOL_PROFILE_ENV in environment:
         required_tools = resolve_tool_profile(environment[MCP_TOOL_PROFILE_ENV])
+    if MCP_TOOL_FILTER_ENV in environment:
+        required_tools = resolve_tool_filter(
+            environment[MCP_TOOL_FILTER_ENV], environment.get(MCP_TOOL_PROFILE_ENV)
+        )
     if environment.get(_CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV) == "1":
         required_tools = required_tools & INTERACTION_TOOLS
+    if require_interaction and not INTERACTION_TOOLS.issubset(required_tools):
+        raise ValueError("OpenCode v2 interaction channel requires all three interaction tools")
 
     agents = config.get("agents")
     agent = agents.get(agent_name) if isinstance(agents, dict) else None

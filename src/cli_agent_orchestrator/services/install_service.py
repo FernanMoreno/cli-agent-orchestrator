@@ -51,7 +51,7 @@ from cli_agent_orchestrator.utils.mcp_resolution import (
     CAO_MCP_SERVER_MODULE,
     resolve_mcp_server_config,
 )
-from cli_agent_orchestrator.utils.mcp_tool_policy import MCP_TOOL_PROFILE_CONFIG
+from cli_agent_orchestrator.utils.mcp_tool_policy import MCP_TOOL_PROFILE_CONFIG, encode_tool_filter
 from cli_agent_orchestrator.utils.opencode_config import (
     disable_mcp_server,
     ensure_skills_symlink,
@@ -496,7 +496,7 @@ def kiro_install_predates_native_enforcement(
 
 def _prepare_native_profiles(
     servers: Optional[Dict[str, Any]],
-) -> Tuple[Optional[Dict[str, Any]], Dict[str, str]]:
+) -> Tuple[Optional[Dict[str, Any]], Dict[str, str], Dict[str, List[str]]]:
     """Consume only validated policy metadata, retaining persisted command resolution."""
     from cli_agent_orchestrator.providers.mcp_interactions import (
         overlay_interaction_capability_file,
@@ -504,18 +504,16 @@ def _prepare_native_profiles(
 
     prepared = {}
     profiles: Dict[str, str] = {}
+    filters: Dict[str, List[str]] = {}
     for name, raw in (servers or {}).items():
         config = dict(raw)
         selected = MCP_TOOL_PROFILE_CONFIG in config
         value = config.pop(MCP_TOOL_PROFILE_CONFIG, None)
         validate_mcp_tool_profile_installation(config)
         if selected:
-            # The native envelope binds profiles, but cannot retain client filters.
-            if config.get("enabled_tools") is not None:
-                raise ValueError(
-                    "OpenCode native tool profiles do not support enabled_tools; "
-                    "omit the filter or use a provider that preserves it"
-                )
+            enabled_tools = config.pop("enabled_tools", None)
+            if enabled_tools is not None:
+                filters[name] = json.loads(encode_tool_filter(enabled_tools, value))
             if not isinstance(name, str) or not name:
                 raise ValueError("OpenCode native tool profile requires a server identity")
             if not isinstance(value, str):
@@ -543,7 +541,7 @@ def _prepare_native_profiles(
             overlay_interaction_capability_file({name: raw}, None)
             profiles[name] = value
         prepared[name] = config
-    return (prepared if servers is not None else None), profiles
+    return (prepared if servers is not None else None), profiles, filters
 
 
 def install_agent(
@@ -668,8 +666,11 @@ def install_agent(
         # this merge existed only here while five providers re-read the profile
         # from disk at launch.
         native_profiles: Dict[str, str] = {}
+        native_filters: Dict[str, List[str]] = {}
         if provider == ProviderType.OPENCODE_CLI.value:
-            profile.mcpServers, native_profiles = _prepare_native_profiles(profile.mcpServers)
+            profile.mcpServers, native_profiles, native_filters = _prepare_native_profiles(
+                profile.mcpServers
+            )
 
         plugin_mcp = apply_plugin_mcp_servers(
             profile, provider=provider, persisted=True, normalize_existing=True
@@ -716,7 +717,9 @@ def install_agent(
                 # leaves a visible pending artifact instead of a legacy fallback.
                 locked_atomic_write(
                     native_file,
-                    render_native_agent(native_policy_agent, native_id, native_profiles),
+                    render_native_agent(
+                        native_policy_agent, native_id, native_profiles, filters=native_filters
+                    ),
                     mode=0o600,
                 )
 
@@ -899,6 +902,7 @@ def install_agent(
                         agent_id,
                         native_profiles,
                         source_config=completed_config,
+                        filters=native_filters,
                     ),
                     mode=0o600,
                 )

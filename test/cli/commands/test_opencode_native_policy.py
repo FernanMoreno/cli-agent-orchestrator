@@ -300,9 +300,7 @@ def test_explicit_policy_cannot_enable_a_disabled_or_malformed_source(install_wo
 
 
 @pytest.mark.parametrize("selection", ["interaction", "collaboration"])
-@pytest.mark.parametrize(
-    "enabled", [[], ["send_message"], ["秘密 unknown"], "send_message", {}, [1]]
-)
+@pytest.mark.parametrize("enabled", ["send_message", {}, [1]])
 def test_preparation_refuses_profiled_client_filter_without_mutating_input(selection, enabled):
     import copy
 
@@ -321,9 +319,7 @@ def test_preparation_refuses_profiled_client_filter_without_mutating_input(selec
 
 
 @pytest.mark.parametrize("existing", [False, True])
-@pytest.mark.parametrize(
-    "enabled", [[], ["send_message"], ["秘密 unknown"], "send_message", {}, [1]]
-)
+@pytest.mark.parametrize("enabled", ["send_message", {}, [1]])
 def test_install_refuses_profiled_filter_before_changing_owned_artifacts(
     install_workspace, enabled, existing, tmp_path
 ):
@@ -394,6 +390,7 @@ def test_profiled_native_install_accepts_unspecified_client_filter(
 @pytest.mark.parametrize("enabled", [[], ["send_message"], None])
 def test_unprofiled_native_preparation_preserves_legacy_filter_handling(enabled):
     servers = {"legacy": {"command": "other-server", "enabled_tools": enabled}}
-    prepared, profiles = install_service._prepare_native_profiles(servers)
+    prepared, profiles, filters = install_service._prepare_native_profiles(servers)
     assert prepared == servers
     assert profiles == {}
+    assert filters == {}

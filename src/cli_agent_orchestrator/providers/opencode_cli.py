@@ -792,6 +792,10 @@ class OpenCodeCliProvider(BaseProvider):
                     v2_config_dir,
                     agent_name=self._agent_profile,
                     server_name=server_name,
+                    require_interaction=(
+                        self._interaction_source_requested
+                        and server_name == self._v2_cao_mcp_server_name
+                    ),
                 )
             # Unprofiled terminals without interaction opt-in keep their legacy
             # behavior. A profile grant alone never advertises that channel.

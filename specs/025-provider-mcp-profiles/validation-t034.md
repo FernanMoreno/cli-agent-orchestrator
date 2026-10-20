@@ -1,5 +1,7 @@
 # T034 — refuse discarded native installation filters
 
+Historical snapshot at `158904ae`: valid-list refusal was subsequently superseded by [T035 bound filter propagation](validation-t035.md). Its original failure/pass evidence remains unchanged; malformed filters still fail before publication.
+
 ## Reproduced boundary
 
 OpenCode installation's `_prepare_native_profiles` retained `enabled_tools` while consuming `cao_tool_profile`. `translate_mcp_server_config` then dropped the filter because native shared MCP entries have a closed schema. The version-one native envelope records profile names only. Installation could therefore return success and publish a ready full-profile artifact for an empty, partial, unknown or malformed client filter. This is an installation configuration defect, independent of a model response or the historical Claude timeout.
