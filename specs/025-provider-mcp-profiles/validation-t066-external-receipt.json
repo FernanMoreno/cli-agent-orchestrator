@@ -1,0 +1,75 @@
+{
+  "acceptance_passed": true,
+  "acknowledged_generation": [
+    2
+  ],
+  "all_owned_api_process_groups_absent": true,
+  "all_owned_attempt_artifacts_absent": true,
+  "all_unicode_payloads_match": true,
+  "durable_redacted_a_replay_count": 1,
+  "elapsed_seconds": 183.903,
+  "evidence_attribution": {
+    "controller_ownership_ledger": "owned targets removed, stage complete, exit0, runner process group absent",
+    "historical_job_noninterference": "fresh owned namespace and preserved prior artifacts; no historical reconciliation action authorized or executed",
+    "pinned_runner_controls": "25-second API shutdown failure gate; fixed Unicode message fixtures; a passed receipt entails both controls, without storing shutdown duration or message bodies",
+    "receipt": "message/ACK/event counts, payload-match flags, live identities, replacement operations, redaction, API group absence and PostgreSQL identity",
+    "root_independent_commands": "private receipt/ledger SHA256; eight exact Docker absence checks; private config absence",
+    "source_inventory": "all46 individual source hashes retained in private receipt/manifest; public aggregate SHA256 uses sorted compact JSON and committed source_head"
+  },
+  "failure_code": null,
+  "final_ack_event_count": 2,
+  "final_message_count": 2,
+  "final_sent_event_count": 2,
+  "historical_reconcile_jobs_touched": false,
+  "independent_exact_docker_absence_checks": 8,
+  "launcher_sha256": {
+    "scripts/local_work_docker_demo.py": "eeddedc06fb646a0ddf60a1cd63d33c2a606f1646c30a78445c12ae02d98380f",
+    "test/integration/t019/local-demo-worker.c": "e23e9e1d3fb8ad0a2ea2bc7417241428af92495cefbcbcc187acd1a8b31e1b63"
+  },
+  "memory_available_mib_at_preflight": 8299,
+  "minimum_memory_mib": 6144,
+  "old_attempts_reconciled_with_real_docker_cleanup": true,
+  "owned_api_a_stopped_within_unchanged_25_second_gate": true,
+  "owned_database_targets_removed": true,
+  "owned_runner_process_group_absent": true,
+  "postgres_identity_unchanged": true,
+  "private_database_config_and_secret_copies_removed": true,
+  "private_ownership_sha256": "d7b90e5716b6b5f2fe4550ed0616c315a8ad9ac4dfc6dd46bd7ffcd3b569d4ba",
+  "private_receipt_sha256": "853a5b2899569d86089fb595153efd5e5a29acb65755271c30656a453593534c",
+  "provider_credential_free_child_environment": true,
+  "real_post_commit_response_dropped": true,
+  "real_proxy_effect_states": [
+    "intent",
+    "uncertain"
+  ],
+  "receiver_and_sender_replacement_generation": 2,
+  "redaction_checks": {
+    "api_logs": true,
+    "live_sse_frames": true,
+    "proxy_effect_projection": true,
+    "receipt": true,
+    "work_event_metadata": true
+  },
+  "replacement_admission_operations": [
+    "resolve_replacement",
+    "admit_replacement"
+  ],
+  "replacement_receiver_acked_a_before_sender_replacement": true,
+  "replay_changes_transport_request_id": true,
+  "replay_reuses_original_message_id": true,
+  "run_nonce": "2cbc71cb4287415e94a5f8eba7d9c1d5",
+  "runner_sha256": "f528b851377a15d3bad30caf23485eb3bb1f5966fd04d1fcfa05262615e582b3",
+  "schema": "spec025.external-work-message.acceptance.v1",
+  "scope_limits": [
+    "generic Work Docker workers; no native OpenCode inference",
+    "no broad-scale/control-latency acceptance",
+    "no global NFR/coverage acceptance",
+    "historical failed runs and their retained owned targets unchanged"
+  ],
+  "source_file_count": 46,
+  "source_head": "2b3cb03c0724e47ba76ffb7719fbe2921a518387",
+  "source_inventory_sha256": "ac6f9ecba21cab1716e6bdb08543c860b5429c673d8142b02582e38188a6205a",
+  "source_pins_sha256": "5c4ee105f72ac4fe9023b9cf536db51921f7bb0c216a9376e262e5f966aab600",
+  "two_live_process_workers_before_a": true,
+  "two_live_replacement_process_workers_before_b": true
+}
