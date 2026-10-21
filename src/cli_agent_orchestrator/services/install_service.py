@@ -718,7 +718,11 @@ def install_agent(
                 locked_atomic_write(
                     native_file,
                     render_native_agent(
-                        native_policy_agent, native_id, native_profiles, filters=native_filters
+                        native_policy_agent,
+                        native_id,
+                        native_profiles,
+                        filters=native_filters,
+                        preserve_permission_order=True,
                     ),
                     mode=0o600,
                 )
@@ -903,6 +907,7 @@ def install_agent(
                         native_profiles,
                         source_config=completed_config,
                         filters=native_filters,
+                        preserve_permission_order=True,
                     ),
                     mode=0o600,
                 )

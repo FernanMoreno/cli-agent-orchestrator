@@ -35,6 +35,7 @@ class NativeToolPolicy:
     profiles: Mapping[str, str]
     binding: str | None
     filters: Mapping[str, frozenset[str]] = field(default_factory=lambda: MappingProxyType({}))
+    format_version: int = 1
 
 
 @dataclass(frozen=True)
@@ -104,15 +105,15 @@ def parse_native_agent(text: str, agent_id: str):
         if not isinstance(data, dict) or type(data.get("version")) is not int:
             raise ValueError(_ERROR)
         version = data["version"]
-        if version not in (1, 2) or set(data) != (
+        if version not in (1, 2, 3) or set(data) != (
             {"version", "agent_id", "state", "profiles", "binding"}
-            | ({"filters"} if version == 2 else set())
+            | ({"filters"} if version in (2, 3) else set())
         ):
             raise ValueError(_ERROR)
         if data["agent_id"] != agent_id or data["state"] not in ("pending", "ready"):
             raise ValueError(_ERROR)
         profiles = _profiles(data["profiles"])
-        filters = _filters(data["filters"], profiles) if version == 2 else {}
+        filters = _filters(data["filters"], profiles) if version in (2, 3) else {}
         if version == 2 and not filters:
             raise ValueError(_ERROR)
         binding = data["binding"]
@@ -125,7 +126,12 @@ def parse_native_agent(text: str, agent_id: str):
         raise ValueError(_ERROR) from exc
     agent.content = body if separator else ""
     return agent, NativeToolPolicy(
-        agent_id, data["state"], MappingProxyType(profiles), binding, MappingProxyType(filters)
+        agent_id,
+        data["state"],
+        MappingProxyType(profiles),
+        binding,
+        MappingProxyType(filters),
+        format_version=version,
     )
 
 
@@ -142,6 +148,8 @@ def _binding(
     profiles: Mapping[str, str],
     config: Mapping[str, Any],
     filters: Mapping[str, frozenset[str]] | None = None,
+    *,
+    preserve_permission_order: bool = False,
 ) -> str:
     servers = _servers(config)
     bound = {}
@@ -171,6 +179,22 @@ def _binding(
                 "servers": bound,
                 "agent_tools": options.get("tools"),
                 **({"filters": _filter_payload(filters)} if filters else {}),
+                **(
+                    {
+                        "permission_order": {
+                            "native_permission": _ordered_policy_value(
+                                agent.metadata.get("permission")
+                            ),
+                            "native_tools": _ordered_policy_value(agent.metadata.get("tools")),
+                            "global_permission": _ordered_policy_value(config.get("permission")),
+                            "global_tools": _ordered_policy_value(config.get("tools")),
+                            "agent_permission": _ordered_policy_value(options.get("permission")),
+                            "agent_tools": _ordered_policy_value(options.get("tools")),
+                        }
+                    }
+                    if preserve_permission_order
+                    else {}
+                ),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -181,6 +205,48 @@ def _binding(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _ordered_policy_value(value: Any) -> Any:
+    """Encode mapping order in arrays before canonical JSON sorts object keys."""
+    if isinstance(value, Mapping):
+        return {"mapping": [[name, _ordered_policy_value(item)] for name, item in value.items()]}
+    if isinstance(value, list):
+        return {"sequence": [_ordered_policy_value(item) for item in value]}
+    return value
+
+
+def _canonical_mapping_order(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        try:
+            if list(value) != sorted(value):
+                return False
+        except TypeError:
+            return False
+        return all(_canonical_mapping_order(item) for item in value.values())
+    if isinstance(value, list):
+        return all(_canonical_mapping_order(item) for item in value)
+    return True
+
+
+def _ambiguous_legacy_tools(value: Any) -> bool:
+    """Old hashes cannot attest mixed wildcard precedence in shared tool gates."""
+    if value is None:
+        return False
+    if not isinstance(value, Mapping):
+        return True
+    effects = set()
+    wildcard = False
+    for name, effect in value.items():
+        if not isinstance(name, str):
+            return True
+        wildcard |= "*" in name or "?" in name
+        if type(effect) is bool:
+            effect = "allow" if effect else "deny"
+        if not isinstance(effect, str) or effect not in ("allow", "deny", "ask"):
+            return True
+        effects.add(effect)
+    return wildcard and len(effects) > 1
+
+
 def render_native_agent(
     agent,
     agent_id: str,
@@ -188,26 +254,36 @@ def render_native_agent(
     *,
     source_config: Mapping[str, Any] | None = None,
     filters: Mapping[str, list[str]] | None = None,
+    preserve_permission_order: bool = False,
 ) -> str:
     """Render pending, or ready when the completed shared snapshot is supplied."""
     if NATIVE_POLICY_PREFIX in agent.content:
         raise ValueError("OpenCode native policy prefix is reserved")
+    if type(preserve_permission_order) is not bool:
+        raise ValueError(_ERROR)
     # Bind exactly the payload obtained after native frontmatter serialization.
-    bare = frontmatter.loads(frontmatter.dumps(agent))
+    bare = frontmatter.loads(frontmatter.dumps(agent, sort_keys=not preserve_permission_order))
     selections = _profiles(profiles)
     selected_filters = _filters(filters if filters is not None else {}, selections)
     data: dict[str, Any] = {
-        "version": 2 if selected_filters else 1,
+        "version": 3 if preserve_permission_order else (2 if selected_filters else 1),
         "agent_id": agent_id,
         "state": "pending" if source_config is None else "ready",
         "profiles": selections,
         "binding": (
             None
             if source_config is None
-            else _binding(bare, agent_id, selections, source_config, selected_filters)
+            else _binding(
+                bare,
+                agent_id,
+                selections,
+                source_config,
+                selected_filters,
+                preserve_permission_order=preserve_permission_order,
+            )
         ),
     }
-    if selected_filters:
+    if selected_filters or preserve_permission_order:
         data["filters"] = _filter_payload(selected_filters)
     encoded = base64.urlsafe_b64encode(
         json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -215,13 +291,38 @@ def render_native_agent(
     if len(encoded) > MAX_ENCODED_POLICY:
         raise ValueError(_ERROR)
     bare.content = f"{NATIVE_POLICY_PREFIX}{encoded} -->\n{bare.content}"
-    rendered: str = frontmatter.dumps(bare)
+    rendered: str = frontmatter.dumps(bare, sort_keys=not preserve_permission_order)
     return rendered
 
 
 def validate_native_binding(agent, policy: NativeToolPolicy, config: Mapping[str, Any]) -> None:
+    if type(policy.format_version) is not int or policy.format_version not in (1, 2, 3):
+        raise ValueError(_ERROR)
+    if policy.format_version < 3:
+        # The legacy renderer sorted native metadata; a different order cannot
+        # be a valid legacy render. Shared mixed wildcard gates were never
+        # order-bound and require reinstall instead of guessing prior intent.
+        agents = config.get("agent", {}) or {}
+        if not isinstance(agents, Mapping):
+            raise ValueError(_ERROR)
+        options = agents.get(policy.agent_id, {}) or {}
+        if (
+            any(
+                not _canonical_mapping_order(agent.metadata.get(name))
+                for name in ("permission", "tools")
+            )
+            or _ambiguous_legacy_tools(config.get("tools"))
+            or not isinstance(options, Mapping)
+            or _ambiguous_legacy_tools(options.get("tools"))
+        ):
+            raise ValueError(_ERROR)
     if policy.state != "ready" or policy.binding != _binding(
-        agent, policy.agent_id, policy.profiles, config, policy.filters
+        agent,
+        policy.agent_id,
+        policy.profiles,
+        config,
+        policy.filters,
+        preserve_permission_order=policy.format_version == 3,
     ):
         raise ValueError(_ERROR)
 

@@ -185,3 +185,9 @@ El segundo recorrido real v2 arrancó, conectó MCP, ofreció exactamente las tr
 Pasó el recorrido completo en **v2.0.18**, vinculado a **398bae68** y al SHA del runner/binario: dos preguntas, dos respuestas y ambos ACK; un reinicio de API; tres observaciones AG-UI con identidad/ledger/proveedor/base de datos estables; estado final COMPLETED antes del plazo; catálogo/ofertas exactos de tres herramientas y sin llamadas ajenas. Limpieza completa, temporales eliminados, bindings restaurados y auth del operador intacto. Se conservaron el TypeError inicial, el fallo posterior de orden y una admisión bloqueada por memoria; el éxito procede de otra medición que sí superó 6.144 MiB.
 
 T043 y T045 cerrados en su alcance restringido, con límites y criterios originales. Siguen abiertos v1 real completo, perfiles ampliados reales, mensajes externos, concurrencia, otras autenticaciones y el hallazgo confirmado T046. T032 no se reanudó. [Evidencia final](../specs/025-provider-mcp-profiles/validation-t043.md).
+
+## T046 — integridad del orden de permisos
+
+Corregido el renderizado y binding de políticas nativas: las nuevas instalaciones usan un sobre v3 explícito que conserva y valida el orden de reglas y recursos. Se mantienen los bytes/hashes de los formatos antiguos; los casos antiguos ambiguos se rechazan con indicación de reinstalar, sin modificar artefactos del operador. El número del sobre no cambia el soporte del CLI: v1 administrado sigue pendiente.
+
+Pasaron **642 pruebas**, incluidas 35 nuevas de orden, compatibilidad, ambas fases del instalador y propagación privada; tipado de 405 archivos, estilo y composición 5/0. Los lanzamientos de esos contratos están simulados: la aceptación real ampliada continúa abierta. T032 permanece aplazada. [Evidencia T046](../specs/025-provider-mcp-profiles/validation-t046.md).
