@@ -53,6 +53,10 @@ from cli_agent_orchestrator.utils.mcp_tool_policy import (
     MCP_TOOL_PROFILE_ENV,
     resolve_tool_profile,
 )
+from cli_agent_orchestrator.utils.opencode_ownership import (
+    PrivateConfigOwnership,
+    PrivateConfigOwnershipError,
+)
 from cli_agent_orchestrator.utils.opencode_policy import (
     NativeAgentSnapshot,
     NativeToolPolicy,
@@ -513,6 +517,7 @@ class OpenCodeCliProvider(BaseProvider):
         self._v2_config_dir = None
         self._v1_config_dir: Path | None = None
         self._owned_v1_config_dir: Path | None = None
+        self._private_config_ownership: PrivateConfigOwnership | None = None
         self._v1_mcp_ready_signals: dict[Path, str] = {}
         self._launch_runtime: tuple[str, dict[str, str]] | None = None
         self._runtime_probe_complete = False
@@ -834,7 +839,8 @@ class OpenCodeCliProvider(BaseProvider):
         # Retire the old private tree only once the replacement shell is ready,
         # before a new allocation can overwrite ownership. Receipt state stays
         # fenced until the recovery service confirms the replacement launch.
-        self.cleanup()
+        if self.cleanup() is False:
+            raise RuntimeError("OpenCode private configuration cleanup is incomplete")
 
         if self._cli_major == 2:
             # A provider instance may be initialized more than once after a
@@ -847,10 +853,7 @@ class OpenCodeCliProvider(BaseProvider):
                 write_v2_configuration,
             )
 
-            parent = CAO_HOME_DIR / "opencode-v2"
-            parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            os.chmod(parent, 0o700)
-            self._owned_v2_config_dir = Path(tempfile.mkdtemp(prefix="terminal-", dir=parent))
+            self._owned_v2_config_dir = self._config_ownership().allocate(2)
             source_config = read_config()
             if self._native_tool_policy is not None:
                 import frontmatter
@@ -991,10 +994,7 @@ class OpenCodeCliProvider(BaseProvider):
                     raise ValueError("OpenCode v1 interaction requires a canonical CAO MCP server")
                 if self.interaction_capability_file is None:
                     raise ValueError("OpenCode v1 interaction requires a runtime-issued capability")
-            parent = CAO_HOME_DIR / "opencode-v1"
-            parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            os.chmod(parent, 0o700)
-            self._owned_v1_config_dir = Path(tempfile.mkdtemp(prefix="terminal-", dir=parent))
+            self._owned_v1_config_dir = self._config_ownership().allocate(1)
             self._v1_config_dir = write_v1_configuration(
                 self._owned_v1_config_dir,
                 source_config=source_config,
@@ -1694,19 +1694,41 @@ class OpenCodeCliProvider(BaseProvider):
         """Return the command to exit the OpenCode TUI."""
         return "/exit"
 
-    def cleanup(self) -> None:
+    def _config_ownership(self) -> PrivateConfigOwnership:
+        if self._private_config_ownership is None:
+            self._private_config_ownership = PrivateConfigOwnership(CAO_HOME_DIR, self.terminal_id)
+        return self._private_config_ownership
+
+    def restore_private_config_ownership(self) -> None:
+        """Bind a reconstructed adapter to its private current-launch receipt."""
+        self._config_ownership().bind_restored()
+
+    def cleanup(self) -> bool:
         """Clean up OpenCode provider state."""
         self._initialized = False
         self._interaction_preflight_ok = False
         self._v1_mcp_ready_signals = {}
+        try:
+            ownership = self._config_ownership()
+            if not ownership.cleanup():
+                return False
+            for path in (self._owned_v1_config_dir, self._owned_v2_config_dir):
+                if path is not None and (path.exists() or path.is_symlink()):
+                    if ownership.managed:
+                        return False
+                    # Preserve the trusted in-memory cleanup seam used by
+                    # older/direct diagnostic callers. Reconstruction never
+                    # adopts these unindexed paths from editable metadata.
+                    shutil.rmtree(path)
+        except (OSError, ValueError, PrivateConfigOwnershipError):
+            return False
         if self._owned_v1_config_dir is not None:
-            shutil.rmtree(self._owned_v1_config_dir, ignore_errors=True)
             self._owned_v1_config_dir = None
             self._v1_config_dir = None
         if self._owned_v2_config_dir is not None:
-            shutil.rmtree(self._owned_v2_config_dir, ignore_errors=True)
             self._owned_v2_config_dir = None
             self._v2_config_dir = None
             self._v2_data_home = None
             self._v2_database_path = None
             self._v2_cao_mcp_server_name = None
+        return True

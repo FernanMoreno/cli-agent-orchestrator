@@ -316,6 +316,8 @@ class ProviderManager:
         )
         if isinstance(provider, OpenCodeCliProvider) and metadata.get("provider_variant") is None:
             provider.restore_runtime_variant(None)
+        if isinstance(provider, OpenCodeCliProvider):
+            provider.restore_private_config_ownership()
         recovery = None
         if getattr(provider, "requires_turn_receipt", False) is True:
             # Receipt state is private database state, intentionally separate
@@ -418,6 +420,19 @@ class ProviderManager:
                     logger.warning("Cleanup deferred for restored Grok provider: %s", terminal_id)
                     return False
                 logger.info("Cleaned up restored Grok provider for terminal: %s", terminal_id)
+            elif metadata and metadata.get("provider") == ProviderType.OPENCODE_CLI.value:
+                restored_opencode_provider = OpenCodeCliProvider(
+                    terminal_id,
+                    metadata["tmux_session"],
+                    metadata["tmux_window"],
+                    metadata.get("agent_profile"),
+                )
+                restored_opencode_provider.restore_private_config_ownership()
+                if restored_opencode_provider.cleanup() is False:
+                    logger.warning(
+                        "Cleanup deferred for restored OpenCode provider: %s", terminal_id
+                    )
+                    return False
             elif metadata and metadata.get("provider") == ProviderType.MINIMAX_CODE.value:
                 restored_minimax_provider = MiniMaxCodeProvider(
                     terminal_id,
