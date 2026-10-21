@@ -48,7 +48,11 @@ from cli_agent_orchestrator.providers.mcp_interactions import (
     overlay_interaction_capability_file,
 )
 from cli_agent_orchestrator.services.settings_service import get_server_settings
-from cli_agent_orchestrator.utils.mcp_tool_policy import MCP_TOOL_PROFILE_ENV
+from cli_agent_orchestrator.utils.mcp_tool_policy import (
+    INTERACTION_TOOLS,
+    MCP_TOOL_PROFILE_ENV,
+    resolve_tool_profile,
+)
 from cli_agent_orchestrator.utils.opencode_policy import (
     NativeAgentSnapshot,
     NativeToolPolicy,
@@ -59,6 +63,37 @@ from cli_agent_orchestrator.utils.opencode_policy import (
 from cli_agent_orchestrator.utils.terminal import wait_for_shell
 
 logger = logging.getLogger(__name__)
+
+
+def _managed_surface_excludes_interaction(policy: NativeToolPolicy | None) -> bool:
+    """A coarse server grant is not human-channel intent for a nonhuman surface.
+
+    Only validated explicit profiles establish this exclusion. Legacy native
+    configuration keeps its existing opt-in behavior; an interaction profile
+    or even one selected human tool still requires the complete protocol.
+    """
+    if policy is None or not policy.profiles:
+        return False
+    for server, profile in policy.profiles.items():
+        if profile == "interaction":
+            return False
+        tools = resolve_tool_profile(profile)
+        if server in policy.filters:
+            tools = tools.intersection(policy.filters[server])
+        # Recovery/delegated interaction calls also read the runtime-issued
+        # capability. They must not be mistaken for capability-free tools.
+        if tools.intersection(
+            INTERACTION_TOOLS
+            | {
+                "cao_list_interactions",
+                "cao_get_interaction",
+                "cao_answer_interaction",
+                "cao_escalate_interaction",
+            }
+        ):
+            return False
+    return True
+
 
 # =============================================================================
 # Regex Patterns — verified from live OpenCode TUI probe fixtures.
@@ -531,11 +566,13 @@ class OpenCodeCliProvider(BaseProvider):
 
             source_config = read_config()
             policy_version = None
+            selected_policy = None
             if self._prepared_native_profile is not None:
                 import frontmatter
 
                 snapshot = self._prepared_native_profile
                 if snapshot.policy is not None:
+                    selected_policy = snapshot.policy
                     policy_version = snapshot.policy.format_version
                     validate_native_binding(
                         frontmatter.loads(snapshot.text), snapshot.policy, source_config
@@ -547,12 +584,15 @@ class OpenCodeCliProvider(BaseProvider):
                 if path.is_file():
                     agent, policy = parse_native_agent(path.read_text(encoding="utf-8"), agent_id)
                     if policy is not None:
+                        selected_policy = policy
                         policy_version = policy.format_version
                         if path.is_symlink():
                             return False
                         validate_native_binding(agent, policy, source_config)
                         source_config = apply_native_profiles(source_config, policy)
             if self._cli_major == 1 and policy_version != 3:
+                return False
+            if _managed_surface_excludes_interaction(selected_policy):
                 return False
             # Use the same active-server predicate as initialization.  A
             # bundled entry that is explicitly disabled cannot receive the
@@ -721,6 +761,17 @@ class OpenCodeCliProvider(BaseProvider):
         self._agent_profile = snapshot.agent_id
         self._native_agent_source = (snapshot.agent_id, snapshot.text)
         self._native_tool_policy = snapshot.policy
+        # The direct path can reload a different bound native profile on a
+        # later initialization. Reapply this provider's coarse grant before
+        # excluding a nonhuman surface, preserving explicit protocol requests.
+        if "@cao-mcp-server" in (self._allowed_tools or []):
+            self._interaction_source_requested = True
+        if _managed_surface_excludes_interaction(snapshot.policy):
+            # A runtime-issued capability is an explicit protocol request and
+            # must retain the strict three-tool refusal. Without one, a bound
+            # nonhuman profile must not acquire that request from @cao alone.
+            if self.interaction_capability_file is None:
+                self._interaction_source_requested = False
 
     def prepare_native_profile(self, snapshot: NativeAgentSnapshot) -> None:
         """Bind the pre-allocation selection to this exact provider identity."""
