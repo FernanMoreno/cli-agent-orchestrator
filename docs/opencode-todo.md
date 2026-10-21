@@ -6,6 +6,9 @@ Fecha de revisión: 2026-10-20. Esta lista registra trabajo por hacer; no activa
 
 Actualización 2026-10-21: la [recuperación verificada de memoria](../specs/025-provider-mcp-profiles/memory-recovery-20261021.md) trasladó siete árboles temporales inactivos a disco, conservando su contenido y acceso, sin detener servicios ni cambiar el mínimo de 6.144 MiB. El [recorrido real v1 T053](../specs/025-provider-mcp-profiles/validation-t053.md) pasó preguntas/respuestas/ACK, Unicode/recibo/completed, identidades PostgreSQL/AG-UI/nativas estables tras reiniciar API y cierre/limpieza completos en la fuente f23b1d5f. Esto cierra el flujo restringido administrado, no los perfiles ampliados ni toda la aceptación v1. La [clasificación del error de credenciales T056](../specs/025-provider-mcp-profiles/validation-t056.md) quedó corregida y validada en ce41f190:591 pruebas, rechazo real con clave inválida y control autenticado con Unicode/recibo/completed. Se conservan los fallos anteriores y sus límites; timeout/cancelación, perfiles ampliados y aceptación v1 global siguen pendientes.
 
+La [corrección T057](../specs/025-provider-mcp-profiles/validation-t057.md) pasó616 pruebas y recuperación real por cancelación en a97bf19f: rechazo de generaciones incorrecta/repetida, sustitución de ejecución nativa, modelo correcto y limpieza de configuración (un árbol tras reset, cero tras borrar sesión). Quedan separados el timeout activo y la cancelación mientras una herramienta sigue ejecutándose.
+
+
 ## Estado y límites de la evidencia
 
 - El adaptador detecta las versiones principales 1 y 2. V2 usa `mini --standalone` y configuración por terminal; v1 conserva su ruta nativa.
