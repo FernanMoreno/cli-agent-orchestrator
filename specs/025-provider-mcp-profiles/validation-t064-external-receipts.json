@@ -1,0 +1,30 @@
+{
+  "schema": "spec025.external-work-message.partial.v1",
+  "source_head": "65e3415056ce4bcc30c81fce6f01ede8f3ed0695",
+  "private_receipt_sha256": "5731b85f2d4326872bc51fddefe354eb36307e23db77b4d67306e4587347ba6e",
+  "run_nonce": "de2f9ff70d1c41dba91900fb326371a5",
+  "acceptance_passed": false,
+  "failure_code": "owned_process_container_did_not_start",
+  "first_send_message_count": 1,
+  "first_send_event_count": 1,
+  "first_send_ack_count": 0,
+  "two_live_process_workers_before_a": true,
+  "real_post_commit_response_dropped": true,
+  "real_proxy_effect_uncertain": true,
+  "owned_api_a_stopped_within_unchanged_25_second_gate": true,
+  "old_attempts_reconciled_with_real_docker_cleanup": true,
+  "durable_redacted_a_replay_count": 1,
+  "replacement_receiver_live": false,
+  "all_owned_api_process_groups_absent": true,
+  "failure_cleanup_attempt_generations": 3,
+  "all_owned_attempt_artifacts_absent": true,
+  "postgres_identity_unchanged": true,
+  "redaction_checks": {
+    "api_logs": true,
+    "receipt": true
+  },
+  "failed_owned_database_targets_retained": true,
+  "historical_reconcile_jobs_touched": false,
+  "root_cause": "retry_work deliberately plans the next generation without admitting an executable order; launch replacement admission and per-generation provenance are absent",
+  "next_work": "T066 internal replacement admission; no scheduler-only or copied-origin bypass"
+}

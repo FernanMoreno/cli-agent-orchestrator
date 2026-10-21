@@ -502,6 +502,21 @@ export function setBrowserBearer(token: string) {
     throw new Error("Formato de token inválido");
   sessionStorage.setItem(TOKEN_KEY, token);
 }
+/** The server refused the tab bearer: drop it and withdraw everything read with it. */
+function rejectBrowserBearer() {
+  sessionStorage.removeItem(TOKEN_KEY);
+  stopAuthority();
+  // A manual connection can test a token before auth/config is known.
+  // Always drop that rejected token, but only withdraw a bearer session.
+  if (state.mode === "bearer") {
+    update({
+      session: null,
+      status: "revoked",
+      message: "El servidor no ha aceptado el token de acceso.",
+    });
+  }
+  window.dispatchEvent(new Event("cao-auth-required"));
+}
 export function consumeBrowserLink() {
   const fragment = new URLSearchParams(location.hash.slice(1));
   const token = fragment.get("cao_token");
@@ -536,7 +551,7 @@ export async function browserFetch(
   const headers = new Headers(options?.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (local && !safe) headers.set("X-CAO-Browser", "1");
-  const signal = local
+  const signal = local || token !== null
     ? AbortSignal.any([
         authority.signal,
         ...(options?.signal ? [options.signal] : []),
@@ -562,10 +577,9 @@ export async function browserFetch(
     }
     throw error;
   }
-  if (expected !== generation) {
-    if (local) throw new Error("La sesión ha cambiado");
-    return response;
-  }
+  // A read that started under a session or token that has since been
+  // withdrawn must not be handed back to the caller.
+  if (expected !== generation) throw new Error("La sesión ha cambiado");
   if (
     local &&
     response.status === 503 &&
@@ -599,9 +613,11 @@ export async function browserFetch(
         ),
         expected,
       );
-  } else if (!local && response.status === 401 && browserBearer() === token) {
-    sessionStorage.removeItem(TOKEN_KEY);
-    window.dispatchEvent(new Event("cao-auth-required"));
+  } else if (
+    !local && token !== null &&
+    response.status === 401 && browserBearer() === token
+  ) {
+    rejectBrowserBearer();
   }
   return response;
 }

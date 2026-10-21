@@ -121,15 +121,17 @@ afterEach(() => vi.restoreAllMocks());
 describe("Profiles tab navigation (stage 1)", () => {
   beforeEach(() => vi.stubGlobal("fetch", routedFetch()));
 
-  it("renders the Profiles tab between Home and Agents", async () => {
+  it("groups Profiles under Library, apart from running Agents, keeping Alt+2", async () => {
+    // Spec 019 groups destinations by objective; shortcuts stay bound to the
+    // destination, so Profiles keeps Alt+2 and Agents keeps Alt+3 (#510).
     render(<App />);
-    await screen.findByRole("tab", { name: /profiles/i });
-    const tabs = screen.getAllByRole("tab").map((t) => t.textContent);
-    const home = tabs.findIndex((t) => t?.includes("Home"));
-    const profiles = tabs.findIndex((t) => t?.includes("Profiles"));
-    const agents = tabs.findIndex((t) => t?.includes("Agents"));
-    expect(profiles).toBe(home + 1);
-    expect(agents).toBe(profiles + 1);
+    const profiles = await screen.findByRole("tab", { name: /profiles/i });
+    const agents = screen.getByRole("tab", { name: /agents/i });
+    expect(profiles).toHaveAttribute("title", "Alt+2");
+    expect(agents).toHaveAttribute("title", "Alt+3");
+    expect(screen.getByRole("tab", { name: /home/i })).toHaveAttribute("title", "Alt+1");
+    expect(profiles).toHaveAccessibleDescription("Library");
+    expect(agents).toHaveAccessibleDescription("Work");
   });
 
   it("opens the Profiles panel when the tab is clicked", async () => {
@@ -171,13 +173,30 @@ describe("Profiles tab navigation (stage 1)", () => {
       "aria-selected",
       "false",
     );
+    // The Tab stop and the panel label follow the shortcut selection...
+    expect(screen.getByRole("tab", { name: /agents/i })).toHaveAttribute("tabindex", "0");
+    expect(screen.getByRole("tab", { name: /profiles/i })).toHaveAttribute("tabindex", "-1");
+    expect(screen.getByRole("tabpanel")).toHaveAccessibleName(/agents/i);
+    // ...and a click selection.
+    fireEvent.click(screen.getByRole("tab", { name: /profiles/i }));
+    expect(screen.getByRole("tab", { name: /profiles/i })).toHaveAttribute("tabindex", "0");
+    expect(screen.getByRole("tabpanel")).toHaveAccessibleName(/profiles/i);
   });
 
   it("appends Questions after current tabs and preserves the existing Agents shortcut", async () => {
     render(<App />);
     const questionsTab = await screen.findByRole("tab", { name: /questions/i });
+    // Questions and the Execution map keep their appended shortcuts after
+    // the spec 019 grouping (they display under Work).
+    const executionTab = screen.getByRole("tab", { name: /execution map/i });
     const tabs = screen.getAllByRole("tab");
-    expect(tabs[tabs.length - 1]).toBe(questionsTab);
+    const shortcuts = tabs.map((t) => t.getAttribute("title"));
+    // Appended last in shortcut order: their shortcuts are the two highest.
+    expect(shortcuts.filter(Boolean)).toHaveLength(tabs.length);
+    expect(questionsTab.getAttribute("title")).toMatch(/^Alt\+/);
+    expect(executionTab.getAttribute("title")).toMatch(/^Alt\+/);
+    expect(questionsTab.getAttribute("title")).not.toBe(executionTab.getAttribute("title"));
+    expect(questionsTab).toHaveAccessibleDescription("Work");
     expect(screen.getByRole("tab", { name: /agents/i })).toHaveAttribute("title", "Alt+3");
 
     fireEvent.keyDown(window, { key: "3", altKey: true });

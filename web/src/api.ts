@@ -18,7 +18,7 @@
  * A relative `--base` such as `./` cannot work for runtime calls and is not
  * supported; use an absolute prefix.
  */
-import { browserFetch } from "./auth";
+import { browserAuthSignal, browserFetch } from "./auth";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 let activeNode: string | null = null;
@@ -109,6 +109,7 @@ export async function fetchJSON<T>(
   },
 ): Promise<T> {
   const epoch = nodeEpoch;
+  const authSignal = browserAuthSignal();
   const signal = nodeSignal();
   const controller = new AbortController();
   const { captureProblemCode, ...requestOptions } = opts ?? {};
@@ -174,6 +175,9 @@ export async function fetchJSON<T>(
     // endpoint returns a non-empty JSON body, so existing callers are
     // unaffected.
     const text = await res.text();
+    // Headers can arrive before a token is revoked while the body is still
+    // streaming. Never publish data from that withdrawn authority.
+    if (authSignal.aborted) throw new Error("La sesión ha cambiado");
     if (!opts?.direct && epoch !== nodeEpoch)
       throw new Error("Node selection changed");
     if (text.trim() === "") return undefined as T;
@@ -373,11 +377,12 @@ export interface AgentDirsSettings {
 }
 
 export interface InboxMessage {
-  id: string;
+  /** Integer on the server today; kept open so the client never coerces it. */
+  id: string | number;
   sender_id: string;
   receiver_id: string;
   message: string;
-  status: "pending" | "delivered" | "failed";
+  status: "pending" | "delivered" | "reconcile" | "failed";
   created_at: string | null;
 }
 
