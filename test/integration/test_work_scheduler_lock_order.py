@@ -235,6 +235,10 @@ def test_batch_terminal_withdrawals_do_not_hold_aggregate_against_retry(
     scheduler = context.scheduler
     _add_job(context, index=1)
     _add_job(context, index=2)
+    # Admission retires in place only in canonical ascending job order. This
+    # schedule pauses the preview after the first withdrawal while the retry
+    # holds job 1, so job 0 must sort lowest for that withdrawal to run first.
+    context.jobs.sort(key=lambda pair: pair[0]["id"])
 
     retry_work = admit(context, "withdraw-batch-retry", job_index=1)
     held = scheduler.claim_next(actor_id="scheduler-lock-test")
@@ -550,3 +554,123 @@ def test_claim_racing_with_terminal_withdrawal_has_one_queue_event_winner(
         if event["event_type"] in {"scheduler.withdrawn", "scheduler.claimed"}
     ]
     assert scheduler_events == ["scheduler.withdrawn"]
+
+
+def _wait_until_blocked_by(target, waiter_pid, blocker_pid, timeout=8.0):
+    deadline = monotonic() + timeout
+    last_state = None
+    with connect(target) as monitor:
+        while monotonic() < deadline:
+            row = monitor.execute(
+                "SELECT wait_event_type,wait_event,pg_blocking_pids(pid) AS blockers "
+                "FROM pg_stat_activity WHERE pid=%s",
+                (waiter_pid,),
+            ).fetchone()
+            if row is not None:
+                last_state = (row["wait_event_type"], row["wait_event"], tuple(row["blockers"]))
+                if row["wait_event_type"] == "Lock" and blocker_pid in row["blockers"]:
+                    return
+            sleep(0.01)
+    raise AssertionError(f"old claimer never waited on the new claimer; state={last_state!r}")
+
+
+def test_claimers_with_diverged_queue_snapshots_lock_jobs_in_canonical_order(
+    scheduler_lock_context, monkeypatch
+):
+    """Claimers whose FIFO snapshots differ must not lock parent jobs in opposite order."""
+    context = scheduler_lock_context
+    repository = context.repo
+    scheduler = context.scheduler
+    _add_job(context, index=1)
+    first, second = sorted(range(2), key=lambda index: context.jobs[index][0]["id"])
+    job_a, job_b = context.jobs[first][0]["id"], context.jobs[second][0]["id"]
+    assert job_a < job_b
+    a0 = admit(context, "canonical-a0", job_index=first)
+    b0 = admit(context, "canonical-b0", job_index=second)
+    a1 = admit(context, "canonical-a1", job_index=first)
+
+    old_snapshotted = Event()
+    allow_old = Event()
+    new_first_locked = Event()
+    allow_new = Event()
+    old_first_locks = []
+    new_first_locks = []
+    backend_pids = {}
+    original_transaction = repository.transaction
+    original_lock_job = repository._lock_job_for_write
+
+    @contextmanager
+    def trace_transaction():
+        with original_transaction() as connection:
+            name = current_thread().name
+            if name in {"old-claim", "new-claim"} and name not in backend_pids:
+                backend_pids[name] = connection.execute("SELECT pg_backend_pid()").fetchone()[0]
+            yield connection
+
+    def pausing_lock_job(connection, job_id):
+        name = current_thread().name
+        if name == "old-claim" and not old_first_locks:
+            old_snapshotted.set()
+            assert allow_old.wait(8), "middle/new claims never reached the old resume point"
+            old_first_locks.append(job_id)
+            return original_lock_job(connection, job_id)
+        original_lock_job(connection, job_id)
+        if name == "new-claim" and not new_first_locks:
+            new_first_locks.append(job_id)
+            new_first_locked.set()
+            assert allow_new.wait(8), "old claimer never reached its lock wait"
+
+    monkeypatch.setattr(repository, "transaction", trace_transaction)
+    monkeypatch.setattr(repository, "_lock_job_for_write", pausing_lock_job)
+
+    def claim(name):
+        current_thread().name = name
+        try:
+            return ("claimed", scheduler.claim_next(actor_id="scheduler-lock-test"))
+        except BaseException as error:  # retained for exact assertion below
+            return ("error", error)
+
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="canonical-claim") as pool:
+        old_future = pool.submit(claim, "old-claim")
+        new_future = None
+        try:
+            assert old_snapshotted.wait(8), "old claimer did not snapshot the queue"
+            middle = scheduler.claim_next(actor_id="scheduler-lock-test")
+            assert middle is not None and middle.work_item_id == a0["id"]
+            new_future = pool.submit(claim, "new-claim")
+            assert new_first_locked.wait(8), "new claimer did not take its first job lock"
+            allow_old.set()
+            _wait_until_blocked_by(
+                repository.target, backend_pids["old-claim"], backend_pids["new-claim"]
+            )
+        finally:
+            allow_old.set()
+            allow_new.set()
+        futures = [old_future] + ([new_future] if new_future is not None else [])
+        done, pending = wait(futures, timeout=15)
+        assert not pending, "diverged-snapshot claimers did not finish"
+        old_outcome, new_outcome = old_future.result(), new_future.result()
+
+    errors = [value for kind, value in (old_outcome, new_outcome) if kind == "error"]
+    assert not errors, f"diverged claimers failed: {errors!r}"
+    assert new_first_locks == [job_a] and old_first_locks == [job_a]
+    claims = [value for _, value in (old_outcome, new_outcome) if value is not None]
+    assert len(claims) == 1 and claims[0].work_item_id == b0["id"]
+    counts = _scheduler_counts(repository)
+    assert counts.get("held", 0) == 2 and counts.get("queued", 0) == 1
+    assert scheduler.get_by_attempt(a1["attempts"][-1]["id"]).state == "queued"
+    claimed_events = [
+        event
+        for job, _ in context.jobs
+        for event in repository.read_events(job["id"])["events"]
+        if event["event_type"] == "scheduler.claimed"
+    ]
+    assert sorted(event["work_item_id"] for event in claimed_events) == sorted([a0["id"], b0["id"]])
+    with repository.read_snapshot() as connection:
+        spent = dict(
+            connection.execute(
+                "SELECT job_id,sum(units) FROM work_scheduler_requests "
+                "WHERE state IN ('held','released') GROUP BY job_id"
+            ).fetchall()
+        )
+    assert spent == {job_a: 1, job_b: 1}

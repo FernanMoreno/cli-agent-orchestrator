@@ -293,3 +293,101 @@ def test_revoked_snapshot_does_not_retire_a_concurrently_held_request(
             ).fetchall()
         )
     assert event_counts == {"scheduler.claimed": 1}
+
+
+def test_dispatch_retirement_and_selected_job_lock_in_canonical_order(
+    admission_lock_context, monkeypatch
+):
+    """A dispatcher must not hold a retired job and then lock a lower selected job."""
+    from contextlib import contextmanager
+    from test.integration.test_work_scheduler_lock_order import _wait_until_blocked_by
+    from threading import Event, current_thread
+
+    context = admission_lock_context
+    repository = context.repo
+    low, high = sorted(range(2), key=lambda index: context.jobs[index][0]["id"])
+    job_a, job_b = context.jobs[low][0]["id"], context.jobs[high][0]["id"]
+    selected = admit(context, "canonical-dispatch-selected", job_index=low)
+    retired = admit(context, "canonical-dispatch-retired", job_index=high)
+    selected_attempt = selected["attempts"][-1]["id"]
+    retired_attempt = retired["attempts"][-1]["id"]
+    preview = context.service._preview()
+    assert preview is not None and preview.attempt_id == selected_attempt
+    context.authority.revoke(
+        context.actor,
+        grant_id=context.jobs[high][1].id,
+        expected_grant_revision=1,
+        reason="canonical dispatch lock-order regression",
+    )
+
+    retired_event = Event()
+    allow_dispatch = Event()
+    backend_pids = {}
+    original_transaction = repository.transaction
+    original_retire = context.service._retire_unexecutable
+
+    @contextmanager
+    def trace_transaction():
+        with original_transaction() as connection:
+            name = current_thread().name
+            if name in {"dispatch", "claim"} and name not in backend_pids:
+                backend_pids[name] = connection.execute("SELECT pg_backend_pid()").fetchone()[0]
+            yield connection
+
+    def pausing_retire(connection, request):
+        result = original_retire(connection, request)
+        if current_thread().name == "dispatch":
+            retired_event.set()
+            assert allow_dispatch.wait(8), "claimer never waited on the dispatcher"
+        return result
+
+    monkeypatch.setattr(repository, "transaction", trace_transaction)
+    monkeypatch.setattr(context.service, "_retire_unexecutable", pausing_retire)
+
+    def run(name, call):
+        current_thread().name = name
+        try:
+            return ("ok", call())
+        except BaseException as error:  # retained for exact assertion below
+            return ("error", error)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        dispatch = pool.submit(run, "dispatch", lambda: context.service._commit_dispatch(preview))
+        claim = None
+        try:
+            assert retired_event.wait(8), "dispatcher did not retire the revoked request"
+            claim = pool.submit(
+                run, "claim", lambda: context.scheduler.claim_next(actor_id="admission-lock-test")
+            )
+            _wait_until_blocked_by(
+                repository.target, _backend_pid(backend_pids, "claim"), backend_pids["dispatch"]
+            )
+        finally:
+            allow_dispatch.set()
+        dispatch_outcome = dispatch.result(timeout=15)
+        claim_outcome = claim.result(timeout=15)
+
+    errors = [value for kind, value in (dispatch_outcome, claim_outcome) if kind == "error"]
+    assert not errors, f"dispatcher/claimer failed: {errors!r}"
+    assert claim_outcome == ("ok", None)
+    assert context.scheduler.get_by_attempt(selected_attempt).state == "held"
+    assert context.scheduler.get_by_attempt(retired_attempt).state == "withdrawn"
+    assert repository.get_work(retired["id"])["attempts"][-1]["state"] == "failed"
+    with repository.connection() as connection:
+        event_counts = dict(
+            connection.execute(
+                "SELECT event_type,count(*) FROM work_events WHERE job_id IN (%s,%s) "
+                "AND event_type IN ('scheduler.claimed','attempt.failed','scheduler.withdrawn') "
+                "GROUP BY event_type",
+                (job_a, job_b),
+            ).fetchall()
+        )
+    assert event_counts == {"scheduler.claimed": 1, "attempt.failed": 1, "scheduler.withdrawn": 1}
+
+
+def _backend_pid(backend_pids, name, timeout=8.0):
+    deadline = time.monotonic() + timeout
+    while name not in backend_pids:
+        assert time.monotonic() < deadline, f"{name} never opened its transaction"
+        time.sleep(0.01)
+    return backend_pids[name]

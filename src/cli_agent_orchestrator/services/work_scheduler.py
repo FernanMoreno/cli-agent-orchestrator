@@ -344,17 +344,15 @@ class WorkScheduler:
                 "SELECT job_id,attempt_id FROM work_scheduler_requests "
                 "WHERE state='queued' ORDER BY queue_sequence"
             ).fetchall()
-            eligible_attempts = set()
-            locked_jobs = set()
-            for row in queued:
-                if row["job_id"] not in locked_jobs:
-                    self.repository._lock_job_for_write(connection, row["job_id"])
-                    locked_jobs.add(row["job_id"])
-                eligible_attempts.add(row["attempt_id"])
+            # Snapshots taken before and after a concurrent claim can list jobs
+            # in different FIFO order. Lock them in ascending id order so two
+            # claimers never hold opposite parent jobs before the aggregate.
+            for job_id in sorted({row["job_id"] for row in queued}):
+                self.repository._lock_job_for_write(connection, job_id)
             return self._claim_next(
                 connection,
                 actor_id=actor_id,
-                eligible_attempts=frozenset(eligible_attempts),
+                eligible_attempts=frozenset(row["attempt_id"] for row in queued),
             )
 
     @staticmethod

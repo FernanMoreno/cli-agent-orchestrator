@@ -149,6 +149,24 @@ class ResolvedLaunch:
 
 
 @dataclass(frozen=True)
+class ResolvedReplacement:
+    """Sealed, single-runtime context for one explicit planned-generation admission."""
+
+    principal_id: str
+    work_item_id: str
+    generation: int
+    expected_work_revision: int
+    expected_attempt_id: str
+    planned_attempt_revision: int
+    action_idempotency_key: str
+    retry_idempotency_key: str
+    retry_request_hash: str
+    launch: ResolvedLaunch
+    _seal: str = field(repr=False, compare=False)
+    _runtime: object = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True)
 class LaunchReceipt:
     """The durable admission identity for this operation only, never a terminal view."""
 
@@ -223,6 +241,87 @@ class LaunchRuntime:
             self._handoff_payload(resolved).encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
+
+    @staticmethod
+    def _replacement_identity(
+        *,
+        principal_id: str,
+        work_item_id: str,
+        generation: int,
+        action_idempotency_key: str,
+        launch: ResolvedLaunch,
+    ) -> tuple[str, str]:
+        payload = _canonical(
+            {
+                "version": 1,
+                "principal_id": principal_id,
+                "work_item_id": work_item_id,
+                "generation": generation,
+                "action_idempotency_key": action_idempotency_key,
+                "launch_request_hash": launch.request_hash,
+                "provision_fingerprint": launch.provision_fingerprint,
+                "provision_ref": launch.provision.ref.model_dump(mode="json"),
+            }
+        )
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        return f"replacement-v1-{digest}", digest
+
+    @staticmethod
+    def _replacement_payload(resolved: ResolvedReplacement) -> str:
+        return _canonical(
+            {
+                "principal_id": resolved.principal_id,
+                "work_item_id": resolved.work_item_id,
+                "generation": resolved.generation,
+                "expected_work_revision": resolved.expected_work_revision,
+                "expected_attempt_id": resolved.expected_attempt_id,
+                "planned_attempt_revision": resolved.planned_attempt_revision,
+                "action_idempotency_key": resolved.action_idempotency_key,
+                "retry_idempotency_key": resolved.retry_idempotency_key,
+                "retry_request_hash": resolved.retry_request_hash,
+                "launch_handoff": LaunchRuntime._handoff_payload(resolved.launch),
+            }
+        )
+
+    def _seal_replacement(self, resolved: ResolvedReplacement) -> str:
+        return hmac.new(
+            self._handoff_secret,
+            self._replacement_payload(resolved).encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+    def _replacement_handoff_is_current(self, principal: Principal, resolved) -> bool:
+        try:
+            if (
+                not isinstance(resolved, ResolvedReplacement)
+                or resolved._runtime is not self._runtime_identity
+                or resolved.principal_id != principal.id
+                or resolved.launch._runtime is not self._runtime_identity
+                or not self._handoff_is_current(resolved.launch)
+                or not hmac.compare_digest(resolved._seal, self._seal_replacement(resolved))
+                or type(resolved.generation) is not int
+                or resolved.generation <= 1
+                or type(resolved.expected_work_revision) is not int
+                or resolved.expected_work_revision <= 0
+                or type(resolved.planned_attempt_revision) is not int
+                or resolved.planned_attempt_revision <= 0
+                or resolved.launch.idempotency_key != resolved.retry_idempotency_key
+                or resolved.launch.principal_id != principal.id
+            ):
+                return False
+            retry_key, retry_hash = self._replacement_identity(
+                principal_id=resolved.principal_id,
+                work_item_id=resolved.work_item_id,
+                generation=resolved.generation,
+                action_idempotency_key=resolved.action_idempotency_key,
+                launch=resolved.launch,
+            )
+            return (
+                retry_key == resolved.retry_idempotency_key
+                and retry_hash == resolved.retry_request_hash
+            )
+        except (AttributeError, TypeError, ValueError):
+            return False
 
     def _handoff_is_current(self, resolved: ResolvedLaunch) -> bool:
         """Reject replace/forgery before it can reach admission or preflight."""
@@ -562,6 +661,203 @@ class LaunchRuntime:
                 "Trusted launch context is no longer valid.",
                 retryable=False,
                 required_action="refresh_launch_context",
+            ) from error
+
+    def resolve_replacement(
+        self,
+        principal: Principal,
+        selection: str | None,
+        intent: LaunchIntent,
+        *,
+        work_item_id: str,
+        generation: int,
+        idempotency_key: str,
+    ) -> ResolvedReplacement:
+        """Resolve current launch evidence for an explicit planned replacement generation."""
+        self._require_principal(principal)
+        try:
+            work_item_id = _identity(work_item_id, "replacement work item")
+            if type(generation) is not int or generation <= 1:
+                raise ValueError("replacement generation must follow the initial generation")
+            if selection is None:
+                raise ValueError("replacement admission requires an explicit launch selector")
+            action_key = self._idempotency_key(idempotency_key)
+            base = self.resolve_launch(principal, selection, intent)
+            retry_key, retry_hash = self._replacement_identity(
+                principal_id=principal.id,
+                work_item_id=work_item_id,
+                generation=generation,
+                action_idempotency_key=action_key,
+                launch=base,
+            )
+            payload = json.loads(base.envelope.payload_json)
+            terminal_id = hashlib.sha256(
+                ("launch-terminal-v1:" + base.request_hash + ":" + retry_key).encode("utf-8")
+            ).hexdigest()[:8]
+            payload["terminal_id"] = terminal_id
+            launch = replace(
+                base,
+                idempotency_key=retry_key,
+                terminal_id=terminal_id,
+                envelope=WorkDeliveryEnvelope(
+                    operation_kind=base.envelope.operation_kind,
+                    adapter_version=base.envelope.adapter_version,
+                    payload_json=_canonical(payload),
+                ),
+                _seal="",
+            )
+            launch = replace(launch, _seal=self._seal_handoff(launch))
+
+            with self.repository.read_snapshot() as connection:
+                work = self.repository._work(connection, work_item_id)
+                if (
+                    work["job_id"] != launch.job_id
+                    or work["operation_kind"] != "launch"
+                    or work["origin_protocol"] != "launch-v1"
+                    or work["lineage_protocol"] != "legacy"
+                    or not work["attempts"]
+                ):
+                    raise WorkConflict("replacement work is not an original managed launch")
+                current = work["attempts"][-1]
+                if current["generation"] != generation:
+                    raise WorkConflict("replacement generation is no longer current")
+                existing = connection.execute(
+                    "SELECT retry_admission_key,retry_request_hash,replanned_work_revision,"
+                    "planned_attempt_revision FROM work_launch_retry_bindings "
+                    "WHERE attempt_id=%s AND generation=%s",
+                    (current["id"], generation),
+                ).fetchone()
+                if existing is None:
+                    if work["state"] != "queued" or current["state"] != "planned":
+                        raise WorkConflict("replacement is not awaiting explicit admission")
+                    work_revision = work["revision"]
+                    attempt_revision = current["revision"]
+                else:
+                    if (
+                        existing["retry_admission_key"],
+                        existing["retry_request_hash"],
+                    ) != (retry_key, retry_hash):
+                        raise WorkConflict(
+                            "replacement admission identity conflicts with its order"
+                        )
+                    work_revision = existing["replanned_work_revision"]
+                    attempt_revision = existing["planned_attempt_revision"]
+                    if current["revision"] < attempt_revision or work["revision"] < work_revision:
+                        raise WorkConflict(
+                            "replacement durable revision moved behind its admission"
+                        )
+
+            resolved = ResolvedReplacement(
+                principal_id=principal.id,
+                work_item_id=work_item_id,
+                generation=generation,
+                expected_work_revision=work_revision,
+                expected_attempt_id=current["id"],
+                planned_attempt_revision=attempt_revision,
+                action_idempotency_key=action_key,
+                retry_idempotency_key=retry_key,
+                retry_request_hash=retry_hash,
+                launch=launch,
+                _seal="",
+                _runtime=self._runtime_identity,
+            )
+            return replace(resolved, _seal=self._seal_replacement(resolved))
+        except LaunchRuntimeError:
+            raise
+        except (WorkConflict, KeyError, ValueError) as error:
+            raise self._error(
+                "launch_context_invalid",
+                "Trusted replacement context is no longer valid.",
+                retryable=False,
+                required_action="resolve_replacement_again",
+            ) from error
+        except (SchemaMismatch, DatabaseError) as error:
+            raise self._error(
+                "launch_store_unavailable",
+                "Verified work store is unavailable.",
+                retryable=True,
+                required_action="retry_same_replacement",
+            ) from error
+
+    def admit_replacement(
+        self, principal: Principal, resolved: ResolvedReplacement
+    ) -> LaunchReceipt:
+        """Explicitly bind and queue one already-planned generation; never dispatch it."""
+        self._require_principal(principal)
+        if not self._replacement_handoff_is_current(principal, resolved):
+            raise self._error(
+                "launch_context_invalid",
+                "Trusted replacement context is no longer valid.",
+                retryable=False,
+                required_action="resolve_replacement_again",
+            )
+        try:
+            work = self._admission.replacements.admit(principal, resolved)
+            attempt = next(
+                attempt
+                for attempt in work["attempts"]
+                if attempt["generation"] == resolved.generation
+            )
+            return LaunchReceipt(
+                work_item_id=work["id"],
+                attempt_id=attempt["id"],
+                generation=attempt["generation"],
+                state=work["state"],
+            )
+        except AuthorityDenied as error:
+            raise self._error(
+                "launch_authority_denied",
+                "Verified launch authority is required.",
+                retryable=False,
+                required_action="reauthorize",
+            ) from error
+        except ProvisionDenied as error:
+            raise self._error(
+                "launch_context_invalid",
+                "Trusted launch context is no longer valid.",
+                retryable=False,
+                required_action="refresh_launch_context",
+            ) from error
+        except WorkConflict as error:
+            raise self._error(
+                "launch_context_invalid",
+                "Trusted replacement context is no longer valid.",
+                retryable=False,
+                required_action="resolve_replacement_again",
+            ) from error
+        except (
+            GrantConflict,
+            ContractConflict,
+            SnapshotConflict,
+            SnapshotUnavailable,
+            KnowledgeAccessDenied,
+        ) as error:
+            raise self._error(
+                "launch_context_invalid",
+                "Trusted replacement context is no longer valid.",
+                retryable=False,
+                required_action="resolve_replacement_again",
+            ) from error
+        except ProvisionUnavailable as error:
+            raise self._error(
+                "launch_context_invalid",
+                "Trusted launch context is no longer valid.",
+                retryable=False,
+                required_action="resolve_replacement_again",
+            ) from error
+        except (SchemaMismatch, DatabaseError) as error:
+            raise self._error(
+                "launch_store_unavailable",
+                "Verified work store is unavailable.",
+                retryable=True,
+                required_action="retry_same_replacement",
+            ) from error
+        except (TypeError, ValueError) as error:
+            raise self._error(
+                "launch_context_invalid",
+                "Trusted replacement context is no longer valid.",
+                retryable=False,
+                required_action="resolve_replacement_again",
             ) from error
 
     def admit_launch(self, principal: Principal, resolved: ResolvedLaunch) -> LaunchReceipt:

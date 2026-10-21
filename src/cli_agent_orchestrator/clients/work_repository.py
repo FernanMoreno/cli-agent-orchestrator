@@ -456,7 +456,7 @@ def _stored_recovery_context_rows(rows) -> RecoveryStoreContext:
 
 
 # Native Work schema version, recorded in the PostgreSQL migration ledger.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class WorkRepository:

@@ -246,6 +246,11 @@ class WorkAdmission:
         self.attempt_credentials = WorkAttemptCredentials(repository, origins=origins)
         self.scheduler = WorkScheduler(repository)
         self.reservations = WorkReservations(repository)
+        from cli_agent_orchestrator.services.work_replacement_admission import (
+            WorkReplacementAdmission,
+        )
+
+        self.replacements = WorkReplacementAdmission(self)
         self._pending_abandonments: set[asyncio.Future] = set()
         if origins is not None:
             origins._bind_admission(self)
@@ -1131,13 +1136,27 @@ class WorkAdmission:
             actor_id=binding.principal_id,
         )
 
-    def _eligible(self, connection, *, registered_only=False):
-        """Probe each queued candidate without retaining its authority/path locks."""
+    def _eligible(self, connection, *, registered_only=False, selected_job_id=None):
+        """Probe each queued candidate without retaining its authority/path locks.
+
+        Retirement retains its job locks for the rest of the transaction. Every
+        retained job lock, including the optional dispatch-selected job, must be
+        taken in ascending job id order, matching claim_next. A retirement runs
+        in place only while no later candidate probe or the selected job sorts
+        below it; otherwise it waits for the ordered pass after all probes.
+        """
         eligible = {}
+        retirements_by_job = {}
         requests = connection.execute(
             "SELECT * FROM work_scheduler_requests WHERE state='queued' ORDER BY queue_sequence"
         ).fetchall()
-        for request in requests:
+        later_floor: list[str | None] = []
+        floor = selected_job_id
+        for request in reversed(requests):
+            later_floor.append(floor)
+            floor = request["job_id"] if floor is None else min(floor, request["job_id"])
+        later_floor.reverse()
+        for request, later in zip(requests, later_floor):
             binding = None
             retire = False
             executable = True
@@ -1181,10 +1200,23 @@ class WorkAdmission:
                 connection.execute("ROLLBACK TO work_candidate_probe")
                 connection.execute("RELEASE work_candidate_probe")
             if retire:
-                self._retire_unexecutable(connection, request)
+                if not retirements_by_job and (later is None or request["job_id"] <= later):
+                    self._retire_unexecutable(connection, request)
+                else:
+                    retirements_by_job.setdefault(request["job_id"], []).append(request)
                 continue
             if binding is not None and executable and path_available:
                 eligible[binding.attempt_id] = binding
+        jobs = set(retirements_by_job)
+        if selected_job_id is not None:
+            jobs.add(selected_job_id)
+        for job_id in sorted(jobs):
+            if job_id == selected_job_id:
+                # Same lane→job order as _revalidate_order's grant chain.
+                WorkAuthority.lock_job_authority_lane(connection, job_id)
+                self.repository._lock_job_for_write(connection, job_id)
+            for request in retirements_by_job.get(job_id, ()):
+                self._retire_unexecutable(connection, request)
         return eligible
 
     def _preview(self, *, registered_only=False):
@@ -1208,7 +1240,9 @@ class WorkAdmission:
     ):
         with self.repository.transaction() as connection:
             self.repository._verify(connection)
-            eligible = self._eligible(connection, registered_only=registered_only)
+            eligible = self._eligible(
+                connection, registered_only=registered_only, selected_job_id=preview.job_id
+            )
             probed_binding = eligible.get(preview.attempt_id)
             if probed_binding is None:
                 raise _SelectionChanged()

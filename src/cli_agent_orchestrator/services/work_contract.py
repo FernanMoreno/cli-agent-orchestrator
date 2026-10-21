@@ -13,7 +13,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from cli_agent_orchestrator.clients.postgres import Connection
-from cli_agent_orchestrator.clients.work_repository import WorkRepository
+from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.models.work_contract import (
     EffectiveWorkContract,
     EffectiveWorkContractV2,
@@ -62,6 +62,9 @@ def _nonsecret(value):
 class WorkContracts:
     def __init__(self, repository: WorkRepository):
         self.repository = repository
+        from cli_agent_orchestrator.services.work_retry_origin import WorkRetryOrigins
+
+        self.retry_origins = WorkRetryOrigins(repository)
 
     def _transaction(self, connection):
         if not isinstance(connection, Connection) or not connection.in_transaction:
@@ -499,12 +502,30 @@ class WorkContracts:
             "SELECT * FROM work_launch_origin_bindings WHERE attempt_id=%s AND generation=%s",
             (attempt["id"], attempt["generation"]),
         ).fetchone()
+        retry_origin = connection.execute(
+            "SELECT 1 FROM work_launch_retry_bindings WHERE attempt_id=%s AND generation=%s",
+            (attempt["id"], attempt["generation"]),
+        ).fetchone()
         if item["origin_protocol"] == "legacy":
-            if origin is not None:
+            if origin is not None or retry_origin is not None:
                 raise ContractConflict("legacy work contradicts its launch origin binding")
             return
         if item["origin_protocol"] != "launch-v1":
             raise ContractConflict("work origin protocol is unknown")
+        if attempt["generation"] > 1:
+            if origin is not None:
+                raise ContractConflict("replacement has a copied initial launch origin")
+            if retry_origin is None:
+                raise ContractConflict("replacement has no durable retry-origin binding")
+            try:
+                self.retry_origins.revalidate(
+                    connection, attempt=attempt, binding=binding, contract=contract
+                )
+            except WorkConflict as error:
+                raise ContractConflict("replacement retry origin is no longer valid") from error
+            return
+        if retry_origin is not None:
+            raise ContractConflict("initial launch generation contradicts its retry origin")
         if origin is None:
             raise ContractConflict("v21 launch work has no durable origin binding")
         if (

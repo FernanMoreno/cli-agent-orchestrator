@@ -780,3 +780,673 @@ def test_runtime_conflict_has_a_server_owned_recovery_action(trusted_setup, monk
     assert "private durable conflict detail" not in str(raised.value)
     assert durable_counts(repository) == (0, 0, 0, 0, 0)
     assert backend.effects == []
+
+
+def _retry_admission_setup(trusted_setup):
+    """Create a real durable generation-two plan without running a backend."""
+    from uuid import uuid4
+
+    from cli_agent_orchestrator.services.work_reducer import TransitionEvidence
+    from cli_agent_orchestrator.services.work_reservations import StoppedWriter
+    from cli_agent_orchestrator.services.work_scheduler import WorkScheduler
+    from cli_agent_orchestrator.services.work_service import WorkService
+
+    repository, principal, _, _, _, _ = trusted_setup
+    event_suffix = uuid4().hex
+    module, runtime, backend = make_runtime(trusted_setup)
+    provision(trusted_setup)
+    initial_handoff = runtime.resolve_launch(principal, "opaque", intent(module, "initial"))
+    initial = runtime.admit_launch(principal, initial_handoff)
+    scheduler = runtime._admission.scheduler
+    held = scheduler.claim_next(actor_id=principal.id)
+    assert held is not None and held.attempt_id == initial.attempt_id
+
+    sent = repository.transition_attempt(
+        attempt_id=initial.attempt_id,
+        generation=1,
+        expected_revision=1,
+        expected_state="planned",
+        target="sent",
+        actor_id=principal.id,
+        event_id=f"replacement-test-sent-{event_suffix}",
+        evidence=TransitionEvidence(
+            generation=1,
+            expected_generation=1,
+            contract_confirmed=True,
+            grant_confirmed=True,
+            capacity_confirmed=True,
+            reservations_confirmed=True,
+        ),
+    )
+    reconciled = repository.transition_attempt(
+        attempt_id=initial.attempt_id,
+        generation=1,
+        expected_revision=sent["attempts"][-1]["revision"],
+        expected_state="sent",
+        target="reconcile",
+        actor_id=principal.id,
+        event_id=f"replacement-test-reconcile-{event_suffix}",
+        evidence=TransitionEvidence(generation=1, expected_generation=1),
+    )
+    retry_scheduler = WorkScheduler(
+        repository,
+        stop_verifier=lambda owner: StoppedWriter(
+            owner.attempt_id,
+            owner.generation,
+            owner.revision,
+            f"test-stop-{owner.attempt_id}-{owner.generation}",
+        ),
+    )
+    replanned = WorkService(repository).retry_work(
+        reconciled["id"],
+        scheduler=retry_scheduler,
+        expected_revision=reconciled["revision"],
+        provider="mock_cli",
+        evidence=TransitionEvidence(
+            generation=1,
+            expected_generation=1,
+            reconciliation_authorized=True,
+        ),
+        actor_id=principal.id,
+        lease_seconds=300,
+    )
+    return module, runtime, backend, principal, initial_handoff, initial, replanned
+
+
+def test_replacement_admission_binds_generation_and_replay_is_read_only(trusted_setup):
+    """Replanned work stays inert until explicit current-authority admission."""
+    module, runtime, backend, principal, initial_handoff, initial, replanned = (
+        _retry_admission_setup(trusted_setup)
+    )
+    repository = trusted_setup[0]
+    replacement_handoff = runtime.resolve_replacement(
+        principal,
+        "opaque",
+        intent(module, "replacement"),
+        work_item_id=initial.work_item_id,
+        generation=2,
+        idempotency_key="receiver-generation-two",
+    )
+
+    assert replacement_handoff.retry_idempotency_key != initial_handoff.idempotency_key
+    assert replacement_handoff.generation == 2
+    assert replanned["attempts"][-1]["state"] == "planned"
+    with repository.transaction() as connection:
+        initial_origin_before = connection.execute(
+            "SELECT request_hash,idempotency_key FROM work_launch_origin_bindings "
+            "WHERE attempt_id=%s AND generation=1",
+            (initial.attempt_id,),
+        ).fetchone()
+        assert (
+            connection.execute(
+                "SELECT 1 FROM work_scheduler_requests WHERE work_item_id=%s AND generation=2",
+                (initial.work_item_id,),
+            ).fetchone()
+            is None
+        )
+
+    first = runtime.admit_replacement(principal, replacement_handoff)
+    same_runtime_replay = runtime.admit_replacement(principal, replacement_handoff)
+    _, restarted, restarted_backend = make_runtime(trusted_setup)
+    replay_handoff = restarted.resolve_replacement(
+        principal,
+        "opaque",
+        intent(module, "replacement"),
+        work_item_id=initial.work_item_id,
+        generation=2,
+        idempotency_key="receiver-generation-two",
+    )
+    replay = restarted.admit_replacement(principal, replay_handoff)
+    assert same_runtime_replay == first
+    assert replay == first
+    assert restarted_backend.preflights == []
+    assert (first.work_item_id, first.generation, first.state) == (
+        initial.work_item_id,
+        2,
+        "queued",
+    )
+    work = repository.get_work(initial.work_item_id)
+    current_attempt = work["attempts"][-1]
+    assert current_attempt["generation"] == 2
+    assert current_attempt["state"] == "planned"
+    with repository.transaction() as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_launch_retry_bindings WHERE work_item_id=%s",
+                (initial.work_item_id,),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_scheduler_requests WHERE work_item_id=%s",
+                (initial.work_item_id,),
+            ).fetchone()[0]
+            == 2
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_attempt_credentials AS credential "
+                "JOIN work_attempts AS attempt ON attempt.id=credential.attempt_id "
+                "AND attempt.generation=credential.generation WHERE attempt.work_item_id=%s",
+                (initial.work_item_id,),
+            ).fetchone()[0]
+            == 0
+        )
+        delivery_hashes = connection.execute(
+            "SELECT delivery.delivery_hash FROM work_delivery_orders AS delivery "
+            "JOIN work_attempts AS attempt ON attempt.id=delivery.attempt_id "
+            "AND attempt.generation=delivery.generation WHERE attempt.work_item_id=%s "
+            "ORDER BY attempt.generation",
+            (initial.work_item_id,),
+        ).fetchall()
+        assert len(delivery_hashes) == 2
+        assert delivery_hashes[0]["delivery_hash"] != delivery_hashes[1]["delivery_hash"]
+        current_origin = connection.execute(
+            "SELECT id,state,units,attempt_id,generation FROM work_scheduler_requests "
+            "WHERE work_item_id=%s AND generation=2",
+            (initial.work_item_id,),
+        ).fetchone()
+        assert tuple(current_origin)[1:] == ("queued", 1, current_attempt["id"], 2)
+        retry_origin = connection.execute(
+            "SELECT root_attempt_id,prior_attempt_id,prior_scheduler_request_id,retry_actor_id,"
+            "current_scheduler_request_id FROM work_launch_retry_bindings "
+            "WHERE work_item_id=%s AND generation=2",
+            (initial.work_item_id,),
+        ).fetchone()
+        prior_scheduler = connection.execute(
+            "SELECT id FROM work_scheduler_requests WHERE attempt_id=%s AND generation=1 "
+            "AND state='released' AND stop_evidence_ref IS NOT NULL",
+            (initial.attempt_id,),
+        ).fetchone()
+        assert prior_scheduler is not None
+        assert tuple(retry_origin) == (
+            initial.attempt_id,
+            initial.attempt_id,
+            prior_scheduler["id"],
+            principal.id,
+            current_origin["id"],
+        )
+        initial_origin_after = connection.execute(
+            "SELECT request_hash,idempotency_key FROM work_launch_origin_bindings "
+            "WHERE attempt_id=%s AND generation=1",
+            (initial.attempt_id,),
+        ).fetchone()
+        assert tuple(initial_origin_after) == tuple(initial_origin_before)
+        runtime._admission.contracts._revalidate_order(
+            connection, current_attempt["id"], generation=2
+        )
+
+    original_replay = runtime.admit_launch(principal, initial_handoff)
+    assert original_replay == initial
+    assert len(backend.effects) == 0
+    assert durable_counts(repository) == (1, 2, 2, 2, 2)
+
+
+def _admitted_replacement(trusted_setup):
+    module, runtime, backend, principal, _, initial, _ = _retry_admission_setup(trusted_setup)
+    handoff = runtime.resolve_replacement(
+        principal,
+        "opaque",
+        intent(module, "replacement"),
+        work_item_id=initial.work_item_id,
+        generation=2,
+        idempotency_key="receiver-generation-two",
+    )
+    admitted = runtime.admit_replacement(principal, handoff)
+    return module, runtime, principal, initial, handoff, admitted
+
+
+def _job_high_water(repository, work_item_id):
+    with repository.transaction() as connection:
+        return connection.execute(
+            "SELECT sequence.job_id,sequence.high_water FROM work_event_sequences AS sequence "
+            "JOIN work_items AS item ON item.job_id=sequence.job_id WHERE item.id=%s",
+            (work_item_id,),
+        ).fetchone()
+
+
+def test_event_retention_after_replacement_admission_keeps_dispatch_provenance(trusted_setup):
+    """Pruning the journal neither fails nor erases the immutable replacement facts."""
+    from cli_agent_orchestrator.services.work_contract import ContractConflict
+
+    module, runtime, principal, initial, handoff, admitted = _admitted_replacement(trusted_setup)
+    repository = trusted_setup[0]
+    head = _job_high_water(repository, initial.work_item_id)
+
+    repository.prune_events(head["job_id"], through_sequence=head["high_water"])
+
+    with repository.transaction() as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_events WHERE work_item_id=%s",
+                (initial.work_item_id,),
+            ).fetchone()[0]
+            == 0
+        )
+        runtime._admission.contracts._revalidate_order(
+            connection, admitted.attempt_id, generation=2
+        )
+    assert runtime.admit_replacement(principal, handoff) == admitted
+
+    # A missing event above the retention watermark was never legitimately pruned.
+    with pytest.raises(ContractConflict):
+        with repository.transaction() as connection:
+            connection.execute(
+                "UPDATE work_event_sequences SET retained_after=0 WHERE job_id=%s",
+                (head["job_id"],),
+            )
+            runtime._admission.contracts._revalidate_order(
+                connection, admitted.attempt_id, generation=2
+            )
+
+
+def test_unpruned_missing_release_event_fails_dispatch_revalidation(trusted_setup):
+    from cli_agent_orchestrator.services.work_contract import ContractConflict
+
+    _, runtime, _, initial, _, admitted = _admitted_replacement(trusted_setup)
+    repository = trusted_setup[0]
+    with pytest.raises(ContractConflict):
+        with repository.transaction() as connection:
+            connection.execute(
+                "DELETE FROM work_events WHERE attempt_id=%s AND event_type='scheduler.released'",
+                (initial.attempt_id,),
+            )
+            runtime._admission.contracts._revalidate_order(
+                connection, admitted.attempt_id, generation=2
+            )
+
+
+def test_pruned_release_evidence_fails_replacement_admission_closed(trusted_setup):
+    """Initial admission requires the actual durable release/replan events."""
+    module, runtime, _, principal, _, initial, _ = _retry_admission_setup(trusted_setup)
+    repository = trusted_setup[0]
+    head = _job_high_water(repository, initial.work_item_id)
+    repository.prune_events(head["job_id"], through_sequence=head["high_water"])
+    handoff = runtime.resolve_replacement(
+        principal,
+        "opaque",
+        intent(module, "replacement"),
+        work_item_id=initial.work_item_id,
+        generation=2,
+        idempotency_key="receiver-generation-two",
+    )
+
+    with pytest.raises(module.LaunchRuntimeError):
+        runtime.admit_replacement(principal, handoff)
+    with repository.transaction() as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_scheduler_requests WHERE work_item_id=%s",
+                (initial.work_item_id,),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_launch_retry_bindings WHERE work_item_id=%s",
+                (initial.work_item_id,),
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_predecessor_cleanup_after_admission_keeps_replacement_dispatchable(trusted_setup):
+    """Legitimate cleanup revisions of the stopped generation do not fence the new one."""
+    import psycopg
+
+    from cli_agent_orchestrator.services.work_contract import ContractConflict
+    from cli_agent_orchestrator.services.work_service import WorkService
+
+    _, runtime, principal, initial, handoff, admitted = _admitted_replacement(trusted_setup)
+    repository = trusted_setup[0]
+    contracts = runtime._admission.contracts
+    prior = repository.get_attempt(initial.attempt_id)
+
+    pending = repository.record_cleanup(
+        initial.attempt_id,
+        generation=1,
+        expected_revision=prior["revision"],
+        state="pending",
+        actor_id=principal.id,
+    )
+    # Current policy: an unobserved pending cleanup blocks dispatch of the replacement.
+    with pytest.raises(ContractConflict):
+        with repository.transaction() as connection:
+            contracts._revalidate_order(connection, admitted.attempt_id, generation=2)
+    repository.record_cleanup(
+        initial.attempt_id,
+        generation=1,
+        expected_revision=pending["attempts"][0]["revision"],
+        state="failed",
+        actor_id=principal.id,
+    )
+    cleaned = WorkService(repository).cleanup_attempt(
+        initial.attempt_id, lambda: True, actor_id=principal.id
+    )
+    assert cleaned["attempts"][0]["cleanup_state"] == "complete"
+    assert cleaned["attempts"][0]["revision"] > prior["revision"]
+
+    with repository.transaction() as connection:
+        contracts._revalidate_order(connection, admitted.attempt_id, generation=2)
+    assert runtime.admit_replacement(principal, handoff) == admitted
+
+    # The released stop proof compared exactly above cannot be altered afterwards.
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with repository.transaction() as connection:
+            connection.execute(
+                "UPDATE work_scheduler_requests SET stop_evidence_ref=%s "
+                "WHERE attempt_id=%s AND generation=1",
+                ("altered-stop-proof", initial.attempt_id),
+            )
+    with repository.transaction() as connection:
+        contracts._revalidate_order(connection, admitted.attempt_id, generation=2)
+
+
+def test_replacement_handoff_from_another_runtime_is_rejected(trusted_setup):
+    """A resolved generation cannot be moved to another LaunchRuntime owner."""
+    module, runtime, _, principal, _, initial, _ = _retry_admission_setup(trusted_setup)
+    _, foreign_runtime, _ = make_runtime(trusted_setup)
+    handoff = runtime.resolve_replacement(
+        principal,
+        "opaque",
+        intent(module, "replacement"),
+        work_item_id=initial.work_item_id,
+        generation=2,
+        idempotency_key="receiver-generation-two",
+    )
+
+    with pytest.raises(module.LaunchRuntimeError):
+        foreign_runtime.admit_replacement(principal, handoff)
+
+    assert durable_counts(trusted_setup[0]) == (1, 2, 1, 1, 1)
+
+
+def test_replacement_identity_conflict_is_read_only(trusted_setup):
+    """A current generation cannot be rebound to another action key or payload."""
+    module, runtime, _, principal, _, initial, _ = _retry_admission_setup(trusted_setup)
+    repository = trusted_setup[0]
+    accepted = runtime.resolve_replacement(
+        principal,
+        "opaque",
+        intent(module, "replacement"),
+        work_item_id=initial.work_item_id,
+        generation=2,
+        idempotency_key="receiver-generation-two",
+    )
+    runtime.admit_replacement(principal, accepted)
+    before = durable_counts(repository)
+
+    with pytest.raises(module.LaunchRuntimeError):
+        runtime.resolve_replacement(
+            principal,
+            "opaque",
+            intent(module, "replacement"),
+            work_item_id=initial.work_item_id,
+            generation=2,
+            idempotency_key="different-action",
+        )
+    with pytest.raises(module.LaunchRuntimeError):
+        runtime.resolve_replacement(
+            principal,
+            "opaque",
+            intent(module, "changed replacement"),
+            work_item_id=initial.work_item_id,
+            generation=2,
+            idempotency_key="receiver-generation-two",
+        )
+
+    assert durable_counts(repository) == before
+    with repository.connection() as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_launch_retry_bindings WHERE work_item_id=%s",
+                (initial.work_item_id,),
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_replacement_origin_rows_are_immutable_in_postgres(trusted_setup):
+    """The database trigger protects replacement provenance after admission."""
+    import psycopg
+
+    module, runtime, _, principal, _, initial, _ = _retry_admission_setup(trusted_setup)
+    repository = trusted_setup[0]
+    handoff = runtime.resolve_replacement(
+        principal,
+        "opaque",
+        intent(module, "replacement"),
+        work_item_id=initial.work_item_id,
+        generation=2,
+        idempotency_key="receiver-generation-two",
+    )
+    runtime.admit_replacement(principal, handoff)
+    attempt_id = repository.get_work(initial.work_item_id)["attempts"][-1]["id"]
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with repository.transaction() as connection:
+            connection.execute(
+                "UPDATE work_launch_retry_bindings SET retry_request_hash=%s "
+                "WHERE attempt_id=%s AND generation=2",
+                ("b" * 64, attempt_id),
+            )
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with repository.transaction() as connection:
+            connection.execute(
+                "DELETE FROM work_launch_retry_bindings WHERE attempt_id=%s AND generation=2",
+                (attempt_id,),
+            )
+
+    with repository.connection() as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_launch_retry_bindings WHERE attempt_id=%s AND generation=2",
+                (attempt_id,),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_scheduler_requests WHERE work_item_id=%s AND generation=2",
+                (initial.work_item_id,),
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_replacement_requires_explicit_current_provision_selector(trusted_setup):
+    """An omitted selector cannot race another active provision into ambiguity."""
+    module, runtime, _, principal, _, initial, _ = _retry_admission_setup(trusted_setup)
+
+    with pytest.raises(module.LaunchRuntimeError):
+        runtime.resolve_replacement(
+            principal,
+            None,
+            intent(module, "replacement"),
+            work_item_id=initial.work_item_id,
+            generation=2,
+            idempotency_key="receiver-generation-two",
+        )
+
+    assert durable_counts(trusted_setup[0]) == (1, 2, 1, 1, 1)
+
+
+def test_replacement_rejects_a_provision_replaced_after_resolution(trusted_setup):
+    """A sealed handoff cannot bind an older active provision revision."""
+    module, runtime, backend, principal, _, initial, _ = _retry_admission_setup(trusted_setup)
+    repository, _, _, job, grant, contract = trusted_setup
+    handoff = runtime.resolve_replacement(
+        principal,
+        "opaque",
+        intent(module, "replacement"),
+        work_item_id=initial.work_item_id,
+        generation=2,
+        idempotency_key="receiver-generation-two",
+    )
+    before = durable_counts(repository)
+    preflights = len(backend.preflights)
+    WorkProvisioning(repository).provision_launch(
+        principal,
+        subject=principal,
+        selector="opaque",
+        expected_revision=1,
+        job_id=job["id"],
+        grant_id=grant.id,
+        grant_revision=grant.revision,
+        contract=contract,
+        adapter_version=1,
+        lease_seconds=300,
+    )
+
+    with pytest.raises(module.LaunchRuntimeError):
+        runtime.admit_replacement(principal, handoff)
+
+    assert durable_counts(repository) == before
+    assert len(backend.preflights) == preflights
+
+
+def test_replacement_rejects_a_stale_planned_generation_cas(trusted_setup):
+    """A sealed handoff cannot bind after the planned attempt revision advances."""
+    module, runtime, backend, principal, _, initial, replanned = _retry_admission_setup(
+        trusted_setup
+    )
+    repository = trusted_setup[0]
+    attempt = replanned["attempts"][-1]
+    handoff = runtime.resolve_replacement(
+        principal,
+        "opaque",
+        intent(module, "replacement"),
+        work_item_id=initial.work_item_id,
+        generation=2,
+        idempotency_key="receiver-generation-two",
+    )
+    repository.renew_attempt(
+        attempt["id"],
+        generation=2,
+        expected_revision=attempt["revision"],
+        lease_seconds=300,
+        actor_id=principal.id,
+    )
+    before = durable_counts(repository)
+    preflights = len(backend.preflights)
+
+    with pytest.raises(module.LaunchRuntimeError):
+        runtime.admit_replacement(principal, handoff)
+
+    assert durable_counts(repository) == before
+    assert len(backend.preflights) == preflights
+
+
+def test_concurrent_identical_replacement_admission_has_one_order(trusted_setup):
+    """Concurrent exact retries converge without multiplying current-generation rows."""
+    module, runtime, _, principal, _, initial, _ = _retry_admission_setup(trusted_setup)
+    repository = trusted_setup[0]
+    handoff = runtime.resolve_replacement(
+        principal,
+        "opaque",
+        intent(module, "replacement"),
+        work_item_id=initial.work_item_id,
+        generation=2,
+        idempotency_key="receiver-generation-two",
+    )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        receipts = list(pool.map(lambda _: runtime.admit_replacement(principal, handoff), range(4)))
+
+    assert {(item.work_item_id, item.attempt_id, item.generation) for item in receipts} == {
+        (receipts[0].work_item_id, receipts[0].attempt_id, receipts[0].generation)
+    }
+    assert receipts[0].generation == 2
+    with repository.connection() as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_launch_retry_bindings WHERE work_item_id=%s",
+                (initial.work_item_id,),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_scheduler_requests WHERE work_item_id=%s AND generation=2",
+                (initial.work_item_id,),
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_revoked_current_grant_blocks_replacement_before_preflight(trusted_setup):
+    """A previously sealed retry context grants no authority after revocation."""
+    module, runtime, backend, principal, _, initial, _ = _retry_admission_setup(trusted_setup)
+    repository, _, authority, _, grant, _ = trusted_setup
+    handoff = runtime.resolve_replacement(
+        principal,
+        "opaque",
+        intent(module, "replacement"),
+        work_item_id=initial.work_item_id,
+        generation=2,
+        idempotency_key="receiver-generation-two",
+    )
+    before = durable_counts(repository)
+    preflights = len(backend.preflights)
+    authority.revoke(
+        principal,
+        grant_id=grant.id,
+        expected_grant_revision=grant.revision,
+        reason="replacement admission revocation test",
+    )
+
+    with pytest.raises(module.LaunchRuntimeError):
+        runtime.admit_replacement(principal, handoff)
+
+    assert durable_counts(repository) == before
+    assert len(backend.preflights) == preflights
+    with repository.connection() as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_scheduler_requests WHERE work_item_id=%s AND generation=2",
+                (initial.work_item_id,),
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_replacement_enqueue_failure_rolls_back_the_generation_order(trusted_setup, monkeypatch):
+    """A late scheduler refusal cannot leave a partially bound replacement."""
+    module, runtime, _, principal, _, initial, replanned = _retry_admission_setup(trusted_setup)
+    repository = trusted_setup[0]
+    handoff = runtime.resolve_replacement(
+        principal,
+        "opaque",
+        intent(module, "replacement"),
+        work_item_id=initial.work_item_id,
+        generation=2,
+        idempotency_key="receiver-generation-two",
+    )
+    before = durable_counts(repository)
+
+    def refuse_enqueue(*_args, **_kwargs):
+        from cli_agent_orchestrator.services.work_scheduler import SchedulerBackpressure
+
+        raise SchedulerBackpressure("test queue refusal")
+
+    monkeypatch.setattr(runtime._admission.scheduler, "_enqueue", refuse_enqueue)
+    with pytest.raises(module.LaunchRuntimeError):
+        runtime.admit_replacement(principal, handoff)
+
+    assert durable_counts(repository) == before
+    with repository.connection() as connection:
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_launch_retry_bindings WHERE work_item_id=%s",
+                (initial.work_item_id,),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM work_delivery_orders WHERE attempt_id=%s",
+                (replanned["attempts"][-1]["id"],),
+            ).fetchone()[0]
+            == 0
+        )

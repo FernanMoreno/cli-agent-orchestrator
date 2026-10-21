@@ -630,6 +630,113 @@ _WORK_V3_STATEMENTS = (
        FOR EACH ROW EXECUTE FUNCTION work_messages_guard_fn()""",
 )
 
+_WORK_V4_TABLES = ("work_launch_retry_bindings",)
+
+# Retry origins copy release/replan event facts instead of referencing the
+# prunable work_events journal, so event retention stays independent.
+_WORK_V4_STATEMENTS = (
+    "ALTER TABLE work_launch_origin_bindings ADD CONSTRAINT uq_launch_origin_retry_root "
+    "UNIQUE (attempt_id,generation,work_item_id,job_id)",
+    "ALTER TABLE work_scheduler_requests ADD CONSTRAINT uq_scheduler_retry_link "
+    "UNIQUE (id,work_item_id,attempt_id,generation)",
+    "ALTER TABLE work_launch_provisions ADD CONSTRAINT uq_provisions_retry_link "
+    "UNIQUE (principal_id,selector,revision,job_id,id)",
+    "ALTER TABLE work_dispatch_bindings ADD CONSTRAINT uq_dispatch_retry_link "
+    "UNIQUE (attempt_id,generation,work_item_id,job_id,principal_id,grant_id,grant_revision,"
+    "contract_id,contract_hash,snapshot_id)",
+    "ALTER TABLE work_delivery_orders ADD CONSTRAINT uq_delivery_retry_link "
+    "UNIQUE (attempt_id,generation,contract_hash,request_hash,delivery_hash)",
+    """CREATE TABLE work_launch_retry_bindings (
+        attempt_id TEXT NOT NULL,
+        generation BIGINT NOT NULL CHECK(generation>1),
+        work_item_id TEXT NOT NULL,
+        job_id TEXT NOT NULL,
+        root_attempt_id TEXT NOT NULL,
+        root_generation BIGINT NOT NULL CHECK(root_generation=1),
+        prior_attempt_id TEXT NOT NULL,
+        prior_generation BIGINT NOT NULL CHECK(prior_generation=generation-1),
+        prior_attempt_revision BIGINT NOT NULL CHECK(prior_attempt_revision>0),
+        prior_scheduler_request_id TEXT NOT NULL,
+        prior_scheduler_revision BIGINT NOT NULL CHECK(prior_scheduler_revision>0),
+        stop_evidence_ref TEXT NOT NULL CHECK(length(stop_evidence_ref) BETWEEN 1 AND 512),
+        retry_actor_id TEXT NOT NULL,
+        release_event_id TEXT NOT NULL,
+        release_event_sequence BIGINT NOT NULL CHECK(release_event_sequence>0),
+        retry_event_id TEXT NOT NULL,
+        retry_event_sequence BIGINT NOT NULL,
+        replanned_work_revision BIGINT NOT NULL CHECK(replanned_work_revision>0),
+        planned_attempt_revision BIGINT NOT NULL CHECK(planned_attempt_revision>0),
+        principal_id TEXT NOT NULL,
+        selector TEXT NOT NULL CHECK(length(selector) BETWEEN 1 AND 128
+            AND selector !~ '[^A-Za-z0-9._:-]'),
+        provision_id TEXT NOT NULL,
+        provision_revision BIGINT NOT NULL CHECK(provision_revision>0),
+        provision_fingerprint TEXT NOT NULL CHECK(length(provision_fingerprint)=64
+            AND provision_fingerprint !~ '[^0-9a-f]'),
+        grant_id TEXT NOT NULL,
+        grant_revision BIGINT NOT NULL CHECK(grant_revision>0),
+        contract_id TEXT NOT NULL,
+        contract_hash TEXT NOT NULL CHECK(length(contract_hash)=64
+            AND contract_hash !~ '[^0-9a-f]'),
+        snapshot_id TEXT NOT NULL,
+        snapshot_hash TEXT NOT NULL CHECK(length(snapshot_hash)=64
+            AND snapshot_hash !~ '[^0-9a-f]'),
+        delivery_request_hash TEXT NOT NULL CHECK(length(delivery_request_hash)=64
+            AND delivery_request_hash !~ '[^0-9a-f]'),
+        delivery_hash TEXT NOT NULL CHECK(length(delivery_hash)=64
+            AND delivery_hash !~ '[^0-9a-f]'),
+        retry_admission_key TEXT NOT NULL CHECK(length(retry_admission_key) BETWEEN 1 AND 128
+            AND retry_admission_key !~ '[^A-Za-z0-9._:-]'),
+        retry_request_hash TEXT NOT NULL CHECK(length(retry_request_hash)=64
+            AND retry_request_hash !~ '[^0-9a-f]'),
+        current_scheduler_request_id TEXT NOT NULL,
+        created_at DOUBLE PRECISION NOT NULL CHECK(created_at>0),
+        schema_version BIGINT NOT NULL CHECK(schema_version=1),
+        PRIMARY KEY(attempt_id,generation),
+        UNIQUE(work_item_id,generation),
+        UNIQUE(retry_admission_key),
+        CHECK(attempt_id<>prior_attempt_id),
+        CHECK(release_event_id<>retry_event_id),
+        CHECK(release_event_sequence<retry_event_sequence),
+        FOREIGN KEY(job_id,work_item_id) REFERENCES work_items(job_id,id),
+        FOREIGN KEY(work_item_id,attempt_id,generation)
+            REFERENCES work_attempts(work_item_id,id,generation),
+        FOREIGN KEY(root_attempt_id,root_generation,work_item_id,job_id)
+            REFERENCES work_launch_origin_bindings(attempt_id,generation,work_item_id,job_id),
+        FOREIGN KEY(work_item_id,prior_attempt_id,prior_generation)
+            REFERENCES work_attempts(work_item_id,id,generation),
+        FOREIGN KEY(prior_scheduler_request_id,work_item_id,prior_attempt_id,prior_generation)
+            REFERENCES work_scheduler_requests(id,work_item_id,attempt_id,generation),
+        FOREIGN KEY(current_scheduler_request_id,work_item_id,attempt_id,generation)
+            REFERENCES work_scheduler_requests(id,work_item_id,attempt_id,generation),
+        FOREIGN KEY(principal_id) REFERENCES work_principals(id),
+        FOREIGN KEY(retry_actor_id) REFERENCES work_principals(id),
+        FOREIGN KEY(principal_id,selector,provision_revision,job_id,provision_id)
+            REFERENCES work_launch_provisions(principal_id,selector,revision,job_id,id),
+        FOREIGN KEY(job_id,grant_id,grant_revision)
+            REFERENCES work_grants(job_id,id,revision),
+        FOREIGN KEY(attempt_id,generation,work_item_id,job_id,principal_id,grant_id,
+            grant_revision,contract_id,contract_hash,snapshot_id)
+            REFERENCES work_dispatch_bindings(attempt_id,generation,work_item_id,job_id,
+                principal_id,grant_id,grant_revision,contract_id,contract_hash,snapshot_id),
+        FOREIGN KEY(attempt_id,generation,contract_hash,delivery_request_hash,delivery_hash)
+            REFERENCES work_delivery_orders(attempt_id,generation,contract_hash,request_hash,
+                delivery_hash)
+    )""",
+    "CREATE FUNCTION work_launch_retry_bindings_immutable_update_fn() RETURNS trigger "
+    "LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Work retry origins are immutable' "
+    "USING ERRCODE='23514'; RETURN NEW; END $$",
+    "CREATE TRIGGER work_launch_retry_bindings_immutable_update BEFORE UPDATE "
+    "ON work_launch_retry_bindings FOR EACH ROW "
+    "EXECUTE FUNCTION work_launch_retry_bindings_immutable_update_fn()",
+    "CREATE FUNCTION work_launch_retry_bindings_immutable_delete_fn() RETURNS trigger "
+    "LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Work retry origins cannot be deleted' "
+    "USING ERRCODE='23514'; RETURN OLD; END $$",
+    "CREATE TRIGGER work_launch_retry_bindings_immutable_delete BEFORE DELETE "
+    "ON work_launch_retry_bindings FOR EACH ROW "
+    "EXECUTE FUNCTION work_launch_retry_bindings_immutable_delete_fn()",
+)
+
 WORK_TABLES = (
     "work_attempt_credentials",
     "work_attempts",
@@ -708,4 +815,5 @@ WORK_POSTGRES_MIGRATIONS = (
     ComponentMigration("work", "main", 1, _WORK_V1_STATEMENTS, WORK_TABLES),
     ComponentMigration("work", "main", 2, _WORK_V2_STATEMENTS, ()),
     ComponentMigration("work", "main", 3, _WORK_V3_STATEMENTS, _WORK_V3_TABLES),
+    ComponentMigration("work", "main", 4, _WORK_V4_STATEMENTS, _WORK_V4_TABLES),
 )
