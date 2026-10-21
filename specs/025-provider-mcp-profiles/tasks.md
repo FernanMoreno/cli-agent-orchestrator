@@ -84,7 +84,7 @@ T031 evidence: [timeout observations and real diagnostic](validation-t031.md): R
 
 ## T007 Claude explicit filters
 
-- [ ] T032 Reproduce ineffective propagation of Claude profiled `enabled_tools`; implement a protected server-side immutable filter with strict startup parsing and empty/partial semantics, leaving legacy unprofiled behavior unchanged. Prove actual builder-to-MCP catalog/call boundaries, malformed/forged input refusal and instance isolation; run provider/native/install regressions, architecture/composition, typing/style and independent review. Keep full T007 and live acceptance open.
+- [x] T032 Reproduce ineffective propagation of Claude profiled `enabled_tools`; implement a protected server-side immutable filter with strict startup parsing and empty/partial semantics, leaving legacy unprofiled behavior unchanged. Prove actual builder-to-MCP catalog/call boundaries, malformed/forged input refusal and instance isolation; run provider/native/install regressions, architecture/composition, typing/style and independent review. Keep full T007 and live acceptance open.
 
 ## T007 native routing guard
 
@@ -141,3 +141,13 @@ T043/T045 closed for the bounded restricted v2 journey: after snapshot-order fix
 T046 completed for ordered render/binding integrity with explicit envelope v3 migration, exact legacy golden compatibility, fail-closed ambiguous legacy gates, 35 new cases and 642 combined passes; typing405/style3/composition5/0. See [evidence and remaining real gates](validation-t046.md). This closes neither managed CLI v1 nor real expanded-profile acceptance.
 
 Post-integration T046 restricted real v2 acceptance passed on dab6d4fd with all 498 runtime/live source files and binary unchanged: 2 questions/answers/ACK, one API restart, stable AG-UI, exact catalog/offers, timely COMPLETED, full cleanup and auth unchanged. This does not close actual managed-v3 or expanded-profile operation acceptance.
+
+## Explicit resumption of postponed validation
+
+The user's instruction to finish postponed work resumes T032's expanded and Python MCP stdio validation. The Codex-only restriction remains: do not invoke Claude Code, its model or login. Original refusals/receipts remain unchanged.
+
+- [x] T047 Complete the resumed T032 regression gate: diagnose the reproduced stale list-command test after T035 switched native filters to protected child transport; assert exact partial/empty child filters, independent capability paths and input nonmutation. Run the explicit current-source 16-module selection including both real Python stdio children, applicable composition/type/style and Codex review. This is server transport validation, not authenticated Claude acceptance or completion of T007.
+
+- [ ] T048 Correct the real journey's closed MCP child environment rejecting the two server-private policy variables, proven by source inspection after T046. Add actual writer boundary RED/GREEN contracts for empty/partial/absent filters, input nonmutation and unknown-env refusal. Preserve strict isolation/criteria; commit/rebind and run the real restricted journey using a privately prepared managed-v3 artifact. Do not infer actual production installation or expanded-profile operation acceptance.
+
+T032/T047 verified on the new explicit 16-module selection: 605 passing tests, both actual Python stdio children included; original failed run preserved (604 pass/one stale expectation). Canonical typing405, style for the changed test and composition5/0; Codex source/diff review. Authenticated vendor and full T007 gates remain open.

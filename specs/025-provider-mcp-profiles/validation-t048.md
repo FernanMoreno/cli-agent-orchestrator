@@ -1,0 +1,13 @@
+# T048 — managed child policy through the isolated real harness
+
+Graphify identified three real writer/isolation nodes and 12 incident edges; source verified the closed child environment predates the protected profile/filter transport. Both actual writer boundaries refused these names before native launch. The new regression module reproduced **six failures/two refusal controls**.
+
+The correction adds exactly CAO_INTERNAL_MCP_TOOL_PROFILE and CAO_INTERNAL_MCP_ENABLED_TOOLS to the harness's closed name set. env -i, private capability handling, canonical module recognition and unknown-name/credential-name refusal stay enforced. Absent, empty and partial filters preserve their exact transport through both helper and installed nested writer. Configuration and the frozen selected agent remain unchanged. The source change is two literal allowlist lines; no product/server grant or operation authority changes.
+
+The ten-module combined selection passed **285 tests**, no failures/errors/skips, two existing Pydantic warnings, admitted at **6,299 MiB**. This includes eight new writer/isolation cases and existing snapshot, managed binding, initialization, observer, HTTP-offer, journey and native cleanup contracts. Original coverage/markers retained; ordinary fixtures reused verified existing PostgreSQL with isolated schemas; the new module is database-offline.
+
+Canonical mypy passed **405 source files** and composition kept **five contracts/zero broken**. Black/isort passed both changed/new test modules; the large existing journey file was not reformatted and changes exactly two entries. Codex composition review checked the profile → overlay → isolated serialization → child startup boundary, input ownership and legacy behavior. No DB schema, event, retry, deadline or production authentication path changes.
+
+Real managed-v3 restricted acceptance remains pending until source integration and a fresh runner/bin/PG/memory preflight. The private preparation hook uses the real renderer and validates pending/ready bindings only inside the owned journey tree. It will additionally require observing format3/profile/filter on the actual production provider and emitted isolated child, plus the original full questions/ACK/restart predicate. This is not an actual production installer run or expanded-profile operation acceptance.
+
+Private bounded AST refresh captured 145 nodes/456 edges from the three affected Python files, with zero model tokens; main generated graph preserved. Reviewed source hashes match. Durable evidence stays in Spec Kit, without duplicating graph facts into a vault.

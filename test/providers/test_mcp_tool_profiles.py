@@ -1,6 +1,7 @@
 """CAO-only policy metadata must never leak into another MCP launch."""
 
 import copy
+import json
 import sys
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from cli_agent_orchestrator.providers.mcp_interactions import overlay_interaction_capability_file
 
 PROFILE_ENV = "CAO_INTERNAL_MCP_TOOL_PROFILE"
+FILTER_ENV = "CAO_INTERNAL_MCP_ENABLED_TOOLS"
 
 pytestmark = pytest.mark.offline_database
 
@@ -63,13 +65,22 @@ def test_list_command_and_partial_filter_and_terminal_isolation():
             "environment": {PROFILE_ENV: "collaboration"},
         }
     }
+    before = copy.deepcopy(source)
     first = overlay_interaction_capability_file(source, "/private/first")
+    assert source == before
     assert first["cao"]["environment"][PROFILE_ENV] == "interaction"
-    assert first["cao"]["enabled_tools"] == ["cao_ask_user"]
+    assert json.loads(first["cao"]["environment"][FILTER_ENV]) == ["cao_ask_user"]
+    assert "enabled_tools" not in first["cao"]
     source["cao"]["cao_tool_profile"] = "collaboration"
+    source["cao"]["enabled_tools"] = []
     second = overlay_interaction_capability_file(source, "/private/second")
     assert second["cao"]["environment"][PROFILE_ENV] == "collaboration"
+    assert json.loads(second["cao"]["environment"][FILTER_ENV]) == []
+    assert "enabled_tools" not in second["cao"]
     assert first["cao"]["environment"][PROFILE_ENV] == "interaction"
+    assert json.loads(first["cao"]["environment"][FILTER_ENV]) == ["cao_ask_user"]
+    assert first["cao"]["environment"]["CAO_INTERACTION_CAPABILITY_FILE"] == "/private/first"
+    assert second["cao"]["environment"]["CAO_INTERACTION_CAPABILITY_FILE"] == "/private/second"
 
 
 def test_forged_env_without_metadata_cannot_select_profile():
