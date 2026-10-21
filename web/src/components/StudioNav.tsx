@@ -39,13 +39,20 @@ export function shortcutLabel(index: number): string | null {
   return null;
 }
 
+/** Stable DOM ids tying each tab to the single panel that shows the active destination. */
+export const studioTabId = (prefix: string, key: string) => `${prefix}-tab-${key}`;
+export const studioPanelId = (prefix: string) => `${prefix}-panel`;
+
 export function StudioNav<K extends string>({
   destinations,
   current,
   locked,
   badges,
   onSelect,
+  idPrefix = "studio",
 }: {
+  /** Prefix for tab/panel ids; must be unique per rendered strip. */
+  idPrefix?: string;
   /** Visible destinations in shortcut order. */
   destinations: StudioDestination<K>[];
   current: K;
@@ -59,8 +66,10 @@ export function StudioNav<K extends string>({
     items: destinations.filter((d) => d.group === g),
   })).filter((g) => g.items.length > 0);
 
-  // Arrow keys move focus across the whole strip (WAI-ARIA tabs pattern);
-  // selection still requires Enter/Space or click.
+  // Tabs with manual activation: only the selected tab is in the Tab order,
+  // arrow keys/Home/End move focus across the whole strip and selection still
+  // requires Enter/Space or click (both go through onSelect, which honours
+  // the save lock).
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     const tabs = Array.from(
       e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
@@ -108,7 +117,10 @@ export function StudioNav<K extends string>({
                   key={t.key}
                   type="button"
                   role="tab"
+                  id={studioTabId(idPrefix, t.key)}
+                  tabIndex={selected ? 0 : -1}
                   aria-selected={selected}
+                  aria-controls={selected ? studioPanelId(idPrefix) : undefined}
                   aria-disabled={locked && !selected}
                   aria-describedby={`studio-group-${group}`}
                   aria-keyshortcuts={shortcut ?? undefined}

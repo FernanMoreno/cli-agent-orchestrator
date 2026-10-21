@@ -173,6 +173,14 @@ describe("Profiles tab navigation (stage 1)", () => {
       "aria-selected",
       "false",
     );
+    // The Tab stop and the panel label follow the shortcut selection...
+    expect(screen.getByRole("tab", { name: /agents/i })).toHaveAttribute("tabindex", "0");
+    expect(screen.getByRole("tab", { name: /profiles/i })).toHaveAttribute("tabindex", "-1");
+    expect(screen.getByRole("tabpanel")).toHaveAccessibleName(/agents/i);
+    // ...and a click selection.
+    fireEvent.click(screen.getByRole("tab", { name: /profiles/i }));
+    expect(screen.getByRole("tab", { name: /profiles/i })).toHaveAttribute("tabindex", "0");
+    expect(screen.getByRole("tabpanel")).toHaveAccessibleName(/profiles/i);
   });
 
   it("appends Questions after current tabs and preserves the existing Agents shortcut", async () => {

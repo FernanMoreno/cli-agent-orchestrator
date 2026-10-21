@@ -72,3 +72,35 @@ describe("StudioContextBar", () => {
     expect(screen.getByText("This server")).toBeInTheDocument();
   });
 });
+
+describe("StudioNav tab pattern", () => {
+  it("keeps a single Tab stop on the selected tab and ties it to the panel", () => {
+    render(
+      <>
+        <StudioNav destinations={dests} current="agents" locked={false} onSelect={() => {}} idPrefix="t" />
+        <div role="tabpanel" id="t-panel" aria-labelledby="t-tab-agents" />
+      </>,
+    );
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((t) => t.getAttribute("tabindex"))).toEqual(["-1", "0", "-1", "-1"]);
+    const agents = screen.getByRole("tab", { name: "Agents" });
+    expect(agents).toHaveAttribute("id", "t-tab-agents");
+    expect(agents).toHaveAttribute("aria-controls", "t-panel");
+    expect(screen.getByRole("tab", { name: "Home" })).not.toHaveAttribute("aria-controls");
+    expect(screen.getByRole("tabpanel", { name: "Agents" })).toBeInTheDocument();
+    expect(new Set(tabs.map((t) => t.id)).size).toBe(tabs.length);
+  });
+
+  it("selects on Enter and Space only through onSelect", () => {
+    const onSelect = vi.fn();
+    render(<StudioNav destinations={dests} current="home" locked={false} onSelect={onSelect} />);
+    const home = screen.getByRole("tab", { name: "Home" });
+    home.focus();
+    fireEvent.keyDown(home, { key: "ArrowRight" });
+    const agents = screen.getByRole("tab", { name: "Agents" });
+    expect(agents).toHaveFocus();
+    expect(onSelect).not.toHaveBeenCalled();
+    fireEvent.click(agents); // native button activation for Enter/Space
+    expect(onSelect).toHaveBeenCalledWith("agents");
+  });
+});
