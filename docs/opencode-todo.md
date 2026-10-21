@@ -4,6 +4,8 @@ Publicación, 2026-10-20: el gate común reprodujo el NFR de memoria a 1,010 s e
 
 Fecha de revisión: 2026-10-20. Esta lista registra trabajo por hacer; no activa herramientas ni cambia permisos. Las casillas abiertas son propuestas o validaciones pendientes, no necesariamente defectos reproducidos.
 
+Actualización 2026-10-21: la [recuperación verificada de memoria](../specs/025-provider-mcp-profiles/memory-recovery-20261021.md) trasladó siete árboles temporales inactivos a disco, conservando su contenido y acceso, sin detener servicios ni cambiar el mínimo de 6.144 MiB. El [recorrido real v1 T053](../specs/025-provider-mcp-profiles/validation-t053.md) pasó preguntas/respuestas/ACK, Unicode/recibo/completed, identidades PostgreSQL/AG-UI/nativas estables tras reiniciar API y cierre/limpieza completos en la fuente f23b1d5f. Esto cierra el flujo restringido administrado, no los perfiles ampliados ni toda la aceptación v1. El [diagnóstico con clave inválida](../specs/025-provider-mcp-profiles/validation-t054.md) reprodujo una clasificación idle ante un error nativo de credencial, pendiente de corrección; no se confunde con el fallback ya corregido en T055.
+
 ## Estado y límites de la evidencia
 
 - El adaptador detecta las versiones principales 1 y 2. V2 usa `mini --standalone` y configuración por terminal; v1 conserva su ruta nativa.

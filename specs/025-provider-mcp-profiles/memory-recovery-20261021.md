@@ -1,0 +1,11 @@
+# Memory recovery — 2026-10-21
+
+The user requested investigation of additional memory before the native-v1 interaction retry. `/tmp` is tmpfs: initially about 4.9 GiB occupied and only 2,971 free inodes. Available memory was 7,170 MiB, shared memory 3,631 MiB and free swap 307 MiB. Process RSS alone did not explain the pressure; no process was stopped.
+
+Seven inactive historical CAOS test/static-analysis directories were relocated from `/tmp` to the Linux disk under the private evidence cache. The four `caos-frontend-current-main-20261018-r1` through `r4` trees and three `caos-t131-main-static-20261018-luna-r2` / `caos-mypy-3errors-private-20261018-luna` / `caos-mypy-3errors-private-20261018-luna-r2` trees were checked for current-user process references through cwd/root/exe, open descriptors, command lines and readable mappings before relocation. One unrelated process mapping was unreadable; no inaccessible process was stopped or modified.
+
+For each tree, copy verification compared relative paths, entry types, modes, regular-file sizes and SHA-256 contents, and symlink targets. The original was checked again for changes and process references before replacement. All **134,563 entries** matched. The original paths are now symlinks to the verified disk copies, preserving access to the historical evidence; historical launchers remain subject to their existing source/hash checks and were not executed. Private JSON receipts retain per-tree manifest digests and measurements. No operator credentials were read for output, renewed or deleted.
+
+After relocation, `/tmp` occupied about **2.2 GiB**, with **137,534 free inodes**. Available memory measured **8,087 MiB**, shared memory **2,837 MiB**, and free swap **2,290 MiB**. This is an observed improvement of about **917 MiB available memory** and **1,983 MiB free swap**, not a global memory-performance acceptance result. No cache-drop, swap reconfiguration, service shutdown, PostgreSQL replacement, reinstall or admission-limit change was used.
+
+The native-v1 interaction retry uses a fresh runner/receipt, current committed source, the original pinned binary, verified existing PostgreSQL and the unchanged **6,144 MiB** admission at every required boundary. Its outcome is recorded separately in [T053](validation-t053.md); relocating old evidence does not itself validate any provider journey.
