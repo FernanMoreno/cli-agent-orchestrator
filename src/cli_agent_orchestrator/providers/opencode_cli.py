@@ -779,6 +779,12 @@ class OpenCodeCliProvider(BaseProvider):
         if not await wait_for_shell(self.terminal_id, timeout=init_timeout):
             raise TimeoutError(f"Shell initialization timed out after {init_timeout}s")
 
+        # Recovery reuses this provider after fencing and resetting its pane.
+        # Retire the old private tree only once the replacement shell is ready,
+        # before a new allocation can overwrite ownership. Receipt state stays
+        # fenced until the recovery service confirms the replacement launch.
+        self.cleanup()
+
         if self._cli_major == 2:
             # A provider instance may be initialized more than once after a
             # failed deferred start.  Never retain a previous preflight result
