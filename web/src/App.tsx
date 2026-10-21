@@ -43,6 +43,7 @@ import {
   CircleHelp,
   Network,
 } from "lucide-react";
+import { StudioContextBar, StudioNav, type StudioDestination } from "./components/StudioNav";
 
 type TabKey =
   | "home"
@@ -67,19 +68,23 @@ type TabKey =
 // Plugins and Questions are appended after them, always. Alt+N numbers the
 // VISIBLE tabs in array order, so appending preserves every existing shortcut.
 // (Agent Plugins, not the event-plugin system — see docs/agent-plugins.md.)
-const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
-  { key: "home", label: "Home", icon: <Home size={16} /> },
-  { key: "profiles", label: "Profiles", icon: <Package size={16} /> },
-  { key: "agents", label: "Agents", icon: <Bot size={16} /> },
-  { key: "flows", label: "Flows", icon: <Clock size={16} /> },
-  { key: "settings", label: "Settings", icon: <Settings size={16} /> },
-  { key: "memory", label: "Memory", icon: <Brain size={16} /> },
-  { key: "workflows", label: "Workflows", icon: <Workflow size={16} /> },
-  { key: "plugins", label: "Plugins", icon: <Puzzle size={16} /> },
-  { key: "beads", label: "Tasks", icon: <CheckCircle size={16} /> },
-  { key: "ralph", label: "Ralph", icon: <Workflow size={16} /> },
-  { key: "questions", label: "Questions", icon: <CircleHelp size={16} /> },
-  { key: "execution", label: "Execution map", icon: <Network size={16} /> },
+//
+// Display is grouped by objective (spec 019): Work is what runs on the node,
+// Library holds reusable definitions (profiles are not running instances).
+// Shortcuts stay bound to this array order, independent of the grouping.
+const TABS: StudioDestination<TabKey>[] = [
+  { key: "home", label: "Home", icon: <Home size={16} />, group: "work" },
+  { key: "profiles", label: "Profiles", icon: <Package size={16} />, group: "library" },
+  { key: "agents", label: "Agents", icon: <Bot size={16} />, group: "work" },
+  { key: "flows", label: "Flows", icon: <Clock size={16} />, group: "operation" },
+  { key: "settings", label: "Settings", icon: <Settings size={16} />, group: "administration" },
+  { key: "memory", label: "Memory", icon: <Brain size={16} />, group: "library" },
+  { key: "workflows", label: "Workflows", icon: <Workflow size={16} />, group: "operation" },
+  { key: "plugins", label: "Plugins", icon: <Puzzle size={16} />, group: "library" },
+  { key: "beads", label: "Tasks", icon: <CheckCircle size={16} />, group: "work" },
+  { key: "ralph", label: "Ralph", icon: <Workflow size={16} />, group: "operation" },
+  { key: "questions", label: "Questions", icon: <CircleHelp size={16} />, group: "work" },
+  { key: "execution", label: "Execution map", icon: <Network size={16} />, group: "work" },
 ];
 
 function Snackbar() {
@@ -147,6 +152,8 @@ function Dashboard() {
     fleetMode,
     fleetError: registryError,
     refreshFleet,
+    activeNode,
+    fleetNodes,
   } = useStore();
   // Subscribed (not just read via getState) so the tab strip re-renders
   // and visibly reflects the refusal while a save owns navigation --
@@ -269,47 +276,20 @@ function Dashboard() {
       {/* Tab Bar */}
       <div className="border-b border-gray-800">
         <div className="max-w-7xl mx-auto px-6">
-          <nav className="flex gap-1 py-2" role="tablist">
-            {visibleTabs.map((t, i) => (
-              <button
-                key={t.key}
-                role="tab"
-                aria-selected={tab === t.key}
-                aria-disabled={navLocked && tab !== t.key}
-                onClick={() => requestTabChange(t.key)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-2 ${
-                  tab === t.key
-                    ? "bg-gradient-to-r from-emerald-600 to-emerald-500 text-white shadow-lg shadow-emerald-500/20"
-                    : navLocked
-                      ? "text-gray-600 cursor-not-allowed"
-                      : "text-gray-400 hover:text-white hover:bg-gray-800/50"
-                }`}
-                title={
-                  navLocked && tab !== t.key
-                    ? "Finish or cancel the in-flight save first"
-                    : i < 9
-                      ? `Alt+${i + 1}`
-                      : i === 9
-                        ? "Alt+0"
-                        : i === 10
-                          ? "Alt+Shift+1"
-                          : i === 11
-                            ? "Alt+Shift+2"
-                            : `Tab ${i + 1}`
-                }
-              >
-                {t.icon}
-                {t.label}
-                {t.key === "agents" && sessions.length > 0 && (
-                  <span
-                    className={`px-1.5 py-0.5 text-xs rounded-full ${tab === t.key ? "bg-white/20" : "bg-gray-700"}`}
-                  >
-                    {sessions.length}
-                  </span>
-                )}
-              </button>
-            ))}
-          </nav>
+          <StudioNav
+            destinations={visibleTabs}
+            current={tab}
+            locked={navLocked}
+            badges={{ agents: sessions.length }}
+            onSelect={requestTabChange}
+          />
+          <div className="pb-2">
+            <StudioContextBar
+              node={activeNode}
+              nodeOnline={fleetNodes.find((n) => n.name === activeNode)?.online}
+              auth={authSnapshot()}
+            />
+          </div>
         </div>
       </div>
 
