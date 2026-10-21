@@ -155,3 +155,14 @@ def test_transient_or_noncurrent_retry_is_not_permanent_auth_error(path, case):
 @pytest.mark.parametrize("path", ["raw", "screen"])
 def test_native_v1_permanent_retry_does_not_change_v2(path):
     assert status(RETRY_FIXTURE.read_text(), path, major=2) != TerminalStatus.ERROR
+
+
+@pytest.mark.parametrize("path", ["raw", "screen"])
+@pytest.mark.parametrize(
+    "spinner", ["⬝" * 8, "■" * 8, "⬝" * 5 + "■" * 3, "■" * 3 + "⬝" * 5, "⬝■" * 4]
+)
+def test_permanent_refusal_is_error_across_native_block_animation(path, spinner):
+    # Pinned upstream createFrames emits both inactive dots and active blocks.
+    # A live T056-r2 intermediate viewport had the mixed five-dot/three-block frame.
+    text = RETRY_FIXTURE.read_text().replace("⬝" * 8, spinner)
+    assert status(text, path) == TerminalStatus.ERROR

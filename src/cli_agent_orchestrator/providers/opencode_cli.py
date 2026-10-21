@@ -391,7 +391,7 @@ def _has_current_v1_auth_provider_error(text: str) -> bool:
         return False
     error = r"Upstream request failed: Invalid credential"
     if re.fullmatch(
-        r"\s*[⬝ ]*" + error + r" \[retrying in [0-9]+s attempt #[1-9][0-9]*\]"
+        r"\s*[⬝■ ]*" + error + r" \[retrying in [0-9]+s attempt #[1-9][0-9]*\]"
         r"\s+esc interrupt\s+• OpenCode 1\.\d+\.\d+\s*",
         rows[-1],
     ):
