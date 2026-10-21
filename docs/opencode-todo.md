@@ -197,3 +197,9 @@ Después del commit **dab6d4fd**, otro recorrido real v2 pasó sobre las 498 fue
 ## T032/T047 — validación aplazada completada
 
 La instrucción expresa de terminar lo aplazado reanudó esta validación. La selección actual de 16 módulos reprodujo una expectativa antigua de metadatos tras T035: 604 correctas/una fallida. Corregida la prueba para exigir filtros protegidos parcial/vacío e identidad de capacidades aislada, la misma selección pasó **605 pruebas**, incluidos los **dos procesos MCP stdio reales**. Estos ejecutan Python/CAOS; no se lanzó Claude Code ni un modelo ni se usó su login. Se conservan los fallos y las negativas anteriores por memoria. T032 se cierra en su alcance de transporte/regresión, no como aceptación real autenticada del proveedor ni de T007 completo. [Evidencia actualizada](../specs/025-provider-mcp-profiles/validation-t032.md).
+
+## T048 — agente administrado v3 en recorrido real
+
+Corregido el rechazo de las dos variables protegidas de perfil/filtro en el entorno aislado del lanzador real, manteniendo env -i y el rechazo de variables ajenas. Seis fallos/dos controles RED y **285 pruebas** combinadas correctas; tipado405, estilo y composición5/0.
+
+El primer recorrido real cargó v3, conectó MCP y ofreció las tres herramientas, pero agotó el plazo antes de preguntar. Una repetición con la misma fuente y criterios pasó en **41,51 s**: perfil/filtro exactos observados en el proveedor y el proceso hijo, preguntas/respuestas/ACK, reinicio e identidad AG-UI, limpieza y auth intactos. T048 cerrado en ese alcance; se conserva el timeout sin atribuir una causa no demostrada. El artefacto se preparó con el renderizador real en el árbol privado: esto no acredita el instalador completo ni los perfiles ampliados/v1. [Evidencia y nota de auditoría de recibos](../specs/025-provider-mcp-profiles/validation-t048.md).
