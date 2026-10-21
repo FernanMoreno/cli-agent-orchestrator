@@ -32,6 +32,8 @@ def launch(tmp_path, monkeypatch):
     backend = MagicMock()
     monkeypatch.setattr(opencode_cli, "get_backend", lambda: backend)
     instance = opencode_cli.OpenCodeCliProvider("test1234", "test", "window", "reviewer")
+    # Native model inventory is an external CLI boundary, tested independently.
+    monkeypatch.setattr(instance, "_validate_v1_model_available", AsyncMock())
     monkeypatch.setattr(instance, "_wait_for_initial_ready", AsyncMock(return_value=True))
     monkeypatch.setattr(instance, "_wait_for_v2_cao_mcp_ready", AsyncMock(return_value=True))
     yield instance, backend, tmp_path / "cao"

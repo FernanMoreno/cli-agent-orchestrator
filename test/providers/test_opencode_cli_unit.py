@@ -561,6 +561,7 @@ class TestInitialize:
             "resolve_opencode_runtime",
             lambda: ("/opt/bin/opencode", {"PATH": "/opt/bin:/usr/bin:/bin"}),
         )
+        monkeypatch.setattr(OpenCodeCliProvider, "_validate_v1_model_available", AsyncMock())
         with patch(
             "cli_agent_orchestrator.providers.opencode_cli.detect_opencode_major", return_value=1
         ):

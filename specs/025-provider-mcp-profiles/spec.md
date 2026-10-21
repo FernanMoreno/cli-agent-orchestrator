@@ -141,3 +141,6 @@ The first implementation adds an opt-in server policy primitive through CAO's ex
 
 - **FR-041**: Explicit native-v1 interaction requires a validated managed-v3 policy, runtime-issued capability, all three required tools in its effective server filter/native grant and successful current-launch client discovery. Missing, empty or partial surfaces must fail before task delivery; profile values cannot override the capability.
 - **SC-025**: Prove native-v1 explicit interaction and refusal contracts offline, then source-bound actual questions/answers/ACK, Unicode, observer cleanup and restart. Keep unproven full-profile operations/messages/global gates open.
+
+- **FR-042**: When native v1 has an explicit effective launch/agent/global model, refuse before launching/delivering a task if the exact model is unavailable in the isolated native provider inventory. Do not allow fallback caused by missing provider availability; inventory lookup must be asynchronous, bounded, private and cancellation-safe, and preserve actual launch/auth semantics.
+- **SC-026**: Reproduce empty-auth fallback and native inventory contrast, prove offline exact inventory/environment/precedence/refusal/lifecycle contracts, then real native no-task refusal and authenticated model control. Inventory availability does not prove credential validity or HTTP-wire model identity.

@@ -219,3 +219,5 @@ T052: conexión MCP de v1 ligada a señales privadas de descubrimiento del clien
 T053: candidato de interacción explícita nativa v1 con perfil v3, capacidad privada, preflight completo y descubrimiento del cliente. 13 contratos/503 pruebas pasaron; aún pendiente aceptación real de preguntas/ACK/reinicio. [Evidencia](../specs/025-provider-mcp-profiles/validation-t053.md).
 
 Primer arranque real T053: perfil/capacidad/catálogo/conexión correctos, pero el guard de memoria detuvo el recorrido antes del modelo (5.867 MiB <6.144). Limpieza completa; preguntas/ACK/reinicio siguen abiertos.
+
+T054/T055: el diagnóstico sin credenciales mostró fallback silencioso de Go a Big Pickle; LAST no aceptó resultado final. El candidato T055 comprueba el inventario nativo exacto antes del lanzamiento: 24 contratos/527 pruebas pasaron. Pendientes negativa real y control autenticado sobre el commit. [Diagnóstico](../specs/025-provider-mcp-profiles/validation-t054.md) y [corrección/límites](../specs/025-provider-mcp-profiles/validation-t055.md).

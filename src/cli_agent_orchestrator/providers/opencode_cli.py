@@ -918,6 +918,11 @@ class OpenCodeCliProvider(BaseProvider):
             )
             self._v1_mcp_ready_signals = prepare_v1_mcp_readiness(self._v1_config_dir)
             generated = json.loads((self._v1_config_dir / "opencode.json").read_text())
+            effective_model = (
+                self._model
+                or generated["agent"][self._agent_profile].get("model")
+                or generated.get("model")
+            )
             for name, server in generated["mcp"].items():
                 if server.get("enabled") is not False and (
                     MCP_TOOL_PROFILE_ENV in server.get("environment", {})
@@ -962,11 +967,6 @@ class OpenCodeCliProvider(BaseProvider):
                     snapshot = self._v1_config_dir / "auth-source"
                     try:
                         _copy_private_state_bundle(source_credential_db, snapshot)
-                        effective_model = (
-                            self._model
-                            or generated["agent"][self._agent_profile].get("model")
-                            or generated.get("model")
-                        )
                         assert self._launch_runtime is not None
                         active_auth = await read_v1_active_auth(
                             snapshot,
@@ -985,6 +985,10 @@ class OpenCodeCliProvider(BaseProvider):
                 elif source_auth.is_file() or source_auth.is_symlink():
                     if not _copy_private_state_file(source_auth, private_data / "auth.json"):
                         raise RuntimeError("OpenCode auth state disappeared during isolation")
+            if effective_model is not None:
+                await self._validate_v1_model_available(
+                    effective_model, timeout=min(float(init_timeout), 30.0)
+                )
         command = self._build_launch_command()
         # A generated native child starts at a shell prompt.  It must
         # never be inferred from a racy foreground-process probe: instruct the
@@ -1021,6 +1025,47 @@ class OpenCodeCliProvider(BaseProvider):
             self._interaction_preflight_ok = True
         self._initialized = True
         return True
+
+    async def _validate_v1_model_available(self, model: str, *, timeout: float) -> None:
+        """Refuse an explicit unavailable model before native v1 can fall back."""
+        from cli_agent_orchestrator.utils.database_environment import without_database_environment
+        from cli_agent_orchestrator.utils.opencode_v1 import _stop_auth_export
+
+        if not isinstance(model, str) or "/" not in model:
+            raise ValueError("OpenCode v1 model must use provider/model")
+        provider, model_id = model.split("/", 1)
+        if not model_id or re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", provider) is None:
+            raise ValueError("OpenCode v1 model must use provider/model")
+        command = self._build_launch_command(_v1_model_provider=provider)
+        environment = without_database_environment(
+            {**dict(os.environ), **(self._launch_runtime[1] if self._launch_runtime else {})}
+        )
+        process = None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "/bin/sh",
+                "-c",
+                command,
+                cwd=str(self._v1_config_dir),
+                env=environment,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+            )
+            output, _error = await asyncio.wait_for(process.communicate(), timeout)
+        except (OSError, asyncio.TimeoutError) as exc:
+            raise RuntimeError("OpenCode v1 model inventory probe failed or timed out") from exc
+        finally:
+            if process is not None:
+                await _stop_auth_export(process)
+        try:
+            available = len(output) <= 1024 * 1024 and model in output.decode("utf-8").splitlines()
+        except UnicodeError:
+            available = False
+        if process.returncode != 0 or not available:
+            raise ValueError(
+                "OpenCode v1 requested model is unavailable in isolated configuration/auth"
+            )
 
     async def _wait_for_v1_cao_mcp_ready(self, timeout: float) -> bool:
         from cli_agent_orchestrator.utils.mcp_readiness import has_ready_signal
@@ -1111,7 +1156,7 @@ class OpenCodeCliProvider(BaseProvider):
                 return True
             await asyncio.sleep(min(0.5, remaining))
 
-    def _build_launch_command(self) -> str:
+    def _build_launch_command(self, *, _v1_model_provider: str | None = None) -> str:
         """Build the inline-env opencode launch command string."""
         env_pairs = [
             "OPENCODE_CONFIG=" + shlex.quote(str(OPENCODE_CONFIG_FILE)),
@@ -1167,10 +1212,15 @@ class OpenCodeCliProvider(BaseProvider):
                     self._v2_data_home / "opencode/opencode.db"
                 )
                 env_pairs.append("OPENCODE_DB=" + shlex.quote(str(private_database)))
-        if self._agent_profile:
-            cmd_parts += ["--agent", self._agent_profile]
-        if self._model:
-            cmd_parts += ["--model", self._model]
+        if _v1_model_provider is not None:
+            if self._cli_major != 1 or self._v1_config_dir is None:
+                raise ValueError("private native v1 configuration required for model inventory")
+            cmd_parts += ["models", _v1_model_provider]
+        else:
+            if self._agent_profile:
+                cmd_parts += ["--agent", self._agent_profile]
+            if self._model:
+                cmd_parts += ["--model", self._model]
         log_redirect = ""
         if (
             self._cli_major == 2
