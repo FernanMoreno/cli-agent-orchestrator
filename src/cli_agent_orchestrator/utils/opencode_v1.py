@@ -270,6 +270,7 @@ def write_v1_configuration(
     selected_model: str | None = None,
     capability_file: str | None = None,
     interaction_pull_flow_only: bool = False,
+    managed_tool_profiles: dict[str, str] | None = None,
 ) -> Path:
     """Freeze one selected native agent without exposing the shared agent catalog."""
     name, text = selected_agent_source
@@ -395,7 +396,10 @@ def write_v1_configuration(
     )
 
     native_servers = overlay_interaction_capability_file(
-        native_servers, capability_file, interaction_pull_flow_only=interaction_pull_flow_only
+        native_servers,
+        capability_file,
+        interaction_pull_flow_only=interaction_pull_flow_only,
+        managed_tool_profiles=managed_tool_profiles,
     )
     for server in native_servers.values():
         if set(server) - _NATIVE_MCP_FIELDS[server["type"]]:

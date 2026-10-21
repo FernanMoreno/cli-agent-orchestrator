@@ -880,6 +880,7 @@ class OpenCodeCliProvider(BaseProvider):
                     source_servers,
                     self.interaction_capability_file,
                     interaction_pull_flow_only=self._interaction_source_requested,
+                    managed_tool_profiles=self._managed_mcp_tool_profiles(),
                 )
                 if isinstance(native_mcp.get("servers"), dict):
                     native_mcp["servers"] = overlaid
@@ -1005,6 +1006,7 @@ class OpenCodeCliProvider(BaseProvider):
                     self.interaction_capability_file if self._interaction_source_requested else None
                 ),
                 interaction_pull_flow_only=self._interaction_source_requested,
+                managed_tool_profiles=self._managed_mcp_tool_profiles(),
             )
             self._v1_mcp_ready_signals = prepare_v1_mcp_readiness(self._v1_config_dir)
             generated = json.loads((self._v1_config_dir / "opencode.json").read_text())
@@ -1693,6 +1695,18 @@ class OpenCodeCliProvider(BaseProvider):
     def exit_cli(self) -> str:
         """Return the command to exit the OpenCode TUI."""
         return "/exit"
+
+    def _managed_mcp_tool_profiles(self) -> dict[str, str] | None:
+        """Separate permission-backed v3 surfaces from capability-only legacy."""
+        policy = self._native_tool_policy
+        if (
+            policy is not None
+            and policy.state == "ready"
+            and policy.format_version == 3
+            and "@cao-mcp-server" in (self._allowed_tools or [])
+        ):
+            return dict(policy.profiles)
+        return None
 
     def _config_ownership(self) -> PrivateConfigOwnership:
         if self._private_config_ownership is None:

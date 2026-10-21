@@ -114,6 +114,7 @@ def overlay_interaction_capability_file(
     capability_file: str | None,
     *,
     interaction_pull_flow_only: bool = False,
+    managed_tool_profiles: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Protect the internal capability-file env on every MCP config entry.
 
@@ -185,7 +186,18 @@ def overlay_interaction_capability_file(
                         )
                 if isinstance(capability_file, str) and capability_file:
                     target_env[CAO_INTERACTION_CAPABILITY_FILE] = capability_file
-                if interaction_pull_flow_only and capability_file:
+                if (
+                    interaction_pull_flow_only
+                    and capability_file
+                    and not (
+                        has_tool_profile
+                        and tool_profile != "interaction"
+                        and managed_tool_profiles is not None
+                        and managed_tool_profiles.get(name) == tool_profile
+                    )
+                ):
+                    # Only an exact bound managed selection supersedes the
+                    # legacy restriction; unrelated children retain it.
                     target_env[_CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV] = "1"
         if "env" in config or env:
             config["env"] = env
