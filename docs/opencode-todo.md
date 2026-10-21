@@ -217,3 +217,5 @@ T051: selección activa de credenciales v1 corregida; 28 contratos y 475 pruebas
 T052: conexión MCP de v1 ligada a señales privadas de descubrimiento del cliente; 12 contratos y 490 pruebas ampliadas pasaron. Se conservó una ejecución fallida por inodos agotados y se repitió sin alterar criterios. [Evidencia](../specs/025-provider-mcp-profiles/validation-t052.md). El diagnóstico real administrado pasó encc8edda8: señal propia y catálogo exacto. No se observó cierre del observador; interacción v1 aún cerrada.
 
 T053: candidato de interacción explícita nativa v1 con perfil v3, capacidad privada, preflight completo y descubrimiento del cliente. 13 contratos/503 pruebas pasaron; aún pendiente aceptación real de preguntas/ACK/reinicio. [Evidencia](../specs/025-provider-mcp-profiles/validation-t053.md).
+
+Primer arranque real T053: perfil/capacidad/catálogo/conexión correctos, pero el guard de memoria detuvo el recorrido antes del modelo (5.867 MiB <6.144). Limpieza completa; preguntas/ACK/reinicio siguen abiertos.
