@@ -22,3 +22,9 @@ Input: [spec.md](spec.md), [plan.md](plan.md), [capability-map.md](capability-ma
 - [ ] T050 Spec Kit (020) surfaces — BLOCKED: no backend contract (see plan.md)
 - [ ] T060 Adopt 019 design tokens through `design-tokens/` generator (shared generated files)
 - [ ] T070 Spanish localization + glossary (FR-037)
+
+## Root review correction after Claude R3
+
+Independent source review found two further auth boundaries: disabled-mode/no-token401 incorrectly revoked the Dashboard, and a200 response body that finished after bearer revocation could still return data. Root added regression cases using the actual auth/API modules and a delayed ReadableStream: RED2failed/2passed, then GREEN4passed after the correction. Bearer revocation now requires actual bearer mode and the exact non-null current token; bearer fetches carry the authority abort signal and fetchJSON checks it again after body consumption. Normal local renewal keeps the same session authority; no blanket identity or permission claim is added.
+
+Private preimplementation Graphify pinned nine current source/test inputs (171nodes/330edges), with the auth/body boundaries verified against source. Final independent narrow source review approved this delta. Type checking passed; the complete web suite and production build are running separately and must be recorded from their actual results. Browser/screen-reader, full017/019/020, bearer-reader identity, live snapshot/cursors and scale remain open. Replacing a bearer token without revocation is outside this narrow correction.

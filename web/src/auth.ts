@@ -547,7 +547,7 @@ export async function browserFetch(
   const headers = new Headers(options?.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (local && !safe) headers.set("X-CAO-Browser", "1");
-  const signal = local
+  const signal = local || state.mode === "bearer"
     ? AbortSignal.any([
         authority.signal,
         ...(options?.signal ? [options.signal] : []),
@@ -609,7 +609,10 @@ export async function browserFetch(
         ),
         expected,
       );
-  } else if (!local && response.status === 401 && browserBearer() === token) {
+  } else if (
+    state.mode === "bearer" && token !== null &&
+    response.status === 401 && browserBearer() === token
+  ) {
     rejectBrowserBearer();
   }
   return response;
