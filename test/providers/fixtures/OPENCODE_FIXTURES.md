@@ -2,7 +2,7 @@
 
 ## Source probe captures
 
-All fixtures were derived from tmux capture-pane output against a live
+The original fixtures listed below were derived from tmux capture-pane output against a live
 `opencode 1.14.19` session on 2026-04-20, with one file re-captured on 2026-04-20
 after a probe-script defect was discovered (see below).
 
@@ -47,3 +47,12 @@ dialog rather than the primary "Permission required" dialog in
 `04-permission-plain.txt`.  Both are valid WAITING_USER_ANSWER states per §8.3 of
 the design doc — the `PERMISSION_PROMPT_PATTERN` regex matches both
 `△  Permission required` and `△  Always allow`.
+
+## Native-v1 invalid credential viewport
+
+`opencode_v1_invalid_credential.txt` derives from the retained T054 invalid-key
+diagnostic on source `4f032e95`, pinned native 1.18.35. It preserves row positions,
+the separately framed error toast and standalone body, and v1/Go footer chrome.
+Prompts, receipt text, identifiers, timestamps and private paths are omitted.
+It exercises raw/screen classification only; real acceptance is recorded in
+Spec 025 and is not established by replaying this fixture.
