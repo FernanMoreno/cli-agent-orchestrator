@@ -12,6 +12,7 @@ import {
 } from "../../api";
 import {
   buildExecutionMap,
+  deliveryLabel,
   processLabel,
   type ExecutionMap,
   type MapEdge,
@@ -38,16 +39,34 @@ async function settle<T>(p: Promise<T>): Promise<SourceResult<T>> {
   try {
     return { ok: true, value: await p };
   } catch (e) {
+    if (e instanceof ScopeChangedError) throw e;
     return failure(e);
   }
 }
 
+/** Thrown when the active node changes while a map load is in progress. */
+export class ScopeChangedError extends Error {
+  constructor() {
+    super("Node selection changed");
+  }
+}
+
+/**
+ * Loads one observation snapshot. The load is bound to the node epoch at its
+ * start: before every further request it re-checks the epoch and stops, so
+ * identifiers read from one node are never sent to another node.
+ */
 export async function loadExecutionMap(): Promise<ExecutionMap> {
+  const epoch = getNodeEpoch();
+  const ensureScope = () => {
+    if (epoch !== getNodeEpoch()) throw new ScopeChangedError();
+  };
   const sessionsResult = await settle(
     (async () => {
       const list = await api.listSessions();
       const details: SessionDetail[] = [];
       for (const s of list) {
+        ensureScope();
         try {
           details.push(await api.getSession(s.name));
         } catch (e) {
@@ -55,22 +74,27 @@ export async function loadExecutionMap(): Promise<ExecutionMap> {
           if ((e as ApiError)?.status !== 404) throw e;
         }
       }
+      ensureScope();
       return details;
     })(),
   );
+  ensureScope();
   const inbox: Record<string, SourceResult<InboxMessage[]>> = {};
+  let inboxNotQueried = 0;
   if (sessionsResult.ok) {
-    const ids = sessionsResult.value
-      .flatMap((d) => d.terminals.map((t) => t.id))
-      .slice(0, MAX_AGENTS_FOR_INBOX);
+    const all = sessionsResult.value.flatMap((d) => d.terminals.map((t) => t.id));
+    const ids = all.slice(0, MAX_AGENTS_FOR_INBOX);
+    inboxNotQueried = all.length - ids.length;
     await Promise.all(
       ids.map(async (id) => {
         inbox[id] = await settle(api.getInboxMessages(id, INBOX_PAGE));
       }),
     );
   }
+  ensureScope();
   const waitGraph = await settle(api.getInteractionWaitGraph());
-  return buildExecutionMap({ sessions: sessionsResult, inbox, waitGraph });
+  ensureScope();
+  return buildExecutionMap({ sessions: sessionsResult, inbox, inboxNotQueried, waitGraph });
 }
 
 type LoadState =
@@ -84,7 +108,7 @@ function nodeTitle(n: MapNode): string {
 }
 
 function edgeLabel(e: MapEdge): string {
-  if (e.type === "communication") return `message, ${e.deliveryState}`;
+  if (e.type === "communication") return `message, ${deliveryLabel(e.deliveryState)}`;
   return `${e.required ? "required" : "optional"} wait${e.cycle ? ", cycle confirmed" : ""}`;
 }
 

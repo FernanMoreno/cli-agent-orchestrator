@@ -42,8 +42,8 @@ export interface MapEdge {
   from: string;
   to: string;
   source: "inbox" | "interaction-wait-graph";
-  /** Delivery state for communication; never implies task completion. */
-  deliveryState?: InboxMessage["status"];
+  /** Raw delivery state for communication; never implies task completion. */
+  deliveryState?: string;
   required?: boolean;
   cycle?: boolean;
   createdAt?: string | null;
@@ -72,6 +72,8 @@ export interface ExecutionMapInput {
   sessions: SourceResult<SessionDetail[]>;
   /** Keyed by receiver terminal id. */
   inbox: Record<string, SourceResult<InboxMessage[]>>;
+  /** Visible agents whose inbox was not requested (local fan-out cap). */
+  inboxNotQueried?: number;
   waitGraph: SourceResult<InteractionWaitGraph>;
 }
 
@@ -122,14 +124,17 @@ export function buildExecutionMap(input: ExecutionMapInput): ExecutionMap {
   let hiddenEndpointEdges = 0;
   const inboxEntries = Object.entries(input.inbox);
   let inboxFailures = 0;
+  const seenMessages = new Set<string>();
   for (const [, result] of inboxEntries) {
     if (!result.ok) {
       inboxFailures++;
       continue;
     }
     for (const m of result.value) {
-      const id = `inbox:${m.id}`;
-      if (edges.has(id)) continue;
+      // The server id is numeric today; normalise so duplicates collapse.
+      const id = `inbox:${String(m.id)}`;
+      if (seenMessages.has(id)) continue;
+      seenMessages.add(id);
       if (!nodes.has(m.sender_id) || !nodes.has(m.receiver_id)) {
         hiddenEndpointEdges++;
         continue;
@@ -147,18 +152,26 @@ export function buildExecutionMap(input: ExecutionMapInput): ExecutionMap {
     }
   }
   if (input.sessions.ok) {
+    const notQueried = input.inboxNotQueried ?? 0;
+    const read = inboxEntries.length - inboxFailures;
+    const notes: string[] = [
+      "First page of messages per agent, oldest first (not necessarily the latest).",
+    ];
+    if (inboxFailures > 0) {
+      notes.push(`${inboxFailures} of ${inboxEntries.length} requested inboxes could not be read.`);
+    }
+    if (notQueried > 0) {
+      notes.push(`${notQueried} agent(s) were not queried; their messages are not shown.`);
+    }
     coverage.push({
       source: "inbox",
       state:
-        inboxFailures === 0
-          ? "complete"
-          : inboxFailures === inboxEntries.length
-            ? "error"
-            : "partial",
-      note:
-        inboxFailures === 0
-          ? "Recent messages per agent (bounded page)."
-          : `${inboxFailures} of ${inboxEntries.length} agent inboxes could not be read.`,
+        inboxEntries.length > 0 && read === 0
+          ? "error"
+          : inboxFailures > 0 || notQueried > 0
+            ? "partial"
+            : "complete",
+      note: notes.join(" "),
     });
   }
 
@@ -218,4 +231,17 @@ const PROCESS_LABELS: Record<string, string> = {
 
 export function processLabel(status: string): string {
   return PROCESS_LABELS[status.toLowerCase()] ?? status;
+}
+
+const DELIVERY_LABELS: Record<string, string> = {
+  pending: "pending",
+  delivered: "delivered",
+  failed: "failed",
+  reconcile: "needs reconciliation",
+};
+
+/** Delivery label; unknown server states are shown as reported, not guessed. */
+export function deliveryLabel(status: string | undefined): string {
+  if (!status) return "state unknown";
+  return DELIVERY_LABELS[status.toLowerCase()] ?? `state "${status}"`;
 }

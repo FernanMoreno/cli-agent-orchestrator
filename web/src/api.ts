@@ -373,11 +373,12 @@ export interface AgentDirsSettings {
 }
 
 export interface InboxMessage {
-  id: string;
+  /** Integer on the server today; kept open so the client never coerces it. */
+  id: string | number;
   sender_id: string;
   receiver_id: string;
   message: string;
-  status: "pending" | "delivered" | "failed";
+  status: "pending" | "delivered" | "reconcile" | "failed";
   created_at: string | null;
 }
 

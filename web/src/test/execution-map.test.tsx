@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import type { InboxMessage, SessionDetail } from "../api";
-import { buildExecutionMap, type ExecutionMap } from "../components/execution/executionMap";
-import { ExecutionMapPanel } from "../components/execution/ExecutionMapPanel";
+import { api, setActiveNode, type InboxMessage, type SessionDetail } from "../api";
+import { buildExecutionMap, deliveryLabel, type ExecutionMap } from "../components/execution/executionMap";
+import { ExecutionMapPanel, ScopeChangedError, loadExecutionMap } from "../components/execution/ExecutionMapPanel";
 
 const session: SessionDetail = {
   session: { id: "s1", name: "cao-s1", status: "active" },
@@ -115,5 +115,102 @@ describe("ExecutionMapPanel", () => {
     expect(await screen.findByText(/No agents are running/)).toBeInTheDocument();
     await act(async () => { resolveFirst(ready()); });
     expect(screen.queryByRole("button", { name: /developer/ })).toBeNull();
+  });
+});
+
+describe("execution map review fixes", () => {
+  it("counts a repeated hidden message once", () => {
+    const map = buildExecutionMap({
+      sessions: { ok: true, value: [session] },
+      inbox: {
+        aaaa1111: { ok: true, value: [msg("7", "zzzz9999", "aaaa1111")] },
+        bbbb2222: { ok: true, value: [msg("7", "zzzz9999", "aaaa1111"), msg("7", "zzzz9999", "aaaa1111")] },
+      },
+      waitGraph: { ok: true, value: { nodes: [], edges: [] } },
+    });
+    expect(map.hiddenEndpointEdges).toBe(1);
+  });
+
+  it("declares inbox coverage partial when agents were not queried", () => {
+    const map = buildExecutionMap({
+      sessions: { ok: true, value: [session] },
+      inbox: { aaaa1111: { ok: true, value: [] }, bbbb2222: { ok: true, value: [] } },
+      inboxNotQueried: 3,
+      waitGraph: { ok: true, value: { nodes: [], edges: [] } },
+    });
+    const inbox = map.coverage.find((c) => c.source === "inbox");
+    expect(inbox?.state).toBe("partial");
+    expect(inbox?.note).toMatch(/3 agent\(s\) were not queried/);
+    expect(inbox?.note).not.toMatch(/Recent/);
+  });
+
+  it("keeps numeric ids and unknown delivery states as reported", () => {
+    const m = { ...msg("x", "aaaa1111", "bbbb2222"), id: 42, status: "reconcile" } as InboxMessage;
+    const odd = { ...msg("y", "aaaa1111", "bbbb2222"), status: "mystery" } as unknown as InboxMessage;
+    const map = buildExecutionMap({
+      sessions: { ok: true, value: [session] },
+      inbox: { bbbb2222: { ok: true, value: [m, { ...m }, odd] } },
+      waitGraph: { ok: true, value: { nodes: [], edges: [] } },
+    });
+    expect(map.edges.map((e) => e.id)).toEqual(["inbox:42", "inbox:y"]);
+    expect(deliveryLabel(map.edges[0].deliveryState)).toBe("needs reconciliation");
+    expect(deliveryLabel(map.edges[1].deliveryState)).toBe('state "mystery"');
+  });
+});
+
+describe("loadExecutionMap scope", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    setActiveNode(null);
+  });
+
+  const detail = (name: string): SessionDetail => ({
+    session: { id: name, name, status: "active" },
+    terminals: [{ id: `${name}-t`, tmux_session: name, tmux_window: "w0", provider: "codex", agent_profile: "dev", created_at: null, last_active: null }],
+  });
+
+  it("stops before session details when the node changes after the list", async () => {
+    setActiveNode("A");
+    vi.spyOn(api, "listSessions").mockImplementation(async () => {
+      setActiveNode("B");
+      return [{ id: "a1", name: "a-session", status: "active" }] as never;
+    });
+    const getSession = vi.spyOn(api, "getSession").mockResolvedValue(detail("a-session"));
+    const inbox = vi.spyOn(api, "getInboxMessages").mockResolvedValue([]);
+    const wait = vi.spyOn(api, "getInteractionWaitGraph").mockResolvedValue({ nodes: [], edges: [] });
+    await expect(loadExecutionMap()).rejects.toBeInstanceOf(ScopeChangedError);
+    expect(getSession).not.toHaveBeenCalled();
+    expect(inbox).not.toHaveBeenCalled();
+    expect(wait).not.toHaveBeenCalled();
+  });
+
+  it("stops before inbox reads when the node changes after details", async () => {
+    setActiveNode("A");
+    vi.spyOn(api, "listSessions").mockResolvedValue([{ id: "a1", name: "a-session", status: "active" }] as never);
+    vi.spyOn(api, "getSession").mockImplementation(async () => {
+      setActiveNode("B");
+      return detail("a-session");
+    });
+    const inbox = vi.spyOn(api, "getInboxMessages").mockResolvedValue([]);
+    const wait = vi.spyOn(api, "getInteractionWaitGraph").mockResolvedValue({ nodes: [], edges: [] });
+    await expect(loadExecutionMap()).rejects.toBeInstanceOf(ScopeChangedError);
+    expect(inbox).not.toHaveBeenCalled();
+    expect(wait).not.toHaveBeenCalled();
+  });
+
+  it("queries at most 50 inboxes and reports the rest as not queried", async () => {
+    const many: SessionDetail = {
+      session: { id: "big", name: "big", status: "active" },
+      terminals: Array.from({ length: 51 }, (_, i) => ({ id: `t${i}`, tmux_session: "big", tmux_window: `w${i}`, provider: "codex", agent_profile: "dev", created_at: null, last_active: null })),
+    };
+    vi.spyOn(api, "listSessions").mockResolvedValue([many.session] as never);
+    vi.spyOn(api, "getSession").mockResolvedValue(many);
+    const inbox = vi.spyOn(api, "getInboxMessages").mockResolvedValue([]);
+    vi.spyOn(api, "getInteractionWaitGraph").mockResolvedValue({ nodes: [], edges: [] });
+    const map = await loadExecutionMap();
+    expect(inbox).toHaveBeenCalledTimes(50);
+    const c = map.coverage.find((x) => x.source === "inbox");
+    expect(c?.state).toBe("partial");
+    expect(c?.note).toMatch(/1 agent\(s\) were not queried/);
   });
 });
