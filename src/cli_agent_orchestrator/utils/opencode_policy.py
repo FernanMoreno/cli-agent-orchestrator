@@ -37,6 +37,13 @@ class NativeToolPolicy:
     filters: Mapping[str, frozenset[str]] = field(default_factory=lambda: MappingProxyType({}))
 
 
+@dataclass(frozen=True)
+class NativeAgentSnapshot:
+    agent_id: str
+    text: str
+    policy: NativeToolPolicy | None
+
+
 def _profiles(value: Any) -> dict[str, str]:
     if not isinstance(value, Mapping):
         raise ValueError(_ERROR)

@@ -382,3 +382,11 @@ directory. Offline contracts include two mocked agents with independent state
 and cleanup. Pinned v1 native config/catalog, real authentication and multi-agent
 journeys remain pending under the user's validation deferral; see
 [T040 evidence and limits](../specs/025-provider-mcp-profiles/validation-t040.md).
+
+New terminal creation validates and freezes the installed native OpenCode agent
+before allocating terminal or child/backend state, including deferred launches.
+The manager passes that exact selection to initialization and capability discovery;
+current managed configuration binding is checked again before launch. An existing
+idempotent terminal reuse does not reload its install file. This is a local
+ordering/snapshot contract; effective native runtime/model and restart acceptance
+remain pending. See [T041 validation](../specs/025-provider-mcp-profiles/validation-t041.md).

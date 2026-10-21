@@ -1946,6 +1946,17 @@ async def create_terminal(
                 profile.allowedTools, profile.role, mcp_server_names
             )
 
+        # OpenCode's installed native selection must be valid before any new
+        # identity, child receipt, worktree, backend or database allocation.
+        # Keep the immutable payload across the later asynchronous boundaries.
+        opencode_native_profile = None
+        if provider == ProviderType.OPENCODE_CLI.value:
+            from cli_agent_orchestrator.providers.opencode_cli import OpenCodeCliProvider
+
+            opencode_native_profile = await asyncio.to_thread(
+                OpenCodeCliProvider.load_native_profile, agent_profile
+            )
+
         # Step 1: Generate unique identifiers
         if (
             managed_terminal_id is not None
@@ -2397,6 +2408,7 @@ async def create_terminal(
             model=_provider_launch_model(provider, model, profile),
             engine=resolved_engine,
             resume_session_id=resume_session_id,
+            opencode_native_profile=opencode_native_profile,
         )
 
         # Issue a source capability only after the durable terminal row and

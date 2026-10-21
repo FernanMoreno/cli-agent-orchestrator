@@ -33,6 +33,7 @@ from cli_agent_orchestrator.providers.minimax_code import MiniMaxCodeProvider
 from cli_agent_orchestrator.providers.mock_cli import MockCliProvider
 from cli_agent_orchestrator.providers.omp import OmpProvider
 from cli_agent_orchestrator.providers.opencode_cli import OpenCodeCliProvider
+from cli_agent_orchestrator.utils.opencode_policy import NativeAgentSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +60,16 @@ class ProviderManager:
         *,
         publish: bool = True,
         provider_variant: Optional[str] = None,
+        opencode_native_profile: NativeAgentSnapshot | None = None,
     ) -> BaseProvider:
         """Create and store provider instance."""
         try:
             provider: BaseProvider
+            if (
+                opencode_native_profile is not None
+                and provider_type != ProviderType.OPENCODE_CLI.value
+            ):
+                raise ValueError("OpenCode native profile requires the OpenCode provider")
             descriptor = registered_provider_descriptor(provider_type)
             if descriptor is not None:
                 descriptor.preflight("launch", model=model)
@@ -141,6 +148,8 @@ class ProviderManager:
                     allowed_tools,
                     model=model,
                 )
+                if opencode_native_profile is not None:
+                    provider.prepare_native_profile(opencode_native_profile)
                 if provider_variant is not None:
                     provider.restore_runtime_variant(provider_variant)
             elif provider_type == ProviderType.OMP.value:

@@ -945,6 +945,8 @@ class TestCreateTerminal:
         mock_status_monitor,
         mock_delete_terminals_by_session,
         provider_name,
+        tmp_path,
+        monkeypatch,
     ):
         """build_skill_catalog() is never called for providers that deliver skills natively or
         at install time — OpenCode (symlink), Kiro (skill:// resources), Q, Copilot."""
@@ -960,6 +962,14 @@ class TestCreateTerminal:
         mock_provider_manager.create_provider.return_value = mock_provider
         mock_log_dir.__truediv__.return_value = MagicMock()
         mock_fifo_dir.__truediv__ = MagicMock(return_value="fake.fifo")
+
+        if provider_name == "opencode_cli":
+            from cli_agent_orchestrator.providers import opencode_cli
+
+            agents = tmp_path / "native-agents"
+            agents.mkdir()
+            (agents / "developer.md").write_text("Base prompt")
+            monkeypatch.setattr(opencode_cli, "OPENCODE_AGENTS_DIR", agents)
 
         await create_terminal(provider_name, "developer", new_session=True)
 

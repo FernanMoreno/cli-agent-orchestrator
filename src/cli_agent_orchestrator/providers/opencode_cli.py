@@ -50,6 +50,7 @@ from cli_agent_orchestrator.providers.mcp_interactions import (
 from cli_agent_orchestrator.services.settings_service import get_server_settings
 from cli_agent_orchestrator.utils.mcp_tool_policy import MCP_TOOL_PROFILE_ENV
 from cli_agent_orchestrator.utils.opencode_policy import (
+    NativeAgentSnapshot,
     NativeToolPolicy,
     apply_native_profiles,
     parse_native_agent,
@@ -452,6 +453,7 @@ class OpenCodeCliProvider(BaseProvider):
         self._v2_cao_mcp_server_name: str | None = None
         self._interaction_preflight_ok = False
         self._native_agent_source: tuple[str, str] | None = None
+        self._prepared_native_profile: NativeAgentSnapshot | None = None
         self._native_tool_policy: NativeToolPolicy | None = None
         self._interaction_source_requested = bool(
             isinstance(allowed_tools, list) and "@cao-mcp-server" in allowed_tools
@@ -494,7 +496,16 @@ class OpenCodeCliProvider(BaseProvider):
             )
 
             source_config = read_config()
-            if self._agent_profile:
+            if self._prepared_native_profile is not None:
+                import frontmatter
+
+                snapshot = self._prepared_native_profile
+                if snapshot.policy is not None:
+                    validate_native_binding(
+                        frontmatter.loads(snapshot.text), snapshot.policy, source_config
+                    )
+                    source_config = apply_native_profiles(source_config, snapshot.policy)
+            elif self._agent_profile:
                 agent_id = to_opencode_agent_id(self._agent_profile)
                 path = OPENCODE_AGENTS_DIR / f"{agent_id}.md"
                 if path.is_file():
@@ -667,11 +678,31 @@ class OpenCodeCliProvider(BaseProvider):
             if self._interaction_source_requested:
                 raise ValueError("OpenCode v2 CAO interaction requires a native agent profile")
             return
+        snapshot = self._prepared_native_profile or self.load_native_profile(self._agent_profile)
+        self._agent_profile = snapshot.agent_id
+        self._native_agent_source = (snapshot.agent_id, snapshot.text)
+        self._native_tool_policy = snapshot.policy
+
+    def prepare_native_profile(self, snapshot: NativeAgentSnapshot) -> None:
+        """Bind the pre-allocation selection to this exact provider identity."""
+        from cli_agent_orchestrator.utils.opencode_config import to_opencode_agent_id
+
+        if (
+            not isinstance(snapshot, NativeAgentSnapshot)
+            or not self._agent_profile
+            or snapshot.agent_id != to_opencode_agent_id(self._agent_profile)
+        ):
+            raise ValueError("OpenCode native profile identity does not match this provider")
+        self._prepared_native_profile = snapshot
+
+    @staticmethod
+    def load_native_profile(agent_profile: str) -> NativeAgentSnapshot:
+        """Read/validate without allocating runtime state or probing a vendor CLI."""
         import frontmatter
 
         from cli_agent_orchestrator.utils.opencode_config import to_opencode_agent_id
 
-        agent_id = to_opencode_agent_id(self._agent_profile)
+        agent_id = to_opencode_agent_id(agent_profile)
         path = OPENCODE_AGENTS_DIR / f"{agent_id}.md"
         try:
             if not path.is_file():
@@ -684,12 +715,14 @@ class OpenCodeCliProvider(BaseProvider):
         except Exception:
             raise ValueError(
                 f"OpenCode native profile {agent_id!r} is missing, unreadable, or invalid; "
-                f"prepare it with cao install {shlex.quote(self._agent_profile)} "
+                f"prepare it with cao install {shlex.quote(agent_profile)} "
                 "--provider opencode_cli"
             ) from None
-        self._agent_profile = agent_id
-        self._native_agent_source = (agent_id, frontmatter.dumps(profile))
-        self._native_tool_policy = policy
+        if policy is not None:
+            from cli_agent_orchestrator.utils.opencode_config import read_config
+
+            validate_native_binding(profile, policy, read_config())
+        return NativeAgentSnapshot(agent_id, frontmatter.dumps(profile), policy)
 
     async def _initialize_validated(self) -> bool:
         if self._native_tool_policy is not None and self._cli_major != 2:
