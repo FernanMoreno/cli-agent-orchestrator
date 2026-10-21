@@ -111,3 +111,47 @@ def test_prose_stale_completed_and_active_retry_do_not_become_auth_error(path, c
 @pytest.mark.parametrize("path", ["raw", "screen"])
 def test_native_v1_error_shape_does_not_enable_v2_auth_detector(path):
     assert status(FIXTURE.read_text(), path, major=2) != TerminalStatus.ERROR
+
+
+RETRY_FIXTURE = FIXTURE.with_name("opencode_v1_invalid_credential_retry.txt")
+
+
+@pytest.mark.parametrize("path", ["raw", "screen"])
+def test_recorded_current_permanent_credential_retry_is_error(path):
+    assert status(RETRY_FIXTURE.read_text(), path) == TerminalStatus.ERROR
+
+
+@pytest.mark.parametrize("path", ["raw", "screen"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "other_provider",
+        "transient",
+        "prose_prefix",
+        "old_frame",
+        "later_completion",
+        "wrong_version",
+    ],
+)
+def test_transient_or_noncurrent_retry_is_not_permanent_auth_error(path, case):
+    text = RETRY_FIXTURE.read_text()
+    if case == "other_provider":
+        text = text.replace("OpenCode Go", "Other provider")
+    elif case == "transient":
+        text = text.replace("Invalid credential", "Service temporarily unavailable")
+    elif case == "prose_prefix":
+        text = text.replace("Upstream request failed:", "A user quoted Upstream request failed:")
+    elif case == "old_frame":
+        text += f"\n{MODEL}\n{FOOTER}"
+    elif case == "later_completion":
+        text += f"\n{COMPLETED}\n{MODEL}\n{FOOTER}"
+    elif case == "wrong_version":
+        text = text.replace("OpenCode 1.18.35", "OpenCode 2.0.0")
+    assert status(text, path) != TerminalStatus.ERROR
+    if case == "transient":
+        assert status(text, path) == TerminalStatus.PROCESSING
+
+
+@pytest.mark.parametrize("path", ["raw", "screen"])
+def test_native_v1_permanent_retry_does_not_change_v2(path):
+    assert status(RETRY_FIXTURE.read_text(), path, major=2) != TerminalStatus.ERROR

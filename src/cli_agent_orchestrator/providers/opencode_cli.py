@@ -380,18 +380,25 @@ _V2_AUTH_FAILURE_MARKERS = (
 
 
 def _has_current_v1_auth_provider_error(text: str) -> bool:
-    """Recognize the observed native-v1 Go idle credential-error body/toast.
+    """Recognize the observed native-v1 Go permanent credential refusals.
 
-    Native retry footers keep their processing semantics. Require two separate
-    error surfaces and current version/model chrome; a quoted error sentence
-    or a previous raw-buffer frame is insufficient.
+    A permanent refusal in the exact native retry footer is already an error,
+    even while the vendor keeps retrying. Transient retries remain processing.
+    Idle refusals require the separate body/toast and current native chrome.
     """
     rows = [row.rstrip() for row in text.splitlines() if row.strip()]
+    if not rows or not any(re.search(r"^\s*┃\s+.+·.+\bOpenCode Go\b", row) for row in rows[-4:-1]):
+        return False
+    error = r"Upstream request failed: Invalid credential"
+    if re.fullmatch(
+        r"\s*[⬝ ]*" + error + r" \[retrying in [0-9]+s attempt #[1-9][0-9]*\]"
+        r"\s+esc interrupt\s+• OpenCode 1\.\d+\.\d+\s*",
+        rows[-1],
+    ):
+        return True
     footer_pattern = r"ctrl\+p\s+commands\b.*\bOpenCode 1\.\d+\.\d+\s*$"
-    if (
-        not rows
-        or re.search(footer_pattern, rows[-1]) is None
-        or re.search(PROCESSING_FOOTER_PATTERN, rows[-1])
+    if re.search(footer_pattern, rows[-1]) is None or re.search(
+        PROCESSING_FOOTER_PATTERN, rows[-1]
     ):
         return False
     previous_footers = [i for i, row in enumerate(rows[:-1]) if re.search(footer_pattern, row)]
@@ -399,7 +406,6 @@ def _has_current_v1_auth_provider_error(text: str) -> bool:
         rows = rows[previous_footers[-1] + 1 :]
     if not any(re.search(r"^\s*┃\s+.+·.+\bOpenCode Go\b", row) for row in rows[-4:-1]):
         return False
-    error = r"Upstream request failed: Invalid credential"
     body_rows = [i for i, row in enumerate(rows) if re.fullmatch(r"\s*┃\s+" + error + r"\s*", row)]
     if not body_rows or not any(re.search(r"┃\s+" + error + r"\s+┃\s*$", row) for row in rows):
         return False

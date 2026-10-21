@@ -56,3 +56,8 @@ the separately framed error toast and standalone body, and v1/Go footer chrome.
 Prompts, receipt text, identifiers, timestamps and private paths are omitted.
 It exercises raw/screen classification only; real acceptance is recorded in
 Spec 025 and is not established by replaying this fixture.
+
+`opencode_v1_invalid_credential_retry.txt` is the separately sanitized current
+retry viewport from the first T056 actual attempt on `7df731be`. Only the
+model chrome and permanent-credential retry footer remain. It does not turn
+transient retry messages into authentication failures.
