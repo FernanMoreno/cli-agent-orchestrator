@@ -467,7 +467,7 @@ class OpenCodeCliProvider(BaseProvider):
     def interaction_capabilities(self):
         """Do not advertise a v2 interaction channel before strict preflight."""
         capabilities = super().interaction_capabilities
-        if self._cli_major == 2 and (
+        if self._cli_major in (1, 2) and (
             not self._interaction_source_requested or not self._interaction_preflight_ok
         ):
             capabilities["explicit_channel"] = "unsupported"
@@ -728,7 +728,10 @@ class OpenCodeCliProvider(BaseProvider):
 
     async def _initialize_validated(self) -> bool:
         if self._native_tool_policy is not None and self._cli_major != 2:
-            raise ValueError("OpenCode v1 does not support managed native MCP tool policies")
+            if self._cli_major != 1 or self._native_tool_policy.format_version != 3:
+                raise ValueError("OpenCode v1 does not support managed native legacy MCP policies")
+            if self._interaction_source_requested:
+                raise ValueError("OpenCode v1 managed interaction readiness is not yet supported")
         init_timeout = get_server_settings()["provider_init_timeout"]
         if not await wait_for_shell(self.terminal_id, timeout=init_timeout):
             raise TimeoutError(f"Shell initialization timed out after {init_timeout}s")
@@ -862,21 +865,43 @@ class OpenCodeCliProvider(BaseProvider):
                 (self._v2_data_home / "mcp-startup.log").touch(mode=0o600)
         else:
             from cli_agent_orchestrator.utils.opencode_config import read_config
-            from cli_agent_orchestrator.utils.opencode_v1 import write_v1_configuration
+            from cli_agent_orchestrator.utils.opencode_v1 import (
+                validate_v1_mcp_configuration,
+                write_v1_configuration,
+            )
 
             if self._native_agent_source is None:
                 raise ValueError("OpenCode v1 requires an installed native agent profile")
+            self._interaction_preflight_ok = False
+            source_config = read_config()
+            if self._native_tool_policy is not None:
+                import frontmatter
+
+                validate_native_binding(
+                    frontmatter.loads(self._native_agent_source[1]),
+                    self._native_tool_policy,
+                    source_config,
+                )
+                source_config = apply_native_profiles(source_config, self._native_tool_policy)
             parent = CAO_HOME_DIR / "opencode-v1"
             parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             os.chmod(parent, 0o700)
             self._owned_v1_config_dir = Path(tempfile.mkdtemp(prefix="terminal-", dir=parent))
             self._v1_config_dir = write_v1_configuration(
                 self._owned_v1_config_dir,
-                source_config=read_config(),
+                source_config=source_config,
                 selected_agent_source=self._native_agent_source,
                 selected_model=self._model,
                 session_id=self.terminal_id,
             )
+            generated = json.loads((self._v1_config_dir / "opencode.json").read_text())
+            for name, server in generated["mcp"].items():
+                if server.get("enabled") is not False and MCP_TOOL_PROFILE_ENV in server.get(
+                    "environment", {}
+                ):
+                    validate_v1_mcp_configuration(
+                        self._v1_config_dir, agent_name=self._agent_profile, server_name=name
+                    )
             for directory in ("home", "config", "data", "cache", "state", "tmp"):
                 (self._v1_config_dir / directory).mkdir(mode=0o700)
             private_data = self._v1_config_dir / "data/opencode"

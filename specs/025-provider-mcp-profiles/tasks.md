@@ -153,3 +153,10 @@ The user's instruction to finish postponed work resumes T032's expanded and Pyth
 T032/T047 verified on the new explicit 16-module selection: 605 passing tests, both actual Python stdio children included; original failed run preserved (604 pass/one stale expectation). Canonical typing405, style for the changed test and composition5/0; Codex source/diff review. Authenticated vendor and full T007 gates remain open.
 
 T048 evidence: [managed isolated child](validation-t048.md). Six RED failures/two refusal controls; 285 combined passes, typing405, style2, architecture5/0 and reviewed bounded AST refresh. First real managed run loaded/profiled/offered exact tools but timed out before a question; one identical-semantic repeat passed the unchanged full ACK/restart/cleanup/auth predicate plus actual managed-v3 provider/child observations on f6e8be15. Original failed run and administrative annotation amendment retained. No production-installer/expanded/v1/global claim.
+
+## User-ordered remaining groups
+
+Execute v1 → v2 expanded/installer → multi-agent messages/scaling → authentication/launchers → timeout diagnosis → global gates → Codex final matrix. Claude Code remains prohibited; historical job/QEMU restrictions persist. Existing holds do not supersede the latest instruction, but memory admission and evidence requirements remain unchanged.
+
+- [ ] T049 Add validated-v3 managed native-v1 noninteraction launch, protected child filters and native-grant preflight; retain legacy/refusal and unvalidated v1 interaction guards. Prove seven profiles and negative/isolation contracts, actual pinned native grammar/MCP, typing/style/architecture/composition and current-source review. Advances T040/T042, not full v1 acceptance.
+- [ ] T050 Complete pinned v1 real readiness, explicit questions/answers/ACK, model/Unicode/receipts/errors/timeout/cancel/cleanup and restart/message behavior with source-bound isolated runs. Close T037/T040/T042 and OC1 only on their complete criteria; then proceed to the second requested group.

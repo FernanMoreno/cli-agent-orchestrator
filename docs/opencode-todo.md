@@ -203,3 +203,9 @@ La instrucción expresa de terminar lo aplazado reanudó esta validación. La se
 Corregido el rechazo de las dos variables protegidas de perfil/filtro en el entorno aislado del lanzador real, manteniendo env -i y el rechazo de variables ajenas. Seis fallos/dos controles RED y **285 pruebas** combinadas correctas; tipado405, estilo y composición5/0.
 
 El primer recorrido real cargó v3, conectó MCP y ofreció las tres herramientas, pero agotó el plazo antes de preguntar. Una repetición con la misma fuente y criterios pasó en **41,51 s**: perfil/filtro exactos observados en el proveedor y el proceso hijo, preguntas/respuestas/ACK, reinicio e identidad AG-UI, limpieza y auth intactos. T048 cerrado en ese alcance; se conserva el timeout sin atribuir una causa no demostrada. El artefacto se preparó con el renderizador real en el árbol privado: esto no acredita el instalador completo ni los perfiles ampliados/v1. [Evidencia y nota de auditoría de recibos](../specs/025-provider-mcp-profiles/validation-t048.md).
+
+## T049 — base administrada de v1
+
+Implementada la ruta privada v1 para sobres v3 validados, perfiles/filtros protegidos y comprobación de permisos nativos efectivos antes del lanzamiento. Se mantienen el rechazo de sobres antiguos en v1 y de su interacción administrada todavía no validada. Se conservan orden/recursos, normalización de nombres sin colisiones, configuración del operador y limpieza propia.
+
+Pasaron **441 pruebas**, incluidas 43 nuevas; tipado de 405 archivos, estilo y composición5/0. Se conservan RED y dos negativas iniciales por memoria; la ampliada arrancó después de que el usuario liberara memoria. La comprobación del binario v1 fijado se ejecuta después de integrar esta fuente. T040/T042/T049 y la aceptación completa de v1 continúan abiertas hasta sus criterios reales. [Evidencia T049](../specs/025-provider-mcp-profiles/validation-t049.md).

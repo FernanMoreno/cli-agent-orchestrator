@@ -1,7 +1,7 @@
 """Installation-consistency envelopes for CAO-managed native OpenCode agents.
 
 These digests bind configuration, not operator authenticity. Enforcement is
-provided only by CAO's private v2 launch, never by direct external CLI use.
+provided only by CAO's validated private native launch, never by direct CLI use.
 """
 
 import base64
