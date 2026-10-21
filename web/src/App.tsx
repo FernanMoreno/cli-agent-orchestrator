@@ -13,6 +13,7 @@ import { BeadsPanel } from "./components/BeadsPanel";
 import { RalphPanel } from "./components/RalphPanel";
 import { PluginsPanel } from "./components/PluginsPanel";
 import { QuestionsPanel } from "./components/QuestionsPanel";
+import { ExecutionMapPanel } from "./components/execution/ExecutionMapPanel";
 import { PLUGINS_TAB_ENABLED } from "./featureFlags";
 import { NodeSwitcher } from "./components/NodeSwitcher";
 import { CaoMark } from "./components/CaoMark";
@@ -40,6 +41,7 @@ import {
   WifiOff,
   Package,
   CircleHelp,
+  Network,
 } from "lucide-react";
 
 type TabKey =
@@ -53,7 +55,8 @@ type TabKey =
   | "plugins"
   | "beads"
   | "ralph"
-  | "questions";
+  | "questions"
+  | "execution";
 
 // Profiles sits between Home and Agents (#510): browsing/authoring profiles
 // precedes launching agents, and AgentPanel stays the launch picker. This was
@@ -76,6 +79,7 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: "beads", label: "Tasks", icon: <CheckCircle size={16} /> },
   { key: "ralph", label: "Ralph", icon: <Workflow size={16} /> },
   { key: "questions", label: "Questions", icon: <CircleHelp size={16} /> },
+  { key: "execution", label: "Execution map", icon: <Network size={16} /> },
 ];
 
 function Snackbar() {
@@ -194,12 +198,13 @@ function Dashboard() {
   }, [navLocked]);
 
   // Shortcuts 1-9 retain their existing meaning. Alt+0 reaches tab 10 and
-  // Alt+Shift+1 reaches tab 11 without renumbering any current destination.
+  // Alt+Shift+1 reaches tab 11 and Alt+Shift+2 tab 12 without renumbering any
+  // current destination.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!e.altKey || e.ctrlKey || e.metaKey) return;
       const index = e.shiftKey
-        ? (e.key === "1" ? 10 : -1)
+        ? (e.key === "1" ? 10 : e.key === "2" ? 11 : -1)
         : e.key === "0"
           ? 9
           : /^[1-9]$/.test(e.key)
@@ -288,7 +293,9 @@ function Dashboard() {
                         ? "Alt+0"
                         : i === 10
                           ? "Alt+Shift+1"
-                          : `Tab ${i + 1}`
+                          : i === 11
+                            ? "Alt+Shift+2"
+                            : `Tab ${i + 1}`
                 }
               >
                 {t.icon}
@@ -342,6 +349,7 @@ function Dashboard() {
             {tab === "beads" && <BeadsPanel />}
             {tab === "ralph" && <RalphPanel />}
             {tab === "plugins" && PLUGINS_TAB_ENABLED && <PluginsPanel />}
+            {tab === "execution" && <ExecutionMapPanel />}
             {tab === "questions" && <QuestionsPanel onOpenManualTerminal={openManualTerminal} />}
           </Suspense>
         </ErrorBoundary>

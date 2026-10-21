@@ -177,7 +177,10 @@ describe("Profiles tab navigation (stage 1)", () => {
     render(<App />);
     const questionsTab = await screen.findByRole("tab", { name: /questions/i });
     const tabs = screen.getAllByRole("tab");
-    expect(tabs[tabs.length - 1]).toBe(questionsTab);
+    // Execution map (spec 017) is appended after Questions on Alt+Shift+2.
+    const executionTab = screen.getByRole("tab", { name: /execution map/i });
+    expect(tabs[tabs.length - 2]).toBe(questionsTab);
+    expect(tabs[tabs.length - 1]).toBe(executionTab);
     expect(screen.getByRole("tab", { name: /agents/i })).toHaveAttribute("title", "Alt+3");
 
     fireEvent.keyDown(window, { key: "3", altKey: true });
