@@ -138,3 +138,6 @@ The first implementation adds an opt-in server policy primitive through CAO's ex
 
 - **FR-040**: Native v1 initialization with an active canonical CAO MCP child must confirm successful client tool discovery using a fresh private launch signal; a ready TUI, internal catalog scan or profile-supplied signal cannot establish readiness. Reuse the existing MCP signal contract without widening tool surface or operation authority.
 - **SC-024**: Prove protected per-launch discovery, timeout/cancellation and cleanup offline, then actual pinned managed-v1 discovery before enabling its explicit interaction channel.
+
+- **FR-041**: Explicit native-v1 interaction requires a validated managed-v3 policy, runtime-issued capability, all three required tools in its effective server filter/native grant and successful current-launch client discovery. Missing, empty or partial surfaces must fail before task delivery; profile values cannot override the capability.
+- **SC-025**: Prove native-v1 explicit interaction and refusal contracts offline, then source-bound actual questions/answers/ACK, Unicode, observer cleanup and restart. Keep unproven full-profile operations/messages/global gates open.

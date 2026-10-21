@@ -169,4 +169,10 @@ T051 implementation evidence: [active credential selection](validation-t051.md).
 
 T051 production diagnostic passed on304dfdc6: actual API/tmux/provider ready, Unicode model response, LAST active-receipt gate and completed state, complete private cleanup/operator preservation. Bounded criterion closed; full T050 remains open.
 
-- [ ] T052 Reuse the existing launch-scoped MCP client-discovery signal for native v1. Protect signal paths/tokens from profile overrides, require successful discovery before initialization, preserve native grants/server filters and retain the interaction guard until actual pinned discovery is proven. Cover stale/forged/missing signals, timeout/cancellation, disabled/foreign children and cleanup; then run a source-bound actual managed native-v1 terminal/catalog diagnostic. Part of ordered group1.
+- [x] T052 Reuse the existing launch-scoped MCP client-discovery signal for native v1. Protect signal paths/tokens from profile overrides, require successful discovery before initialization, preserve native grants/server filters and retain the interaction guard until actual pinned discovery is proven. Cover stale/forged/missing signals, timeout/cancellation, disabled/foreign children and cleanup; then run a source-bound actual managed native-v1 terminal/catalog diagnostic. Part of ordered group1.
+
+T052 actual managed-v3 terminal/catalog discovery passed oncc8edda8 with complete process/resource cleanup. Observer graceful completion was unobserved; no model/interaction or full OC1 acceptance. See [evidence](validation-t052.md).
+
+- [ ] T053 Implement explicit native-v1 interaction only for a validated managed-v3 profile: protected capability overlay, all-three native grant/filter preflight, successful client discovery before channel advertisement, failure/cancellation cleanup. Preserve legacy refusal and operation authority. Verify offline RED/GREEN and applicable regressions, then actual source-bound Unicode questions/answers/ACK, graceful observer cleanup and API restart; do not infer message or global acceptance.
+
+T053 candidate: [implementation evidence](validation-t053.md). 13 final contracts/503 expanded passes; discovered and corrected no-profile-metadata grant bypass. Actual interaction/restart acceptance remains pending.

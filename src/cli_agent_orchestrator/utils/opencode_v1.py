@@ -268,6 +268,8 @@ def write_v1_configuration(
     selected_agent_source: tuple[str, str],
     session_id: str,
     selected_model: str | None = None,
+    capability_file: str | None = None,
+    interaction_pull_flow_only: bool = False,
 ) -> Path:
     """Freeze one selected native agent without exposing the shared agent catalog."""
     name, text = selected_agent_source
@@ -392,7 +394,9 @@ def write_v1_configuration(
         overlay_interaction_capability_file,
     )
 
-    native_servers = overlay_interaction_capability_file(native_servers, None)
+    native_servers = overlay_interaction_capability_file(
+        native_servers, capability_file, interaction_pull_flow_only=interaction_pull_flow_only
+    )
     for server in native_servers.values():
         if set(server) - _NATIVE_MCP_FIELDS[server["type"]]:
             raise ValueError("OpenCode v1 requires native MCP server fields")
@@ -426,11 +430,17 @@ def write_v1_configuration(
 
 
 def validate_v1_mcp_configuration(
-    destination: Path, *, agent_name: str, server_name: str | None
+    destination: Path,
+    *,
+    agent_name: str,
+    server_name: str | None,
+    require_interaction: bool = False,
 ) -> None:
     """Check native v1 global/agent grants for the exact protected surface."""
+    from cli_agent_orchestrator.constants import _CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV
     from cli_agent_orchestrator.providers.mcp_interactions import is_bundled_cao_mcp_entry
     from cli_agent_orchestrator.utils.mcp_tool_policy import (
+        INTERACTION_TOOLS,
         MCP_TOOL_FILTER_ENV,
         MCP_TOOL_PROFILE_ENV,
         resolve_tool_filter,
@@ -456,9 +466,17 @@ def validate_v1_mcp_configuration(
         if not isinstance(environment, dict):
             raise ValueError("OpenCode v1 MCP environment must be an object")
         profile = environment.get(MCP_TOOL_PROFILE_ENV)
-        required = resolve_tool_profile(profile)
+        required = (
+            INTERACTION_TOOLS
+            if profile is None and require_interaction
+            else resolve_tool_profile(profile)
+        )
         if MCP_TOOL_FILTER_ENV in environment:
             required = resolve_tool_filter(environment[MCP_TOOL_FILTER_ENV], profile)
+        if environment.get(_CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV) == "1":
+            required = required & INTERACTION_TOOLS
+        if require_interaction and not INTERACTION_TOOLS.issubset(required):
+            raise ValueError("OpenCode v1 interaction channel requires all three interaction tools")
         rules: list[tuple[str, object]] = []
         for permissions in (config.get("permission"), agent.get("permission")):
             normalized: dict[str, object] = {}

@@ -466,7 +466,7 @@ class OpenCodeCliProvider(BaseProvider):
 
     @property
     def interaction_capabilities(self):
-        """Do not advertise a v2 interaction channel before strict preflight."""
+        """Advertise native interaction only after its strict dialect preflight."""
         capabilities = super().interaction_capabilities
         if self._cli_major in (1, 2) and (
             not self._interaction_source_requested or not self._interaction_preflight_ok
@@ -475,12 +475,12 @@ class OpenCodeCliProvider(BaseProvider):
         return capabilities
 
     def interaction_source_configured(self, mcp_servers) -> bool:
-        """Whether native OpenCode v2 config exposes CAO's MCP source.
+        """Whether the native OpenCode configuration exposes CAO's MCP source.
 
-        OpenCode v2 does not consume the profile-level ``mcp_servers`` mapping
+        Native OpenCode does not consume the profile-level ``mcp_servers`` mapping
         used by most adapters. Its native ``opencode.json`` is copied into a
-        private per-terminal configuration and the generated v2 agent grant is
-        checked by ``validate_v2_mcp_configuration`` during initialization.
+        private per-terminal configuration. Its dialect-specific native grant
+        is checked during initialization.
         Reading that native config here prevents advertising a source that the
         child process cannot actually start; ``mcp_servers`` remains in the
         signature for the shared provider interface.
@@ -489,7 +489,7 @@ class OpenCodeCliProvider(BaseProvider):
             return False
         try:
             self._prepare_runtime()
-            if self._cli_major != 2:
+            if self._cli_major not in (1, 2):
                 return False
             from cli_agent_orchestrator.utils.opencode_config import (
                 read_config,
@@ -497,11 +497,13 @@ class OpenCodeCliProvider(BaseProvider):
             )
 
             source_config = read_config()
+            policy_version = None
             if self._prepared_native_profile is not None:
                 import frontmatter
 
                 snapshot = self._prepared_native_profile
                 if snapshot.policy is not None:
+                    policy_version = snapshot.policy.format_version
                     validate_native_binding(
                         frontmatter.loads(snapshot.text), snapshot.policy, source_config
                     )
@@ -512,10 +514,13 @@ class OpenCodeCliProvider(BaseProvider):
                 if path.is_file():
                     agent, policy = parse_native_agent(path.read_text(encoding="utf-8"), agent_id)
                     if policy is not None:
+                        policy_version = policy.format_version
                         if path.is_symlink():
                             return False
                         validate_native_binding(agent, policy, source_config)
                         source_config = apply_native_profiles(source_config, policy)
+            if self._cli_major == 1 and policy_version != 3:
+                return False
             # Use the same active-server predicate as initialization.  A
             # bundled entry that is explicitly disabled cannot receive the
             # capability overlay or answer interaction tools.
@@ -731,8 +736,12 @@ class OpenCodeCliProvider(BaseProvider):
         if self._native_tool_policy is not None and self._cli_major != 2:
             if self._cli_major != 1 or self._native_tool_policy.format_version != 3:
                 raise ValueError("OpenCode v1 does not support managed native legacy MCP policies")
-            if self._interaction_source_requested:
-                raise ValueError("OpenCode v1 managed interaction readiness is not yet supported")
+        if (
+            self._cli_major == 1
+            and self._interaction_source_requested
+            and self._native_tool_policy is None
+        ):
+            raise ValueError("OpenCode v1 interaction requires a validated managed v3 profile")
         init_timeout = get_server_settings()["provider_init_timeout"]
         if not await wait_for_shell(self.terminal_id, timeout=init_timeout):
             raise TimeoutError(f"Shell initialization timed out after {init_timeout}s")
@@ -886,6 +895,12 @@ class OpenCodeCliProvider(BaseProvider):
                     source_config,
                 )
                 source_config = apply_native_profiles(source_config, self._native_tool_policy)
+            v1_cao_server_name = _find_cao_mcp_server_name(source_config)
+            if self._interaction_source_requested:
+                if v1_cao_server_name is None:
+                    raise ValueError("OpenCode v1 interaction requires a canonical CAO MCP server")
+                if self.interaction_capability_file is None:
+                    raise ValueError("OpenCode v1 interaction requires a runtime-issued capability")
             parent = CAO_HOME_DIR / "opencode-v1"
             parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             os.chmod(parent, 0o700)
@@ -896,15 +911,25 @@ class OpenCodeCliProvider(BaseProvider):
                 selected_agent_source=self._native_agent_source,
                 selected_model=self._model,
                 session_id=self.terminal_id,
+                capability_file=(
+                    self.interaction_capability_file if self._interaction_source_requested else None
+                ),
+                interaction_pull_flow_only=self._interaction_source_requested,
             )
             self._v1_mcp_ready_signals = prepare_v1_mcp_readiness(self._v1_config_dir)
             generated = json.loads((self._v1_config_dir / "opencode.json").read_text())
             for name, server in generated["mcp"].items():
-                if server.get("enabled") is not False and MCP_TOOL_PROFILE_ENV in server.get(
-                    "environment", {}
+                if server.get("enabled") is not False and (
+                    MCP_TOOL_PROFILE_ENV in server.get("environment", {})
+                    or (self._interaction_source_requested and name == v1_cao_server_name)
                 ):
                     validate_v1_mcp_configuration(
-                        self._v1_config_dir, agent_name=self._agent_profile, server_name=name
+                        self._v1_config_dir,
+                        agent_name=self._agent_profile,
+                        server_name=name,
+                        require_interaction=(
+                            self._interaction_source_requested and name == v1_cao_server_name
+                        ),
                     )
             for directory in ("home", "config", "data", "cache", "state", "tmp"):
                 (self._v1_config_dir / directory).mkdir(mode=0o700)
@@ -992,6 +1017,8 @@ class OpenCodeCliProvider(BaseProvider):
                     "OpenCode v2 CAO MCP server did not connect before initialization timed out"
                 )
 
+        if self._cli_major == 1 and self._interaction_source_requested:
+            self._interaction_preflight_ok = True
         self._initialized = True
         return True
 
@@ -1526,6 +1553,7 @@ class OpenCodeCliProvider(BaseProvider):
     def cleanup(self) -> None:
         """Clean up OpenCode provider state."""
         self._initialized = False
+        self._interaction_preflight_ok = False
         self._v1_mcp_ready_signals = {}
         if self._owned_v1_config_dir is not None:
             shutil.rmtree(self._owned_v1_config_dir, ignore_errors=True)

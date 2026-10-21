@@ -112,17 +112,14 @@ async def test_v1_binding_rechecked_after_shell_wait(launch, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_v1_managed_interaction_stays_refused_until_readiness_is_supported(
-    launch, monkeypatch
-):
+async def test_v1_managed_interaction_requires_runtime_capability(launch, monkeypatch):
     instance, backend, home = launch
     monkeypatch.setattr(opencode_cli, "detect_opencode_major", lambda _: 1)
     prepare(monkeypatch)
     instance._interaction_source_requested = True
-    instance.set_interaction_capability_file(home / "synthetic.cap")
-    assert not instance.interaction_source_configured({})
+    assert instance.interaction_source_configured({})
     assert instance.interaction_capabilities["explicit_channel"] == "unsupported"
-    with pytest.raises(ValueError, match="v1.*interaction"):
+    with pytest.raises(ValueError, match="v1.*capability"):
         await instance.initialize()
     backend.send_keys.assert_not_called()
 

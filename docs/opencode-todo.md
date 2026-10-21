@@ -214,4 +214,6 @@ La comprobación nativa T049 pasó sobre **fad7a331**: v1.18.35 resolvió agente
 
 T051: selección activa de credenciales v1 corregida; 28 contratos y 475 pruebas combinadas pasaron, además de exportación nativa real aislada. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t051.md). El recorrido real API/tmux de producción también pasó en304dfdc6: Unicode, recibo activo, completed y limpieza íntegra. No cierra OC1.
 
-T052: conexión MCP de v1 ligada a señales privadas de descubrimiento del cliente; 12 contratos y 490 pruebas ampliadas pasaron. Se conservó una ejecución fallida por inodos agotados y se repitió sin alterar criterios. [Evidencia](../specs/025-provider-mcp-profiles/validation-t052.md). Pendiente el diagnóstico real administrado; interacción v1 aún cerrada.
+T052: conexión MCP de v1 ligada a señales privadas de descubrimiento del cliente; 12 contratos y 490 pruebas ampliadas pasaron. Se conservó una ejecución fallida por inodos agotados y se repitió sin alterar criterios. [Evidencia](../specs/025-provider-mcp-profiles/validation-t052.md). El diagnóstico real administrado pasó encc8edda8: señal propia y catálogo exacto. No se observó cierre del observador; interacción v1 aún cerrada.
+
+T053: candidato de interacción explícita nativa v1 con perfil v3, capacidad privada, preflight completo y descubrimiento del cliente. 13 contratos/503 pruebas pasaron; aún pendiente aceptación real de preguntas/ACK/reinicio. [Evidencia](../specs/025-provider-mcp-profiles/validation-t053.md).
