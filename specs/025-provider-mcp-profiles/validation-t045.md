@@ -1,4 +1,4 @@
-# T045 — preserve native snapshot permission order (in progress)
+# T045 — preserve native snapshot permission order (completed bounded correction)
 
 The second resumed real v2 journey reached an observed exact three-tool catalog/HTTP offer and executed ask_user, then failed the strict generated permission shape. The producer was serializing the selected native profile with default frontmatter.dumps, which sorts mapping keys. An auth-free source reproduction showed the original canonical permission sequence passes the existing predicate, while its frozen serialization fails. No change to that predicate is justified.
 
@@ -11,3 +11,5 @@ The separate T046 audit tracks install/render ordering and current canonical bin
 Composition review: input native YAML → read-only loader → immutable selected snapshot → real native v1/v2 writers → last-match rules/strict journey predicate. Configuration/state ownership, engine/model/version/preflight checks and server operation authority stay unchanged. Source and selected files remain unmodified. Synthetic raw profiles plus actual serializers/evaluator establish this boundary without a provider; ordinary regression fixtures reuse the verified owned PostgreSQL service. Real model/ACK/restart acceptance remains T043. Verdict: PASS WITH RISKS for snapshot preservation only, because the wider T046 binding/render audit and real retry remain open.
 
 T046 auth-free audit is now confirmed, not merely proposed: reordering an overlapping permission map changes effective deny to allow while retaining the current canonical binding; current render serialization can make that same change. The private t046-ordered-binding-audit receipt binds both source files. T045 changes neither render nor envelope formats and does not certify that broader integrity boundary. A separately designed compatible correction is still required.
+
+After integration as 398bae68, the repinned actual R3 passed the existing exact permission predicate and the full unchanged questions/answers/ACK/AG-UI/restart/cleanup/auth success contract. T045 is closed for snapshot order preservation; the broader confirmed T046 render/binding finding remains open.

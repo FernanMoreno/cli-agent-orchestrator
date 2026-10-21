@@ -179,3 +179,9 @@ El primer recorrido real v2 quedó en `native_initialize` por un TypeError del a
 ## T045 — orden del perfil congelado
 
 El segundo recorrido real v2 arrancó, conectó MCP, ofreció exactamente las tres herramientas y creó dos preguntas, pero no llegó a respuestas/ACK/reinicio: la serialización del perfil congelado ordenaba sus permisos y el gate exacto lo rechazó. Corregido el productor para preservar el orden de acciones y recursos, sin cambiar el gate ni ampliar permisos. Tres casos RED/GREEN y **493 pruebas combinadas** correctos, tipado de 405 archivos, estilo y composición 5/0. [Evidencia T045](../specs/025-provider-mcp-profiles/validation-t045.md). El próximo reintento real debe usar fuente y runner nuevos; T043 sigue abierto. T046 conserva el hallazgo confirmado relacionado de renderizado/binding, que esta corrección no resuelve.
+
+## T043/T045 — aceptación real v2 sobre fuente corregida
+
+Pasó el recorrido completo en **v2.0.18**, vinculado a **398bae68** y al SHA del runner/binario: dos preguntas, dos respuestas y ambos ACK; un reinicio de API; tres observaciones AG-UI con identidad/ledger/proveedor/base de datos estables; estado final COMPLETED antes del plazo; catálogo/ofertas exactos de tres herramientas y sin llamadas ajenas. Limpieza completa, temporales eliminados, bindings restaurados y auth del operador intacto. Se conservaron el TypeError inicial, el fallo posterior de orden y una admisión bloqueada por memoria; el éxito procede de otra medición que sí superó 6.144 MiB.
+
+T043 y T045 cerrados en su alcance restringido, con límites y criterios originales. Siguen abiertos v1 real completo, perfiles ampliados reales, mensajes externos, concurrencia, otras autenticaciones y el hallazgo confirmado T046. T032 no se reanudó. [Evidencia final](../specs/025-provider-mcp-profiles/validation-t043.md).
