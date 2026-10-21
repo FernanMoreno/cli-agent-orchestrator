@@ -1,9 +1,11 @@
 """Private native-v1 configuration; never translate v2 permission arrays silently."""
 
+import asyncio
 import copy
 import json
 import os
 import re
+import signal
 from pathlib import Path
 
 import frontmatter
@@ -20,6 +22,152 @@ _NATIVE_MCP_FIELDS = {
     "local": {"type", "command", "cwd", "environment", "enabled", "timeout"},
     "remote": {"type", "url", "headers", "oauth", "enabled", "timeout"},
 }
+
+
+async def _stop_auth_export(process) -> None:
+    if process.returncode is not None:
+        return
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGTERM)
+        else:
+            process.terminate()
+    except ProcessLookupError:
+        pass
+    try:
+        await asyncio.wait_for(process.wait(), 3.0)
+    except asyncio.TimeoutError:
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        except ProcessLookupError:
+            pass
+        await asyncio.wait_for(process.wait(), 3.0)
+
+
+async def read_v1_active_auth(
+    snapshot: Path,
+    *,
+    executable: str,
+    selected_model: str | None,
+    path_value: str,
+    timeout: float,
+) -> dict | None:
+    """Ask the native CLI to export only the selected key from an owned copy.
+
+    CAO never opens a vendor database driver. Empty native session stores keep
+    legacy auth behavior; a nonempty current store cannot select an old key.
+    """
+    if (
+        snapshot.is_symlink()
+        or not snapshot.is_dir()
+        or snapshot.stat().st_uid != os.getuid()
+        or snapshot.stat().st_mode & 0o077
+    ):
+        raise RuntimeError("OpenCode v1 credential snapshot is not private")
+    provider = None
+    if isinstance(selected_model, str) and "/" in selected_model:
+        candidate, model = selected_model.split("/", 1)
+        if model and re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", candidate):
+            provider = candidate
+    condition = f"integration_id = '{provider}' AND active = 1" if provider else "1 = 0"
+    query = (
+        "SELECT 'summary' AS kind, COUNT(*) AS total, NULL AS value FROM credential "
+        "UNION ALL SELECT 'selected' AS kind, NULL AS total, "
+        "CASE WHEN LENGTH(value) <= 65536 THEN value ELSE NULL END AS value "
+        f"FROM (SELECT value FROM credential WHERE {condition} LIMIT 2)"
+    )
+    for name in ("home", "config", "data", "cache", "state", "tmp"):
+        (snapshot / name).mkdir(mode=0o700)
+    environment = {
+        "PATH": path_value,
+        "LANG": "C.UTF-8",
+        "HOME": str(snapshot / "home"),
+        "OPENCODE_TEST_HOME": str(snapshot / "home"),
+        "XDG_CONFIG_HOME": str(snapshot / "config"),
+        "XDG_DATA_HOME": str(snapshot / "data"),
+        "XDG_CACHE_HOME": str(snapshot / "cache"),
+        "XDG_STATE_HOME": str(snapshot / "state"),
+        "TMPDIR": str(snapshot / "tmp"),
+        "OPENCODE_CONFIG_DIR": str(snapshot / "config"),
+        "OPENCODE_DB": str(snapshot / "opencode.db"),
+        "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
+        "OPENCODE_DISABLE_AUTOUPDATE": "1",
+        "OPENCODE_DISABLE_MODELS_FETCH": "1",
+    }
+    process = None
+    try:
+        process = await asyncio.create_subprocess_exec(
+            executable,
+            "db",
+            "--format",
+            "json",
+            query,
+            env=environment,
+            cwd=str(snapshot),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+        )
+        output, error = await asyncio.wait_for(process.communicate(), timeout)
+    except asyncio.CancelledError:
+        raise
+    except (OSError, asyncio.TimeoutError) as exc:
+        raise RuntimeError("OpenCode v1 credential export failed or timed out") from exc
+    finally:
+        if process is not None:
+            await _stop_auth_export(process)
+    if process.returncode != 0:
+        # This is the only recognized old-store failure, not an auth fallback
+        # for a malformed, inaccessible or unsupported current store.
+        if re.search(rb"\bno such table:\s*credential(?:\r?\n|$)", error):
+            return None
+        raise RuntimeError("OpenCode v1 credential store export is invalid")
+    try:
+        if len(output) > 1024 * 1024:
+            raise ValueError()
+        rows = json.loads(output)
+        if (
+            not isinstance(rows, list)
+            or not 1 <= len(rows) <= 3
+            or any(not isinstance(row, dict) for row in rows)
+            or any(set(row) != {"kind", "total", "value"} for row in rows)
+        ):
+            raise ValueError()
+        summary = [row for row in rows if row["kind"] == "summary"]
+        selected = [row for row in rows if row["kind"] == "selected"]
+        if (
+            len(summary) != 1
+            or len(summary) + len(selected) != len(rows)
+            or type(summary[0]["total"]) is not int
+            or summary[0]["total"] < len(selected)
+            or summary[0]["value"] is not None
+            or any(row["total"] is not None for row in selected)
+        ):
+            raise ValueError()
+        if summary[0]["total"] == 0:
+            return None
+        if provider is None:
+            raise RuntimeError("OpenCode v1 current credentials require an explicit model")
+        if len(selected) != 1 or not isinstance(selected[0]["value"], str):
+            raise ValueError()
+        value = json.loads(selected[0]["value"])
+        if isinstance(value, dict) and value.get("type") == "oauth":
+            raise RuntimeError("OpenCode v1 active OAuth credential migration is unsupported")
+        if (
+            not isinstance(value, dict)
+            or value.get("type") != "key"
+            or not isinstance(value.get("key"), str)
+            or not value["key"]
+        ):
+            raise ValueError()
+        return {provider: {"type": "api", "key": value["key"]}}
+    except (ValueError, TypeError, KeyError) as exc:
+        raise RuntimeError(
+            "OpenCode v1 selected active credential is invalid or ambiguous"
+        ) from exc
 
 
 def _native_mcp_permissions(permissions: dict, server_names) -> dict:

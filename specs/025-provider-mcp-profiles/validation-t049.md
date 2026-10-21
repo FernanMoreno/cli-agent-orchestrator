@@ -1,4 +1,4 @@
-# T049 — managed native-v1 preparation (in progress)
+# T049 — managed native-v1 preparation (bounded gate completed)
 
 The first remaining group is OpenCode v1, per the user's ordered request. The old provider rejected every managed envelope, while its strict native writer could neither consume profile/filter metadata nor validate the effective native grant. T049 adds a bounded v3-only noninteraction path; legacy envelope v1/v2 and unvalidated managed-v1 interaction remain refused.
 
@@ -21,3 +21,9 @@ Reviewed: immutable native artifact → current shared config binding → canoni
 Managed-v1 interaction is deliberately unavailable until T050 proves its own readiness/recovery path. Native-v1 permission booleans remain refused because the pinned native schema requires effects; v2 fixture booleans are not silently treated as v1 syntax. Real installer/model/Unicode response/errors/cancel/message/ACK/restart and full OC1 gates remain open. No Claude executable/login, global install or historical job mutation is involved. Durable findings stay in this Spec Kit increment.
 
 Expanded verification: **441 tests passed**, zero failures/errors/skips, two existing Pydantic deprecation warnings, 107.35 seconds pytest time. The 11-module selection retained original coverage/markers and reused the verified existing PostgreSQL service with isolated schemas for ordinary fixtures. The new 43-case module remained database-offline. Source hashes match the reviewed AST refresh. Verdict so far: PASS for the bounded noninteraction implementation, with the native real probe and T050 still required.
+
+## Actual pinned native-v1 grammar and catalog passed
+
+After integration as **fad7a331**, the official pinned **v1.18.35** binary passed three serialized commands: version, debug agent v1-probe, and mcp list. Admission was **6,332 / 6,324 / 6,343 MiB** respectively, each above the unchanged floor. The actual native agent resolved exactly, including the selected OpenCode Go model and Unicode prompt. The actual CLI connected its canonical Python MCP child; the source-bound protocol observer recorded exactly ask/wait/acknowledge in the filtered catalog, no unexpected tools/calls, and confirmed observer shutdown. All owned process groups were gone, runtime source/binary unchanged. Total 6.74 s. No credentials staged, model request, PostgreSQL, API worker or historical job touched. Private auth-free artifacts are retained as evidence, not described as deleted.
+
+This composes the real v3 render/parser/binding/apply/native-writer pipeline with the pinned CLI; it is not a real production terminal/model/installer acceptance. The production provider path has the 43 mocked-launch contracts and 441 combined regressions above. T049 closes this bounded preparation gate; T040/T042/T050 and full v1 acceptance remain open for the actual model, readiness, interaction, cancellation/error, credentials and restart/message journeys. Final composition verdict: **PASS WITH RISKS**, restricted to the proven noninteraction preparation/catalog scope.

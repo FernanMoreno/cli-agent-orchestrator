@@ -866,6 +866,7 @@ class OpenCodeCliProvider(BaseProvider):
         else:
             from cli_agent_orchestrator.utils.opencode_config import read_config
             from cli_agent_orchestrator.utils.opencode_v1 import (
+                read_v1_active_auth,
                 validate_v1_mcp_configuration,
                 write_v1_configuration,
             )
@@ -924,9 +925,38 @@ class OpenCodeCliProvider(BaseProvider):
                 from cli_agent_orchestrator.utils.opencode_v2 import _private_write
 
                 _private_write(private_data / "auth.json", json.dumps(inline_auth) + "\n")
-            elif source_auth.is_file() or source_auth.is_symlink():
-                if not _copy_private_state_file(source_auth, private_data / "auth.json"):
-                    raise RuntimeError("OpenCode auth state disappeared during isolation")
+            else:
+                source_credential_db = _source_opencode_database_path(
+                    source_data_home, runtime_environment
+                )
+                active_auth = None
+                if source_credential_db.is_file() or source_credential_db.is_symlink():
+                    snapshot = self._v1_config_dir / "auth-source"
+                    try:
+                        _copy_private_state_bundle(source_credential_db, snapshot)
+                        effective_model = (
+                            self._model
+                            or generated["agent"][self._agent_profile].get("model")
+                            or generated.get("model")
+                        )
+                        assert self._launch_runtime is not None
+                        active_auth = await read_v1_active_auth(
+                            snapshot,
+                            executable=self._launch_runtime[0],
+                            selected_model=effective_model,
+                            path_value=self._launch_runtime[1].get("PATH", os.defpath),
+                            timeout=min(float(init_timeout), 30.0),
+                        )
+                    finally:
+                        if snapshot.exists():
+                            shutil.rmtree(snapshot)
+                if active_auth is not None:
+                    from cli_agent_orchestrator.utils.opencode_v2 import _private_write
+
+                    _private_write(private_data / "auth.json", json.dumps(active_auth) + "\n")
+                elif source_auth.is_file() or source_auth.is_symlink():
+                    if not _copy_private_state_file(source_auth, private_data / "auth.json"):
+                        raise RuntimeError("OpenCode auth state disappeared during isolation")
         command = self._build_launch_command()
         # A generated native child starts at a shell prompt.  It must
         # never be inferred from a racy foreground-process probe: instruct the

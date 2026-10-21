@@ -1,0 +1,7 @@
+# T050 — pinned native-v1 real journeys (in progress)
+
+The first direct native-v1 model diagnostic on **fad7a331** passed with the official pinned **1.18.35** binary and requested/resolved OpenCode Go model. It used the actual native v1 writer, explicit model/agent flags, production prepare_input/base receipt verification and JSON text events. Actual model elapsed **5.98 s**; wrapper **9.53 s**; admission **6,364 MiB**. Unicode response and the active per-turn receipt verified; no tool calls or provider error, exit0, owned process group gone, private auth/state removed, original auth/source/binary unchanged. The original 75-second model budget was unchanged. No PostgreSQL/API/Claude used.
+
+Only the active selected Go API key was staged from a stable private vendor snapshot and converted to native v1 JSON. A subsequent read-only comparison confirmed that key differs from legacy auth.json, which the production v1 branch still copies. T051 corrects this demonstrated selection boundary before a production terminal run; no claim that the old key is expired or caused any historical timeout is justified.
+
+This is **a direct JSON model diagnostic**, not production TUI extraction/status, installer, interaction questions/ACK, restart/message/concurrency/error/cancellation or global acceptance. Model identity is fixed in the requested flags/native resolved agent; no separate HTTP-wire model observer is claimed. Those required T050 gates remain open and first in the user's requested order.
