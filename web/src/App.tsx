@@ -43,7 +43,13 @@ import {
   CircleHelp,
   Network,
 } from "lucide-react";
-import { StudioContextBar, StudioNav, type StudioDestination } from "./components/StudioNav";
+import {
+  StudioContextBar,
+  StudioNav,
+  studioPanelId,
+  studioTabId,
+  type StudioDestination,
+} from "./components/StudioNav";
 
 type TabKey =
   | "home"
@@ -295,6 +301,11 @@ function Dashboard() {
 
       {/* Content */}
       <main className="max-w-7xl mx-auto px-6 py-6">
+        <div
+          role="tabpanel"
+          id={studioPanelId("studio")}
+          aria-labelledby={studioTabId("studio", tab)}
+        >
         <ErrorBoundary>
           <Suspense
             fallback={
@@ -333,6 +344,7 @@ function Dashboard() {
             {tab === "questions" && <QuestionsPanel onOpenManualTerminal={openManualTerminal} />}
           </Suspense>
         </ErrorBoundary>
+        </div>
       </main>
 
       <Snackbar />
@@ -443,6 +455,13 @@ export default function App() {
   if (auth.mode === "bearer" && auth.config?.local_setup_available === true)
     return <BrowserAccess setupAvailable />;
   if (auth.mode === "local_password" && !auth.session) return <BrowserAccess />;
+  if (auth.mode !== "local_password" && auth.status === "revoked")
+    return (
+      <main className="min-h-screen bg-gray-950 text-gray-200 p-6">
+        <p role="status">{auth.message}</p>
+        <BrowserConnection initiallyRequired />
+      </main>
+    );
   if (!fleetReady) return <main role="status">Comprobando nodos…</main>;
   return (
     <>

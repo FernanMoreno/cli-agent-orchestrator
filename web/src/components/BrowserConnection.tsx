@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { setBrowserBearer } from '../auth'
 
-export function BrowserConnection() {
-  const [required, setRequired] = useState(false)
+export function BrowserConnection({ initiallyRequired = false }: { initiallyRequired?: boolean } = {}) {
+  const [required, setRequired] = useState(initiallyRequired)
   const [token, setToken] = useState('')
-  const [error, setError] = useState('')
+  const [error, setError] = useState(initiallyRequired ? 'Se requiere autenticación o el acceso ha caducado.' : '')
   const [busy, setBusy] = useState(false)
   useEffect(() => {
     const show = () => { setRequired(true); setError('Se requiere autenticación o el acceso ha caducado.') }
