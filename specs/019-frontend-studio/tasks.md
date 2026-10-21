@@ -9,8 +9,8 @@ Input: [spec.md](spec.md), [plan.md](plan.md), [capability-map.md](capability-ma
 
 ## Increment 2 — Goal-based navigation and context (US1)
 
-- [ ] T010 Group destinations (Work / Library / Operation / Administration) without renumbering shortcuts
-- [ ] T011 Persistent context bar: active fleet node, reader identity, permission scope
+- [x] T010 Group destinations (Work / Operation / Library / Administration) without renumbering shortcuts — `web/src/components/StudioNav.tsx`, `web/src/App.tsx`. Shortcuts stay bound to destination order; Library (profiles, memory, plugins = definitions) is separated from Work (running agents, questions, tasks, execution map). Tabs pattern: arrow/Home/End move focus, `aria-describedby` names the group, `aria-keyshortcuts` exposes the shortcut. Tests: `web/src/test/studio-nav.test.tsx`; order assertions in `profiles-panel.test.tsx` changed from adjacency to group + shortcut preservation.
+- [~] T011 Context bar: active fleet node (with registry offline flag) and reader identity from real browser-auth state — done. Permission scope: BLOCKED, the server exposes no permission summary; the bar says so instead of inventing one (pending contract: read-only per-area capability/permission projection for the current reader).
 - [ ] T012 Linkable location (hash route) restoring tab + selection on reload/back (US1 AS4)
 - [ ] T013 Capability catalog: each area shows available / limited by permission / limited by server, with next step (FR-029)
 
