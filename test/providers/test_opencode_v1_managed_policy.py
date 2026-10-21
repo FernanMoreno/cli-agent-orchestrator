@@ -5,6 +5,7 @@ import json
 import sys
 from test.providers.test_opencode_native_policy import ready_agent
 from test.providers.test_opencode_profile_initialization import launch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -45,6 +46,8 @@ async def test_managed_v3_native_v1_exact_private_policy(launch, monkeypatch, pr
     instance, backend, _ = launch
     monkeypatch.setattr(opencode_cli, "detect_opencode_major", lambda _: 1)
     config, path, agent = prepare(monkeypatch, profile, tools)
+    # External client discovery is independently covered by the readiness module.
+    monkeypatch.setattr(instance, "_wait_for_v1_cao_mcp_ready", AsyncMock(return_value=True))
     original = copy.deepcopy(config), path.read_bytes()
     assert await instance.initialize()
     private = instance._v1_config_dir

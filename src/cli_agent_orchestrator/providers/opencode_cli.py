@@ -445,6 +445,7 @@ class OpenCodeCliProvider(BaseProvider):
         self._v2_config_dir = None
         self._v1_config_dir: Path | None = None
         self._owned_v1_config_dir: Path | None = None
+        self._v1_mcp_ready_signals: dict[Path, str] = {}
         self._launch_runtime: tuple[str, dict[str, str]] | None = None
         self._runtime_probe_complete = False
         self._owned_v2_config_dir: Path | None = None
@@ -866,6 +867,7 @@ class OpenCodeCliProvider(BaseProvider):
         else:
             from cli_agent_orchestrator.utils.opencode_config import read_config
             from cli_agent_orchestrator.utils.opencode_v1 import (
+                prepare_v1_mcp_readiness,
                 read_v1_active_auth,
                 validate_v1_mcp_configuration,
                 write_v1_configuration,
@@ -895,6 +897,7 @@ class OpenCodeCliProvider(BaseProvider):
                 selected_model=self._model,
                 session_id=self.terminal_id,
             )
+            self._v1_mcp_ready_signals = prepare_v1_mcp_readiness(self._v1_config_dir)
             generated = json.loads((self._v1_config_dir / "opencode.json").read_text())
             for name, server in generated["mcp"].items():
                 if server.get("enabled") is not False and MCP_TOOL_PROFILE_ENV in server.get(
@@ -976,6 +979,12 @@ class OpenCodeCliProvider(BaseProvider):
         ready_deadline = asyncio.get_running_loop().time() + 120.0
         if not await self._wait_for_initial_ready(timeout=120.0):
             raise TimeoutError("OpenCode CLI initialization timed out after 120 seconds")
+        if self._cli_major == 1 and self._v1_mcp_ready_signals:
+            remaining = ready_deadline - asyncio.get_running_loop().time()
+            if remaining <= 0 or not await self._wait_for_v1_cao_mcp_ready(timeout=remaining):
+                raise TimeoutError(
+                    "OpenCode v1 CAO MCP discovery did not complete before initialization timed out"
+                )
         if self._v2_cao_mcp_server_name is not None:
             remaining = ready_deadline - asyncio.get_running_loop().time()
             if remaining <= 0 or not await self._wait_for_v2_cao_mcp_ready(timeout=remaining):
@@ -985,6 +994,21 @@ class OpenCodeCliProvider(BaseProvider):
 
         self._initialized = True
         return True
+
+    async def _wait_for_v1_cao_mcp_ready(self, timeout: float) -> bool:
+        from cli_agent_orchestrator.utils.mcp_readiness import has_ready_signal
+
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            signals = dict(self._v1_mcp_ready_signals)
+            if await asyncio.to_thread(
+                lambda: all(has_ready_signal(path, token) for path, token in signals.items())
+            ):
+                return True
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return False
+            await asyncio.sleep(min(0.1, remaining))
 
     async def _wait_for_v2_cao_mcp_ready(self, timeout: float) -> bool:
         """Wait for this terminal's private OpenCode log to confirm CAO MCP."""
@@ -1502,6 +1526,7 @@ class OpenCodeCliProvider(BaseProvider):
     def cleanup(self) -> None:
         """Clean up OpenCode provider state."""
         self._initialized = False
+        self._v1_mcp_ready_signals = {}
         if self._owned_v1_config_dir is not None:
             shutil.rmtree(self._owned_v1_config_dir, ignore_errors=True)
             self._owned_v1_config_dir = None

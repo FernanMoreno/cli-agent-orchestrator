@@ -5,7 +5,9 @@ import copy
 import json
 import os
 import re
+import secrets
 import signal
+import sys
 from pathlib import Path
 
 import frontmatter
@@ -168,6 +170,44 @@ async def read_v1_active_auth(
         raise RuntimeError(
             "OpenCode v1 selected active credential is invalid or ambiguous"
         ) from exc
+
+
+def prepare_v1_mcp_readiness(directory: Path) -> dict[Path, str]:
+    """Bind client discovery to fresh, owned native-v1 launch state."""
+    from cli_agent_orchestrator.providers.mcp_interactions import is_bundled_cao_mcp_entry
+    from cli_agent_orchestrator.utils.mcp_readiness import READY_FILE_ENV, READY_TOKEN_ENV
+
+    if (
+        directory.is_symlink()
+        or not directory.is_dir()
+        or directory.stat().st_uid != os.getuid()
+        or directory.stat().st_mode & 0o077
+    ):
+        raise ValueError("private OpenCode config directory required")
+    path = directory / "opencode.json"
+    config = json.loads(path.read_text())
+    signals: dict[Path, str] = {}
+    signal_root = directory / "mcp-ready"
+    for index, (name, server) in enumerate(config["mcp"].items()):
+        # Even disabled/foreign children cannot retain profile-forged signals.
+        for field in ("env", "environment"):
+            if field in server:
+                server[field].pop(READY_FILE_ENV, None)
+                server[field].pop(READY_TOKEN_ENV, None)
+        if server.get("enabled") is False or not is_bundled_cao_mcp_entry(name, server):
+            continue
+        if not signals:
+            signal_root.mkdir(mode=0o700)
+        ready_path = signal_root / f"{index}.json"
+        token = secrets.token_hex(32)
+        if server.get("command") == ["cao-mcp-server"]:
+            server["command"] = [sys.executable, "-m", "cli_agent_orchestrator.mcp_server.server"]
+        server.setdefault("environment", {}).update(
+            {READY_FILE_ENV: str(ready_path), READY_TOKEN_ENV: token}
+        )
+        signals[ready_path] = token
+    _private_write(path, json.dumps(config, indent=2) + "\n")
+    return signals
 
 
 def _native_mcp_permissions(permissions: dict, server_names) -> dict:
