@@ -665,3 +665,19 @@ class LaunchRuntime:
         WorkAdmission; admission continues to return only its queued receipt.
         """
         return await self._admission.dispatch_registered_next()
+
+    async def prepare_registered_dispatch(self):
+        """Admit one registered order without waiting for its external delivery."""
+        return await self._admission.prepare_registered_dispatch()
+
+    async def deliver_registered_dispatch(self, prepared) -> dict:
+        """Complete the exact single-use handoff returned by preparation."""
+        return await self._admission.deliver_registered_dispatch(prepared)
+
+    async def abandon_registered_dispatch(self, prepared) -> None:
+        """Reconcile a committed handoff that could not acquire a delivery task."""
+        await self._admission.abandon_registered_dispatch(prepared)
+
+    async def wait_for_registered_dispatch_cleanup(self) -> None:
+        """Join canceled preparation cleanup before shared runtime shutdown."""
+        await self._admission.wait_for_dispatch_cleanup()

@@ -13,3 +13,9 @@ The native-v1 interaction retry uses a fresh runner/receipt, current committed s
 ## Further closed static caches
 
 During T062 final regression, four additional inactive CAOS mypy/Graphify cache trees were relocated from tmpfs to the private ext4 cache, preserving their original paths as symlinks. Before/after source/copy manifests matched for15,313 entries/450,543,612 regular bytes; same-user /proc cwd/root/exe/fd/cmdline/maps checks found no references before copying or switching. No process, PostgreSQL service, historical cb18/job directory, credentials or project checkout was stopped/altered. Private receipt memory-extra-static-relocation-20261021.json records manifests and sampled memory; this does not waive the6144MiB admission before every actual stage.
+
+## Idle Codex peer transports — 2026-10-21
+
+R10 rejected model admission at5824MiB after both native terminals were created. Process inspection identified19 inactive codex-claude-bridge MCP transport processes belonging directly to the current Codex ancestor, with no CLI children. Since the user requires Codex-only work, these unused peer transports were stopped with SIGTERM through pidfd handles after checking UID, parent, process start identity, command digest, zero children and unchanged CPU counters across samples. All19 exited. No Claude CLI/login/configuration action, PostgreSQL replacement, user-process termination, historical Work reconciliation or memory-policy change occurred.
+
+Their observed combined RSS was690MiB; available memory increased from7461 to8025MiB in the cleanup sample. This observed564MiB improvement is separate from the RSS sum and from NFR acceptance. Private content-free cleanup evidence records process identity and measurements. Subsequent R11 admitted its model phase at6305MiB and retains its own failed provider diagnostic and complete cleanup evidence in [T060](validation-t060.md).

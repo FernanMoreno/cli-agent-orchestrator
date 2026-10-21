@@ -4,6 +4,7 @@ import asyncio
 import importlib
 import json
 import multiprocessing
+import os
 from dataclasses import replace
 from test.integration.test_work_dispatch import (  # noqa: F401
     AdmissionOnlyBackend,
@@ -20,7 +21,7 @@ pytestmark = pytest.mark.postgres
 
 from cli_agent_orchestrator.clients import database
 from cli_agent_orchestrator.clients.postgres import Connection, DatabaseError, connect
-from cli_agent_orchestrator.clients.work_repository import WorkRepository
+from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.services.work_admission import WorkAdmission
 from cli_agent_orchestrator.services.work_provisioning import WorkProvisioning
 from cli_agent_orchestrator.services.work_service import DeliveryObservation, DeliveryUncertain
@@ -183,6 +184,48 @@ async def test_restart_routes_mixed_operations_with_exact_payload_and_snapshot(c
     with context.repo.connection() as connection:
         events = " ".join(row[0] for row in connection.execute("SELECT metadata FROM work_events"))
         assert "launch task" not in events and "inbox task" not in events
+
+
+@pytest.mark.asyncio
+async def test_abandoned_registered_handoff_reconciles_and_retains_writer_ownership(context):
+    observed = []
+    registry(context, observed)
+    work = admit(context, "abandoned-registered-handoff", delivery=envelope("inbox", "task"))
+
+    prepared = await context.service.prepare_registered_dispatch()
+
+    assert prepared is not None
+    assert prepared.sent["id"] == work["id"]
+    assert prepared.sent["attempts"][-1]["state"] == "sent"
+    credential_fd = prepared.port._attempt_credential_fd
+    assert type(credential_fd) is int
+    os.fstat(credential_fd)
+    before_abandon = accounting(context.repo)
+    assert before_abandon["held"] == 1
+    assert before_abandon["paths"] == 1
+
+    other_runtime = WorkAdmission(
+        reopened_repository(context),
+        backends={"test": context.backend},
+    )
+    with pytest.raises(WorkConflict, match="handoff is unavailable"):
+        await other_runtime.deliver_registered_dispatch(prepared)
+
+    await context.service.abandon_registered_dispatch(prepared)
+
+    reconciled = context.repo.get_work(work["id"])
+    assert reconciled["state"] == "reconcile"
+    assert reconciled["attempts"][-1]["state"] == "reconcile"
+    assert accounting(context.repo) == before_abandon
+    assert prepared.port._attempt_credential_fd is None
+    with pytest.raises(OSError):
+        os.fstat(credential_fd)
+    assert observed == []
+
+    with pytest.raises(WorkConflict, match="handoff is unavailable"):
+        await context.service.deliver_registered_dispatch(prepared)
+    with pytest.raises(WorkConflict, match="handoff is unavailable"):
+        await context.service.abandon_registered_dispatch(prepared)
 
 
 @pytest.mark.asyncio

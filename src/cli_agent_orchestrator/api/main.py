@@ -1443,19 +1443,165 @@ def _sweep_workflow_runs_at_startup() -> None:
 
 
 async def _run_registered_work_dispatcher(gateway) -> None:
-    """Poll only the server-owned process gateway; admission endpoints never dispatch."""
-    while True:
+    """Admit one order at a time and own every full registered delivery task."""
+    deliveries: set[asyncio.Task] = set()
+    queued_handoffs: dict[asyncio.Task, dict[str, Any]] = {}
+    loop = asyncio.get_running_loop()
+
+    def notify_handoff(state: dict[str, Any]) -> None:
+        ready = state["ready"]
+        if not ready.done():
+            ready.set_result(None)
+
+    async def abandon_unstarted(state: dict[str, Any]) -> None:
+        if state["started"] or state["abandon_started"]:
+            return
+        # Transfer the single-use handoff to its reconciliation owner before
+        # yielding. WorkAdmission retains and drains the underlying cleanup even
+        # if this dispatcher is cancelled while waiting for that fence.
+        state["abandon_started"] = True
         try:
-            dispatched = await gateway.dispatch_registered_next()
+            await gateway.abandon_registered_dispatch(state["handoff"])
         except asyncio.CancelledError:
             raise
         except Exception:
-            # WorkService has already retained the attempt's durable uncertain state.
-            # Do not log exception text supplied by an execution backend.
-            logger.warning("Durable Work dispatch failed; inspect the persisted order")
-            dispatched = None
-        if dispatched is None:
-            await asyncio.sleep(0.5)
+            logger.warning(
+                "Durable Work handoff could not be reconciled; inspect the persisted order"
+            )
+
+    def observe_delivery(task: asyncio.Task) -> None:
+        state = queued_handoffs.get(task)
+        if state is not None:
+            notify_handoff(state)
+        # The shutdown join may observe a task before its done callback runs.
+        # Membership makes that observation idempotent without retaining every
+        # completed task for the lifetime of this dispatcher.
+        if task not in deliveries:
+            return
+        deliveries.remove(task)
+        if task.cancelled():
+            if state is not None and not state["started"]:
+                # The delivery coroutine never claimed the capability. Its
+                # dispatcher owner closes and reconciles it inline.
+                return
+            logger.warning("Durable Work delivery was cancelled; inspect the persisted order")
+            return
+        try:
+            task.result()
+        except Exception:
+            # Never include exception text supplied by an execution backend.
+            logger.warning("Durable Work delivery failed; inspect the persisted order")
+
+    try:
+        while True:
+            try:
+                prepared = await gateway.prepare_registered_dispatch()
+                if prepared is None:
+                    await asyncio.sleep(0.5)
+                    continue
+
+                state = {
+                    "handoff": prepared,
+                    "started": False,
+                    "abandon_started": False,
+                    "ready": loop.create_future(),
+                }
+
+                async def deliver_prepared(handoff=prepared):
+                    # Yield once before the protected delivery path. This keeps
+                    # even eager task factories from claiming the handoff before
+                    # create_task returns an owner to the dispatcher.
+                    await asyncio.sleep(0)
+                    state["started"] = True
+                    notify_handoff(state)
+                    return await gateway.deliver_registered_dispatch(handoff)
+
+                delivery_coroutine = deliver_prepared()
+                try:
+                    delivery = asyncio.create_task(delivery_coroutine)
+                except BaseException:
+                    # Task creation may fail after preparation committed sent and
+                    # returned live credential descriptors. Close the coroutine
+                    # object and hand that capability back for fenced reconciliation.
+                    delivery_coroutine.close()
+                    await abandon_unstarted(state)
+                    raise
+                deliveries.add(delivery)
+                queued_handoffs[delivery] = state
+                delivery.add_done_callback(observe_delivery)
+                await asyncio.shield(state["ready"])
+                if not state["started"]:
+                    # The task factory may return a task that was cancelled before
+                    # its first step. The done callback wakes this owner so the
+                    # committed capability cannot be silently dropped.
+                    await abandon_unstarted(state)
+                queued_handoffs.pop(delivery, None)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Preparation errors retain Work's durable state; delivery errors
+                # are observed by their owner callback above. Backend text is private.
+                logger.warning("Durable Work dispatch failed; inspect the persisted order")
+                await asyncio.sleep(0.5)
+    finally:
+        # A root stop can arrive while a task is queued but before its coroutine
+        # enters. Let it either claim the handoff or finish without starting, then
+        # abandon only the latter. A queued admitted delivery may still begin here;
+        # the dispatcher does not make another admission.
+        for delivery, state in tuple(queued_handoffs.items()):
+            while not state["ready"].done():
+                try:
+                    await asyncio.shield(state["ready"])
+                except asyncio.CancelledError:
+                    continue
+            if state["started"]:
+                queued_handoffs.pop(delivery, None)
+                continue
+            try:
+                await abandon_unstarted(state)
+            except asyncio.CancelledError:
+                # Abandonment has already transferred cleanup ownership to the
+                # gateway. The final cleanup drain below joins that owner.
+                pass
+            queued_handoffs.pop(delivery, None)
+
+        # A delivery may still own a Docker to_thread execution. Stop admissions,
+        # but let the adapter finish its bounded process cleanup before ports and
+        # shared runtime resources close. Coroutine cancellation is not stop proof.
+        pending = tuple(deliveries)
+        if pending:
+            joined = asyncio.gather(*pending, return_exceptions=True)
+            while not joined.done():
+                try:
+                    await asyncio.shield(joined)
+                except asyncio.CancelledError:
+                    continue
+            joined.result()
+            for delivery in pending:
+                observe_delivery(delivery)
+
+        drain = getattr(gateway, "wait_for_registered_dispatch_cleanup", None)
+        if callable(drain):
+            await drain()
+
+
+async def _stop_registered_work_dispatcher(task: asyncio.Task) -> None:
+    """Stop admissions and wait through the dispatcher's backend cleanup fence."""
+    task.cancel()
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            continue
+        except Exception:
+            break
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        # The dispatcher has already logged a sanitized failure at its boundary.
+        logger.warning("Durable Work dispatcher stopped with unresolved persisted work")
 
 
 def _compose_managed_workflow_runtime(app: FastAPI, repository, gateway):
@@ -1891,11 +2037,7 @@ async def lifespan(app: FastAPI):
         pass
 
     if work_dispatcher_task is not None:
-        work_dispatcher_task.cancel()
-        try:
-            await work_dispatcher_task
-        except asyncio.CancelledError:
-            pass
+        await _stop_registered_work_dispatcher(work_dispatcher_task)
 
     # Stop the pipe-pane liveness watchdog thread, then release shared services.
     await shutdown_lifespan_resources(best_effort=False)

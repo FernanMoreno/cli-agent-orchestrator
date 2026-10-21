@@ -1,11 +1,11 @@
 """Versioned legacy and process-backed launch delivery adapters."""
 
-import asyncio
 from typing import Annotated
 
 from pydantic import Field, StringConstraints, field_validator
 
 from cli_agent_orchestrator.models.work_contract import FrozenContractModel, Identity, Text
+from cli_agent_orchestrator.services.work_blocking import run_owned_blocking
 from cli_agent_orchestrator.services.work_delivery import DeliveryAdapter
 from cli_agent_orchestrator.services.work_service import DeliveryObservation
 from cli_agent_orchestrator.services.work_terminal import (
@@ -131,10 +131,9 @@ async def _launch_process(binding, payload, snapshot, port):
     worker_input = message.encode("utf-8")
     if len(worker_input) > 32768:
         raise ValueError("frozen launch content exceeds the process input bound")
-    # This capability has no terminal methods and is closed when the adapter
-    # returns. to_thread cancellation is handled by WorkService as uncertain;
-    # it never authorizes redelivery of a potentially released worker.
-    await asyncio.to_thread(
+    # Keep this committed delivery's capability owned until Docker cleanup has
+    # returned, including when its asyncio caller is cancelled.
+    await run_owned_blocking(
         port.execute_process,
         payload.command_token,
         worker_input,

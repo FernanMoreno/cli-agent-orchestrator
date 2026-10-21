@@ -1,0 +1,76 @@
+"""Owned off-loop execution for admitted Work process effects."""
+
+from __future__ import annotations
+
+import asyncio
+import contextvars
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, TypeVar
+
+_Result = TypeVar("_Result")
+
+
+async def run_owned_blocking(
+    function: Callable[..., _Result], /, *args: Any, **kwargs: Any
+) -> _Result:
+    """Run one admitted blocking call outside asyncio's shared default executor.
+
+    The caller must invoke this only after Work admission has committed. One
+    single-use executor then owns that call through completion, without adding a
+    separate production concurrency limit or queue for unadmitted work.
+    """
+    loop = asyncio.get_running_loop()
+    context = contextvars.copy_context()
+
+    def invoke() -> _Result:
+        return context.run(function, *args, **kwargs)
+
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cao-work-execution")
+    try:
+        future = executor.submit(invoke)
+    except BaseException:
+        # If thread startup failed after submission began, cancel pending work and
+        # join any worker that did start before the caller can close its capability.
+        executor.shutdown(wait=True, cancel_futures=True)
+        raise
+
+    try:
+        wrapped = asyncio.wrap_future(future, loop=loop)
+    except BaseException:
+        # A live loop should always be able to wrap a submitted Future. Still join
+        # the real operation if that invariant is broken; never report it stopped.
+        executor.shutdown(wait=True, cancel_futures=True)
+        raise
+
+    try:
+        return await asyncio.shield(wrapped)
+    except asyncio.CancelledError as cancellation:
+        while not future.done() or not wrapped.done():
+            if wrapped.done() and not future.done():
+                wrapped = asyncio.wrap_future(future, loop=loop)
+            try:
+                await asyncio.shield(wrapped)
+            except asyncio.CancelledError:
+                continue
+            except BaseException:
+                # A worker exception completes the concurrent Future as well.
+                # If the wrapper failed independently, rebuild its awaitable from
+                # the still-owned Future and keep draining instead of closing early.
+                if not future.done():
+                    wrapped = asyncio.wrap_future(future, loop=loop)
+
+        # Cancellation remains the caller-visible outcome, but retrieve a worker
+        # error from both Future layers and keep ownership through synchronous cleanup.
+        try:
+            wrapped.result()
+        except BaseException:
+            pass
+        try:
+            future.result()
+        except BaseException:
+            pass
+        raise cancellation
+    finally:
+        # The concurrent Future is done on every normal/error/cancel path above.
+        # shutdown(wait=True) joins the worker thread before adapter port cleanup.
+        executor.shutdown(wait=True, cancel_futures=True)

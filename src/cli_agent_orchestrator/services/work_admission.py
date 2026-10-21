@@ -6,6 +6,7 @@ commit intent, and recheck authority at the protected external-effect boundary.
 """
 
 import asyncio
+import contextvars
 import logging
 import os
 import time
@@ -52,6 +53,19 @@ logger = logging.getLogger(__name__)
 
 class _SelectionChanged(Exception):
     """Another dispatcher won during preflight; retry selection, never its effect."""
+
+
+class _PreparedRegisteredDispatch:
+    """Single-use handoff for an already admitted registered delivery."""
+
+    __slots__ = ("owner", "binding", "port", "sent", "claimed")
+
+    def __init__(self, owner, binding, port, sent):
+        self.owner = owner
+        self.binding = binding
+        self.port = port
+        self.sent = sent
+        self.claimed = False
 
 
 class _WorkEffectPort:
@@ -232,7 +246,7 @@ class WorkAdmission:
         self.attempt_credentials = WorkAttemptCredentials(repository, origins=origins)
         self.scheduler = WorkScheduler(repository)
         self.reservations = WorkReservations(repository)
-        self._pending_abandonments: set[asyncio.Task[None]] = set()
+        self._pending_abandonments: set[asyncio.Future] = set()
         if origins is not None:
             origins._bind_admission(self)
         if workflow_origins is not None:
@@ -1496,22 +1510,71 @@ class WorkAdmission:
             actor_id=binding.principal_id,
         )
 
-    async def _abandon_preparation(self, worker) -> None:
-        # Cancelling to_thread does not stop its transaction. Observe its outcome
-        # without ever invoking the adapter, including after repeated cancellation.
+    def _abandon_preparation(self, worker) -> None:
+        # Keep the worker itself as the cleanup owner. Creating a child task here
+        # can fail after the worker has committed sent and produced a live port.
+        self._pending_abandonments.add(worker)
+        worker.add_done_callback(self._finish_abandoned_preparation)
+
+    def _finish_abandoned_preparation(self, worker) -> None:
+        # The worker's completion callback runs on this loop. Reconcile only after
+        # its transaction and descriptor handoff have actually returned.
         try:
-            prepared = await worker
-            if prepared is not None:
-                binding, port, sent = prepared
-                port.close()
-                await asyncio.to_thread(
-                    WorkService(self.repository, origins=self.origins)._reconcile,
-                    sent,
-                    actor_id=binding.principal_id,
-                )
+            prepared = worker.result()
+        except asyncio.CancelledError:
+            self._pending_abandonments.discard(worker)
+            logger.error("Cancelled dispatch preparation outcome is unavailable")
+            return
         except Exception:
             # A store failure leaves the committed intent sent, never queued.
             # Do not log exception bodies that a backend might populate with input.
+            self._pending_abandonments.discard(worker)
+            logger.error("Cancelled dispatch preparation requires reconciliation")
+            return
+
+        if prepared is None:
+            self._pending_abandonments.discard(worker)
+            return
+
+        binding, port, sent = prepared
+        try:
+            port.close()
+        except Exception:
+            # Keep the sent fence and still attempt DB reconciliation; closing a
+            # capability cannot prove that a process stopped or release capacity.
+            logger.error("Could not close a cancelled dispatch preparation capability")
+
+        def reconcile():
+            return WorkService(self.repository, origins=self.origins)._reconcile(
+                sent,
+                actor_id=binding.principal_id,
+            )
+
+        try:
+            cleanup_context = contextvars.copy_context()
+            cleanup = asyncio.get_running_loop().run_in_executor(
+                None,
+                cleanup_context.run,
+                reconcile,
+            )
+        except Exception:
+            self._pending_abandonments.discard(worker)
+            logger.error("Cancelled dispatch preparation requires reconciliation")
+            return
+
+        # Add the real executor Future before dropping the completed worker so a
+        # concurrent shutdown drain always sees one of the two owners.
+        self._pending_abandonments.add(cleanup)
+        cleanup.add_done_callback(self._observe_dispatch_reconciliation)
+        self._pending_abandonments.discard(worker)
+
+    def _observe_dispatch_reconciliation(self, cleanup) -> None:
+        self._pending_abandonments.discard(cleanup)
+        try:
+            cleanup.result()
+        except asyncio.CancelledError:
+            logger.error("Cancelled dispatch preparation reconciliation was cancelled")
+        except Exception:
             logger.error("Cancelled dispatch preparation requires reconciliation")
 
     async def dispatch_next_async(self, send):
@@ -1525,33 +1588,124 @@ class WorkAdmission:
 
     async def dispatch_registered_next(self) -> dict | None:
         """Recover delivery exclusively from its immutable order and server registry."""
+        prepared = await self.prepare_registered_dispatch()
+        if prepared is None:
+            return None
+        return await self.deliver_registered_dispatch(prepared)
 
-        async def deliver(binding, port):
-            with self.repository.read_snapshot() as connection:
-                self.contracts._revalidate_order(
-                    connection,
-                    binding.attempt_id,
-                    generation=binding.generation,
-                )
-                if not self.deliveries._executable(connection, binding):
-                    raise WorkConflict("delivery adapter is unavailable")
-                envelope = self.deliveries._load(connection, binding)
-                snapshot = DelegationSnapshots._load_authorized(
-                    connection,
-                    connection.execute(
-                        "SELECT * FROM work_delegation_snapshots WHERE id=%s",
-                        (binding.contract.snapshot.id,),
-                    ).fetchone(),
-                )
-                adapter, payload = self.deliveries._restore(connection, binding)
-            return await adapter.send(binding, payload, snapshot, port)
+    async def prepare_registered_dispatch(self):
+        """Admit one registered order and return its single-use delivery handoff."""
+        prepared = await self._prepare_dispatch_async(registered_only=True)
+        if prepared is None:
+            return None
+        binding, port, sent = prepared
+        return _PreparedRegisteredDispatch(self, binding, port, sent)
 
-        result: dict | None = await self._dispatch_async(deliver, registered_only=True)
-        return result
+    async def deliver_registered_dispatch(self, prepared) -> dict:
+        """Finish one handoff; repeated or cross-runtime use cannot replay delivery."""
+        if (
+            not isinstance(prepared, _PreparedRegisteredDispatch)
+            or prepared.owner is not self
+            or prepared.claimed
+        ):
+            raise WorkConflict("registered delivery handoff is unavailable")
+        prepared.claimed = True
+        return await self._send_prepared_dispatch(
+            (prepared.binding, prepared.port, prepared.sent),
+            self._deliver_registered,
+        )
 
-    async def _dispatch_async(self, send, *, registered_only=False):
-        if not callable(send):
-            raise ValueError("server delivery adapter required")
+    async def abandon_registered_dispatch(self, prepared) -> None:
+        """Close an unstarted committed handoff and retain its sent uncertainty fence."""
+        if (
+            not isinstance(prepared, _PreparedRegisteredDispatch)
+            or prepared.owner is not self
+            or prepared.claimed
+        ):
+            raise WorkConflict("registered delivery handoff is unavailable")
+        prepared.claimed = True
+        binding, port, sent = prepared.binding, prepared.port, prepared.sent
+        try:
+            port.close()
+        except Exception:
+            # Closing an unstarted capability cannot prove process cessation or
+            # release scheduler ownership. Keep the sent fence and try reconciliation.
+            logger.error("Could not close an unstarted registered delivery capability")
+
+        def reconcile():
+            return WorkService(self.repository, origins=self.origins)._reconcile(
+                sent,
+                actor_id=binding.principal_id,
+            )
+
+        try:
+            context = contextvars.copy_context()
+            cleanup = asyncio.get_running_loop().run_in_executor(
+                None,
+                context.run,
+                reconcile,
+            )
+        except Exception:
+            # The sent attempt remains fenced if the executor is already shutting down.
+            logger.error("Unstarted registered delivery requires reconciliation")
+            return
+        self._pending_abandonments.add(cleanup)
+
+        def observe_cleanup(future):
+            self._pending_abandonments.discard(future)
+            try:
+                future.result()
+            except asyncio.CancelledError:
+                logger.error("Unstarted registered delivery reconciliation was cancelled")
+            except Exception:
+                logger.error("Unstarted registered delivery requires reconciliation")
+
+        cleanup.add_done_callback(observe_cleanup)
+        await asyncio.shield(cleanup)
+
+    async def _deliver_registered(self, binding, port):
+        with self.repository.read_snapshot() as connection:
+            self.contracts._revalidate_order(
+                connection,
+                binding.attempt_id,
+                generation=binding.generation,
+            )
+            if not self.deliveries._executable(connection, binding):
+                raise WorkConflict("delivery adapter is unavailable")
+            self.deliveries._load(connection, binding)
+            snapshot = DelegationSnapshots._load_authorized(
+                connection,
+                connection.execute(
+                    "SELECT * FROM work_delegation_snapshots WHERE id=%s",
+                    (binding.contract.snapshot.id,),
+                ).fetchone(),
+            )
+            adapter, payload = self.deliveries._restore(connection, binding)
+        return await adapter.send(binding, payload, snapshot, port)
+
+    async def wait_for_dispatch_cleanup(self, *, propagate_cancellation=False) -> None:
+        """Join abandonment owners; shutdown keeps draining through cancellation."""
+        while self._pending_abandonments:
+            owners = tuple(self._pending_abandonments)
+            cleanup = asyncio.gather(
+                *owners,
+                return_exceptions=True,
+            )
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    if propagate_cancellation:
+                        raise
+                    continue
+            cleanup.result()
+            # A completed owner may have no discard callback (for example when
+            # a caller registered the cleanup Future directly). Retire only the
+            # owners from this joined snapshot: callbacks may have transferred
+            # ownership to a new reconciliation Future while the gather ran.
+            self._pending_abandonments.difference_update(owner for owner in owners if owner.done())
+
+    async def _prepare_dispatch_async(self, *, registered_only=False):
         worker = asyncio.create_task(
             asyncio.to_thread(
                 self._prepare_dispatch,
@@ -1559,18 +1713,19 @@ class WorkAdmission:
             )
         )
         try:
-            prepared = await asyncio.shield(worker)
+            return await asyncio.shield(worker)
         except asyncio.CancelledError:
-            cleanup = asyncio.create_task(self._abandon_preparation(worker))
-            self._pending_abandonments.add(cleanup)
-            cleanup.add_done_callback(self._pending_abandonments.discard)
+            self._abandon_preparation(worker)
+            # The first cancellation waits for cleanup. A further cancellation
+            # may release this caller while the registered worker/reconciliation
+            # remains owned; shutdown uses the default cancellation-resistant drain.
             try:
-                await asyncio.shield(cleanup)
+                await self.wait_for_dispatch_cleanup(propagate_cancellation=True)
             except asyncio.CancelledError:
-                pass  # Retained cleanup continues; a dying process leaves sent.
+                pass
             raise
-        if prepared is None:
-            return None
+
+    async def _send_prepared_dispatch(self, prepared, send) -> dict:
         binding, port, sent = prepared
 
         async def deliver():
@@ -1579,8 +1734,20 @@ class WorkAdmission:
             finally:
                 port.close()
 
-        return await WorkService(self.repository, origins=self.origins)._send_committed_async(
-            sent,
-            deliver,
-            actor_id=binding.principal_id,
-        )
+        try:
+            return await WorkService(self.repository, origins=self.origins)._send_committed_async(
+                sent,
+                deliver,
+                actor_id=binding.principal_id,
+            )
+        finally:
+            # Also close if writer registration fails before ``deliver`` starts.
+            port.close()
+
+    async def _dispatch_async(self, send, *, registered_only=False):
+        if not callable(send):
+            raise ValueError("server delivery adapter required")
+        prepared = await self._prepare_dispatch_async(registered_only=registered_only)
+        if prepared is None:
+            return None
+        return await self._send_prepared_dispatch(prepared, send)

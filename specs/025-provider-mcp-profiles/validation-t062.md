@@ -1,6 +1,6 @@
 # T062 — Restart-safe OpenCode private configuration ownership
 
-2026-10-21. **Candidate; actual committed-source acceptance remains pending.**
+2026-10-21. **Implementation integrated in3aef365a; the full T060 committed-source repetition remains pending.**
 
 ## Reproduction and first incorrect boundary
 
@@ -39,3 +39,7 @@ Composition verdict for the candidate: **PASS WITH RISKS**, bounded to tested ow
 Final bounded private Graphify refresh:162 AST nodes/415 edges, five directly affected source/test files, zero model tokens; generated main graph preserved. Final scoped diff and documentation-link checks passed. Repository evidence records the durable conclusions; the previously identified vault-identity mismatch remains and no substitute vault was accessed. Candidate commit/source-bound actual repetition is the next gate.
 
 Candidate code committed/pushed to main as **3aef365a**, remote exact SHA verified. Normal commit hook succeeded but lint-staged matched no configured root Python task; actual manual Black/isort six-file checks above provide formatting evidence. Staged and44-commit range secret scans passed. Actual repeated T060-r5 failed before API restart on a native upstream endpoint-unavailable retry, with no tool calls/message/final receipt. It did verify zero private roots after session deletion before outer teardown, all owned cleanup and operator/source/binary preservation. This does **not** satisfy postrestart ownership/full T060 acceptance; both remain open. [Retained details](validation-t060.md).
+
+## Current-source bounded resource check
+
+The subsequent T063 collaboration/v1 native pilot on9cc35033 passed API restart with stable native identities/metadata and immediate zero provider roots plus capability removal after HTTP200 session deletion, before outer teardown. [Pilot scope and limits](validation-t063.md). This independently verifies the ownership-retirement boundary for that one profile/dialect; no model task was sent, so it does not replace T062’s full unchanged two-message T060 predicate. Current-source T060-r6 persisted one message but never reached a completed sender result or API restart within its original budget; its failed receipt remains separate.

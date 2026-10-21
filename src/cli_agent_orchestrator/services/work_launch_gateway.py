@@ -69,6 +69,22 @@ class _ComposedLaunchRuntimeProvider:
         """Use the same server-owned runtime for its internal queue dispatcher."""
         return await self._runtime.dispatch_registered_next()
 
+    async def prepare_registered_dispatch(self):
+        """Admit one registered order and hand off its private delivery capability."""
+        return await self._runtime.prepare_registered_dispatch()
+
+    async def deliver_registered_dispatch(self, prepared) -> dict:
+        """Run the already-admitted registered delivery to its full result."""
+        return await self._runtime.deliver_registered_dispatch(prepared)
+
+    async def abandon_registered_dispatch(self, prepared) -> None:
+        """Reconcile a committed handoff that could not acquire a delivery task."""
+        await self._runtime.abandon_registered_dispatch(prepared)
+
+    async def wait_for_registered_dispatch_cleanup(self) -> None:
+        """Drain preparation abandonment before the shared runtime is released."""
+        await self._runtime.wait_for_registered_dispatch_cleanup()
+
 
 @dataclass(frozen=True, slots=True)
 class DurableLaunchRequest:
@@ -112,6 +128,56 @@ class DurableLaunchGateway:
             )
         result: dict | None = await dispatcher()
         return result
+
+    async def prepare_registered_dispatch(self):
+        """Prepare one order without holding the API dispatcher for its delivery."""
+        prepare = getattr(self._launch_runtime_provider, "prepare_registered_dispatch", None)
+        if not callable(prepare) or not all(
+            callable(getattr(self._launch_runtime_provider, name, None))
+            for name in ("deliver_registered_dispatch", "abandon_registered_dispatch")
+        ):
+            raise self._error(
+                "launch_runtime_unavailable",
+                "Trusted launch runtime is unavailable.",
+                retryable=False,
+                required_action="inspect_server_configuration",
+            )
+        return await prepare()
+
+    async def deliver_registered_dispatch(self, prepared) -> dict:
+        """Complete one prepared order through its exact composed runtime."""
+        deliver = getattr(self._launch_runtime_provider, "deliver_registered_dispatch", None)
+        if not callable(deliver):
+            raise self._error(
+                "launch_runtime_unavailable",
+                "Trusted launch runtime is unavailable.",
+                retryable=False,
+                required_action="inspect_server_configuration",
+            )
+        result: dict = await deliver(prepared)
+        return result
+
+    async def abandon_registered_dispatch(self, prepared) -> None:
+        """Close and reconcile a committed handoff that could not be delivered."""
+        abandon = getattr(self._launch_runtime_provider, "abandon_registered_dispatch", None)
+        if not callable(abandon):
+            raise self._error(
+                "launch_runtime_unavailable",
+                "Trusted launch runtime is unavailable.",
+                retryable=False,
+                required_action="inspect_server_configuration",
+            )
+        await abandon(prepared)
+
+    async def wait_for_registered_dispatch_cleanup(self) -> None:
+        """Join abandoned preparation cleanup when the provider owns any."""
+        drain = getattr(
+            self._launch_runtime_provider,
+            "wait_for_registered_dispatch_cleanup",
+            None,
+        )
+        if callable(drain):
+            await drain()
 
     @staticmethod
     def _error(

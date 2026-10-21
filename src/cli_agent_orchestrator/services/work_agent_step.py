@@ -1,6 +1,5 @@
 """Registered terminal and process delivery adapters for managed agent steps."""
 
-import asyncio
 from typing import Annotated
 
 from pydantic import StringConstraints
@@ -10,6 +9,7 @@ from cli_agent_orchestrator.models.work_contract import (
     FrozenContractModel,
     Identity,
 )
+from cli_agent_orchestrator.services.work_blocking import run_owned_blocking
 from cli_agent_orchestrator.services.work_delivery import DeliveryAdapter
 from cli_agent_orchestrator.services.work_service import DeliveryObservation
 from cli_agent_orchestrator.services.work_terminal import (
@@ -88,11 +88,11 @@ async def _deliver_process(binding, payload, snapshot, port):
     if len(worker_input) > 32768:
         raise ValueError("frozen agent-step content exceeds the process input bound")
     command_token = binding.contract.executable_identities[0].command_token
-    # The process capability has no terminal methods. Cancellation remains
-    # uncertain in WorkService and never permits implicit redelivery.
+    # The process capability has no terminal methods. Keep its port owned until
+    # Docker cleanup returns, even if the awaiting delivery task is cancelled.
     from cli_agent_orchestrator.backends.docker_backend import DockerWorkExecution
 
-    execution = await asyncio.to_thread(port.execute_process, command_token, worker_input)
+    execution = await run_owned_blocking(port.execute_process, command_token, worker_input)
     if type(execution) is not DockerWorkExecution or (
         type(execution.returncode) is not int
         or not 0 <= execution.returncode <= 255
