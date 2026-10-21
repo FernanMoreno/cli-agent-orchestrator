@@ -1659,6 +1659,7 @@ def _write_v2_configuration_with_isolated_native_mcp(
     source_auth: Path | None = None,
     source_credential_db: Path | None = None,
     selected_model: str | None = None,
+    selected_agent_source: tuple[str, str] | None = None,
 ) -> Any:
     """Isolate only the serialized child config, after provider discovery."""
     isolated_config = _isolate_native_mcp_for_v2_writer(source_config)
@@ -1670,6 +1671,7 @@ def _write_v2_configuration_with_isolated_native_mcp(
         source_auth=source_auth,
         source_credential_db=source_credential_db,
         selected_model=selected_model,
+        selected_agent_source=selected_agent_source,
     )
 
 
@@ -2614,6 +2616,7 @@ def run(
             source_auth: Path | None = None,
             source_credential_db: Path | None = None,
             selected_model: str | None = None,
+            selected_agent_source: tuple[str, str] | None = None,
         ) -> Any:
             return _write_v2_configuration_with_isolated_native_mcp(
                 production_v2_writer,
@@ -2624,6 +2627,7 @@ def run(
                 source_auth=source_auth,
                 source_credential_db=source_credential_db,
                 selected_model=selected_model,
+                selected_agent_source=selected_agent_source,
             )
 
         opencode_v2.write_v2_configuration = isolated_v2_writer
