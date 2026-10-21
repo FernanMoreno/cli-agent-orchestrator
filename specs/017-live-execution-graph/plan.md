@@ -21,9 +21,13 @@ The map is an observation surface: it never starts, resends, cancels or answers 
 
 - **Not available** (backend blocker, documented — not worked around):
   - `caller_id` is stored on `TerminalModel` but **not** returned by `list_terminals_by_session`
-    / `GET /sessions/{name}`. Delegation/creator edges therefore cannot be drawn. Pending
-    contract: add `caller_id` (nullable) to the terminal row projection, read-only, same
-    scopes as the session endpoint. Owner: backend (Codex lane).
+    / `GET /sessions/{name}`. Even when exposed it is creation/callback metadata, not proof of
+    supervision, delegation or authority. Pending contract: a typed relation (kind, provenance,
+    observed-at) authorised against both endpoints. Until then the map draws no creator or
+    delegation edges. Owner: backend (Codex lane).
+  - The inbox endpoint returns message bodies; the map discards them, but a metadata-only
+    projection with per-resource ACL is still pending. Inbox pages are `created_at ASC LIMIT`
+    (oldest first), so the map labels them as a first page, not as recent activity.
   - No aggregated topology snapshot nor stream with per-origin cursors. The first slice
     uses explicit refresh/polling and declares freshness; it never shows "live".
   - Wait-graph task ids are not joined to terminals; waits are shown as their own group.
