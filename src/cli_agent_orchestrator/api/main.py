@@ -341,8 +341,8 @@ class CreateTerminalBody(BaseModel):
     Carries the deferred-init message payload OUT of the query string:
     prompt content can be large (URL-length 414 risk) and sensitive (query
     strings are routinely captured in HTTP access logs and traces). Routing
-    fields (provider, defer_init, etc.) stay as query params; only the
-    message content lives here.
+    fields (provider, defer_init, etc.) stay as query params. Message
+    content and optional validated discovery group/metadata live here.
     """
 
     initial_message: Optional[str] = None
@@ -354,6 +354,19 @@ class CreateTerminalBody(BaseModel):
             "cannot be confirmed. False is an explicit at-most-once policy."
         ),
     )
+
+    group: Optional[List[str]] = None
+    metadata: Optional[Dict] = None
+
+    @field_validator("group")
+    @classmethod
+    def validate_group(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        return _check_group_size(v)
+
+    @field_validator("metadata")
+    @classmethod
+    def validate_metadata(cls, v: Optional[Dict]) -> Optional[Dict]:
+        return _check_metadata_size(v)
 
 
 def _check_group_size(group: Optional[List[str]]) -> Optional[List[str]]:
@@ -417,8 +430,6 @@ class CreateSessionBody(CreateTerminalBody):
     """
 
     env_vars: Optional[Dict[str, str]] = None
-    group: Optional[List[str]] = None
-    metadata: Optional[Dict] = None
 
     @field_validator("env_vars")
     @classmethod
@@ -429,16 +440,6 @@ class CreateSessionBody(CreateTerminalBody):
             return validate_forwarded_env(value)
         except ForwardedEnvError as exc:
             raise ValueError(str(exc)) from None
-
-    @field_validator("group")
-    @classmethod
-    def validate_group(cls, v: Optional[List[str]]) -> Optional[List[str]]:
-        return _check_group_size(v)
-
-    @field_validator("metadata")
-    @classmethod
-    def validate_metadata(cls, v: Optional[Dict]) -> Optional[Dict]:
-        return _check_metadata_size(v)
 
 
 RESUME_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{7,63}\Z")
@@ -4864,6 +4865,8 @@ async def create_terminal_in_session(
             model=model,
             use_worktree=use_worktree,
             idempotency_key=idempotency_key,
+            group=body.group if body else None,
+            metadata=body.metadata if body else None,
             creation_principal=await optional_creation_principal(request),
         )
         return result

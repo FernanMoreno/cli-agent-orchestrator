@@ -260,3 +260,10 @@ T066 añade admisión explícita y autorizada de la generación de reemplazo, co
 
 
 Aceptación externa posterior, 2026-10-22: T064/T065/T066 ya completaron el recorrido Work real en main 2b3cb03c, **2 mensajes/2 ACK**, respuesta perdida sin duplicado, reinicio/replay AG-UI, generaciones2 del receptor y emisor, dos procesos reales simultáneos y limpieza propia completa. [Recibo sanitizado](../specs/025-provider-mcp-profiles/validation-t066-external-receipt.json). La preparación pendiente descrita arriba es el estado anterior a este recibo. OC-05 conserva pendiente el contrato genérico/nativo en la fuente final; OC-06 conserva escala y latencia de control. No se cierran los fallos históricos ni los gates globales.
+
+
+## Corrección de descubrimiento T068 — 2026-10-22
+
+La nueva ejecución nativa v2 R9b falló antes de mensajes: el terminal emisor recibió `group=null` aunque se envió el grupo correcto. La limpieza propia terminó completa y la autenticación del operador quedó intacta. Se identificaron dos omisiones de API: el cuerpo de creación de terminal adicional descartaba `group`/`metadata` y la ruta no los reenviaba al servicio. La corrección comparte los validadores existentes con la creación inicial y transmite ambos campos; conserva permisos, identidad y límites.
+
+Doce casos HTTP fallaron antes del cambio; la regresión posterior pasó **471 pruebas en diez módulos**, estilo de ambos archivos, tipado409 y composición5/0, con aprobación de Claude en modo lectura. [Fallo real, corrección y límites](../specs/025-provider-mcp-profiles/validation-t068.md). T068/T011/T038 mantienen pendiente la aceptación nativa nueva tras publicar y actualizar los hashes del lanzador; no se elimina la comprobación del grupo ni se reutiliza el recibo fallido.

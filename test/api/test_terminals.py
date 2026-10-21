@@ -1427,6 +1427,67 @@ class TestCreateSessionWithGroupAndMetadata:
             assert call_kwargs["metadata"] is None
 
 
+class TestCreateAdditionalTerminalWithGroupAndMetadata:
+    """Additional terminals must retain discovery labels like initial sessions."""
+
+    @pytest.mark.parametrize("defer_init", [False, True])
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"group": ["tenant_1", "project_5"], "metadata": {"task": "sender"}},
+            {"group": [], "metadata": {}},
+            {"group": None, "metadata": None},
+            None,
+        ],
+    )
+    def test_discovery_fields_survive_additional_terminal_creation(self, client, defer_init, body):
+        expected_group = body.get("group") if body else None
+        expected_metadata = body.get("metadata") if body else None
+        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
+            mock_svc.create_terminal = AsyncMock(
+                return_value=Terminal(
+                    **_terminal_dict(group=expected_group, metadata=expected_metadata)
+                )
+            )
+            response = client.post(
+                "/sessions/test-session/terminals",
+                params={
+                    "provider": "kiro_cli",
+                    "agent_profile": "developer",
+                    "defer_init": defer_init,
+                },
+                json=body,
+            )
+            assert response.status_code == 201
+            kwargs = mock_svc.create_terminal.call_args.kwargs
+            assert kwargs["group"] == expected_group
+            assert kwargs["metadata"] == expected_metadata
+            assert kwargs["defer_init"] is defer_init
+            assert kwargs["new_session"] is False
+            assert response.json()["group"] == expected_group
+            assert response.json()["metadata"] == expected_metadata
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"group": "tenant_1"},
+            {"metadata": ["invalid"]},
+            {"group": ["tenant"] * (TERMINAL_GROUP_MAX_ELEMENTS + 1)},
+            {"metadata": {"large": "x" * TERMINAL_METADATA_MAX_BYTES}},
+        ],
+    )
+    def test_invalid_discovery_body_rejected_before_service(self, client, body):
+        with patch("cli_agent_orchestrator.api.main.terminal_service") as mock_svc:
+            mock_svc.create_terminal = AsyncMock(return_value=Terminal(**_terminal_dict()))
+            response = client.post(
+                "/sessions/test-session/terminals",
+                params={"provider": "kiro_cli", "agent_profile": "developer"},
+                json=body,
+            )
+            assert response.status_code == 422
+            mock_svc.create_terminal.assert_not_awaited()
+
+
 class TestUpdateTerminalGroupEndpoint:
     """#432: PATCH /terminals/{id}/group."""
 
