@@ -722,7 +722,9 @@ class OpenCodeCliProvider(BaseProvider):
             from cli_agent_orchestrator.utils.opencode_config import read_config
 
             validate_native_binding(profile, policy, read_config())
-        return NativeAgentSnapshot(agent_id, frontmatter.dumps(profile), policy)
+        # Native permissions use last-match ordering, including nested resource
+        # patterns. YAML's default key sorting can change the selected policy.
+        return NativeAgentSnapshot(agent_id, frontmatter.dumps(profile, sort_keys=False), policy)
 
     async def _initialize_validated(self) -> bool:
         if self._native_tool_policy is not None and self._cli_major != 2:

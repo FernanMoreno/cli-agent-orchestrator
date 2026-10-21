@@ -116,3 +116,8 @@ The first implementation adds an opt-in server policy primitive through CAO's ex
 
 - FR-034: The real OpenCode journey's isolated native writer adapters must accept and forward the production selected_agent_source snapshot explicitly, in both the outer installed adapter and the isolation helper. Preserve all existing private MCP/capability/environment handling and source inputs. Never recover from an unexpected keyword by dropping the frozen payload or rereading the changed agent.
 - SC-018: Reproduce the real native_initialize TypeError offline at both adapter boundaries, then verify exact frozen-payload forwarding and actual v2 serialization after the source file changes, plus absent/None legacy compatibility. Retain the failed real receipt, original deadlines, auth nonmutation and cleanup gates before a newly source-bound real retry.
+
+## Ordered frozen native permissions
+
+- FR-035: Freezing a native OpenCode profile must preserve insertion order of permission actions and nested resource patterns. YAML serialization must not sort those mappings: last-match native permission semantics and the real harness's exact canonical grant order remain intact. Do not relax the exact interaction predicate or grant permissions to repair a snapshot mismatch.
+- SC-019: Reproduce the resumed real scope mismatch with the actual native-profile loader, preserving the original strict predicate. Add a semantic overlapping-wildcard deny case and nested-resource order case through real v1/v2 writers. Keep immutable snapshot, payload, binding/version checks, existing refusal tests and real deadlines unchanged.
