@@ -19,6 +19,7 @@ The provider detects the following terminal states:
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -441,6 +442,8 @@ class OpenCodeCliProvider(BaseProvider):
         self._initialized = False
         self._cli_major = 1
         self._v2_config_dir = None
+        self._v1_config_dir: Path | None = None
+        self._owned_v1_config_dir: Path | None = None
         self._launch_runtime: tuple[str, dict[str, str]] | None = None
         self._runtime_probe_complete = False
         self._owned_v2_config_dir: Path | None = None
@@ -822,6 +825,48 @@ class OpenCodeCliProvider(BaseProvider):
                 _copy_private_state_bundle(source_credential_db, opencode_data)
             if self._v2_cao_mcp_server_name is not None:
                 (self._v2_data_home / "mcp-startup.log").touch(mode=0o600)
+        else:
+            from cli_agent_orchestrator.utils.opencode_config import read_config
+            from cli_agent_orchestrator.utils.opencode_v1 import write_v1_configuration
+
+            if self._native_agent_source is None:
+                raise ValueError("OpenCode v1 requires an installed native agent profile")
+            parent = CAO_HOME_DIR / "opencode-v1"
+            parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.chmod(parent, 0o700)
+            self._owned_v1_config_dir = Path(tempfile.mkdtemp(prefix="terminal-", dir=parent))
+            self._v1_config_dir = write_v1_configuration(
+                self._owned_v1_config_dir,
+                source_config=read_config(),
+                selected_agent_source=self._native_agent_source,
+                selected_model=self._model,
+                session_id=self.terminal_id,
+            )
+            for directory in ("home", "config", "data", "cache", "state", "tmp"):
+                (self._v1_config_dir / directory).mkdir(mode=0o700)
+            private_data = self._v1_config_dir / "data/opencode"
+            private_data.mkdir(mode=0o700)
+            runtime_environment = {
+                **dict(os.environ),
+                **(self._launch_runtime[1] if self._launch_runtime else {}),
+            }
+            source_data_value = runtime_environment.get("XDG_DATA_HOME", "").strip()
+            source_data_home = Path(source_data_value or str(Path.home() / ".local/share"))
+            source_auth = source_data_home / "opencode/auth.json"
+            inline_auth = None
+            try:
+                candidate = json.loads(runtime_environment.get("OPENCODE_AUTH_CONTENT", ""))
+                if isinstance(candidate, dict):
+                    inline_auth = candidate
+            except (TypeError, ValueError):
+                pass  # Native v1 also falls back to auth.json for malformed inline JSON.
+            if inline_auth is not None:
+                from cli_agent_orchestrator.utils.opencode_v2 import _private_write
+
+                _private_write(private_data / "auth.json", json.dumps(inline_auth) + "\n")
+            elif source_auth.is_file() or source_auth.is_symlink():
+                if not _copy_private_state_file(source_auth, private_data / "auth.json"):
+                    raise RuntimeError("OpenCode auth state disappeared during isolation")
         command = self._build_launch_command()
         # A generated native child starts at a shell prompt.  It must
         # never be inferred from a racy foreground-process probe: instruct the
@@ -941,6 +986,36 @@ class OpenCodeCliProvider(BaseProvider):
             executable, environment = self._launch_runtime
             cmd_parts[0] = executable
             env_pairs.append("PATH=" + shlex.quote(environment["PATH"]))
+        if self._cli_major == 1 and self._v1_config_dir is not None:
+            private = self._v1_config_dir
+            env_pairs[:2] = [
+                "OPENCODE_CONFIG=" + shlex.quote(str(private / "opencode.json")),
+                "OPENCODE_CONFIG_DIR=" + shlex.quote(str(private)),
+            ]
+            for key, relative in {
+                "HOME": "home",
+                "OPENCODE_TEST_HOME": "home",
+                "XDG_CONFIG_HOME": "config",
+                "XDG_DATA_HOME": "data",
+                "XDG_CACHE_HOME": "cache",
+                "XDG_STATE_HOME": "state",
+                "TMPDIR": "tmp",
+                "OPENCODE_DB": "data/opencode/opencode.db",
+            }.items():
+                env_pairs.append(key + "=" + shlex.quote(str(private / relative)))
+            env_pairs.append("OPENCODE_DISABLE_PROJECT_CONFIG=1")
+            cmd_parts = [
+                "/usr/bin/env",
+                "-u",
+                "OPENCODE_CONFIG_CONTENT",
+                "-u",
+                "OPENCODE_PERMISSION",
+                "-u",
+                "OPENCODE_AUTH_CONTENT",
+                "-u",
+                "OPENCODE_TUI_CONFIG",
+                *cmd_parts,
+            ]
         if self._cli_major == 2:
             # Private servers keep child sessions out of the operator's shared
             # v2 daemon; mini exposes agent/model flags and terminal input.
@@ -1337,6 +1412,10 @@ class OpenCodeCliProvider(BaseProvider):
     def cleanup(self) -> None:
         """Clean up OpenCode provider state."""
         self._initialized = False
+        if self._owned_v1_config_dir is not None:
+            shutil.rmtree(self._owned_v1_config_dir, ignore_errors=True)
+            self._owned_v1_config_dir = None
+            self._v1_config_dir = None
         if self._owned_v2_config_dir is not None:
             shutil.rmtree(self._owned_v2_config_dir, ignore_errors=True)
             self._owned_v2_config_dir = None

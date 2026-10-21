@@ -1,0 +1,27 @@
+# T040 — private legacy v1 foundation (partial)
+
+## Scope and reproduced boundaries
+
+CAOS is a multi-agent network. Isolation must hold between workers and against the operator, while coordination, supervision and knowledge remain separate role capabilities. This increment prepares the legacy/unmanaged v1 route; it does not lift the managed-v1 refusal or certify the network's real journeys.
+
+The initial six new tests failed against the shared-path launch (six failures). Native v1 now receives an owned unique private config/home/data/cache/state/temp root, an explicit private database path, the frozen selected agent and disabled project-config discovery. Compatible legacy auth is snapshotted read-only into owner-only private state; no v2 database is copied. Valid inline auth, including an empty object, is snapshotted before the inherited override is cleared. Invalid inline JSON follows native v1's file fallback. The command uses an absolute trusted env executable to clear late config/permission/auth-content/TUI overrides. No auth material is placed in command arguments. Cleanup, including initialization failure, removes only the current instance's owned root.
+
+A dedicated v1 writer preserves native permission objects rather than emitting v2 arrays. It validates MCP field shapes, native timeout/OAuth types, sanitizer collisions and directory ownership; unsupported raw managed declarations fail before emission. Literal MCP server name `servers` is distinguished from the v2 wrapper. The upstream ConfigAgentV1 normalizer demonstrated another boundary: agent-frontmatter tools must survive, write/patch map to edit, explicit permission rules take precedence, and global rules must stay global. Four new cases failed before correcting those scope/alias conversions. The deprecated root mode map can reintroduce unselected agents; its rejection has a separate regression that first produced one failure and 30 passing controls.
+
+Pinned upstream reference: [v1 agent normalization](https://github.com/anomalyco/opencode/blob/53d1eabb61e21162157817bf677da0a4ad3332e3/packages/core/src/v1/config/agent.ts), [configuration loading](https://github.com/anomalyco/opencode/blob/53d1eabb61e21162157817bf677da0a4ad3332e3/packages/opencode/src/config/config.ts). The existing release pin is unchanged.
+
+## Offline verification
+
+Final source-bound results: **265 passing offline provider/configuration contracts**, including **28 cases in the new v1 isolation module** and three existing managed-v1 refusal cases. Zero failures, errors or skips; two preexisting Pydantic class-config deprecation warnings. Canonical mypy passed **405 source files**, Black/isort passed the three changed Python files, and project composition kept **5 contracts, 0 broken**. Final source-bound results are recorded in the private t040 receipts. The new module exercises two simultaneously initialized mocked roles, separate frozen prompts/configuration/state, and independent cleanup. It also verifies source configuration/auth nonmutation, private modes, exact selected model, malformed declarations and continued managed-v1 refusal. Provider regression tests use mocked launch/readiness and a synthetic shell executable; they never run the pinned vendor binary, a model or PostgreSQL.
+
+An intermediate inline-auth regression produced four failures from a missing json import; it was corrected, and that receipt is retained. Earlier failures are not replaced by the final passing result. Coverage settings and default markers remain unchanged; scoped unit coverage is not a global coverage gate.
+
+## Composition review (Codex only)
+
+Changed subsystems: v1 configuration serialization and provider launch/state cleanup. Reviewed neighbors: frozen native profile loading, runtime executable resolution, private credential-copy helper, protected MCP overlay, v2 serializer, existing initialization rollback and native policy refusal. Config and auth are copied, never updated at source; there is no database migration, API/event/message schema change, task dispatch or transaction. Failure propagation uses the existing initialization cleanup path. No shared mutable terminal directory is introduced. The two-role offline scenario checks ownership and noninterference rather than real scheduling, ordering or backpressure.
+
+Filesystem/command contracts use temporary synthetic state and mocked backend/readiness because those boundaries are the object of this increment. Real native parsing, effective catalog/model, OAuth renewal, API-restart ownership recovery, terminal cancellation, control latency and message ordering remain untested here. Pact and real PostgreSQL do not establish this local serializer contract; the separate live message/AG-UI gates remain open. Verdict: PASS WITH RISKS for the bounded offline foundation only; full T040/T037 acceptance remains open.
+
+## Explicit deferrals
+
+The user chose to keep all real OpenCode validation pending, regardless of later memory recovery. No native config/catalog probe, authentication, provider/model journey, PostgreSQL run or historical job was executed in this increment. The 6,144 MiB real/intensive floor is unchanged. T032's expanded suite and two stdio cases remain separately deferred. V1 managed profiles, pre-terminal profile validation, implicit native resource discovery and real restart recovery still require their own evidence. T037/T040, OC1-02–05, OC-05/06 and the wider OpenCode backlog remain open. No Claude, subagent, global installation or operator-login modification was used.

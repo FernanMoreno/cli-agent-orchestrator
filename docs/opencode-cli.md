@@ -371,3 +371,14 @@ and translated agent permissions/MCP settings. Install the agent profile before
 launching it. Native CAO MCP connectivity and the authorized tmux/Herdr matrix were
 accepted against 2.0.18; see the [personal deployment guide](personal-deployment.md)
 and [acceptance evidence](../specs/003-personal-deployment/completion-evidence.md).
+
+The legacy v1 launch now freezes the selected installed agent in a unique private
+configuration and uses private home, data, cache, state, temporary and database
+paths. Native v1 `permission` rules retain their syntax; unsupported managed
+profiles are still refused. Inherited late config/permission/auth-content
+overrides are cleared after compatible legacy auth is snapshotted privately.
+Operator state is read only, and cleanup removes the current terminal's owned
+directory. Offline contracts include two mocked agents with independent state
+and cleanup. Pinned v1 native config/catalog, real authentication and multi-agent
+journeys remain pending under the user's validation deferral; see
+[T040 evidence and limits](../specs/025-provider-mcp-profiles/validation-t040.md).

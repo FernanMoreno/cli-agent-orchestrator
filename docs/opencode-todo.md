@@ -151,3 +151,11 @@ Pasaron **181 pruebas** de catálogo/transporte/autoridad/preflight y ocho compr
 ## OC1-01 — binario v1 fijado
 
 Preparado OpenCode **1.18.35** en un directorio privado, separado del v2 **2.0.18** instalado. El archivo oficial Linux x64 baseline coincide con el SHA-256 publicado por GitHub y el ejecutable devuelve exactamente `1.18.35`. No hubo instalación global, copia de credenciales ni turno de modelo. [Pin público reproducible](../specs/025-provider-mcp-profiles/opencode-v1-pin.json) y [evidencia de preparación](../specs/025-provider-mcp-profiles/validation-t037.md). OC1-02–05 siguen pendientes: la ruta v1 debe aislar configuración/datos y aplicar perfiles privados antes de ejecutar aceptación real.
+
+## T040 parcial — aislamiento v1 entre agentes
+
+La ruta legada v1 prepara configuración, agente congelado, home, datos/auth, caché, estado, temporales y base de datos en un directorio privado por terminal. Mantiene la sintaxis nativa de permisos y rechaza perfiles administrados todavía no validados. Los overrides tardíos se eliminan del lanzamiento después de copiar el auth compatible en privado; el origen permanece intacto. El formato antiguo `mode` se rechaza porque puede introducir agentes no seleccionados.
+
+La red multiagente tiene una prueba offline con reviewer y worker inicializados simultáneamente: cada uno conserva su configuración/estado y limpiar uno no afecta al otro. Los permisos globales y del agente conservan sus ámbitos; `write`/`patch` se normalizan a `edit` según el código v1 fijado. Pasaron **265 contratos offline**, tipado de **405 archivos**, estilo y composición **5/0**. Esta evidencia no acredita coordinación, mensajes, cancelación, latencia o reinicio reales. [Resultados y límites de T040](../specs/025-provider-mcp-profiles/validation-t040.md).
+
+**Por decisión expresa del usuario, todas las pruebas reales OpenCode siguen pendientes aunque se recupere memoria.** T032 continúa aplazada por separado; T040/T037 y OC1-02–05/OC-05/06 permanecen abiertos. Codex trabaja solo; sin Claude ni subagentes.
