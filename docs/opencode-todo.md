@@ -46,7 +46,7 @@ Las tres herramientas del recorrido restringido son `cao_ask_user`, `cao_wait_fo
 
 - [x] OC1-01 Preparar un binario v1 con versión y procedencia fijadas, aislado del v2 instalado, sin reinstalación global.
 - [ ] OC1-02 Validar instalación del perfil antes de crear terminal; comprobar agente y modelo efectivos, evitando fallback silencioso.
-- [ ] OC1-03 Ejecutar prompt Unicode, respuesta con recibo, error de proveedor, timeout, cancelación y limpieza en v1 real.
+- [x] OC1-03 Ejecutar prompt Unicode, respuesta con recibo, error de proveedor, timeout, cancelación y limpieza en v1 real.
 - [ ] OC1-04 Verificar credenciales y configuración aisladas también en v1; el aislamiento de `OPENCODE_DB` de v2 no demuestra esta propiedad para v1.
 - [ ] OC1-05 Validar los perfiles MCP ampliados con la sintaxis de permisos de v1 y el recorrido preguntas/respuestas/ACK, mensajes y reinicio de API.
 
@@ -226,3 +226,5 @@ T053: candidato de interacción explícita nativa v1 con perfil v3, capacidad pr
 Primer arranque real T053: perfil/capacidad/catálogo/conexión correctos, pero el guard de memoria detuvo el recorrido antes del modelo (5.867 MiB <6.144). Limpieza completa; preguntas/ACK/reinicio siguen abiertos.
 
 T054/T055: el diagnóstico sin credenciales mostró fallback silencioso de Go a Big Pickle; LAST no aceptó resultado final. El candidato T055 comprueba el inventario nativo exacto antes del lanzamiento: 24 contratos/527 pruebas pasaron. Negativa real y control autenticado pasaron en4f032e95: HTTP400 sin tarea/fallback y modelo/Unicode/recibo/completed correctos con clave activa; limpieza íntegra. OC1 completo sigue abierto. [Diagnóstico](../specs/025-provider-mcp-profiles/validation-t054.md) y [corrección/límites](../specs/025-provider-mcp-profiles/validation-t055.md).
+
+Actualización 2026-10-21, T058: [timeout activo y cancelación en curso](../specs/025-provider-mcp-profiles/validation-t058.md) pasaron en5d6262d0. La herramienta nativa ejecutó sleep120, la API agotó el presupuesto75 con504/processing/sin reenvíos ni recibo; el proceso seguía vivo y fue detenido por la cancelación de su generación. Se verificaron rechazos409, nuevo CLI/modelo, un/cero árboles privados y limpieza íntegra. Esto cierra OC1-03 con los controles Unicode/error previos; no explica los timeouts históricos ni cierra perfiles/mensajes/instalación.
