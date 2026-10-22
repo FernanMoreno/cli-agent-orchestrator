@@ -1,0 +1,121 @@
+{
+  "schema": "spec025.t060.opencode-v2-messages.private.v10",
+  "utc_started": "2026-10-22T14:40:34.206473+00:00",
+  "utc_finished": "2026-10-22T14:42:58.479189+00:00",
+  "source_head": "46c075438cb94db1b1b22030e4db17c2bb9799dd",
+  "source_head_expected": "46c075438cb94db1b1b22030e4db17c2bb9799dd",
+  "source_file_count": 507,
+  "source_fingerprint_sha256": "13c78892cb7e98c9c701126679f90ef13bb83b0cffbad281ed492677b4b868b6",
+  "model": "opencode-go/glm-5.3-flash",
+  "binary_sha256_expected": "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f",
+  "postgres_container_id_expected": "e2b7b35a921276dc80b2caf93863b8b00fd3b7ab9a5dfd610999fe7638035b6b",
+  "postgres_image_id_expected": "sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336",
+  "model_catalog": {
+    "source": "https://models.opencode.ai/api.json",
+    "observed_at_utc": "2026-10-22T14:40:38.337901+00:00",
+    "eligible": true,
+    "reason": "eligible",
+    "status": "unspecified",
+    "http_status": 200,
+    "catalog_sha256": "325ce115cb0557facc948295a7a5d4197820cfb0e55289c5fe34838cee52cb1b",
+    "catalog_bytes": 6053826
+  },
+  "memory_admissions_mib": {
+    "initial": 7905,
+    "production_profile_install": 7883,
+    "install_receiver": 7880,
+    "install_sender": 8485,
+    "api_start": 8358,
+    "terminal_receiver": 8234,
+    "terminal_sender": 7880,
+    "model_phase_1_sender": 7489,
+    "model_phase_1_receiver": 7489,
+    "model_phase_1_start": 7482,
+    "receiver_phase_1_started": 7403
+  },
+  "receiver_create_http_status": 201,
+  "sender_create_http_status": 201,
+  "receiver_operation_permissions_exact": true,
+  "sender_operation_permissions_exact": true,
+  "receiver_model_ready": true,
+  "sender_model_ready": true,
+  "error_code": "model_phase_exceeded_75_seconds",
+  "elapsed_seconds": 137.32,
+  "success": false,
+  "cleanup_session_delete_http_status": 200,
+  "native_provider_roots_immediately_after_delete": 0,
+  "capability_files_immediately_after_delete": 0,
+  "api_cleanup": true,
+  "tmux_cleanup": true,
+  "postgres_cleanup": true,
+  "cleanup_failures": [],
+  "operator_auth_unchanged": true,
+  "source_unchanged": true,
+  "binary_unchanged": true,
+  "runner_unchanged": true,
+  "python_interpreter_unchanged": true,
+  "private_state_removed": true,
+  "postgres_cleanup_deferred": false,
+  "private_receipt_sha256": "864d995c3457748c777025b4f6bb7c57d3d449bc8c496eabce4a87c3155b4da5",
+  "closed_runner_sha256": "936de72a3a7c321e1995b164b71e38de05dbc638a25a1bd3b58c1e304e253ccb",
+  "opening": {
+    "utc": "2026-10-22T14:40:34.070170+00:00",
+    "memory_mib": 7654,
+    "closed_runner_sha256": "936de72a3a7c321e1995b164b71e38de05dbc638a25a1bd3b58c1e304e253ccb",
+    "opened_runner_sha256": "2af2e366cbc0bc530cbafa9eb36525061e87670e9b4ad0f106feac9d70246e32",
+    "opened_manifest_sha256": "2c8467d54425357a5b4fe8eb97b95cee8575dc4620db727f0916bbf241d9be0e",
+    "gate_only_ast_delta": true,
+    "peer_job": "b23f722b9f8749f49806a29ee64d0e89"
+  },
+  "phases": [
+    {
+      "name": "before_restart",
+      "receiver_ack_exact": null,
+      "elapsed_seconds": 85.565,
+      "sender_model_within_75_seconds": true,
+      "receiver_model_within_75_seconds": false,
+      "sender_model_seconds": 16.054,
+      "receiver_model_seconds": null,
+      "model_seconds": 16.054,
+      "last_receipt_unicode_verified": true,
+      "durable_turn_completed": true,
+      "receiver_turn_completed_once": false
+    }
+  ],
+  "observed_tools": {
+    "sender_catalog": [
+      "list_siblings",
+      "send_message"
+    ],
+    "sender_completed_calls": {
+      "list_siblings": 1,
+      "send_message": 1
+    },
+    "receiver_catalog": [],
+    "receiver_calls": 0
+  },
+  "pg_summary": {
+    "rows": 1,
+    "statuses": [
+      "delivered"
+    ],
+    "message_content_published": false
+  },
+  "receiver_first_reconcile": {
+    "observed_elapsed_seconds": 19.917971,
+    "turn_sequence": 1,
+    "turn_completed": 0,
+    "turn_closed": false
+  },
+  "limits": [
+    "First phase failed; no restart/second phase acceptance",
+    "Saved viewport belongs to sender; receiver response not captured",
+    "Prompt echo markers do not prove response/retry/provider attribution",
+    "No LongCat, Work, profile-global or global acceptance credit"
+  ],
+  "offline_synthetic_probe": {
+    "passed": true,
+    "cases": 40,
+    "actual_cause_proved": false
+  }
+}
