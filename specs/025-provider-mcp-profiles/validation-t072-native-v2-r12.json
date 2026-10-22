@@ -1,0 +1,181 @@
+{
+  "schema": "spec025.t060.opencode-v2-messages.private.v12",
+  "utc_started": "2026-10-22T15:57:07.314106+00:00",
+  "utc_finished": "2026-10-22T15:59:05.156792+00:00",
+  "source_head": "c93b1be7b8ef95926a16b4626b9065d0a7ea9c63",
+  "source_file_count": 507,
+  "source_fingerprint_sha256": "13c78892cb7e98c9c701126679f90ef13bb83b0cffbad281ed492677b4b868b6",
+  "model": "opencode-go/glm-5.3-flash",
+  "binary_sha256_expected": "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f",
+  "memory_admissions_mib": {
+    "initial": 8576,
+    "production_profile_install": 8570,
+    "install_receiver": 8570,
+    "install_sender": 8568,
+    "api_start": 8472,
+    "terminal_receiver": 8379,
+    "terminal_sender": 7842,
+    "model_phase_1_sender": 7394,
+    "model_phase_1_receiver": 7394,
+    "model_phase_1_start": 7411,
+    "receiver_phase_1_started": 7294,
+    "api_restart": 7272
+  },
+  "error_code": "terminal_lifecycle_not_durable",
+  "elapsed_seconds": 111.448,
+  "success": false,
+  "lifecycle_observations": {
+    "phase_1_before": {
+      "receiver": {
+        "status": "idle",
+        "turn_sequence": 0,
+        "turn_sequence_valid": true,
+        "turn_completed": 0,
+        "turn_completed_valid": true,
+        "turn": {
+          "http_status": 200,
+          "projection_status": "valid",
+          "state": "none",
+          "reason": "none",
+          "attempts": 0,
+          "generation_present": false
+        }
+      },
+      "sender": {
+        "status": "idle",
+        "turn_sequence": 0,
+        "turn_sequence_valid": true,
+        "turn_completed": 0,
+        "turn_completed_valid": true,
+        "turn": {
+          "http_status": 200,
+          "projection_status": "valid",
+          "state": "none",
+          "reason": "none",
+          "attempts": 0,
+          "generation_present": false
+        }
+      }
+    },
+    "before_restart": {
+      "receiver": {
+        "status": "completed",
+        "turn_sequence": 1,
+        "turn_sequence_valid": true,
+        "turn_completed": 1,
+        "turn_completed_valid": true,
+        "turn": {
+          "http_status": 200,
+          "projection_status": "valid",
+          "state": "verified",
+          "reason": "none",
+          "attempts": 0,
+          "generation_present": true
+        }
+      },
+      "sender": {
+        "status": "completed",
+        "turn_sequence": 1,
+        "turn_sequence_valid": true,
+        "turn_completed": 1,
+        "turn_completed_valid": true,
+        "turn": {
+          "http_status": 200,
+          "projection_status": "valid",
+          "state": "verified",
+          "reason": "none",
+          "attempts": 0,
+          "generation_present": true
+        }
+      }
+    },
+    "after_restart": {
+      "receiver": {
+        "status": "completed",
+        "turn_sequence": 0,
+        "turn_sequence_valid": true,
+        "turn_completed": 0,
+        "turn_completed_valid": true,
+        "turn": {
+          "http_status": 200,
+          "projection_status": "valid",
+          "state": "verified",
+          "reason": "none",
+          "attempts": 0,
+          "generation_present": true
+        }
+      },
+      "sender": {
+        "status": "unknown",
+        "turn_sequence": 0,
+        "turn_sequence_valid": true,
+        "turn_completed": 0,
+        "turn_completed_valid": true,
+        "turn": {
+          "http_status": 200,
+          "projection_status": "valid",
+          "state": "verified",
+          "reason": "none",
+          "attempts": 0,
+          "generation_present": true
+        }
+      }
+    }
+  },
+  "cleanup_session_delete_http_status": 200,
+  "native_provider_roots_immediately_after_delete": 0,
+  "capability_files_immediately_after_delete": 0,
+  "api_restart_process_changed": true,
+  "postgres_target_identity_stable": true,
+  "api_cleanup": true,
+  "tmux_cleanup": true,
+  "postgres_cleanup": true,
+  "cleanup_failures": [],
+  "operator_auth_unchanged": true,
+  "source_unchanged": true,
+  "binary_unchanged": true,
+  "runner_unchanged": true,
+  "python_interpreter_unchanged": true,
+  "private_state_removed": true,
+  "private_receipt_sha256": "f635af7b109581184868822b46cac10d8ad0cf99d6fa7916c34532b58f10ec06",
+  "receiver_failure_diagnostic": {
+    "status": "captured",
+    "elapsed_ms": 61,
+    "within_10_seconds": true,
+    "turn": {
+      "http_status": 200,
+      "projection_status": "valid",
+      "state": "verified",
+      "reason": "none",
+      "attempts": 0,
+      "generation_present": true
+    },
+    "receipt_row": {
+      "status": "captured",
+      "row_present": true,
+      "generation_present": true,
+      "receipt_sha256_present": true,
+      "generation_matches_turn": true,
+      "phase": "result_verified"
+    }
+  },
+  "phases": [
+    {
+      "name": "before_restart",
+      "sender_model_seconds": 13.721,
+      "receiver_model_seconds": 45.668,
+      "last_receipt_unicode_verified": true,
+      "receiver_turn_completed_once": true,
+      "one_exact_pg_api_message": true,
+      "agui_redacted_one_notification": true,
+      "agui_capture_stopped_cleanly": true
+    }
+  ],
+  "limits": {
+    "second_message_reached": false,
+    "eventual_sender_readiness_observed": false,
+    "r10_reconciliation_reproduced": false,
+    "r11_offending_values_known": false,
+    "native_acceptance_complete": false
+  }
+}

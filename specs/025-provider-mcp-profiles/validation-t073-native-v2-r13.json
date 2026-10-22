@@ -1,0 +1,276 @@
+{
+  "schema": "spec025.t060.opencode-v2-messages.private.v13",
+  "utc_started": "2026-10-22T16:07:57.651184+00:00",
+  "utc_finished": "2026-10-22T16:09:51.478239+00:00",
+  "source_head": "c93b1be7b8ef95926a16b4626b9065d0a7ea9c63",
+  "source_file_count": 507,
+  "source_fingerprint_sha256": "13c78892cb7e98c9c701126679f90ef13bb83b0cffbad281ed492677b4b868b6",
+  "model": "opencode-go/glm-5.3-flash",
+  "binary_sha256_expected": "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f",
+  "memory_admissions_mib": {
+    "initial": 8637,
+    "production_profile_install": 8639,
+    "install_receiver": 8639,
+    "install_sender": 8659,
+    "api_start": 8589,
+    "terminal_receiver": 8452,
+    "terminal_sender": 7860,
+    "model_phase_1_sender": 7385,
+    "model_phase_1_receiver": 7385,
+    "model_phase_1_start": 7385,
+    "receiver_phase_1_started": 7338,
+    "api_restart": 7253,
+    "model_phase_2_sender": 7266,
+    "model_phase_2_receiver": 7266,
+    "model_phase_2_start": 7259,
+    "receiver_phase_2_started": 7292
+  },
+  "elapsed_seconds": 107.281,
+  "success": true,
+  "lifecycle_observations": {
+    "phase_1_before": {
+      "receiver": {
+        "status": "idle",
+        "turn_sequence": 0,
+        "turn_sequence_valid": true,
+        "turn_completed": 0,
+        "turn_completed_valid": true,
+        "turn": {
+          "http_status": 200,
+          "projection_status": "valid",
+          "state": "none",
+          "reason": "none",
+          "attempts": 0,
+          "generation_present": false
+        }
+      },
+      "sender": {
+        "status": "idle",
+        "turn_sequence": 0,
+        "turn_sequence_valid": true,
+        "turn_completed": 0,
+        "turn_completed_valid": true,
+        "turn": {
+          "http_status": 200,
+          "projection_status": "valid",
+          "state": "none",
+          "reason": "none",
+          "attempts": 0,
+          "generation_present": false
+        }
+      }
+    },
+    "before_restart": {
+      "receiver": {
+        "status": "completed",
+        "turn_sequence": 1,
+        "turn_sequence_valid": true,
+        "turn_completed": 1,
+        "turn_completed_valid": true,
+        "turn": {
+          "http_status": 200,
+          "projection_status": "valid",
+          "state": "verified",
+          "reason": "none",
+          "attempts": 0,
+          "generation_present": true
+        }
+      },
+      "sender": {
+        "status": "completed",
+        "turn_sequence": 1,
+        "turn_sequence_valid": true,
+        "turn_completed": 1,
+        "turn_completed_valid": true,
+        "turn": {
+          "http_status": 200,
+          "projection_status": "valid",
+          "state": "verified",
+          "reason": "none",
+          "attempts": 0,
+          "generation_present": true
+        }
+      }
+    },
+    "after_restart": {
+      "receiver": {
+        "status": "completed",
+        "turn_sequence": 0,
+        "turn_sequence_valid": true,
+        "turn_completed": 0,
+        "turn_completed_valid": true,
+        "turn": {
+          "http_status": 200,
+          "projection_status": "valid",
+          "state": "verified",
+          "reason": "none",
+          "attempts": 0,
+          "generation_present": true
+        }
+      },
+      "sender": {
+        "status": "completed",
+        "turn_sequence": 0,
+        "turn_sequence_valid": true,
+        "turn_completed": 0,
+        "turn_completed_valid": true,
+        "turn": {
+          "http_status": 200,
+          "projection_status": "valid",
+          "state": "verified",
+          "reason": "none",
+          "attempts": 0,
+          "generation_present": true
+        }
+      }
+    },
+    "phase_2_before": {
+      "receiver": {
+        "status": "completed",
+        "turn_sequence": 0,
+        "turn_sequence_valid": true,
+        "turn_completed": 0,
+        "turn_completed_valid": true,
+        "turn": {
+          "http_status": 200,
+          "projection_status": "valid",
+          "state": "verified",
+          "reason": "none",
+          "attempts": 0,
+          "generation_present": true
+        }
+      },
+      "sender": {
+        "status": "completed",
+        "turn_sequence": 0,
+        "turn_sequence_valid": true,
+        "turn_completed": 0,
+        "turn_completed_valid": true,
+        "turn": {
+          "http_status": 200,
+          "projection_status": "valid",
+          "state": "verified",
+          "reason": "none",
+          "attempts": 0,
+          "generation_present": true
+        }
+      }
+    }
+  },
+  "restart_readiness": {
+    "receiver": {
+      "status": "completed",
+      "turn_sequence": 0,
+      "turn_sequence_valid": true,
+      "turn_completed": 0,
+      "turn_completed_valid": true,
+      "turn": {
+        "http_status": 200,
+        "projection_status": "valid",
+        "state": "verified",
+        "reason": "none",
+        "attempts": 0,
+        "generation_present": true
+      },
+      "ready_samples": 3
+    },
+    "sender": {
+      "status": "completed",
+      "turn_sequence": 0,
+      "turn_sequence_valid": true,
+      "turn_completed": 0,
+      "turn_completed_valid": true,
+      "turn": {
+        "http_status": 200,
+        "projection_status": "valid",
+        "state": "verified",
+        "reason": "none",
+        "attempts": 0,
+        "generation_present": true
+      },
+      "ready_samples": 3
+    }
+  },
+  "terminal_verified_receipts_stable_on_api_restart": true,
+  "terminal_lifecycle_stable_on_api_restart": true,
+  "native_process_identity_stable_on_api_restart": true,
+  "provider_root_identity_stable_on_api_restart": true,
+  "terminal_metadata_stable_on_api_restart": true,
+  "first_pg_api_row_stable_on_restart": true,
+  "two_exact_pg_api_messages": true,
+  "both_message_phases_passed": true,
+  "native_catalog_and_calls_exact": true,
+  "graceful_observer_seals_observed": true,
+  "observer_seal_seconds": 0.1,
+  "session_delete_http_status": 200,
+  "native_provider_roots_immediately_after_delete": 0,
+  "capability_files_immediately_after_delete": 0,
+  "api_restart_process_changed": true,
+  "postgres_target_identity_stable": true,
+  "api_cleanup": true,
+  "tmux_cleanup": true,
+  "postgres_cleanup": true,
+  "cleanup_failures": [],
+  "operator_auth_unchanged": true,
+  "source_unchanged": true,
+  "binary_unchanged": true,
+  "runner_unchanged": true,
+  "python_interpreter_unchanged": true,
+  "private_state_removed": true,
+  "private_receipt_sha256": "97faa21e1e3b170f2a451778f2c20a5448d2d1ddfbcb4991b4409276543fbd51",
+  "closed_runner_sha256": "30a39121349a1d018d72ea9253361990695c47c408cd17bc5c479f0e6931e15a",
+  "semantics": {
+    "terminal_lifecycle_stable": "settled ready local counters and exact verified durable receipts; not cross-process counter equality",
+    "nested_turn_http_status": "terminal GET containing the embedded turn, not separate turn request"
+  },
+  "phases": [
+    {
+      "name": "before_restart",
+      "sender_model_seconds": 16.9,
+      "receiver_model_seconds": 15.048,
+      "last_receipt_unicode_verified": true,
+      "durable_turn_completed": true,
+      "receiver_turn_completed_once": true,
+      "one_exact_pg_api_message": true,
+      "agui_redacted_one_notification": true,
+      "agui_capture_stopped_cleanly": true
+    },
+    {
+      "name": "after_restart",
+      "sender_model_seconds": 14.542,
+      "receiver_model_seconds": 6.055,
+      "last_receipt_unicode_verified": true,
+      "durable_turn_completed": true,
+      "receiver_turn_completed_once": true,
+      "one_exact_pg_api_message": true,
+      "agui_redacted_one_notification": true,
+      "agui_capture_stopped_cleanly": true
+    }
+  ],
+  "observed_tools": {
+    "sender": {
+      "catalog": [
+        "list_siblings",
+        "send_message"
+      ],
+      "completed_calls": {
+        "list_siblings": 1,
+        "send_message": 2
+      },
+      "unexpected_tool_count": 0,
+      "unexpected_call_count": 0
+    },
+    "receiver": {
+      "catalog": [],
+      "completed_calls": {},
+      "unexpected_tool_count": 0,
+      "unexpected_call_count": 0
+    }
+  },
+  "limits": {
+    "r10_cause_demonstrated": false,
+    "all_authentication_modes_accepted": false,
+    "global_scale_or_nfr_acceptance": false,
+    "work_message_acceptance_from_this_run": false
+  }
+}
