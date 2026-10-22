@@ -1,0 +1,81 @@
+{
+  "schema": "spec025.t060.v1-r13.sanitized.v1",
+  "source_head": "82237cae267673a14958047e3eca5a6e0b508167",
+  "source_pin_count": 505,
+  "binary_sha256": "77b2cfe4b97df6f15c3673b22100b9f79c711f25ecb9bf513bb82526b15d24fa",
+  "runner_sha256": "498cf839bc17ae6f0bc30993a5c37d73ea8633d060f11f3707e3ce855cdc7b64",
+  "private_receipt_sha256": "6f017a743347bf529160c5b4f023f4be9646c39e60c5c6ca0d4bf17d83e9413e",
+  "success": false,
+  "error_type": "AssertionError",
+  "error_code": "model_receipt_not_observed",
+  "elapsed_seconds": 140.36886016995413,
+  "stage_memory_mib": {
+    "initial_admission_mib": 9355,
+    "install_receiver_admission_mib": 9238,
+    "install_sender_admission_mib": 9201,
+    "api_start_admission_mib": 9165,
+    "terminal_receiver_admission_mib": 8863,
+    "terminal_sender_admission_mib": 8166,
+    "model_phase_0_admission_mib": 7443
+  },
+  "model_phase": {
+    "phase": 0,
+    "input_sequence": 1,
+    "input_returned_seconds": 2.32,
+    "phase_seconds": 75.03377655299846,
+    "deadline_seconds": 75,
+    "last_http_status_counts": {
+      "202": 125
+    },
+    "last_state_sample": {
+      "elapsed_seconds": 70.44,
+      "turn_state": "pending",
+      "terminal_status": "processing",
+      "terminal_turn_sequence": 1,
+      "terminal_turn_completed": 0
+    },
+    "persisted_messages": 0,
+    "observed_mcp_call_count": 0,
+    "restart_reached": false
+  },
+  "checks": {
+    "receiver_group_exact_on_create": true,
+    "sender_group_exact_on_create": true,
+    "receiver_group_exact_when_ready": true,
+    "sender_group_exact_when_ready": true,
+    "receiver_operation_permissions_exact": true,
+    "sender_operation_permissions_exact": true,
+    "receiver_model_ready": true,
+    "sender_model_ready": true,
+    "two_isolated_native_roots": true,
+    "credentials_isolated": true,
+    "filters_exact": true,
+    "exact_native_catalogs": true,
+    "agui_captures_stopped_cleanly": true,
+    "agui_capture_threads_confirmed_dead_before_postgres_teardown": true,
+    "api_cleanup": true,
+    "api_launches_confirmed_dead_before_postgres_teardown": true,
+    "postgres_cleanup": true,
+    "postgres_cleanup_deferred": false,
+    "tmux_processes_clean": true,
+    "tmux_processes_confirmed_dead_before_postgres_teardown": true,
+    "private_state_removed": true,
+    "operator_auth_unchanged": true,
+    "source_unchanged": true,
+    "runner_unchanged": true,
+    "binary_unchanged": true,
+    "source_head_pinned_at_end": true,
+    "source_runtime_tree_clean_at_end": true
+  },
+  "cleanup_session_delete_http_status": 200,
+  "private_roots_after_session_delete": 0,
+  "cleanup_failure_codes": [],
+  "limits": {
+    "last_202_is_not_provider_error_evidence": true,
+    "viewport_observed": false,
+    "cause_proved": false,
+    "observer_graceful_sealing_completed": false,
+    "discovery_receiver_identity_proved": false,
+    "full_native_acceptance": false
+  }
+}
