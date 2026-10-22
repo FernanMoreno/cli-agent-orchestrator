@@ -1,0 +1,117 @@
+{
+  "contract": "DESIGN.md: Mesa de despacho proposal; static work-network mockup with explicit fictional data, local interactions, desktop1440x1000 and mobile375x812. See contractDetails for limits.",
+  "targetViewports": [
+    "1440x1000",
+    "375x812"
+  ],
+  "accessibility": {
+    "status": "pass",
+    "evidence": "Bounded browser checks: Enter selects graph element; view tabs and inspector labels present; mobile Close and Escape close the drawer and return focus. Full accessibility/contrast certification was not performed."
+  },
+  "responsive": {
+    "status": "pass",
+    "evidence": "Chromium at actual1440x1000 and375x812: graph/list document width never exceeds viewport without overflow masking. Mobile Close/Escape tested."
+  },
+  "contentStates": {
+    "loading": {
+      "status": "not-applicable",
+      "reason": "Static in-memory fixture has no asynchronous loading or data request."
+    },
+    "empty": {
+      "status": "pass",
+      "evidence": "Unmatched search yields zero rows and explicit remove-filter guidance."
+    },
+    "error": {
+      "status": "not-applicable",
+      "reason": "No network/backend operation exists; fake blocked task is explicitly a fixture state, not a real error."
+    },
+    "partial": {
+      "status": "pass",
+      "evidence": "Instance/type/state filters show a subset; inspector keeps fixture authority labels."
+    },
+    "success": {
+      "status": "pass",
+      "evidence": "Answer requires choice; local receipt says it was not sent, updates activity with simulated label."
+    },
+    "permission": {
+      "status": "not-applicable",
+      "reason": "No permission enforcement exists in mockup; all identities/authority are visibly fictional, no server actions."
+    }
+  },
+  "renderedEvidence": [
+    {
+      "viewport": "1440x1000",
+      "artifact": "mockup-studio-original.png",
+      "observation": "Final integrated HTML rendered in real desktop Chromium; initial network and decision inspector."
+    },
+    {
+      "viewport": "375x812",
+      "artifact": "mockup-studio-original-movil.png",
+      "observation": "Final integrated HTML rendered at375px in real Chromium; graph scroll confined to panel and content stacked."
+    }
+  ],
+  "browserSmoke": [
+    {
+      "viewport": "1440x1000",
+      "passed": true,
+      "controls": [
+        "graph",
+        "keyboard-selection",
+        "list",
+        "unmasked-overflow",
+        "empty-search",
+        "instance-filter",
+        "kind-filter",
+        "state-filter",
+        "answer-required",
+        "local-answer",
+        "activity",
+        "mobile-menu-button-Escape-focus-if-applicable"
+      ],
+      "javascriptErrors": 0,
+      "externalRequests": 0
+    },
+    {
+      "viewport": "375x812",
+      "passed": true,
+      "controls": [
+        "graph",
+        "keyboard-selection",
+        "list",
+        "unmasked-overflow",
+        "empty-search",
+        "instance-filter",
+        "kind-filter",
+        "state-filter",
+        "answer-required",
+        "local-answer",
+        "activity",
+        "mobile-menu-button-Escape-focus-if-applicable"
+      ],
+      "javascriptErrors": 0,
+      "externalRequests": 0
+    }
+  ],
+  "contractDetails": {
+    "surface": "Static CAOS Studio work-network proposal, not production",
+    "job": "See agents/tasks/decisions across instances; inspect dependencies and simulate a local answer",
+    "direction": "Mesa de despacho; author-created composition informed by four documented references; user design review pending",
+    "viewports": [
+      "1440x1000",
+      "375x812"
+    ],
+    "limitations": [
+      "No live API/auth/model/backend",
+      "No complete WCAG or screen-reader acceptance",
+      "No claims of full specs017/018/019 completion"
+    ]
+  },
+  "svgTitleFit": {
+    "passed": true,
+    "viewports": [
+      "1440x1000",
+      "375x812"
+    ],
+    "evidence": "Measured every rendered node title bounding box against its node; no title extends outside. Screenshots regenerated after pixel-based wrapping correction."
+  }
+}

@@ -50,3 +50,9 @@ La indicación «Maqueta · datos simulados» permanece visible. Las respuestas 
 Validación local de Codex: Chromium/Playwright, escritorio de 1440 px y móvil de 375 px; selección de agente y pregunta, acción simulada, cambio de tema y grafo/lista correctos, sin errores JavaScript ni solicitudes HTTP externas. Se corrigió el desbordamiento de la tabla móvil con desplazamiento dentro de su panel. Capturas regeneradas desde el HTML integrado. Esta comprobación del prototipo no sustituye las pruebas de integración del frontend real.
 
 Revisión independiente de Claude Code en modo lectura: sin bloqueos para la entrega visual. Se atendieron sus observaciones de contraste del contador en tema claro, selección de filas con Espacio y estado accesible del botón de tema. En móvil esta maqueta concentra la navegación en Trabajo y oculta Biblioteca/Operación; la preview general sigue enlazada.
+
+## Revisión visual «Mesa de despacho» · 2026-10-22
+
+Tras el rechazo del usuario a la maqueta anterior, Claude elaboró una propuesta nueva: [abrir maqueta](mockup-studio-original.html), [escritorio](mockup-studio-original.png) y [móvil](mockup-studio-original-movil.png). La [investigación](mockup-studio-original-research.md) documenta cuatro referencias públicas y su transformación. Es una propuesta para revisión del usuario, con decisiones, tareas y agentes en carriles por instancia y fases. No cambia aún los tokens ni el frontend de producción.
+
+Codex revisó el prototipo en navegador, corrigió el cierre del cajón móvil y regeneró las capturas. [Evidencia y límites](mockup-studio-original-evidence.json). Conservamos la maqueta anterior como antecedente; ninguna de las dos acredita integración o aceptación de las specs 017/018/019.
