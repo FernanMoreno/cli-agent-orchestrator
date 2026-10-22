@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>CAOS Studio · Red multiagente · Maqueta</title>
+<style>
+:root{color-scheme:dark;--bg:#101319;--surface:#181d25;--raised:#222935;--text:#eef2f6;--muted:#a0acbd;--border:#354052;--accent:#c6ef77;--on-accent:#17220b;
+--ok:#7fd8a4;--run:#7cb8ff;--wait:#f2c46d;--err:#ff8f8f;--idle:#a0acbd;--claude:#e8a87c;--codex:#8fb8ff;--opencode:#c9a2f2}
+body.light .side a .count{color:#fff}
+body.light{color-scheme:light;--bg:#edf1f5;--surface:#fff;--raised:#f4f7fa;--text:#19232f;--muted:#526172;--border:#cbd4df;--accent:#28613d;--on-accent:#fff;
+--ok:#1d7a47;--run:#1f5fae;--wait:#8a5a00;--err:#b42323;--idle:#526172;--claude:#a2522a;--codex:#24569c;--opencode:#6a3aa0}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,sans-serif}
+button{font:inherit;color:inherit;cursor:pointer;border:1px solid var(--border);border-radius:8px;background:var(--raised);padding:7px 12px}
+button:hover{border-color:var(--accent)}
+*:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+h1,h2,h3,p{margin:0}
+.mono{font-family:ui-monospace,monospace;font-size:12px}
+.muted{color:var(--muted)}
+.banner{position:sticky;top:0;z-index:5;display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap;
+background:repeating-linear-gradient(135deg,#f2c46d 0 14px,#e9b955 14px 28px);color:#2a1d00;font-weight:700;padding:7px 16px;font-size:13px}
+.banner span{font-weight:500}
+.shell{display:grid;grid-template-columns:216px minmax(0,1fr) 340px;min-height:calc(100vh - 34px)}
+nav.side{background:var(--surface);border-right:1px solid var(--border);padding:20px 12px}
+.brand{display:flex;gap:10px;align-items:center;padding:0 8px 18px}
+.brandmark{font:700 19px ui-monospace,monospace;color:var(--accent);border:1px solid var(--border);padding:1px 7px;border-radius:8px}
+.group{margin-top:14px}.group>span{display:block;color:var(--muted);font-size:10px;letter-spacing:1.4px;text-transform:uppercase;padding:0 10px 6px}
+.side a{display:block;padding:7px 10px;border-radius:8px;color:inherit;text-decoration:none;font-size:13px;border:1px solid transparent}
+.side a[aria-current=page]{background:var(--raised);border-color:var(--border);color:var(--accent);font-weight:600}
+.side a .count{float:right;font-size:11px;background:var(--wait);color:#2a1d00;border-radius:10px;padding:0 7px}
+main{min-width:0;padding:18px 22px 40px}
+.context{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:16px}
+.chip{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--border);background:var(--surface);border-radius:999px;padding:3px 11px;font-size:12px}
+.chip b{font-weight:600}
+.head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+h1{font-size:26px;letter-spacing:-.6px;font-weight:650}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden}
+.seg button{border:0;border-radius:0;background:var(--surface)}
+.seg button[aria-pressed=true]{background:var(--accent);color:var(--on-accent);font-weight:600}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 14px}
+.kpi strong{display:block;font-size:22px;letter-spacing:-.5px}
+.kpi span{font-size:12px;color:var(--muted)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px}
+.graphwrap{position:relative;padding:8px}
+svg{display:block;width:100%;height:auto}
+.node{cursor:pointer}
+.node rect{fill:var(--raised);stroke:var(--border);stroke-width:1.5}
+.node:hover rect,.node:focus rect{stroke:var(--accent)}
+.node.sel rect{stroke:var(--accent);stroke-width:3}
+.node:focus{outline:none}
+.node text{fill:var(--text);font:600 13px system-ui,sans-serif}
+.node text.sub{fill:var(--muted);font:12px ui-monospace,monospace}
+.edge{stroke:var(--border);stroke-width:2;fill:none}
+.edge.active{stroke:var(--run);stroke-dasharray:6 5}
+.edge.blocked{stroke:var(--wait);stroke-dasharray:2 5}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);padding:6px 14px 12px}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
+#listView{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--border)}
+th{font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);font-weight:600}
+tbody tr{cursor:pointer}tbody tr:hover,tbody tr[data-selected=true]{background:var(--raised)}
+.state{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600}
+.state::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor}
+.s-run{color:var(--run)}.s-wait{color:var(--wait)}.s-ok{color:var(--ok)}.s-err{color:var(--err)}.s-idle{color:var(--idle)}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;margin-top:14px}
+.card h2{font-size:15px;padding:12px 14px 4px}
+.card .note{font-size:12px;color:var(--muted);padding:0 14px 8px}
+ul.list{list-style:none;margin:0;padding:4px 8px 10px}
+ul.list button{display:block;width:100%;text-align:left;background:none;border:1px solid transparent;padding:9px 10px}
+ul.list button[aria-pressed=true]{background:var(--raised);border-color:var(--accent)}
+ul.list small{display:block;color:var(--muted);font-size:12px}
+.steps{display:flex;gap:4px;padding:6px 14px 14px;flex-wrap:wrap}
+.step{flex:1 1 90px;border:1px solid var(--border);border-radius:8px;padding:6px 8px;font-size:12px;background:var(--raised)}
+.step b{display:block;font-size:11px}
+aside.inspector{background:var(--surface);border-left:1px solid var(--border);padding:18px;min-width:0}
+.inspector h2{font-size:18px;margin:4px 0 2px}
+.inspector dl{display:grid;grid-template-columns:110px 1fr;gap:6px 10px;margin:14px 0;font-size:13px}
+.inspector dt{color:var(--muted)}.inspector dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.tag{display:inline-block;border:1px solid var(--border);border-radius:6px;padding:0 6px;margin:0 4px 4px 0;font-size:12px;font-family:ui-monospace,monospace}
+.sim{margin-top:12px;border:1px dashed var(--wait);border-radius:10px;padding:10px;font-size:12px}
+.sim button{margin-top:8px;width:100%}
+.toast{margin-top:8px;font-size:12px;color:var(--wait);min-height:1em}
+.kind{font-size:11px;letter-spacing:1px;text-transform:uppercase;font-weight:700}
+.k-claude{color:var(--claude)}.k-codex{color:var(--codex)}.k-opencode{color:var(--opencode)}
+.foot{margin-top:18px;font-size:12px;color:var(--muted)}
+.foot a{color:var(--accent)}
+[hidden]{display:none!important}
+.shell>*{min-width:0}
+@media (max-width:760px){.graphwrap{overflow-x:auto}.graphwrap svg{min-width:640px}.banner span{display:block}.inspector dl{grid-template-columns:96px 1fr}}
+@media (max-width:1180px){.shell{grid-template-columns:200px minmax(0,1fr)}aside.inspector{grid-column:1/-1;border-left:0;border-top:1px solid var(--border)}}
+@media (max-width:760px){.shell{grid-template-columns:1fr}nav.side{border-right:0;border-bottom:1px solid var(--border);padding:10px}
+.side .group{display:none}.side .group.main{display:flex;gap:4px;overflow-x:auto;margin:0}.side .group.main>span{display:none}.side a{white-space:nowrap}
+.brand{padding:0 4px 8px}.kpis{grid-template-columns:repeat(2,1fr)}.cols{grid-template-columns:1fr}main{padding:14px}}
+@media (prefers-reduced-motion:no-preference){.edge.active{animation:none}}
+</style>
+</head>
+<body>
+<div class="banner" role="note">MAQUETA · DATOS SIMULADOS <span>— nada de esta pantalla refleja estado en vivo ni ejecuta acciones reales</span></div>
+<div class="shell">
+<nav class="side" aria-label="Navegación principal">
+  <div class="brand"><span class="brandmark">C/</span><div><strong>CAOS Studio</strong><br><small class="muted">propuesta 019</small></div></div>
+  <div class="group main"><span>Trabajo</span>
+    <a href="#" data-nav>Inicio</a>
+    <a href="#" aria-current="page" data-nav>Red multiagente</a>
+    <a href="#" data-nav>Tareas</a>
+    <a href="#" data-nav>Preguntas <span class="count">3</span></a>
+    <a href="#" data-nav>Ejecuciones</a>
+  </div>
+  <div class="group"><span>Biblioteca</span>
+    <a href="#" data-nav>Agentes y perfiles</a><a href="#" data-nav>Perfiles MCP</a><a href="#" data-nav>Workflows</a></div>
+  <div class="group"><span>Operación</span>
+    <a href="#" data-nav>Instancias</a><a href="#" data-nav>Historial</a></div>
+  <p class="toast" id="navnote" aria-live="polite"></p>
+</nav>
+
+<main>
+  <div class="context" aria-label="Contexto">
+    <span class="chip">Proyecto <b>caos</b></span>
+    <span class="chip">Instancia <b class="mono">inst-demo-02</b></span>
+    <span class="chip">Red <b>feature-019-frontend</b></span>
+    <span class="chip muted">Instantánea ficticia · 22 oct 10:40</span>
+  </div>
+  <div class="head">
+    <div><h1>Red multiagente</h1><p class="muted">Supervisor Claude coordinando trabajadores Codex y OpenCode (contexto 018, grafo de ejecución 017).</p></div>
+    <div class="seg" role="group" aria-label="Vista">
+      <button type="button" aria-pressed="true" data-view="graph">Grafo</button>
+      <button type="button" aria-pressed="false" data-view="list">Lista</button>
+    </div>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><strong>5</strong><span>agentes en la red</span></div>
+    <div class="kpi"><strong>2</strong><span>trabajando</span></div>
+    <div class="kpi"><strong>3</strong><span>preguntas pendientes</span></div>
+    <div class="kpi"><strong>7/12</strong><span>tareas cerradas</span></div>
+  </div>
+
+  <section class="card" id="graphView" aria-label="Grafo de la red">
+    <div class="graphwrap">
+      <svg id="graph" viewBox="0 0 780 310" role="group" aria-label="Grafo: supervisor y trabajadores. Use Tab para recorrer nodos y Enter para seleccionar."></svg>
+    </div>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--run)"></i>trabajando</span>
+      <span><i class="dot" style="background:var(--wait)"></i>esperando respuesta</span>
+      <span><i class="dot" style="background:var(--ok)"></i>entregado</span>
+      <span><i class="dot" style="background:var(--err)"></i>fallo</span>
+      <span><i class="dot" style="background:var(--idle)"></i>inactivo</span>
+      <span>— delegación · - - activa · ··· bloqueada</span>
+    </div>
+  </section>
+
+  <section class="card" id="listView" hidden aria-label="Lista de agentes">
+    <table><thead><tr><th>Agente</th><th>Rol</th><th>Estado</th><th>Perfil MCP</th><th>Tarea</th></tr></thead><tbody id="rows"></tbody></table>
+  </section>
+
+  <div class="cols">
+    <section class="card" aria-labelledby="qh">
+      <h2 id="qh">Preguntas pendientes</h2><p class="note">Seleccione para ver contexto en el inspector.</p>
+      <ul class="list" id="questions"></ul>
+    </section>
+    <section class="card" aria-labelledby="eh">
+      <h2 id="eh">Ejecuciones</h2><p class="note">Pasos del grafo de ejecución (simulados).</p>
+      <ul class="list" id="runs"></ul>
+      <div class="steps" id="steps" aria-live="polite"></div>
+    </section>
+  </div>
+  <p class="foot">Otras áreas: <a href="design-preview.html">preview general 019</a> · <a href="DESIGN.md">DESIGN.md</a>. Maqueta estática: sin API, sin autenticación, sin persistencia. No cierra tareas de spec 017/018/019.</p>
+  <p style="margin-top:8px"><button type="button" id="theme">Cambiar tema claro/oscuro</button></p>
+</main>
+
+<aside class="inspector" aria-labelledby="insTitle" aria-live="polite">
+  <div id="inspector"></div>
+</aside>
+</div>
+
+<script>
+const agents=[
+ {id:'sup',name:'Supervisor',kind:'claude',role:'supervisor',state:'run',x:390,y:60,profile:'mcp-lead',tools:['peer_task','peer_status','graphify','speckit'],task:'Coordinar 019 · maqueta',model:'Claude (perfil ficticio)',inst:'inst-demo-02'},
+ {id:'cx1',name:'Codex · back',kind:'codex',role:'trabajador',state:'run',x:100,y:240,profile:'mcp-edit',tools:['fs.edit','tests.run'],task:'T014 contrato API',model:'Codex (perfil ficticio)',inst:'inst-demo-02',parent:'sup'},
+ {id:'cx2',name:'Codex · revisión',kind:'codex',role:'revisor',state:'ok',x:293,y:240,profile:'mcp-read',tools:['fs.read'],task:'Revisar diff T011',model:'Codex (perfil ficticio)',inst:'inst-demo-02',parent:'sup'},
+ {id:'oc1',name:'OpenCode · UI',kind:'opencode',role:'trabajador',state:'wait',x:486,y:240,profile:'mcp-edit',tools:['fs.edit','browser.preview'],task:'T020 navegación',model:'OpenCode (perfil ficticio)',inst:'inst-demo-03',parent:'sup',q:'q1'},
+ {id:'oc2',name:'OpenCode · docs',kind:'opencode',role:'trabajador',state:'err',x:680,y:240,profile:'mcp-docs',tools:['docling','fs.read'],task:'T022 inventario',model:'OpenCode (perfil ficticio)',inst:'inst-demo-03',parent:'sup'}
+];
+const label={run:'trabajando',wait:'esperando respuesta',ok:'entregado',err:'fallo',idle:'inactivo'};
+const color={run:'var(--run)',wait:'var(--wait)',ok:'var(--ok)',err:'var(--err)',idle:'var(--idle)'};
+const kindName={claude:'Claude',codex:'Codex',opencode:'OpenCode'};
+const questions=[
+ {id:'q1',title:'¿Mantener pestañas o rail lateral en móvil?',from:'oc1',to:'Usuario',task:'T020',age:'hace 12 min'},
+ {id:'q2',title:'¿Aprobar cambio de esquema de perfiles MCP?',from:'sup',to:'Usuario',task:'T014',age:'hace 31 min'},
+ {id:'q3',title:'¿Reintentar inventario tras fallo de lectura?',from:'oc2',to:'Supervisor',task:'T022',age:'hace 4 min'}
+];
+const runs=[
+ {id:'r1',title:'run-0193 · feature 019',state:'run',steps:[['ok','Planificar'],['ok','Asignar'],['run','Implementar'],['idle','Revisar'],['idle','Entregar']]},
+ {id:'r2',title:'run-0188 · revisión T011',state:'ok',steps:[['ok','Preparar'],['ok','Revisar'],['ok','Entregar']]},
+ {id:'r3',title:'run-0190 · inventario',state:'err',steps:[['ok','Leer'],['err','Convertir'],['idle','Resumir']]}
+];
+const NS='http://www.w3.org/2000/svg';
+const svg=document.getElementById('graph');
+let selected='sup';
+function el(t,a,p){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e}
+function drawGraph(){
+ svg.textContent='';
+ agents.filter(a=>a.parent).forEach(a=>{const p=agents.find(b=>b.id===a.parent);
+  const cls=a.state==='run'?'edge active':a.state==='wait'?'edge blocked':'edge';
+  el('path',{d:`M${p.x},${p.y+34} C${p.x},${(p.y+a.y)/2} ${a.x},${(p.y+a.y)/2} ${a.x},${a.y-34}`,class:cls},svg)});
+ agents.forEach(a=>{
+  const g=el('g',{class:'node'+(a.id===selected?' sel':''),tabindex:0,role:'button','aria-label':`${a.name}, ${kindName[a.kind]}, ${a.role}, ${label[a.state]}`,'aria-pressed':a.id===selected},svg);
+  const w=a.role==='supervisor'?200:172;
+  el('rect',{x:a.x-w/2,y:a.y-34,width:w,height:68,rx:12},g);
+  el('rect',{x:a.x-w/2,y:a.y-34,width:6,height:68,rx:3,style:`fill:var(--${a.kind});stroke:none`},g);
+  el('circle',{cx:a.x+w/2-14,cy:a.y-20,r:6,style:`fill:${color[a.state]}`},g);
+  const t=el('text',{x:a.x-w/2+16,y:a.y-8},g);t.textContent=a.name;
+  const s=el('text',{x:a.x-w/2+16,y:a.y+12,class:'sub'},g);s.textContent=`${kindName[a.kind]} · ${a.role}`;
+  const s2=el('text',{x:a.x-w/2+16,y:a.y+27,class:'sub'},g);s2.textContent=label[a.state];
+  g.addEventListener('click',()=>select(a.id));
+  g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select(a.id);svg.querySelector(`[aria-label^="${a.name},"]`)?.focus()}});
+ });
+}
+function drawRows(){
+ document.getElementById('rows').innerHTML=agents.map(a=>`<tr tabindex="0" data-id="${a.id}" data-selected="${a.id===selected}">
+ <td><span class="kind k-${a.kind}">${kindName[a.kind]}</span><br>${a.name}</td><td>${a.role}</td>
+ <td><span class="state s-${a.state}">${label[a.state]}</span></td><td class="mono">${a.profile}</td><td>${a.task}</td></tr>`).join('');
+ document.querySelectorAll('#rows tr').forEach(r=>{r.onclick=()=>select(r.dataset.id);r.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select(r.dataset.id);document.querySelector(`#rows tr[data-id=${r.dataset.id}]`).focus()}}});
+}
+const ins=document.getElementById('inspector');
+function select(id){selected=id;drawGraph();drawRows();
+ const a=agents.find(x=>x.id===id);const q=questions.filter(q=>q.from===id);
+ ins.innerHTML=`<span class="kind k-${a.kind}">${kindName[a.kind]} · ${a.role}</span>
+ <h2 id="insTitle">${a.name}</h2><span class="state s-${a.state}">${label[a.state]}</span>
+ <dl><dt>Modelo</dt><dd>${a.model}</dd><dt>Instancia</dt><dd class="mono">${a.inst}</dd>
+ <dt>Perfil MCP</dt><dd class="mono">${a.profile}</dd><dt>Herramientas</dt><dd>${a.tools.map(t=>`<span class="tag">${t}</span>`).join('')}</dd>
+ <dt>Tarea</dt><dd>${a.task}</dd><dt>Reporta a</dt><dd>${a.parent?agents.find(b=>b.id===a.parent).name:'Usuario'}</dd>
+ <dt>Preguntas</dt><dd>${q.length?q.map(x=>x.title).join('<br>'):'ninguna'}</dd></dl>
+ ${simBox('Abrir terminal del agente')}`;wireSim()}
+function selectQuestion(id){const q=questions.find(x=>x.id===id);const a=agents.find(x=>x.id===q.from);
+ document.querySelectorAll('#questions button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.id===id));
+ ins.innerHTML=`<span class="kind">Pregunta pendiente</span><h2 id="insTitle">${q.title}</h2>
+ <dl><dt>De</dt><dd>${a.name} (${kindName[a.kind]})</dd><dt>Para</dt><dd>${q.to}</dd><dt>Tarea</dt><dd>${q.task}</dd><dt>Abierta</dt><dd>${q.age}</dd>
+ <dt>Entrega</dt><dd>sin respuesta · no entregada</dd></dl>${simBox('Responder (simulado)')}`;wireSim()}
+function selectRun(id){const r=runs.find(x=>x.id===id);
+ document.querySelectorAll('#runs button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.id===id));
+ document.getElementById('steps').innerHTML=r.steps.map(([s,n],i)=>`<div class="step"><b class="state s-${s}">${label[s]}</b>${i+1}. ${n}</div>`).join('');}
+function simBox(t){return `<div class="sim"><b>Acción no disponible en la maqueta.</b><br>En el producto real requiere permisos y API verificadas.<button type="button" class="simbtn">${t}</button><p class="toast" aria-live="polite"></p></div>`}
+function wireSim(){ins.querySelectorAll('.simbtn').forEach(b=>b.onclick=()=>{b.nextElementSibling.textContent='Simulación: no se envió nada ni se ejecutó trabajo.'})}
+document.getElementById('questions').innerHTML=questions.map(q=>`<li><button type="button" aria-pressed="false" data-id="${q.id}"><span class="state s-wait">pendiente</span> ${q.title}<small>${agents.find(a=>a.id===q.from).name} → ${q.to} · ${q.task} · ${q.age}</small></button></li>`).join('');
+document.querySelectorAll('#questions button').forEach(b=>b.onclick=()=>selectQuestion(b.dataset.id));
+document.getElementById('runs').innerHTML=runs.map(r=>`<li><button type="button" aria-pressed="false" data-id="${r.id}"><span class="state s-${r.state}">${label[r.state]}</span> <span class="mono">${r.title}</span></button></li>`).join('');
+document.querySelectorAll('#runs button').forEach(b=>b.onclick=()=>selectRun(b.dataset.id));
+document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{const g=b.dataset.view==='graph';
+ document.getElementById('graphView').hidden=!g;document.getElementById('listView').hidden=g;
+ document.querySelectorAll('[data-view]').forEach(x=>x.setAttribute('aria-pressed',x===b))});
+document.querySelectorAll('[data-nav]').forEach(a=>a.onclick=e=>{e.preventDefault();document.getElementById('navnote').textContent='Sección fuera de esta maqueta: ver preview general 019.'});
+document.getElementById('theme').setAttribute('aria-pressed','false');
+document.getElementById('theme').onclick=()=>{const light=document.body.classList.toggle('light');document.getElementById('theme').setAttribute('aria-pressed',String(light))};
+select('sup');selectRun('r1');
+</script>
+</body>
+</html>
