@@ -30,7 +30,9 @@ def runner() -> CliRunner:
 
 
 @pytest.fixture()
-def install_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Dict[str, Any]:
+def install_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, opencode_test_environment
+) -> Dict[str, Any]:
     """Redirect all filesystem paths used by the install command to tmp_path."""
     local_store = tmp_path / "agent-store"
     context_dir = tmp_path / "agent-context"
@@ -53,7 +55,8 @@ def install_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Dict[s
     monkeypatch.setattr(
         "cli_agent_orchestrator.services.install_service.OPENCODE_AGENTS_DIR", opencode_agents
     )
-    # Redirect the config file used by opencode_config helpers
+    # Installation owns this alias after the shared launch defaults; the
+    # provider's command-building alias can keep its separate private path.
     monkeypatch.setattr(
         "cli_agent_orchestrator.utils.opencode_config.OPENCODE_CONFIG_FILE", opencode_config
     )

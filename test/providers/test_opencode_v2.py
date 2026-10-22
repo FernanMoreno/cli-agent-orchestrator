@@ -7,6 +7,8 @@ import pytest
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.opencode_cli import OpenCodeCliProvider
 
+pytestmark = pytest.mark.usefixtures("opencode_test_environment")
+
 
 def provider():
     value = OpenCodeCliProvider("test1234", "test", "window", "reviewer", model="opencode/free")

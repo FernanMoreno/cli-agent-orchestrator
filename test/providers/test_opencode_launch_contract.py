@@ -9,7 +9,7 @@ from cli_agent_orchestrator.providers import opencode_cli
 
 
 @pytest.fixture
-def runtime(tmp_path, monkeypatch):
+def runtime(tmp_path, monkeypatch, opencode_test_environment):
     tools = tmp_path / "tools with spaces"
     tools.mkdir()
     executable = tools / "opencode"
@@ -23,9 +23,6 @@ def runtime(tmp_path, monkeypatch):
     agents.mkdir()
     monkeypatch.setattr(opencode_cli, "OPENCODE_AGENTS_DIR", agents)
     monkeypatch.setattr(opencode_cli, "CAO_HOME_DIR", tmp_path / "cao")
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    monkeypatch.delenv("OPENCODE_DB", raising=False)
-    monkeypatch.delenv("OPENCODE_AUTH_CONTENT", raising=False)
     monkeypatch.setattr(opencode_cli, "wait_for_shell", AsyncMock(return_value=True))
     from cli_agent_orchestrator.utils import opencode_config
 

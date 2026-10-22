@@ -157,6 +157,46 @@ def _reset_backend_registry():
     registry._backend = original
 
 
+@pytest.fixture
+def opencode_test_environment(monkeypatch, tmp_path):
+    """Provide explicit offline defaults without changing production precedence.
+
+    Opt in at launch-fixture boundaries. Tests can install intentional overrides
+    after setup; HOME, PATH and unrelated provider fixtures remain unchanged.
+    Managed config aliases were imported before XDG was isolated, so bind them
+    explicitly as well.
+    """
+    from cli_agent_orchestrator.providers import opencode_cli
+    from cli_agent_orchestrator.utils import opencode_config
+
+    root = tmp_path / "opencode-environment"
+    for key, directory in {
+        "XDG_DATA_HOME": "data",
+        "XDG_CONFIG_HOME": "config",
+        "XDG_CACHE_HOME": "cache",
+        "XDG_STATE_HOME": "state",
+    }.items():
+        path = root / directory
+        path.mkdir(parents=True)
+        monkeypatch.setenv(key, str(path))
+    for key in (
+        "OPENCODE_DB",
+        "OPENCODE_AUTH_CONTENT",
+        "OPENCODE_CONFIG",
+        "OPENCODE_CONFIG_DIR",
+        "OPENCODE_CONFIG_CONTENT",
+        "OPENCODE_PERMISSION",
+        "OPENCODE_TUI_CONFIG",
+        "OPENCODE_TEST_HOME",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    for module in (opencode_cli, opencode_config):
+        monkeypatch.setattr(module, "OPENCODE_CONFIG_DIR", root / "config")
+        monkeypatch.setattr(module, "OPENCODE_CONFIG_FILE", root / "config/opencode.json")
+    monkeypatch.setattr(opencode_cli, "OPENCODE_AGENTS_DIR", root / "config/agents")
+    return root
+
+
 @pytest.fixture(autouse=True)
 def _hermetic_cao_env(monkeypatch, tmp_path):
     """Keep tests independent of CAO runtime identity and persisted settings.

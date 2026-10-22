@@ -547,7 +547,7 @@ class TestExtractLastMessage:
 
 class TestInitialize:
     @pytest.fixture(autouse=True)
-    def installed_v1(self, tmp_path, monkeypatch):
+    def installed_v1(self, tmp_path, monkeypatch, opencode_test_environment):
         # This class exercises v1 chrome and commands without reading the
         # operator's installed version, config, or credentials.
         from cli_agent_orchestrator.providers import opencode_cli
@@ -557,9 +557,6 @@ class TestInitialize:
         (agents / "developer.md").write_text("---\ndescription: Developer\n---\nDevelop.\n")
         monkeypatch.setattr(opencode_cli, "OPENCODE_AGENTS_DIR", agents)
         monkeypatch.setattr(opencode_cli, "CAO_HOME_DIR", tmp_path / "cao")
-        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-        monkeypatch.delenv("OPENCODE_DB", raising=False)
-        monkeypatch.delenv("OPENCODE_AUTH_CONTENT", raising=False)
         monkeypatch.setattr(
             opencode_cli,
             "resolve_opencode_runtime",

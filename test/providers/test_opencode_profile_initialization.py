@@ -14,14 +14,12 @@ pytestmark = [pytest.mark.offline_database, pytest.mark.asyncio]
 
 
 @pytest.fixture
-def launch(tmp_path, monkeypatch):
+def launch(tmp_path, monkeypatch, opencode_test_environment):
     agents = tmp_path / "agents"
     agents.mkdir()
     (agents / "reviewer.md").write_text("---\ndescription: Reviewer\n---\nReview.\n")
     monkeypatch.setattr(opencode_cli, "CAO_HOME_DIR", tmp_path / "cao")
     monkeypatch.setattr(opencode_cli, "OPENCODE_AGENTS_DIR", agents)
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "synthetic-data"))
-    monkeypatch.delenv("OPENCODE_DB", raising=False)
     monkeypatch.setattr(
         opencode_cli,
         "resolve_opencode_runtime",
