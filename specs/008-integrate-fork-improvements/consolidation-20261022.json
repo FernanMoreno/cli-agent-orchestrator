@@ -1,0 +1,221 @@
+{
+  "schema": "caos.worktree-centralization.v1",
+  "date": "2026-10-22",
+  "base_main_head": "29c4100bb75f8b6b1f09ab855dfaa4316f868d6b",
+  "frontend_head": "aecafa83c874c562e3830ea9b48b4bcd08bbf02b",
+  "frontend_prior_content_integration_commit": "4678ae72",
+  "registered_worktrees": 16,
+  "present_worktrees": 7,
+  "absent_worktrees": 9,
+  "worktrees": [
+    {
+      "label": "main",
+      "path": "/mnt/c/users/ferna/onedrive/escritorio/caos",
+      "present": true,
+      "registry_head": "29c4100bb75f8b6b1f09ab855dfaa4316f868d6b",
+      "commits_ahead_main_before": 0,
+      "classification": "authoritative_current_checkout",
+      "tracked_deltas": null,
+      "untracked_paths": null
+    },
+    {
+      "label": "absent_registry_entry",
+      "path": "/home/felni/.cache/cao-fork-publish",
+      "present": false,
+      "registry_head": "87e2d5f354374ea8acc685275e749992df51cdbd",
+      "commits_ahead_main_before": 0,
+      "classification": "directory_absent; retained_commit_is_main_ancestor",
+      "tracked_deltas": null,
+      "untracked_paths": null
+    },
+    {
+      "label": "publication_snapshot",
+      "path": "/home/felni/.cache/caos-git-publish-20261020/source",
+      "present": true,
+      "registry_head": "d0dd2e3a0240049af5070a144c092e0c8156f15a",
+      "commits_ahead_main_before": 0,
+      "classification": "clean_historical_ancestor",
+      "tracked_deltas": 0,
+      "untracked_paths": 1
+    },
+    {
+      "label": "work_replacement",
+      "path": "/home/felni/.codex/worktrees/1cb8/caos",
+      "present": true,
+      "registry_head": "65e3415056ce4bcc30c81fce6f01ede8f3ed0695",
+      "commits_ahead_main_before": 0,
+      "classification": "all_changed_and_untracked_implementation_bytes_already_in_main; docs_older",
+      "tracked_deltas": 13,
+      "untracked_paths": 5
+    },
+    {
+      "label": "work_dispatcher",
+      "path": "/home/felni/.codex/worktrees/35d7/caos",
+      "present": true,
+      "registry_head": "9cc35033d8a8f0878d7d3be7582bc65ef193a551",
+      "commits_ahead_main_before": 0,
+      "classification": "equivalent_or_superseded_by_main_replacement_cancellation_lock_order_and_metadata_fixes",
+      "tracked_deltas": 11,
+      "untracked_paths": 3
+    },
+    {
+      "label": "frontend_graph",
+      "path": "/home/felni/.codex/worktrees/caos-front-graph-20261021",
+      "present": true,
+      "registry_head": "aecafa83c874c562e3830ea9b48b4bcd08bbf02b",
+      "commits_ahead_main_before": 10,
+      "classification": "all_functionality_already_in_main; genealogy_consolidation_preserves_main_content",
+      "tracked_deltas": 5,
+      "untracked_paths": 9
+    },
+    {
+      "label": "legacy_candidate",
+      "path": "/home/felni/cao015-final/candidate",
+      "present": true,
+      "registry_head": "87e2d5f354374ea8acc685275e749992df51cdbd",
+      "commits_ahead_main_before": 0,
+      "classification": "broken_git_pointer_preserved; safe_text_comparison_matches_historical_02309f3f",
+      "tracked_deltas": null,
+      "untracked_paths": null
+    },
+    {
+      "label": "t097",
+      "path": "/mnt/c/users/ferna/onedrive/escritorio/caos/.worktrees/t097-remediation",
+      "present": true,
+      "registry_head": "26b1bd3b634c98798b209c822f355c6782c9dbe8",
+      "commits_ahead_main_before": 0,
+      "classification": "221_entries_match_previous_manifest; no_exclusive_product_delta; legacy_sqlite_retired_in_current_main",
+      "tracked_deltas": 77,
+      "untracked_paths": 144
+    },
+    {
+      "label": "absent_registry_entry",
+      "path": "/tmp/cao-fork-publish-clean",
+      "present": false,
+      "registry_head": "30b16bd21cadc6764026ddf6b28de692275a1494",
+      "commits_ahead_main_before": 0,
+      "classification": "directory_absent; retained_commit_is_main_ancestor",
+      "tracked_deltas": null,
+      "untracked_paths": null
+    },
+    {
+      "label": "absent_registry_entry",
+      "path": "/tmp/caos-push-worktree-a5af896b",
+      "present": false,
+      "registry_head": "cca49875340938859bff0d8467ce02394b3993de",
+      "commits_ahead_main_before": 0,
+      "classification": "directory_absent; retained_commit_is_main_ancestor",
+      "tracked_deltas": null,
+      "untracked_paths": null
+    },
+    {
+      "label": "absent_registry_entry",
+      "path": "/tmp/caos-spec016-baseline-noauth",
+      "present": false,
+      "registry_head": "02309f3f1e8cd1cf3b66dc92ca4d9e6c21ccf2db",
+      "commits_ahead_main_before": 0,
+      "classification": "directory_absent; retained_commit_is_main_ancestor",
+      "tracked_deltas": null,
+      "untracked_paths": null
+    },
+    {
+      "label": "absent_registry_entry",
+      "path": "/tmp/caos-spec016-validation",
+      "present": false,
+      "registry_head": "02309f3f1e8cd1cf3b66dc92ca4d9e6c21ccf2db",
+      "commits_ahead_main_before": 0,
+      "classification": "directory_absent; retained_commit_is_main_ancestor",
+      "tracked_deltas": null,
+      "untracked_paths": null
+    },
+    {
+      "label": "absent_registry_entry",
+      "path": "/var/tmp/caos-prebase",
+      "present": false,
+      "registry_head": "ca71a269f7efb5c83f87365bc95718ab8f02c54f",
+      "commits_ahead_main_before": 0,
+      "classification": "directory_absent; retained_commit_is_main_ancestor",
+      "tracked_deltas": null,
+      "untracked_paths": null
+    },
+    {
+      "label": "absent_registry_entry",
+      "path": "/var/tmp/caos-publish-87e2d5f3",
+      "present": false,
+      "registry_head": "87e2d5f354374ea8acc685275e749992df51cdbd",
+      "commits_ahead_main_before": 0,
+      "classification": "directory_absent; retained_commit_is_main_ancestor",
+      "tracked_deltas": null,
+      "untracked_paths": null
+    },
+    {
+      "label": "absent_registry_entry",
+      "path": "/var/tmp/caos-push-worktree",
+      "present": false,
+      "registry_head": "0d1b4ff9cf9caa88d28f16a1c9f54c22678813f4",
+      "commits_ahead_main_before": 0,
+      "classification": "directory_absent; retained_commit_is_main_ancestor",
+      "tracked_deltas": null,
+      "untracked_paths": null
+    },
+    {
+      "label": "absent_registry_entry",
+      "path": "/var/tmp/caos-t097-push",
+      "present": false,
+      "registry_head": "1992212360395b83ada73b8659f16376bbaf9c9f",
+      "commits_ahead_main_before": 0,
+      "classification": "directory_absent; retained_commit_is_main_ancestor",
+      "tracked_deltas": null,
+      "untracked_paths": null
+    }
+  ],
+  "functional_source_files_compared": 1812,
+  "functional_source_fingerprint_sha256": "9cdd2cd5aa82b4593b96c7dd6afea459eacb2414f467c92f93755dc49d6677f6",
+  "functional_source_changes_from_centralization": 0,
+  "foreign_graphify_files_preserved": 12,
+  "candidate_limits": {
+    "safe_tracked_files_matched": 2202,
+    "generated_extras": 29,
+    "excluded_paths": 171,
+    "full_git_status_certified": false
+  },
+  "checks": {
+    "web_test_modules": 48,
+    "web_tests_passed": 531,
+    "web_test_exit_code": 0,
+    "typescript_and_production_build_exit_code": 0,
+    "work_regression": {
+      "passed": 77,
+      "warnings": 15,
+      "exit_code": 0,
+      "integration_included": true,
+      "coverage_collection_preserved": true
+    },
+    "composition": {
+      "files": 412,
+      "dependencies": 1834,
+      "contracts_kept": 5,
+      "contracts_broken": 0,
+      "exit_code": 0
+    },
+    "frontend_history_secret_scan": {
+      "commits": 10,
+      "exit_code": 0,
+      "leaks_detected": 0
+    }
+  },
+  "limits": {
+    "global_acceptance_claimed": false,
+    "new_native_model_journeys_run": false,
+    "qemu_cases_run": 0,
+    "historical_job_state_changes": false,
+    "source_worktrees_removed_or_reset": false
+  },
+  "preservation_rechecked": true,
+  "independent_review": {
+    "mode": "read",
+    "reviewer": "Claude Code",
+    "verdict": "approved_with_documentation_clarifications_applied",
+    "lead_execution_results_not_independently_rerun": true
+  }
+}

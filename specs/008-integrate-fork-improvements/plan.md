@@ -6,7 +6,7 @@
 Integración por componentes, con ledger de cobertura. No se reemplazan árboles enteros: se adaptan comportamientos de referencias congeladas conservando contratos Work/007/browser y mejoras locales. La instrucción del usuario autoriza esta selección y desarrollo en main. El alcance se termina cuando todas las capacidades quedan implementadas o su equivalencia funcional está probada.
 
 ## Technical Context
-- Python >=3.10, FastAPI/Pydantic2, SQLite/SQLAlchemy, FastMCP; tmux/herdr y backends Work.
+- Python >=3.10, FastAPI/Pydantic2, PostgreSQL/SQLAlchemy, FastMCP (SQLite corresponde al contexto histórico retirado); tmux/herdr y backends Work.
 - TypeScript/React18/Vite: web y MCP Apps; Rust TUI.
 - Persistencia: modelos/repositorios existentes, migraciones aditivas; snapshots y artefactos con digest.
 - Pruebas: pytest sin cobertura compartida, Vitest/build, cargo; fixtures de providers, modelo de interleavings y pruebas aisladas de backend.
@@ -63,10 +63,16 @@ estática independientes, sin imports al runtime CAOS ni cambios de permisos.
 Se mantienen los contratos y pruebas originales, con instrucciones relativas,
 datos iniciales vacíos y un índice de auditorías históricas. Graphify sirve para
 localizar los consumidores de aceptación; sus rutas se comprueban en fuente.
+
+### Centralización renovada — 2026-10-22
+
+Partir de main 29c4100b y preservar sus doce artefactos Graphify ajenos. Congelar manifiestos/patches privados de los worktrees presentes, sin escribir en ellos. Separar ancestros limpios, contenido ya incorporado mediante otra historia Git, deltas locales iguales y verdaderos cambios exclusivos. Codex compara frontend y archivos actuales; revisiones paralelas de lectura contrastan los dos worktrees de Work y el histórico T097/candidate con sus manifiestos anteriores. El código de demos del Escritorio ya coincide con los ejemplos integrados y los logs históricos no son código.
+
+Antes de cualquier integración, inspeccionar Graphify y fuente de los subsistemas afectados. Incorporar funcionalidad faltante mediante cambios acotados y pruebas; si una rama solo difiere en genealogía, conservar el contenido actual al reunir la historia tras demostrar equivalencia. Revisar las pruebas web de grafo, navegación y revocación; las pruebas Work/persistencia/dispatcher se seleccionan según el delta que resulte de la auditoría. Ejecutar composición y revisión final independiente. Mantener fuentes/worktrees originales y registrar hashes para detectar cambios externos durante la revisión; no se hace limpieza ni se cambian los criterios globales o las tareas QEMU.
 Las pruebas se ejecutan con archivos de datos temporales y puertos libres.
 
 El inventario y las decisiones de integración se registran en
-`main-consolidation-20261012.md`; las comprobaciones completas de Spec021 y
+`consolidation-20261022.md` y `consolidation-20261022.json`; el checkpoint anterior permanece en `main-consolidation-20261012.md`. Las comprobaciones completas de Spec021 y
 Spec016 permanecen abiertas hasta obtener sus propios resultados actuales.
 
 ### Perfil de build T097 con digest fijo — 2026-10-12

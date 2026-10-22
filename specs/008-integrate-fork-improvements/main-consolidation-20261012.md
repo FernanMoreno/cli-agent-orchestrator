@@ -165,6 +165,8 @@ Los ejemplos contienen seeds vacíos. Se excluyen bytecode, cachés y entornos.
 
 ## Worktrees
 
+Actualización del 2026-10-22: las conclusiones siguientes corresponden al checkpoint del 12 de octubre. Los importadores/catálogos SQLite citados después se retiraron explícitamente en la arquitectura actual PostgreSQL; no se afirma que sus destinos sigan existiendo. El [inventario renovado](consolidation-20261022.md) revisa los worktrees actuales, las equivalencias y esta frontera de compatibilidad sin restaurar implementaciones anteriores.
+
 - `codex/015-final-recovery`, en `/home/felni/cao015-final/candidate`, está limpio
   y su HEAD es el mismo `02309f3f` que `main`; no hay un delta local exclusivo.
 - `codex/015-final-integration` referencia el commit `87e2d5f3`, ya incluido en

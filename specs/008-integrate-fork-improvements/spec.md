@@ -138,3 +138,8 @@ la ascendencia de una rama no acredita por sí sola sus modificaciones locales.
   evidencia estática revisada de su fuente, imagen de build, toolchain, opciones
   y rutas canónicas reproducibles. Un digest desconocido sigue rechazándose; la
   evidencia de compilación no equivale a aceptación host ni activa el backend.
+
+## Nueva centralización solicitada — 2026-10-22
+
+- **FR-025**: Centralizar en el checkout principal de `main` las capacidades funcionales más recientes de todos los worktrees presentes. Inventariar por separado commits, cambios locales y archivos de implementación sin seguimiento; comparar contra el código actual y las integraciones anteriores. Conservar implementaciones posteriores y garantías más fuertes, registrar equivalencias verificadas y portar cualquier delta exclusivo con sus pruebas. Un HEAD antecesor no demuestra que su árbol modificado esté integrado. No borrar worktrees, reparar referencias, retirar datos ni publicar secretos como parte de esta consolidación.
+- **SC-007**: Cada worktree registrado queda clasificado como presente, ausente o referencia Git rota; cada delta funcional presente queda integrado o respaldado por igualdad de bytes/equivalencia con escenarios y pruebas actuales. La integración conserva los cambios ajenos del checkout, supera las comprobaciones aplicables y registra el alcance pendiente con honestidad. La genealogía Git puede incorporarse después de verificar el contenido; no autoriza reemplazar la implementación vigente por un snapshot anterior.
