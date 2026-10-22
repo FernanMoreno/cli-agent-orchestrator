@@ -324,3 +324,17 @@ T068/T072/T073 cerrados en su alcance. T071 cierra el diagnóstico acotado con u
 
 
 2026-10-22 · T076 completada: el contrato externo `cao.work.message` se revalidó sobre `aef64405`, separado de send_message nativo v1/v2. Dos trabajadores Docker vivos, dos mensajes Unicode/ACK, respuesta perdida y replay con identidad estable, reinicio de API, reemplazos autorizados y limpieza del namespace propio pasaron. El lead verificó ocho ausencias Docker y los pins; PostgreSQL quedó intacto. Los dos rechazos previos fueron de preparación (VIRTUAL_ENV omitido y puerto de metadata histórico), reproducidos y corregidos sin tocar producto ni criterios. 620 pruebas Work y composición5/0; revisión final Claude aprobada. No acredita inferencia nativa, matriz de perfiles/modelos, escala ni gates globales; OC-05/T011 agregados siguen abiertos. [Resultados y recibo](../specs/025-provider-mcp-profiles/validation-t076.md).
+
+
+### Actualización T077: fuente nativa actual, 2026-10-22
+
+La revalidación posterior a T074 está en curso ([T077](../specs/025-provider-mcp-profiles/validation-t077.md)). Ambos inventarios de 507 archivos coinciden salvo los dos helpers de estado privado en `opencode_cli.py`. La copia v2 pasó sus controles offline actuales y revisión de preparación; eso todavía no es aceptación real. El gate v1 exige una generación completa en el mismo HEAD: el recibo histórico R23b no se reutiliza como prueba de la fuente nueva. PostgreSQL y ambos binarios conservan las identidades verificadas. OC-05/06, la matriz ampliada y los gates globales siguen abiertos.
+
+
+Resultado actual T077: generación aislada v1 PASS, pero recorridos administrados FAILED. V1 R2 persistió un mensaje y completó el turno sin que LAST contuviera el Unicode exigido; v2 validó el emisor y dejó al receptor en reconcile/receipt_result_unverifiable sin ACK a75s. Ambos limpiaron su estado y preservaron al operador. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t077.md). T078 prepara observación mínima de la frontera LAST; no se repiten los fallos sin información nueva ni se marcan como aceptación.
+
+
+La observación mínima [T078](../specs/025-provider-mcp-profiles/validation-t078.md) completó después el recorrido v1 en8057 con2 mensajes,AG-UI,reinicio,Unicode,catálogos/llamadas exactos y limpieza; el fallo anterior no reapareció y no queda causalmente explicado. En v2,el replay del receptor confirmó ACK sin recibo y una contradicción del perfil «exactly ACK»; [T079](../specs/025-provider-mcp-profiles/validation-t079.md) corrige esa entrada y refuerza el gate de ACK,que antes era diagnóstico. Todavía no acredita una nueva ejecución v2.
+
+
+2026-10-23 — T079 v2 real FAILED pese al perfil corregido; causa reproducida de extracción en T080 y brecha de canal Thinking en T081. Se conservan todos los recibos y el PASS v1 T078. [Correcciones, pruebas y límites](../specs/025-provider-mcp-profiles/validation-t080.md). Revalidación nativa/global aún abierta; no se toma el último ACK del texto para aprobar.

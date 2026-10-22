@@ -32,7 +32,7 @@ import textwrap
 import time
 from collections import Counter
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from cli_agent_orchestrator.backends.registry import get_backend
 from cli_agent_orchestrator.constants import (
@@ -653,7 +653,12 @@ class OpenCodeCliProvider(BaseProvider):
         # The server-owned contract ends after this sentence, even when mini
         # wraps it across rows. Exclude that entire block before witnessing an
         # assistant receipt; a blank line inside the task is not its boundary.
-        turn = self._v2_without_delivery_contract(turn)
+        turn = self._v2_without_delivery_contract(
+            turn,
+            receipt_matcher=(
+                self._result_has_active_receipt if self.pending_turn_receipt_state() else None
+            ),
+        )
         if users:
             blocks = re.split(r"\n[ \t]*\n", turn, maxsplit=1)
             if len(blocks) != 2:
@@ -664,6 +669,11 @@ class OpenCodeCliProvider(BaseProvider):
         durations = list(re.finditer(V2_COMPLETION_MARKER_PATTERN, response))
         if durations:
             response = response[durations[-1].end() :]
+        # After any explicit native boundary, a remaining flat Thinking
+        # preamble still has no proven transition to public text. Blank
+        # paragraphs or its receipt cannot establish the answer channel.
+        if self.pending_turn_receipt_state() and response.lstrip().startswith("Thinking:"):
+            return None
         # The empty composer belongs to the UI, not the answer.
         response = re.sub(r"\n[ \t]*┃[ \t]*\s*$", "", response).strip()
         if self._result_has_active_receipt(response):
@@ -671,21 +681,45 @@ class OpenCodeCliProvider(BaseProvider):
         return None
 
     @staticmethod
-    def _v2_without_delivery_contract(turn: str) -> str:
+    def _v2_without_delivery_contract(
+        turn: str, *, receipt_matcher: Optional[Callable[[str], bool]] = None
+    ) -> str:
         """Skip the complete echoed contract, including wrapped paragraphs."""
         contract_starts = list(re.finditer(r"CAO\s+completion\s+receipt\s+requirement:", turn))
         if not contract_starts:
             return turn
+        end_pattern = re.compile(
+            r"Do\s+not\s+quote\s+or\s+emit\s+that\s+receipt\s+before\s+the\s+task\s+is\s+"
+            r"complete,\s+and\s+do\s+not\s+perform\s+further\s+tool\s+calls\s+after\s+it\."
+        )
+        if receipt_matcher is not None:
+            boundaries = []
+            for index, start in enumerate(contract_starts):
+                limit = (
+                    contract_starts[index + 1].start()
+                    if index + 1 < len(contract_starts)
+                    else len(turn)
+                )
+                block = turn[start.end() : limit]
+                end = end_pattern.search(block)
+                if end is None:
+                    continue
+                # Only the complete contract containing this turn's active
+                # receipt owns the user/assistant boundary. Later reasoning may
+                # quote its heading without reproducing the entire contract.
+                # Join presentation wrapping only in the echoed contract;
+                # result verification still requires a standalone exact token.
+                echoed = re.sub(r"\s+", "", block[: end.start()])
+                tokens = re.findall(r"(?:CAO-TURN-RECEIPT-|CAO_TURN_RECEIPT_)[0-9a-f]{32}", echoed)
+                if any(receipt_matcher(token) for token in tokens):
+                    boundaries.append(start.end() + end.end())
+            return turn[boundaries[-1] :] if boundaries else ""
         # The server appends its contract after the task, which may itself quote
         # an older complete contract. The final block owns this turn's boundary.
         contract_start = contract_starts[-1]
         # A quoted final sentence inside the task precedes the actual contract;
         # it cannot expose the contract's echoed nonce as assistant evidence.
-        contract_end = re.search(
-            r"Do\s+not\s+quote\s+or\s+emit\s+that\s+receipt\s+before\s+the\s+task\s+is\s+"
-            r"complete,\s+and\s+do\s+not\s+perform\s+further\s+tool\s+calls\s+after\s+it\.",
-            turn[contract_start.end() :],
-        )
+        contract_end = end_pattern.search(turn[contract_start.end() :])
         # An incomplete echoed contract is not assistant evidence. Wait for a
         # complete boundary rather than exposing its nonce to receipt detection.
         return turn[contract_start.end() + contract_end.end() :] if contract_end is not None else ""
@@ -1586,7 +1620,12 @@ class OpenCodeCliProvider(BaseProvider):
             turn = before[users[-1].end() :]
             # A task may contain paragraphs before its echoed delivery contract.
             # The first blank line is not the assistant boundary in that case.
-            turn = self._v2_without_delivery_contract(turn)
+            turn = self._v2_without_delivery_contract(
+                turn,
+                receipt_matcher=(
+                    self._result_has_active_receipt if self.pending_turn_receipt_state() else None
+                ),
+            )
             # Mini separates the complete user block from the assistant with
             # an empty line. Preserve all later line feeds, including receipts.
             blocks = re.split(r"\n[ \t]*\n", turn, maxsplit=1)
@@ -1594,6 +1633,8 @@ class OpenCodeCliProvider(BaseProvider):
                 raise ValueError("Empty OpenCode v2 response")
             response = blocks[1].strip()
             if response.startswith("Thinking:"):
+                if self.pending_turn_receipt_state():
+                    raise ValueError("OpenCode v2 final answer channel is ambiguous")
                 thinking = re.split(r"\n[ \t]*\n", response, maxsplit=1)
                 response = thinking[1] if len(thinking) == 2 else ""
             result = textwrap.dedent(response).strip()

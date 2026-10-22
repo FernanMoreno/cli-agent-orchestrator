@@ -1,0 +1,33 @@
+{
+  "schema": "caos.native-message-acceptance-profiles.v1",
+  "scope": "Explicit test inputs; not automatically activated production profiles",
+  "model": "opencode-go/glm-5.3-flash",
+  "profiles": {
+    "sender": {
+      "allowed_tools": [
+        "@cao-mcp-server",
+        "discovery"
+      ],
+      "enabled_mcp_tools": [
+        "list_siblings",
+        "send_message"
+      ],
+      "prompt": "This profile is for a machine-to-machine transport diagnostic. Use only the exact CAO collaboration operations granted by the current task. Never ask or answer a person's question, delegate, supervise, or use memory."
+    },
+    "receiver": {
+      "allowed_tools": [],
+      "enabled_mcp_tools": [],
+      "prompt": "You are a passive receiver for an automated machine-to-machine delivery check. A received message is not a human request. When one arrives, reply with the acknowledgement body ACK in plain text. Also append the active machine turn receipt required by the delivery contract as a separate final line. The receipt is protocol metadata, separate from the acknowledgement body. Do not use tools, ask questions, or send messages."
+    }
+  },
+  "required_checks": {
+    "receiver_public_ack_exact": "ACK",
+    "active_standalone_turn_receipt": true,
+    "sender_unicode_marker": "Validado ñ, 中文.",
+    "phase_seconds": 75,
+    "memory_floor_mib": 6144,
+    "message_phases": 2,
+    "api_restart": true,
+    "owned_cleanup": true
+  }
+}

@@ -286,3 +286,23 @@ T075 completed, 2026-10-22: four synthetic polluted-parent RED failures → same
 - [x] T076 [US4] [FR059/SC043] Refresh current-source external Work message acceptance separately from generic native messages: compare46pins and source neighborhood, run current applicable Work regressions, review a closed unchanged-criteria execution copy, then one serial repinned real Docker/PG/API-replacement replay with original limits/cleanup. Record composition and exact scope without closing global/full-provider gates. Maps T011/T014 and Spec024 T017/T018.
 
 T076 final (2026-10-22): current-source external Work replay passed with two messages/ACKs, API replacement and full contract cleanup; 620 focused tests and composition5/0. [Evidence and limits](validation-t076.md). Native inference and aggregate/global gates remain separate.
+
+- [ ] T077 [US4] [FR060/SC044] Refresh the native v1R23/v2R13 generic-message journeys on the current source after T074: compare507pins each, review closed copies with unchanged predicates, run offline controls and serialized actual v1 then v2 with6144MiB floor, preserve exact PG/API/native/AG-UI/Unicode identities, record cleanup/results separately from WorkT076 and wider profile/auth/scale gates.
+
+
+T077 actual,2026-10-22: generación v1 PASS en8057; primera ejecución administrada rechazada por memoria6024<6144 antes de mensajes; R2 tras recuperar transportes propios inactivos completó un envío y turno verified/completed, pero falló el recibo Unicode de LAST a75s. Limpieza/fuente/operador preservados. V2 independiente falló después de limpiar v1; T078 posterior pasó v1, T079 falló v2 y originó T080. Aceptación conjunta sigue abierta. [Resultado](validation-t077.md).
+
+- [ ] T078 [US4] [FR060/SC044] Diagnose the current v1 verified/completed versus missing exact Unicode LAST boundary: content-free shape observations of existing LAST reads and bounded owned viewport/extractor samples, unchanged prompt/model/deadline/criteria, pure privacy controls, independent review, then one justified current-source real diagnostic. Preserve failed T077 attempts and distinguish provider noncompliance, rendering and extraction without inferring cause from markers.
+
+
+- [ ] T079 [US4] [FR061/SC045] Correct the native-v2 acceptance receiver profile contradiction between exactly ACK and required machine receipt. Preserve strict public ACK, active standalone receipt, tools/grants, model,75s/6144MiB, two-message/restart/durable/cleanup gates; reproduce the T077 saved receiver against actual parser, review the closed profile-only delta, then execute a fresh serial run and record source-bound outcome separately from historical failures.
+
+
+T078 resultado actual: recorrido nativo v1 completo PASS en8057,2 mensajes/AG-UI/reinicio/Unicode/catálogos/llamadas/limpieza;28 controles de privacidad y revisión independiente. El fallo T077 R2 no reapareció y su causa sigue sin determinarse; T078 conserva ese diagnóstico pendiente y no autoriza repeticiones sin información nueva. [Resultado](validation-t078.md).
+
+
+- [ ] T080 [US4] [FR062/SC046] Fix the reproduced OpenCode-v2 delivery-contract boundary that discards valid ACK/receipt when later assistant reasoning quotes an incomplete contract heading. Bind complete contract selection to the active receipt without accepting prompt echoes, preserve all stronger T079 gates, add adversarial RED→GREEN source regressions and saved-frame validation, run focused/provider/service/composition checks and independent review, integrate main and repin one actual native-v2 run.
+
+- [x] T081 [US4] [FR063/SC047] Reproduce and reject receipt-bound v2 flattened Thinking output without a reliable final-channel boundary; preserve full transcript diagnostics, ordinary final text, and legacy behavior; run parser/service checks and saved T079 replay before any current-source native acceptance.
+
+T080/T081 offline2026-10-23:218pruebas/5contratos PASS; replay T079 ambiguo rechazado y FULL sin settlement. T081 cierra la regresión conservadora; T080 mantiene pendiente su revalidación nativa integrada. [Evidencia, composición y límites](validation-t080.md).
