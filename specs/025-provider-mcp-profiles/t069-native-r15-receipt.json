@@ -1,0 +1,48 @@
+{
+  "schema": "caos.native-http-diagnostic.v1",
+  "diagnostic_only": true,
+  "acceptance_claimed": false,
+  "source_head": "fe35aaed925a5540c31235c1266f14f9626d2be2",
+  "runner_sha256": "b5f565951156cc7125bf93b4f2c9ae3454d424b8b29335d1081c669e5c6816d5",
+  "plugin_sha256": "be49d7a3ef77d54b3d59dad2ae6f242606d1b3520a1aef91e9d33d4ef0a7ecea",
+  "binary_sha256": "77b2cfe4b97df6f15c3673b22100b9f79c711f25ecb9bf513bb82526b15d24fa",
+  "model": "opencode-go/longcat-2.5-preview-free",
+  "model_deadline_seconds": 75,
+  "mcp_enabled": false,
+  "native_tool_authority_empty": true,
+  "raw_stdout_persisted": false,
+  "headers_or_bodies_recorded": false,
+  "outcome": "native_http_failure_observed",
+  "events": {},
+  "error_names": {},
+  "error_categories": 0,
+  "auth_export_timeout_seconds": 30,
+  "no_http_observation_means_unattributed": true,
+  "http_observations": [
+    {
+      "event": "installed",
+      "schema": 1
+    },
+    {
+      "event": "response",
+      "schema": 1,
+      "route_class": "legacy_go_chat",
+      "http_status": 402,
+      "redirected": false,
+      "elapsed_ms": 3951
+    }
+  ],
+  "model_admission_mib": 9267,
+  "timing_scope": "native_process_lifetime_including_cli_startup",
+  "model_seconds": 12.647369835991412,
+  "native_exit_code": -15,
+  "owned_process_session_stopped": true,
+  "ledger_valid": true,
+  "operator_auth_unchanged": true,
+  "source_unchanged": true,
+  "binary_unchanged": true,
+  "plugin_unchanged": true,
+  "runner_unchanged": true,
+  "source_head_pinned_at_end": true,
+  "private_state_removed": true
+}
