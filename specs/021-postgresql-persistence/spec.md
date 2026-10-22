@@ -544,3 +544,8 @@ budget. Correct this only if owned monitor/init exit and eventual child status
 are proved within the original deadline. Unknown ownership, pidfd errors,
 reaping errors and deadline exhaustion must remain conservative. Never infer
 TERMINATED merely from elapsed time or relax the security/test assertions.
+
+
+### T132 — Current-source cold NFR diagnosis (2026-10-22)
+
+FR-044 and the existing strict benchmark remain unchanged. On published main5628bdf6, global R5 reproduced the first independent covered cold NFR at1.0231529650045559s against `<1.0s`; subsequent stages were not executed. Diagnose that source/fixture/environment rather than treating older loaded/isolated profiles as its cause. Any diagnostic must preserve all fresh schema/identity/history/authority checks, audit commits, transaction and failure-order boundaries. Profiling/EXPLAIN measurements are diagnostic only and cannot substitute for three uninstrumented cold covered passes or full regression/coverage. No prewarm, timer/body/GC/threshold/selection change or unchanged retry for green.

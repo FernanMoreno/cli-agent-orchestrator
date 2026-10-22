@@ -464,3 +464,8 @@ The subsequent normal eight-worker hook completed: 18,263 passed, one failed,
 failed at 2.200422219990287 s. Its displayed 87% coverage rounds 86.913605%;
 neither that display nor the marker-filtered selection establishes T083.
 The push was rejected; T076/T081/T083 remain open, with no performance fix.
+
+
+- [ ] T132 [US3] Diagnose the fresh current-source global-R5 cold covered NFR failure (1.0231529650045559s, main5628bdf6) with source/fixture-bound, content-free boundary timing and independent Codex read review. Preserve the actual failed receipt and every original FR-044, benchmark, coverage, authority, transaction and cleanup criterion. Reuse T129/T130 history without assuming current causality or rerunning unchanged acceptance for green; identify and prove any first incorrect/expensive boundary before a separate reviewed correction. T076/T081/T083 remain open.
+
+T132 diagnostic update (2026-10-22, Codex only): boundary timing and post-call unchanged baseline plans completed, preserving all three actual failures and verified owned cleanup. The baseline plans measured 22.199–31.556ms server execution and 2.770–5.679ms planning over 73 current Work tables. No candidate or product correction is established; T132 and the original cold/full gates stay open. See [current-source receipts and limits](current-source-nfr-20261022.md).
