@@ -198,23 +198,27 @@ def _find_cao_mcp_server_name(source_config: dict) -> Optional[str]:
 def _copy_private_state_file(source: Path, destination: Path) -> bool:
     """Copy one operator state file into a new owner-only data directory."""
     try:
-        source_fd = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        source_fd = os.open(
+            source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        )
     except FileNotFoundError:
         return False
     except OSError as exc:
         raise RuntimeError("OpenCode credential state cannot be read safely") from exc
-    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    destination_created = False
     try:
         source_stat = os.fstat(source_fd)
         if not stat.S_ISREG(source_stat.st_mode):
             raise RuntimeError("OpenCode credential state must be a regular file")
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         destination_fd = os.open(
             destination,
             os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
             0o600,
         )
-        os.fchmod(destination_fd, 0o600)
+        destination_created = True
         try:
+            os.fchmod(destination_fd, 0o600)
             with os.fdopen(source_fd, "rb") as reader:
                 source_fd = -1
                 with os.fdopen(destination_fd, "wb") as writer:
@@ -226,10 +230,11 @@ def _copy_private_state_file(source: Path, destination: Path) -> bool:
             if destination_fd >= 0:
                 os.close(destination_fd)
     except BaseException:
-        try:
-            destination.unlink()
-        except OSError:
-            pass
+        if destination_created:
+            try:
+                destination.unlink()
+            except OSError:
+                pass
         raise
     finally:
         if source_fd >= 0:
@@ -240,7 +245,9 @@ def _copy_private_state_file(source: Path, destination: Path) -> bool:
 def _state_file_metadata(path: Path) -> tuple[int, int, int, int, int, int] | None:
     """Capture a regular state file identity without following links."""
     try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        descriptor = os.open(
+            path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        )
     except FileNotFoundError:
         return None
     except OSError as exc:

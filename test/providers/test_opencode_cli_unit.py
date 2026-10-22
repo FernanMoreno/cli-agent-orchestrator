@@ -557,6 +557,9 @@ class TestInitialize:
         (agents / "developer.md").write_text("---\ndescription: Developer\n---\nDevelop.\n")
         monkeypatch.setattr(opencode_cli, "OPENCODE_AGENTS_DIR", agents)
         monkeypatch.setattr(opencode_cli, "CAO_HOME_DIR", tmp_path / "cao")
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+        monkeypatch.delenv("OPENCODE_DB", raising=False)
+        monkeypatch.delenv("OPENCODE_AUTH_CONTENT", raising=False)
         monkeypatch.setattr(
             opencode_cli,
             "resolve_opencode_runtime",
