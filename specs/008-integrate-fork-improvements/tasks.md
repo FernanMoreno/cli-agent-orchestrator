@@ -128,6 +128,6 @@ Reproduction commands and outcomes: quickstart.md, docs/audits/evidence/2026-10-
 
 ## Centralización renovada — 2026-10-22
 
-- [ ] T076 [FR-025] Inventariar todos los worktrees registrados/presentes, commits exclusivos y deltas locales/sin seguimiento; contrastar byte a byte o por escenarios contra main 29c4100b y la consolidación previa. Conservar snapshots privados y cambios ajenos.
-- [ ] T077 [FR-025] Integrar en main las capacidades funcionales exclusivas y reunir la genealogía pendiente solo después de revisar contenido y precedencia; conservar versiones actuales más completas y los originales externos.
-- [ ] T078 [SC-007] Ejecutar regresiones aplicables de frontend/Work/persistencia/dispatcher, composición y revisión independiente; verificar nuevamente los manifiestos de origen y registrar qué quedó integrado, equivalente, ausente o pendiente, sin atribuir aceptación global no demostrada.
+- [x] T076 [FR-025] Inventariar todos los worktrees registrados/presentes, commits exclusivos y deltas locales/sin seguimiento; contrastar byte a byte o por escenarios contra main 29c4100b y la consolidación previa. Conservar snapshots privados y cambios ajenos.
+- [x] T077 [FR-025] Integrar en main las capacidades funcionales exclusivas y reunir la genealogía pendiente solo después de revisar contenido y precedencia; conservar versiones actuales más completas y los originales externos.
+- [x] T078 [SC-007] Ejecutar regresiones aplicables de frontend/Work/persistencia/dispatcher, composición y revisión independiente; verificar nuevamente los manifiestos de origen y registrar qué quedó integrado, equivalente, ausente o pendiente, sin atribuir aceptación global no demostrada.

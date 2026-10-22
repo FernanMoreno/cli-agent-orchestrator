@@ -202,7 +202,8 @@
       "commits": 10,
       "exit_code": 0,
       "leaks_detected": 0
-    }
+    },
+    "staged_secret_scan_exit_code": 0
   },
   "limits": {
     "global_acceptance_claimed": false,
@@ -217,5 +218,11 @@
     "reviewer": "Claude Code",
     "verdict": "approved_with_documentation_clarifications_applied",
     "lead_execution_results_not_independently_rerun": true
-  }
+  },
+  "consolidation_merge_commit": "fddfbf85bf640877a2b81188ba5258f7a4ddcb2a",
+  "consolidation_merge_parents": [
+    "29c4100bb75f8b6b1f09ab855dfaa4316f868d6b",
+    "aecafa83c874c562e3830ea9b48b4bcd08bbf02b"
+  ],
+  "post_merge_functional_fingerprint_rechecked": true
 }

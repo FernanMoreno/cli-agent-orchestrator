@@ -45,3 +45,5 @@ La revisión cubre las fronteras frontend/autenticación y Work/admisión/schedu
 Gitleaks revisó los diez commits del frontend que pasan a ser alcanzables desde main: no detectó secretos.
 
 Veredicto de composición: PASS dentro de este alcance. Permanecen separadas la aceptación global de modelos/perfiles/concurrencia, los recorridos nativos y T074 host/guest; no se ejecutó QEMU ni se alteraron jobs históricos.
+
+Cierre Git: merge `fddfbf85bf640877a2b81188ba5258f7a4ddcb2a` en main con los dos padres esperados. Tras el commit se revalidaron los 1812 hashes funcionales y los doce artefactos ajenos; la rama frontend queda incluida por ascendencia. El hook normal de pre-commit terminó sin errores y el escaneo de los seis documentos preparados no detectó secretos. T076–T078 quedan cerradas para esta centralización.
