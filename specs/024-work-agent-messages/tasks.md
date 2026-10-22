@@ -59,3 +59,7 @@ process-replacement/provider lane are evidenced.
 - All T001–T007 regression tests precede production changes. T008 precedes T009; T009 precedes T010. T011 and T012 depend on the closed tool contract in T008. T013 precedes T014; T015 follows T010–T014. T016–T019 are completion gates after implementation.
 - The isolated test files T001–T007 can be authored in parallel. Schema/repository work (T008–T009), proxy privacy work (T012), and pure AG-UI projection work (T013) can proceed independently after the red tests exist; route and end-to-end work depends on their contracts.
 - MVP scope is US1 send/receive/ack with PostgreSQL authorization and body privacy. The feature is complete only after US2 durable owner-scoped AG-UI/API replacement and US3 negative authorization boundaries pass.
+
+## Current-source external revalidation (2026-10-22, T076)
+
+The 40-module Work union passed 620 tests (49 warnings), including PostgreSQL/message/origin/API/Docker/AG-UI coverage. The repinned external cao.work.message journey passed on aef64405 with two real Docker workers, lost-reply replay, durable AG-UI, API replacement, generation-2 ACKs and owned-target cleanup. Composition passed5/0; bounded transaction/authority/privacy review and evidence are in [T076](../025-provider-mcp-profiles/validation-t076.md). This is current external Work acceptance without native provider inference; T017's full suite and T018's integral completion retain their own criteria.

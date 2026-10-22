@@ -281,3 +281,8 @@ T074 completed, 2026-10-22: six filesystem RED failures → thirteen new GREEN s
 
 
 T075 completed, 2026-10-22: four synthetic polluted-parent RED failures → same four GREEN; explicit common fixture adopted by owning launch/module/install boundaries. Polluted-parent broad run: 899 passed, four warnings, zero inherited-file accesses in parent and both workers, source sentinels intact. Strengthened durable guards plus mixed neighbors: 165 passed, zero inherited-file accesses. Explicit auth/override tests retained. Black/isort passed for seven files, composition five kept/zero broken and final Claude read review approved. Product source unchanged; native/global gates remain distinct. [Audit, evidence and limits](validation-t075.md).
+
+
+- [x] T076 [US4] [FR059/SC043] Refresh current-source external Work message acceptance separately from generic native messages: compare46pins and source neighborhood, run current applicable Work regressions, review a closed unchanged-criteria execution copy, then one serial repinned real Docker/PG/API-replacement replay with original limits/cleanup. Record composition and exact scope without closing global/full-provider gates. Maps T011/T014 and Spec024 T017/T018.
+
+T076 final (2026-10-22): current-source external Work replay passed with two messages/ACKs, API replacement and full contract cleanup; 620 focused tests and composition5/0. [Evidence and limits](validation-t076.md). Native inference and aggregate/global gates remain separate.
