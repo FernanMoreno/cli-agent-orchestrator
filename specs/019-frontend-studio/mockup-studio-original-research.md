@@ -56,3 +56,28 @@ Chromium/Playwright a 1440×1000 y 375×812: selección con Enter, grafo/lista, 
 La revisión independiente de Claude fue de lectura, sin ejecutar pruebas; aprobó el alcance del arreglo y pidió precisar estos límites. El cajón es navegación no modal; no se afirma atrapamiento de foco ni conformidad WCAG completa. El juicio de originalidad corresponde al autor y queda pendiente de la revisión visual del usuario; las referencias y su transformación se documentan para que pueda valorarse. El encargo de edición de Claude quedó marcado como bloqueado por hooks ausentes en su worktree aunque entregó los cuatro artefactos; Codex realizó después la integración y la verificación indicadas aquí, sin atribuir al encargo una certificación de workflow.
 
 La inspección de las capturas Linux también reprodujo títulos SVG que rebasaban sus nodos al cambiar la fuente de sistema. Se sustituyó el corte por número de caracteres por medición real del texto y ajuste a dos líneas, con etiqueta completa en el inspector. La repetición a1440/375 comprobó los límites SVG de todos los títulos y regeneró ambas capturas.
+
+## Revisión del grafo (2026-10-22, tras «debe mejorar lo del grafo»)
+
+Se conservan marca, paleta, disposición, inspector, decisiones y actividad. Solo cambia el panel del grafo. Es una **propuesta visual nueva** con datos ficticios: no implica contratos de 017, servicios ni capacidad real de escala.
+
+Qué cambia y por qué (017 FR-003/008/024/026/027, 019 FR-036):
+
+- **Estructura.** Filas = agente, agrupadas en marcos por instancia; columnas = fase. Una tarea o decisión vive en la fila de quien la lleva, así que «ejecuta» se lee por posición y no ocupa aristas. La supervisión es un tronco de delegación a la izquierda, del Planificador (supervisor) a los demás agentes.
+- **Cuatro vínculos dirigidos, distinguibles sin color:** delegación (continua, punta abierta), dependencia (continua fina, punta llena), espera de decisión (discontinua, punta con tope) y comunicación (punteada, punta abierta; no crea dependencia). Se eliminaron las aristas sin semántica. Las rutas son ortogonales y están escalonadas a mano para que no se crucen dentro de la red.
+- **Estado sin color:** cada nodo lleva un glifo (punto, check, pausa, círculo tachado, aro) y el estado en texto en el subtítulo. La forma indica el tipo: píldora para agente, rectángulo para tarea y rombo para decisión.
+- **Ruta crítica.** Trazo negro grueso, nodos con borde de tinta y pasos numerados 1–4. Nunca se atenúa, así que se distingue de la comunicación y de las dependencias laterales. El resumen inferior nombra qué decisiones la retienen. Se puede apagar.
+- **Exploración local:** zoom (botones, + / −, Ctrl + rueda), encajar (0), 100 %, centrar la selección (C), arrastre del fondo y minimapa clicable cuando la red no cabe. Las flechas mueven el foco entre nodos con un único tab stop (roving) y encuadran el nodo enfocado; Enter selecciona. Al volver a renderizar se conserva el encuadre, como pide el criterio de 017 de no desplazar al operador.
+- **Filtros con indicadores:** los chips de vínculo sirven a la vez de leyenda y muestran visibles/total. Hay una barra «Mostrando X de 14 elementos y Y de 16 vínculos» que nombra lo oculto, y el botón «Mostrar red completa». «Solo rama de …» deja los ascendientes y descendientes de la selección. El estado vacío también se ve dentro del grafo.
+- **Inspector:** «Camino de bloqueo» (qué retiene a la selección, encadenado hacia arriba) y vecinos agrupados por tipo y dirección, con acceso a cada vínculo. Seleccionar un vínculo (clic, inspector o lista) muestra tipo, dirección, ámbito, si está en la ruta crítica y la fuente, declarada como ficticia.
+- **Lista** equivalente: elementos más una tabla de vínculos, navegable con teclado.
+
+Datos ficticios ajustados para la propuesta: se añade T-207 «Revisión y entrega»; D-15 pasa a retener T-205. Se mantienen 3 decisiones.
+
+Comprobado con Chromium/Playwright de Linux a 1440×1000 y 375×812: 26 comprobaciones por viewport pasan, con 0 errores JS y 0 solicitudes externas. El detalle está en [mockup-studio-original-graph-checks.json](mockup-studio-original-graph-checks.json). Las capturas se regeneraron; la de móvil es de página completa.
+
+Límites: no se ha comprobado en Windows (solo con fuentes Linux, aunque el ajuste mide el texto real). No hay pellizco táctil para zoom (se usan los botones). En móvil el grafo empieza por debajo del primer pantallazo porque la cabecera existente no se tocó. Los vínculos no son tab stops propios: se llega a ellos por el inspector o la lista. Sin auditoría axe ni WCAG. La valoración del diseño queda pendiente del usuario.
+
+### Verificación independiente del grafo por Codex
+
+Codex volvió a ejecutar las26 comprobaciones de navegador en cada viewport (1440×1000 y375×812) desde los archivos copiados al directorio principal. Todas pasaron, sin errores JavaScript ni solicitudes externas. Incluyen14 nodos/16 vínculos, textos dentro de nodos, filtros/restablecimiento/vacío, navegación del grafo, lista equivalente, respuesta local y cierre móvil. Se conserva el alcance de prototipo; estos datos no validan carga real ni contratos backend. El registro JSON distingue esta revisión de la evidencia de la maqueta anterior.

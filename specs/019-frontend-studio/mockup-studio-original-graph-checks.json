@@ -1,0 +1,285 @@
+{
+ "date": "2026-10-22",
+ "runner": "Playwright Chromium (Linux, headless), deviceScaleFactor 1; script kept outside the repository",
+ "file": "mockup-studio-original.html",
+ "results": [
+  {
+   "viewport": "1440x1000",
+   "checks": {
+    "no-page-overflow-graph": {
+     "pass": true,
+     "info": {
+      "sw": 1440,
+      "iw": 1440,
+      "bo": "visible",
+      "ho": "visible"
+     }
+    },
+    "svg-text-inside-nodes": {
+     "pass": true,
+     "info": {
+      "nodes": 14,
+      "bad": []
+     }
+    },
+    "zoom-in": {
+     "pass": true,
+     "info": [
+      "94%",
+      "113%"
+     ]
+    },
+    "zoom-out": {
+     "pass": true,
+     "info": "79%"
+    },
+    "reset-100": {
+     "pass": true
+    },
+    "fit": {
+     "pass": true,
+     "info": "translate(13.4 10.0) scale(0.942)"
+    },
+    "center-selection": {
+     "pass": true,
+     "info": "translate(18.1 177.7) scale(0.942)"
+    },
+    "drag-pan": {
+     "pass": true,
+     "info": [
+      "translate(18.1 177.7) scale(0.942)",
+      "translate(-81.9 177.7) scale(0.942)"
+     ]
+    },
+    "keyboard-arrow-enter": {
+     "pass": true,
+     "info": {
+      "f0": "D-14",
+      "f1": "T-204",
+      "h2": "Migrar almacén de sesiones",
+      "nTab": 1
+     }
+    },
+    "keyboard-zoom": {
+     "pass": true,
+     "info": "113%"
+    },
+    "edge-inspector": {
+     "pass": true
+    },
+    "edge-filter-indicator": {
+     "pass": true,
+     "info": {
+      "before": 16,
+      "after": 13,
+      "st": "Mostrando 14 de 14 elementos y 13 de 16 vínculos0 elementos y 3 vínculos ocultos por filtrosMostrar red completa"
+     }
+    },
+    "reset-full-network": {
+     "pass": true
+    },
+    "branch-focus": {
+     "pass": true,
+     "info": 8
+    },
+    "critical-badges": {
+     "pass": true
+    },
+    "critical-toggle": {
+     "pass": true
+    },
+    "graph-empty-state": {
+     "pass": true
+    },
+    "graph-empty-reset": {
+     "pass": true
+    },
+    "instance-filter": {
+     "pass": true
+    },
+    "kind-filter": {
+     "pass": true
+    },
+    "state-filter": {
+     "pass": true
+    },
+    "list-equivalent": {
+     "pass": true,
+     "info": {
+      "rows": 14,
+      "erows": 16,
+      "o": {
+       "sw": 1440,
+       "iw": 1440,
+       "bo": "visible",
+       "ho": "visible"
+      }
+     }
+    },
+    "list-keyboard": {
+     "pass": true
+    },
+    "answer-required": {
+     "pass": true
+    },
+    "local-answer-unblocks": {
+     "pass": true,
+     "info": {
+      "t204": "Tarea Migrar almacén de sesiones, En espera, worker-b, paso 2 de la ruta crítica"
+     }
+    },
+    "no-page-overflow-end": {
+     "pass": true,
+     "info": {
+      "sw": 1440,
+      "iw": 1440,
+      "bo": "visible",
+      "ho": "visible"
+     }
+    }
+   },
+   "javascriptErrors": [],
+   "externalRequests": [],
+   "passed": true
+  },
+  {
+   "viewport": "375x812",
+   "checks": {
+    "no-page-overflow-graph": {
+     "pass": true,
+     "info": {
+      "sw": 375,
+      "iw": 375,
+      "bo": "visible",
+      "ho": "visible"
+     }
+    },
+    "svg-text-inside-nodes": {
+     "pass": true,
+     "info": {
+      "nodes": 14,
+      "bad": []
+     }
+    },
+    "zoom-in": {
+     "pass": true,
+     "info": [
+      "90%",
+      "108%"
+     ]
+    },
+    "zoom-out": {
+     "pass": true,
+     "info": "75%"
+    },
+    "fit": {
+     "pass": true,
+     "info": "translate(10.0 114.1) scale(0.384)"
+    },
+    "center-selection": {
+     "pass": true,
+     "info": "translate(11.9 182.4) scale(0.384)"
+    },
+    "drag-pan": {
+     "pass": true,
+     "info": [
+      "translate(11.9 182.4) scale(0.384)",
+      "translate(-88.1 182.4) scale(0.384)"
+     ]
+    },
+    "keyboard-arrow-enter": {
+     "pass": true,
+     "info": {
+      "f0": "D-14",
+      "f1": "T-204",
+      "h2": "Migrar almacén de sesiones",
+      "nTab": 1
+     }
+    },
+    "keyboard-zoom": {
+     "pass": true,
+     "info": "46%"
+    },
+    "edge-inspector": {
+     "pass": true
+    },
+    "edge-filter-indicator": {
+     "pass": true,
+     "info": {
+      "before": 16,
+      "after": 13,
+      "st": "Mostrando 14 de 14 elementos y 13 de 16 vínculos0 elementos y 3 vínculos ocultos por filtrosMostrar red completa"
+     }
+    },
+    "reset-full-network": {
+     "pass": true
+    },
+    "branch-focus": {
+     "pass": true,
+     "info": 8
+    },
+    "critical-badges": {
+     "pass": true
+    },
+    "critical-toggle": {
+     "pass": true
+    },
+    "graph-empty-state": {
+     "pass": true
+    },
+    "graph-empty-reset": {
+     "pass": true
+    },
+    "instance-filter": {
+     "pass": true
+    },
+    "kind-filter": {
+     "pass": true
+    },
+    "state-filter": {
+     "pass": true
+    },
+    "list-equivalent": {
+     "pass": true,
+     "info": {
+      "rows": 14,
+      "erows": 16,
+      "o": {
+       "sw": 375,
+       "iw": 375,
+       "bo": "visible",
+       "ho": "visible"
+      }
+     }
+    },
+    "list-keyboard": {
+     "pass": true
+    },
+    "answer-required": {
+     "pass": true
+    },
+    "local-answer-unblocks": {
+     "pass": true,
+     "info": {
+      "t204": "Tarea Migrar almacén de sesiones, En espera, worker-b, paso 2 de la ruta crítica"
+     }
+    },
+    "no-page-overflow-end": {
+     "pass": true,
+     "info": {
+      "sw": 375,
+      "iw": 375,
+      "bo": "visible",
+      "ho": "visible"
+     }
+    },
+    "mobile-menu-escape-focus": {
+     "pass": true
+    }
+   },
+   "javascriptErrors": [],
+   "externalRequests": [],
+   "passed": true
+  }
+ ]
+}
