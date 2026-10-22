@@ -1,0 +1,68 @@
+{
+  "schema": "caos.native-http-diagnostic.v1",
+  "diagnostic_only": true,
+  "error_body_persisted": false,
+  "request_identity_booleans_only": true,
+  "observer_error_budget_ms": 500,
+  "acceptance_claimed": false,
+  "source_head": "dc6be9a98363c6aaf6ea3b028c9897683f63c882",
+  "runner_sha256": "a40b745af2d163d3db9495d6e647af5c3f503030acdcca1de3e729bcb4101ab9",
+  "plugin_sha256": "4944bbca29ac0d5e1c6663bfb81d2ec8a70deb31ce63a6151a8f45001b2b7e90",
+  "binary_sha256": "77b2cfe4b97df6f15c3673b22100b9f79c711f25ecb9bf513bb82526b15d24fa",
+  "model": "opencode-go/longcat-2.5-preview-free",
+  "model_deadline_seconds": 75,
+  "mcp_enabled": false,
+  "native_tool_authority_empty": true,
+  "raw_stdout_persisted": false,
+  "headers_or_bodies_recorded": false,
+  "outcome": "native_http_failure_observed",
+  "events": {},
+  "error_names": {},
+  "error_categories": {},
+  "auth_export_timeout_seconds": 30,
+  "no_http_observation_means_unattributed": true,
+  "http_observations": [
+    {
+      "event": "installed",
+      "schema": 1
+    },
+    {
+      "event": "response",
+      "schema": 1,
+      "route_class": "legacy_go_chat",
+      "http_status": 402,
+      "redirected": false,
+      "elapsed_ms": 1977,
+      "request": {
+        "model_matches": true,
+        "auth_matches": true,
+        "session_present": true,
+        "user_agent_present": true,
+        "tools_count": 0,
+        "stream": true
+      },
+      "error_detail": {
+        "state": "json",
+        "code": "unknown",
+        "markers": [
+          "unsupported",
+          "endpoint"
+        ]
+      },
+      "observer_ms": 2
+    }
+  ],
+  "model_admission_mib": 8244,
+  "timing_scope": "native_process_lifetime_including_cli_startup",
+  "model_seconds": 10.540571984020062,
+  "native_exit_code": -15,
+  "owned_process_session_stopped": true,
+  "ledger_valid": true,
+  "operator_auth_unchanged": true,
+  "source_unchanged": true,
+  "binary_unchanged": true,
+  "plugin_unchanged": true,
+  "runner_unchanged": true,
+  "source_head_pinned_at_end": true,
+  "private_state_removed": true
+}

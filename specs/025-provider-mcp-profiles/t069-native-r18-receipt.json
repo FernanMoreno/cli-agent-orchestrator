@@ -1,0 +1,47 @@
+{
+  "schema": "caos.native-http-diagnostic.v1",
+  "diagnostic_only": true,
+  "auth_staging": "full_native_store_copy",
+  "expected_auth_file_is_observer_only": true,
+  "error_body_persisted": false,
+  "request_identity_booleans_only": true,
+  "observer_error_budget_ms": 500,
+  "acceptance_claimed": false,
+  "source_head": "dc6be9a98363c6aaf6ea3b028c9897683f63c882",
+  "runner_sha256": "91d2774e89124b8d19b03c82b498ad6fd9ef6eecfb426b994f774e1f74fb695e",
+  "plugin_sha256": "837d215a560c9c3ce8ce0254049dcb850e8d5a1f719f05ef753b04ff7ef7b0ac",
+  "binary_sha256": "77b2cfe4b97df6f15c3673b22100b9f79c711f25ecb9bf513bb82526b15d24fa",
+  "model": "opencode-go/longcat-2.5-preview-free",
+  "model_deadline_seconds": 75,
+  "mcp_enabled": false,
+  "native_tool_authority_empty": true,
+  "raw_stdout_persisted": false,
+  "headers_or_bodies_recorded": false,
+  "outcome": "native_error_event",
+  "events": {
+    "error": 1
+  },
+  "error_names": {},
+  "error_categories": {},
+  "auth_export_timeout_seconds": 30,
+  "no_http_observation_means_unattributed": true,
+  "http_observations": [
+    {
+      "event": "installed",
+      "schema": 1
+    }
+  ],
+  "model_admission_mib": 8055,
+  "timing_scope": "native_process_lifetime_including_cli_startup",
+  "model_seconds": 9.179708516050596,
+  "native_exit_code": 1,
+  "owned_process_session_stopped": true,
+  "ledger_valid": true,
+  "operator_auth_unchanged": true,
+  "source_unchanged": true,
+  "binary_unchanged": true,
+  "plugin_unchanged": true,
+  "runner_unchanged": true,
+  "source_head_pinned_at_end": true,
+  "private_state_removed": true
+}

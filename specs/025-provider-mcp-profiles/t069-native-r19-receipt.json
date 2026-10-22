@@ -1,0 +1,72 @@
+{
+  "schema": "caos.native-http-diagnostic.v1",
+  "diagnostic_only": true,
+  "causal_control": "explicit_current_longcat_model_only",
+  "original_model_acceptance_claimed": false,
+  "native_unicode_response_observed": false,
+  "error_body_persisted": false,
+  "request_identity_booleans_only": true,
+  "observer_error_budget_ms": 500,
+  "acceptance_claimed": false,
+  "source_head": "dc6be9a98363c6aaf6ea3b028c9897683f63c882",
+  "runner_sha256": "e5ff3410d7dc60c3b2e5c66df4005367a70df5496ddf6f815d7f2ecbcdba4c49",
+  "plugin_sha256": "4944bbca29ac0d5e1c6663bfb81d2ec8a70deb31ce63a6151a8f45001b2b7e90",
+  "binary_sha256": "77b2cfe4b97df6f15c3673b22100b9f79c711f25ecb9bf513bb82526b15d24fa",
+  "model": "opencode-go/longcat-2.0",
+  "model_deadline_seconds": 75,
+  "mcp_enabled": false,
+  "native_tool_authority_empty": true,
+  "raw_stdout_persisted": false,
+  "headers_or_bodies_recorded": false,
+  "outcome": "native_http_failure_observed",
+  "events": {},
+  "error_names": {},
+  "error_categories": {},
+  "auth_export_timeout_seconds": 30,
+  "no_http_observation_means_unattributed": true,
+  "http_observations": [
+    {
+      "event": "installed",
+      "schema": 1
+    },
+    {
+      "event": "response",
+      "schema": 1,
+      "route_class": "legacy_go_chat",
+      "http_status": 402,
+      "redirected": false,
+      "elapsed_ms": 2314,
+      "request": {
+        "model_matches": true,
+        "auth_matches": true,
+        "session_present": true,
+        "user_agent_present": true,
+        "tools_count": 0,
+        "stream": true
+      },
+      "error_detail": {
+        "state": "json",
+        "code": "unknown",
+        "message_category": "unknown",
+        "markers": [
+          "unsupported",
+          "endpoint"
+        ]
+      },
+      "observer_ms": 3
+    }
+  ],
+  "model_admission_mib": 8506,
+  "timing_scope": "native_process_lifetime_including_cli_startup",
+  "model_seconds": 9.537629311031196,
+  "native_exit_code": -15,
+  "owned_process_session_stopped": true,
+  "ledger_valid": true,
+  "operator_auth_unchanged": true,
+  "source_unchanged": true,
+  "binary_unchanged": true,
+  "plugin_unchanged": true,
+  "runner_unchanged": true,
+  "source_head_pinned_at_end": true,
+  "private_state_removed": true
+}

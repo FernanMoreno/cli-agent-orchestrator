@@ -1,0 +1,21 @@
+# T070 — current catalog before standard live acceptance
+
+Date: 2026-10-22. Candidate builds on main dc6be9a9.
+
+The standard live-journey CLI previously started run() without checking current model lifecycle. The pinned acceptance model is now deprecated in the official model catalog, while native diagnostics explicitly disable model-catalog refresh. A behavioral RED contract proved main() still invoked the journey when the catalog prerequisite was deprecated.
+
+The CLI now checks the fixed official public catalog before calling run(). Deprecated, missing, malformed, tool-incapable and unverified states stop with a content-free catalog rejection. An omitted/null catalog status is unspecified and eligible only with tool_call exactly true. Eligible delegates to the existing journey and unchanged completion/cleanup/auth/scope predicate; catalog eligibility does not assert inference success. No approval or invalid model means no catalog access.
+
+The isolated stdlib reader makes one fixed HTTPS GET with no ambient credentials/proxy/netrc, follows no redirects, caps the payload at16MiB and runs under a10s parent process timeout covering DNS/TLS/headers/body. Timeout reaps the child. Fixed error states discard raw exception/body text. The public catalog digest/timestamp and eligibility metadata accompany the CLI result. No provider runtime, credential preference, global config or login is changed. Programmatic diagnostic run() remains separate: external/private acceptance launchers must explicitly invoke the helper and retain its receipt. This is a documented residual integration responsibility.
+
+Validation: original behavioral RED1; final219 offline tests passed in10.59s across the new catalog module and both existing harness/native-mini modules. All original assertions remain; the existing cleanup-exit contract now stubs only its new external catalog prerequisite. New contracts include actual child timeout/reaping, no-auth environment, fixed destination/no redirect policy, size/schema/privacy rejection, zero network on unapproved/invalid input, early CLI refusal and unchanged eligible delegation.
+
+The first broader run retained11 failures:8 offline exit-contract cases had not stubbed the new live prerequisite;3 imported an old installed snapshot instead of the checkout. Root corrected that fixture boundary and the invocation to PYTHONPATH=repo/src:repo and verified the writer's actual source file before rerunning. The HTTP probes already prepended the checkout src path, so the old offline import does not explain their402s. No old test assertion or live acceptance criterion was weakened.
+
+Black/isort four files and mypy on the new helper passed. Registered composition passed412 files/1834 dependencies/5 kept/0 broken. A bounded private Graphify refresh recorded197 AST nodes/421 edges, zero model tokens, and preserved the shared graph. Final composition review covers CLI→public child→strict catalog projection→unchanged journey: no persistence/migration/message API changes, one child owner with bounded cleanup, no cache or retries, no user-config/auth inheritance. Real HTTP catalog evidence and a real timeout child complement offline HTTP-schema fixtures; PostgreSQL/container tests are inapplicable to this pre-runtime barrier.
+
+Claude READ review6d4516ee0ee74fc1ac070d27a7e497dc approved the concrete implementation; root corrected the nonblocking import/RED-fixture clarity notes and documented unspecified status, fixed child constants and programmatic-run scope. Reviewer ran no checks. Final diff review preserves the existing model budgets, native authority, receipt/ACK and cleanup conditions.
+
+[Real public-catalog entrypoint receipt](t070-current-catalog-receipt.json): HTTP200, catalog6053697bytes/SHA256fc8b216abdff5f04b96e04492da3bcdd1994681f4d140325dde293f4e94d0217, selected model deprecated; CLI exits1 before run(). The witness replaces run() with a failing sentinel, so no API/PostgreSQL/native model process can be started by this check. This proves the rejection boundary, not a live provider fix.
+
+T070 closes only this standard-CLI admission gap. T069's upstream rejection cause and T060/T062/full provider acceptance remain open. No claim that model deprecation explains R19's separate402 is made.

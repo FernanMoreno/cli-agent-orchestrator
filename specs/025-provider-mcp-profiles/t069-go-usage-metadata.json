@@ -1,0 +1,63 @@
+{
+  "diagnostic_only": true,
+  "endpoint": "current_go_usage",
+  "model_calls": 0,
+  "credential_values_or_hashes_persisted": false,
+  "sources": [
+    {
+      "source": "active_database",
+      "key_kind": "console",
+      "http_status": 200,
+      "body_state": "json",
+      "known_fields": [
+        "usage"
+      ],
+      "error_message_tokens": [],
+      "known_boolean_flags": {}
+    },
+    {
+      "source": "legacy_go_json",
+      "key_kind": "legacy",
+      "http_status": 401,
+      "body_state": "json",
+      "known_fields": [
+        "error"
+      ],
+      "error_message_tokens": [
+        "this",
+        "api",
+        "key",
+        "has",
+        "_",
+        "_",
+        "a",
+        "_",
+        "api",
+        "key",
+        "in",
+        "opencode",
+        "_",
+        "and",
+        "_",
+        "_",
+        "in",
+        "_",
+        "_",
+        "or",
+        "_",
+        "_",
+        "_",
+        "in",
+        "again",
+        "_",
+        "not",
+        "_",
+        "this",
+        "key"
+      ],
+      "known_boolean_flags": {}
+    }
+  ],
+  "operator_auth_unchanged": true,
+  "private_state_removed": true
+}

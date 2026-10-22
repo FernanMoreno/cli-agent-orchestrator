@@ -622,6 +622,13 @@ def test_opencode_main_requires_cleanup_and_auth_for_success_exit(
 ) -> None:
     from test.live_provider import opencode_interaction_journey as opencode
 
+    # This offline contract isolates final cleanup/exit behavior from live catalog admission.
+    monkeypatch.setattr(
+        opencode.model_catalog,
+        "check_model",
+        lambda model: {"eligible": True, "reason": "eligible", "status": "active"},
+    )
+
     result = {
         "provider": "opencode_cli",
         "result": "completed_and_acknowledged",

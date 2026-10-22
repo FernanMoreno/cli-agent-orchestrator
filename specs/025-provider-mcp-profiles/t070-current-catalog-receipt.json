@@ -1,0 +1,24 @@
+{
+  "entrypoint": {
+    "model_catalog": {
+      "catalog_bytes": 6053697,
+      "catalog_sha256": "fc8b216abdff5f04b96e04492da3bcdd1994681f4d140325dde293f4e94d0217",
+      "eligible": false,
+      "http_status": 200,
+      "observed_at_utc": "2026-10-22T11:35:36.594808+00:00",
+      "reason": "deprecated",
+      "source": "https://models.opencode.ai/api.json",
+      "status": "deprecated"
+    },
+    "provider": "opencode_cli",
+    "raw_provider_output_printed": false,
+    "requested_model": "opencode-go/longcat-2.5-preview-free",
+    "result": "model_catalog_rejected"
+  },
+  "observation": {
+    "entrypoint_exit": 1,
+    "native_calls": 0,
+    "api_or_postgres_started": false,
+    "guard_used_real_public_catalog": true
+  }
+}

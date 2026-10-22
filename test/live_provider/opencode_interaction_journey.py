@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from test.live_provider import interaction_cli_journey as common
 from test.live_provider import opencode_http_tool_offer_observer, opencode_mcp_observer
+from test.live_provider import opencode_model_catalog as model_catalog
 from typing import Any
 
 RUN_BUDGET_SECONDS = 75.0
@@ -3575,11 +3576,30 @@ def main() -> int:
         help="explicitly authorize the one bounded model journey",
     )
     args = parser.parse_args()
+    catalog = None
+    if args.run_model and args.model == common.OPENCODE_INTERACTION_MODEL:
+        catalog = model_catalog.check_model(args.model)
+        if catalog["eligible"] is not True:
+            print(
+                json.dumps(
+                    {
+                        "provider": "opencode_cli",
+                        "result": "model_catalog_rejected",
+                        "requested_model": common.OPENCODE_INTERACTION_MODEL,
+                        "model_catalog": catalog,
+                        "raw_provider_output_printed": False,
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 1
     run_result = run(model=args.model, run_model=args.run_model)
     if args.run_model and args.model == common.OPENCODE_INTERACTION_MODEL:
         # This exact literal comes from the harness invocation, not provider output.
         run_result["requested_model"] = common.OPENCODE_INTERACTION_MODEL
     result = common._safe_provider_receipt(run_result)
+    if catalog is not None:
+        result["model_catalog"] = catalog
     result["raw_provider_output_printed"] = False
     print(json.dumps(result, sort_keys=True))
     successful_journey = (
