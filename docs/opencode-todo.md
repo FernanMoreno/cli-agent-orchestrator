@@ -338,3 +338,7 @@ La observación mínima [T078](../specs/025-provider-mcp-profiles/validation-t07
 
 
 2026-10-23 — T079 v2 real FAILED pese al perfil corregido; causa reproducida de extracción en T080 y brecha de canal Thinking en T081. Se conservan todos los recibos y el PASS v1 T078. [Correcciones, pruebas y límites](../specs/025-provider-mcp-profiles/validation-t080.md). Revalidación nativa/global aún abierta; no se toma el último ACK del texto para aprobar.
+
+T080 actual en f3e4c354: timeout75s de fase1, sin reinicio; un mensaje persistido, receptor reconcile y replay rechazado por Thinking ambiguo. Limpieza/operador preservados; gate cerrado. No se repite sin señal nueva. Hace falta identidad y separación estructurada del canal final; OC-05/06 permanecen abiertos.
+
+T082: implementado override privado soportado por Mini v2.0.18 para ocultar solo las partes tipadas de razonamiento, manteniendo texto final/ACK y la guardia de ambigüedad.219pruebas y composición5/0 PASS; revisión independiente aprobada. [Fuente y alcance](../specs/025-provider-mcp-profiles/validation-t082.md). Aceptación real nueva todavía pendiente.

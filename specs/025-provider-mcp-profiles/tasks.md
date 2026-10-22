@@ -301,8 +301,12 @@ T077 actual,2026-10-22: generación v1 PASS en8057; primera ejecución administr
 T078 resultado actual: recorrido nativo v1 completo PASS en8057,2 mensajes/AG-UI/reinicio/Unicode/catálogos/llamadas/limpieza;28 controles de privacidad y revisión independiente. El fallo T077 R2 no reapareció y su causa sigue sin determinarse; T078 conserva ese diagnóstico pendiente y no autoriza repeticiones sin información nueva. [Resultado](validation-t078.md).
 
 
-- [ ] T080 [US4] [FR062/SC046] Fix the reproduced OpenCode-v2 delivery-contract boundary that discards valid ACK/receipt when later assistant reasoning quotes an incomplete contract heading. Bind complete contract selection to the active receipt without accepting prompt echoes, preserve all stronger T079 gates, add adversarial RED→GREEN source regressions and saved-frame validation, run focused/provider/service/composition checks and independent review, integrate main and repin one actual native-v2 run.
+- [x] T080 [US4] [FR062/SC046] Fix the reproduced OpenCode-v2 delivery-contract boundary that discards valid ACK/receipt when later assistant reasoning quotes an incomplete contract heading. Bind complete contract selection to the active receipt without accepting prompt echoes, preserve all stronger T079 gates, add adversarial RED→GREEN source regressions and saved-frame validation, run focused/provider/service/composition checks and independent review, integrate main and repin one actual native-v2 run.
 
 - [x] T081 [US4] [FR063/SC047] Reproduce and reject receipt-bound v2 flattened Thinking output without a reliable final-channel boundary; preserve full transcript diagnostics, ordinary final text, and legacy behavior; run parser/service checks and saved T079 replay before any current-source native acceptance.
 
 T080/T081 offline2026-10-23:218pruebas/5contratos PASS; replay T079 ambiguo rechazado y FULL sin settlement. T081 cierra la regresión conservadora; T080 mantiene pendiente su revalidación nativa integrada. [Evidencia, composición y límites](validation-t080.md).
+
+T080 revalidado2026-10-23 en f3e4c354: ejecución real FAILED por75s en fase1, replay receptor rechazado por canal ambiguo; limpieza completa y gate cerrado. T080 cierra la corrección y su ensayo, no aceptación v2. T077/T079 y OC-05 siguen abiertos; investigar canal estructurado antes de repetir. [Resultado](validation-t080.md).
+
+- [ ] T082 [US4] [FR064/SC048] Verify v2.0.18 Mini typed reasoning filtering and CLI-config override, reproduce absent private launch override, implement child-only mini.thinking=hide without changing model/MCP/receipt criteria, test launch and provider/service boundaries, review composition and one freshly pinned native-v2 run.

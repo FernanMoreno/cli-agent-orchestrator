@@ -1231,3 +1231,27 @@ def test_quoted_go_model_unavailable_does_not_override_completed_answer(screen):
         else instance.get_status(frame)
     )
     assert status == TerminalStatus.COMPLETED
+
+
+def test_v2_child_hides_typed_reasoning_without_mutating_parent_config(monkeypatch):
+    import json
+    import os
+    import shlex
+
+    ambient = '{"mini":{"thinking":"show","tools":"show"}}'
+    monkeypatch.setenv("OPENCODE_CLI_CONFIG_CONTENT", ambient)
+    instance = provider()
+    command = shlex.split(instance._build_launch_command())
+    settings = next(
+        (
+            word.split("=", 1)[1]
+            for word in command
+            if word.startswith("OPENCODE_CLI_CONFIG_CONTENT=")
+        ),
+        None,
+    )
+    assert settings is not None
+    assert json.loads(settings) == {"mini": {"thinking": "hide"}}
+    assert os.environ["OPENCODE_CLI_CONFIG_CONTENT"] == ambient
+    instance._cli_major = 1
+    assert "OPENCODE_CLI_CONFIG_CONTENT=" not in instance._build_launch_command()

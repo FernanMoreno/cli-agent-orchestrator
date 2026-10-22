@@ -500,6 +500,88 @@
           "receiver_turn_completed_once": false
         }
       ]
+    },
+    "v2_t080": {
+      "source_head": "f3e4c354e430aab87a55b18bd28596bb0795d04e",
+      "source_file_count": 507,
+      "source_fingerprint_sha256": "036c9c682fb11627a4522c694bfe8c32834f6565c30a9ae6df2beddf785519f9",
+      "binary_sha256_expected": "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f",
+      "model": "opencode-go/glm-5.3-flash",
+      "utc_started": "2026-10-22T23:17:53.870717+00:00",
+      "utc_finished": "2026-10-22T23:20:00.638865+00:00",
+      "elapsed_seconds": 120.201,
+      "error_code": "model_phase_exceeded_75_seconds",
+      "error_type": "GateError",
+      "capability_files_immediately_after_delete": 0,
+      "native_provider_roots_immediately_after_delete": 0,
+      "private_receipt_sha256": "c423eeb6272a8daaae6d835b21e07a5cc2f4cc16d8eef2f6a22069c9dd753290",
+      "checks": {
+        "claude_used": false,
+        "redacted_output_only": true,
+        "postgres_cleanup_deferred": false,
+        "postgres_cleanup_guard_installed": true,
+        "postgres_identity_verified": true,
+        "receiver_production_install_passed": true,
+        "receiver_installed_native_v3_verified": true,
+        "receiver_allowed_tools_exact": true,
+        "sender_production_install_passed": true,
+        "sender_installed_native_v3_verified": true,
+        "sender_allowed_tools_exact": true,
+        "private_v2_credential_snapshot_created": true,
+        "ambient_environment_sanitized_by_allowlist": true,
+        "private_tmux_server_pinned": true,
+        "api_healthy": true,
+        "receiver_operation_permissions_exact": true,
+        "receiver_model_ready": true,
+        "receiver_model_phase_within_75_seconds": true,
+        "sender_operation_permissions_exact": true,
+        "sender_model_ready": true,
+        "sender_model_phase_within_75_seconds": true,
+        "two_native_v2_provider_roots": true,
+        "no_human_interaction_capability": true,
+        "agui_capture_threads_confirmed_dead_before_postgres_teardown": true,
+        "api_a_launch_attempted": true,
+        "api_b_launch_attempted": false,
+        "api_processes_confirmed_dead_before_postgres_teardown": true,
+        "api_launches_tracked_through_confirmed_death": true,
+        "api_b_cleanup": false,
+        "api_a_cleanup": true,
+        "api_cleanup": true,
+        "tmux_processes_confirmed_dead_before_postgres_teardown": true,
+        "tmux_cleanup": true,
+        "postgres_cleanup": true,
+        "operator_auth_unchanged": true,
+        "source_unchanged": true,
+        "binary_unchanged": true,
+        "runner_unchanged": true,
+        "python_interpreter_unchanged": true,
+        "private_state_removed": true,
+        "success": false
+      },
+      "memory_admissions_mib": {
+        "initial": 8829,
+        "production_profile_install": 8834,
+        "install_receiver": 8834,
+        "install_sender": 8837,
+        "api_start": 8820,
+        "terminal_receiver": 8660,
+        "terminal_sender": 8096,
+        "model_phase_1_sender": 7569,
+        "model_phase_1_receiver": 7569,
+        "model_phase_1_start": 7567,
+        "receiver_phase_1_started": 7322
+      },
+      "phases": [
+        {
+          "index": 0,
+          "elapsed_seconds": 75.149,
+          "sender_model_within_75_seconds": false,
+          "receiver_model_within_75_seconds": false,
+          "last_receipt_unicode_verified": false,
+          "durable_turn_completed": false,
+          "receiver_turn_completed_once": false
+        }
+      ]
     }
   }
 }

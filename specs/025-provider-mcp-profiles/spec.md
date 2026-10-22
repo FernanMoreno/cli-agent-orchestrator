@@ -231,3 +231,6 @@ FR053 catalog-schema detail: an omitted/null native catalog status is the docume
 
 - FR063: For receipt-bound native-v2 turns, an unresolved leading Thinking preamble must not be promoted to public final output solely because a standalone active receipt occurs later in its flattened region. Without a demonstrated channel boundary, fail extraction closed; do not infer the final answer from blank paragraphs or the last ACK.
 - SC047: Synthetic single/multiple receipt Thinking frames and the saved T079 frame must remain unverifiable through actual extraction/service verification. Plain assistant text with current receipt remains supported; legacy no-receipt behavior stays separate.
+
+- FR064: Managed native-v2 Mini must suppress rendering of typed reasoning parts in its private child CLI configuration, preserving assistant text, model reasoning, MCP permissions, summary/footer and current receipt checks. Never edit the operator CLI configuration or use a global display toggle.
+- SC048: The launched v2 child must receive the exact supported CLI config override mini.thinking=hide, overriding ambient display input; v1 launch stays unchanged. Current-version upstream schema/transport evidence must show reasoning-only filtering, with focused launch/extraction/service checks and one reviewed source-bound native revalidation.

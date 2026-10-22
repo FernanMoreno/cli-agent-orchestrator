@@ -19,3 +19,12 @@ Graphify previo identificó34 aristas del propietario; el helper reciente no fig
 Riesgo residual: una respuesta legítima que empiece por Thinking puede quedar sin verificar al no existir frontera estructurada fiable. Se prefiere conservarla visible y sin asentamiento a adivinar su canal. Falta la revalidación nativa en la fuente integrada; no hay aceptación final/global.
 
 Validación final offline:218 pruebas enfocadas PASS en126,16s,2warnings, con imports fijados explícitamente a main; Black/isort y diff-check PASS. Arquitectura:412archivos,1834dependencias,5contratos conservados/0rotos. El replay privado T079 se rechaza por canal ambiguo; la prueba de servicio FULL conserva el transcript y demuestra cero llamadas de settlement. El viewport fue revisado en fuente, sin afirmar una nueva prueba específica de esa ruta. Veredicto de composición: PASS WITH RISKS para las correcciones offline; aceptación nativa y soporte de canal estructurado aún pendientes.
+
+
+## Revalidación nativa integrada
+
+Fuente ejecutada f3e4c354 (parser829afa8f…), inventario507 y candidato ejecutado b07d2720…; preparación cerrada revisada por Codex,274controles puros y criterios T079 idénticos. PostgreSQL existente verificado por identidad/imagen; admisión mínima7322MiB.
+
+Resultado real: FAILED en120,201s, primera fase agotada a75,149s. Se persistió un mensaje; la captura del emisor contiene el marcador Unicode, pero eso no prueba su extracción ni el turno durable. El receptor quedó reconcile/receipt_result_unverifiable,3intentos, recibo sent y generación coincidente. No se llegó al reinicio ni a la fase2. El replay del viewport receptor con su estado durable real produce ValueError por canal final ambiguo: el recibo dentro de la región Thinking no se promueve. Se necesita una frontera estructurada, no otro intento idéntico ni aumentar el plazo.
+
+Limpieza confirmada: API/tmux/PostgreSQL y estado privado eliminados; credenciales del operador, fuente, binario, runner e intérprete intactos. Se guardaron los bytes ejecutados y el gate volvió a cerrado. Esta ejecución no acepta v2 ni cierra T077/OC-05/06/global. La siguiente investigación se limita al canal estructurado de texto/razonamiento y su identidad de sesión/turno, sin leer la base del operador.

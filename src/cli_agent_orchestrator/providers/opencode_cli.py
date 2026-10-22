@@ -1339,6 +1339,13 @@ class OpenCodeCliProvider(BaseProvider):
             # Private servers keep child sessions out of the operator's shared
             # v2 daemon; mini exposes agent/model flags and terminal input.
             cmd_parts += ["mini", "--standalone"]
+            # Mini otherwise flattens typed reasoning into the same terminal
+            # transcript as final text. Filter it in the native renderer,
+            # without disabling model reasoning or changing operator settings.
+            env_pairs.append(
+                "OPENCODE_CLI_CONFIG_CONTENT="
+                + shlex.quote(json.dumps({"mini": {"thinking": "hide"}}, separators=(",", ":")))
+            )
             if self._v2_data_home is not None:
                 env_pairs.append("XDG_DATA_HOME=" + shlex.quote(str(self._v2_data_home)))
                 private_database = self._v2_database_path or (
