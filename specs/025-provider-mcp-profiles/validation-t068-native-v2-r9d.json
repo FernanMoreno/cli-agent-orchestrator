@@ -1,0 +1,78 @@
+{
+  "schema": "spec025.native-v2-failed-summary.v1",
+  "source_head": "b619772049a67bcb0bdf6398861a6c1a97c7eb36",
+  "raw_receipt_sha256": "79364edbdf6282c531b9126484ce9e190519274a85623b429db71d18a74c91b8",
+  "runner_sha256": "47cfad4e0df2374a6a0f318e5d7c50c25c8e6f6a097b4076386619b3de57b5b2",
+  "success": false,
+  "acceptance_claimed": false,
+  "error_code": "model_phase_exceeded_75_seconds",
+  "elapsed_seconds": 124.446,
+  "phases_started": 1,
+  "phases_passed": 0,
+  "api_restarts_reached": 0,
+  "postgres_identity_verified": true,
+  "admission_minimum_mib": 7735,
+  "minimum_required_mib": 6144,
+  "native_catalogs": [
+    {
+      "role": "receiver",
+      "tool_names": [],
+      "unexpected_count": 0,
+      "started_calls": 0,
+      "finished_calls": 0,
+      "shutdown_complete": true
+    },
+    {
+      "role": "sender",
+      "tool_names": [
+        "list_siblings",
+        "send_message"
+      ],
+      "unexpected_count": 0,
+      "started_calls": 0,
+      "finished_calls": 0,
+      "shutdown_complete": true
+    }
+  ],
+  "persisted_messages": 0,
+  "phase": {
+    "name": "before_restart",
+    "elapsed_seconds": 75.393,
+    "last_receipt_unicode_verified": false,
+    "sender_last_turn_sequence": 1,
+    "sender_last_turn_completed": 1,
+    "sender_last_status": "idle",
+    "receiver_last_turn_sequence": 0
+  },
+  "postfailure_screen_diagnosis": {
+    "upstream_request_failed_marker": true,
+    "http_status_unknown": true,
+    "marker_observation_time_within_phase_unproved": true,
+    "retry_or_footer_markers_not_authoritative": true,
+    "endpoint_unavailable_screen_marker": true,
+    "marker_source_attribution_unproved": true
+  },
+  "cleanup": {
+    "cleanup_session_delete_http_status": 200,
+    "native_provider_roots_immediately_after_delete": 0,
+    "capability_files_immediately_after_delete": 0,
+    "api_cleanup": true,
+    "tmux_cleanup": true,
+    "postgres_cleanup": true,
+    "cleanup_failures": [],
+    "operator_auth_unchanged": true,
+    "source_unchanged": true,
+    "binary_unchanged": true,
+    "runner_unchanged": true,
+    "python_interpreter_unchanged": true,
+    "private_state_removed": true
+  },
+  "peer_review": {
+    "mode": "read",
+    "job_id": "90a58e297602400b91621d231f4cd220",
+    "status": "completed",
+    "commands_executed_by_peer": false,
+    "finding": "final screen showed endpoint-unavailable / upstream-failure markers; zero MCP calls; marker timing, source attribution and HTTP status unproved"
+  },
+  "runner_hash_scope": "opened actual R9d runner; closed backup has a distinct hash"
+}
