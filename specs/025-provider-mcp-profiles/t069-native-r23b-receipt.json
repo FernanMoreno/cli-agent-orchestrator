@@ -1,0 +1,93 @@
+{
+  "schema": "caos.native-http-diagnostic.v1",
+  "diagnostic_only": true,
+  "native_generation_completion_checked": true,
+  "native_mode": "headless",
+  "original_model_acceptance_claimed": false,
+  "causal_control": "GLM53Flash_clarified_prompt_generation_gate",
+  "native_unicode_response_observed": true,
+  "error_body_persisted": false,
+  "request_identity_booleans_only": true,
+  "observer_error_budget_ms": 500,
+  "acceptance_claimed": false,
+  "source_head": "75b2ad42a0ccb401e2b72d657a1690202ef00f90",
+  "runner_sha256": "d6027abf5c4b983c2839e68bed7131a19dd29530cef04d3533433253d0119e6a",
+  "plugin_sha256": "4944bbca29ac0d5e1c6663bfb81d2ec8a70deb31ce63a6151a8f45001b2b7e90",
+  "binary_sha256": "77b2cfe4b97df6f15c3673b22100b9f79c711f25ecb9bf513bb82526b15d24fa",
+  "model": "opencode-go/glm-5.3-flash",
+  "model_deadline_seconds": 75,
+  "mcp_enabled": false,
+  "native_tool_authority_empty": true,
+  "raw_stdout_persisted": false,
+  "headers_or_bodies_recorded": false,
+  "outcome": "native_process_exit",
+  "events": {
+    "step_start": 1,
+    "text": 1,
+    "step_finish": 1
+  },
+  "error_names": {},
+  "error_categories": {},
+  "auth_export_timeout_seconds": 30,
+  "no_http_observation_means_unattributed": true,
+  "http_observations": [
+    {
+      "event": "installed",
+      "schema": 1
+    },
+    {
+      "event": "response",
+      "schema": 1,
+      "route_class": "legacy_go_chat",
+      "http_status": 200,
+      "redirected": false,
+      "elapsed_ms": 2403,
+      "request": {
+        "model_matches": true,
+        "auth_matches": true,
+        "session_present": true,
+        "user_agent_present": true,
+        "tools_count": 0,
+        "stream": true,
+        "user_agent_native_prefix": true,
+        "opencode_client_present": true,
+        "opencode_client_kind": "cli"
+      },
+      "error_detail": {
+        "state": "not_error",
+        "code": "unknown",
+        "message_category": "unknown",
+        "message_tokens": [],
+        "markers": []
+      },
+      "observer_ms": 0
+    }
+  ],
+  "current_model_catalog": {
+    "source": "https://models.opencode.ai/api.json",
+    "observed_at_utc": "2026-10-22T12:52:50.156261+00:00",
+    "eligible": true,
+    "reason": "eligible",
+    "status": "unspecified",
+    "http_status": 200,
+    "catalog_sha256": "a09570cd27dd17e1e171e5928cf7413375f2541b379d00480cbf485ca15c617d",
+    "catalog_bytes": 6053209
+  },
+  "model_admission_mib": 8391,
+  "timing_scope": "native_process_lifetime_including_cli_startup",
+  "native_text_shapes": [
+    "exact_sentinel"
+  ],
+  "model_seconds": 13.166490069008432,
+  "native_exit_code": 0,
+  "owned_process_session_stopped": true,
+  "ledger_valid": true,
+  "operator_auth_unchanged": true,
+  "source_unchanged": true,
+  "binary_unchanged": true,
+  "plugin_unchanged": true,
+  "runner_unchanged": true,
+  "source_head_pinned_at_end": true,
+  "private_state_removed": true,
+  "native_generation_completed": true
+}

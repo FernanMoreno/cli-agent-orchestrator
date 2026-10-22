@@ -1,6 +1,6 @@
 # T069 — native Go HTTP boundary
 
-Date: 2026-10-22. Executed source: main `fe35aaed925a5540c31235c1266f14f9626d2be2`.
+Date: 2026-10-22. Initial R15 executed source: main `fe35aaed925a5540c31235c1266f14f9626d2be2`; subsequent increments identify their own source pins.
 
 ## R15: observed native HTTP rejection
 
@@ -71,3 +71,41 @@ Independent Luna Max ECC READ review approved the concrete closed runner after c
 This challenges the hypothesis that headless mode alone caused the Go rejection: the TUI request with matching model/auth received the same route/status/error as the headless control. It does not prove the upstream root cause, model inference entitlement, generation completion or MCP/collaboration acceptance. Do not change account/login, silently substitute models, raise limits or replay unchanged failures. T069/T060/T062 and full native/global acceptance remain open.
 
 Final independent Luna Max ECC READ review confirmed that the private receipt and sanitized copy agree and found no actionable discrepancy in the interpretation. The observed client category remains unclassified as expected or defective; no local upstream source established that convention. No unchanged replay is justified by this result.
+
+
+## R22: explicit model-family control on the same native TUI route
+
+The [public metadata comparison](t069-public-go-comparison.json) found LongCat2.0 and GLM5.3Flash in both the official catalog and public native Go model list. Both resolve to the OpenAI-compatible Go API. The original LongCat2.5Free is deprecated and absent from the native list. GLM5.1 appears in the native list but is missing from the catalog, so it was not chosen. These independent metadata sources can differ; listing is not an inference guarantee. No auth or inference requests were used for this comparison. Pinned upstream `session/llm/request.ts` also confirms that OpenCode sends the native UA/session and runtime client flag; the observed `cli` field is not itself a demonstrated fault.
+
+Root prepared one explicit GLM5.3Flash TUI control against R21: same pinned v1 binary, selected active Go-key export, prompt, empty authority, private PTY,75s/6144MiB, observer and cleanup; changed only the requested model family and corresponding equality check, plus fresh main/source507 pins and result labels. Public catalog admission remained before auth staging. Independent Luna Max ECC READ review approved the concrete gate before one run. Root controls passed41 JS,9 schema,3 actual gate assertions and7 private-PTY lifecycle checks. A staging attempt initially tried to hash a symlink-directory fixture; it failed before creating the pins and before any native/auth work. The final pins reused exactly R21's507 source paths, all verified unchanged, with current HEAD. No criteria were relaxed.
+
+The [R22 actual receipt](t069-native-r22-receipt.json) observed **HTTP200 on legacy_go_chat**, with model/auth/session/native-UA checks true, client category `cli`,tools0,streamtrue. Native process lifetime14.735586371039972s, admission8376MiB, observer0ms. All recorded source/binary/helper/runner/HEAD/operator-auth preservation, owned-session stop, PTY closure and private-root cleanup passed. Execution gates were reclosed and actual bytes archived privately. No API/PostgreSQL resources were started or restarted.
+
+A subsequent network `AbortError` is recorded111ms after the200 row. Its request identity is not recorded; the diagnostic was stopping around this point, but the receipt cannot attribute that error to teardown or to a particular request. HTTP200 only establishes a successful response status for the matched request, not a completed stream, Unicode generation, MCP use or original-model acceptance.
+
+This is a useful positive transport control: the legacy route and selected key are not universally unable to return200 from this native CLI. R21's LongCat2.0 request received402 with the same route/key-selection method; model-specific availability/routing remains a hypothesis, not a proven service cause. At the R22 increment, original LongCat failures remain preserved and T069/T060/T062 are not yet closed; the later R23 outcome below updates the model-agnostic tasks. Do not change the product endpoint or login based on the earlier route-only hypothesis.
+
+Independent Claude READ review e9aca8b7b06940a0bba8375511f7f343 initially proposed different API-family routing; the public routing metadata falsified that hypothesis. Follow-up310c5fd0edd44aca8393ec26e1f2aae8 objected to a shared legacy-route failure hypothesis; final review c0b52a7ea59d425aa0a407eb630967e1 read the actual R16/R21/R22 receipts and withdrew the universal legacy-route claim. R22 ran after the recorded independent Luna approval, before that Claude response arrived; the manifest is closed again after execution, not evidence of bypassing its execution gate. Root retains the narrower finding: one model received200 where another received402, with additional body options and upstream model-specific routing still unobserved. Reviewers did not execute controls or models.
+
+
+## R23a: natural native generation ended, exact sentinel gate failed
+
+Before admitting a managed two-agent control, root required natural headless CLI exit0, native text and step_finish, the exact Unicode sentinel and a matching-model/auth Go2xx. TUI is interactive, so this operational prerequisite uses the previously inspected native JSON run protocol. It does not change original-model acceptance or infer a cause by comparing modes. Root tested15 positive/negative cases against the actual extracted completion/sentinel functions, plus41 JS privacy/pass-through controls and9 schema/3 actual gate assertions; independent Luna Max ECC READ review approved one execution.
+
+The [R23a receipt](t069-native-r23a-receipt.json) records native_process_exit0 with one step_start, one text and one step_finish, matched GLM5.3Flash/auth HTTP200,12.530531088006683s and admission8425MiB. **The exact Unicode sentinel flag was false; native_generation_completed remained false and the runner exited1.** The combined gate deliberately includes exact output, so the successful native exit does not turn this into an accepted run. All recorded cleanup/preservation passed; gates were closed and executed bytes archived. The managed MCP run remains closed.
+
+No raw answer was retained, so the specific text difference cannot be established from this receipt. The pinned upstream native run implementation emits the final text part after its end marker; this single text event does not support the earlier split-chunk concern. The prompt put an instruction after the exact-response colon, which is potentially ambiguous, but its role in this failure is unproved. A separately reviewed operational R23b may clarify the prompt by putting instructions before a delimited unchanged target and add a finite answer-shape projection. Preserve R23a, require the identical strict completion predicate and do not credit a retry as its success.
+
+
+## R23b: explicit GLM generation prerequisite passed
+
+R23b retained the identical natural-exit/Unicode/step_finish/matched2xx completion predicate, model, auth, binary and75s/6144MiB limits. Its prompt put the no-tools instruction before a delimited unchanged target, and its output observer added only finite text-shape categories. Root verified15 actual generation-predicate controls,6 actual shape controls,2 checks against the actual command prompt,9 schema controls and3 actual gate assertions; the unchanged JavaScript helper retains the previously executed41 controls. Independent Luna Max ECC READ review approved one run.
+
+The [actual R23b receipt](t069-native-r23b-receipt.json) passed: **natural exit0, exact Unicode text, step_finish1 and matched-model/auth legacy Go HTTP200**. The safe text-shape category was exact_sentinel. Native lifetime13.166490069008432s, admission8391MiB. All recorded cleanup and operator/source/binary/helper/runner/HEAD preservation checks passed. Gates are reclosed, executed bytes archived and no owned root remains. No API/PostgreSQL resources were used for this prerequisite.
+
+This proves a completed bounded native headless generation with this explicit GLM model and selected-key staging. It does not prove TUI/MCP, model-family availability in general, original LongCat acceptance or that prompt ambiguity caused R23a: its raw answer was deliberately not retained. R23a remains failed in its own right. A fresh source-bound two-agent diagnostic may now use this exact successful receipt as an admission prerequisite, while retaining all prior collaboration/restart/cleanup predicates.
+
+
+## Current bounded outcome after R23
+
+The separate [R23 managed-v1 collaboration/restart journey](validation-t060.md#r23--actual-managed-v1-glm-collaboration-and-restart-passed) passed with explicit GLM5.3Flash and the pinned native binary/current source. T060/T062 are model-agnostic and now close in their written scope; R23 does not credit a successful LongCat run or erase its failure evidence. T069's specific upstream rejection attribution stays open. No endpoint/login change is justified. No broader OC1/OC2/model/auth/scale/global acceptance follows.

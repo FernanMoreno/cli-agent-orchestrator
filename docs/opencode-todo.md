@@ -290,3 +290,12 @@ Investigación profunda posterior: R17/R20 verificaron el modelo, la clave selec
 
 
 Investigación del método,2026-10-22: R21 ejecutó TUI nativo con PTY privado y el mismo longcat-2.0 de R19; volvió a recibir402 con modelo/clave coincidentes y «upstream request failed endpoint is unavailable». Memoria8702MiB,13.404s, limpieza completa. Debilita la hipótesis de fallo exclusivo del modo sin interfaz; no demuestra la causa del servicio ni aceptación de generación/MCP. Se conserva abierto T069 y se evitan repeticiones sin nueva variable causal. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t069.md#r21-native-tui-control-against-r19-headless).
+
+
+Control T069 R22: GLM5.3Flash respondió HTTP200 con la misma ruta antigua, clave seleccionada, binario v1 y TUI que fallaban con LongCat. No se demuestra que la ruta esté inutilizada de forma general. Se mantuvieron75s/6144MiB y limpieza completa; todavía no se verificó la generación ni MCP y se conserva un AbortError posterior sin atribuir. Preparar el recorrido multiagente con este modelo explícito conserva las aceptaciones LongCat pendientes y sus fallos. [Evidencia](../specs/025-provider-mcp-profiles/validation-t069.md#r22-explicit-model-family-control-on-the-same-native-tui-route).
+
+
+Prerrequisito de generación: R23a acabó con exit0 pero falló la salida exacta; se conserva. R23b pasó salida Unicode exacta, finalización nativa y HTTP200 con GLM5.3Flash,13.166s/8391MiB y limpieza completa. Habilita revisar el nuevo diagnóstico multiagente; no acredita MCP ni la aceptación LongCat. [Evidencia](../specs/025-provider-mcp-profiles/validation-t069.md#r23b-explicit-glm-generation-prerequisite-passed).
+
+
+T060/T062 completados en su alcance escrito,2026-10-22: R23 con GLM5.3Flash explícito y binario v1 fijado pasó dos mensajes reales persistidos, PostgreSQL/API/AG-UI, reinicio con identidades estables, LAST Unicode, catálogos/llamadas MCP exactos, cierre y cero raíces antes del desmontaje exterior.17.44s/9.27s por fase<75s; admisiones>=6144MiB. Las tareas no exigen LongCat; sus fallos históricos siguen conservados, sin crédito de aceptación para ese modelo. Siguen pendientes OC1-05 en su conjunto, la aceptación de todos los perfiles/modelos/autenticaciones, escala y globales; tampoco se acredita consumo por el receptor ni secuencia de turnos monótona. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t060.md#r23--actual-managed-v1-glm-collaboration-and-restart-passed).

@@ -1,0 +1,46 @@
+{
+  "schema": "caos.public-go-catalog-comparison.v1",
+  "diagnostic_only": true,
+  "model_calls": 0,
+  "authentication_used": false,
+  "catalog_source": "https://models.opencode.ai/api.json",
+  "native_go_source": "https://opencode.ai/inference/go/v1/models",
+  "catalog_sha256": "fc8b216abdff5f04b96e04492da3bcdd1994681f4d140325dde293f4e94d0217",
+  "native_go_sha256": "5904e988e88607d191c6617122b6194b84242e4b730d8927b62db4ce2e5beed2",
+  "provider_npm": "@ai-sdk/openai-compatible",
+  "provider_api": "https://opencode.ai/inference/go/openai/v1",
+  "models": {
+    "longcat-2.5-preview-free": {
+      "native_go_listed": false,
+      "catalog_present": true,
+      "catalog_status": "deprecated",
+      "tool_call": true,
+      "resolved_npm": "@ai-sdk/openai-compatible",
+      "resolved_api": "https://opencode.ai/inference/go/openai/v1"
+    },
+    "longcat-2.0": {
+      "native_go_listed": true,
+      "catalog_present": true,
+      "catalog_status": "unspecified",
+      "tool_call": true,
+      "resolved_npm": "@ai-sdk/openai-compatible",
+      "resolved_api": "https://opencode.ai/inference/go/openai/v1"
+    },
+    "glm-5.1": {
+      "native_go_listed": true,
+      "catalog_present": false,
+      "catalog_status": "missing",
+      "tool_call": null,
+      "resolved_npm": null,
+      "resolved_api": null
+    },
+    "glm-5.3-flash": {
+      "native_go_listed": true,
+      "catalog_present": true,
+      "catalog_status": "unspecified",
+      "tool_call": true,
+      "resolved_npm": "@ai-sdk/openai-compatible",
+      "resolved_api": "https://opencode.ai/inference/go/openai/v1"
+    }
+  }
+}

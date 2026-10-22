@@ -1,0 +1,182 @@
+{
+  "schema": "caos.native-v1-collaboration-diagnostic.v1",
+  "source_head": "75b2ad42a0ccb401e2b72d657a1690202ef00f90",
+  "source_pin_count": 507,
+  "binary_sha256": "77b2cfe4b97df6f15c3673b22100b9f79c711f25ecb9bf513bb82526b15d24fa",
+  "runner_sha256": "758c93a2f884f484b02df1e8a7716ee43ce8dcfa34eea6bc4c758aa4224275ad",
+  "opener_sha256": "53d77afcecf85cfbc38e1c9848eb4775c34728848a795c7c9f95bb8abeca0ee8",
+  "private_receipt_sha256": "2db387e7a4a2f7652727d6f51a053fba4c995f96afb48c151cd88c6b4d89d659",
+  "generation_gate_receipt_sha256": "9b8afabc973ba7a0af6e38277b0b03304f3e8082f12a792e214486d5ea583648",
+  "model": "opencode-go/glm-5.3-flash",
+  "diagnostic_only": true,
+  "original_model_acceptance_claimed": false,
+  "external_cao_work_message_acceptance_claimed": false,
+  "success": true,
+  "elapsed_seconds": 116.33572933799587,
+  "phases": [
+    {
+      "phase": 0,
+      "deadline_seconds_from_input_start": 75.0,
+      "input_returned_elapsed_seconds": 2.34,
+      "input_turn_sequence": 1,
+      "observed_pg_message_count": 1,
+      "last_receipt_unicode_verified": true,
+      "last_receipt_observed_elapsed_seconds": 17.42,
+      "model_seconds": 17.443684499012306,
+      "sender_completed": true,
+      "one_exact_new_persisted_message": true,
+      "agui_one_redacted_notification": true,
+      "agui_capture_thread_stopped": true,
+      "agui_capture_clean": true
+    },
+    {
+      "phase": 1,
+      "deadline_seconds_from_input_start": 75.0,
+      "input_returned_elapsed_seconds": 2.34,
+      "input_turn_sequence": 1,
+      "observed_pg_message_count": 2,
+      "last_receipt_unicode_verified": true,
+      "last_receipt_observed_elapsed_seconds": 9.25,
+      "model_seconds": 9.270918423018884,
+      "sender_completed": true,
+      "one_exact_new_persisted_message": true,
+      "agui_one_redacted_notification": true,
+      "agui_capture_thread_stopped": true,
+      "agui_capture_clean": true
+    }
+  ],
+  "stage_memory_mib": {
+    "initial_admission_mib": 8193,
+    "install_receiver_admission_mib": 8058,
+    "install_sender_admission_mib": 8071,
+    "api_start_admission_mib": 8029,
+    "terminal_receiver_admission_mib": 7873,
+    "terminal_sender_admission_mib": 7116,
+    "model_phase_0_admission_mib": 6348,
+    "api_restart_admission_mib": 6239,
+    "model_phase_1_admission_mib": 6346
+  },
+  "checks": {
+    "raw_output_printed": false,
+    "explicit_go_confirmed": true,
+    "source_pin_manifest_exact": true,
+    "postgres_autostarted": false,
+    "postgres_container_id_matches": true,
+    "postgres_image_id_matches": true,
+    "postgres_identity_verified": true,
+    "receiver_production_install_passed": true,
+    "sender_production_install_passed": true,
+    "api_healthy": true,
+    "receiver_group_exact_on_create": true,
+    "receiver_group_exact_when_ready": true,
+    "receiver_operation_permissions_exact": true,
+    "receiver_model_ready": true,
+    "sender_group_exact_on_create": true,
+    "sender_group_exact_when_ready": true,
+    "sender_operation_permissions_exact": true,
+    "sender_model_ready": true,
+    "credentials_isolated": true,
+    "two_isolated_native_roots": true,
+    "filters_exact": true,
+    "native_identities_survive_restart": true,
+    "pg_message_identity_survives_restart": true,
+    "api_message_identity_survives_restart": true,
+    "both_phases_passed": true,
+    "graceful_exit_http_success": true,
+    "graceful_observer_seals_within_10s": true,
+    "agui_captures_stopped_cleanly": true,
+    "agui_capture_threads_confirmed_dead_before_postgres_teardown": true,
+    "agui_capture_phases_clean": true,
+    "api_launches_confirmed_dead_before_postgres_teardown": true,
+    "api_cleanup": true,
+    "tmux_processes_clean": true,
+    "tmux_processes_confirmed_dead_before_postgres_teardown": true,
+    "postgres_cleanup": true,
+    "postgres_cleanup_deferred": false,
+    "exact_native_catalogs": true,
+    "exact_native_successful_calls": true,
+    "observers_complete": true,
+    "operator_auth_unchanged": true,
+    "source_unchanged": true,
+    "binary_unchanged": true,
+    "runner_unchanged": true,
+    "source_head_pinned_at_end": true,
+    "source_runtime_tree_clean_at_end": true,
+    "private_state_removed": true,
+    "postgres_guard_binding_exact": true,
+    "viewport_helper_unchanged": true,
+    "inherited_acceptance_passed": true
+  },
+  "protocol_observations": {
+    "receiver": {
+      "observer_status": "observed",
+      "mcp_catalog_observation_status": "observed",
+      "mcp_catalog_tool_names": [],
+      "mcp_catalog_unexpected_tool_count": 0,
+      "mcp_catalog_observation_count": 1,
+      "mcp_tool_observation_status": "unobserved",
+      "mcp_tool_unexpected_call_count": 0,
+      "observed_interaction_tools": [],
+      "mcp_tool_calls": [],
+      "mcp_observer_shutdown_observed": true
+    },
+    "sender": {
+      "observer_status": "observed",
+      "mcp_catalog_observation_status": "observed",
+      "mcp_catalog_tool_names": [
+        "list_siblings",
+        "send_message"
+      ],
+      "mcp_catalog_unexpected_tool_count": 0,
+      "mcp_catalog_observation_count": 1,
+      "mcp_tool_observation_status": "observed",
+      "mcp_tool_unexpected_call_count": 0,
+      "observed_interaction_tools": [
+        "list_siblings",
+        "send_message"
+      ],
+      "mcp_tool_calls": [
+        {
+          "server": "cao-mcp-server",
+          "tool": "list_siblings",
+          "status": "completed",
+          "error_present": false,
+          "result_present": true
+        },
+        {
+          "server": "cao-mcp-server",
+          "tool": "send_message",
+          "status": "completed",
+          "error_present": false,
+          "result_present": true
+        },
+        {
+          "server": "cao-mcp-server",
+          "tool": "send_message",
+          "status": "completed",
+          "error_present": false,
+          "result_present": true
+        }
+      ],
+      "mcp_observer_shutdown_observed": true
+    }
+  },
+  "cleanup_session_delete_http_status": 200,
+  "private_roots_after_session_delete": 0,
+  "cleanup_failure_codes": [],
+  "postrun_integrity": {
+    "helper_unchanged": true,
+    "launcher_unchanged": true,
+    "viewport_observer_sha256": "e3bf1ded3dde1d1ea44f0a057dc79cb582d755d279161a2f3df811984f132e9d",
+    "opener_sha256": "53d77afcecf85cfbc38e1c9848eb4775c34728848a795c7c9f95bb8abeca0ee8"
+  },
+  "limits": {
+    "per_message_seconds": 75,
+    "minimum_available_mib": 6144,
+    "graceful_observer_seconds": 10,
+    "list_siblings_receiver_id_independently_validated": false
+  },
+  "binary_version_from_pin": "1.18.35",
+  "binary_pin_reference": "opencode-v1-pin.json",
+  "binary_pin_sha256": "6c57aab72edb75b4bdc6dc866144d8eafdb8e8231b5593ee23b206f7c9245b29"
+}

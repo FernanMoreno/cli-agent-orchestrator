@@ -1,6 +1,6 @@
 # T062 — Restart-safe OpenCode private configuration ownership
 
-2026-10-21. **Implementation integrated in3aef365a; the full T060 committed-source repetition remains pending.**
+2026-10-21 implementation integrated in3aef365a. Current status,2026-10-22: **T062/SC030 passed in the written scope after R23’s actual model-backed restart/cleanup witness**. Prior implementation/failure evidence below remains retained.
 
 ## Reproduction and first incorrect boundary
 
@@ -43,3 +43,10 @@ Candidate code committed/pushed to main as **3aef365a**, remote exact SHA verifi
 ## Current-source bounded resource check
 
 The subsequent T063 collaboration/v1 native pilot on9cc35033 passed API restart with stable native identities/metadata and immediate zero provider roots plus capability removal after HTTP200 session deletion, before outer teardown. [Pilot scope and limits](validation-t063.md). This independently verifies the ownership-retirement boundary for that one profile/dialect; no model task was sent, so it does not replace T062’s full unchanged two-message T060 predicate. Current-source T060-r6 persisted one message but never reached a completed sender result or API restart within its original budget; its failed receipt remains separate.
+
+
+## R23 committed-source model/restart/cleanup predicate passed
+
+2026-10-22: [R23 on main75b2ad42](validation-t060.md#r23--actual-managed-v1-glm-collaboration-and-restart-passed) explicitly selected GLM5.3Flash after a completed generation prerequisite and passed the unchanged two-agent/two-message/native-model/PostgreSQL/AG-UI/API-restart/graceful-exit predicate. Session DELETE200 removed both private roots before outer teardown, cleanup was not deferred, and source/binary/operator state was preserved. Existing PostgreSQL identity and restart count0 were independently checked before/after. This supplies the missing actual model-backed postrestart retirement witness for the integrated ownership fix. It does not claim success of prior LongCat runs or real model operations for all v2 profiles. The earlier753-test regression/type/style/composition evidence remains historical, not a newly rerun suite.
+
+Bounded verdict: **PASS for T062/SC030's written scope**, combining the earlier implementation/regression proof with R23's actual committed-source model-backed restart and immediate retirement witness. Independent task-text review confirms no fixed LongCat requirement; only the newly explicit GLM input is credited. Broader provider/model/OC1/global acceptance, historical LongCat outcomes and unrelated ownership of old unindexed roots remain outside this closure.
