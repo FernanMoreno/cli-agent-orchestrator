@@ -44,3 +44,7 @@ authorized project, plus phase execution through existing workflow/Work authorit
 - Tab strip already at 12 entries; increment 2 is needed before adding more destinations.
 - English UI copy kept for consistency with the existing app; Spanish localization (FR-037) is a
   separate cross-cutting increment.
+
+## Static mockup scale and label correction (2026-10-22)
+
+Integrate only the isolated HTML and its model/DOM checks from the reviewed frontend worktree into main. Keep the approved demonstration and add bounded synthetic scopes with progressive drill-down and paginated secondary panels. Fix the reproduced SVG paint-order defect by painting lane/continuation labels after links with a narrow background halo, while nodes retain their foreground layer. Verify model counts and bounded DOM, then use an existing real browser for desktop/mobile, interactions, text and screenshots. Compare the served HTML hash with main before sharing the preview. Existing screenshots remain historical until explicitly replaced. No application/server contract changes; the existing graph has no mockup nodes, so inspect inline source directly and preserve foreign Graphify output.

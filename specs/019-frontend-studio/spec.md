@@ -262,3 +262,7 @@ El operador migra a la nueva interfaz por etapas manteniendo sus datos, perfiles
 - IA puede acelerar exploración visual y generación de componentes; no se presume que todas las referencias estén íntegramente diseñadas por IA ni que métricas sociales acrediten calidad operativa.
 - Se puede entregar por etapas, pero ninguna etapa parcial satisface por sí sola la petición de cobertura total. Las capacidades desactivadas se explican y los contratos nuevos se planifican explícitamente.
 - Esta fase entrega investigación, spec, matriz y prototipo conceptual aislado. No modifica el frontend de producción ni implementa todas las funciones.
+
+## Approved mockup scope: progressive scale (2026-10-22)
+
+The approved visual identity is retained. The static original mockup must demonstrate bounded scope navigation, hierarchical aggregation, identifier search, paginated agent/status lists, decisions and activity for explicitly synthetic 100/10k/1M scenarios. It must generate data on demand rather than materialize the total network. The original 14-element demonstration remains available; graph labels must remain legible where links cross them. This does not implement or accept production backend scale, real feeds, permission projection or full Studio coverage.

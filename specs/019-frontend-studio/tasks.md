@@ -32,3 +32,10 @@ Private preimplementation Graphify pinned nine source/test inputs (171 nodes/330
 A real Chromium smoke with explicit local API mocks confirmed grouped navigation, context, manual arrow/Enter/Space activation, existing Alt shortcuts and the execution snapshot. Its mobile check failed at 375 px (document/body 546 px): the Work group did not wrap its buttons, and header controls also exceeded the viewport. Root corrected those layout boundaries by wrapping controls without hiding overflow or weakening the width assertion. Final focused tests, build and browser results are recorded in [validation-studio-increment.md](validation-studio-increment.md).
 
 Screen-reader acceptance, full 017/019/020, bearer-reader identity, live snapshots/cursors, server permission projection and scale remain open. Replacing a bearer token without revocation is outside this narrow auth correction.
+
+## Static original mockup: approved design, progressive scale
+
+- [x] T080 Integrate bounded synthetic 100/10k/1M scenarios, hierarchy, search, lists, decisions and activity while preserving the approved demonstration; independently run model/DOM checks and review the delta.
+- [x] T081 Correct link/worker label overlap; validate demo/scaled interactions in a real browser at desktop/mobile sizes, capture fresh evidence and verify the preview serves the accepted main HTML. Production scale and full accessibility acceptance remain separate.
+
+T080/T081 (2026-10-22): static mockup only, 33 model +19 DOM +26 real-browser checks, fresh desktop/mobile screenshots and matching served-main HTML. [Root integration, failures and limits](mockup-studio-original-research.md#revisión-e-integración-del-lead-2026-10-22). Production/reader acceptance remains open.

@@ -1,0 +1,244 @@
+{
+  "date": "2026-10-22",
+  "runner": "Existing private Chromium 1243 / Playwright, Linux, headless",
+  "html_sha256": "0ee9587a35d0ed649d21bb5e4d74dc02137551252440cd56fdd01521a2d2cb53",
+  "synthetic_only": true,
+  "results": [
+    {
+      "viewport": "1440x1000",
+      "checks": {
+        "demo-original": {
+          "pass": true,
+          "info": "14 nodes, 16 links"
+        },
+        "demo-layout": {
+          "pass": true,
+          "info": {
+            "width": 1440,
+            "scroll": 1440,
+            "body": 1440,
+            "checks": {
+              "mode": "demo",
+              "scale": "demo",
+              "nodes": 14,
+              "rows": 0,
+              "feed": 7,
+              "decisions": 3,
+              "crumbs": 0,
+              "ok": true
+            },
+            "textBad": []
+          }
+        },
+        "lane-label-foreground": {
+          "pass": true,
+          "info": {
+            "count": 8,
+            "ok": true
+          }
+        },
+        "demo-zoom": {
+          "pass": true,
+          "info": [
+            "94%",
+            "113%"
+          ]
+        },
+        "demo-filter-and-list": {
+          "pass": true,
+          "info": 4
+        },
+        "million-root": {
+          "pass": true,
+          "info": {
+            "width": 1440,
+            "scroll": 1440,
+            "body": 1440,
+            "checks": {
+              "mode": "agg",
+              "scale": "1m",
+              "nodes": 40,
+              "rows": 30,
+              "feed": 9,
+              "decisions": 3,
+              "crumbs": 1,
+              "ok": true
+            },
+            "textBad": []
+          }
+        },
+        "million-keyboard-drilldown": {
+          "pass": true,
+          "info": {
+            "steps": 4,
+            "nodes": 5,
+            "edges": 3
+          }
+        },
+        "million-search-and-breadcrumbs": {
+          "pass": true,
+          "info": "sintético\nRed completa"
+        },
+        "million-state-page": {
+          "pass": true,
+          "info": "Mostrando 40 de 37.105 agentes · 37.105 agentes en el ámbito\nAnteriores\n41–80 de 37.105\nSiguientes\nMáx. 40 tarjetas por nivel; el resto se agrega o pagina"
+        },
+        "million-list-layout": {
+          "pass": true,
+          "info": {
+            "width": 1440,
+            "scroll": 1440,
+            "body": 1440,
+            "checks": {
+              "mode": "agg",
+              "scale": "1m",
+              "nodes": 40,
+              "rows": 40,
+              "feed": 9,
+              "decisions": 3,
+              "crumbs": 2,
+              "ok": true
+            },
+            "textBad": []
+          }
+        },
+        "list-group-change-restores-positive-graph-zoom": {
+          "pass": true,
+          "info": 74
+        },
+        "list-scale-change-restores-graph-and-keeps-existing-zoom": {
+          "pass": true,
+          "info": {
+            "zoom": 74,
+            "preserved": "88%"
+          }
+        },
+        "javascript-and-network": {
+          "pass": true,
+          "info": {
+            "errors": 0,
+            "external": 0
+          }
+        }
+      }
+    },
+    {
+      "viewport": "375x812",
+      "checks": {
+        "demo-original": {
+          "pass": true,
+          "info": "14 nodes, 16 links"
+        },
+        "demo-layout": {
+          "pass": true,
+          "info": {
+            "width": 375,
+            "scroll": 375,
+            "body": 375,
+            "checks": {
+              "mode": "demo",
+              "scale": "demo",
+              "nodes": 14,
+              "rows": 0,
+              "feed": 7,
+              "decisions": 3,
+              "crumbs": 0,
+              "ok": true
+            },
+            "textBad": []
+          }
+        },
+        "lane-label-foreground": {
+          "pass": true,
+          "info": {
+            "count": 8,
+            "ok": true
+          }
+        },
+        "demo-zoom": {
+          "pass": true,
+          "info": [
+            "90%",
+            "108%"
+          ]
+        },
+        "demo-filter-and-list": {
+          "pass": true,
+          "info": 4
+        },
+        "million-root": {
+          "pass": true,
+          "info": {
+            "width": 375,
+            "scroll": 375,
+            "body": 375,
+            "checks": {
+              "mode": "agg",
+              "scale": "1m",
+              "nodes": 40,
+              "rows": 30,
+              "feed": 9,
+              "decisions": 3,
+              "crumbs": 1,
+              "ok": true
+            },
+            "textBad": []
+          }
+        },
+        "million-keyboard-drilldown": {
+          "pass": true,
+          "info": {
+            "steps": 4,
+            "nodes": 5,
+            "edges": 3
+          }
+        },
+        "million-search-and-breadcrumbs": {
+          "pass": true,
+          "info": "sintético\nRed completa"
+        },
+        "million-state-page": {
+          "pass": true,
+          "info": "Mostrando 40 de 37.105 agentes · 37.105 agentes en el ámbito\nAnteriores\n41–80 de 37.105\nSiguientes\nMáx. 40 tarjetas por nivel; el resto se agrega o pagina"
+        },
+        "million-list-layout": {
+          "pass": true,
+          "info": {
+            "width": 375,
+            "scroll": 375,
+            "body": 375,
+            "checks": {
+              "mode": "agg",
+              "scale": "1m",
+              "nodes": 40,
+              "rows": 40,
+              "feed": 9,
+              "decisions": 3,
+              "crumbs": 2,
+              "ok": true
+            },
+            "textBad": []
+          }
+        },
+        "list-group-change-restores-positive-graph-zoom": {
+          "pass": true,
+          "info": 98
+        },
+        "list-scale-change-restores-graph-and-keeps-existing-zoom": {
+          "pass": true,
+          "info": {
+            "zoom": 98,
+            "preserved": "117%"
+          }
+        },
+        "javascript-and-network": {
+          "pass": true,
+          "info": {
+            "errors": 0,
+            "external": 0
+          }
+        }
+      }
+    }
+  ]
+}
