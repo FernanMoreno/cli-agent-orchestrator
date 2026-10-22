@@ -175,6 +175,249 @@ for (const n of [100, 10_000, 1_000_000]) {
   });
 }
 
+/* ---- T082: vínculos dirigidos por antecesor común más bajo (LCA) ----
+   Cada vínculo atómico une agentes concretos en hijos distintos del nodo que lo genera;
+   los niveles superiores lo ven como haz agregado y los inferiores como puerto externo
+   con el mismo id. Conteos exactos sobre ese conjunto modelado, nunca sobre la red total. */
+const inR = (node, i) => node.lo <= i && i < node.hi;
+for (const n of [100, 10_000, 1_000_000]) {
+  const M = CaosScale.create(n);
+  const walk = () => {
+    const out = [];
+    let node = M.root();
+    for (;;) {
+      out.push(node);
+      if (M.isLeaf(node)) break;
+      const kids = M.children(node);
+      node = kids[Math.min(kids.length - 1, 2)];
+    }
+    return out;
+  };
+  check(
+    `${n}: edgesOf acotado, extremos en hijos distintos e ids únicos`,
+    () => {
+      walk().forEach((node) => {
+        const kids = M.kids(node),
+          es = M.edgesOf(node);
+        assert.ok(
+          es.length <= Math.min(3 * kids.length, L.edgesPerGroup),
+          `aristas=${es.length}`,
+        );
+        assert.ok(
+          es.length > 0 || kids.length < 2,
+          `${M.label(node)} sin vínculos`,
+        );
+        const ids = new Set(es.map((e) => e.id));
+        assert.equal(ids.size, es.length, "ids repetidos");
+        es.forEach((e) => {
+          assert.ok(inR(node, e.a) && inR(node, e.b), `${e.id} fuera del nodo`);
+          const ka = kids.findIndex((k) => inR(k, e.a)),
+            kb = kids.findIndex((k) => inR(k, e.b));
+          assert.ok(ka >= 0 && kb >= 0 && ka !== kb, `${e.id} no cruza hijos`);
+          assert.ok(Object.hasOwn(CaosScale.RELS, e.ty), e.ty);
+        });
+      });
+    },
+  );
+  check(
+    `${n}: semántica: delega desde el responsable, espera solo a bloqueados/esperando`,
+    () => {
+      walk().forEach((node) =>
+        M.edgesOf(node).forEach((e) => {
+          if (e.ty === "delega")
+            assert.equal(e.a, node.lo, `${e.id} no sale del responsable`);
+          if (e.ty === "espera")
+            assert.ok(
+              ["wait", "block"].includes(M.agent(e.b).st),
+              `${e.id} destino ${M.agent(e.b).st}`,
+            );
+          assert.notEqual(e.a, e.b);
+        }),
+      );
+    },
+  );
+  check(`${n}: determinismo de ids y extremos entre instancias`, () => {
+    const M2 = CaosScale.create(n);
+    walk().forEach((node) =>
+      assert.deepEqual(
+        M2.edgesOf(node).map((e) => [e.id, e.ty, e.a, e.b]),
+        M.edgesOf(node).map((e) => [e.id, e.ty, e.a, e.b]),
+      ),
+    );
+  });
+  check(`${n}: haces del nivel suman exactamente el conjunto modelado`, () => {
+    walk().forEach((node) => {
+      const r = M.relations({ kind: "range", node });
+      const sum = [...r.internal, ...r.external].reduce(
+        (a, b) => a + b.count,
+        0,
+      );
+      assert.equal(sum + r.self, r.modeled);
+      assert.equal(
+        r.internal.reduce((a, b) => a + b.count, 0),
+        M.edgesOf(node).length,
+      );
+      assert.equal(r.self, 0);
+      r.internal.forEach((b) => {
+        assert.notEqual(b.from.key, b.to.key);
+        assert.equal(b.count, b.atoms.length);
+        b.atoms.forEach((e) => assert.equal(e.ty, b.ty));
+      });
+    });
+  });
+  check(
+    `${n}: al bajar, los vínculos del haz reaparecen como puertos externos con el mismo id`,
+    () => {
+      const path = walk();
+      for (let d = 0; d + 1 < path.length; d++) {
+        const child = path[d + 1],
+          key = M.keyOf(child),
+          up = M.relations({ kind: "range", node: path[d] }),
+          down = M.relations({ kind: "range", node: child });
+        const touching = up.internal
+          .filter((b) => b.from.key === key || b.to.key === key)
+          .flatMap((b) => b.atoms.map((e) => e.id));
+        const ext = new Set(
+          down.external.flatMap((b) => b.atoms.map((e) => e.id)),
+        );
+        touching.forEach((id) =>
+          assert.ok(
+            ext.has(id),
+            `${id} se pierde al bajar a ${M.label(child)}`,
+          ),
+        );
+        down.external.forEach((b) =>
+          assert.ok(b.outside === "from" || b.outside === "to"),
+        );
+      }
+    },
+  );
+  check(`${n}: proyectos agregan los vínculos raíz sin perder ninguno`, () => {
+    const root = M.edgesOf(M.root()),
+      r = M.relations({ kind: "projects" });
+    assert.equal(r.modeled, root.length);
+    assert.equal(
+      r.internal.reduce((a, b) => a + b.count, 0) + r.self,
+      root.length,
+    );
+    M.projects().forEach((p) => {
+      const rp = M.relations({ kind: "project", p: p.p });
+      const inP = (i) => M.projectOf({ lo: i }) === p.p;
+      assert.equal(
+        rp.internal.reduce((a, b) => a + b.count, 0),
+        root.filter((e) => inP(e.a) && inP(e.b)).length,
+      );
+      assert.equal(
+        rp.external.reduce((a, b) => a + b.count, 0),
+        root.filter((e) => inP(e.a) !== inP(e.b)).length,
+      );
+    });
+  });
+  check(
+    `${n}: agrupación por estado marca alcance parcial y es exacta sobre la raíz`,
+    () => {
+      const r = M.relations({ kind: "states", base: M.root() });
+      assert.equal(r.partial, true);
+      assert.equal(
+        r.internal.reduce((a, b) => a + b.count, 0) + r.self,
+        M.edgesOf(M.root()).length,
+      );
+      r.internal.forEach((b) =>
+        b.atoms.forEach((e) => {
+          assert.equal("s:" + M.agent(e.a).st, b.from.key);
+          assert.equal("s:" + M.agent(e.b).st, b.to.key);
+        }),
+      );
+    },
+  );
+  check(
+    `${n}: página por estado tiene vínculos (internos o puertos) acotados`,
+    () => {
+      const st = M.counts(M.root()).block ? "block" : "wait";
+      const pg = M.pageByState(M.root(), st, 0, L.leaf).rows.map((a) => a.idx);
+      const r = M.relations({ kind: "page", agents: pg });
+      assert.equal(r.partial, true);
+      assert.ok(r.internal.length + r.external.length > 0, "página sin líneas");
+      assert.ok(r.modeled <= pg.length * 8 * L.edgesPerGroup);
+      r.external.forEach((b) =>
+        b.atoms.forEach((e) =>
+          assert.ok(pg.includes(e.a) !== pg.includes(e.b)),
+        ),
+      );
+    },
+  );
+  check(
+    `${n}: vecindad deriva sus vínculos de agente del mismo generador`,
+    () => {
+      for (const i of [
+        0,
+        n - 1,
+        Math.floor(n / 3),
+        M.nthWithState(M.root(), "block", 0),
+        M.nthWithState(M.root(), "wait", 0),
+      ].filter((x) => x >= 0)) {
+        const atoms = new Map(M.agentAtoms(i).map((e) => [e.id, e])),
+          d = M.neighbourhood(i, {}),
+          byId = new Map(d.N.map((x) => [x.id, x]));
+        const agentEdges = d.E.filter(
+          (e) =>
+            byId.get(e.a).kind === "agent" && byId.get(e.b).kind === "agent",
+        );
+        agentEdges.forEach((e) => {
+          const at = atoms.get(e.id);
+          assert.ok(at, `${e.id} no existe en el generador`);
+          assert.equal(e.ty, at.ty);
+          assert.equal(e.a, M.agent(at.a).id);
+          assert.equal(e.b, M.agent(at.b).id);
+        });
+        assert.equal(d.INFO.total, atoms.size);
+        assert.ok(d.INFO.shown <= d.INFO.total);
+        if (atoms.size)
+          assert.ok(agentEdges.length > 0, "vecindad sin vínculos de agente");
+        const sup = [...atoms.values()].find(
+          (e) => e.ty === "delega" && e.b === i,
+        );
+        if (sup)
+          assert.ok(
+            agentEdges.some((e) => e.id === sup.id),
+            "falta la delegación del superior",
+          );
+        const focus = [...atoms.values()].at(-1);
+        if (focus)
+          assert.ok(
+            M.neighbourhood(i, {}, focus.id).E.some((e) => e.id === focus.id),
+            "vínculo pedido no visible",
+          );
+      }
+    },
+  );
+}
+check(
+  "1M: relaciones de cualquier nivel sin recorrer el millón (< 60 ms)",
+  () => {
+    const M = CaosScale.create(1_000_000),
+      t = performance.now();
+    let node = M.root();
+    M.relations({ kind: "projects" });
+    M.relations({ kind: "states", base: node });
+    while (!M.isLeaf(node)) {
+      M.relations({ kind: "range", node });
+      node = M.children(node)[5] || M.children(node)[0];
+    }
+    M.relations({ kind: "range", node });
+    M.relations({
+      kind: "page",
+      agents: M.pageByState(M.root(), "wait", 777, L.leaf).rows.map(
+        (a) => a.idx,
+      ),
+    });
+    M.neighbourhood(654_321, {});
+    assert.ok(
+      performance.now() - t < 60,
+      `${(performance.now() - t).toFixed(1)} ms`,
+    );
+  },
+);
 check("1M: navegar raíz→hoja y contar no recorre el millón (< 50 ms)", () => {
   const M = CaosScale.create(1_000_000),
     t = performance.now();
@@ -209,6 +452,70 @@ check(
   },
 );
 
+check("T083: proyectos declaran el subconjunto entre equipos", () => {
+  const M = CaosScale.create(1_000_000);
+  assert.equal(M.relations({ kind: "projects" }).partial, true);
+  for (const p of M.projects())
+    assert.equal(M.relations({ kind: "project", p: p.p }).partial, true);
+});
+check(
+  "T083: la autoridad ficticia de todo emisor de delegación es coherente",
+  () => {
+    const M = CaosScale.create(1_000_000);
+    for (const index of [0, 500_000, 999_999]) {
+      for (const node of M.pathOf(index)) {
+        for (const e of M.edgesOf(node).filter((e) => e.ty === "delega")) {
+          assert.match(M.agent(e.a).auth, /delegar/);
+        }
+      }
+    }
+  },
+);
+check(
+  "T083: solo los responsables estructurales delegan y la espera apunta a agentes retenidos",
+  () => {
+    const M = CaosScale.create(1_000_000);
+    for (const index of [1, 2, 777, 500_001]) {
+      const leads = M.pathOf(index).some((nd) => nd.lo === index);
+      if (!leads) assert.doesNotMatch(M.agent(index).auth, /delegar/);
+    }
+    assert.equal(M.agent(0).name, "Coordinador");
+    for (const node of M.pathOf(500_000))
+      for (const e of M.edgesOf(node).filter((e) => e.ty === "espera")) {
+        assert.match(M.agent(e.a).auth, /coordina decisiones/);
+        assert.ok(["wait", "block"].includes(M.agent(e.b).st));
+      }
+    assert.match(CaosScale.RELS.espera.note, /coordinador/);
+    assert.doesNotMatch(CaosScale.RELS.espera.desc, /una persona/);
+  },
+);
+check(
+  "T083: toda espera de hoja o grupo nace en un coordinador de otro hijo (barrido de hojas)",
+  () => {
+    let leaves = 0,
+      waits = 0;
+    for (const size of [100, 10_000, 1_000_000]) {
+      const M = CaosScale.create(size);
+      const step = Math.max(1, Math.floor(size / 397));
+      for (let index = 0; index < size; index += step) {
+        for (const node of M.pathOf(index)) {
+          if (M.isLeaf(node)) leaves++;
+          const kids = M.kids(node);
+          for (const e of M.edgesOf(node).filter((e) => e.ty === "espera")) {
+            waits++;
+            assert.match(M.agent(e.a).auth, /coordina decisiones/, e.id);
+            assert.equal(M.agent(e.a).name, "Coordinador", e.id);
+            assert.ok(["wait", "block"].includes(M.agent(e.b).st), e.id);
+            const ka = kids.findIndex((c) => c.lo <= e.a && e.a < c.hi);
+            const kb = kids.findIndex((c) => c.lo <= e.b && e.b < c.hi);
+            assert.notEqual(ka, kb, e.id);
+          }
+        }
+      }
+    }
+    assert.ok(leaves > 300 && waits > 50, `hojas ${leaves}, esperas ${waits}`);
+  },
+);
 const w = Math.max(...results.map((r) => r[0].length));
 results.forEach(([n, s, i]) =>
   console.log(`${s === "ok" ? "  ok  " : "FALLO "} ${n.padEnd(w)}  ${i}`),

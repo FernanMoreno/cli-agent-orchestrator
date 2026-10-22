@@ -149,6 +149,13 @@ kbd{font-family:var(--mono);font-size:11px;color:var(--ink-3);padding:1px 5px;bo
 .edge.dim{opacity:.4}
 .edge.hl{stroke:var(--accent)!important}
 .edge.esel{stroke:var(--accent)!important;stroke-width:3!important}
+.edge-hit:focus{outline:none}
+.edge-hit:focus-visible{stroke:rgba(47,79,181,.22)}
+.bcount{font:600 10.5px var(--mono);fill:var(--ink-2)}
+.port rect{fill:var(--bg);stroke:var(--line-2);stroke-dasharray:3 3}
+.port text{font:11.5px var(--sans);fill:var(--ink-2)}
+.atoms li{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:baseline;padding:4px 0;font-size:12.5px;border-bottom:1px solid var(--line)}
+.atoms .ghost{padding:1px 7px;font-family:var(--mono);font-size:11.5px}
 
 /* scope bar: escenario y migas del ámbito del grafo */
 .scopebar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;padding:8px 12px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--ink-3)}
@@ -426,7 +433,9 @@ dd{margin:0;min-width:0;overflow-wrap:anywhere}
    Es un modelo de maqueta: no describe ni mide la capacidad de ningún backend. */
 const CaosScale=(()=>{
   const STATES=["run","wait","block","done","idle"];
-  const LIMITS={cards:40,leaf:40,rows:50,feed:8,decisions:3,neighbourhood:12};
+  /* bundles: haces visibles a la vez; edgesPerGroup: vínculos que genera un nodo; ports: grupos
+     exteriores dibujados; linkRows/atomRows: ventanas de la tabla Vínculos y del inspector. */
+  const LIMITS={cards:40,leaf:40,rows:50,feed:8,decisions:3,neighbourhood:12,bundles:24,edgesPerGroup:96,ports:6,linkRows:10,atomRows:6};
   const P=97, F=LIMITS.cards, LEAF=LIMITS.leaf;
   /* pesos sobre 97 por variante de equipo: sano, cargado, con problemas */
   const WEIGHTS=[[52,3,1,28,13],[54,8,3,18,14],[40,12,9,16,20]];
@@ -475,8 +484,10 @@ const CaosScale=(()=>{
       return -1;
     }
     const pad=i=>"AG-"+String(i+1).padStart(digits,"0");
-    function agent(i){const t=teamOf(i),h=hash(i*3+7);
-      return {idx:i,id:pad(i),name:PROF[h%PROF.length],st:stateOf(i),team:t,project:PROJ[t%NP],auth:AUTH[h%PROF.length],inst:"worker-"+String(hash(i>>>4)%512).padStart(3,"0")}}
+    /* Responsable estructural: primer agente de algún grupo con varios hijos; es quien emite «delega» en edgesOf. */
+    const isLead=i=>pathOf(i).some(nd=>nd.lo===i&&!(isLeaf(nd)&&nd.hi-nd.lo<2));
+    function agent(i){const t=teamOf(i),h=hash(i*3+7),lead=isLead(i);
+      return {idx:i,id:pad(i),name:lead?"Coordinador":PROF[h%PROF.length],st:stateOf(i),team:t,project:PROJ[t%NP],auth:lead?"coordina decisiones y puede delegar tareas":AUTH[1+h%(AUTH.length-1)],inst:"worker-"+String(hash(i>>>4)%512).padStart(3,"0")}}
     function pathOf(i){const p=[root()];while(!isLeaf(p[p.length-1])){const kids=children(p[p.length-1]);p.push(kids.find(k=>k.lo<=i&&i<k.hi))}return p}
     function label(node){
       if(node.k==="project")return "Proyecto «"+PROJ[node.p]+"»";
@@ -502,18 +513,89 @@ const CaosScale=(()=>{
         out.push({time:String(Math.floor(tm/60)).padStart(2,"0")+":"+String(tm%60).padStart(2,"0"),who:ag.name+" "+ag.id,verb,ref:ag.id,idx})}
       return out;
     }
-    /* Vecindad de un agente: conjunto pequeño con el formato de la red de demostración. */
-    function neighbourhood(i,answered){
-      const leaf=pathOf(i).pop(),me=agent(i);
-      let sup=leaf.lo!==i?leaf.lo:(teamOf(i)*c1!==i?teamOf(i)*c1:null);
-      const peer=i+1<leaf.hi?i+1:(i-1>=leaf.lo&&i-1!==sup?i-1:null);
+    /* ---- Vínculos dirigidos (T082): modelo por antecesor común más bajo ----
+       edgesOf(nodo) genera de forma determinista a lo sumo min(3·hijos, LIMITS.edgesPerGroup)
+       vínculos atómicos entre agentes concretos situados en hijos DISTINTOS del nodo; cada
+       vínculo pertenece así a un único nodo (su antecesor común más bajo) y su id deriva de
+       la ruta de ese nodo. Un nivel agrega por (hijo origen, hijo destino, tipo) los vínculos
+       propios y muestra como puertos externos los de sus antecesores que lo tocan; al bajar,
+       esos mismos ids reaparecen. Coste O(profundidad·96) por consulta: nunca recorre n. */
+    const unit=i=>({k:"range",lo:i,hi:i+1,depth:-1,path:null,unit:true});
+    const kids=node=>node.k==="range"&&!node.unit&&isLeaf(node)?Array.from({length:node.hi-node.lo},(_,j)=>unit(node.lo+j)):node.unit?[]:children(node);
+    const keyOf=x=>x.unit?"a:"+x.lo:x.k==="agent"?"a:"+x.i:x.k==="project"?"p:"+x.p:x.k==="state"?"s:"+x.st:"r:"+x.lo+"-"+x.hi+"-"+x.depth;
+    const tag=node=>node.depth?node.path.map(j=>String(j+1).padStart(2,"0")).join("."):"0";
+    const RID={delega:"del",depende:"dep",espera:"esp",comunica:"com"};
+    const ecache=new Map();
+    function edgesOf(node){
+      if(node.k!=="range"||node.unit)return [];
+      const ck=node.lo+":"+node.hi+":"+node.depth;if(ecache.has(ck))return ecache.get(ck);
+      const C=kids(node),k=C.length,cap=Math.min(3*k,LIMITS.edgesPerGroup),t=tag(node),s=hash(node.lo*31+node.hi*7+node.depth+1),out=[];
+      const pick=(c,x)=>c.lo+hash(x)%(c.hi-c.lo);
+      const add=(ty,j,a,b)=>{if(out.length<cap&&a!==b)out.push({id:"R"+t+"-"+RID[ty]+(j+1),ty,a,b,at:t})};
+      /* delegación: el responsable del nodo (primer agente) asigna a los responsables de los demás hijos */
+      for(let j=1;j<k;j++)add("delega",j,C[0].lo,C[j].lo);
+      for(let j=0;j+1<k;j++)if(hash(s+j*11+1)%3)add("depende",j,pick(C[j],s+j*13+2),pick(C[j+1],s+j*17+3));
+      for(let j=0;j<k&&k>1;j++)if(hash(s+j*19+4)%4===0){const q=(j+1+hash(s+j*23+5)%(k-1))%k;add("comunica",j,pick(C[j],s+j*29+6),pick(C[q],s+j*31+7))}
+      /* espera: el coordinador de otro hijo retiene a un agente que espera o está bloqueado.
+         En una hoja el hijo 1 es un agente suelto (no coordina): el hijo 0 no recibe esperas. */
+      for(let j=0;j<k&&k>1;j++)if(hash(s+j*37+8)%5===0){const src=C[j?0:1].lo;if(!isLead(src))continue;
+        const c=counts(C[j]),pref=hash(s+j*41)%2?"block":"wait",st=c[pref]?pref:c[pref==="block"?"wait":"block"]?(pref==="block"?"wait":"block"):null;
+        if(st)add("espera",j,src,nthWithState(C[j],st,hash(s+j*43)%c[st]))}
+      if(ecache.size>600)ecache.clear();ecache.set(ck,out);return out;
+    }
+    const ancestors=node=>node.k==="range"&&node.depth>0?pathOf(node.lo).slice(0,node.depth):[];
+    const touching=node=>ancestors(node).flatMap(A=>edgesOf(A).filter(e=>(node.lo<=e.a&&e.a<node.hi)!==(node.lo<=e.b&&e.b<node.hi)).map(e=>({...e,lca:A})));
+    function agentAtoms(i){const seen=new Set();return pathOf(i).flatMap(A=>edgesOf(A).filter(e=>(e.a===i||e.b===i)&&!seen.has(e.id)&&seen.add(e.id)))}
+    const teamLabel=i=>n<=LEAF?label(root()):label(teamNode(teamOf(i)));
+    const kidOf=(A,i)=>kids(A).find(c=>c.lo<=i&&i<c.hi);
+    /* Agrega vínculos atómicos en haces (tipo, grupo origen, grupo destino) para el nivel pedido:
+       {kind:"range",node} | {kind:"projects"} | {kind:"project",p} | {kind:"states",base} | {kind:"page",agents}.
+       internal: haces entre grupos del nivel; external: entre un grupo y un grupo exterior;
+       self: vínculos con ambos extremos en el mismo grupo (agrupaciones no jerárquicas). */
+    function relations(q){
+      let atoms=[],grp,outside=()=>null,partial=false,scope;
+      if(q.kind==="range"){const node=q.node,K=kids(node);scope="nivel "+label(node);
+        grp=i=>{if(!(node.lo<=i&&i<node.hi))return null;const c=K.find(c=>c.lo<=i&&i<c.hi);return {key:keyOf(c),label:c.unit?agent(i).id:label(c)}};
+        atoms=edgesOf(node).concat(touching(node));
+        outside=(e,i)=>{const c=kidOf(e.lca,i);return {key:"x:"+keyOf(c),label:c.unit?agent(i).id:label(c)}}}
+      else if(q.kind==="projects"){partial=true;scope="solo vínculos entre equipos de la red; los internos de cada equipo se ven al bajar";atoms=edgesOf(root());grp=i=>{const p=teamOf(i)%NP;return {key:"p:"+p,label:"Proyecto «"+PROJ[p]+"»"}}}
+      else if(q.kind==="project"){const p=q.p;partial=true;scope="solo vínculos entre equipos de la red; los internos de cada equipo se ven al bajar";atoms=edgesOf(root()).filter(e=>teamOf(e.a)%NP===p||teamOf(e.b)%NP===p);
+        grp=i=>teamOf(i)%NP===p?{key:keyOf(teamNode(teamOf(i))),label:label(teamNode(teamOf(i)))}:null;
+        outside=(e,i)=>{const r=teamOf(i)%NP;return {key:"x:p:"+r,label:"Proyecto «"+PROJ[r]+"»"}}}
+      else if(q.kind==="states"){partial=true;scope="solo vínculos entre equipos de "+label(q.base);atoms=edgesOf(q.base);grp=i=>{const st=agent(i).st;return {key:"s:"+st,label:st}}}
+      else{partial=true;scope="vínculos de los agentes de esta página";const set=new Set(q.agents),seen=new Set();
+        q.agents.forEach(i=>agentAtoms(i).forEach(e=>{if(!seen.has(e.id)){seen.add(e.id);atoms.push(e)}}));
+        grp=i=>set.has(i)?{key:"a:"+i,label:agent(i).id}:null;
+        outside=(e,i)=>({key:"x:"+keyOf(n>LEAF?teamNode(teamOf(i)):root()),label:teamLabel(i)})}
+      const B=new Map(),internal=[],external=[];let self=0;
+      atoms.forEach(e=>{let a=grp(e.a),b=grp(e.b),out=null;
+        if(a&&b&&a.key===b.key){self++;return}
+        if(!a){a=outside(e,e.a);out="from"}else if(!b){b=outside(e,e.b);out="to"}
+        const id="H:"+(q.kind==="range"?tag(q.node):q.kind==="project"?"p"+q.p:q.kind)+":"+e.ty+":"+a.key+">"+b.key;
+        let x=B.get(id);if(!x){x={id,ty:e.ty,from:a,to:b,outside:out,atoms:[],count:0};B.set(id,x);(out?external:internal).push(x)}
+        x.atoms.push(e);x.count++});
+      return {internal,external,self,modeled:atoms.length,partial,scope};
+    }
+    /* Vecindad de un agente: conjunto pequeño con el formato de la red de demostración.
+       Los vínculos entre agentes salen de agentAtoms (mismo generador que los haces); las
+       tareas y la decisión son una ilustración local con ids V-… separados. */
+    function neighbourhood(i,answered,focusAtom){
+      const leaf=pathOf(i).pop(),me=agent(i),atoms=agentAtoms(i);
+      const supE=atoms.find(e=>e.ty==="delega"&&e.b===i),sup=supE?supE.a:null;
+      const order=atoms.filter(e=>e!==supE).sort((x,y)=>(y.id===focusAtom)-(x.id===focusAtom));
+      const partners=[];order.forEach(e=>{const o=e.a===i?e.b:e.a;if(o!==sup&&!partners.includes(o)&&partners.length<4)partners.push(o)});
+      const shownAtoms=atoms.filter(e=>{const o=e.a===i?e.b:e.a;return o===sup||partners.includes(o)});
       const g0=label(leaf),N=[],E=[],ROUTE=[],DEC={};
       const LANES=[{id:g0.toLowerCase(),label:g0.toLowerCase(),sub:"vecindad de "+me.id}];
       const A=(x,row,lane)=>{const a=agent(x);N.push({id:a.id,kind:"agent",t:a.name,s:a.id,lane,row,col:0,st:a.st,profile:a.name.toLowerCase()+" (ficticio)",auth:a.auth,since:a.st==="idle"?"en espera":"hace "+(1+hash(x)%50)+" min",idx:x})};
       const tState={run:"run",wait:"wait",block:"block",done:"done",idle:"idle"};
-      if(sup!==null){A(sup,0,LANES[0].id);const ta="T-"+(sup+1)+".p";N.push({id:ta,kind:"task",t:"Planificar el lote",s:"hecho",lane:LANES[0].id,row:0,col:1,st:"done",owner:agent(sup).id,since:"hace 40 min"});ROUTE.push(ta);
-        E.push({id:"V-"+(i+1)+".1",ty:"delega",a:agent(sup).id,b:me.id,note:"asignó el trabajo de "+me.id})}
+      if(sup!==null){A(sup,0,LANES[0].id);const ta="T-"+(sup+1)+".p";N.push({id:ta,kind:"task",t:"Planificar el lote",s:"hecho",lane:LANES[0].id,row:0,col:1,st:"done",owner:agent(sup).id,since:"hace 40 min"});ROUTE.push(ta)}
       A(i,1,LANES[0].id);
+      /* agentes relacionados: dos por carril, con su grupo y la posición en el total */
+      for(let g=0;g*2<partners.length;g++){const part=partners.slice(g*2,g*2+2),lid="relacionados "+(g+1);
+        LANES.push({id:lid,label:"relacionados · "+(g*2+1)+"–"+(g*2+part.length)+" de "+new Set(atoms.map(e=>e.a===i?e.b:e.a)).size,sub:part.map(teamLabel).filter((x,j,a)=>a.indexOf(x)===j).join(" · ").toLowerCase()});
+        part.forEach((x,j)=>A(x,2+g*2+j,lid))}
+      shownAtoms.forEach((e,j)=>E.push({id:e.id,ty:e.ty,a:agent(e.a).id,b:agent(e.b).id,note:RELS[e.ty].note+" · modelado en "+(e.at==="0"?"la red":"el grupo "+e.at),bulge:30+(j%4)*16,atom:true}));
       const ti="T-"+(i+1)+".1";
       N.push({id:ti,kind:"task",t:"Trabajo de "+me.name.toLowerCase(),s:{run:"intento 1",wait:"en revisión",block:"retenida",done:"hecho",idle:"en cola"}[me.st],lane:LANES[0].id,row:1,col:2,st:tState[me.st],owner:me.id,since:"hace "+(1+hash(i+5)%30)+" min"});
       ROUTE.push(ti);if(sup!==null)E.push({id:"V-"+(i+1)+".2",ty:"depende",a:ROUTE[0],b:ti});
@@ -522,19 +604,14 @@ const CaosScale=(()=>{
         E.push({id:"V-"+(i+1)+".3",ty:"espera",a:d,b:ti});
         DEC[d]={from:me.name,task:ti,q:me.st==="block"?`${me.id} no puede seguir sin una decisión sobre su tarea ${ti}. Datos sintéticos de escala.`:`${me.id} pide aprobar el resultado de ${ti}. Datos sintéticos de escala.`,opts:["Aprobar","Rechazar","Pedir más análisis"],age:(1+hash(i+9)%20)+" min",scope:"Decide: perfil revisión (ficticio)"};
         if(done){const t=N.find(x=>x.id===ti);if(t.st==="wait"||t.st==="block")t.st="idle"}}
-      if(peer!==null){const pa=agent(peer),l1={id:"vecina "+pa.id.toLowerCase(),label:"vecina",sub:"misma célula · "+pa.inst};LANES.push(l1);A(peer,2,l1.id);
-        const tp="T-"+(peer+1)+".2",tz="T-"+(peer+1)+".3";
-        N.push({id:tp,kind:"task",t:"Integrar resultado",s:"depende de "+ti,lane:l1.id,row:2,col:3,st:pa.st==="run"?"run":"idle",owner:pa.id,since:"en cola"});
-        N.push({id:tz,kind:"task",t:"Entregar lote",s:"en cola",lane:l1.id,row:3,col:4,st:"idle",owner:pa.id,since:"en cola"});
-        E.push({id:"V-"+(i+1)+".4",ty:"depende",a:ti,b:tp},{id:"V-"+(i+1)+".5",ty:"depende",a:tp,b:tz},{id:"V-"+(i+1)+".6",ty:"comunica",a:pa.id,b:me.id,note:"«¿cuándo estará "+ti+"?»",bulge:42});
-        if(sup!==null)E.push({id:"V-"+(i+1)+".7",ty:"delega",a:agent(sup).id,b:pa.id,note:"asignó la integración"});
-        ROUTE.push(tp,tz)}
       const FEED=N.filter(x=>x.kind!=="agent").slice(0,5).map((x,j)=>["11:"+String(50-j*4).padStart(2,"0"),(N.find(a=>a.id===x.owner)||{t:"—"}).t,x.kind==="decision"?"planteó la decisión":"actualizó",x.id,"sintético"]);
-      return {N,E,LANES,ROUTE,DEC,FEED};
+      return {N,E,LANES,ROUTE,DEC,FEED,INFO:{total:atoms.length,shown:shownAtoms.length,partners:new Set(atoms.map(e=>e.a===i?e.b:e.a)).size}};
     }
-    return {n,root,isLeaf,children,counts,nthWithState,agent,pathOf,label,projects,projectOf,pageByState,leafAgents,find,feedPage,neighbourhood,teams};
+    return {n,root,isLeaf,children,kids,keyOf,counts,nthWithState,agent,pathOf,label,projects,projectOf,pageByState,leafAgents,find,feedPage,neighbourhood,teams,edgesOf,agentAtoms,relations};
   }
-  return {STATES,LIMITS,create};
+  /* Tipos de vínculo del modelo sintético (mismo vocabulario que la demostración). */
+  const RELS={delega:{note:"rol superior asigna trabajo"},depende:{note:"el destino necesita el resultado del origen"},espera:{note:"el destino espera a que el agente coordinador de origen resuelva su decisión o bloqueo",desc:"El agente destino está en espera o bloqueado hasta que el agente coordinador de origen resuelva la decisión o el bloqueo (relación sintética entre agentes, no una tarea concreta)."},comunica:{note:"mensaje sin dependencia ni autoridad"}};
+  return {STATES,LIMITS,RELS,create};
 })();
 </script>
 
@@ -623,9 +700,12 @@ const SCALES={demo:0,"100":100,"10k":10000,"1m":1000000};
 const LIM=CaosScale.LIMITS, fmt=x=>Number(x).toLocaleString("es-ES");
 let scale="demo", M=null, stack=[], groupBy="team", aggSel=null, page=0, decPage=0, feedPg=0, aggItems=[], aggPos={};
 const answeredIdx={};
+/* Haces de vínculos del nivel (T082): rel = relaciones del modelo, allB = haces con tipo activo,
+   shownB = los dibujados (≤ LIM.bundles), ports = grupos exteriores dibujados. */
+let rel=null, allB=[], shownB=[], ports=[], selBundle=null, linkPg=0, atomPg=0, NINFO=null;
 const mode=()=>scale==="demo"?"demo":stack[stack.length-1].k==="agent"?"nbh":"agg";
 const scopeNode=()=>{for(let j=stack.length-1;j>=0;j--){const x=stack[j];if(x.k==="range"||x.k==="project")return x;if(x.k==="state")return x.base}return null};
-function loadData(d){({N,E,LANES,ROUTE,DEC,FEED}=d);byId=Object.fromEntries(N.map(n=>[n.id,n]));eById=Object.fromEntries(E.map(e=>[e.id,e]));W=W0;H=TOP+LANES.length*GHT+6}
+function loadData(d){({N,E,LANES,ROUTE,DEC,FEED}=d);NINFO=d.INFO||null;byId=Object.fromEntries(N.map(n=>[n.id,n]));eById=Object.fromEntries(E.map(e=>[e.id,e]));W=W0;H=TOP+LANES.length*GHT+6}
 
 /* ---- Rama: ascendientes y descendientes de la selección ---- */
 function branchSet(){
@@ -688,7 +768,8 @@ function ortho(p,r=7){let d=`M${p[0][0]} ${p[0][1]}`;
 function route(e){
   const A=byId[e.a],B=byId[e.b],p=pos(A),q=pos(B),ma=p.y+NH/2,mb=q.y+NH/2;
   if(e.ty==="delega"){const tx=10;return ortho([[p.x,ma],[tx,ma],[tx,mb],[q.x-2,mb]])}
-  if(e.ty==="comunica"){const x=p.x+AW,y1=ma-8,y2=mb+8,b=x+e.bulge;return `M${x} ${y1} C${b} ${y1} ${b} ${y2} ${x+2} ${y2}`}
+  /* entre agentes (vecindad sintética) toda relación no jerárquica rodea por la derecha */
+  if(e.ty==="comunica"||(A.kind==="agent"&&B.kind==="agent")){const x=p.x+AW,y1=ma-8,y2=mb+8,b=x+e.bulge;return `M${x} ${y1} C${b} ${y1} ${b} ${y2} ${x+2} ${y2}`}
   if(A.col===B.col){const cx=p.x+NW/2;return A.row<B.row?`M${cx} ${p.y+NH} L${cx} ${q.y-2}`:`M${cx} ${p.y} L${cx} ${q.y+NH+2}`}
   const y1=ma+(e.dy1||0),y2=mb+(e.dy2||0),x1=p.x+NW,x2=q.x-2;
   if(Math.abs(y1-y2)<1)return `M${x1} ${y1} L${x2} ${y2}`;
@@ -803,8 +884,9 @@ function moveFocus(id,[dx,dy]){
   cur.tabIndex=-1;nx.tabIndex=0;focusId=best;nx.focus();
 }
 /* Barra del grafo: filtros de vínculo que hacen de leyenda */
+function legendSw(t){const T=ET[t];return `<svg width="24" height="10" viewBox="0 0 24 10" aria-hidden="true"><path d="M1 5h17" stroke="${T.c}" stroke-width="${T.w+.2}"${T.dash?` stroke-dasharray="${T.dash}"`:""} fill="none"/><path d="${T.mk==="tri"?"M17 1.5 23 5 17 8.5z":T.mk==="bar"?"M16 1.5 21 5 16 8.5z M21.5 1h1.6v8h-1.6z":"M17 1.5 22.5 5 17 8.5"}" fill="${T.mk==="open"?"none":T.c}" stroke="${T.mk==="open"?T.c:"none"}" stroke-width="1.4"/></svg>`}
 function renderTools(){
-  const sw=t=>{const T=ET[t];return `<svg viewBox="0 0 24 10" aria-hidden="true"><path d="M1 5h17" stroke="${T.c}" stroke-width="${T.w+.2}"${T.dash?` stroke-dasharray="${T.dash}"`:""} fill="none"/><path d="${T.mk==="tri"?"M17 1.5 23 5 17 8.5z":T.mk==="bar"?"M16 1.5 21 5 16 8.5z M21.5 1h1.6v8h-1.6z":"M17 1.5 22.5 5 17 8.5"}" fill="${T.mk==="open"?"none":T.c}" stroke="${T.mk==="open"?T.c:"none"}" stroke-width="1.4"/></svg>`};
+  const sw=legendSw;
   let s=`<span class="lbl">Vínculos</span>`;
   Object.keys(ET).forEach(t=>{const tot=E.filter(e=>e.ty===t).length,vis=E.filter(e=>e.ty===t&&edgeVisible(e)).length;
     s+=`<button class="chip" type="button" data-ety="${t}" aria-pressed="${etypes[t]}" title="${esc(ET[t].desc)}">${sw(t)}${ET[t].label} <span class="cnt">${etypes[t]?vis+"/"+tot:"0/"+tot}</span></button>`});
@@ -814,6 +896,7 @@ function renderTools(){
   $("gtools").innerHTML=s;
   const vn=N.filter(visible).length,ve=E.filter(edgeVisible).length,hn=N.length-vn,he=E.length-ve;
   $("gstatus").innerHTML=`<span>Mostrando <b>${vn}</b> de ${N.length} elementos y <b>${ve}</b> de ${E.length} vínculos</span>`+
+    (mode()==="nbh"&&NINFO?`<span>Relaciones del agente: <b>${NINFO.shown}</b> de ${NINFO.total} vínculos modelados con ${NINFO.partners} agentes · las tareas son ilustrativas</span>`:"")+
     (filtersActive()?`<span class="hid">${hn} elementos y ${he} vínculos ocultos por filtros</span><button class="ghost" type="button" data-reset>Mostrar red completa</button>`:"");
   document.querySelectorAll("[data-cnt]").forEach(c=>{const k=c.dataset.cnt;c.textContent=N.filter(n=>n.kind===k).length});
 }
@@ -839,7 +922,7 @@ function renderList(){
 function blockingPath(id){
   const out=[],seen=new Set();
   (function up(x){E.forEach(e=>{if(e.b!==x||e.ty==="comunica"||e.ty==="delega"||seen.has(e.id))return;seen.add(e.id);const a=byId[e.a];
-    if(e.ty==="espera"&&a.st==="wait")out.push([x,e.a,e.id,"espera respuesta a"]);
+    if(e.ty==="espera"&&a.kind==="decision"&&a.st==="wait")out.push([x,e.a,e.id,"espera respuesta a"]);
     else if(e.ty==="depende"&&a.st!=="done"){out.push([x,e.a,e.id,a.st==="block"?"depende de la bloqueada":a.st==="wait"?"depende de":"depende de"]);up(e.a)}
   })})(id);return out}
 function relRow(e,other){const n=byId[other];const[c,l]=STATE[n.st];return `<li><button data-go="${other}"><span class="mono">${esc(other)}</span><span>${esc(n.t)}</span><span class="why ${c}">${l}</span></button><button class="eid mono" type="button" data-edge="${e.id}" aria-label="Ver vínculo ${e.id}">${e.id}</button></li>`}
@@ -850,7 +933,7 @@ function relGroups(id){
 }
 function renderInspector(){
   if(selEdge){const e=eById[selEdge],T=ET[e.ty],A=byId[e.a],B=byId[e.b];
-    let rows=`<dt>Tipo</dt><dd>${T.label}</dd><dt>Dirección</dt><dd><button class="ghost" style="padding:2px 8px" data-go="${A.id}">${esc(A.t)}</button> ${T.verb} <button class="ghost" style="padding:2px 8px" data-go="${B.id}">${esc(B.t)}</button></dd><dt>Significado</dt><dd>${T.desc}</dd><dt>Ámbito</dt><dd class="mono">${A.lane===B.lane?esc(A.lane):esc(A.lane)+" → "+esc(B.lane)}</dd><dt>Ruta crítica</dt><dd>${onRoute(e)?"Sí: forma parte del camino hacia la entrega":"No"}</dd>`;
+    let rows=`<dt>Tipo</dt><dd>${T.label}</dd><dt>Dirección</dt><dd><button class="ghost" style="padding:2px 8px" data-go="${A.id}">${esc(A.t)}</button> ${T.verb} <button class="ghost" style="padding:2px 8px" data-go="${B.id}">${esc(B.t)}</button></dd><dt>Significado</dt><dd>${e.atom&&CaosScale.RELS[e.ty].desc||T.desc}</dd><dt>Ámbito</dt><dd class="mono">${A.lane===B.lane?esc(A.lane):esc(A.lane)+" → "+esc(B.lane)}</dd><dt>Ruta crítica</dt><dd>${onRoute(e)?"Sí: forma parte del camino hacia la entrega":"No"}</dd>`;
     if(e.note) rows+=`<dt>Registro</dt><dd>${esc(e.note)}</dd>`;
     rows+=`<dt>Fuente</dt><dd>Registro ficticio de la maqueta; no es evidencia de ningún servicio.</dd>`;
     $("inspector").innerHTML=`<div class="insp-head"><div class="kind">Vínculo <span class="mono" style="text-transform:none;letter-spacing:0;font-weight:400">${e.id}</span></div><h2>${esc(e.a)} ${T.verb} ${esc(e.b)}</h2><div class="mono" style="color:var(--ink-3)">${T.label}</div></div><div class="insp-body"><dl>${rows}</dl><p class="note">Selecciona un extremo para volver a su contexto.</p></div><div class="actions"><button class="ghost" type="button" data-center="${B.id}">Centrar destino</button></div>`;
@@ -868,7 +951,8 @@ function renderInspector(){
   if(n.st==="block") body+=`<p class="note">Bloqueada hasta resolver ${E.filter(e=>e.b===n.id&&e.ty==="espera").map(e=>e.a).join(", ")||"sus dependencias"}. Aquí no se ejecuta nada.</p>`;
   if(n.kind==="decision"&&n.st==="wait") body+=`<p class="note">Responde en <a href="#hDec" style="color:var(--accent)">Decisiones pendientes</a>. La respuesta es local a esta maqueta.</p>`;
   const acts=n.kind==="agent"?["Abrir terminal","Asignar tarea"]:n.kind==="task"?["Reasignar","Cancelar intento"]:["Responder"];
-  $("inspector").innerHTML=`<div class="insp-head"><div class="kind">${KIND[n.kind]} <span class="mono" style="text-transform:none;letter-spacing:0;font-weight:400">${esc(n.id)}</span></div><h2>${esc(n.t)}</h2><div class="mono" style="color:var(--ink-3)">${esc(n.s)}</div></div><div class="insp-body">${body}</div><div class="actions">${acts.map((a,i)=>`<button class="${i?"ghost":"primary"}" data-sim="${a}">${a} <span class="sim">simulado</span></button>`).join("")}<button class="ghost" type="button" data-center="${n.id}">Centrar en el grafo</button></div>`;
+  const other=mode()==="nbh"&&n.kind==="agent"&&n.idx!==undefined&&stack.length&&stack[stack.length-1].i!==n.idx?`<button class="ghost" type="button" data-agent="${n.idx}">Abrir su vecindad</button>`:"";
+  $("inspector").innerHTML=`<div class="insp-head"><div class="kind">${KIND[n.kind]} <span class="mono" style="text-transform:none;letter-spacing:0;font-weight:400">${esc(n.id)}</span></div><h2>${esc(n.t)}</h2><div class="mono" style="color:var(--ink-3)">${esc(n.s)}</div></div><div class="insp-body">${body}</div><div class="actions">${acts.map((a,i)=>`<button class="${i?"ghost":"primary"}" data-sim="${a}">${a} <span class="sim">simulado</span></button>`).join("")}${other}<button class="ghost" type="button" data-center="${n.id}">Centrar en el grafo</button></div>`;
 }
 /* ---- Decisiones y actividad ---- */
 const answered={};
@@ -913,16 +997,61 @@ function itemPass(x){
   if(q&&M.find(q)<0&&!(itemLabel(x)+" "+(x.k==="agent"?M.agent(x.i).id:"")).toLowerCase().includes(q))return false;
   return true;
 }
-const aggFilters=()=>$("stateFilter").value!=="all"||$("q").value.trim()!=="";
+const aggFilters=()=>$("stateFilter").value!=="all"||$("q").value.trim()!==""||!Object.values(etypes).every(Boolean);
 function stackedBar(c,x,y,w){let s=`<rect class="agg-bar-bg" x="${x}" y="${y}" width="${w}" height="6" rx="3"/>`,o=x;
   CaosScale.STATES.forEach(st=>{if(!c[st])return;const sw=Math.max(1.5,w*c[st]/c.total);s+=`<rect x="${o.toFixed(1)}" y="${y}" width="${Math.min(sw,x+w-o).toFixed(1)}" height="6" fill="${STCOL[st]}"/>`;o+=sw});return s}
+/* ---- Haces de vínculos del ámbito agregado (T082) ----
+   El modelo agrega vínculos atómicos por (tipo, grupo origen, grupo destino). Se dibujan a lo
+   sumo LIM.bundles haces: primero los del grupo seleccionado, luego por conteo y alternando
+   tipos; los exteriores llegan a LIM.ports puertos. El resto queda en la tabla Vínculos. */
+const bLabel=g=>g.key.startsWith("s:")?STATE[g.label][1]:g.label;
+function relQuery(){const top=stack[stack.length-1];
+  if(top.k==="state")return {kind:"page",agents:levelItems().list.map(x=>x.i)};
+  if(top.k==="project")return {kind:"project",p:top.p};
+  if(!M.isLeaf(top)&&!top.depth&&groupBy==="project")return {kind:"projects"};
+  if(!M.isLeaf(top)&&!top.depth&&groupBy==="state")return {kind:"states",base:top};
+  return {kind:"range",node:top}}
+function computeRel(){
+  rel=M.relations(relQuery());
+  const rank={},vis=new Set(aggItems.map(x=>x.key)),inner=b=>b.outside==="from"?b.to.key:b.outside==="to"?b.from.key:null;
+  allB=[...rel.internal,...rel.external].filter(b=>etypes[b.ty]);
+  allB.forEach(b=>{rank[b.ty]=(rank[b.ty]||0)+1;b.rank=rank[b.ty]});
+  const inc=b=>aggSel&&(b.from.key===aggSel||b.to.key===aggSel)?0:1,TY=Object.keys(ET);
+  const order=allB.slice().sort((x,y)=>((y.id===selBundle)-(x.id===selBundle))||(inc(x)-inc(y))||(y.count-x.count)||(x.rank-y.rank)||(TY.indexOf(x.ty)-TY.indexOf(y.ty))||(x.id<y.id?-1:1));
+  ports=[];shownB=[];
+  for(const b of order){if(shownB.length>=LIM.bundles)break;
+    const ends=b.outside?[inner(b)]:[b.from.key,b.to.key];if(!ends.every(k=>vis.has(k)))continue;
+    if(b.outside){const pk=b.outside==="from"?b.from.key:b.to.key;if(!ports.some(p=>p.key===pk)){if(ports.length>=LIM.ports)continue;ports.push(b.outside==="from"?b.from:b.to)}}
+    shownB.push(b)}
+}
+function bundlePath(S,T,k,G){
+  const o=((k%7)-3)*3.4,f=.2+.6*((k*5)%9)/8,sx=S.x+S.w*f,tx=T.x+T.w*(1-f),yS=S.y+S.h+G/2+o,yT=T.y-G/2+o,xv=T.x-G/2+o;
+  if(Math.abs(yS-yT)<1)return {d:ortho([[sx,S.y+S.h],[sx,yS],[tx,yS],[tx,T.y-1]],6),lx:(sx+tx)/2,ly:yS};
+  return {d:ortho([[sx,S.y+S.h],[sx,yS],[xv,yS],[xv,yT],[tx,yT],[tx,T.y-1]],6),lx:(sx+xv)/2,ly:yS}}
+function bundleAria(b){return `${b.id}: ${ET[b.ty].label}, ${bLabel(b.from)} → ${bLabel(b.to)}, ${fmt(b.count)} ${b.count===1?"vínculo":"vínculos"}${b.outside?", exterior":""}`}
 function renderAgg(){
-  const lv=levelItems(),top=stack[stack.length-1],vw=vpSize().w,narrow=vw<600,cols=vw<480?1:narrow?2:5,CWd=cols===1?Math.max(240,Math.min(340,vw-32)):200,G=14;
+  const lv=levelItems(),top=stack[stack.length-1],vw=vpSize().w,narrow=vw<600,cols=vw<480?1:narrow?2:5,G=30,M0=G,CWd=cols===1?Math.max(220,Math.min(340,vw-32-M0)):200;
   aggItems=lv.list.filter(itemPass).slice(0,LIM.cards).map(x=>({...x,key:keyOf(x)}));
-  const agents=aggItems.length&&aggItems[0].k==="agent",CH=agents?NH:92;
-  aggPos={};let s=`<title>Ámbito sintético: ${esc(stack.map(x=>x.k==="agent"?"":x.k==="state"?STATE[x.st][1]:M.label(x)).join(" / "))}</title><g id="cam">`;
+  computeRel();
+  const agents=aggItems.length&&aggItems[0].k==="agent",CH=agents?NH:92,PH=34,rows=Math.max(1,Math.ceil(aggItems.length/cols)),prows=Math.ceil(ports.length/cols);
+  aggPos={};let s=`<title>Ámbito sintético: ${esc(stack.map(x=>x.k==="agent"?"":x.k==="state"?STATE[x.st][1]:M.label(x)).join(" / "))}</title>`+markers()+`<g id="cam">`;
   const fid=aggItems.some(x=>x.key===focusId)?focusId:(aggItems.find(x=>x.key===aggSel)||aggItems[0]||{}).key;
-  aggItems.forEach((x,j)=>{const bx=16+(j%cols)*(CWd+G),by=16+Math.floor(j/cols)*(CH+G);aggPos[x.key]={x:bx,y:by,w:CWd,h:CH};
+  aggItems.forEach((x,j)=>{aggPos[x.key]={x:M0+(j%cols)*(CWd+G),y:M0+Math.floor(j/cols)*(CH+G),w:CWd,h:CH}});
+  const portTop=M0+rows*(CH+G);
+  ports.forEach((p,j)=>{aggPos[p.key]={x:M0+(j%cols)*(CWd+G),y:portTop+Math.floor(j/cols)*(PH+G),w:CWd,h:PH}});
+  /* haces: halo, trazo, zona de clic y conteo; las tarjetas se pintan encima de los extremos */
+  const sb=allB.find(b=>b.id===selBundle);
+  const drawn=shownB.map((b,k)=>{const S=aggPos[b.from.key],T=aggPos[b.to.key],T0=ET[b.ty];
+    const inc=aggSel&&(b.from.key===aggSel||b.to.key===aggSel),es=b.id===selBundle,dim=sb?!es:aggSel?!inc:false,hl=!sb&&inc;
+    return {b,T0,es,dim,hl,...bundlePath(S,T,k,G),w:T0.w+Math.min(2.4,Math.log2(b.count)*.7)}});
+  drawn.sort((x,y)=>(x.hl||x.es)-(y.hl||y.es));
+  drawn.forEach(x=>{s+=`<path class="edge-halo${x.dim?" dim":""}" d="${x.d}"/>`});
+  drawn.forEach(x=>{const{b,T0}=x;
+    s+=`<path class="edge${x.hl?" hl":""}${x.es?" esel":""}${x.dim?" dim":""}" d="${x.d}" stroke="${T0.c}" stroke-width="${x.w.toFixed(2)}"${T0.dash?` stroke-dasharray="${T0.dash}"`:""} marker-end="url(#${T0.mk}-${x.hl||x.es?"acc":MK[b.ty]})"/>`;
+    s+=`<path class="edge-hit" data-bundle="${esc(b.id)}" data-ty="${b.ty}" data-count="${b.count}" data-from="${esc(b.from.key)}" data-to="${esc(b.to.key)}" tabindex="0" role="button" aria-pressed="${x.es}" aria-label="${esc(bundleAria(b))}" d="${x.d}"><title>${esc(bundleAria(b))}</title></path>`});
+  drawn.forEach(x=>{if(x.b.count>1||x.es)s+=`<text class="bcount halo" x="${x.lx.toFixed(1)}" y="${(x.ly+3.5).toFixed(1)}" text-anchor="middle" aria-hidden="true">${fmt(x.b.count)}</text>`});
+  ports.forEach(p=>{const q=aggPos[p.key];s+=`<g class="port" aria-hidden="true" transform="translate(${q.x},${q.y})"><rect width="${q.w}" height="${PH}" rx="6"/><text x="12" y="21">Fuera: ${esc(wrap(p.label,q.w-70)[0])}</text></g>`});
+  aggItems.forEach((x,j)=>{const bx=M0+(j%cols)*(CWd+G),by=M0+Math.floor(j/cols)*(CH+G);aggPos[x.key]={x:bx,y:by,w:CWd,h:CH};
     const on=x.key===aggSel;
     if(x.k==="agent"){const a=M.agent(x.i),[,lbl,short]=STATE[a.st],lead=top.k==="range"&&x.i===top.lo;
       s+=`<g class="node${on?" sel":""}" tabindex="${x.key===fid?0:-1}" role="button" data-id="${x.key}" aria-pressed="${on}" aria-label="Agente ${esc(a.name)} ${a.id}, ${lbl}${lead?", dirige la célula":""}" transform="translate(${bx},${by})">`;
@@ -935,9 +1064,9 @@ function renderAgg(){
     s+=`<title>${esc(lab)} · Enter otra vez o doble clic para abrir</title><rect class="body" width="${CWd}" height="${CH}" rx="8"/>`;
     s+=`<text class="t" x="14" y="22">${esc(wrap(lab,CWd-44)[0])}</text><text class="agg-open" x="${CWd-14}" y="22" text-anchor="end" aria-hidden="true">›</text>`;
     s+=`<text class="s" x="14" y="40">${esc(sub)}</text>`+stackedBar(c,14,52,CWd-28);
-    s+=`<text class="s" x="14" y="80"><tspan class="st" fill="${STCOL.block}">${fmt(c.block)} bloq.</tspan><tspan> · </tspan><tspan class="st" fill="${STCOL.wait}">${fmt(c.wait)} esperan</tspan></text></g>`;
+    s+=`<text class="s st" x="14" y="72" fill="${STCOL.block}">${fmt(c.block)} bloqueados</text><text class="s st" x="14" y="86" fill="${STCOL.wait}">${fmt(c.wait)} esperan decisión</text></g>`;
   });
-  const rows=Math.max(1,Math.ceil(aggItems.length/cols));W=32+cols*CWd+(cols-1)*G;H=32+rows*CH+(rows-1)*G;
+  W=2*M0+cols*CWd+(cols-1)*G;H=M0+rows*CH+(rows-1)*G+(prows?G+prows*PH+(prows-1)*G:0)+M0;
   $("world").innerHTML=s+"</g>";$("world").setAttribute("role","group");
   $("world").setAttribute("aria-label",`Ámbito sintético: ${aggItems.length} de ${fmt(lv.total)} ${lv.noun} visibles`);
   const em=$("gempty");em.hidden=aggItems.length>0;
@@ -952,21 +1081,27 @@ function renderAgg(){
       if(dir){e.preventDefault();moveFocus(k,dir)}
     });
   });
+  $("world").querySelectorAll(".edge-hit[data-bundle]").forEach(p=>p.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();selectBundle(p.dataset.bundle,"edge")}}));
   applyVp();
 }
 function pagerHtml(attr,pg,size,total,prev,next){const a=pg*size+1,b=Math.min(total,(pg+1)*size),last=(pg+1)*size>=total;
   return `<span class="pager"><button class="ghost" type="button" ${attr}="-1"${pg?"":" disabled"}>${prev}</button><span>${total?fmt(a)+"–"+fmt(b):"0"} de ${fmt(total)}</span><button class="ghost" type="button" ${attr}="1"${last?" disabled":""}>${next}</button></span>`}
 function renderToolsAgg(){
   const c=itemCounts(stack[stack.length-1].k==="state"?stack[stack.length-1]:scopeNode()),lv=levelItems();
-  $("gtools").innerHTML=`<span class="lbl">Estados del ámbito</span>`+CaosScale.STATES.map(st=>`<span class="chip tog" aria-pressed="false"><svg viewBox="0 0 24 10" aria-hidden="true"><rect x="1" y="2" width="22" height="6" rx="3" fill="${STCOL[st]}"/></svg>${STATE[st][1]} <span class="cnt">${fmt(c[st])}</span></span>`).join("");
-  const shown=aggItems.length;
+  const all=[...rel.internal,...rel.external];
+  $("gtools").innerHTML=`<span class="lbl">Vínculos</span>`+Object.keys(ET).map(t=>{const T=ET[t],tot=all.filter(b=>b.ty===t).length,vis=shownB.filter(b=>b.ty===t).length;
+      return `<button class="chip" type="button" data-ety="${t}" aria-pressed="${etypes[t]}" title="${esc(T.desc)}">${legendSw(t)}${T.label} <span class="cnt">${etypes[t]?vis+"/"+tot:"0/"+tot}</span></button>`}).join("")+
+    `<span class="lbl" style="margin-left:6px">Estados del ámbito</span>`+CaosScale.STATES.map(st=>`<span class="chip tog" aria-pressed="false"><svg viewBox="0 0 24 10" aria-hidden="true"><rect x="1" y="2" width="22" height="6" rx="3" fill="${STCOL[st]}"/></svg>${STATE[st][1]} <span class="cnt">${fmt(c[st])}</span></span>`).join("");
+  const shown=aggItems.length,hidB=allB.length-shownB.length;
   $("gstatus").innerHTML=`<span>Mostrando <b>${shown}</b> de ${fmt(lv.total)} ${lv.noun} · <b>${fmt(c.total)}</b> agentes en el ámbito</span>`+
     (lv.paged?pagerHtml("data-page",page,LIM.leaf,lv.total,"Anteriores","Siguientes"):"")+
-    (aggFilters()?`<span class="hid">filtros activos en este nivel</span><button class="ghost" type="button" data-reset>Quitar filtros</button>`:`<span>Máx. ${LIM.cards} tarjetas por nivel; el resto se agrega o pagina</span>`);
+    `<span>Mostrando <b>${shownB.length}</b> de ${allB.length} haces de vínculos · ${fmt(rel.modeled)} vínculos modelados${rel.self?` (${fmt(rel.self)} dentro de un mismo grupo)`:""}${rel.partial?` · <span class="hid">alcance parcial: ${esc(rel.scope)}</span>`:""}</span>`+
+    (hidB>0?`<span class="hid">${hidB} haces sin dibujar: selecciona un grupo para enfocarlos o</span><button class="ghost" type="button" data-linklist>abre la tabla Vínculos</button>`:"")+
+    (aggFilters()?`<span class="hid">filtros activos en este nivel</span><button class="ghost" type="button" data-reset>Quitar filtros</button>`:`<span>Máx. ${LIM.cards} tarjetas y ${LIM.bundles} haces por nivel; el resto se agrega o pagina</span>`);
   document.querySelectorAll("[data-cnt]").forEach(x=>x.textContent=x.dataset.cnt==="agent"?fmt(c.total):"—");
 }
 function renderListAgg(){
-  const lv=levelItems();aggItems=lv.list.filter(itemPass).slice(0,LIM.cards).map(x=>({...x,key:keyOf(x)}));
+  const lv=levelItems();aggItems=lv.list.filter(itemPass).slice(0,LIM.cards).map(x=>({...x,key:keyOf(x)}));computeRel();
   const agents=aggItems.length&&aggItems[0].k==="agent";
   let s=`<table><caption class="sr">Elementos del ámbito sintético (ventana de ${LIM.cards} como máximo)</caption><thead><tr><th scope="col">${agents?"Agente":"Grupo"}</th><th scope="col">${agents?"Estado":"Agentes"}</th><th scope="col">${agents?"Proyecto · instancia":"Atención"}</th><th scope="col">${agents?"Abrir":"Estados"}</th></tr></thead><tbody>`;
   aggItems.forEach(x=>{const on=x.key===aggSel;
@@ -974,13 +1109,38 @@ function renderListAgg(){
     const c=itemCounts(x);s+=`<tr tabindex="0" data-item="${x.key}" aria-selected="${on}"><td><b style="font-weight:600">${esc(itemLabel(x))}</b></td><td class="mono">${fmt(c.total)}</td><td><span class="state st-block"><i></i>${fmt(c.block)}</span> · <span class="state st-wait"><i></i>${fmt(c.wait)}</span></td><td><svg viewBox="0 0 120 8" style="width:120px;height:8px" aria-hidden="true">${stackedBar(c,0,1,120)}</svg></td></tr>`});
   if(!aggItems.length)s+=`<tr><td colspan="4" style="color:var(--ink-3)">Nada de este nivel coincide con los filtros. <button class="ghost" type="button" data-reset>Quitar filtros</button></td></tr>`;
   s+="</tbody></table>";if(lv.paged)s+=`<div style="padding:0 14px 12px">${pagerHtml("data-page",page,LIM.leaf,lv.total,"Anteriores","Siguientes")}</div>`;
+  /* tabla Vínculos: equivalente accesible de todos los haces del nivel, paginada */
+  const LR=LIM.linkRows;linkPg=Math.min(linkPg,Math.max(0,Math.ceil(allB.length/LR)-1));
+  s+=`<table style="margin-top:8px"><caption class="sr">Vínculos del ámbito sintético: ${allB.length} haces, ${LR} por página</caption><thead><tr><th scope="col">Vínculo</th><th scope="col">Origen → destino</th><th scope="col">Vínculos</th><th scope="col">Alcance</th></tr></thead><tbody>`;
+  allB.slice(linkPg*LR,(linkPg+1)*LR).forEach(b=>{s+=`<tr tabindex="0" data-bundle="${esc(b.id)}" aria-selected="${b.id===selBundle}"><td>${ET[b.ty].label}<div class="mono" style="color:var(--ink-3)">${esc(b.id)}</div></td><td>${esc(bLabel(b.from))} <span style="color:var(--ink-3)">${ET[b.ty].verb}</span> ${esc(bLabel(b.to))}</td><td class="mono">${fmt(b.count)}</td><td>${b.outside?"exterior":"entre grupos del nivel"}${shownB.includes(b)?"":" · sin dibujar"}</td></tr>`});
+  if(!allB.length)s+=`<tr><td colspan="4" style="color:var(--ink-3)">Ningún vínculo con los tipos activos en este nivel.</td></tr>`;
+  s+=`</tbody></table><div style="padding:0 14px 12px">${pagerHtml("data-lpage",linkPg,LR,allB.length,"Anteriores","Siguientes")} <span class="pager">${fmt(rel.modeled)} vínculos modelados${rel.partial?" · alcance parcial: "+esc(rel.scope):""}</span></div>`;
   $("listView").innerHTML=s;
+  $("listView").querySelectorAll("tr[data-bundle]").forEach(r=>r.addEventListener("keydown",e=>{if(e.target===r&&(e.key==="Enter"||e.key===" ")){e.preventDefault();selectBundle(r.dataset.bundle,"row")}}));
   $("listView").querySelectorAll("tr[data-item]").forEach(r=>r.addEventListener("keydown",e=>{if(e.target!==r)return;if(e.key==="Enter"||e.key===" "){e.preventDefault();aggSel===r.dataset.item?openItem(r.dataset.item,true):selectAgg(r.dataset.item,"row")}}));
 }
+function bundleBtn(b){return `<li><button type="button" data-bundle="${esc(b.id)}"><span class="mono">${fmt(b.count)}</span><span>${ET[b.ty].label}: ${esc(bLabel(b.from))} → ${esc(bLabel(b.to))}</span></button></li>`}
+function linkSecs(key){
+  const all=[...rel.internal,...rel.external].filter(b=>etypes[b.ty]),sec=(t,l)=>l.length?`<div class="sec"><h4>${t} · ${fmt(l.reduce((a,b)=>a+b.count,0))}</h4><ul class="rel">${l.slice(0,6).map(bundleBtn).join("")}</ul>${l.length>6?`<p class="note">y ${l.length-6} haces más en la tabla Vínculos.</p>`:""}</div>`:`<div class="sec"><h4>${t} · 0</h4></div>`;
+  return sec("Salientes",all.filter(b=>!b.outside&&b.from.key===key))+sec("Entrantes",all.filter(b=>!b.outside&&b.to.key===key))+sec("Externos",all.filter(b=>b.outside&&(b.from.key===key||b.to.key===key)))}
+function renderInspectorBundle(b){
+  const T=ET[b.ty],AR=LIM.atomRows;atomPg=Math.min(atomPg,Math.max(0,Math.ceil(b.count/AR)-1));
+  const end=(g,side)=>{const vis=aggItems.some(x=>x.key===g.key),inLevel=levelItems().list.some(x=>keyOf(x)===g.key);return vis?`<button class="ghost" style="padding:2px 8px" type="button" data-pick="${esc(g.key)}">${esc(bLabel(g))}</button>`:`${esc(bLabel(g))} <span style="color:var(--ink-3)">(${inLevel?"oculto por los filtros":"fuera de este nivel"})</span>`};
+  const atoms=b.atoms.slice(atomPg*AR,(atomPg+1)*AR).map(e=>{const A=M.agent(e.a),B=M.agent(e.b);return `<li><button class="ghost" type="button" data-agent="${e.a}" data-atom="${esc(e.id)}">${A.id}</button><span>${T.verb}</span><button class="ghost" type="button" data-agent="${e.b}" data-atom="${esc(e.id)}">${B.id}</button><span class="mono" style="color:var(--ink-3);margin-left:auto">${esc(e.id)}</span></li>`}).join("");
+  const cur=b.atoms[atomPg*AR]||b.atoms[0],opens=k=>aggItems.find(x=>x.key===k&&x.k!=="agent");
+  const down=[["from","origen"],["to","destino"]].filter(([s])=>opens(b[s].key)).map(([s,l])=>`<button class="ghost" type="button" data-down="${esc(b[s].key)}" data-atom="${esc(cur.id)}">Bajar al ${l}</button>`).join("");
+  $("inspector").innerHTML=`<div class="insp-head"><div class="kind">Haz de vínculos <span class="mono" style="text-transform:none;letter-spacing:0;font-weight:400">${esc(b.id)}</span> <span class="synth">sintético</span></div><h2>${esc(bLabel(b.from))} ${T.verb} ${esc(bLabel(b.to))}</h2><div class="mono" style="color:var(--ink-3)">${T.label}</div></div>`+
+    `<div class="insp-body"><dl><dt>Tipo</dt><dd>${legendSw(b.ty)} ${T.label}</dd><dt>Origen</dt><dd>${end(b.from)}</dd><dt>Destino</dt><dd>${end(b.to)}</dd><dt>Significado</dt><dd>${CaosScale.RELS[b.ty].desc||T.desc}</dd>`+
+    `<dt>Vínculos</dt><dd><b>${fmt(b.count)}</b> de ${fmt(rel.modeled)} modelados en este nivel (conteo exacto del conjunto modelado, no de la red total)</dd><dt>Alcance</dt><dd>${b.outside?"exterior: llega de un nivel superior":"entre grupos de este nivel"}${rel.partial?" · parcial: "+esc(rel.scope):""}</dd></dl>`+
+    `<div class="sec"><h4>Pares atómicos · ${fmt(atomPg*AR+1)}–${fmt(Math.min(b.count,(atomPg+1)*AR))} de ${fmt(b.count)}</h4><ul class="rel atoms">${atoms}</ul>${b.count>AR?`<div class="pager">${pagerHtml("data-apage",atomPg,AR,b.count,"Anteriores","Siguientes")}</div>`:""}</div>`+
+    `<p class="note">Cada par abre la vecindad del agente con ese mismo vínculo seleccionado. Datos sintéticos de la maqueta.</p></div>`+
+    `<div class="actions">${down}${stack.length>1?`<button class="ghost" type="button" data-crumb="${stack.length-2}">Subir</button>`:""}<button class="ghost" type="button" data-agent="${cur.a}" data-atom="${esc(cur.id)}">Vecindad</button></div>`}
 function renderInspectorAgg(){
+  const sb=selBundle&&[...rel.internal,...rel.external].find(b=>b.id===selBundle&&etypes[b.ty]);
+  if(sb){renderInspectorBundle(sb);return}
   const it=aggItems.find(x=>x.key===aggSel),top=stack[stack.length-1],hidden=aggSel&&!it;
   if(it&&it.k==="agent"){const a=M.agent(it.i),[c,l]=STATE[a.st],team=M.pathOf(a.idx)[1];
-    $("inspector").innerHTML=`<div class="insp-head"><div class="kind">Agente <span class="mono" style="text-transform:none;letter-spacing:0;font-weight:400">${a.id}</span> <span class="synth">sintético</span></div><h2>${esc(a.name)}</h2><div class="mono" style="color:var(--ink-3)">${esc(a.inst)}</div></div><div class="insp-body"><dl><dt>Estado</dt><dd><span class="state ${c}"><i></i>${l}</span></dd><dt>Equipo</dt><dd>${esc(team?M.label(team):"Red completa")}</dd><dt>Proyecto</dt><dd class="mono">${esc(a.project)}</dd><dt>Autoridad</dt><dd>${esc(a.auth)} (ficticia)</dd></dl><p class="note">Sus tareas, decisiones y vínculos se cargan al abrir la vecindad; aquí no se materializa el resto de la red.</p></div><div class="actions"><button class="primary" type="button" data-agent="${a.idx}">Ver vecindad</button><button class="ghost" type="button" data-center="${it.key}">Centrar</button></div>`;return}
+    $("inspector").innerHTML=`<div class="insp-head"><div class="kind">Agente <span class="mono" style="text-transform:none;letter-spacing:0;font-weight:400">${a.id}</span> <span class="synth">sintético</span></div><h2>${esc(a.name)}</h2><div class="mono" style="color:var(--ink-3)">${esc(a.inst)}</div></div><div class="insp-body"><dl><dt>Estado</dt><dd><span class="state ${c}"><i></i>${l}</span></dd><dt>Equipo</dt><dd>${esc(team?M.label(team):"Red completa")}</dd><dt>Proyecto</dt><dd class="mono">${esc(a.project)}</dd><dt>Autoridad</dt><dd>${esc(a.auth)} (ficticia)</dd></dl>${linkSecs(it.key)}<p class="note">Sus tareas, decisiones y vínculos se cargan al abrir la vecindad; aquí no se materializa el resto de la red.</p></div><div class="actions"><button class="primary" type="button" data-agent="${a.idx}">Ver vecindad</button><button class="ghost" type="button" data-center="${it.key}">Centrar</button></div>`;return}
   const node=it||(top.k==="state"?top:scopeNode()),c=itemCounts(node),lab=it?itemLabel(it):top.k==="state"?"Estado: "+STATE[top.st][1]:M.label(node);
   const kind=node.k==="project"?"Proyecto":node.k==="state"?"Estado":node.depth?["","Equipo","Subequipo","Célula"][node.depth]||"Grupo":"Ámbito";
   const base=node.k==="state"?node.base:node,fb=M.nthWithState(base,node.k==="state"?node.st:"block",0),fw=node.k==="state"?-1:M.nthWithState(base,"wait",0);
@@ -989,7 +1149,7 @@ function renderInspectorAgg(){
   const acts=(it?`<button class="primary" type="button" data-open="${it.key}">Abrir ${esc(lab)}</button>`:"")+
     (fb>=0?`<button class="ghost" type="button" data-agent="${fb}">Primer ${node.k==="state"?"agente":"bloqueado"}</button>`:"")+(fw>=0?`<button class="ghost" type="button" data-agent="${fw}">Primera decisión</button>`:"")+
     (it?`<button class="ghost" type="button" data-center="${it.key}">Centrar</button>`:"");
-  $("inspector").innerHTML=`<div class="insp-head"><div class="kind">${kind} <span class="synth">sintético</span></div><h2>${esc(lab)}</h2><div class="mono" style="color:var(--ink-3)">${it?"seleccionado en "+esc(stack.length>1?(top.k==="state"?"estado":M.label(scopeNode())):"la red completa"):"ámbito actual"}</div></div><div class="insp-body"><dl>${rows}</dl>${hidden?`<p class="note">La selección anterior queda oculta por los filtros; se muestra el ámbito.</p>`:""}<p class="note">${it?"Enter otra vez, doble clic o «Abrir» entra en el grupo; las migas permiten volver.":"Selecciona una tarjeta para ver su resumen."} Conteos exactos del modelo sintético de la maqueta; no proceden de ningún servicio.</p></div><div class="actions">${acts}</div>`;
+  $("inspector").innerHTML=`<div class="insp-head"><div class="kind">${kind} <span class="synth">sintético</span></div><h2>${esc(lab)}</h2><div class="mono" style="color:var(--ink-3)">${it?"seleccionado en "+esc(stack.length>1?(top.k==="state"?"estado":M.label(scopeNode())):"la red completa"):"ámbito actual"}</div></div><div class="insp-body"><dl>${rows}</dl>${it?linkSecs(it.key):""}${hidden?`<p class="note">La selección anterior queda oculta por los filtros; se muestra el ámbito.</p>`:""}<p class="note">${it?"Enter otra vez, doble clic o «Abrir» entra en el grupo; las migas permiten volver.":"Selecciona una tarjeta para ver su resumen."} Conteos exactos del modelo sintético de la maqueta; no proceden de ningún servicio.</p></div><div class="actions">${acts}</div>`;
 }
 const inScope=(i,node)=>node.k==="project"?M.projectOf({lo:i})===node.p:i>=node.lo&&i<node.hi;
 function renderDecisionsSynth(){
@@ -1015,26 +1175,33 @@ function renderScope(){
     lab=x.k==="agent"?M.agent(x.i).id:x.k==="state"?"Estado: "+STATE[x.st][1]+(page?` · pág. ${page+1}`:""):M.label(x);
     return (j?'<span class="sep" aria-hidden="true">›</span>':"")+`<button type="button" data-crumb="${j}"${last?' aria-current="location"':""}>${esc(lab)}</button>`}).join("");
 }
-function selectAgg(k,how){aggSel=k;focusId=k;renderAll();if(view==="graph")ensureVisible(k);
+function selectAgg(k,how){aggSel=k;focusId=k;selBundle=null;atomPg=0;renderAll();if(view==="graph")ensureVisible(k);
   if(how==="node"){const g=$("world").querySelector(`.node[data-id="${k}"]`);if(g)g.focus()}else if(how==="row"){const r=$("listView").querySelector(`tr[data-item="${k}"]`);if(r)r.focus()}}
+function selectBundle(id,how){selBundle=id;atomPg=0;renderAll();
+  if(how==="edge"){const p=[...$("world").querySelectorAll(".edge-hit[data-bundle]")].find(x=>x.dataset.bundle===id);if(p)p.focus()}
+  else if(how==="row"){const r=[...$("listView").querySelectorAll("tr[data-bundle]")].find(x=>x.dataset.bundle===id);if(r)r.focus()}}
+/* bajar desde un haz: abre el grupo y selecciona el haz exterior que contiene el mismo vínculo */
+function descend(k,atom){const x=itemFromKey(k),e=rel&&[...rel.internal,...rel.external].flatMap(b=>b.atoms).find(e=>e.id===atom);openItem(k);
+  /* agrupación por estado: abrir en la página que contiene el extremo, por rango exacto (O(segmentos), no O(n)) */
+  if(x&&x.k==="state"&&e){const i=M.agent(e.a).st===x.st?e.a:e.b,lo=x.base.lo;page=Math.floor((i>lo?M.counts({k:"range",lo,hi:i})[x.st]:0)/LIM.leaf);renderAll()}const b=rel&&[...rel.internal,...rel.external].find(x=>x.atoms.some(e=>e.id===atom));if(b){selBundle=b.id;atomPg=Math.floor(b.atoms.findIndex(e=>e.id===atom)/LIM.atomRows);renderAll()}}
 function itemFromKey(k){return aggItems.find(x=>x.key===k)}
 function focusFirst(){const g=view==="graph"?$("world").querySelector('.node[tabindex="0"]'):$("listView").querySelector("tr[data-item]");if(g)g.focus()}
 function openItem(k,kb){const x=itemFromKey(k);if(!x)return;
   if(x.k==="agent"){openAgent(x.i,kb);return}
-  const{key,...node}=x;stack.push(node);page=0;aggSel=null;focusId=null;renderAll();frame();if(kb)focusFirst()}
-function openAgent(i,kb){stack.push({k:"agent",i});loadData(M.neighbourhood(i,answered));sel=M.agent(i).id;selEdge=null;focusId=sel;renderAll();frame();
+  const{key,...node}=x;stack.push(node);page=0;aggSel=null;focusId=null;selBundle=null;linkPg=atomPg=0;renderAll();frame();if(kb)focusFirst()}
+function openAgent(i,kb,atom){stack.push({k:"agent",i});loadData(M.neighbourhood(i,answered,atom));sel=M.agent(i).id;selEdge=atom&&eById[atom]?atom:null;selBundle=null;focusId=sel;renderAll();frame();
   if(kb){const g=$("world").querySelector(`.node[data-id="${sel}"]`);if(g)g.focus()}}
 function goTo(j){if(j>=stack.length-1)return;const leaving=stack[j+1];stack=stack.slice(0,j+1);
-  if(leaving.k==="state")page=0;aggSel=keyOf(leaving);focusId=aggSel;W=W0;renderAll();frame();if(view==="graph")ensureVisible(aggSel)}
-function jumpToAgent(i){const root=M.root(),a=M.agent(i);
+  if(leaving.k==="state")page=0;aggSel=keyOf(leaving);selBundle=null;linkPg=atomPg=0;focusId=aggSel;W=W0;renderAll();frame();if(view==="graph")ensureVisible(aggSel)}
+function jumpToAgent(i,atom){const root=M.root(),a=M.agent(i);
   if(groupBy==="state"&&!M.isLeaf(root)){page=Math.floor((i?M.counts({k:"range",lo:0,hi:i}):{[a.st]:0})[a.st]/LIM.leaf);stack=[root,{k:"state",st:a.st,base:root}]}
   else{const p=M.pathOf(i);stack=groupBy==="project"&&p.length>1?[root,{k:"project",p:M.projectOf(p[1]),depth:0,path:[]},...p.slice(1)]:p}
-  aggSel="a:"+i;openAgent(i)}
+  aggSel="a:"+i;openAgent(i,false,atom)}
 /* encuadre: escritorio encaja; en pantallas estrechas se prioriza leer a tamaño útil */
 let framePending=false;
 function frame(){if(view!=="graph"){framePending=true;return}framePending=false;const{w}=vpSize();if(w>=600){fit();return}
   if(mode()==="agg"){vp.k=Math.min(1,(w-8)/W);vp.x=(w-W*vp.k)/2;vp.y=4;applyVp()}else{vp.k=.9;centerOn(sel);vp.y=4;applyVp()}}
-function setScale(v){scale=v;stack=[];page=decPage=feedPg=0;aggSel=null;selEdge=null;$("q").value="";$("stateFilter").value="all";
+function setScale(v){scale=v;stack=[];page=decPage=feedPg=linkPg=atomPg=0;aggSel=null;selEdge=null;selBundle=null;$("q").value="";$("stateFilter").value="all";
   if(v==="demo"){M=null;loadData(DEMO);sel="D-14";focusId="D-14"}else{M=CaosScale.create(SCALES[v]);stack=[M.root()]}
   $("groupWrap").hidden=v==="demo";$("ctxInstance").hidden=v!=="demo";
   $("q").placeholder=v==="demo"?"Buscar tarea, agente, decisión…":"Filtrar este nivel o ir a AG-… (Enter)";
@@ -1050,8 +1217,8 @@ function renderAll(){
   renderTools();renderCritical();view==="graph"?renderGraph():renderList();renderInspector();renderDecisions();renderFeed()}
 /* Autocomprobación de límites de DOM (para QA en navegador: __caosMockupChecks()). */
 window.__caosMockupChecks=()=>{const c={mode:mode(),scale,nodes:$("world").querySelectorAll(".node").length,rows:$("listView").querySelectorAll("tbody tr").length,
-  feed:$("feed").children.length,decisions:$("decisions").querySelectorAll("article").length,crumbs:$("scope").querySelectorAll("button").length};
-  c.ok=c.nodes<=Math.max(LIM.cards,LIM.leaf,LIM.neighbourhood)&&c.rows<=LIM.cards+LIM.neighbourhood*3&&c.feed<=LIM.feed+1&&c.decisions<=Math.max(LIM.decisions,10);return c};
+  feed:$("feed").children.length,decisions:$("decisions").querySelectorAll("article").length,crumbs:$("scope").querySelectorAll("button").length,bundles:$("world").querySelectorAll(".edge-hit[data-bundle]").length,ports:$("world").querySelectorAll(".port").length};
+  c.ok=c.nodes<=Math.max(LIM.cards,LIM.leaf,LIM.neighbourhood)&&c.bundles<=LIM.bundles&&c.ports<=LIM.ports&&c.rows<=LIM.cards+LIM.neighbourhood*3&&c.feed<=LIM.feed+1&&c.decisions<=Math.max(LIM.decisions,10);return c};
 function refocus(how){
   if(how==="node"){const g=$("world").querySelector(`.node[data-id="${sel}"]`);if(g)g.focus()}
   else if(how==="row"){const r=$("listView").querySelector(`tr[data-id="${selEdge?"":sel}"],tr[data-edge="${selEdge||""}"]`);if(r)r.focus()}
@@ -1064,10 +1231,14 @@ document.addEventListener("click",e=>{
   if(e.target.closest("[data-reset]")){resetFilters();return}
   const cr=e.target.closest("[data-crumb]"); if(cr){goTo(+cr.dataset.crumb);return}
   const opn=e.target.closest("[data-open]"); if(opn){openItem(opn.dataset.open);return}
-  const ag=e.target.closest("[data-agent]"); if(ag&&M){e.preventDefault();jumpToAgent(+ag.dataset.agent);if(window.innerWidth<1180)$("viewPanel").scrollIntoView({behavior:"smooth",block:"start"});return}
-  const pg=e.target.closest("[data-page],[data-dpage],[data-fpage]"); if(pg){const d=+(pg.dataset.page||pg.dataset.dpage||pg.dataset.fpage);
-    if(pg.dataset.page)page=Math.max(0,page+d);else if(pg.dataset.dpage)decPage=Math.max(0,decPage+d);else feedPg=Math.max(0,feedPg+d);
-    renderAll();if(pg.dataset.page)frame();const again=document.querySelector(`[${pg.dataset.page?"data-page":pg.dataset.dpage?"data-dpage":"data-fpage"}="${d}"]:not([disabled])`);if(again)again.focus();return}
+  const dn=e.target.closest("[data-down]"); if(dn){descend(dn.dataset.down,dn.dataset.atom);return}
+  const pk=e.target.closest("[data-pick]"); if(pk){selectAgg(pk.dataset.pick);return}
+  const ll=e.target.closest("[data-linklist]"); if(ll){setView("list");const r=$("listView").querySelector("tr[data-bundle]");if(r)r.focus();return}
+  const ag=e.target.closest("[data-agent]"); if(ag&&M){e.preventDefault();jumpToAgent(+ag.dataset.agent,ag.dataset.atom);if(window.innerWidth<1180)$("viewPanel").scrollIntoView({behavior:"smooth",block:"start"});return}
+  const pg=e.target.closest("[data-page],[data-dpage],[data-fpage],[data-lpage],[data-apage]"); if(pg){const at=["page","dpage","fpage","lpage","apage"].find(k=>pg.dataset[k]),d=+pg.dataset[at];
+    if(at==="page"){page=Math.max(0,page+d);selBundle=null}else if(at==="dpage")decPage=Math.max(0,decPage+d);else if(at==="fpage")feedPg=Math.max(0,feedPg+d);else if(at==="lpage")linkPg=Math.max(0,linkPg+d);else atomPg=Math.max(0,atomPg+d);
+    renderAll();if(at==="page")frame();const again=document.querySelector(`[data-${at}="${d}"]:not([disabled])`);if(again)again.focus();return}
+  const bd=e.target.closest("[data-bundle]"); if(bd&&!dragMoved){e.preventDefault();selectBundle(bd.dataset.bundle,bd.matches(".edge-hit")?"edge":bd.matches("tr")?"row":null);return}
   const itr=e.target.closest("#listView tr[data-item]"); if(itr){selectAgg(itr.dataset.item);return}
   const ed=e.target.closest("[data-edge]"); if(ed&&!dragMoved){e.preventDefault();selectEdge(ed.dataset.edge);return}
   const tr=e.target.closest("#listView tr[data-id]"); if(tr){select(tr.dataset.id);return}
@@ -1112,7 +1283,7 @@ $("q").addEventListener("keydown",e=>{if(e.key!=="Enter"||scale==="demo")return;
   if(i>=0){$("q").value="";jumpToAgent(i);toast(`Abierta la vecindad de ${M.agent(i).id}; las migas permiten volver.`)}
   else toast("Enter abre un agente por id (AG-…) o número; el texto solo filtra el nivel visible.")});
 $("scaleSel").addEventListener("change",e=>setScale(e.target.value));
-$("groupSel").addEventListener("change",e=>{groupBy=e.target.value;stack=[M.root()];page=0;aggSel=null;focusId=null;renderAll();frame()});
+$("groupSel").addEventListener("change",e=>{groupBy=e.target.value;stack=[M.root()];page=linkPg=atomPg=0;aggSel=null;selBundle=null;focusId=null;renderAll();frame()});
 const tabs=[$("tabGraph"),$("tabList")];
 function setView(v){view=v;tabs.forEach(t=>{const on=(t.id==="tabGraph")===(v==="graph");t.setAttribute("aria-selected",on);t.tabIndex=on?0:-1});
   $("graphView").hidden=v!=="graph";document.querySelector(".zoombar").hidden=v!=="graph";$("critical").hidden=v!=="graph";$("listView").hidden=v!=="list";$("viewPanel").setAttribute("aria-labelledby",v==="graph"?"tabGraph":"tabList");renderAll();if(v==="graph"&&framePending)frame()}

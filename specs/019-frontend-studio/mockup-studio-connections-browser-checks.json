@@ -1,0 +1,590 @@
+{
+  "date": "2026-10-22",
+  "runner": "Existing private Chromium 1243 / Playwright, Linux, headless",
+  "html_sha256": "915b0110d1d775ad738d35bee881d9480d5f2b59cc787bc1d067c7bf9f604690",
+  "synthetic_only": true,
+  "results": [
+    {
+      "viewport": "1440x1000",
+      "checks": {
+        "demo-original": {
+          "pass": true,
+          "info": "14 nodes, 16 links"
+        },
+        "demo-layout": {
+          "pass": true,
+          "info": {
+            "width": 1440,
+            "scroll": 1440,
+            "body": 1440,
+            "checks": {
+              "mode": "demo",
+              "scale": "demo",
+              "nodes": 14,
+              "rows": 0,
+              "feed": 7,
+              "decisions": 3,
+              "crumbs": 0,
+              "bundles": 0,
+              "ports": 0,
+              "ok": true
+            },
+            "textBad": []
+          }
+        },
+        "lane-label-foreground": {
+          "pass": true,
+          "info": {
+            "count": 8,
+            "ok": true
+          }
+        },
+        "demo-zoom": {
+          "pass": true,
+          "info": [
+            "94%",
+            "113%"
+          ]
+        },
+        "demo-filter-and-list": {
+          "pass": true,
+          "info": 4
+        },
+        "million-root": {
+          "pass": true,
+          "info": {
+            "width": 1440,
+            "scroll": 1440,
+            "body": 1440,
+            "checks": {
+              "mode": "agg",
+              "scale": "1m",
+              "nodes": 40,
+              "rows": 30,
+              "feed": 9,
+              "decisions": 3,
+              "crumbs": 1,
+              "bundles": 24,
+              "ports": 0,
+              "ok": true
+            },
+            "textBad": []
+          }
+        },
+        "million-keyboard-drilldown": {
+          "pass": true,
+          "info": {
+            "steps": 0,
+            "nodes": 40,
+            "edges": 24
+          }
+        },
+        "million-search-and-breadcrumbs": {
+          "pass": true,
+          "info": "sintético\nRed completa"
+        },
+        "million-state-page": {
+          "pass": true,
+          "info": "Mostrando 40 de 37.105 agentes · 37.105 agentes en el ámbito\nAnteriores\n41–80 de 37.105\nSiguientes\nMostrando 24 de 133 haces de vínculos · 161 vínculos modelados · alcance parcial: vínculos de los agentes de esta página\n109 haces sin dibujar: selecciona un grupo para enfocarlos o\nabre la tabla Vínculos\nMáx. 40 tarjetas y 24 haces por nivel; el resto se agrega o pagina"
+        },
+        "million-list-layout": {
+          "pass": true,
+          "info": {
+            "width": 1440,
+            "scroll": 1440,
+            "body": 1440,
+            "checks": {
+              "mode": "agg",
+              "scale": "1m",
+              "nodes": 40,
+              "rows": 50,
+              "feed": 9,
+              "decisions": 3,
+              "crumbs": 2,
+              "bundles": 24,
+              "ports": 1,
+              "ok": true
+            },
+            "textBad": []
+          }
+        },
+        "list-group-change-restores-positive-graph-zoom": {
+          "pass": true,
+          "info": 68
+        },
+        "list-scale-change-restores-graph-and-keeps-existing-zoom": {
+          "pass": true,
+          "info": {
+            "zoom": 68,
+            "preserved": "81%"
+          }
+        },
+        "100-hierarchy-0": {
+          "pass": true,
+          "info": {
+            "lines": 5,
+            "nodes": 3,
+            "scope": "sintético\nRed completa"
+          }
+        },
+        "100-hierarchy-1-agent-leaf": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 40,
+            "scope": "sintético\nRed completa\n›\nEquipo 01"
+          }
+        },
+        "100-neighbourhood": {
+          "pass": true,
+          "info": {
+            "lines": 5,
+            "nodes": 6,
+            "scope": "sintético\nRed completa\n›\nEquipo 01\n›\nAG-0000001"
+          }
+        },
+        "10k-hierarchy-0": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 40,
+            "scope": "sintético\nRed completa"
+          }
+        },
+        "10k-hierarchy-1": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 7,
+            "scope": "sintético\nRed completa\n›\nEquipo 01"
+          }
+        },
+        "10k-hierarchy-2-agent-leaf": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 40,
+            "scope": "sintético\nRed completa\n›\nEquipo 01\n›\nSubequipo 01.01"
+          }
+        },
+        "10k-neighbourhood": {
+          "pass": true,
+          "info": {
+            "lines": 4,
+            "nodes": 6,
+            "scope": "sintético\nRed completa\n›\nEquipo 01\n›\nSubequipo 01.01\n›\nAG-0000001"
+          }
+        },
+        "1m-hierarchy-0": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 40,
+            "scope": "sintético\nRed completa"
+          }
+        },
+        "1m-hierarchy-1": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 40,
+            "scope": "sintético\nRed completa\n›\nEquipo 01"
+          }
+        },
+        "1m-hierarchy-2": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 16,
+            "scope": "sintético\nRed completa\n›\nEquipo 01\n›\nSubequipo 01.01"
+          }
+        },
+        "1m-hierarchy-3-agent-leaf": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 40,
+            "scope": "sintético\nRed completa\n›\nEquipo 01\n›\nSubequipo 01.01\n›\nCélula 01.01.01"
+          }
+        },
+        "1m-neighbourhood": {
+          "pass": true,
+          "info": {
+            "lines": 4,
+            "nodes": 6,
+            "scope": "sintético\nRed completa\n›\nEquipo 01\n›\nSubequipo 01.01\n›\nCélula 01.01.01\n›\nAG-0000001"
+          }
+        },
+        "1m-project-root": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 6,
+            "scope": "sintético\nRed completa"
+          }
+        },
+        "1m-project-inside": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 7,
+            "scope": "sintético\nRed completa\n›\nProyecto «atlas»"
+          }
+        },
+        "1m-state-root": {
+          "pass": true,
+          "info": {
+            "lines": 20,
+            "nodes": 5,
+            "scope": "sintético\nRed completa"
+          }
+        },
+        "1m-state-inside": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 40,
+            "scope": "sintético\nRed completa\n›\nEstado: En curso"
+          }
+        },
+        "bundle-pointer-click-opens-correct-inspector": {
+          "pass": true,
+          "info": "H:0:delega:r:0-25000-1>r:150000-175000-1"
+        },
+        "bundle-keyboard-inspector-and-list-selection": {
+          "pass": true,
+          "info": {
+            "id": "H:0:delega:r:0-25000-1>r:25000-50000-1",
+            "atom": "R0-del2",
+            "rowId": "H:0:delega:r:0-25000-1>r:25000-50000-1"
+          }
+        },
+        "bundle-descend-retains-atomic-id-and-opens-real-neighbourhood": {
+          "pass": true,
+          "info": "R0-del2"
+        },
+        "selected-link-outside-default-window-is-visible-on-graph": {
+          "pass": true,
+          "info": "H:0:delega:r:0-25000-1>r:500000-525000-1"
+        },
+        "hidden-endpoints-are-described-as-filtered": {
+          "pass": true,
+          "info": {
+            "atoms": 3,
+            "description": "HAZ DE VÍNCULOS\nH:0:delega:r:0-25000-1>r:500000-525000-1\nSINTÉTICO\nEquipo 01 delega en Equipo 21\nDelegación\nTipo\n Delega"
+          }
+        },
+        "state-descent-opens-endpoint-page": {
+          "pass": true,
+          "info": {
+            "side": "s:done",
+            "i": 25000,
+            "atom": "R0-del2"
+          }
+        },
+        "projects-declare-partial-scope": {
+          "pass": true,
+          "info": "partial"
+        },
+        "javascript-and-network": {
+          "pass": true,
+          "info": {
+            "errors": 0,
+            "external": 0
+          }
+        }
+      }
+    },
+    {
+      "viewport": "375x812",
+      "checks": {
+        "demo-original": {
+          "pass": true,
+          "info": "14 nodes, 16 links"
+        },
+        "demo-layout": {
+          "pass": true,
+          "info": {
+            "width": 375,
+            "scroll": 375,
+            "body": 375,
+            "checks": {
+              "mode": "demo",
+              "scale": "demo",
+              "nodes": 14,
+              "rows": 0,
+              "feed": 7,
+              "decisions": 3,
+              "crumbs": 0,
+              "bundles": 0,
+              "ports": 0,
+              "ok": true
+            },
+            "textBad": []
+          }
+        },
+        "lane-label-foreground": {
+          "pass": true,
+          "info": {
+            "count": 8,
+            "ok": true
+          }
+        },
+        "demo-zoom": {
+          "pass": true,
+          "info": [
+            "90%",
+            "108%"
+          ]
+        },
+        "demo-filter-and-list": {
+          "pass": true,
+          "info": 4
+        },
+        "million-root": {
+          "pass": true,
+          "info": {
+            "width": 375,
+            "scroll": 375,
+            "body": 375,
+            "checks": {
+              "mode": "agg",
+              "scale": "1m",
+              "nodes": 40,
+              "rows": 30,
+              "feed": 9,
+              "decisions": 3,
+              "crumbs": 1,
+              "bundles": 24,
+              "ports": 0,
+              "ok": true
+            },
+            "textBad": []
+          }
+        },
+        "million-keyboard-drilldown": {
+          "pass": true,
+          "info": {
+            "steps": 0,
+            "nodes": 40,
+            "edges": 24
+          }
+        },
+        "million-search-and-breadcrumbs": {
+          "pass": true,
+          "info": "sintético\nRed completa"
+        },
+        "million-state-page": {
+          "pass": true,
+          "info": "Mostrando 40 de 37.105 agentes · 37.105 agentes en el ámbito\nAnteriores\n41–80 de 37.105\nSiguientes\nMostrando 24 de 133 haces de vínculos · 161 vínculos modelados · alcance parcial: vínculos de los agentes de esta página\n109 haces sin dibujar: selecciona un grupo para enfocarlos o\nabre la tabla Vínculos\nMáx. 40 tarjetas y 24 haces por nivel; el resto se agrega o pagina"
+        },
+        "million-list-layout": {
+          "pass": true,
+          "info": {
+            "width": 375,
+            "scroll": 375,
+            "body": 375,
+            "checks": {
+              "mode": "agg",
+              "scale": "1m",
+              "nodes": 40,
+              "rows": 50,
+              "feed": 9,
+              "decisions": 3,
+              "crumbs": 2,
+              "bundles": 24,
+              "ports": 1,
+              "ok": true
+            },
+            "textBad": []
+          }
+        },
+        "list-group-change-restores-positive-graph-zoom": {
+          "pass": true,
+          "info": 98
+        },
+        "list-scale-change-restores-graph-and-keeps-existing-zoom": {
+          "pass": true,
+          "info": {
+            "zoom": 98,
+            "preserved": "118%"
+          }
+        },
+        "100-hierarchy-0": {
+          "pass": true,
+          "info": {
+            "lines": 5,
+            "nodes": 3,
+            "scope": "sintético\nRed completa"
+          }
+        },
+        "100-hierarchy-1-agent-leaf": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 40,
+            "scope": "sintético\nRed completa\n›\nEquipo 01"
+          }
+        },
+        "100-neighbourhood": {
+          "pass": true,
+          "info": {
+            "lines": 5,
+            "nodes": 6,
+            "scope": "sintético\nRed completa\n›\nEquipo 01\n›\nAG-0000001"
+          }
+        },
+        "10k-hierarchy-0": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 40,
+            "scope": "sintético\nRed completa"
+          }
+        },
+        "10k-hierarchy-1": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 7,
+            "scope": "sintético\nRed completa\n›\nEquipo 01"
+          }
+        },
+        "10k-hierarchy-2-agent-leaf": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 40,
+            "scope": "sintético\nRed completa\n›\nEquipo 01\n›\nSubequipo 01.01"
+          }
+        },
+        "10k-neighbourhood": {
+          "pass": true,
+          "info": {
+            "lines": 4,
+            "nodes": 6,
+            "scope": "sintético\nRed completa\n›\nEquipo 01\n›\nSubequipo 01.01\n›\nAG-0000001"
+          }
+        },
+        "1m-hierarchy-0": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 40,
+            "scope": "sintético\nRed completa"
+          }
+        },
+        "1m-hierarchy-1": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 40,
+            "scope": "sintético\nRed completa\n›\nEquipo 01"
+          }
+        },
+        "1m-hierarchy-2": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 16,
+            "scope": "sintético\nRed completa\n›\nEquipo 01\n›\nSubequipo 01.01"
+          }
+        },
+        "1m-hierarchy-3-agent-leaf": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 40,
+            "scope": "sintético\nRed completa\n›\nEquipo 01\n›\nSubequipo 01.01\n›\nCélula 01.01.01"
+          }
+        },
+        "1m-neighbourhood": {
+          "pass": true,
+          "info": {
+            "lines": 4,
+            "nodes": 6,
+            "scope": "sintético\nRed completa\n›\nEquipo 01\n›\nSubequipo 01.01\n›\nCélula 01.01.01\n›\nAG-0000001"
+          }
+        },
+        "1m-project-root": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 6,
+            "scope": "sintético\nRed completa"
+          }
+        },
+        "1m-project-inside": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 7,
+            "scope": "sintético\nRed completa\n›\nProyecto «atlas»"
+          }
+        },
+        "1m-state-root": {
+          "pass": true,
+          "info": {
+            "lines": 20,
+            "nodes": 5,
+            "scope": "sintético\nRed completa"
+          }
+        },
+        "1m-state-inside": {
+          "pass": true,
+          "info": {
+            "lines": 24,
+            "nodes": 40,
+            "scope": "sintético\nRed completa\n›\nEstado: En curso"
+          }
+        },
+        "bundle-pointer-click-opens-correct-inspector": {
+          "pass": true,
+          "info": "H:0:espera:r:0-25000-1>r:900000-925000-1"
+        },
+        "bundle-keyboard-inspector-and-list-selection": {
+          "pass": true,
+          "info": {
+            "id": "H:0:delega:r:0-25000-1>r:25000-50000-1",
+            "atom": "R0-del2",
+            "rowId": "H:0:delega:r:0-25000-1>r:25000-50000-1"
+          }
+        },
+        "bundle-descend-retains-atomic-id-and-opens-real-neighbourhood": {
+          "pass": true,
+          "info": "R0-del2"
+        },
+        "selected-link-outside-default-window-is-visible-on-graph": {
+          "pass": true,
+          "info": "H:0:delega:r:0-25000-1>r:500000-525000-1"
+        },
+        "hidden-endpoints-are-described-as-filtered": {
+          "pass": true,
+          "info": {
+            "atoms": 3,
+            "description": "HAZ DE VÍNCULOS\nH:0:delega:r:0-25000-1>r:500000-525000-1\nSINTÉTICO\nEquipo 01 delega en Equipo 21\nDelegación\nTipo\n Delega"
+          }
+        },
+        "state-descent-opens-endpoint-page": {
+          "pass": true,
+          "info": {
+            "side": "s:done",
+            "i": 25000,
+            "atom": "R0-del2"
+          }
+        },
+        "projects-declare-partial-scope": {
+          "pass": true,
+          "info": "partial"
+        },
+        "javascript-and-network": {
+          "pass": true,
+          "info": {
+            "errors": 0,
+            "external": 0
+          }
+        }
+      }
+    }
+  ]
+}

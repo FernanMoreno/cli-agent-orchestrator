@@ -266,7 +266,10 @@ check("1M: agrupar por proyecto conserva el total", () => {
 });
 check("1M: vista Lista acotada y decisiones/actividad paginadas", () => {
   $(d, "#tabList").dispatchEvent(new w.MouseEvent("click", { bubbles: true }));
-  assert.ok($$(d, "#listView tbody tr").length <= 40);
+  /* dos tablas desde T082: ventana de elementos (≤40) y ventana de Vínculos (≤10) */
+  assert.ok($$(d, "#listView tbody tr[data-item]").length <= 40);
+  assert.ok($$(d, "#listView tbody tr[data-bundle]").length <= 10);
+  assert.ok($$(d, "#listView tbody tr").length <= 51);
   assert.ok($$(d, "#decisions article").length <= 3);
   assert.ok($$(d, "#feed li").length <= 9);
   const first = $(d, "#feed time").textContent;
@@ -343,6 +346,341 @@ check("escala desconocida o heredada conserva la demostración", () => {
     b.w.close();
   }
 });
+/* ---- T082: haces dirigidos en todos los niveles ---- */
+const click = (el) =>
+  el.dispatchEvent(
+    new el.ownerDocument.defaultView.MouseEvent("click", { bubbles: true }),
+  );
+const hits = (d) => $$(d, "#world .edge-hit[data-bundle]");
+const shown = (d, ctx) => {
+  const h = hits(d);
+  assert.ok(h.length > 0, `${ctx}: sin líneas`);
+  assert.ok(h.length <= 24, `${ctx}: ${h.length} haces`);
+  assert.ok(
+    $$(d, "#world path.edge").length >= h.length,
+    `${ctx}: haz sin trazo`,
+  );
+  assert.match($(d, "#gstatus").textContent, /Mostrando \d+ de \d+ haces/, ctx);
+  h.forEach((p) => {
+    assert.match(p.getAttribute("aria-label"), /→/, `${ctx}: sin dirección`);
+    assert.equal(p.getAttribute("tabindex"), "0", `${ctx}: haz sin teclado`);
+  });
+  sane(d, ctx);
+};
+const enterTwice = (d, k) => {
+  key($(d, `#world .node[data-id="${k}"]`), "Enter");
+  key($(d, `#world .node[data-id="${k}"]`), "Enter");
+};
+for (const width of [1440, 390]) {
+  check(
+    `T082 ${width}px 1M: líneas en raíz, equipo, subequipo, célula y hoja; vecindad del generador`,
+    () => {
+      const b = boot(
+        width,
+        "http://localhost/mockup-studio-original.html?escala=1m",
+      );
+      shown(b.d, "raíz");
+      const levels = [];
+      while (!nodes(b.d)[0].dataset.id.startsWith("a:")) {
+        enterTwice(b.d, nodes(b.d)[1].dataset.id);
+        levels.push(crumbs(b.d).at(-1));
+        shown(b.d, crumbs(b.d).join("/"));
+        assert.ok(levels.length < 6);
+      }
+      assert.ok(levels.length >= 3, levels.join(","));
+      assert.ok(
+        $$(b.d, "#world .port").length > 0,
+        "la hoja debe mostrar puertos externos",
+      );
+      enterTwice(b.d, nodes(b.d)[3].dataset.id);
+      const atomEdges = $$(b.d, "#world .edge-hit").filter((p) =>
+        /^R[\d.]+-/.test(p.dataset.edge),
+      );
+      assert.ok(atomEdges.length > 0, "vecindad sin vínculos del generador");
+      assert.match(
+        $(b.d, "#gstatus").textContent,
+        /Relaciones del agente: \d+ de \d+/,
+      );
+      sane(b.d, "vecindad");
+      assert.deepEqual(b.errors, []);
+    },
+  );
+}
+check(
+  "T082 1M: proyectos y estado (con página) también muestran haces; estado avisa alcance parcial",
+  () => {
+    const b = boot(
+      1440,
+      "http://localhost/mockup-studio-original.html?escala=1m",
+    );
+    change($(b.d, "#groupSel"), "project");
+    shown(b.d, "proyectos");
+    enterTwice(b.d, nodes(b.d)[0].dataset.id);
+    shown(b.d, "proyecto");
+    change($(b.d, "#groupSel"), "state");
+    shown(b.d, "estados");
+    assert.match($(b.d, "#gstatus").textContent, /alcance parcial/);
+    enterTwice(b.d, "s:block");
+    shown(b.d, "página de bloqueados");
+    assert.match($(b.d, "#gstatus").textContent, /alcance parcial/);
+    assert.deepEqual(b.errors, []);
+  },
+);
+check(
+  "T082 1M: haz seleccionable con origen, destino, tipo, conteo exacto y pares paginados",
+  () => {
+    const b = boot(
+      1440,
+      "http://localhost/mockup-studio-original.html?escala=1m",
+    );
+    const h = hits(b.d).find((p) => +p.dataset.count > 0) || hits(b.d)[0];
+    click(h);
+    const t = $(b.d, "#inspector").textContent;
+    assert.match(t, /Haz de vínculos/);
+    for (const w of ["Origen", "Destino", "Tipo", "Significado", "modelados"])
+      assert.ok(t.includes(w), w);
+    assert.ok(
+      $$(b.d, "#inspector [data-agent][data-atom]").length > 0,
+      "pares sin acceso a vecindad",
+    );
+    assert.ok($$(b.d, "#inspector .atoms li").length <= 6);
+    assert.ok($(b.d, `#world .edge.esel`), "trazo seleccionado");
+    /* teclado sobre otro haz */
+    const other = hits(b.d).find((p) => p.dataset.bundle !== h.dataset.bundle);
+    key(other, "Enter");
+    assert.ok($(b.d, "#inspector").textContent.includes(other.dataset.bundle));
+    sane(b.d, "haz");
+    assert.deepEqual(b.errors, []);
+  },
+);
+check(
+  "T082 1M: pares atómicos paginan y bajar conserva el id del vínculo como puerto",
+  () => {
+    const b = boot(
+      1440,
+      "http://localhost/mockup-studio-original.html?escala=1m",
+    );
+    change($(b.d, "#groupSel"), "project");
+    const big = hits(b.d).sort((x, y) => y.dataset.count - x.dataset.count)[0];
+    click(big);
+    if (+big.dataset.count > 6) {
+      click($(b.d, '#inspector [data-apage="1"]'));
+      assert.match($(b.d, "#inspector").textContent, /7–/);
+    }
+    const atom = $(b.d, "#inspector [data-atom]").dataset.atom;
+    click($(b.d, "#inspector [data-down]"));
+    assert.equal(crumbs(b.d).length, 2);
+    assert.ok(
+      $(b.d, "#inspector").textContent.includes(atom),
+      `${atom} no aparece al bajar`,
+    );
+    /* subir conserva la selección del grupo del que se sale */
+    click($(b.d, '#scope [data-crumb="0"]'));
+    assert.equal(crumbs(b.d).length, 1);
+    assert.equal($$(b.d, "#world .node.sel").length, 1);
+    assert.deepEqual(b.errors, []);
+  },
+);
+check(
+  "T082 1M: par atómico abre la vecindad con ese mismo vínculo seleccionado",
+  () => {
+    const b = boot(
+      1440,
+      "http://localhost/mockup-studio-original.html?escala=1m",
+    );
+    click(hits(b.d)[0]);
+    const a = $(b.d, "#inspector [data-atom]"),
+      atom = a.dataset.atom;
+    click(a);
+    assert.match(crumbs(b.d).at(-1), /^AG-/);
+    assert.ok(
+      $(b.d, `#world .edge-hit[data-edge="${atom}"]`),
+      `${atom} no dibujado`,
+    );
+    assert.match(h2(b.d), new RegExp(crumbs(b.d).at(-1)));
+    assert.deepEqual(b.errors, []);
+  },
+);
+check(
+  "T082 1M: seleccionar un grupo focaliza sus vínculos y el inspector los separa",
+  () => {
+    const b = boot(
+      1440,
+      "http://localhost/mockup-studio-original.html?escala=1m",
+    );
+    const k = nodes(b.d)[2].dataset.id;
+    click(nodes(b.d)[2]);
+    const mine = hits(b.d).filter(
+      (p) => p.dataset.from === k || p.dataset.to === k,
+    );
+    assert.ok(mine.length > 0, "grupo sin haces visibles");
+    hits(b.d).forEach((p) => {
+      const edge = p.previousElementSibling;
+      assert.equal(
+        edge.classList.contains("dim"),
+        !(p.dataset.from === k || p.dataset.to === k),
+      );
+    });
+    const t = $(b.d, "#inspector").textContent;
+    assert.match(t, /Salientes · \d+/);
+    assert.match(t, /Entrantes · \d+/);
+    assert.match(t, /Externos · \d+/);
+    assert.ok(
+      $(b.d, "#inspector button[data-bundle]"),
+      "inspector sin acceso a haces",
+    );
+  },
+);
+check("T082 1M: filtro de tipo separado de los tipos de elemento", () => {
+  const b = boot(
+    1440,
+    "http://localhost/mockup-studio-original.html?escala=1m",
+  );
+  assert.ok(hits(b.d).some((p) => p.dataset.ty === "delega"));
+  click($(b.d, '#gtools [data-ety="delega"]'));
+  assert.equal(
+    $(b.d, '#gtools [data-ety="delega"]').getAttribute("aria-pressed"),
+    "false",
+  );
+  assert.ok(!hits(b.d).some((p) => p.dataset.ty === "delega"));
+  assert.ok(hits(b.d).length > 0);
+  assert.ok($$(b.d, ".chip[data-kind]").every((c) => c.disabled));
+  click($(b.d, "#gstatus [data-reset]"));
+  assert.ok(hits(b.d).some((p) => p.dataset.ty === "delega"));
+});
+check("T082 1M: tabla Vínculos accesible, paginada y equivalente", () => {
+  const b = boot(
+    1440,
+    "http://localhost/mockup-studio-original.html?escala=1m",
+  );
+  const total = Number(
+    $(b.d, "#gstatus").textContent.match(/de (\d+) haces/)[1],
+  );
+  click($(b.d, "#tabList"));
+  const rows = $$(b.d, "#listView tr[data-bundle]");
+  assert.ok(rows.length > 0 && rows.length <= 10);
+  assert.match($(b.d, "#listView").textContent, new RegExp(`de ${total}`));
+  if (total > 10) {
+    click($(b.d, '#listView [data-lpage="1"]'));
+    assert.notEqual(
+      $(b.d, "#listView tr[data-bundle]").dataset.bundle,
+      rows[0].dataset.bundle,
+    );
+  }
+  const r = $(b.d, "#listView tr[data-bundle]");
+  key(r, "Enter");
+  assert.ok($(b.d, "#inspector").textContent.includes(r.dataset.bundle));
+  assert.equal(b.d.activeElement.dataset.bundle, r.dataset.bundle);
+  sane(b.d, "lista vínculos");
+});
+check(
+  "T083: seleccionar desde otra página prioriza el haz al volver al grafo",
+  () => {
+    const b = boot(
+      1440,
+      "http://localhost/mockup-studio-original.html?escala=1m",
+    );
+    click($(b.d, "#tabList"));
+    click($(b.d, '#listView [data-lpage="1"]'));
+    const row = $$(b.d, "#listView tr[data-bundle]").at(-1);
+    key(row, "Enter");
+    click($(b.d, "#tabGraph"));
+    assert.ok(
+      hits(b.d).some((p) => p.dataset.bundle === row.dataset.bundle),
+      "haz seleccionado fuera de la ventana dibujada",
+    );
+    b.w.close();
+  },
+);
+check("T083: los extremos filtrados no se describen como externos", () => {
+  const b = boot(
+    1440,
+    "http://localhost/mockup-studio-original.html?escala=1m",
+  );
+  click(hits(b.d)[0]);
+  const q = $(b.d, "#q");
+  q.value = "__no_matching_group__";
+  q.dispatchEvent(new b.w.Event("input", { bubbles: true }));
+  assert.match($(b.d, "#inspector").textContent, /oculto por los filtros/);
+  assert.doesNotMatch($(b.d, "#inspector").textContent, /fuera de este nivel/);
+  b.w.close();
+});
+check(
+  "T083: el icono del tipo conserva tamaño propio fuera de la leyenda",
+  () => {
+    const b = boot(
+      1440,
+      "http://localhost/mockup-studio-original.html?escala=1m",
+    );
+    click(hits(b.d)[0]);
+    const icon = $(b.d, "#inspector dl svg");
+    assert.equal(icon.getAttribute("width"), "24");
+    assert.equal(icon.getAttribute("height"), "10");
+    b.w.close();
+  },
+);
+check(
+  "T083: bajar por estado lleva a la página del extremo seleccionado",
+  () => {
+    const b = boot(
+      1440,
+      "http://localhost/mockup-studio-original.html?escala=1m",
+    );
+    change($(b.d, "#groupSel"), "state");
+    let chosen;
+    for (const hit of hits(b.d)) {
+      click(hit);
+      const pair = $$(b.d, "#inspector .atoms li button[data-agent]").slice(
+        0,
+        2,
+      );
+      for (const [j, side] of [hit.dataset.from, hit.dataset.to].entries()) {
+        const index = Number(pair[j].dataset.agent);
+        const firstPage = b.w.eval(
+          `M.pageByState(M.root(),${JSON.stringify(side.slice(2))},0,40).rows.map(a=>a.idx)`,
+        );
+        if (!firstPage.includes(index)) {
+          chosen = { side, index, atom: pair[j].dataset.atom };
+          break;
+        }
+      }
+      if (chosen) break;
+    }
+    assert.ok(chosen, "falta caso con extremo fuera de la primera página");
+    const down = $$(b.d, "#inspector [data-down]").find(
+      (x) => x.dataset.down === chosen.side,
+    );
+    click(down);
+    assert.ok(
+      nodes(b.d).some((x) => x.dataset.id === "a:" + chosen.index),
+      "el extremo quedó fuera de página",
+    );
+    assert.ok(
+      $(b.d, "#inspector").textContent.includes(chosen.atom),
+      "se perdió el vínculo atómico al bajar",
+    );
+    b.w.close();
+  },
+);
+check(
+  "T083: bajar y Vecindad usan el primer par de la página atómica actual",
+  () => {
+    const b = boot(
+      1440,
+      "http://localhost/mockup-studio-original.html?escala=1m",
+    );
+    change($(b.d, "#groupSel"), "state");
+    const hit = hits(b.d).find((h) => Number(h.dataset.count) > 6);
+    assert.ok(hit, "falta haz con más de una página de pares");
+    click(hit);
+    click($(b.d, '#inspector [data-apage="1"]'));
+    const first = $(b.d, "#inspector .atoms li button[data-atom]").dataset.atom;
+    for (const x of $$(b.d, "#inspector .actions [data-atom]"))
+      assert.equal(x.dataset.atom, first);
+    assert.match($(b.d, "#inspector").textContent, /Significado/);
+    b.w.close();
+  },
+);
 check("sin errores de script en toda la sesión", () =>
   assert.deepEqual(errors, []),
 );
