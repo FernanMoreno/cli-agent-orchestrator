@@ -1,0 +1,22 @@
+{
+  "scope": "Source-identical resource/guard/API-ownership helpers only; M2M execution and final acceptance are not imported or reused",
+  "shared_ast_sha256": {
+    "_GateError": "b79f46633041ebf00acd208eb76765cffaaa728d351c6b3620d774e833de0d77",
+    "_api_launches_confirmed_dead": "a894a5ad9b1a372dc1a1fe730643e0e366630e03460381a2e6c53a866230ac72",
+    "_bounded_count": "cab42a68c41ab152899d925506524aae4ca8ac64f32f7aa95294f7a0b7b12b48",
+    "_enter_guarded_postgres_context": "f4ab763a045a284ed01c41a273261d2ad1dc24789951073d5db73fdf91229832",
+    "_exit_guarded_postgres_context": "13c5851e1b87b895e746b963273d5e96b2503a97eb464283fba648c056ea43ae",
+    "_graceful_seals_seen_by_deadline": "feaff0cc7b0a8c2a7e36577570a1875e6dbc0eef676c2340dbcdcad899de78a1",
+    "_guard_contextmanager_finalbody": "b0b7f25291d352cdcb459d74d0f2c0bc904bdb3143b9c9f994e536d21775a7ec",
+    "_install_guarded_postgres_cleanup": "9e7b5bc289e5bf19fff2e57ea53ec4465db8c7503c3460adf29ea6fe0a00f0f7",
+    "_postgres_runtime_identity_matches": "503d0a47079dc9a3ac065dbae21f4876249ca46d9b5e27cb1d73f49ba6d11a18",
+    "_private_api_request": "c0c5db46b640c7f7f3b55600c4cab623ec8369c9ee4388c3f80a8da2dc3054cd",
+    "_sha256": "54a2156c2678e1f0d699750bbc5a41d3611bb1254d976eaa68dd4a5aa59497e0",
+    "_temporary_environment": "0d754dd2cd9ce6f1925d493acb94b4927e9bfcd595bea6d4f53c049ea4527fc2",
+    "admit": "957f796cd22fd4efbdc7f9cd0cc10573b697e601b16ea47ec62ee6a9c090286a",
+    "fingerprints": "5735657eaf639dfca88c1594a3c24b5afc4a40d91dea5ae5348b99dd13508e2c",
+    "private_json": "07185aaef3bf38227a69549307fb7a9aa44c134c0539fb28c5a9586a2d038eab"
+  },
+  "source": "specs/025-provider-mcp-profiles/fixtures/run_native_v1_acceptance.py",
+  "source_sha256": "bb24022558b43bad6fc0c6376dde303caf1691c37e0a9ed03a1583b03f110c05"
+}

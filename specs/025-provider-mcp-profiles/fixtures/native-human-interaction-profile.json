@@ -1,0 +1,60 @@
+{
+  "schema": "caos.native-v1-human-case.v1",
+  "model": "opencode-go/glm-5.3-flash",
+  "profile_name": "v1-human",
+  "prompt": "Follow the user task using only the three CAO human interaction tools. Ask exactly the requested two questions, wait for the human answers, and acknowledge every exact returned receipt. Never answer on behalf of the human. Keep user-visible final text separate from the required standalone turn receipt.",
+  "tools": [
+    "cao_ask_user",
+    "cao_wait_for_user_answers",
+    "cao_acknowledge_user_answers"
+  ],
+  "allowed_tools": [
+    "@cao-mcp-server"
+  ],
+  "questions": [
+    {
+      "client_key": "test-color",
+      "kind": "text",
+      "prompt": "¿Qué color ñ, 中文 usar?",
+      "required": true
+    },
+    {
+      "client_key": "test-shade",
+      "kind": "single_choice",
+      "prompt": "Elige tono ñ, 中文.",
+      "required": true,
+      "options": [
+        {
+          "id": "sapphire",
+          "label": "Sapphire"
+        },
+        {
+          "id": "amber",
+          "label": "Amber"
+        }
+      ]
+    }
+  ],
+  "human_answers": {
+    "test-color": {
+      "kind": "text",
+      "text": "azul ñ 中文"
+    },
+    "test-shade": {
+      "kind": "options",
+      "option_ids": [
+        "sapphire"
+      ]
+    }
+  },
+  "required_checks": {
+    "question_count": 2,
+    "agui_snapshot_count": 3,
+    "model_seconds": 75,
+    "outer_seconds": 180,
+    "memory_floor_mib": 6144,
+    "restart_boundary": "committed_create_response_before_return_to_mcp",
+    "unicode_marker": "Validado ñ, 中文.",
+    "owned_cleanup": true
+  }
+}
