@@ -104,7 +104,7 @@ kbd{font-family:var(--mono);font-size:11px;color:var(--ink-3);padding:1px 5px;bo
 .gstatus .ghost{padding:2px 9px}
 .chip.tog[aria-pressed=false]{text-decoration:none;color:var(--ink-2);box-shadow:inset 0 0 0 1px var(--line-2)}
 .chip.tog[aria-pressed=true]{background:var(--accent-soft);box-shadow:inset 0 0 0 1.5px var(--accent);color:var(--ink)}
-.vp{position:relative;height:540px;overflow:hidden;background:var(--surface);touch-action:pan-y;cursor:grab}
+.vp{position:relative;height:540px;overflow:hidden;background:var(--surface);touch-action:none;cursor:grab}
 .vp.drag{cursor:grabbing}
 .vp>svg.world{display:block;width:100%;height:100%;user-select:none;-webkit-user-select:none}
 .gbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:6px 12px;border-bottom:1px solid var(--line)}
@@ -595,7 +595,7 @@ const CaosScale=(()=>{
       for(let g=0;g*2<partners.length;g++){const part=partners.slice(g*2,g*2+2),lid="relacionados "+(g+1);
         LANES.push({id:lid,label:"relacionados · "+(g*2+1)+"–"+(g*2+part.length)+" de "+new Set(atoms.map(e=>e.a===i?e.b:e.a)).size,sub:part.map(teamLabel).filter((x,j,a)=>a.indexOf(x)===j).join(" · ").toLowerCase()});
         part.forEach((x,j)=>A(x,2+g*2+j,lid))}
-      shownAtoms.forEach((e,j)=>E.push({id:e.id,ty:e.ty,a:agent(e.a).id,b:agent(e.b).id,note:RELS[e.ty].note+" · modelado en "+(e.at==="0"?"la red":"el grupo "+e.at),bulge:30+(j%4)*16,atom:true}));
+      shownAtoms.forEach((e,j)=>E.push({id:e.id,ty:e.ty,a:agent(e.a).id,b:agent(e.b).id,note:RELS[e.ty].note+" · modelado en "+(e.at==="0"?"la red":"el grupo "+e.at),bulge:34+(j%4)*18,atom:true}));
       const ti="T-"+(i+1)+".1";
       N.push({id:ti,kind:"task",t:"Trabajo de "+me.name.toLowerCase(),s:{run:"intento 1",wait:"en revisión",block:"retenida",done:"hecho",idle:"en cola"}[me.st],lane:LANES[0].id,row:1,col:2,st:tState[me.st],owner:me.id,since:"hace "+(1+hash(i+5)%30)+" min"});
       ROUTE.push(ti);if(sup!==null)E.push({id:"V-"+(i+1)+".2",ty:"depende",a:ROUTE[0],b:ti});
@@ -739,7 +739,8 @@ function resetFilters(){
 }
 
 /* ---- Geometría ---- */
-const TOP=36, GH=26, RH=72, NH=54, CW=170, X1=176, AW=134, NW=140, W0=X1+(COLS.length-2)*CW+NW+16; let W=W0;
+/* Separación ampliada: calles de 56 px entre fases, 30 px entre filas y 72 px tras la columna de agentes para curvas y codos. */
+const TOP=40, GH=32, RH=84, NH=54, CW=196, X1=230, AW=134, NW=140, W0=X1+(COLS.length-2)*CW+NW+16; let W=W0;
 const GHT=GH+2*RH; let H=TOP+LANES.length*GHT+6;
 const nw=n=>n.col?NW:AW;
 function pos(n){const g=LANES.findIndex(l=>l.id===n.lane);return {x:n.col?X1+(n.col-1)*CW:24,y:TOP+g*GHT+GH+(n.row-2*g)*RH+(RH-NH)/2}}
@@ -773,7 +774,8 @@ function route(e){
   if(A.col===B.col){const cx=p.x+NW/2;return A.row<B.row?`M${cx} ${p.y+NH} L${cx} ${q.y-2}`:`M${cx} ${p.y} L${cx} ${q.y+NH+2}`}
   const y1=ma+(e.dy1||0),y2=mb+(e.dy2||0),x1=p.x+NW,x2=q.x-2;
   if(Math.abs(y1-y2)<1)return `M${x1} ${y1} L${x2} ${y2}`;
-  const gx=q.x+(e.gx||-14);return ortho([[x1,y1],[gx,y1],[gx,y2],[x2,y2]]);
+  /* codo en la calle entre fases; el desfase de cada vínculo se amplía para que no se monten */
+  const gx=q.x-(CW-NW)/2+((e.gx||-14)+15)*1.6;return ortho([[x1,y1],[gx,y1],[gx,y2],[x2,y2]]);
 }
 function markers(){const C={dep:"#8d8f93",crit:"#1c1d1f",wait:"#a8620a",acc:"#2f4fb5",del:"#4a4c50",com:"#77797e"};let s="<defs>";
   for(const[k,c]of Object.entries(C)){
@@ -1025,12 +1027,12 @@ function computeRel(){
     shownB.push(b)}
 }
 function bundlePath(S,T,k,G){
-  const o=((k%7)-3)*3.4,f=.2+.6*((k*5)%9)/8,sx=S.x+S.w*f,tx=T.x+T.w*(1-f),yS=S.y+S.h+G/2+o,yT=T.y-G/2+o,xv=T.x-G/2+o;
+  const o=((k%9)-4)*6,f=.2+.6*((k*5)%9)/8,sx=S.x+S.w*f,tx=T.x+T.w*(1-f),yS=S.y+S.h+G/2+o,yT=T.y-G/2+o,xv=T.x-G/2+o;
   if(Math.abs(yS-yT)<1)return {d:ortho([[sx,S.y+S.h],[sx,yS],[tx,yS],[tx,T.y-1]],6),lx:(sx+tx)/2,ly:yS};
   return {d:ortho([[sx,S.y+S.h],[sx,yS],[xv,yS],[xv,yT],[tx,yT],[tx,T.y-1]],6),lx:(sx+xv)/2,ly:yS}}
 function bundleAria(b){return `${b.id}: ${ET[b.ty].label}, ${bLabel(b.from)} → ${bLabel(b.to)}, ${fmt(b.count)} ${b.count===1?"vínculo":"vínculos"}${b.outside?", exterior":""}`}
 function renderAgg(){
-  const lv=levelItems(),top=stack[stack.length-1],vw=vpSize().w,narrow=vw<600,cols=vw<480?1:narrow?2:5,G=30,M0=G,CWd=cols===1?Math.max(220,Math.min(340,vw-32-M0)):200;
+  const lv=levelItems(),top=stack[stack.length-1],vw=vpSize().w,narrow=vw<600,G=64,M0=G,cols=vw<480?1:narrow?2:Math.max(2,Math.min(5,Math.floor((vw/.9-M0)/(210+G)))),CWd=cols===1?Math.max(220,Math.min(340,vw-32-M0)):210;
   aggItems=lv.list.filter(itemPass).slice(0,LIM.cards).map(x=>({...x,key:keyOf(x)}));
   computeRel();
   const agents=aggItems.length&&aggItems[0].k==="agent",CH=agents?NH:92,PH=34,rows=Math.max(1,Math.ceil(aggItems.length/cols)),prows=Math.ceil(ports.length/cols);
@@ -1199,8 +1201,8 @@ function jumpToAgent(i,atom){const root=M.root(),a=M.agent(i);
   aggSel="a:"+i;openAgent(i,false,atom)}
 /* encuadre: escritorio encaja; en pantallas estrechas se prioriza leer a tamaño útil */
 let framePending=false;
-function frame(){if(view!=="graph"){framePending=true;return}framePending=false;const{w}=vpSize();if(w>=600){fit();return}
-  if(mode()==="agg"){vp.k=Math.min(1,(w-8)/W);vp.x=(w-W*vp.k)/2;vp.y=4;applyVp()}else{vp.k=.9;centerOn(sel);vp.y=4;applyVp()}}
+function frame(){if(view!=="graph"){framePending=true;return}framePending=false;const{w}=vpSize();if(w>=600){fit();/* nunca se encoge por debajo del 90 %: si no cabe, se lee a tamaño útil y se desplaza */if(vp.k<.9){vp.k=.9;vp.x=Math.max(8,(w-W*vp.k)/2);vp.y=8;applyVp()}return}
+  if(mode()==="agg"){vp.k=Math.max(.9,Math.min(1,(w-8)/W));vp.x=Math.max(4,(w-W*vp.k)/2);vp.y=4;applyVp()}else{vp.k=.9;centerOn(sel);vp.y=4;applyVp()}}
 function setScale(v){scale=v;stack=[];page=decPage=feedPg=linkPg=atomPg=0;aggSel=null;selEdge=null;selBundle=null;$("q").value="";$("stateFilter").value="all";
   if(v==="demo"){M=null;loadData(DEMO);sel="D-14";focusId="D-14"}else{M=CaosScale.create(SCALES[v]);stack=[M.root()]}
   $("groupWrap").hidden=v==="demo";$("ctxInstance").hidden=v!=="demo";
@@ -1264,14 +1266,18 @@ document.addEventListener("keydown",e=>{
   if(e.target.closest&&e.target.closest("#graphView")&&!e.ctrlKey&&!e.metaKey&&!e.altKey){
     const k=e.key;if(k==="+"||k==="="){e.preventDefault();zoomBy(1.2)}else if(k==="-"){e.preventDefault();zoomBy(1/1.2)}else if(k==="0"){e.preventDefault();fit()}else if(k==="c"||k==="C"){e.preventDefault();centerOn(focusId||sel)}}
 });
-/* Arrastre del fondo y Ctrl+rueda; la rueda sola sigue desplazando la página. */
+/* Arrastre del fondo (ratón o dedo, ambos ejes) y Ctrl+rueda; la rueda sola y el tacto fuera del lienzo siguen desplazando la página. */
 let drag=null,dragMoved=false;
-$("graphView").addEventListener("pointerdown",e=>{if(e.button!==0||e.target.closest(".zoombar,.minimap,.gempty"))return;drag={x:e.clientX,y:e.clientY,vx:vp.x,vy:vp.y,id:e.pointerId};dragMoved=false});
+$("graphView").addEventListener("pointerdown",e=>{tap=null;if(e.button!==0||e.target.closest(".zoombar,.minimap,.gempty"))return;drag={x:e.clientX,y:e.clientY,vx:vp.x,vy:vp.y,id:e.pointerId};dragMoved=false});
 $("graphView").addEventListener("pointermove",e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;
   if(!dragMoved&&Math.hypot(dx,dy)>4){dragMoved=true;$("graphView").classList.add("drag");$("graphView").setPointerCapture(drag.id)}
   if(dragMoved){vp.x=drag.vx+dx;vp.y=drag.vy+dy;applyVp()}});
 const endDrag=()=>{drag=null;$("graphView").classList.remove("drag");setTimeout(()=>dragMoved=false,0)};
-$("graphView").addEventListener("pointerup",endDrag);$("graphView").addEventListener("pointercancel",endDrag);
+/* Un toque sin arrastre activa el objetivo en pointerup: tras un pan táctil el navegador puede no sintetizar el click. Solo se descarta el click de compatibilidad de ESE gesto: mismo objetivo lógico (o fondo, porque el nodo pudo re-renderizarse), <800 ms y antes de otro pointerdown/pointercancel. */
+let tap=null;const TAP_SEL=".node,[data-bundle],[data-edge]";
+const tapKey=el=>{const t=el&&el.closest&&el.closest(TAP_SEL);return t?(t.dataset.id!=null?"n:"+t.dataset.id:t.dataset.bundle!=null?"b:"+t.dataset.bundle:"e:"+t.dataset.edge):null};
+$("graphView").addEventListener("pointerup",e=>{const t=drag&&!dragMoved&&e.pointerType!=="mouse"&&e.target.closest(TAP_SEL);endDrag();if(t){tap={key:tapKey(t),id:e.pointerId,t:performance.now()};t.dispatchEvent(new MouseEvent("click",{bubbles:true,cancelable:true}))}});
+$("graphView").addEventListener("click",e=>{if(!e.isTrusted||!tap||e.detail===0)return;const p=tap;tap=null;if(performance.now()-p.t>=800||e.target.closest(".zoombar,.minimap,.gempty,button,a,input,select"))return;const k=tapKey(e.target);if(k===p.key||(k===null&&!e.target.isConnected)||(k===null&&e.target.closest("#world,svg"))){e.stopPropagation();e.preventDefault()}},true);$("graphView").addEventListener("pointercancel",()=>{tap=null;endDrag()});
 $("graphView").addEventListener("wheel",e=>{if(!e.ctrlKey&&!e.metaKey)return;e.preventDefault();const r=$("graphView").getBoundingClientRect();zoomBy(e.deltaY<0?1.12:1/1.12,e.clientX-r.left,e.clientY-r.top)},{passive:false});
 $("minimap").addEventListener("click",e=>{const r=$("minimap").getBoundingClientRect(),mx=(e.clientX-r.left)/r.width*(W+12)-6,my=(e.clientY-r.top)/r.height*(H+12)-6,{w,h}=vpSize();vp.x=w/2-mx*vp.k;vp.y=h/2-my*vp.k;applyVp()});
 window.addEventListener("resize",()=>renderMinimap());

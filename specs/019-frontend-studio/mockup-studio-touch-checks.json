@@ -1,0 +1,78 @@
+{
+ "checks": {
+  "canvas-touch-action-none": {
+   "pass": true,
+   "info": "none"
+  },
+  "touch-vertical-pan-moves-camera-not-page": {
+   "pass": true,
+   "info": {
+    "c0": "translate(4.0 4.0) scale(0.900)",
+    "c1": "translate(4.0 -366.0) scale(0.900)",
+    "scrollY": 932
+   }
+  },
+  "touch-pan-reaches-and-selects-last-card": {
+   "pass": true,
+   "info": {
+    "last": "r:975000-1000000-1",
+    "swipes": 17,
+    "zoom": "90%"
+   }
+  },
+  "touch-tap-activates-exactly-once": {
+   "pass": true,
+   "info": {
+    "id": "r:950000-975000-1",
+    "clicks": 1,
+    "pressed": 1
+   }
+  },
+  "tap-without-compat-click-then-trusted-click-other-card-under-800ms": {
+   "pass": true,
+   "info": {
+    "first": "r:975000-1000000-1",
+    "second": "r:950000-975000-1",
+    "secondClickAfterMs": 173,
+    "droppedCompatClicks": 1
+   }
+  },
+  "tap-without-compat-click-then-keyboard-control-under-800ms": {
+   "pass": true,
+   "info": {
+    "card": "r:975000-1000000-1",
+    "z0": 90,
+    "z1": 108
+   }
+  },
+  "double-tap-same-card-activates-each-tap-once": {
+   "pass": true,
+   "info": {
+    "card": "r:950000-975000-1",
+    "activations": 2,
+    "pressed": []
+   }
+  },
+  "pointercancel-clears-pending-tap-next-tap-selects-once": {
+   "pass": true,
+   "info": {
+    "cancelled": "r:950000-950625-2",
+    "tapped": "r:950000-950625-2",
+    "activations": 1
+   }
+  },
+  "touch-outside-canvas-scrolls-page": {
+   "pass": true,
+   "info": {
+    "y0": 0,
+    "y1": 492,
+    "yStart": 800
+   }
+  },
+  "no-page-errors": {
+   "pass": true,
+   "info": 0
+  }
+ },
+ "failed": 0
+}
