@@ -1,0 +1,108 @@
+{
+  "schema": "caos.native-v2-collaboration-acceptance-profiles.v1",
+  "scope": "Separate full-surface native OpenCode v2 message case with per-terminal outbound model-tool observation; not automatically activated production profiles",
+  "execution_artifact": {
+    "repository_candidate": "RUN_ENABLED remains false and is source-hashed as the repository candidate.",
+    "private_copy": "The private execution file must equal the repository candidate with exactly the single RUN_ENABLED = False to RUN_ENABLED = True replacement.",
+    "repository_root_environment": "CAO_T104_REPOSITORY_ROOT points the private copy back to the source checkout; its exact path and HEAD are manifest-bound.",
+    "python_interpreter_binding": "The manifest retains the exact absolute sys.executable venv launch path, separately pins its canonical resolved interpreter path, and hashes the resolved interpreter bytes; subprocesses use the venv launch path.",
+    "manifest_hash_fields": ["candidate_sha256", "execution_candidate_sha256"]
+  },
+  "evidence_handling": {
+    "receipt": "The public receipt is redacted; private raw terminal and installer evidence is stored separately under the owned evidence directory.",
+    "operator_auth_material": "Operator auth files are fingerprinted but are never copied into raw evidence.",
+    "credential_snapshot_cleanup": "The private OpenCode credential database and SQLite WAL/SHM sidecars are removed only with confirmed owned-process teardown. If any remain or their state is unknown, credentials_cleanup_deferred is true, retained_private_state contains only status labels, and acceptance cannot pass."
+  },
+  "model": "opencode-go/glm-5.3-flash",
+  "authentication_scope": "Only this selected OpenCode Go model lane in an isolated CAO_AUTH_MODE=off run with an unowned principal; this case makes no cross-provider, OAuth, or global authentication claim",
+  "native_grant_semantics": "The production OpenCode v2 direct MCP server grant is a wildcard for the selected direct profile, and CAO's native permission translator hard-allows the OpenCode built-ins skill and todowrite. With CodeMode exactly false, the case does not claim a per-tool client deny from the wildcard; it requires no explicit execute rule, all eight sender CAO MCP names, zero receiver CAO MCP names, and no tool names beyond the profile plus those two source-approved built-ins.",
+  "native_model_request_observation": {
+    "boundary": "OpenCode http.request hook for the selected provider/model primary request",
+    "scope": "Assertions cover selected-model primary requests only; they make no claim about title, compaction, or generation requests.",
+    "privacy": "The observer reads a bounded request clone in memory and persists only tool-name counts, status, nonce, and seal; it does not persist bodies, schemas, prompts, or headers.",
+    "attribution": "Separate run-owned sender and receiver project workdirs, each with its own source-derived plugin bytes, nonce, and private ledger; candidate also checks each production API working-directory response against its role workdir.",
+    "sender_cao_mcp_wire_names": [
+      "cao-mcp-server_cao_acknowledge_user_answers",
+      "cao-mcp-server_cao_ask_user",
+      "cao-mcp-server_cao_escalate_interaction",
+      "cao-mcp-server_cao_get_interaction",
+      "cao-mcp-server_cao_list_interactions",
+      "cao-mcp-server_cao_wait_for_user_answers",
+      "cao-mcp-server_list_siblings",
+      "cao-mcp-server_send_message"
+    ],
+    "receiver_cao_mcp_wire_names": [],
+    "source_approved_optional_native_builtins": ["skill", "todowrite"],
+    "minimum_target_primary_requests_per_role": 2,
+    "all_selected_model_primary_requests_must_match_role_profile": true,
+    "builtin_execution_observation": "not_observed; acceptance claims no CAO MCP child calls and exact ACK, not zero execution of OpenCode built-ins"
+  },
+  "catalog": [
+    "cao_acknowledge_user_answers",
+    "cao_ask_user",
+    "cao_escalate_interaction",
+    "cao_get_interaction",
+    "cao_list_interactions",
+    "cao_wait_for_user_answers",
+    "list_siblings",
+    "send_message"
+  ],
+  "profiles": {
+    "sender": {
+      "allowed_tools": ["@cao-mcp-server"],
+      "native_tool_profile": "collaboration",
+      "enabled_mcp_tools": null,
+      "runtime_capability": "Required; current InteractionService source bound to exact sender terminal and incarnation",
+      "capability_owner": "Unowned principal in the isolated CAO_AUTH_MODE=off lane; private file, terminal, incarnation, profile, current source and tool fingerprint are run-owned",
+      "legacy_three_tool_marker": false,
+      "prompt": "This profile is for a machine-to-machine transport diagnostic. Use exactly one cao-mcp-server_list_siblings call, then exactly one cao-mcp-server_send_message call for each requested delivery phase. Do not use any human-interaction, delegation, supervision, or memory tool."
+    },
+    "receiver": {
+      "allowed_tools": [],
+      "native_tool_profile": "collaboration",
+      "enabled_mcp_tools": [],
+      "runtime_capability": "Absent",
+      "prompt": "You are a passive receiver for an automated machine-to-machine delivery check. A received message is not a human request. When one arrives, reply exactly ACK in plain text, without using any tool, asking a question, or sending a message."
+    }
+  },
+  "required_checks": {
+    "installed_sender_and_receiver_prompts_exactly_match_profile_fixture": true,
+    "private_execution_copy_exact_single_flag_derivation": true,
+    "private_credential_snapshot_never_unlinked_while_owned_writers_uncertain": true,
+    "sigterm_uses_safe_cancellation_checkpoints_and_cleanup_finishes": true,
+    "python_venv_launch_path_and_canonical_interpreter_hash_bound": true,
+    "sender_mcp_child_catalog_exact_unfiltered_eight": true,
+    "sender_calls_exact": ["list_siblings", "send_message", "send_message"],
+    "sender_calls_from_canonical_cao_mcp_server": true,
+    "sender_ready_native_policy_version": 3,
+    "sender_capability_current_source_bound": true,
+    "production_api_worker_real_lifespan": true,
+    "production_api_worker_invocation_exact": true,
+    "production_runtime_capability_issuance": true,
+    "production_model_launch_uses_selected_model": true,
+    "each_current_working_directory_equals_its_distinct_private_role_workspace": true,
+    "each_private_role_workspace_is_a_run_owned_project_with_its_own_nonce_pinned_offer_observer": true,
+    "project_config_disable_flag_absent": true,
+    "sender_model_request_full_eight_cao_mcp_tools_no_execute_or_unexpected_tools": true,
+    "sender_model_request_primary_count_at_least_two": true,
+    "receiver_model_request_zero_cao_mcp_tools": true,
+    "roles_only_source_approved_optional_builtins_on_model_requests": true,
+    "native_builtin_offer_names_within_source_approved_optional_contract": true,
+    "receiver_has_no_cao_mcp_tools": true,
+    "receiver_no_cao_mcp_child_calls": true,
+    "receiver_native_builtin_execution_observation": "not_observed",
+    "receiver_model_request_primary_count_at_least_two": true,
+    "offer_observer_records_names_only_and_no_raw_request_body_or_headers": true,
+    "receipt_redacted_only_private_raw_evidence_separate": true,
+    "sender_legacy_three_tool_marker_absent": true,
+    "receiver_native_filter_empty": true,
+    "receiver_public_ack_exact": "ACK",
+    "active_durable_turn_receipt": true,
+    "sender_unicode_marker": "Validado ñ, 中文.",
+    "phase_seconds": 75,
+    "memory_floor_mib": 6144,
+    "message_phases": 2,
+    "api_restart": true,
+    "owned_cleanup": true
+  }
+}
