@@ -43,7 +43,9 @@ def row(question, index, *, group_id=GROUP_ID, version=1, state=None, lifecycle=
         "kind": question["kind"],
         "required": question["required"],
         "prompt_content": question["prompt"],
-        "options_json": json.dumps(question["options"], ensure_ascii=False),
+        "options_json": json.dumps(
+            [{**option, "available": True} for option in question["options"]], ensure_ascii=False
+        ),
         "lifecycle": lifecycle,
         "state": state,
     }
@@ -137,6 +139,20 @@ def final_receipt():
 
 
 class QuestionIdentityTests(unittest.TestCase):
+    def test_question_options_match_real_production_defaults_and_reject_unavailable(self):
+        from cli_agent_orchestrator.services.interactions.models import InteractionOption
+
+        actual = rows()
+        normalized = [
+            InteractionOption.model_validate(option).model_dump(mode="json")
+            for option in CHOICE_QUESTION["options"]
+        ]
+        actual[1]["options_json"] = json.dumps(normalized)
+        self.assertTrue(gate.questions_exact(actual, QUESTIONS, TERMINAL_ID, INCARNATION_ID))
+        normalized[0]["available"] = False
+        actual[1]["options_json"] = json.dumps(normalized)
+        self.assertFalse(gate.questions_exact(actual, QUESTIONS, TERMINAL_ID, INCARNATION_ID))
+
     def test_each_catalog_must_be_exact_even_when_union_is_complete(self):
         self.assertTrue(gate.protocol_exact(protocol()))
         complete = dict(

@@ -349,7 +349,9 @@ def questions_exact(
             actual_options = _strict_json(row["options_json"])
         except (TypeError, ValueError, json.JSONDecodeError):
             return False
-        expected_options = question.get("options", [])
+        # Production InteractionOption persists its explicit available=True
+        # default; compare that canonical representation without dropping it.
+        expected_options = [{**option, "available": True} for option in question.get("options", [])]
         if not _json_exact(actual_options, expected_options):
             return False
     return True
