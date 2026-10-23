@@ -122,6 +122,18 @@ V2_COMPLETION_MARKER_PATTERN = (
 # Processing footer — keybind hint present while the agent is generating.
 PROCESSING_FOOTER_PATTERN = r"\besc interrupt\b"
 
+# Native v1 ReasoningHeader.completed() / Locale.duration(), not assistant text.
+# Hide mode still renders this collapsed row before the next TextPart.
+_V1_COLLAPSED_THOUGHT_PATTERN = re.compile(
+    r"^(?:\+ Thought: (?:(?:.+) · )?|Thought · )"
+    r"(?:\d+ms|\d+\.\d+s|\d+m \d+s|\d+h \d+m|\d+d \d+h)$"
+)
+_V1_THOUGHT_HEADER_PATTERN = re.compile(
+    r"^(?:[+-] Thought|(?:(?:[+-] )?Thought: (?:(?:.+) · )?|Thought · )"
+    r"(?:\d+ms|\d+\.\d+s|\d+m \d+s|\d+h \d+m|\d+d \d+h))$"
+)
+
+
 # Idle footer anchor — present when waiting for the next user message.
 IDLE_FOOTER_PATTERN = r"ctrl\+p\s+(?:commands|menu)"
 
@@ -1737,6 +1749,47 @@ class OpenCodeCliProvider(BaseProvider):
         result = "\n".join(dedented).strip()
         result = re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]", "", result)
         result = re.sub(r"[ \t]+$", "", result, flags=re.MULTILINE)
+
+        if (
+            getattr(self, "_pending_turn_generation", None) is not None
+            and self.pending_turn_receipt_state()
+            and self._result_has_active_receipt(result)
+        ):
+            # Only receipt-bound leading native chrome may be removed. Never
+            # select a final paragraph or reinterpret an expanded reasoning body.
+            rows = result.splitlines()
+            first_text = 0
+            while first_text < len(rows) and _V1_COLLAPSED_THOUGHT_PATTERN.fullmatch(
+                rows[first_text].strip()
+            ):
+                first_text += 1
+                if first_text == len(rows) or rows[first_text].strip():
+                    raise ValueError("OpenCode v1 reasoning boundary is ambiguous")
+                while first_text < len(rows) and not rows[first_text].strip():
+                    first_text += 1
+            fence = None
+            for row in rows[first_text:]:
+                fence_match = re.match(r"^[ \t]*(`{3,}|~{3,})", row)
+                if fence_match:
+                    marker = fence_match[1]
+                    if fence is None:
+                        fence = marker
+                    elif (
+                        marker[0] == fence[0]
+                        and len(marker) >= len(fence)
+                        and not row[fence_match.end() :].strip()
+                    ):
+                        fence = None
+                    continue
+                if fence is None and _V1_THOUGHT_HEADER_PATTERN.fullmatch(row.strip()):
+                    raise ValueError("OpenCode v1 reasoning channel is expanded or interleaved")
+            if first_text:
+                result = "\n".join(rows[first_text:]).strip()
+                if not self._result_has_active_receipt(result) or not any(
+                    row.strip() and not self._result_has_active_receipt(row)
+                    for row in rows[first_text:]
+                ):
+                    raise ValueError("OpenCode v1 reasoning boundary has no public response")
 
         if not result:
             raise ValueError("Empty OpenCode response — no content found after extraction")

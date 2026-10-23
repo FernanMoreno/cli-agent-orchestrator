@@ -334,3 +334,15 @@ T085/T086 actual: mandatory receiver ACK gate correctly rejected phase one; send
 - [ ] T088 [US4] [FR070/SC054] Add bounded content-free receiver observations after T085 failure, preserve all strict acceptance predicates, test privacy and unchanged helpers, bind current source plus fresh generation, independently review and perform one serial diagnostic before any behavior fix.
 
 T088 actual (2026-10-23, f7fc120f): fresh generation PASS13.970s; managed FAILED before receiver probe because public sender LAST lacked literal/compacted Unicode marker despite completed metadata. Receiver samples0; full original-run cleanup PASS, minimum7167MiB and operator/source unchanged. Keep T088 and native-v1 acceptance open; do not retry unchanged or infer model/extractor cause. [Evidence](validation-t088.md).
+
+- [ ] T089 [US4] [FR071/SC055] Implement and validate receipt-bound private native-v1 TEXT/API comparison after T088; verify pinned legacy schema, add read-only/privacy/identity/budget regressions, review and run one freshly pinned serial diagnostic with strict acceptance unchanged.
+
+- [x] T090 [US4] [FR072/SC056] Extend the read-only native-v1 comparison to the completed non-ACK receiver after actual T089, test fixed marker/equality behavior, independently review and execute one serial source-bound diagnostic with the same strict ACK/Unicode/restart/cleanup gates.
+
+T089 actual: generation PASS; sender Unicode PASS, conditional sender probe untriggered; receiver FAILED ACK with223observations (20-character non-ACK public result), all cleanup/operator/source checks PASS. T089 cause remains open; T090 targets the receiver with the same bounded reader. [Result](validation-t089.md).
+
+- [ ] T091 [US4] [FR073/SC057] Reproduce native-v1 collapsed Thought chrome leaking into public output, correct the receipt-bound extraction boundary conservatively, validate adversarial/native grammar cases and service settlement, review composition and revalidate with fresh source pins and unchanged native acceptance.
+
+T090 actual: native receiver public TEXT exactly ACK3chars, API20chars/3lines, ownreceipt/privateparent bound; native/APIinequality observed in17.2ms total, all cleanup/operator/source checks PASS. The managed run remains FAILED; T090 comparison complete, T091 corrects a source-reproduced post-native extractor defect. [Evidence](validation-t090.md).
+
+- [ ] T092 [US4] [FR073/SC057] Reanchor the reviewed strong native-v1 generation/managed acceptance to the integrated T091 source and exact diagnostic artifact, verify unchanged gates/507pins/nativebinary/owned PostgreSQL, execute generation then one serial two-message/ACK/AG-UI/restart/cleanup acceptance and preserve its source-bound result.

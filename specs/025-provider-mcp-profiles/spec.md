@@ -254,3 +254,17 @@ SC053: Reproduce a newer unrelated Chromium zombie with denied environ; both own
 FR070: A receiver-ACK diagnostic must retain bounded content-free observations of both terminal metadata and LAST HTTP results on failure, without changing literal ACK, completion counters, deadlines or authority.
 
 SC054: Pure controls prove observation privacy and bounded size; an independently reviewed closed runner is freshly bound to current source and successful generation before one justified actual diagnostic. Missing evidence cannot be upgraded into acceptance.
+
+FR071: A native-v1 diagnostic must compare only completed assistant TEXT from the exact receipt-owned private native database with the public sender LAST, bound to the fresh user/assistant parent and current durable receipt. It must observe a nonconforming sender before the sender acceptance gate aborts, without changing that gate.
+
+SC055: Verify pinned v1 upstream schema and ownership path; deny credential/other-table reads, reasoning/tool/user-body export, mutations, symlinks, oversized parts and ambiguous parents/receipts. Bound one read transaction to 16 parts/64KiB/3s within the original75s. Preserve original model, prompts, permissions, strict Unicode/ACK and cleanup acceptance. Record a source-bound actual result, including an untriggered observer without causal claims.
+
+FR072: Native-v1 receiver diagnosis must compare receipt-bound assistant TEXT with the current completed receiver LAST using literal ACK as the expected marker, independently of Unicode sender diagnosis and without changing ACK acceptance.
+
+SC056: Preserve default Unicode comparison, allow only fixed expected markers Unicode/ACK, test native/API equality and disagreement, and observe a non-ACK completed receiver at most once within the original75s. Preserve historical T089 failure and separately bind current-source generation and the new artifact hash.
+
+FR073: Receipt-bound native-v1 public extraction must exclude completed collapsed Thought chrome rendered before assistant text, using the pinned native header grammar and preserving result/receipt content. Expanded or interleaved ambiguous reasoning headers must fail closed; ordinary unbound/quoted prose must remain unchanged.
+
+SC057: Reproduce the native-renderer20-character ACK contamination synthetically, test generic answers/active-vs-stale receipts/header placement/quoted prose, apply the minimal extractor correction, run parser+receipt/service/composition checks and peer review, then repin current-source native acceptance without reducing any gate. Do not claim the uncaptured T090 extra text was literally inspected.
+
+FR073 boundary limitation: a leading unquoted row exactly identical to the native collapsed Thought+duration chrome is reserved TUI framing and cannot be disambiguated from deliberately emitted text. Quoted/fenced/unbound text and ordinary Thought prose/bullets remain unchanged. Truncated title rows without the complete native duration grammar are not silently stripped; their channel remains unproven. No universal reasoning-channel claim is made for those layouts or older Thinking variants.

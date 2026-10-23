@@ -868,3 +868,88 @@ def test_v2_country_refusal_in_completed_response_does_not_override_completion()
         "developer · Kimi K3 · OpenCode Go · ctrl+p menu",
     ]
     assert provider.get_status_from_screen(rows) == TerminalStatus.COMPLETED
+
+
+class TestV1CollapsedThoughtReceipt:
+    @staticmethod
+    def frame(body: str) -> str:
+        return (
+            "┃  task\n┃\n\n"
+            + "\n".join("     " + line for line in body.splitlines())
+            + "\n\n     ▣  Build · GLM · 2.5s\n"
+        )
+
+    @staticmethod
+    def bound():
+        provider = make_provider()
+        prepared = provider.prepare_input("Return the requested result.")
+        nonce = re.search(r"CAO-TURN-RECEIPT-[0-9a-f]{32}", prepared).group(0)
+        return provider, nonce
+
+    @pytest.mark.parametrize(
+        "header",
+        [
+            "+ Thought: 1.2s",
+            "+ Thought: 12ms",
+            "+ Thought: 1m 2s",
+            "+ Thought: Inspecting · 1.2s",
+            "Thought · 1.2s",
+        ],
+    )
+    @pytest.mark.parametrize("answer", ["ACK", "Any ordinary result"])
+    def test_collapsed_native_header_is_not_public_text(self, header, answer):
+        provider, nonce = self.bound()
+        body = f"{header}\n\n{answer}\n{nonce}"
+        result = provider.extract_last_message_from_script(self.frame(body))
+        assert result == f"{answer}\n{nonce}"
+
+    def test_multiple_collapsed_parts(self):
+        provider, nonce = self.bound()
+        result = provider.extract_last_message_from_script(
+            self.frame(f"+ Thought: 1.2s\n\n+ Thought: 0ms\n\nACK\n{nonce}")
+        )
+        assert result == f"ACK\n{nonce}"
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "- Thought: 1.2s\n\nprivate reasoning\n\nACK",
+            "+ Thought\n\nACK",
+            "+ Thought: 1.2s\n",
+            "answer\n\n+ Thought: 1.2s\n\nACK",
+            "+ Thought: 1.2s\nACK",
+        ],
+    )
+    def test_expanded_interleaved_or_unseparated_header_fails_closed(self, body):
+        provider, nonce = self.bound()
+        with pytest.raises(ValueError, match="reasoning"):
+            provider.extract_last_message_from_script(self.frame(f"{body}\n{nonce}"))
+
+    def test_unbound_literal_and_stale_receipt_are_preserved(self):
+        provider = make_provider()
+        literal = "+ Thought: 1.2s\n\nACK"
+        assert provider.extract_last_message_from_script(self.frame(literal)) == literal
+        provider, nonce = self.bound()
+        stale = "CAO-TURN-RECEIPT-" + "0" * 32
+        assert stale != nonce
+        result = provider.extract_last_message_from_script(self.frame(literal + "\n" + stale))
+        assert result == literal + "\n" + stale
+
+    @pytest.mark.parametrize(
+        "literal",
+        [
+            "A + Thought: 1.2s example",
+            "Thought: keep this ordinary sentence",
+            "- Thought: keep this",
+            "+ Thought: keep this",
+            "+ Thought: clipped title",
+            "Thought",
+            "```\n~~~\n+ Thought: 1.2s\n```",
+            "> + Thought: 1.2s",
+            "```\n+ Thought: 1.2s\n```",
+        ],
+    )
+    def test_non_chrome_prose_is_preserved(self, literal):
+        provider, nonce = self.bound()
+        result = provider.extract_last_message_from_script(self.frame(f"{literal}\n{nonce}"))
+        assert result == f"{literal}\n{nonce}"
