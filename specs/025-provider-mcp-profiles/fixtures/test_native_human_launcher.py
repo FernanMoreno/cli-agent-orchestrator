@@ -12,6 +12,69 @@ SOURCE = Path(__file__).with_name("run_native_v1_human.py")
 
 
 class HumanLauncherTests(unittest.TestCase):
+    def test_actual_create_binding_uses_returned_normalized_backend_session(self):
+        tree = ast.parse(SOURCE.read_text())
+        main = next(node for node in tree.body if isinstance(node, ast.Try))
+        first = next(
+            index
+            for index, node in enumerate(main.body)
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and isinstance(node.value.func.value, ast.Name)
+            and node.value.func.value.id == "created"
+            and node.value.func.attr == "json"
+        )
+        last = next(
+            index
+            for index in range(first, len(main.body))
+            if isinstance(main.body[index], ast.Assign)
+            and any(
+                isinstance(target, ast.Subscript)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "terminals"
+                for target in main.body[index].targets
+            )
+        )
+        viewport = next(
+            node
+            for node in main.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "viewport" for target in node.targets
+            )
+        )
+        helpers = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_created_terminal_target"
+        ]
+        returned = dict(id="abc12345", session_name="cao-t102-owned", name="native-human")
+
+        def history(session, pane, **kwargs):
+            if (session, pane) != (returned["session_name"], returned["name"]):
+                raise ValueError("Session target not found")
+            return "synthetic viewport"
+
+        scope = dict(
+            created=SimpleNamespace(json=lambda: returned),
+            terminals={},
+            session_name="t102-owned",
+            tmux=SimpleNamespace(get_history=history),
+        )
+        exec(
+            compile(
+                ast.Module(
+                    body=[*helpers, *main.body[first : last + 1], viewport], type_ignores=[]
+                ),
+                str(SOURCE),
+                "exec",
+            ),
+            scope,
+        )
+        self.assertEqual(scope["session_name"], returned["session_name"])
+        self.assertEqual(scope["viewport"], "synthetic viewport")
+
     def test_public_gate_and_optimized_python_fail_before_manifest_or_resources(self):
         for options, expected in (
             ([], "execution_gate_closed"),

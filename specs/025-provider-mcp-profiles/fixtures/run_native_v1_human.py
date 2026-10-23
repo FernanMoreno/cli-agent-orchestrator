@@ -467,6 +467,20 @@ def _postgres_runtime_identity_matches(
     return inspect_output.split() == [expected_container_id, expected_image_id, "true"]
 
 
+def _created_terminal_target(data):
+    if (
+        type(data) is not dict
+        or any(
+            type(data.get(key)) is not str or not data[key] or len(data[key]) > 128
+            for key in ("id", "session_name", "name")
+        )
+        or len(data["id"]) != 8
+        or any(char not in "0123456789abcdef" for char in data["id"])
+    ):
+        raise ValueError("created_terminal_target_invalid")
+    return data["id"], data["session_name"], data["name"]
+
+
 barrier_resolved = False
 
 try:
@@ -747,7 +761,7 @@ try:
     if created.status_code != 201:
         raise RuntimeError("production_terminal_creation_failed")
     data = created.json()
-    terminal_id = data["id"]
+    terminal_id, session_name, pane_name = _created_terminal_target(data)
     terminals["human"] = data
     owned |= journey._snapshot_and_recheck_private_tmux_server(
         sid, sockid, socket_path, terminal_id=terminal_id
@@ -794,7 +808,7 @@ try:
         and authfile.stat().st_mode & 0o777 == 0o600
         and authfile.stat().st_nlink == 1
     )
-    viewport = tmux.get_history(session_name, data["name"], strip_escapes=True, visible_only=True)
+    viewport = tmux.get_history(session_name, pane_name, strip_escapes=True, visible_only=True)
     receipt["native_model_ready"] = (
         "GLM-5.3-Flash" in viewport and "OpenCode Go" in viewport and "Big Pickle" not in viewport
     )
@@ -1179,6 +1193,7 @@ try:
 except Exception as exc:
     receipt["error_type"] = type(exc).__name__
     allowed_errors = {
+        "created_terminal_target_invalid",
         "protocol_sidecar_invalid",
         "invalid_native_send_phase",
         "postgres_identity_mismatch",
