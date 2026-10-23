@@ -1316,7 +1316,9 @@
           "receiver_ack_within_deadline": false
         }
       ],
-      "native_text_observer_triggered": false
+      "native_text_observer_triggered": false,
+      "sender_native_text_observer_triggered": false,
+      "receiver_native_text_observer_triggered": false
     },
     "v1_t090": {
       "source_head": "314a1ce3162c7f24edf3e72e61b1aa1e7ff6e535",
@@ -1451,7 +1453,144 @@
           }
         }
       ],
-      "native_text_observer_triggered": false
+      "native_text_observer_triggered": true,
+      "sender_native_text_observer_triggered": false,
+      "receiver_native_text_observer_triggered": true
+    },
+    "generation_t092": {
+      "source_head": "1d46ccbcef16a12c20da464dd006f712c07f9229",
+      "binary_sha256": "77b2cfe4b97df6f15c3673b22100b9f79c711f25ecb9bf513bb82526b15d24fa",
+      "runner_sha256": "79a5caf921dec5724a747e06925e712ea579b6e68ff272af0b3940ba9e94dae9",
+      "model": "opencode-go/glm-5.3-flash",
+      "model_seconds": 14.58462605898967,
+      "model_admission_mib": 8754,
+      "model_deadline_seconds": 75,
+      "native_exit_code": 0,
+      "outcome": "native_process_exit",
+      "private_receipt_sha256": "de17d004c31007ccc7055a4f49a358a81d791ef1d180565d6c3633298f1e5768",
+      "checks": {
+        "diagnostic_only": true,
+        "native_generation_completion_checked": true,
+        "original_model_acceptance_claimed": false,
+        "native_unicode_response_observed": true,
+        "error_body_persisted": false,
+        "request_identity_booleans_only": true,
+        "acceptance_claimed": false,
+        "mcp_enabled": false,
+        "native_tool_authority_empty": true,
+        "raw_stdout_persisted": false,
+        "headers_or_bodies_recorded": false,
+        "no_http_observation_means_unattributed": true,
+        "owned_process_session_stopped": true,
+        "ledger_valid": true,
+        "operator_auth_unchanged": true,
+        "source_unchanged": true,
+        "binary_unchanged": true,
+        "plugin_unchanged": true,
+        "runner_unchanged": true,
+        "source_head_pinned_at_end": true,
+        "private_state_removed": true,
+        "native_generation_completed": true
+      },
+      "memory_admissions_mib": {
+        "model_admission_mib": 8754
+      },
+      "phases": [],
+      "event_counts": {
+        "step_start": 1,
+        "text": 1,
+        "step_finish": 1
+      }
+    },
+    "v1_t092": {
+      "source_head": "1d46ccbcef16a12c20da464dd006f712c07f9229",
+      "source_pin_file_count": 507,
+      "source_pins_sha256": "fe4c441c5b1e3f022d3750c3b2dd8a6fa60e20bb8eeb22712748082d6e794cb6",
+      "binary_sha256": "77b2cfe4b97df6f15c3673b22100b9f79c711f25ecb9bf513bb82526b15d24fa",
+      "runner_sha256": "ff70c917ad8dfd0746f507e2e8967ccc90aaf4fc221127044553e98b17281d36",
+      "model": "opencode-go/glm-5.3-flash",
+      "utc": "2026-10-23T06:19:49.526989+00:00",
+      "elapsed_seconds": 132.67522785597248,
+      "error_code": "model_receipt_not_observed",
+      "error_type": "AssertionError",
+      "private_roots_after_session_delete": 0,
+      "private_receipt_sha256": "111bf64bab711dde5f3d18f5aa0e3a81f44f346dcd5912b6158e752f6e924438",
+      "checks": {
+        "diagnostic_only": true,
+        "original_model_acceptance_claimed": false,
+        "acceptance_claimed": false,
+        "raw_output_printed": false,
+        "explicit_go_confirmed": true,
+        "source_pin_manifest_exact": true,
+        "postgres_autostarted": false,
+        "postgres_container_id_matches": true,
+        "postgres_image_id_matches": true,
+        "postgres_identity_verified": true,
+        "receiver_production_install_passed": true,
+        "sender_production_install_passed": true,
+        "api_healthy": true,
+        "receiver_group_exact_on_create": true,
+        "receiver_group_exact_when_ready": true,
+        "receiver_operation_permissions_exact": true,
+        "receiver_model_ready": true,
+        "sender_group_exact_on_create": true,
+        "sender_group_exact_when_ready": true,
+        "sender_operation_permissions_exact": true,
+        "sender_model_ready": true,
+        "credentials_isolated": true,
+        "two_isolated_native_roots": true,
+        "filters_exact": true,
+        "agui_captures_stopped_cleanly": true,
+        "agui_capture_threads_confirmed_dead_before_postgres_teardown": true,
+        "agui_capture_phases_clean": false,
+        "api_launches_confirmed_dead_before_postgres_teardown": true,
+        "api_cleanup": true,
+        "tmux_processes_clean": true,
+        "tmux_processes_confirmed_dead_before_postgres_teardown": true,
+        "postgres_cleanup": true,
+        "postgres_cleanup_deferred": false,
+        "exact_native_catalogs": true,
+        "exact_native_successful_calls": false,
+        "observers_complete": false,
+        "operator_auth_unchanged": true,
+        "source_unchanged": true,
+        "binary_unchanged": true,
+        "runner_unchanged": true,
+        "source_head_pinned_at_end": true,
+        "source_runtime_tree_clean_at_end": true,
+        "private_state_removed": true,
+        "postgres_guard_binding_exact": true,
+        "viewport_helper_unchanged": true,
+        "inherited_acceptance_passed": false,
+        "receiver_ack_acceptance_passed": false,
+        "success": false
+      },
+      "memory_admissions_mib": {
+        "initial_admission_mib": 9048,
+        "install_receiver_admission_mib": 9054,
+        "install_sender_admission_mib": 9061,
+        "api_start_admission_mib": 9041,
+        "terminal_receiver_admission_mib": 8760,
+        "terminal_sender_admission_mib": 7984,
+        "model_phase_0_admission_mib": 7193
+      },
+      "phases": [
+        {
+          "index": 0,
+          "phase": 0,
+          "receiver_observation_total": 0,
+          "receiver_observation_samples_capped": false,
+          "receiver_sequence_before": 0,
+          "deadline_seconds_from_input_start": 75.0,
+          "input_returned_elapsed_seconds": 2.29,
+          "observed_pg_message_count": 1,
+          "model_seconds": 75.4107896470232,
+          "sender_completed": false
+        }
+      ],
+      "native_text_observer_triggered": false,
+      "sender_native_text_observer_triggered": false,
+      "receiver_native_text_observer_triggered": false
     }
   }
 }

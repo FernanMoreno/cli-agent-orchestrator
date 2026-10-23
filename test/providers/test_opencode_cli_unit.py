@@ -916,7 +916,7 @@ class TestV1CollapsedThoughtReceipt:
             "- Thought: 1.2s\n\nprivate reasoning\n\nACK",
             "+ Thought\n\nACK",
             "+ Thought: 1.2s\n",
-            "answer\n\n+ Thought: 1.2s\n\nACK",
+            "answer\n\n- Thought: 1.2s\n\nACK",
             "+ Thought: 1.2s\nACK",
         ],
     )
@@ -953,3 +953,11 @@ class TestV1CollapsedThoughtReceipt:
         provider, nonce = self.bound()
         result = provider.extract_last_message_from_script(self.frame(f"{literal}\n{nonce}"))
         assert result == f"{literal}\n{nonce}"
+
+
+@pytest.mark.parametrize("prefix", ["tool summary", "ordinary public text", "⚙ list_siblings"])
+def test_v1_collapsed_header_between_parts_preserves_public_text(prefix):
+    provider, nonce = TestV1CollapsedThoughtReceipt.bound()
+    body = f"{prefix}\n\n+ Thought: 1.2s\n\nValidado ñ, 中文.\n{nonce}"
+    result = provider.extract_last_message_from_script(TestV1CollapsedThoughtReceipt.frame(body))
+    assert result == f"{prefix}\n\n\nValidado ñ, 中文.\n{nonce}"

@@ -1,6 +1,6 @@
 # T091 — Receipt-bound v1 collapsed Thought chrome
 
-Date: 2026-10-23. Status: implementation and focused verification; fresh native acceptance pending.
+Date: 2026-10-23. Status: historical first correction on1d46ccbc; T092 exposed a liveness regression, superseded by T093.
 
 T090 proved the receiver native TEXT is exactly ACK while public LAST contains20characters in3lines. Pinned v1.18.35 source shows hide mode still emits a completed collapsed ReasoningHeader, e.g. + Thought: 1.2s. That15-character row plus a blank line plusACK reproduces the observed20/3shape through the uncorrected extractor. T090 did not retain the literal extra row; source-level reproduction and actual byte-shape evidence must remain distinct.
 
@@ -22,3 +22,5 @@ Final unchanged selection of five provider/receipt/service/recovery modules:205t
 Claude read review `05531a7f693c44a5bcf4f3f05279c0a8` requested a narrower bullet grammar. Root reproduced both valid ordinary bullet failures and applied that exact narrowing; the final combined run includes their regressions. No extra speculative provider change was made. Final diff preserves all old acceptance rules; latest source needs new pins and fresh generation/managed acceptance (T092). The code correction is integrated separately from any live acceptance claim.
 
 Composition verdict: PASS for the bounded extractor correction and its provider/service/recovery scenarios; native-v1 acceptance remains pending until T092. The previous raw-frame literal cause was not directly inspected; the source-proven collapsed-header defect has executable RED/GREEN evidence and will be judged by the unchanged native gates.
+
+The leading-only behavior described above is historical. [T092](validation-t092.md) records its actual failure; [T093](validation-t093.md) corrects the source-level assumption about rendered tool/text part boundaries. No T091 native PASS is claimed from its offline tests.

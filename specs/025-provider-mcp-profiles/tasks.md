@@ -346,3 +346,7 @@ T089 actual: generation PASS; sender Unicode PASS, conditional sender probe untr
 T090 actual: native receiver public TEXT exactly ACK3chars, API20chars/3lines, ownreceipt/privateparent bound; native/APIinequality observed in17.2ms total, all cleanup/operator/source checks PASS. The managed run remains FAILED; T090 comparison complete, T091 corrects a source-reproduced post-native extractor defect. [Evidence](validation-t090.md).
 
 - [ ] T092 [US4] [FR073/SC057] Reanchor the reviewed strong native-v1 generation/managed acceptance to the integrated T091 source and exact diagnostic artifact, verify unchanged gates/507pins/nativebinary/owned PostgreSQL, execute generation then one serial two-message/ACK/AG-UI/restart/cleanup acceptance and preserve its source-bound result.
+
+- [ ] T093 [US4] [FR073/SC057] Correct the T091 leading-only regression reproduced after T092 on native tool/text-part layouts; preserve all public rows and strict active-receipt/expanded-channel guards, add interleaving regressions, review and revalidate.
+
+- [ ] T094 [US4] [FR073/SC057] Run freshly pinned generation and the unchanged strong two-message native-v1 acceptance after T093, preserving all earlier failed receipts and distinguishing bounded current acceptance from global gates.

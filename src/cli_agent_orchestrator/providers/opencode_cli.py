@@ -1755,20 +1755,13 @@ class OpenCodeCliProvider(BaseProvider):
             and self.pending_turn_receipt_state()
             and self._result_has_active_receipt(result)
         ):
-            # Only receipt-bound leading native chrome may be removed. Never
-            # select a final paragraph or reinterpret an expanded reasoning body.
+            # Collapsed reasoning headers are native chrome between rendered
+            # parts, including tool blocks. Keep every other public row in order.
             rows = result.splitlines()
-            first_text = 0
-            while first_text < len(rows) and _V1_COLLAPSED_THOUGHT_PATTERN.fullmatch(
-                rows[first_text].strip()
-            ):
-                first_text += 1
-                if first_text == len(rows) or rows[first_text].strip():
-                    raise ValueError("OpenCode v1 reasoning boundary is ambiguous")
-                while first_text < len(rows) and not rows[first_text].strip():
-                    first_text += 1
+            public_rows = []
+            removed_header = False
             fence = None
-            for row in rows[first_text:]:
+            for index, row in enumerate(rows):
                 fence_match = re.match(r"^[ \t]*(`{3,}|~{3,})", row)
                 if fence_match:
                     marker = fence_match[1]
@@ -1780,14 +1773,24 @@ class OpenCodeCliProvider(BaseProvider):
                         and not row[fence_match.end() :].strip()
                     ):
                         fence = None
+                    public_rows.append(row)
+                    continue
+                if fence is None and _V1_COLLAPSED_THOUGHT_PATTERN.fullmatch(row.strip()):
+                    if (
+                        (index > 0 and rows[index - 1].strip())
+                        or index + 1 == len(rows)
+                        or rows[index + 1].strip()
+                    ):
+                        raise ValueError("OpenCode v1 reasoning boundary is ambiguous")
+                    removed_header = True
                     continue
                 if fence is None and _V1_THOUGHT_HEADER_PATTERN.fullmatch(row.strip()):
-                    raise ValueError("OpenCode v1 reasoning channel is expanded or interleaved")
-            if first_text:
-                result = "\n".join(rows[first_text:]).strip()
+                    raise ValueError("OpenCode v1 reasoning channel is expanded or ambiguous")
+                public_rows.append(row)
+            if removed_header:
+                result = "\n".join(public_rows).strip()
                 if not self._result_has_active_receipt(result) or not any(
-                    row.strip() and not self._result_has_active_receipt(row)
-                    for row in rows[first_text:]
+                    row.strip() and not self._result_has_active_receipt(row) for row in public_rows
                 ):
                     raise ValueError("OpenCode v1 reasoning boundary has no public response")
 
