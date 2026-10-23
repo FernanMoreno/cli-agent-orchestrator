@@ -771,6 +771,14 @@ try:
         raise RuntimeError("private_native_root_mismatch")
     private = roots[0]
     generated = json.loads((private / "opencode.json").read_text())
+    config_stat = (private / "opencode.json").stat()
+    native_config_binding = {
+        "config_sha256": _sha256(private / "opencode.json"),
+        "config_device": config_stat.st_dev,
+        "config_inode": config_stat.st_ino,
+        "ownership_sha256": _sha256(private / ".cao-ownership.json"),
+        "launch_model": model,
+    }
     validate_v1_mcp_configuration(
         private, agent_name=profile, server_name="cao-mcp-server", require_interaction=True
     )
@@ -958,6 +966,13 @@ try:
     )
     if not before_native or not all(journey._process_identity_alive(p) for p in before_native):
         raise RuntimeError("native_identity_unavailable")
+    from native_human_api_worker import native_launch_model_exact
+
+    receipt["native_model_argv_before_restart_exact"] = native_launch_model_exact(
+        before_native, binary, model, profile, journey._process_identity_alive
+    )
+    if not receipt["native_model_argv_before_restart_exact"]:
+        raise RuntimeError("native_model_argv_failed")
     preaudit = common._agui_observation_diagnostics(audit_path, group_id, expected)
     receipt["restart_before_wait_exact"] = (
         barrier_reached(barrier)
@@ -991,9 +1006,17 @@ try:
     receipt["native_provider_mcp_identities_stable"] = after_native == before_native and all(
         journey._process_identity_alive(p) for p in after_native
     )
+    receipt["native_model_argv_after_restart_exact"] = native_launch_model_exact(
+        after_native, binary, model, profile, journey._process_identity_alive
+    )
+    native_config_binding["launch_model_observed"] = (
+        receipt["native_model_argv_before_restart_exact"] is True
+        and receipt["native_model_argv_after_restart_exact"] is True
+    )
     if any(
         receipt.get(key) is not True
         for key in (
+            "native_model_argv_after_restart_exact",
             "old_api_worker_dead",
             "new_api_worker_identity_exact",
             "pending_ledger_before_restart_exact",
@@ -1121,6 +1144,7 @@ try:
                 "model": model,
                 "deadline": deadline,
                 "nonce": probe_nonce,
+                **native_config_binding,
             },
             stream,
         )
@@ -1233,6 +1257,7 @@ try:
 except Exception as exc:
     receipt["error_type"] = type(exc).__name__
     allowed_errors = {
+        "native_model_argv_failed",
         "native_probe_http_failed",
         "native_probe_shape_invalid",
         "http_status",

@@ -59,6 +59,8 @@ FINAL_TRUE = (
     "last_active_receipt_exact",
     "deadline_published_once",
     "native_turn_completed_within_75_seconds",
+    "native_model_argv_before_restart_exact",
+    "native_model_argv_after_restart_exact",
     "native_provider_final_state_exact",
     "journey_within_180_seconds",
     "observer_graceful_seal",
