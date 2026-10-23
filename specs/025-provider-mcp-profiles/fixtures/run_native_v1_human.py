@@ -1124,13 +1124,29 @@ try:
             },
             stream,
         )
+    receipt["native_provider_status"] = "NOT_OBSERVED"
     observed = requests.get(
         server.url + "/__v1/human-status",
         headers={"X-CAOS-Probe": probe_nonce},
         timeout=remaining_timeout(2),
     )
     check_deadline()
-    probe = observed.json() if observed.status_code == 200 else {}
+    receipt["native_provider_probe_http_status"] = observed.status_code
+    if observed.status_code != 200:
+        raise RuntimeError("native_probe_http_failed")
+    probe = observed.json()
+    if type(probe) is not dict:
+        raise RuntimeError("native_probe_shape_invalid")
+    receipt["native_provider_probe_flags"] = {
+        key: probe.get(key) is True
+        for key in (
+            "provider_instance_stable",
+            "provider_major_exact",
+            "provider_model_exact",
+            "deadline_met",
+        )
+    }
+    receipt["native_provider_probe_redacted"] = probe.get("raw_text_exported") is False
     receipt["native_provider_final_state_exact"] = (
         all(
             probe.get(k) is True
@@ -1144,7 +1160,20 @@ try:
         and probe.get("provider_status") in {"IDLE", "COMPLETED"}
         and probe.get("raw_text_exported") is False
     )
-    receipt["native_provider_status"] = probe.get("provider_status", "UNKNOWN")
+    receipt["native_provider_status"] = (
+        probe.get("provider_status")
+        if probe.get("provider_status")
+        in {
+            "IDLE",
+            "COMPLETED",
+            "PROCESSING",
+            "ERROR",
+            "WAITING_USER_ANSWER",
+            "WAITING_QUOTA",
+            "RECONCILE",
+        }
+        else "UNKNOWN"
+    )
     receipt["native_turn_completed_within_75_seconds"] = (
         time.monotonic() < deadline
         and state.get("status") == "completed"
@@ -1204,6 +1233,8 @@ try:
 except Exception as exc:
     receipt["error_type"] = type(exc).__name__
     allowed_errors = {
+        "native_probe_http_failed",
+        "native_probe_shape_invalid",
         "http_status",
         "http_transport",
         "reader_deadline",

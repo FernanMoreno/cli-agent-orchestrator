@@ -1,5 +1,6 @@
 """Private worker status and scope failures without a provider or network call."""
 
+import ast
 import json
 import os
 import tempfile
@@ -14,6 +15,51 @@ from cli_agent_orchestrator.models.terminal import TerminalStatus
 
 
 class WorkerTests(unittest.TestCase):
+    def test_actual_private_probe_registration_precedes_root_static_mount(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from starlette.staticfiles import StaticFiles
+
+        tree = ast.parse(Path(worker.__file__).read_text())
+        main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+        registration = next(
+            n
+            for n in main.body
+            if isinstance(n, ast.Expr)
+            and isinstance(n.value, ast.Call)
+            and (
+                isinstance(n.value.func, ast.Attribute)
+                and n.value.func.attr == "add_api_route"
+                or isinstance(n.value.func, ast.Name)
+                and n.value.func.id == "register_private_probe"
+            )
+        )
+        helpers = [
+            n
+            for n in tree.body
+            if isinstance(n, ast.FunctionDef) and n.name == "register_private_probe"
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            Path(temp, "index.html").write_text("synthetic UI")
+            app = FastAPI()
+            app.mount("/", StaticFiles(directory=temp, html=True), name="web")
+            existing = list(app.router.routes)
+            scope = dict(app=app, observe=lambda: {"provider_status": "COMPLETED"})
+            exec(
+                compile(
+                    ast.Module(body=[*helpers, registration], type_ignores=[]),
+                    worker.__file__,
+                    "exec",
+                ),
+                scope,
+            )
+            client = TestClient(app)
+            response = client.get("/__v1/human-status")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"provider_status": "COMPLETED"})
+            self.assertEqual(client.get("/").text, "synthetic UI")
+            self.assertEqual([r for r in app.router.routes if r in existing], existing)
+
     def test_fresh_provider_status_never_exports_history(self):
         provider = SimpleNamespace(
             _cli_major=1, _model="explicit", get_status=Mock(return_value=TerminalStatus.COMPLETED)

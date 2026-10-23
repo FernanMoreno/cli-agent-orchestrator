@@ -67,6 +67,12 @@ def read_scope(path, root):
     return value
 
 
+def register_private_probe(app, observe):
+    """Keep this worker-only route reachable before the production root UI mount."""
+    app.add_api_route("/__v1/human-status", observe, methods=["GET"], include_in_schema=False)
+    app.router.routes.insert(0, app.router.routes.pop())
+
+
 def main():
     from test.live_provider.interaction_api_worker import (
         _observe_service,
@@ -121,7 +127,7 @@ def main():
             scope["deadline"],
         )
 
-    app.add_api_route("/__v1/human-status", observe, methods=["GET"], include_in_schema=False)
+    register_private_probe(app, observe)
     uvicorn.Server(
         uvicorn.Config(
             app,
