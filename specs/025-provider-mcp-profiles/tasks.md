@@ -360,3 +360,7 @@ T090 actual: native receiver public TEXT exactly ACK3chars, API20chars/3lines, o
 T095/T096 partial actual evidence: prompts exact and sender native agent matched; managed run FAILED on native sender missing Unicode. Receiver identity/ACK/restart remain unverified. See [T096](validation-t096.md). Private originals absent on resumption; public sanitization preserved. These tasks remain open on their complete criteria.
 
 - [x] T098 [US4] [FR077/SC061] Enforce the existing1MiB native-v1 JSON row cap in bytes rather than characters; reproduce multibyte oversize acceptance, test each JSON container and agent boundary/privacy, independently review and verify offline.
+
+- [x] T099 [US4] [FR078/SC062] Implement and test the portable receiver-first native-phase diagnostic coordinator, independent of sender acceptance, with exact turn/profile binding, shared75s and total3s observation budgets, bounded polling/frames, one-shot probes, fixed-code privacy and actual synthetic SQLite composition; independently review and preserve the unverified real integration boundary.
+
+T099 closes the portable offline component only (57 synthetic tests, including26 coordinator tests); T095/T096 remain open. A fresh reviewed live caller still needs to integrate this observer with every unchanged native acceptance gate and fresh generation/source/ownership/PostgreSQL bindings. No historical receipt was recreated.
