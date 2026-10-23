@@ -337,6 +337,7 @@ sid = None
 sockid = None
 owned = set()
 terminal_id = ""
+receiver_id = ""
 failures = set()
 start = time.monotonic()
 oldenv = dict(os.environ)
@@ -371,6 +372,146 @@ def admit(phase):
 
 def _bounded_count(value):
     return value if type(value) is int and 0 <= value <= 2**63 - 1 else None
+
+
+def _mixed_private_observer_source(observer_source, tools):
+    """Bind the copied collaboration observer to its terminal-specific ledger."""
+    if (
+        type(observer_source) is not str
+        or type(tools) not in (list, tuple)
+        or any(type(tool) is not str or not tool for tool in tools)
+    ):
+        raise RuntimeError("mcp_observer_source_invalid")
+    original = "    return install_protocol_observer(low_level_server, Path(raw_path), nonce)"
+    if observer_source.count(original) != 1:
+        raise RuntimeError("mcp_observer_source_mismatch")
+    replacement = (
+        "    terminal = selected_environment.get('CAO_TERMINAL_ID', '')\n"
+        "    if not re.fullmatch(r'[0-9a-f]{8}', terminal):\n"
+        "        raise RuntimeError('mcp_observer_terminal_binding_invalid')\n"
+        "    return install_protocol_observer(\n"
+        "        low_level_server,\n"
+        "        Path(raw_path).with_name(Path(raw_path).name + '-' + terminal),\n"
+        "        nonce,\n"
+        "    )"
+    )
+    adapted = observer_source.replace(original, replacement, 1)
+    return adapted + "\nINTERACTION_TOOLS = frozenset(" + repr(tuple(sorted(tools))) + ")\n"
+
+
+def _observer_path_for_terminal(base_path, terminal, *, mixed):
+    if not mixed:
+        return base_path
+    if type(terminal) is not str or re.fullmatch(r"[0-9a-f]{8}", terminal) is None:
+        raise RuntimeError("mcp_observer_terminal_binding_invalid")
+    return base_path.with_name(base_path.name + "-" + terminal)
+
+
+def _private_protocol_rows(path, expected_nonce):
+    """Read one private observer ledger without exposing its raw event contents."""
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) != 0o600
+            or info.st_size > 131072
+        ):
+            raise RuntimeError("protocol_sidecar_invalid")
+        data = stream.read(131073)
+    rows = [json.loads(line) for line in data.splitlines()]
+    if (
+        len(data) > 131072
+        or not data.endswith(b"\n")
+        or not all(type(row) is dict and row.get("nonce") == expected_nonce for row in rows)
+    ):
+        raise RuntimeError("protocol_sidecar_invalid")
+    return rows
+
+
+def _observer_sidecar_identity(path):
+    try:
+        info = path.lstat()
+    except OSError:
+        return None
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_nlink != 1
+        or stat.S_IMODE(info.st_mode) != 0o600
+    ):
+        return None
+    return info.st_dev, info.st_ino
+
+
+def _receiver_interaction_capability_path(caohome, receiver_id, incarnation_id):
+    if (
+        not isinstance(caohome, Path)
+        or not caohome.is_absolute()
+        or type(receiver_id) is not str
+        or re.fullmatch(r"[0-9a-f]{8}", receiver_id) is None
+        or type(incarnation_id) is not str
+        or re.fullmatch(r"[0-9a-f]{32}", incarnation_id) is None
+    ):
+        raise RuntimeError("receiver_identity_failed")
+    terminal_key = hashlib.sha256(receiver_id.encode("utf-8")).hexdigest()
+    incarnation_key = hashlib.sha256(incarnation_id.encode("utf-8")).hexdigest()
+    return caohome / "tmp" / "interaction-capabilities" / f"{terminal_key}.{incarnation_key}.cap"
+
+
+def _interaction_capability_file_absent(path):
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return True
+    except Exception:
+        return False
+    return False
+
+
+def _receiver_capability_absence_exact(
+    server_environment,
+    capability_file_absent,
+    config_binding,
+    current_config_binding,
+):
+    from cli_agent_orchestrator.providers.mcp_interactions import CAO_INTERACTION_CAPABILITY_FILE
+
+    if (
+        type(server_environment) is not dict
+        or CAO_INTERACTION_CAPABILITY_FILE in server_environment
+        or capability_file_absent is not True
+        or type(config_binding) is not tuple
+        or type(current_config_binding) is not tuple
+        or len(config_binding) != 4
+        or len(current_config_binding) != 4
+        or any(type(value) is not int for value in config_binding[:2])
+        or any(type(value) is not int for value in current_config_binding[:2])
+        or any(type(value) is not str for value in config_binding[2:])
+        or any(type(value) is not str for value in current_config_binding[2:])
+    ):
+        return False
+    return config_binding == current_config_binding
+
+
+def _native_v1_passive_receiver_profile(receiver_case, sender_mcp_definition):
+    """Reproduce T101's explicit CAO collaboration server with an empty filter."""
+    allowed = receiver_case.get("allowed_tools")
+    enabled_tools = receiver_case.get("enabled_mcp_tools")
+    if type(allowed) is not list or allowed or type(enabled_tools) is not list or enabled_tools:
+        raise RuntimeError("native_case_contract_mismatch")
+    receiver_mcp_definition = {**sender_mcp_definition, "enabled_tools": []}
+    return frontmatter.Post(
+        receiver_case["prompt"],
+        name="v1-receiver",
+        description="Private native passive receiver",
+        provider="opencode_cli",
+        role="developer",
+        allowedTools=allowed,
+        mcpServers={"cao-mcp-server": receiver_mcp_definition},
+    )
 
 
 def _read_deferred_receiver_variant(
@@ -848,9 +989,7 @@ try:
         observer_directory = root / "mixed-observer"
         observer_directory.mkdir(mode=0o700)
         observer_source = (repo / "test/live_provider/opencode_mcp_observer.py").read_text()
-        observer_source += (
-            "\nINTERACTION_TOOLS = frozenset(" + repr(tuple(sorted(case["tools"]))) + ")\n"
-        )
+        observer_source = _mixed_private_observer_source(observer_source, case["tools"])
         observer_file = observer_directory / "opencode_mcp_observer.py"
         observer_file.write_text(observer_source)
         observer_file.chmod(0o600)
@@ -947,15 +1086,7 @@ try:
         receiver_source = root / "v1-receiver.md"
         receiver_source.write_text(
             frontmatter.dumps(
-                frontmatter.Post(
-                    receiver_case["prompt"],
-                    name="v1-receiver",
-                    description="Private native passive receiver",
-                    provider="opencode_cli",
-                    role="developer",
-                    allowedTools=[],
-                    mcpServers={},
-                ),
+                _native_v1_passive_receiver_profile(receiver_case, mcp_definition),
                 sort_keys=False,
             )
         )
@@ -1262,11 +1393,47 @@ try:
             _sha256(receiver_root / "opencode.json"),
             _sha256(receiver_root / ".cao-ownership.json"),
         )
+        from cli_agent_orchestrator.utils.mcp_tool_policy import (
+            MCP_TOOL_FILTER_ENV,
+            MCP_TOOL_PROFILE_ENV,
+        )
+
+        receiver_mcp = receiver_config.get("mcp")
+        if type(receiver_mcp) is not dict or set(receiver_mcp) != {"cao-mcp-server"}:
+            raise RuntimeError("receiver_identity_failed")
+        receiver_mcp_server = receiver_mcp["cao-mcp-server"]
+        if type(receiver_mcp_server) is not dict:
+            raise RuntimeError("receiver_identity_failed")
+        receiver_mcp_environment = receiver_mcp_server.get("environment")
+        if type(receiver_mcp_environment) is not dict:
+            raise RuntimeError("receiver_identity_failed")
+        receiver_capability_path = _receiver_interaction_capability_path(
+            caohome, receiver_id, rs.get("session_incarnation_id")
+        )
+        receiver_capability_absent_at_config = _interaction_capability_file_absent(
+            receiver_capability_path
+        )
+        receiver_capability_absence_exact_at_config = _receiver_capability_absence_exact(
+            receiver_mcp_environment,
+            receiver_capability_absent_at_config,
+            receiver_config_binding,
+            receiver_config_binding,
+        )
+        validate_v1_mcp_configuration(
+            receiver_root,
+            agent_name="v1-receiver",
+            server_name="cao-mcp-server",
+            require_interaction=False,
+        )
         receipt["receiver_profile_configuration_exact"] = (
             receiver_config.get("model") == model
             and set(receiver_config.get("agent", {})) == {"v1-receiver"}
             and receiver_config["agent"]["v1-receiver"]["prompt"] == receiver_case["prompt"]
-            and not receiver_config.get("mcp")
+            and receiver_mcp_server.get("type") == "local"
+            and receiver_mcp_server.get("enabled") is True
+            and receiver_mcp_environment.get(MCP_TOOL_PROFILE_ENV) == "collaboration"
+            and receiver_mcp_environment.get(MCP_TOOL_FILTER_ENV) == "[]"
+            and receiver_capability_absence_exact_at_config is True
             and receiver_config.get("permission", {}).get("*") == "deny"
             and receiver.get("allowed_tools") == []
         )
@@ -1300,6 +1467,20 @@ try:
             return result, response.json()
 
         def receiver_ack_snapshot(expected_identity, expected_counts, phase):
+            if phase not in {"before_restart", "final"}:
+                raise RuntimeError("mixed_receiver_ack_failed")
+            status_field = "receiver_" + phase + "_terminal_status"
+            ack_field = "receiver_" + phase + "_ack_text_exact"
+            receipt_check_field = "receiver_" + phase + "_receipt_check_valid"
+            allowed_statuses = {
+                "idle",
+                "completed",
+                "processing",
+                "error",
+                "waiting_user_answer",
+                "waiting_quota",
+                "reconcile",
+            }
             while time.monotonic() < min(deadline, start + 180):
                 try:
                     body = json.loads(
@@ -1320,6 +1501,11 @@ try:
                     if response.status_code != 200:
                         raise RuntimeError("mixed_receiver_ack_failed")
                     state = response.json()
+                    status = state.get("status")
+                    receipt[status_field] = (
+                        status if type(status) is str and status in allowed_statuses else "UNKNOWN"
+                    )
+                    receipt[ack_field] = body.get("mode") == "last" and body.get("output") == "ACK"
                     counts = (state.get("turn_sequence"), state.get("turn_completed"))
                     if any(type(value) is not int or value < 0 for value in counts) or any(
                         value > limit for value, limit in zip(counts, expected_counts)
@@ -1333,6 +1519,7 @@ try:
                         and state.get("status") == "completed"
                         and counts == expected_counts
                     ):
+                        receipt[receipt_check_field] = False
                         with connect(targets.main, readonly=True) as con:
                             rows = con.execute(
                                 "SELECT generation,receipt_sha256,result_sha256,phase FROM terminal_turn_receipts WHERE terminal_id=%s",
@@ -1356,6 +1543,7 @@ try:
                                 )
                             )
                         )
+                        receipt[receipt_check_field] = valid is True
                         if not valid:
                             raise RuntimeError("mixed_receiver_ack_failed")
                         check_deadline()
@@ -1911,52 +2099,146 @@ try:
     outer_remaining = start + 180 - time.monotonic()
     if outer_remaining <= 0:
         raise RuntimeError("human_journey_deadline")
-    response = requests.post(
-        server.url + "/terminals/" + terminal_id + "/exit", timeout=min(15, outer_remaining)
-    )
-    receipt["graceful_exit_http_status"] = response.status_code
-    seal_stop = min(time.monotonic() + 10, start + 180)
-    while (
-        time.monotonic() < seal_stop
-        and not observation.with_name(observation.name + ".complete").exists()
-    ):
-        time.sleep(0.1)
-    observed_protocol = observer_module.read_protocol_observations(
-        observation, expected_nonce=nonce
-    )
-    receipt["observer_graceful_seal"] = (
-        response.status_code == 200
-        and _graceful_seals_seen_by_deadline(
-            observed_protocol.get("mcp_observer_shutdown_observed") is True,
-            time.monotonic(),
-            seal_stop,
+    if mixed:
+        sender_observation = _observer_path_for_terminal(observation, terminal_id, mixed=True)
+        receiver_observation = _observer_path_for_terminal(observation, receiver_id, mixed=True)
+        response = requests.post(
+            server.url + "/terminals/" + terminal_id + "/exit",
+            timeout=min(15, outer_remaining),
         )
-    )
-    receipt["protocol_exact"] = (mixed_contract if mixed else human).protocol_exact(
-        observed_protocol
-    )
-    with os.fdopen(
-        os.open(observation, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb"
-    ) as stream:
-        info = os.fstat(stream.fileno())
+        receipt["graceful_exit_http_status"] = response.status_code
+        outer_remaining = start + 180 - time.monotonic()
+        if outer_remaining <= 0:
+            raise RuntimeError("human_journey_deadline")
+        receiver_response = requests.post(
+            server.url + "/terminals/" + receiver_id + "/exit",
+            timeout=min(15, outer_remaining),
+        )
+        receipt["receiver_graceful_exit_http_status"] = receiver_response.status_code
+        seal_stop = min(time.monotonic() + 10, start + 180)
+        sender_seal = sender_observation.with_name(sender_observation.name + ".complete")
+        receiver_seal = receiver_observation.with_name(receiver_observation.name + ".complete")
+        while time.monotonic() < seal_stop and not (
+            sender_seal.exists() and receiver_seal.exists()
+        ):
+            time.sleep(0.1)
+        observed_protocol = observer_module.read_protocol_observations(
+            sender_observation, expected_nonce=nonce
+        )
+        receiver_protocol = observer_module.read_protocol_observations(
+            receiver_observation, expected_nonce=nonce
+        )
+        seal_observed_at = time.monotonic()
+        receipt["observer_graceful_seal"] = (
+            response.status_code == 200
+            and _graceful_seals_seen_by_deadline(
+                observed_protocol.get("mcp_observer_shutdown_observed") is True,
+                seal_observed_at,
+                seal_stop,
+            )
+        )
+        receipt["receiver_observer_graceful_seal_exact"] = (
+            receiver_response.status_code == 200
+            and _graceful_seals_seen_by_deadline(
+                receiver_protocol.get("mcp_observer_shutdown_observed") is True,
+                seal_observed_at,
+                seal_stop,
+            )
+        )
+        receipt["protocol_exact"] = mixed_contract.protocol_exact(observed_protocol)
+        sender_rows = _private_protocol_rows(sender_observation, nonce)
+        receiver_rows = _private_protocol_rows(receiver_observation, nonce)
+        receipt["every_catalog_exact"] = mixed_contract.catalogs_exact(sender_rows)
+        receipt["receiver_protocol_exact"] = mixed_contract.receiver_protocol_exact(
+            receiver_protocol
+        )
+        receipt["receiver_catalogs_empty_exact"] = mixed_contract.receiver_catalogs_empty_exact(
+            receiver_rows, receiver_protocol
+        )
+        sender_identity = _observer_sidecar_identity(sender_observation)
+        receiver_identity = _observer_sidecar_identity(receiver_observation)
+        receipt["receiver_observer_isolation_exact"] = (
+            mixed_contract.observer_paths_exact(
+                str(observation),
+                str(sender_observation),
+                str(receiver_observation),
+                terminal_id,
+                receiver_id,
+            )
+            and not observation.exists()
+            and sender_identity is not None
+            and receiver_identity is not None
+            and sender_identity != receiver_identity
+        )
+        receiver_final_config_info = (receiver_root / "opencode.json").stat()
+        receiver_config_current_binding = (
+            receiver_final_config_info.st_dev,
+            receiver_final_config_info.st_ino,
+            _sha256(receiver_root / "opencode.json"),
+            _sha256(receiver_root / ".cao-ownership.json"),
+        )
+        receiver_capability_absent_at_final = _interaction_capability_file_absent(
+            receiver_capability_path
+        )
+        receipt["receiver_no_runtime_human_capability_exact"] = (
+            receipt.get("receiver_profile_configuration_exact") is True
+            and _receiver_capability_absence_exact(
+                receiver_mcp_environment,
+                receiver_capability_absent_at_config is True
+                and receiver_capability_absent_at_final is True,
+                receiver_config_binding,
+                receiver_config_current_binding,
+            )
+            and receipt["receiver_protocol_exact"] is True
+            and receipt["receiver_catalogs_empty_exact"] is True
+        )
+        receipt["protocol_observation"] = observed_protocol
+        receipt["receiver_protocol_observation"] = receiver_protocol
+    else:
+        response = requests.post(
+            server.url + "/terminals/" + terminal_id + "/exit", timeout=min(15, outer_remaining)
+        )
+        receipt["graceful_exit_http_status"] = response.status_code
+        seal_stop = min(time.monotonic() + 10, start + 180)
+        while (
+            time.monotonic() < seal_stop
+            and not observation.with_name(observation.name + ".complete").exists()
+        ):
+            time.sleep(0.1)
+        observed_protocol = observer_module.read_protocol_observations(
+            observation, expected_nonce=nonce
+        )
+        receipt["observer_graceful_seal"] = (
+            response.status_code == 200
+            and _graceful_seals_seen_by_deadline(
+                observed_protocol.get("mcp_observer_shutdown_observed") is True,
+                time.monotonic(),
+                seal_stop,
+            )
+        )
+        receipt["protocol_exact"] = human.protocol_exact(observed_protocol)
+        with os.fdopen(
+            os.open(observation, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb"
+        ) as stream:
+            info = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.getuid()
+                or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) != 0o600
+                or info.st_size > 131072
+            ):
+                raise RuntimeError("protocol_sidecar_invalid")
+            data = stream.read(131073)
+        rows = [json.loads(line) for line in data.splitlines()]
         if (
-            not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.getuid()
-            or info.st_nlink != 1
-            or stat.S_IMODE(info.st_mode) != 0o600
-            or info.st_size > 131072
+            len(data) > 131072
+            or not data.endswith(b"\n")
+            or not all(type(row) is dict and row.get("nonce") == nonce for row in rows)
         ):
             raise RuntimeError("protocol_sidecar_invalid")
-        data = stream.read(131073)
-    rows = [json.loads(line) for line in data.splitlines()]
-    if (
-        len(data) > 131072
-        or not data.endswith(b"\n")
-        or not all(type(row) is dict and row.get("nonce") == nonce for row in rows)
-    ):
-        raise RuntimeError("protocol_sidecar_invalid")
-    receipt["every_catalog_exact"] = (mixed_contract if mixed else human).catalogs_exact(rows)
-    receipt["protocol_observation"] = observed_protocol
+        receipt["every_catalog_exact"] = human.catalogs_exact(rows)
+        receipt["protocol_observation"] = observed_protocol
     receipt["journey_seconds"] = time.monotonic() - start
     receipt["journey_within_180_seconds"] = receipt["journey_seconds"] <= 180
 
@@ -1978,6 +2260,10 @@ except Exception as exc:
         "http_header_limit",
         "created_terminal_target_invalid",
         "protocol_sidecar_invalid",
+        "mcp_observer_source_invalid",
+        "mcp_observer_source_mismatch",
+        "mcp_observer_terminal_binding_invalid",
+        "native_case_contract_mismatch",
         "invalid_native_send_phase",
         "postgres_identity_mismatch",
         "private_api_route_invalid",
@@ -2276,9 +2562,26 @@ finally:
         )
     if "observation" in globals() and observer_module is not None:
         with contextlib.suppress(Exception):
-            receipt["protocol_observation"] = observer_module.read_protocol_observations(
-                observation, expected_nonce=nonce
-            )
+            if mixed and terminal_id:
+                sender_observation = _observer_path_for_terminal(
+                    observation, terminal_id, mixed=True
+                )
+                receipt["protocol_observation"] = observer_module.read_protocol_observations(
+                    sender_observation, expected_nonce=nonce
+                )
+                if receiver_id:
+                    receiver_observation = _observer_path_for_terminal(
+                        observation, receiver_id, mixed=True
+                    )
+                    receipt["receiver_protocol_observation"] = (
+                        observer_module.read_protocol_observations(
+                            receiver_observation, expected_nonce=nonce
+                        )
+                    )
+            else:
+                receipt["protocol_observation"] = observer_module.read_protocol_observations(
+                    observation, expected_nonce=nonce
+                )
     receipt["tmux_cleanup"] = receipt.get("tmux_processes_clean") is True
     receipt["cleanup_status"] = (
         "complete"

@@ -1,0 +1,32 @@
+{
+  "acceptance_claimed": false,
+  "elapsed_seconds": 171.2143655330001,
+  "error_code": "receiver_deferred_initialization_failed",
+  "error_type": "RuntimeError",
+  "execution_gates_closed": true,
+  "generation_pass_seconds": 16.566076423001505,
+  "global_acceptance_claimed": false,
+  "harness_blocker_reproduced_offline": "shared exclusive observer path plus receiver descriptor differs from canonical T101; T109 corrects the control, no product-change claim",
+  "minimum_admission_mib": 9707,
+  "native_model_input_started": false,
+  "operator_auth_unchanged": true,
+  "owned_writers_DB_private_state_clean": true,
+  "private_receipt_sha256": "13f12f5a9d1cb6718c2bc9559b5dbbb65075cc4721576ffe8beb53169ccad138",
+  "receiver_create_http_status": 201,
+  "receiver_create_seconds": 0.089,
+  "receiver_database_read_error_samples": 0,
+  "receiver_deferred_failure_present": true,
+  "receiver_initialized_variant_samples": 0,
+  "receiver_startup_sample_count": 166,
+  "receiver_startup_status_counts": {
+    "error": 1,
+    "idle": 150,
+    "unknown": 15
+  },
+  "result": "FAILED",
+  "schema": "caos.spec025.t103.r2.sanitized.v1",
+  "shared_owned_pg_retained": true,
+  "source_head": "7c774836e63aa2b7e895d9a9d86e2a794e5f2679",
+  "source_literal_initial_composer_timeout": false,
+  "source_literal_v1_mcp_discovery_timeout": true
+}

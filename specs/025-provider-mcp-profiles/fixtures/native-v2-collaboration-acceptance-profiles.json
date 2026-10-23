@@ -12,10 +12,11 @@
     "receipt": "The public receipt is redacted; private raw terminal and installer evidence is stored separately under the owned evidence directory.",
     "operator_auth_material": "Operator auth files are fingerprinted but are never copied into raw evidence.",
     "credential_snapshot_cleanup": "The private OpenCode credential database and SQLite WAL/SHM sidecars are removed only with confirmed owned-process teardown. If any remain or their state is unknown, credentials_cleanup_deferred is true, retained_private_state contains only status labels, and acceptance cannot pass.",
-    "pre_runtime_failure_cleanup": "Before session creation, cleanup may remove the private root only after proving no API, tmux, PostgreSQL context, credential snapshot, capture, or owned process was started and current private provider-root and capability counts are both zero. Writer, source, operator, binary, and interpreter proofs still apply; these counts are recorded separately from any post-delete counts."
+    "pre_runtime_failure_cleanup": "Before session creation, cleanup may remove the private root only after proving no API, tmux, PostgreSQL context, credential snapshot, capture, or owned process was started and current private provider-root and capability counts are both zero. Writer, source, operator, binary, and interpreter proofs still apply; these counts are recorded separately from any post-delete counts.",
+    "capability_gate_diagnostics": "The receipt contains only fixed booleans for trusted API context, current source, exact owner and kind, capability hash match, and tool fingerprint match when observed from the existing gate reads. It makes no extra query and never emits a Principal ID, token, or raw owner value. A pre-row context failure retains its fixed GateError code and only records trusted_api_context=false."
   },
   "model": "opencode-go/glm-5.3-flash",
-  "authentication_scope": "Only this selected OpenCode Go model lane in an isolated CAO_AUTH_MODE=off run with an unowned principal; this case makes no cross-provider, OAuth, or global authentication claim",
+  "authentication_scope": "Only this selected OpenCode Go model lane in an isolated run with CAO_AUTH_MODE=off and the production is_auth_enabled() check false in the sanitized environment. A sealed local_operator principal for the effective UID is derived by the current trusted loopback request path and bound to the authenticated_creation source row; the current API worker invocation and 127.0.0.1 endpoint are checked. This makes no cross-provider, OAuth, or global authentication claim",
   "native_grant_semantics": "The production OpenCode v2 direct MCP server grant is a wildcard for the selected direct profile, and CAO's native permission translator hard-allows the OpenCode built-ins skill and todowrite. With CodeMode exactly false, the case does not claim a per-tool client deny from the wildcard; it requires no explicit execute rule, all eight sender CAO MCP names, zero receiver CAO MCP names, and no tool names beyond the profile plus those two source-approved built-ins.",
   "native_model_request_observation": {
     "boundary": "OpenCode http.request hook for the selected provider/model primary request",
@@ -54,7 +55,7 @@
       "native_tool_profile": "collaboration",
       "enabled_mcp_tools": null,
       "runtime_capability": "Required; current InteractionService source bound to exact sender terminal and incarnation",
-      "capability_owner": "Unowned principal in the isolated CAO_AUTH_MODE=off lane; private file, terminal, incarnation, profile, current source and tool fingerprint are run-owned",
+      "capability_owner": "Exact sealed local_operator principal from the effective UID, derived only when production is_auth_enabled() is false and from a current verified 127.0.0.1 API worker. InteractionService stores owner_source=authenticated_creation. Observer checks owner ID equality without emitting the ID. Private file, terminal, incarnation, profile, current source and tool fingerprint retain their separate run-ownership checks",
       "legacy_three_tool_marker": false,
       "prompt": "This profile is for a machine-to-machine transport diagnostic. Use exactly one cao-mcp-server_list_siblings call, then exactly one cao-mcp-server_send_message call for each requested delivery phase. Do not use any human-interaction, delegation, supervision, or memory tool."
     },
@@ -81,6 +82,9 @@
     "production_api_worker_real_lifespan": true,
     "production_api_worker_invocation_exact": true,
     "production_runtime_capability_issuance": true,
+    "production_auth_off_loopback_owner_path_verified": true,
+    "sender_capability_source_sealed_local_operator_exact_owner": true,
+    "sender_capability_failure_diagnostics_allowlisted_boolean_only": true,
     "production_model_launch_uses_selected_model": true,
     "each_current_working_directory_equals_its_distinct_private_role_workspace": true,
     "each_private_role_workspace_is_a_run_owned_project_with_its_own_nonce_pinned_offer_observer": true,

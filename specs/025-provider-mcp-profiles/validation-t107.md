@@ -1,6 +1,6 @@
 # T107 — bounded deferred receiver initialization
 
-Status: correction integrated and offline verified; fresh generation/mixed native execution pending. T107/T103 remain open. T103 R1 remains FAILED and immutable.
+Status: bounded control correction and fresh real diagnostic completed. T107 is complete on that scope; T103 acceptance remains open. T103 R1 remains FAILED and immutable.
 
 The mixed receiver uses the production defer_init=true API. A returned201 provides cleanup identity, never readiness. Before any model input the runner polls its exact terminal and owned PostgreSQL row, requiring provider_variant=opencode-v1 plus three consecutive idle/completed0/0 samples. Current production source persists that variant only after provider.initialize() returns; initial creation leaves it NULL. No caller/callback is added. Receiver configuration and explicit model/native identity checks follow readiness. The complete receiver_initialization_complete_exact flag is mandatory in the mixed final contract; T102's default restricted flow is unchanged.
 
@@ -13,3 +13,7 @@ Claude read-only source review found no false-green/blocking startup bug; the le
 This fixes the control/observation mismatch. It does not prove the concrete cause of the prior native startup delay or establish a successful mixed journey. The unchanged180s journey/75s model/6144MiB admission and strict questions/message/ACK/restart/cleanup predicates still require one freshly source-bound serial case. No product API/schema change, auth renewal or historical job operation is introduced. Final source/composition checkpoint and actual results are recorded separately below when available.
 
 Integrated final checkpoint: Import Linter412 files/1834 dependencies,5 kept/0 broken; final four-file diff and unchanged T102 branch reviewed. Composition boundary is production deferred initialization→durable PostgreSQL variant marker→bounded HTTP/readonly child observation→native configuration/model/input gate→owned cleanup. No schema/API/operation grant changed; private adapters reuse the existing framing/reaping contracts. Executable real PostgreSQL/native acceptance is still required. Graphify source relationships were verified directly and unrelated generated files retained. No vault copy is needed for routine fixture details. Verdict: bounded offline correction PASS; actual mixed acceptance PENDING.
+
+Actual R2 completed on7c774836: fresh generation PASS16.566s, deferred HTTP 201 in 0.089 s and166 bounded samples, followed by the correctly rejected source-specific MCP discovery failure before model input. All resource/credential/source cleanup passed. This proves the controller distinguishes idle from initialized, not a successful mixed journey. See [R2](validation-t103-r2-native.json). The source-reproduced observer/profile control defect is handled separately in T109.
+
+R2 cleanup scope: owned writers, isolated case database and private state were cleaned. The verified parent PostgreSQL container remains owned and retained for the next serial case; parent service shutdown is not claimed here.

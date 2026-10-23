@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -203,10 +205,16 @@ def test_profile_fixture_has_separate_unfiltered_full_eight_surface():
         "recorded separately from any post-delete counts"
         in case["evidence_handling"]["pre_runtime_failure_cleanup"]
     )
+    assert (
+        "never emits a Principal ID, token, or raw owner value"
+        in case["evidence_handling"]["capability_gate_diagnostics"]
+    )
     assert case["authentication_scope"].startswith("Only this selected OpenCode Go model lane")
     assert (
         "no cross-provider, OAuth, or global authentication claim" in case["authentication_scope"]
     )
+    assert "owner_source=authenticated_creation" in case["profiles"]["sender"]["capability_owner"]
+    assert "unowned principal" not in case["authentication_scope"]
     assert sender_allowed == case["profiles"]["sender"]["allowed_tools"] == ["@cao-mcp-server"]
     assert sender_filter is None
     assert case["profiles"]["sender"]["enabled_mcp_tools"] is None
@@ -220,6 +228,15 @@ def test_profile_fixture_has_separate_unfiltered_full_eight_surface():
     assert case["required_checks"]["production_api_worker_real_lifespan"] is True
     assert case["required_checks"]["production_api_worker_invocation_exact"] is True
     assert case["required_checks"]["production_runtime_capability_issuance"] is True
+    assert case["required_checks"]["production_auth_off_loopback_owner_path_verified"] is True
+    assert (
+        case["required_checks"]["sender_capability_failure_diagnostics_allowlisted_boolean_only"]
+        is True
+    )
+    assert (
+        case["required_checks"]["sender_capability_source_sealed_local_operator_exact_owner"]
+        is True
+    )
     assert (
         case["required_checks"][
             "each_current_working_directory_equals_its_distinct_private_role_workspace"
@@ -604,12 +621,48 @@ def test_open_code_mcp_empty_operation_scope_keeps_only_source_hard_allowed_buil
         assert all(permissions[name] == "deny" for name in set(ALL_OPENCODE_TOOLS) - optional)
 
 
-def test_runtime_capability_is_bound_to_exact_current_sender_source():
+def _auth_off_loopback_creation_principal(monkeypatch):
+    from starlette.requests import Request
+
+    from cli_agent_orchestrator.api import interactions
+    from cli_agent_orchestrator.security import auth
+
+    monkeypatch.setenv("CAO_AUTH_MODE", "off")
+    monkeypatch.delenv("AUTH0_DOMAIN", raising=False)
+    monkeypatch.delenv("CAO_AUTH_JWKS_URI", raising=False)
+    monkeypatch.setattr(interactions, "get_local_bearer", lambda: None)
+    app = SimpleNamespace(state=SimpleNamespace(browser_auth_config={"enabled": False}))
+    request = Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/sessions",
+            "raw_path": b"/sessions",
+            "query_string": b"",
+            "headers": [],
+            "server": ("127.0.0.1", 45678),
+            "client": ("127.0.0.1", 45679),
+            "app": app,
+        }
+    )
+    principal = asyncio.run(interactions.optional_creation_principal(request))
+    assert auth.is_auth_enabled() is False
+    assert auth.is_verified_principal(principal)
+    assert principal.kind == "local_operator"
+    assert principal.issuer == "urn:cao:local-operator"
+    assert principal.subject == str(os.geteuid())
+    return principal, auth
+
+
+def test_runtime_capability_is_bound_to_exact_current_sender_source(monkeypatch):
     from cli_agent_orchestrator.services.interactions.capability import (
         canonical_tool_fingerprint,
         capability_hash,
     )
 
+    principal, auth = _auth_off_loopback_creation_principal(monkeypatch)
     token = "opaque-test-capability-string-long-enough"
     terminal = {
         "id": "a1b2c3d4",
@@ -635,13 +688,29 @@ def test_runtime_capability_is_bound_to_exact_current_sender_source():
         "execution_mode": "local",
         "session_name": terminal["session_name"],
         "profile_revision": terminal["agent_profile"],
-        "owner_principal_id": None,
-        "owner_source": "unowned",
+        "owner_principal_id": principal.id,
+        "owner_source": "authenticated_creation",
     }
 
+    source_diagnostics = {}
     assert runner._capability_source_binding_matches(
-        actor, status, source, terminal, token, capability_hash, canonical_tool_fingerprint
+        actor,
+        status,
+        source,
+        terminal,
+        token,
+        capability_hash,
+        canonical_tool_fingerprint,
+        principal,
+        diagnostics=source_diagnostics,
     )
+    assert source_diagnostics == {
+        "source_current": True,
+        "owner_exact": True,
+        "kind_exact": True,
+        "capability_hash_matches": True,
+        "tool_fingerprint_matches": True,
+    }
     mismatched_source = {**source, "incarnation_id": "2" * 32}
     assert not runner._capability_source_binding_matches(
         actor,
@@ -651,6 +720,7 @@ def test_runtime_capability_is_bound_to_exact_current_sender_source():
         token,
         capability_hash,
         canonical_tool_fingerprint,
+        principal,
     )
     mismatched_actor = SimpleNamespace(
         terminal_id="ffffffff", incarnation_id=terminal["session_incarnation_id"]
@@ -663,15 +733,246 @@ def test_runtime_capability_is_bound_to_exact_current_sender_source():
         token,
         capability_hash,
         canonical_tool_fingerprint,
+        principal,
     )
     stale = SimpleNamespace(state="stale_turn", capability_available=True)
+    stale_diagnostics = {}
     assert not runner._capability_source_binding_matches(
-        actor, stale, source, terminal, token, capability_hash, canonical_tool_fingerprint
+        actor,
+        stale,
+        source,
+        terminal,
+        token,
+        capability_hash,
+        canonical_tool_fingerprint,
+        principal,
+        diagnostics=stale_diagnostics,
     )
+    assert stale_diagnostics["source_current"] is False
+    wrong_hash_diagnostics = {}
+    assert not runner._capability_source_binding_matches(
+        actor,
+        status,
+        {**source, "capability_hash": "0" * 64},
+        terminal,
+        token,
+        capability_hash,
+        canonical_tool_fingerprint,
+        principal,
+        diagnostics=wrong_hash_diagnostics,
+    )
+    assert wrong_hash_diagnostics["capability_hash_matches"] is False
+    assert wrong_hash_diagnostics["tool_fingerprint_matches"] is True
+    wrong_fingerprint_diagnostics = {}
+    assert not runner._capability_source_binding_matches(
+        actor,
+        status,
+        {**source, "allowed_tool_fingerprint": "f" * 64},
+        terminal,
+        token,
+        capability_hash,
+        canonical_tool_fingerprint,
+        principal,
+        diagnostics=wrong_fingerprint_diagnostics,
+    )
+    assert wrong_fingerprint_diagnostics["capability_hash_matches"] is True
+    assert wrong_fingerprint_diagnostics["tool_fingerprint_matches"] is False
     wrong_owner = {**source, "owner_principal_id": "unexpected"}
+    wrong_owner_diagnostics = {}
     assert not runner._capability_source_binding_matches(
-        actor, status, wrong_owner, terminal, token, capability_hash, canonical_tool_fingerprint
+        actor,
+        status,
+        wrong_owner,
+        terminal,
+        token,
+        capability_hash,
+        canonical_tool_fingerprint,
+        principal,
+        diagnostics=wrong_owner_diagnostics,
     )
+    assert wrong_owner_diagnostics == {
+        "source_current": True,
+        "owner_exact": False,
+        "kind_exact": True,
+        "capability_hash_matches": True,
+        "tool_fingerprint_matches": True,
+    }
+    unowned_source = {**source, "owner_principal_id": None, "owner_source": "unowned"}
+    assert not runner._capability_source_binding_matches(
+        actor,
+        status,
+        unowned_source,
+        terminal,
+        token,
+        capability_hash,
+        canonical_tool_fingerprint,
+        principal,
+    )
+    foreign_auth_principal = auth._verified_principal(
+        "urn:foreign-auth", "different-subject", [], "jwt"
+    )
+    assert auth.is_verified_principal(foreign_auth_principal)
+    assert not runner._capability_source_binding_matches(
+        actor,
+        status,
+        {**source, "owner_principal_id": foreign_auth_principal.id},
+        terminal,
+        token,
+        capability_hash,
+        canonical_tool_fingerprint,
+        principal,
+    )
+    unsealed_lookalike = SimpleNamespace(
+        id=principal.id,
+        kind="local_operator",
+        issuer="urn:cao:local-operator",
+        subject=str(os.geteuid()),
+    )
+    assert not runner._capability_source_binding_matches(
+        actor,
+        status,
+        source,
+        terminal,
+        token,
+        capability_hash,
+        canonical_tool_fingerprint,
+        unsealed_lookalike,
+    )
+    wrong_owner_kind = {**source, "owner_source": "work_principal"}
+    wrong_kind_diagnostics = {}
+    assert not runner._capability_source_binding_matches(
+        actor,
+        status,
+        wrong_owner_kind,
+        terminal,
+        token,
+        capability_hash,
+        canonical_tool_fingerprint,
+        principal,
+        diagnostics=wrong_kind_diagnostics,
+    )
+    assert wrong_kind_diagnostics["owner_exact"] is True
+    assert wrong_kind_diagnostics["kind_exact"] is False
+    missing_source_diagnostics = {}
+    assert not runner._capability_source_binding_matches(
+        actor,
+        status,
+        None,
+        terminal,
+        token,
+        capability_hash,
+        canonical_tool_fingerprint,
+        principal,
+        diagnostics=missing_source_diagnostics,
+    )
+    assert missing_source_diagnostics == {"source_current": False}
+
+
+def test_capability_diagnostics_allowlist_never_emits_identity_or_secret_values():
+    canary = "synthetic-private-principal-id-or-token"
+    candidate = {
+        **{field: True for field in runner.CAPABILITY_BINDING_DIAGNOSTIC_FIELDS},
+        "principal_id": canary,
+        "capability_token": canary,
+        "owner_source": "authenticated_creation",
+        "owner_principal_id": canary,
+    }
+
+    safe = runner._safe_capability_binding_diagnostics(candidate)
+    assert set(safe) == set(runner.CAPABILITY_BINDING_DIAGNOSTIC_FIELDS)
+    assert all(type(value) is bool for value in safe.values())
+    assert canary not in json.dumps(safe)
+    assert "owner_source" not in safe
+    assert "owner_principal_id" not in safe
+    receipt = {}
+    runner._record_capability_binding_diagnostics(receipt, candidate)
+    assert receipt == {"sender_capability_binding_diagnostics": safe}
+    assert canary not in json.dumps(receipt)
+
+    context_failure_receipt = {}
+    runner._record_capability_binding_diagnostics(
+        context_failure_receipt,
+        {"trusted_api_context": False, "principal_id": canary, "token": canary},
+    )
+    assert context_failure_receipt == {
+        "sender_capability_binding_diagnostics": {"trusted_api_context": False}
+    }
+
+
+def test_local_operator_identity_requires_current_auth_off_loopback_api_worker(monkeypatch):
+    monkeypatch.setenv("CAO_AUTH_MODE", "off")
+    monkeypatch.delenv("AUTH0_DOMAIN", raising=False)
+    monkeypatch.delenv("CAO_AUTH_JWKS_URI", raising=False)
+    python_path = Path(sys.executable)
+    process = SimpleNamespace(
+        pid=12345,
+        args=[
+            str(python_path),
+            "-m",
+            "cli_agent_orchestrator.api.main",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "45678",
+        ],
+        poll=lambda: None,
+    )
+    server = SimpleNamespace(url="http://127.0.0.1:45678", port=45678)
+    identity = SimpleNamespace(pid=process.pid, uid=os.getuid(), start_time=12_345)
+
+    trusted_context_diagnostics = {}
+    principal = runner._auth_off_loopback_creation_principal(
+        server,
+        process,
+        identity,
+        python_path,
+        diagnostics=trusted_context_diagnostics,
+    )
+    from cli_agent_orchestrator.security.auth import is_verified_principal
+
+    assert is_verified_principal(principal)
+    assert principal.kind == "local_operator"
+    assert principal.subject == str(os.geteuid())
+    assert trusted_context_diagnostics == {"trusted_api_context": True}
+
+    assert runner._api_worker_invocation_matches(process, server, python_path)
+    non_loopback_process = SimpleNamespace(
+        args=list(process.args), pid=process.pid, poll=process.poll
+    )
+    non_loopback_process.args[4] = "0.0.0.0"
+    assert not runner._api_worker_invocation_matches(non_loopback_process, server, python_path)
+    wrong_host = SimpleNamespace(url="http://0.0.0.0:45678", port=45678)
+    wrong_context_diagnostics = {}
+    with pytest.raises(runner.GateError, match="auth_off_loopback_creator_binding_mismatch"):
+        runner._auth_off_loopback_creation_principal(
+            wrong_host,
+            process,
+            identity,
+            python_path,
+            diagnostics=wrong_context_diagnostics,
+        )
+    assert wrong_context_diagnostics == {"trusted_api_context": False}
+    foreign_uid = SimpleNamespace(pid=process.pid, uid=os.getuid() + 1, start_time=12_345)
+    with pytest.raises(runner.GateError, match="auth_off_loopback_creator_binding_mismatch"):
+        runner._auth_off_loopback_creation_principal(server, process, foreign_uid, python_path)
+    dead_process = SimpleNamespace(
+        pid=process.pid,
+        args=process.args,
+        poll=lambda: 1,
+    )
+    with pytest.raises(runner.GateError, match="auth_off_loopback_creator_binding_mismatch"):
+        runner._auth_off_loopback_creation_principal(server, dead_process, identity, python_path)
+    monkeypatch.setenv("AUTH0_DOMAIN", "foreign-idp.example")
+    enabled_auth_diagnostics = {}
+    with pytest.raises(runner.GateError, match="auth_off_loopback_creator_binding_mismatch"):
+        runner._auth_off_loopback_creation_principal(
+            server,
+            process,
+            identity,
+            python_path,
+            diagnostics=enabled_auth_diagnostics,
+        )
+    assert enabled_auth_diagnostics == {"trusted_api_context": False}
 
 
 def test_private_native_config_binds_sender_capability_and_receiver_empty_filter():
@@ -1019,6 +1320,14 @@ def test_current_manifest_contract_binds_source_binary_python_postgres_and_revie
 
 def test_runtime_source_map_is_complete_and_exact():
     assert runner._runtime_source_modules_match(runner.RUN_SOURCE_RELATIVE_PATHS)
+    assert (
+        runner.RUN_SOURCE_RELATIVE_PATHS["cli_agent_orchestrator.security.auth"]
+        == "src/cli_agent_orchestrator/security/auth.py"
+    )
+    assert (
+        runner.RUN_SOURCE_RELATIVE_PATHS["cli_agent_orchestrator.api.interactions"]
+        == "src/cli_agent_orchestrator/api/interactions.py"
+    )
     incomplete = dict(runner.RUN_SOURCE_RELATIVE_PATHS)
     incomplete.pop("cli_agent_orchestrator.api.main")
     assert not runner._runtime_source_modules_match(incomplete)
@@ -1030,8 +1339,10 @@ def test_runtime_source_map_is_complete_and_exact():
 def test_current_production_api_lifespan_and_issuance_sources_are_bound():
     from test.fixtures.cao_server import _start_cao_server
 
+    from cli_agent_orchestrator.api import interactions as interactions_api
     from cli_agent_orchestrator.api import main as api_main
     from cli_agent_orchestrator.providers import opencode_cli
+    from cli_agent_orchestrator.security import auth as security_auth
     from cli_agent_orchestrator.services import terminal_service
     from cli_agent_orchestrator.services.interactions import service as interaction_service_module
 
@@ -1040,6 +1351,8 @@ def test_current_production_api_lifespan_and_issuance_sources_are_bound():
     )
     assert runner._production_api_capability_issuance_contract(
         api_main,
+        security_auth,
+        interactions_api,
         terminal_service,
         interaction_service_module,
         opencode_cli,
@@ -1049,6 +1362,8 @@ def test_current_production_api_lifespan_and_issuance_sources_are_bound():
         "capability_issuance_path": True,
         "model_launch_source_binding": True,
         "production_api_worker": True,
+        "auth_off_loopback_creator_source": True,
+        "authenticated_creation_owner_persistence": True,
     }
 
 
@@ -1583,7 +1898,12 @@ def test_acceptance_requires_exact_receiver_acknowledgement(monkeypatch):
             "source_fingerprint_sha256": runner.SOURCE_FINGERPRINT_SHA256,
             "profile_fixture_sha256_expected": manifest["profile_fixture_sha256"],
             "operator_auth_snapshot_sha256": manifest["operator_auth_snapshot_sha256"],
-            "sender_capability_source_owner_kind": "unowned",
+            "sender_capability_source_owner_kind": "authenticated_creation",
+            "sender_capability_authenticated_local_operator_owner_bound": True,
+            "sender_capability_auth_off_loopback_api_process_binding_verified": True,
+            "sender_capability_binding_diagnostics": {
+                name: True for name in runner.CAPABILITY_BINDING_DIAGNOSTIC_FIELDS
+            },
             "native_surface": (
                 "full unfiltered collaboration profile; human capability issued and source-bound"
             ),
@@ -1639,6 +1959,32 @@ def test_acceptance_requires_exact_receiver_acknowledgement(monkeypatch):
         }
     )
     assert runner._acceptance_contract(receipt)
+    for changed in (
+        {**receipt, "sender_capability_source_owner_kind": "unowned"},
+        {
+            **receipt,
+            "sender_capability_authenticated_local_operator_owner_bound": False,
+        },
+        {
+            **receipt,
+            "sender_capability_auth_off_loopback_api_process_binding_verified": False,
+        },
+        {
+            **receipt,
+            "sender_capability_binding_diagnostics": {
+                **receipt["sender_capability_binding_diagnostics"],
+                "owner_exact": False,
+            },
+        },
+        {
+            **receipt,
+            "sender_capability_binding_diagnostics": {
+                **receipt["sender_capability_binding_diagnostics"],
+                "principal_id": "must-not-be-receipted",
+            },
+        },
+    ):
+        assert not runner._acceptance_contract(changed)
     cancelled_receipt = {**receipt, "actual_cancel_observed": True}
     assert not runner._acceptance_contract(cancelled_receipt)
     deferred_credentials = {**receipt, "credentials_cleanup_deferred": True}

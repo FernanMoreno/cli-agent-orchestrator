@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import native_acceptance_contract as acceptance
@@ -47,6 +48,11 @@ FINAL_TRUE = (
     "receiver_verified_receipt_exact",
     "receiver_native_identity_stable",
     "receiver_model_argv_exact",
+    "receiver_observer_isolation_exact",
+    "receiver_protocol_exact",
+    "receiver_catalogs_empty_exact",
+    "receiver_no_runtime_human_capability_exact",
+    "receiver_observer_graceful_seal_exact",
 )
 _NO_BROAD_CLAIMS = (
     "acceptance_claimed",
@@ -137,6 +143,102 @@ def catalogs_exact(rows: object) -> bool:
         ):
             return False
     return True
+
+
+def receiver_protocol_exact(observations: object) -> bool:
+    """Require a sealed receiver observer with an observed empty surface and no calls."""
+    if type(observations) is not dict:
+        return False
+    catalog_names = observations.get("mcp_catalog_tool_names")
+    catalog_count = observations.get("mcp_catalog_observation_count")
+    return (
+        type(observations.get("observer_status")) is str
+        and observations["observer_status"] == "observed"
+        and type(observations.get("mcp_catalog_observation_status")) is str
+        and observations["mcp_catalog_observation_status"] == "observed"
+        and type(catalog_names) is list
+        and catalog_names == []
+        and type(observations.get("mcp_catalog_unexpected_tool_count")) is int
+        and observations["mcp_catalog_unexpected_tool_count"] == 0
+        and type(catalog_count) is int
+        and catalog_count >= 1
+        and type(observations.get("mcp_tool_observation_status")) is str
+        and observations["mcp_tool_observation_status"] == "unobserved"
+        and type(observations.get("mcp_tool_unexpected_call_count")) is int
+        and observations["mcp_tool_unexpected_call_count"] == 0
+        and type(observations.get("mcp_tool_calls")) is list
+        and observations["mcp_tool_calls"] == []
+        and type(observations.get("observed_interaction_tools")) is list
+        and observations["observed_interaction_tools"] == []
+        and observations.get("mcp_observer_shutdown_observed") is True
+    )
+
+
+def receiver_catalogs_empty_exact(rows: object, observations: object = None) -> bool:
+    """Require at least one actual empty receiver catalog and no tool-call events."""
+    if type(rows) is not list or any(type(row) is not dict for row in rows):
+        return False
+    events = [row.get("event") for row in rows]
+    if (
+        not events
+        or events[0] != "observer_ready"
+        or events[-1] != "observer_stopped"
+        or events.count("observer_ready") != 1
+        or events.count("observer_stopped") != 1
+        or any(
+            type(event) is not str
+            or event not in {"observer_ready", "tools_list", "observer_stopped"}
+            for event in events
+        )
+    ):
+        return False
+    catalogs = [row for row in rows if row.get("event") == "tools_list"]
+    if not catalogs:
+        return False
+    if observations is not None and (
+        type(observations) is not dict
+        or type(observations.get("mcp_catalog_observation_count")) is not int
+        or observations["mcp_catalog_observation_count"] != len(catalogs)
+    ):
+        return False
+    return all(
+        type(row.get("names")) is list
+        and row["names"] == []
+        and type(row.get("unexpected_count")) is int
+        and row["unexpected_count"] == 0
+        and type(row.get("tool_count")) is int
+        and row["tool_count"] == 0
+        for row in catalogs
+    )
+
+
+def observer_paths_exact(
+    base_path: object,
+    sender_path: object,
+    receiver_path: object,
+    sender_id: object,
+    receiver_id: object,
+) -> bool:
+    """Bind separate private observer filenames to the two exact native IDs."""
+    if (
+        any(type(path) is not str or not path for path in (base_path, sender_path, receiver_path))
+        or not _terminal_id(sender_id)
+        or not _terminal_id(receiver_id)
+        or sender_id == receiver_id
+    ):
+        return False
+    base = Path(base_path)
+    sender = Path(sender_path)
+    receiver = Path(receiver_path)
+    return (
+        base.is_absolute()
+        and sender.is_absolute()
+        and receiver.is_absolute()
+        and base.parent == sender.parent == receiver.parent
+        and sender.name == base.name + "-" + sender_id
+        and receiver.name == base.name + "-" + receiver_id
+        and sender != receiver
+    )
 
 
 def _as_mapping(value: object) -> Mapping[str, Any] | None:

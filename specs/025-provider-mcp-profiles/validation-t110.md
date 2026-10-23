@@ -1,0 +1,15 @@
+# T110 — exact trusted-loopback source ownership
+
+Status: observer correction integrated and offline verified; fresh v2 native acceptance pending. T110/T104 remain open and R2 stays FAILED.
+
+The old capability predicate required owner_principal_id=None and owner_source=unowned. A real Starlette loopback Request through production optional_creation_principal returns a sealed local_operator identity when IdP configuration and browser deployment are absent; production register_source records authenticated_creation with that exact owner. The regression exercised the actual factory path and reproduced the old predicate's rejection, with local-bearer access mocked so no operator auth file was read.
+
+The observer now requires production is_auth_enabled=False in the sanitized case, the explicit case-mode label, equal real/effective UID, the current API PID/UID/start identity and liveness, exact127.0.0.1 URL and pinned venv worker invocation. It derives the expected sealed local operator only through the trusted factory, then requires the exact source owner ID and authenticated_creation kind. It rejects unowned/wrong/foreign/unsealed evidence; all existing token hash, fingerprint, current status, terminal/incarnation, provider/mode/session/profile and grant checks remain. No runtime authority, authentication mode, login or tool grant is changed. Actual source module/route/issuer binding includes auth.py and api.interactions.
+
+The real caller records six allowlisted booleans from already-read context and rows: trusted API context, current source, exact owner, exact kind, token hash match and tool fingerprint match. No IDs, tokens, raw owner strings or new queries are introduced. Acceptance requires exactly those six keys with literal True values as well as the complete existing predicate. Other binding failures can still leave six true booleans while the independent full gate rejects; diagnostics are not a substitute for that gate.
+
+Root integrated configured fixture suite:34 tests passed in62.80s,3 existing deprecation warnings, normal project coverage. Its19% focused coverage is not global acceptance; no project settings/thresholds changed. Tests use the real sealed principal path, reject foreign/unsealed/wrong-owner/unowned cases, exercise current process/loopback trust, all diagnostic failure positions, raw-value canary dropping and incomplete/false/extra maps. Self-check, Black/isort and JSON checks pass. Claude read-only review found no blocking trust/wiring/privacy issue; the lead reviewed the actual correction and preserved the immutable R2 source-bound failure.
+
+This covers one local API ownership lane and the selected Go model fixture. OAuth/JWT/browser/global authentication and native message acceptance remain open. The API's real next source row and full native tool-offer/message/ACK/restart/cleanup flow must pass on freshly committed bindings.
+
+Final integrated composition check: 412 files, 1834 dependencies, five contracts kept and zero broken. Root Black, isort, v2 self-check and diff checks passed. These checks do not replace the pending native run.

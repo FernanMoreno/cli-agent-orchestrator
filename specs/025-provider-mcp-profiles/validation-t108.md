@@ -1,6 +1,6 @@
 # T108 — composed v2 preparation and early cleanup
 
-Status: correction integrated and offline verified; reanchored native-v2 execution pending. T108/T104 remain open; R1 is unchanged FAILED.
+Status: bounded correction verified offline and by R2 actual preparation/cleanup. T108 is complete on that scope; T104 acceptance remains open; R1 is unchanged FAILED.
 
 T104 R1 source had already imported/verified the journey module, then assigned journey=None before using it for private workspace preparation and later launch/cleanup. The new regression executes the real verified import and role-observer preparation loop extracted from the actual runner. On the original source it reproduced the same AttributeError; after removing the bad reset and unused alternate import it passes. This covers a composition path omitted by the earlier helper-only tests.
 
@@ -11,3 +11,7 @@ Integrated root verification:32 tests passed in59.62s with normal project covera
 The original failed R1 receipt and separate owned recovery remain bound in [T104 evidence](validation-t104-r1-native.json). No historical/user resource, credential login or product API/schema was changed. Reusing the already-owned PostgreSQL service requires all preceding case writers dead; a fresh private case must bind committed current source and rerun the unchanged native8-tool/ACK/restart/75s/6144MiB gates. The concrete module-shadowing defect is corrected offline; full v2 acceptance still needs its actual result.
 
 Final architecture/composition checkpoint:412 files/1834 dependencies,5 contracts kept/0 broken; full changed preparation/cleanup diff reviewed. No dependency direction, transaction, migration or public contract changes; no graph rebuild needed for fixture-only edits. Existing generated Graphify modifications remain byte-preserved. No vault write for routine harness details. Verdict: bounded correction PASS offline; current-source native acceptance PENDING.
+
+Actual R2 progressed past the original None reset, installed both profiles and initialized both native terminals, then failed at the distinct owner-observer predicate. Full owned cleanup passed with no retained private state. See [R2](validation-t104-r2-native.json). This closes the T108 preparation/cleanup defect and leaves full message acceptance to T104/T110.
+
+R2 cleanup scope: owned writers, isolated case database and private state were cleaned. The verified parent PostgreSQL container remains owned and retained for the next serial case; parent service shutdown is not claimed here.

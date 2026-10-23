@@ -93,6 +93,14 @@ SENDER_CALLS = ("list_siblings", "send_message", "send_message")
 MCP_HTTP_OFFER_TOOL_NAMES = tuple("cao-mcp-server_" + tool for tool in SENDER_TOOLS)
 OPTIONAL_OPENCODE_BUILTIN_TOOL_NAMES = ("skill", "todowrite")
 HTTP_OFFER_TOOL_NAMES = MCP_HTTP_OFFER_TOOL_NAMES + OPTIONAL_OPENCODE_BUILTIN_TOOL_NAMES
+CAPABILITY_BINDING_DIAGNOSTIC_FIELDS = (
+    "trusted_api_context",
+    "source_current",
+    "owner_exact",
+    "kind_exact",
+    "capability_hash_matches",
+    "tool_fingerprint_matches",
+)
 PRE_RESTART_MESSAGE = "Antes del reinicio: café, español y 日本語."
 POST_RESTART_MESSAGE = "Después del reinicio: café, español y 日本語."
 LAST_RECEIPT = "Validado ñ, 中文."
@@ -130,7 +138,9 @@ RUN_SOURCE_MODULES = (
     "cli_agent_orchestrator.models.opencode_agent",
     "cli_agent_orchestrator.utils.opencode_permissions",
     "cli_agent_orchestrator.utils.opencode_policy",
+    "cli_agent_orchestrator.security.auth",
     "cli_agent_orchestrator.api.main",
+    "cli_agent_orchestrator.api.interactions",
     "cli_agent_orchestrator.services.terminal_service",
     "cli_agent_orchestrator.services.interactions.service",
     "cli_agent_orchestrator.providers.opencode_cli",
@@ -161,7 +171,9 @@ RUN_SOURCE_RELATIVE_PATHS = {
     "cli_agent_orchestrator.utils.opencode_policy": (
         "src/cli_agent_orchestrator/utils/opencode_policy.py"
     ),
+    "cli_agent_orchestrator.security.auth": "src/cli_agent_orchestrator/security/auth.py",
     "cli_agent_orchestrator.api.main": "src/cli_agent_orchestrator/api/main.py",
+    "cli_agent_orchestrator.api.interactions": "src/cli_agent_orchestrator/api/interactions.py",
     "cli_agent_orchestrator.services.terminal_service": (
         "src/cli_agent_orchestrator/services/terminal_service.py"
     ),
@@ -1119,6 +1131,8 @@ def _lifespan_context_contains(context: Any, expected: Any) -> bool:
 
 def _production_api_capability_issuance_contract(
     api_main: Any,
+    security_auth_module: Any,
+    interactions_api_module: Any,
     terminal_service: Any,
     interaction_service_module: Any,
     opencode_cli: Any,
@@ -1135,12 +1149,24 @@ def _production_api_capability_issuance_contract(
             opencode_cli.OpenCodeCliProvider._build_launch_command
         )
         api_worker_source = inspect.getsource(start_cao_server)
+        session_route_source = inspect.getsource(api_main.create_session)
+        auth_enabled_source = inspect.getsource(security_auth_module.is_auth_enabled)
+        local_principal_source = inspect.getsource(security_auth_module.local_operator_principal)
+        current_principal_source = inspect.getsource(security_auth_module.get_current_principal)
+        optional_creator_source = inspect.getsource(
+            interactions_api_module.optional_creation_principal
+        )
+        register_source = inspect.getsource(
+            interaction_service_module.InteractionService.register_source
+        )
     except (AttributeError, OSError, TypeError):
         return {
             "api_lifespan_and_interaction_service": False,
             "capability_issuance_path": False,
             "model_launch_source_binding": False,
             "production_api_worker": False,
+            "auth_off_loopback_creator_source": False,
+            "authenticated_creation_owner_persistence": False,
         }
     return {
         "api_lifespan_and_interaction_service": (
@@ -1181,6 +1207,31 @@ def _production_api_capability_issuance_contract(
             and '"-m"' in api_worker_source
             and "--lifespan" not in api_worker_source
         ),
+        "auth_off_loopback_creator_source": (
+            "return bool(_auth0_domain()) or bool(_generic_jwks_uri())" in auth_enabled_source
+            and '"urn:cao:local-operator"' in local_principal_source
+            and "str(os.geteuid())" in local_principal_source
+            and "if is_auth_enabled():" in local_principal_source
+            and 'for key in ("server", "client")' in current_principal_source
+            and "ipaddress.ip_address(address[0]).is_loopback" in current_principal_source
+            and "return local_operator_principal()" in current_principal_source
+            and 'get_current_principal(request, request.headers.get("Authorization"))'
+            in optional_creator_source
+            and "is_verified_principal(principal)" in optional_creator_source
+            and "return principal" in optional_creator_source
+        ),
+        "authenticated_creation_owner_persistence": (
+            "creation_principal = await optional_creation_principal(request)"
+            in session_route_source
+            and "creation_principal=creation_principal" in session_route_source
+            and "verified_creator = (" in terminal_creation_source
+            and "is_verified_principal(creation_principal)" in terminal_creation_source
+            and "principal=source_principal" in terminal_creation_source
+            and "source_owner = principal.id if principal is not None else None" in register_source
+            and 'owner_kind = "authenticated_creation" if source_owner else "unowned"'
+            in register_source
+            and "owner_principal_id=%s,owner_source=%s" in register_source
+        ),
     }
 
 
@@ -1208,12 +1259,16 @@ _REQUIRED_TRUE_RECEIPT_FIELDS = (
     "sender_allowed_tools_exact",
     "sender_native_v3_full_collaboration_unfiltered",
     "sender_runtime_capability_current_source_bound",
+    "sender_capability_authenticated_local_operator_owner_bound",
+    "sender_capability_auth_off_loopback_api_process_binding_verified",
     "sender_capability_file_private_owned",
     "sender_legacy_three_tool_marker_absent",
     "receiver_native_v3_empty_tool_filter",
     "receiver_no_runtime_capability",
     "production_api_lifespan_and_interaction_service_verified",
     "production_capability_issuance_path_verified",
+    "production_auth_off_loopback_creator_source_verified",
+    "production_authenticated_creation_owner_binding_verified",
     "production_model_launch_source_binding_verified",
     "production_api_worker_invocation_verified",
     "receiver_current_working_directory_bound",
@@ -1706,7 +1761,11 @@ def _acceptance_contract(receipt: Any) -> bool:
         != (RUN_MANIFEST or {}).get("profile_fixture_sha256")
         or receipt.get("operator_auth_snapshot_sha256")
         != (RUN_MANIFEST or {}).get("operator_auth_snapshot_sha256")
-        or receipt.get("sender_capability_source_owner_kind") != "unowned"
+        or receipt.get("sender_capability_source_owner_kind") != "authenticated_creation"
+        or receipt.get("sender_capability_authenticated_local_operator_owner_bound") is not True
+        or receipt.get("sender_capability_auth_off_loopback_api_process_binding_verified")
+        is not True
+        or not _capability_binding_diagnostics_pass(receipt)
         or receipt.get("native_surface")
         != "full unfiltered collaboration profile; human capability issued and source-bound"
         or receipt.get("cross_model_or_oauth_claimed") is not False
@@ -2001,10 +2060,49 @@ def _expected_capability_path(cao_home: Path, terminal: dict[str, Any]) -> Path:
     return cao_home / "tmp" / "interaction-capabilities" / f"{terminal_key}.{incarnation_key}.cap"
 
 
+def _safe_capability_binding_diagnostics(candidate: Any) -> dict[str, bool]:
+    """Project only known boolean gate facts; never serialize source data or identities."""
+    if not isinstance(candidate, dict):
+        return {}
+    return {
+        name: candidate[name]
+        for name in CAPABILITY_BINDING_DIAGNOSTIC_FIELDS
+        if type(candidate.get(name)) is bool
+    }
+
+
+def _record_capability_binding_diagnostics(receipt: dict[str, Any], candidate: Any) -> None:
+    safe = _safe_capability_binding_diagnostics(candidate)
+    if safe:
+        receipt["sender_capability_binding_diagnostics"] = safe
+
+
+def _capability_binding_diagnostics_pass(receipt: dict[str, Any]) -> bool:
+    diagnostics = receipt.get("sender_capability_binding_diagnostics")
+    return (
+        isinstance(diagnostics, dict)
+        and set(diagnostics) == set(CAPABILITY_BINDING_DIAGNOSTIC_FIELDS)
+        and all(
+            type(diagnostics.get(name)) is bool and diagnostics[name] is True
+            for name in CAPABILITY_BINDING_DIAGNOSTIC_FIELDS
+        )
+    )
+
+
 def _runtime_capability_contract(
-    cao_home: Path, target: Any, terminal: dict[str, Any]
+    cao_home: Path,
+    target: Any,
+    terminal: dict[str, Any],
+    *,
+    api_server: Any,
+    api_process: Any,
+    api_identity: Any,
+    python_path: Path,
+    diagnostics: dict[str, Any] | None = None,
 ) -> tuple[Path, dict[str, Any]]:
-    """Prove the runtime-issued token authenticates this current source only."""
+    """Prove the token binds to this current source and sealed loopback creator."""
+    if diagnostics is not None:
+        diagnostics.clear()
     capability_path = _expected_capability_path(cao_home, terminal)
     files = _capability_files(cao_home)
     if files != [capability_path]:
@@ -2043,6 +2141,13 @@ def _runtime_capability_contract(
 
     terminal_id = terminal["id"]
     incarnation_id = terminal["session_incarnation_id"]
+    expected_principal = _auth_off_loopback_creation_principal(
+        api_server,
+        api_process,
+        api_identity,
+        python_path,
+        diagnostics=diagnostics,
+    )
     service = InteractionService(InteractionRepository(target))
     actor = service.authenticate_agent(token)
     status = service.source_status(terminal_id, incarnation_id, actor.turn_generation)
@@ -2052,7 +2157,15 @@ def _runtime_capability_contract(
             (terminal_id, incarnation_id),
         ).fetchone()
     if not _capability_source_binding_matches(
-        actor, status, source, terminal, token, capability_hash, canonical_tool_fingerprint
+        actor,
+        status,
+        source,
+        terminal,
+        token,
+        capability_hash,
+        canonical_tool_fingerprint,
+        expected_principal,
+        diagnostics=diagnostics,
     ):
         raise GateError("sender_runtime_capability_source_binding_mismatch")
     return capability_path, {
@@ -2061,7 +2174,9 @@ def _runtime_capability_contract(
         "capability_file_private_owned": True,
         "capability_hash_matches_source": True,
         "source_current": True,
-        "source_owner_kind": "unowned",
+        "source_owner_kind": "authenticated_creation",
+        "source_owner_matches_expected_local_operator": True,
+        "auth_off_loopback_api_process_binding_verified": True,
         "source_allowed_tool_fingerprint_matches": True,
         "capability_file_path_sha256": hashlib.sha256(
             str(capability_path).encode("utf-8")
@@ -2077,11 +2192,22 @@ def _capability_source_binding_matches(
     token: str,
     capability_hash_fn: Any,
     canonical_fingerprint_fn: Any,
+    expected_principal: Any,
+    *,
+    diagnostics: dict[str, Any] | None = None,
 ) -> bool:
+    from cli_agent_orchestrator.security.auth import is_verified_principal
+
     terminal_id = terminal.get("id")
     incarnation_id = terminal.get("session_incarnation_id")
     fingerprint, allowed_tools = canonical_fingerprint_fn(terminal.get("allowed_tools"))
-    return (
+    expected_local_operator = (
+        is_verified_principal(expected_principal)
+        and expected_principal.kind == "local_operator"
+        and expected_principal.issuer == "urn:cao:local-operator"
+        and expected_principal.subject == str(os.geteuid())
+    )
+    source_current = (
         actor.terminal_id == terminal_id
         and actor.incarnation_id == incarnation_id
         and status.state == "current"
@@ -2091,14 +2217,45 @@ def _capability_source_binding_matches(
         and source["incarnation_id"] == incarnation_id
         and source["revoked_at"] is None
         and source["capability_available"] is True
-        and source["capability_hash"] == capability_hash_fn(token)
-        and source["allowed_tool_fingerprint"] == fingerprint
+    )
+    capability_hash_matches = source is not None and source[
+        "capability_hash"
+    ] == capability_hash_fn(token)
+    tool_fingerprint_matches = (
+        source is not None and source["allowed_tool_fingerprint"] == fingerprint
+    )
+    owner_exact = (
+        source is not None
+        and expected_local_operator
+        and source["owner_principal_id"] == expected_principal.id
+    )
+    kind_exact = source is not None and source["owner_source"] == "authenticated_creation"
+    other_source_bindings_match = (
+        source is not None
         and source["provider"] == "opencode_cli"
         and source["execution_mode"] == "local"
         and source["session_name"] == terminal.get("session_name")
         and source["profile_revision"] == terminal.get("agent_profile")
-        and source["owner_principal_id"] is None
-        and source["owner_source"] == "unowned"
+    )
+    if diagnostics is not None:
+        diagnostics["source_current"] = bool(source_current)
+        if source is not None:
+            diagnostics.update(
+                {
+                    "owner_exact": bool(owner_exact),
+                    "kind_exact": bool(kind_exact),
+                    "capability_hash_matches": bool(capability_hash_matches),
+                    "tool_fingerprint_matches": bool(tool_fingerprint_matches),
+                }
+            )
+    return (
+        bool(source_current)
+        and bool(capability_hash_matches)
+        and bool(tool_fingerprint_matches)
+        and bool(other_source_bindings_match)
+        and bool(expected_local_operator)
+        and bool(owner_exact)
+        and bool(kind_exact)
         and allowed_tools == ("@cao-mcp-server",)
     )
 
@@ -2445,6 +2602,62 @@ def _api_worker_invocation_matches(process: Any, server: Any, python_path: Path)
         )
     except (OSError, RuntimeError, ValueError):
         return False
+
+
+def _auth_off_loopback_creation_principal(
+    server: Any,
+    process: Any,
+    identity: Any,
+    python_path: Path,
+    *,
+    diagnostics: dict[str, Any] | None = None,
+) -> Any:
+    """Derive the expected sealed local creator only for this proven loopback API."""
+    if diagnostics is not None:
+        diagnostics.clear()
+        diagnostics["trusted_api_context"] = False
+    from cli_agent_orchestrator.security.auth import (
+        is_auth_enabled,
+        is_verified_principal,
+        local_operator_principal,
+    )
+
+    port = getattr(server, "port", None)
+    process_pid = getattr(process, "pid", None)
+    identity_pid = getattr(identity, "pid", None)
+    identity_uid = getattr(identity, "uid", None)
+    identity_start = getattr(identity, "start_time", None)
+    if (
+        os.environ.get("CAO_AUTH_MODE") != "off"
+        or os.geteuid() != os.getuid()
+        or is_auth_enabled() is not False
+        or type(port) is not int
+        or not 1 <= port <= 65535
+        or getattr(server, "url", None) != f"http://127.0.0.1:{port}"
+        or type(process_pid) is not int
+        or process_pid <= 0
+        or identity_pid != process_pid
+        or identity_uid != os.getuid()
+        or type(identity_start) is not int
+        or identity_start <= 0
+        or getattr(process, "poll", lambda: 1)() is not None
+        or not _api_worker_invocation_matches(process, server, python_path)
+    ):
+        raise GateError("auth_off_loopback_creator_binding_mismatch")
+    try:
+        principal = local_operator_principal()
+    except Exception:
+        raise GateError("auth_off_loopback_creator_principal_unavailable") from None
+    if (
+        not is_verified_principal(principal)
+        or principal.kind != "local_operator"
+        or principal.issuer != "urn:cao:local-operator"
+        or principal.subject != str(os.geteuid())
+    ):
+        raise GateError("auth_off_loopback_creator_principal_mismatch")
+    if diagnostics is not None:
+        diagnostics["trusted_api_context"] = True
+    return principal
 
 
 def _record_unreturned_api_servers(
@@ -3820,10 +4033,12 @@ def _run_enabled(
         from test.postgres import fixtures as postgres_fixtures
         from test.postgres.fixtures import IMAGE_ID, _discover_postgres_service
 
+        from cli_agent_orchestrator.api import interactions as interactions_api
         from cli_agent_orchestrator.api import main as api_main
         from cli_agent_orchestrator.clients.postgres import connection as postgres_connection
         from cli_agent_orchestrator.models import opencode_agent
         from cli_agent_orchestrator.providers import mcp_interactions, opencode_cli
+        from cli_agent_orchestrator.security import auth as security_auth
         from cli_agent_orchestrator.services import terminal_service
         from cli_agent_orchestrator.services.interactions import (
             service as interaction_service_module,
@@ -3853,6 +4068,8 @@ def _run_enabled(
     receipt["current_source_modules"] = source_module_paths
     production_source_contract = _production_api_capability_issuance_contract(
         api_main,
+        security_auth,
+        interactions_api,
         terminal_service,
         interaction_service_module,
         opencode_cli,
@@ -3862,6 +4079,12 @@ def _run_enabled(
         raise GateError("production_api_capability_source_contract_mismatch")
     receipt["production_api_lifespan_and_interaction_service_verified"] = True
     receipt["production_capability_issuance_path_verified"] = True
+    receipt["production_auth_off_loopback_creator_source_verified"] = production_source_contract[
+        "auth_off_loopback_creator_source"
+    ]
+    receipt["production_authenticated_creation_owner_binding_verified"] = (
+        production_source_contract["authenticated_creation_owner_persistence"]
+    )
     receipt["production_model_launch_source_binding_verified"] = True
     fixture_guard_source_sha256, fixture_guard_derived_sha256 = _install_guarded_postgres_cleanup(
         postgres_fixtures
@@ -4564,9 +4787,20 @@ def _run_enabled(
                     raise GateError("receiver_v2_empty_tool_profile_contract_mismatch")
                 receipt["receiver_no_runtime_capability"] = True
             else:
-                sender_capability_path, capability_projection = _runtime_capability_contract(
-                    cao_home, targets.main, terminals[role]
-                )
+                sender_capability_diagnostics: dict[str, Any] = {}
+                try:
+                    sender_capability_path, capability_projection = _runtime_capability_contract(
+                        cao_home,
+                        targets.main,
+                        terminals[role],
+                        api_server=server,
+                        api_process=api_process,
+                        api_identity=api_identity_a,
+                        python_path=PINNED_PYTHON,
+                        diagnostics=sender_capability_diagnostics,
+                    )
+                finally:
+                    _record_capability_binding_diagnostics(receipt, sender_capability_diagnostics)
                 if not _provider_config_contract(
                     cao_home,
                     terminals[role],
@@ -4585,6 +4819,12 @@ def _run_enabled(
                         "sender_capability_source_owner_kind": capability_projection[
                             "source_owner_kind"
                         ],
+                        "sender_capability_authenticated_local_operator_owner_bound": (
+                            capability_projection["source_owner_matches_expected_local_operator"]
+                        ),
+                        "sender_capability_auth_off_loopback_api_process_binding_verified": (
+                            capability_projection["auth_off_loopback_api_process_binding_verified"]
+                        ),
                         "sender_capability_path_sha256": capability_projection[
                             "capability_file_path_sha256"
                         ],

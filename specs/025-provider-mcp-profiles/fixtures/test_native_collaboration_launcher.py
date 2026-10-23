@@ -2,8 +2,10 @@
 
 import ast
 import copy
+import hashlib
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -14,12 +16,27 @@ from unittest.mock import MagicMock
 
 import frontmatter
 
+from cli_agent_orchestrator import constants
+from cli_agent_orchestrator.providers.mcp_interactions import CAO_INTERACTION_CAPABILITY_FILE
+from cli_agent_orchestrator.services import terminal_service
+from cli_agent_orchestrator.utils.opencode_v1 import validate_v1_mcp_configuration
+
 FIXTURES = Path(__file__).parent
 SOURCE = FIXTURES / "run_native_v1_human.py"
 REPO = FIXTURES.resolve().parents[2]
+SENDER_ID = "a1b2c3d4"
+RECEIVER_ID = "e5f60718"
 
 
 class CollaborationLauncherTests(unittest.TestCase):
+    @staticmethod
+    def _function(name):
+        return next(
+            node
+            for node in ast.parse(SOURCE.read_text()).body
+            if isinstance(node, ast.FunctionDef) and node.name == name
+        )
+
     def test_mixed_case_cannot_silently_change_the_restricted_human_inputs(self):
         tree = ast.parse(SOURCE.read_text())
         node = next(
@@ -173,11 +190,89 @@ class CollaborationLauncherTests(unittest.TestCase):
                 )
                 if success:
                     self.assertEqual(
-                        scope["receiver_ack_snapshot"](identity, required, "test"), required
+                        scope["receiver_ack_snapshot"](identity, required, "before_restart"),
+                        required,
                     )
                 else:
                     with self.assertRaisesRegex(RuntimeError, "mixed_receiver_ack_failed"):
-                        scope["receiver_ack_snapshot"](identity, required, "test")
+                        scope["receiver_ack_snapshot"](identity, required, "before_restart")
+                self.assertIn("receiver_before_restart_terminal_status", scope["receipt"])
+                self.assertIn(
+                    scope["receipt"]["receiver_before_restart_terminal_status"],
+                    {
+                        "completed",
+                        "UNKNOWN",
+                    },
+                )
+                self.assertIs(scope["receipt"]["receiver_before_restart_ack_text_exact"], True)
+                if observed == required and type(observed[0]) is int:
+                    self.assertIs(
+                        scope["receipt"]["receiver_before_restart_receipt_check_valid"],
+                        success,
+                    )
+                else:
+                    self.assertNotIn(
+                        "receiver_before_restart_receipt_check_valid", scope["receipt"]
+                    )
+
+    def test_receiver_ack_failure_keeps_only_bounded_status_and_ack_evidence(self):
+        function = next(
+            node
+            for node in ast.walk(ast.parse(SOURCE.read_text()))
+            if isinstance(node, ast.FunctionDef) and node.name == "receiver_ack_snapshot"
+        )
+        clock = iter(range(1, 100))
+        receipt = {}
+        state = SimpleNamespace(
+            status_code=200,
+            json=lambda: {"status": "idle", "turn_sequence": 0, "turn_completed": 0},
+        )
+        scope = dict(
+            time=SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda _: None),
+            deadline=3,
+            start=0,
+            http_json_bytes=lambda *a: json.dumps(
+                {"mode": "last", "output": "RAW_PRIVATE_OUTPUT"}
+            ).encode(),
+            server=SimpleNamespace(url="http://owned"),
+            receiver_id="abc12345",
+            json=json,
+            HTTPStatusError=RuntimeError,
+            requests=SimpleNamespace(get=lambda *a, **kw: state),
+            remaining_timeout=lambda _: 1,
+            receipt=receipt,
+            connect=lambda *a, **kw: self.fail("receipt query must not run before ACK"),
+            targets=SimpleNamespace(main=object()),
+            re=__import__("re"),
+            check_deadline=lambda: None,
+            RuntimeError=RuntimeError,
+        )
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(SOURCE), "exec"), scope)
+        with self.assertRaisesRegex(RuntimeError, "mixed_receiver_ack_failed"):
+            scope["receiver_ack_snapshot"](None, (1, 1), "final")
+        self.assertEqual(receipt["receiver_final_terminal_status"], "idle")
+        self.assertIs(receipt["receiver_final_ack_text_exact"], False)
+        self.assertNotIn("receiver_final_receipt_check_valid", receipt)
+        self.assertNotIn("RAW_PRIVATE_OUTPUT", repr(receipt))
+
+        unknown_receipt = {}
+        unknown_clock = iter(range(1, 100))
+        scope["time"] = SimpleNamespace(monotonic=lambda: next(unknown_clock), sleep=lambda _: None)
+        scope["receipt"] = unknown_receipt
+        scope["requests"] = SimpleNamespace(
+            get=lambda *a, **kw: SimpleNamespace(
+                status_code=200,
+                json=lambda: {
+                    "status": "PRIVATE_STATUS_DETAIL",
+                    "turn_sequence": 0,
+                    "turn_completed": 0,
+                },
+            )
+        )
+        with self.assertRaisesRegex(RuntimeError, "mixed_receiver_ack_failed"):
+            scope["receiver_ack_snapshot"](None, (1, 1), "final")
+        self.assertEqual(unknown_receipt["receiver_final_terminal_status"], "UNKNOWN")
+        self.assertNotIn("PRIVATE_STATUS_DETAIL", repr(unknown_receipt))
 
     def test_mixed_public_and_optimized_gates_precede_all_manifest_resources(self):
         for flags, expected in (
@@ -272,8 +367,18 @@ class CollaborationLauncherTests(unittest.TestCase):
             and any(isinstance(t, ast.Name) and t.id == "observer_directory" for t in n.targets)
         )
         case = json.loads((FIXTURES / "native-collaboration-interaction-profile.json").read_text())
+        helper = self._function("_mixed_private_observer_source")
+        helper_scope = {}
+        exec(compile(ast.Module(body=[helper], type_ignores=[]), str(SOURCE), "exec"), helper_scope)
         with tempfile.TemporaryDirectory() as temp:
-            scope = dict(root=Path(temp), repo=REPO, case=case, mixed=True, importlib=importlib)
+            scope = dict(
+                root=Path(temp),
+                repo=REPO,
+                case=case,
+                mixed=True,
+                importlib=importlib,
+                _mixed_private_observer_source=helper_scope[helper.name],
+            )
             exec(
                 compile(
                     ast.Module(body=main.body[first : first + 2], type_ignores=[]),
@@ -288,10 +393,366 @@ class CollaborationLauncherTests(unittest.TestCase):
             copied = ast.parse(
                 (scope["observer_directory"] / "opencode_mcp_observer.py").read_text()
             )
+            original_functions = {
+                node.name: node for node in original.body if isinstance(node, ast.FunctionDef)
+            }
+            copied_functions = {
+                node.name: node for node in copied.body if isinstance(node, ast.FunctionDef)
+            }
             self.assertEqual(
-                ast.dump(ast.Module(body=copied.body[:-1], type_ignores=[])), ast.dump(original)
+                {
+                    name: ast.dump(node)
+                    for name, node in copied_functions.items()
+                    if name != "install_protocol_observer_from_env"
+                },
+                {
+                    name: ast.dump(node)
+                    for name, node in original_functions.items()
+                    if name != "install_protocol_observer_from_env"
+                },
+            )
+            adapted_installer = copied_functions["install_protocol_observer_from_env"]
+            self.assertIn("CAO_TERMINAL_ID", ast.unparse(adapted_installer))
+            self.assertIn("mcp_observer_terminal_binding_invalid", ast.unparse(adapted_installer))
+            self.assertIn("Path(raw_path).name + '-' + terminal", ast.unparse(adapted_installer))
+            self.assertEqual(
+                ast.dump(copied.body[-1]),
+                ast.dump(
+                    ast.parse(
+                        "INTERACTION_TOOLS = frozenset(" + repr(tuple(sorted(case["tools"]))) + ")"
+                    ).body[0]
+                ),
             )
             self.assertTrue(all(n in case["tools"] for n in ("send_message", "cao_ask_user")))
+
+            observation_module = scope["observer_module"]
+            with tempfile.TemporaryDirectory() as run_temp:
+                run_root = Path(run_temp)
+                run_root.chmod(0o700)
+                base = run_root / "mcp.events"
+                nonce = "a" * 32
+
+                async def handler(_request):
+                    return None
+
+                def server():
+                    return SimpleNamespace(
+                        _mcp_server=SimpleNamespace(
+                            request_handlers={
+                                observation_module.types.ListToolsRequest: handler,
+                                observation_module.types.CallToolRequest: handler,
+                            }
+                        )
+                    )
+
+                sender_env = {
+                    "CAO_OPENCODE_MCP_OBSERVER": "1",
+                    "CAO_OPENCODE_MCP_OBSERVER_PATH": str(base),
+                    "CAO_OPENCODE_MCP_OBSERVER_NONCE": nonce,
+                    "CAO_TERMINAL_ID": SENDER_ID,
+                }
+                receiver_env = {**sender_env, "CAO_TERMINAL_ID": RECEIVER_ID}
+                sender_observer = observation_module.install_protocol_observer_from_env(
+                    server(), sender_env
+                )
+                receiver_observer = observation_module.install_protocol_observer_from_env(
+                    server(), receiver_env
+                )
+                receiver_observer.record_catalog(
+                    SimpleNamespace(root=observation_module.types.ListToolsResult(tools=[]))
+                )
+                sender_observer.close()
+                receiver_observer.close()
+                sender_path = base.with_name(base.name + "-" + SENDER_ID)
+                receiver_path = base.with_name(base.name + "-" + RECEIVER_ID)
+                self.assertTrue(sender_path.is_file())
+                self.assertTrue(receiver_path.is_file())
+                self.assertNotEqual(
+                    (sender_path.stat().st_dev, sender_path.stat().st_ino),
+                    (receiver_path.stat().st_dev, receiver_path.stat().st_ino),
+                )
+                receiver_observation = observation_module.read_protocol_observations(
+                    receiver_path, expected_nonce=nonce
+                )
+                self.assertEqual(receiver_observation["observer_status"], "observed")
+                self.assertEqual(receiver_observation["mcp_catalog_observation_status"], "observed")
+                self.assertEqual(receiver_observation["mcp_catalog_tool_names"], [])
+                self.assertEqual(receiver_observation["mcp_tool_calls"], [])
+                self.assertIs(receiver_observation["mcp_observer_shutdown_observed"], True)
+
+    def test_original_shared_observer_path_red_rejects_second_child(self):
+        source = REPO / "test/live_provider/opencode_mcp_observer.py"
+        spec = importlib.util.spec_from_file_location("original_mcp_observer_red", source)
+        original = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(original)
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            directory.chmod(0o700)
+            path = directory / "mcp.events"
+            env = {
+                "CAO_OPENCODE_MCP_OBSERVER": "1",
+                "CAO_OPENCODE_MCP_OBSERVER_PATH": str(path),
+                "CAO_OPENCODE_MCP_OBSERVER_NONCE": "b" * 32,
+            }
+
+            async def handler(_request):
+                return None
+
+            server = SimpleNamespace(
+                _mcp_server=SimpleNamespace(
+                    request_handlers={
+                        original.types.ListToolsRequest: handler,
+                        original.types.CallToolRequest: handler,
+                    }
+                )
+            )
+            first = original.install_protocol_observer_from_env(server, env)
+            with self.assertRaisesRegex(ValueError, "mcp_observer_path_invalid"):
+                original.install_protocol_observer_from_env(server, env)
+            first.close()
+
+    def test_passive_receiver_profile_matches_t101_explicit_empty_filter(self):
+        namespace = {"frontmatter": frontmatter, "RuntimeError": RuntimeError}
+        function = self._function("_native_v1_passive_receiver_profile")
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(SOURCE), "exec"), namespace)
+        profiles = json.loads((FIXTURES / "native-message-acceptance-profiles.json").read_text())[
+            "profiles"
+        ]
+        sender_definition = {
+            "command": ["python", "-m", "cli_agent_orchestrator.mcp_server.server"],
+            "args": ["--private"],
+            "env": {"CAO_OPENCODE_MCP_OBSERVER": "1"},
+            "cao_tool_profile": "collaboration",
+            "timeout": 60000,
+        }
+        profile = namespace[function.name](profiles["receiver"], sender_definition)
+        server = profile["mcpServers"]["cao-mcp-server"]
+        self.assertEqual(profile["allowedTools"], [])
+        self.assertEqual(set(profile["mcpServers"]), {"cao-mcp-server"})
+        self.assertEqual(server["cao_tool_profile"], "collaboration")
+        self.assertEqual(server["enabled_tools"], [])
+        self.assertEqual(server["env"], sender_definition["env"])
+        self.assertNotIn("enabled_tools", sender_definition)
+
+    def test_receiver_capability_path_matches_terminal_service_source(self):
+        function = self._function("_receiver_interaction_capability_path")
+        namespace = {
+            "hashlib": hashlib,
+            "Path": Path,
+            "re": re,
+            "RuntimeError": RuntimeError,
+        }
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(SOURCE), "exec"), namespace)
+        with tempfile.TemporaryDirectory() as temp:
+            caohome = Path(temp) / "cao-home"
+            caohome.mkdir(mode=0o700)
+            previous = constants.CAO_HOME_DIR
+            constants.CAO_HOME_DIR = caohome
+            try:
+                production_path = terminal_service._interaction_capability_path(
+                    RECEIVER_ID, "f" * 32
+                )
+            finally:
+                constants.CAO_HOME_DIR = previous
+            self.assertEqual(
+                namespace[function.name](caohome, RECEIVER_ID, "f" * 32), production_path
+            )
+            for terminal_id, incarnation_id in (
+                ("not-an-id", "f" * 32),
+                (RECEIVER_ID, "not-an-incarnation"),
+            ):
+                with self.subTest(terminal_id=terminal_id, incarnation_id=incarnation_id):
+                    with self.assertRaisesRegex(RuntimeError, "receiver_identity_failed"):
+                        namespace[function.name](caohome, terminal_id, incarnation_id)
+
+    def test_receiver_capability_absence_is_lstat_only_and_bound_to_config(self):
+        absent = self._function("_interaction_capability_file_absent")
+        exact = self._function("_receiver_capability_absence_exact")
+        namespace = {"FileNotFoundError": FileNotFoundError}
+        exec(
+            compile(ast.Module(body=[absent, exact], type_ignores=[]), str(SOURCE), "exec"),
+            namespace,
+        )
+        binding = (1, 2, "a" * 64, "b" * 64)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = root / "interaction.cap"
+            self.assertIs(namespace[absent.name](path), True)
+            self.assertIs(namespace[exact.name]({}, True, binding, binding), True)
+            self.assertIs(
+                namespace[exact.name](
+                    {CAO_INTERACTION_CAPABILITY_FILE: "injected"}, True, binding, binding
+                ),
+                False,
+            )
+            self.assertIs(namespace[exact.name]({}, False, binding, binding), False)
+            self.assertIs(namespace[exact.name]({}, True, binding, (1, 3, *binding[2:])), False)
+
+            path.write_text("opaque capability contents")
+            self.assertIs(namespace[absent.name](path), False)
+            self.assertIs(namespace[exact.name]({}, False, binding, binding), False)
+            path.unlink()
+            path.symlink_to(root / "missing-target")
+            self.assertTrue(path.is_symlink())
+            self.assertIs(namespace[absent.name](path), False)
+
+        class UnknownStat:
+            @staticmethod
+            def lstat():
+                raise RuntimeError("stat failed")
+
+        self.assertIs(namespace[absent.name](UnknownStat()), False)
+
+    def test_observer_path_adapter_preserves_t102_and_rejects_bad_mixed_ids(self):
+        function = self._function("_observer_path_for_terminal")
+        namespace = {"re": __import__("re"), "RuntimeError": RuntimeError}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(SOURCE), "exec"), namespace)
+        path = Path("/private/run/mcp.events")
+        self.assertIs(namespace[function.name](path, "not-an-id", mixed=False), path)
+        self.assertEqual(
+            namespace[function.name](path, SENDER_ID, mixed=True),
+            path.with_name(path.name + "-" + SENDER_ID),
+        )
+        for invalid in ("", "A1B2C3D4", "a1b2c3d", "a1b2c3d4-extra"):
+            with (
+                self.subTest(invalid=invalid),
+                self.assertRaisesRegex(RuntimeError, "mcp_observer_terminal_binding_invalid"),
+            ):
+                namespace[function.name](path, invalid, mixed=True)
+
+    def test_mixed_exit_observes_both_seals_in_one_ten_second_grace(self):
+        tree = ast.parse(SOURCE.read_text())
+        branch = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.If)
+            and isinstance(node.test, ast.Name)
+            and node.test.id == "mixed"
+            and any(
+                isinstance(child, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id == "sender_observation"
+                    for target in child.targets
+                )
+                for child in node.body
+            )
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            root.chmod(0o700)
+            receiver_root = root / "receiver"
+            receiver_root.mkdir(mode=0o700)
+            receiver_config_path = receiver_root / "opencode.json"
+            receiver_config_path.write_text("{}\n")
+            receiver_ownership_path = receiver_root / ".cao-ownership.json"
+            receiver_ownership_path.write_text("owned\n")
+            receiver_config_info = receiver_config_path.stat()
+            receiver_config_binding = (
+                receiver_config_info.st_dev,
+                receiver_config_info.st_ino,
+                hashlib.sha256(receiver_config_path.read_bytes()).hexdigest(),
+                hashlib.sha256(receiver_ownership_path.read_bytes()).hexdigest(),
+            )
+            base = root / "mcp.events"
+            sender_path = base.with_name(base.name + "-" + SENDER_ID)
+            receiver_path = base.with_name(base.name + "-" + RECEIVER_ID)
+            nonce = "c" * 32
+            for path in (sender_path, receiver_path):
+                path.write_text(json.dumps({"nonce": nonce}) + "\n")
+                path.chmod(0o600)
+                path.with_name(path.name + ".complete").write_text("sealed")
+            posts = []
+            seals = []
+            observations = []
+
+            def post(url, *, timeout):
+                posts.append((url, timeout))
+                return SimpleNamespace(status_code=200)
+
+            observer = SimpleNamespace(
+                read_protocol_observations=lambda path, *, expected_nonce: (
+                    observations.append((path, expected_nonce))
+                    or {"mcp_observer_shutdown_observed": True}
+                )
+            )
+            contract = SimpleNamespace(
+                protocol_exact=lambda _value: True,
+                catalogs_exact=lambda _rows: True,
+                receiver_protocol_exact=lambda _value: True,
+                receiver_catalogs_empty_exact=lambda _rows, _summary: True,
+                observer_paths_exact=lambda *_args: True,
+            )
+            capability_absent = self._function("_interaction_capability_file_absent")
+            capability_exact = self._function("_receiver_capability_absence_exact")
+            capability_namespace = {}
+            exec(
+                compile(
+                    ast.Module(body=[capability_absent, capability_exact], type_ignores=[]),
+                    str(SOURCE),
+                    "exec",
+                ),
+                capability_namespace,
+            )
+            namespace = {
+                "mixed": True,
+                "observation": base,
+                "terminal_id": SENDER_ID,
+                "receiver_id": RECEIVER_ID,
+                "nonce": nonce,
+                "server": SimpleNamespace(url="http://owned"),
+                "requests": SimpleNamespace(post=post),
+                "start": 0.0,
+                "outer_remaining": 179.0,
+                "observer_module": observer,
+                "mixed_contract": contract,
+                "receipt": {"receiver_profile_configuration_exact": True},
+                "receiver_root": receiver_root,
+                "receiver_config_binding": receiver_config_binding,
+                "receiver_mcp_environment": {},
+                "receiver_capability_path": root / "receiver.cap",
+                "receiver_capability_absent_at_config": True,
+                "_observer_path_for_terminal": lambda path, terminal, *, mixed: path.with_name(
+                    path.name + "-" + terminal
+                ),
+                "_private_protocol_rows": lambda path, expected_nonce: json.loads(path.read_text())
+                and [{"nonce": expected_nonce}],
+                "_observer_sidecar_identity": lambda path: (
+                    path.stat().st_dev,
+                    path.stat().st_ino,
+                ),
+                "_interaction_capability_file_absent": capability_namespace[capability_absent.name],
+                "_receiver_capability_absence_exact": capability_namespace[capability_exact.name],
+                "_sha256": lambda path: hashlib.sha256(path.read_bytes()).hexdigest(),
+                "_graceful_seals_seen_by_deadline": lambda seen, now, stop: (
+                    seals.append((seen, now, stop)) or (seen is True and now <= stop)
+                ),
+                "time": SimpleNamespace(
+                    monotonic=lambda: 1.0, sleep=lambda _: self.fail("unexpected wait")
+                ),
+                "human": SimpleNamespace(),
+                "json": json,
+                "os": __import__("os"),
+                "stat": __import__("stat"),
+            }
+            exec(
+                compile(ast.Module(body=[branch], type_ignores=[]), str(SOURCE), "exec"),
+                namespace,
+            )
+            receipt = namespace["receipt"]
+            self.assertEqual(
+                [url for url, _timeout in posts],
+                [
+                    "http://owned/terminals/" + SENDER_ID + "/exit",
+                    "http://owned/terminals/" + RECEIVER_ID + "/exit",
+                ],
+            )
+            self.assertTrue(all(0 < timeout <= 15 for _url, timeout in posts))
+            self.assertEqual([path for path, _nonce in observations], [sender_path, receiver_path])
+            self.assertTrue(all(seal[2] == 11.0 for seal in seals))
+            self.assertIs(receipt["observer_graceful_seal"], True)
+            self.assertIs(receipt["receiver_observer_graceful_seal_exact"], True)
+            self.assertIs(receipt["receiver_observer_isolation_exact"], True)
+            self.assertIs(receipt["receiver_no_runtime_human_capability_exact"], True)
 
     def test_runner_never_posts_an_inbox_message_to_fake_the_native_tool_call(self):
         posts = [
@@ -812,11 +1273,36 @@ class DeferredReceiverReadinessTests(unittest.TestCase):
                 return CreateResponse()
 
             poll_states = (
-                {"status": "unknown", "turn_sequence": 0, "turn_completed": 0},
-                {"status": "idle", "turn_sequence": 0, "turn_completed": 0},
-                {"status": "idle", "turn_sequence": 0, "turn_completed": 0},
-                {"status": "completed", "turn_sequence": 0, "turn_completed": 0},
-                {"status": "idle", "turn_sequence": 0, "turn_completed": 0},
+                {
+                    "status": "unknown",
+                    "turn_sequence": 0,
+                    "turn_completed": 0,
+                    "session_incarnation_id": "f" * 32,
+                },
+                {
+                    "status": "idle",
+                    "turn_sequence": 0,
+                    "turn_completed": 0,
+                    "session_incarnation_id": "f" * 32,
+                },
+                {
+                    "status": "idle",
+                    "turn_sequence": 0,
+                    "turn_completed": 0,
+                    "session_incarnation_id": "f" * 32,
+                },
+                {
+                    "status": "completed",
+                    "turn_sequence": 0,
+                    "turn_completed": 0,
+                    "session_incarnation_id": "f" * 32,
+                },
+                {
+                    "status": "idle",
+                    "turn_sequence": 0,
+                    "turn_completed": 0,
+                    "session_incarnation_id": "f" * 32,
+                },
             )
             provider_variants = iter((False, False, True, True, True))
             poll_index = 0
@@ -847,6 +1333,21 @@ class DeferredReceiverReadinessTests(unittest.TestCase):
                                 "model": "model-fixture",
                                 "agent": {"v1-receiver": {"prompt": "receiver-profile-prompt"}},
                                 "permission": {"*": "deny"},
+                                "mcp": {
+                                    "cao-mcp-server": {
+                                        "type": "local",
+                                        "command": [
+                                            sys.executable,
+                                            "-m",
+                                            "cli_agent_orchestrator.mcp_server.server",
+                                        ],
+                                        "enabled": True,
+                                        "environment": {
+                                            "CAO_INTERNAL_MCP_TOOL_PROFILE": "collaboration",
+                                            "CAO_INTERNAL_MCP_ENABLED_TOOLS": "[]",
+                                        },
+                                    }
+                                },
                             }
                         )
                     )
@@ -881,14 +1382,29 @@ class DeferredReceiverReadinessTests(unittest.TestCase):
             helper = self._function("_wait_for_deferred_receiver_ready")
             bounded_count = self._function("_bounded_count")
             reader = self._function("_read_deferred_receiver_variant")
+            capability_path = self._function("_receiver_interaction_capability_path")
+            capability_absent = self._function("_interaction_capability_file_absent")
+            capability_exact = self._function("_receiver_capability_absence_exact")
             namespace = {
                 "RuntimeError": RuntimeError,
                 "ValueError": ValueError,
                 "re": __import__("re"),
+                "hashlib": hashlib,
+                "Path": Path,
             }
             exec(
                 compile(
-                    ast.Module(body=[bounded_count, reader, helper], type_ignores=[]),
+                    ast.Module(
+                        body=[
+                            bounded_count,
+                            reader,
+                            helper,
+                            capability_path,
+                            capability_absent,
+                            capability_exact,
+                        ],
+                        type_ignores=[],
+                    ),
                     str(SOURCE),
                     "exec",
                 ),
@@ -932,6 +1448,16 @@ class DeferredReceiverReadinessTests(unittest.TestCase):
                 "_sha256": lambda _path: "a" * 64,
                 "_wait_for_deferred_receiver_ready": namespace["_wait_for_deferred_receiver_ready"],
                 "_read_deferred_receiver_variant": namespace["_read_deferred_receiver_variant"],
+                "validate_v1_mcp_configuration": validate_v1_mcp_configuration,
+                "_receiver_interaction_capability_path": namespace[
+                    "_receiver_interaction_capability_path"
+                ],
+                "_interaction_capability_file_absent": namespace[
+                    "_interaction_capability_file_absent"
+                ],
+                "_receiver_capability_absence_exact": namespace[
+                    "_receiver_capability_absence_exact"
+                ],
             }
             exec(
                 compile(

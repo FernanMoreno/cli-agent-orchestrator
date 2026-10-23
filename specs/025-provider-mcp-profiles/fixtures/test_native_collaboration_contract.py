@@ -76,6 +76,29 @@ def catalog_row(names=None, **overrides):
     return row
 
 
+def receiver_observations(**overrides):
+    result = {
+        "observer_status": "observed",
+        "mcp_catalog_observation_status": "observed",
+        "mcp_catalog_tool_names": [],
+        "mcp_catalog_unexpected_tool_count": 0,
+        "mcp_catalog_observation_count": 1,
+        "mcp_tool_observation_status": "unobserved",
+        "mcp_tool_unexpected_call_count": 0,
+        "mcp_observer_shutdown_observed": True,
+        "mcp_tool_calls": [],
+        "observed_interaction_tools": [],
+    }
+    result.update(overrides)
+    return result
+
+
+def empty_catalog_row(**overrides):
+    row = {"event": "tools_list", "names": [], "unexpected_count": 0, "tool_count": 0}
+    row.update(overrides)
+    return row
+
+
 def pg_row(**overrides):
     row = {
         "id": 17,
@@ -125,6 +148,11 @@ def receipt():
             "receiver_verified_receipt_exact": True,
             "receiver_native_identity_stable": True,
             "receiver_model_argv_exact": True,
+            "receiver_observer_isolation_exact": True,
+            "receiver_protocol_exact": True,
+            "receiver_catalogs_empty_exact": True,
+            "receiver_no_runtime_human_capability_exact": True,
+            "receiver_observer_graceful_seal_exact": True,
         }
     )
     return result
@@ -261,6 +289,77 @@ class SourceAndProtocolTests(unittest.TestCase):
         for rows in malformed:
             with self.subTest(rows=rows):
                 self.assertFalse(gate.catalogs_exact(rows))
+
+    def test_receiver_requires_a_sealed_observed_empty_catalog_and_no_calls(self):
+        good = receiver_observations()
+        rows = [
+            {"event": "observer_ready"},
+            empty_catalog_row(),
+            {"event": "observer_stopped"},
+        ]
+        self.assertTrue(gate.receiver_protocol_exact(good))
+        self.assertTrue(gate.receiver_catalogs_empty_exact(rows, good))
+
+        for field, value in (
+            ("observer_status", "incomplete"),
+            ("observer_status", None),
+            ("mcp_catalog_observation_status", "unobserved"),
+            ("mcp_catalog_tool_names", ["cao_ask_user"]),
+            ("mcp_catalog_tool_names", None),
+            ("mcp_catalog_unexpected_tool_count", True),
+            ("mcp_catalog_unexpected_tool_count", 1),
+            ("mcp_catalog_observation_count", 0),
+            ("mcp_catalog_observation_count", True),
+            ("mcp_tool_observation_status", "observed"),
+            ("mcp_tool_unexpected_call_count", True),
+            ("mcp_tool_unexpected_call_count", 1),
+            ("mcp_tool_calls", [call("cao_ask_user")]),
+            ("observed_interaction_tools", ["cao_ask_user"]),
+            ("mcp_observer_shutdown_observed", False),
+            ("mcp_observer_shutdown_observed", 1),
+        ):
+            changed = receiver_observations(**{field: value})
+            with self.subTest(field=field, value=value):
+                self.assertFalse(gate.receiver_protocol_exact(changed))
+
+        malformed_rows = (
+            [],
+            rows[:-1],
+            [rows[0], empty_catalog_row(names=["send_message"], tool_count=1), rows[-1]],
+            [rows[0], empty_catalog_row(unexpected_count=True), rows[-1]],
+            [rows[0], empty_catalog_row(unexpected_count=1), rows[-1]],
+            [rows[0], empty_catalog_row(tool_count=True), rows[-1]],
+            [rows[0], empty_catalog_row(tool_count=1), rows[-1]],
+            [rows[0], {"event": "tool_call_started"}, rows[-1]],
+            [rows[0], {"event": ["tools_list"]}, rows[-1]],
+            [rows[0], empty_catalog_row(), rows[-1], {"event": "observer_stopped"}],
+        )
+        for malformed in malformed_rows:
+            with self.subTest(rows=malformed):
+                self.assertFalse(gate.receiver_catalogs_empty_exact(malformed))
+        self.assertFalse(
+            gate.receiver_catalogs_empty_exact(
+                rows,
+                receiver_observations(mcp_catalog_observation_count=2),
+            )
+        )
+
+    def test_observer_paths_require_two_exact_terminal_bound_sidecars(self):
+        base = "/private/run/mcp.events"
+        sender = base + "-" + SENDER_ID
+        receiver = base + "-" + RECEIVER_ID
+        self.assertTrue(gate.observer_paths_exact(base, sender, receiver, SENDER_ID, RECEIVER_ID))
+        for paths, sender_id, receiver_id in (
+            ((base, base, receiver), SENDER_ID, RECEIVER_ID),
+            ((base, sender, sender), SENDER_ID, RECEIVER_ID),
+            ((base, base + "-wrong", receiver), SENDER_ID, RECEIVER_ID),
+            ((base, sender, base), SENDER_ID, RECEIVER_ID),
+            ((base, sender, receiver), SENDER_ID.upper(), RECEIVER_ID),
+            ((base, sender, receiver), SENDER_ID, SENDER_ID),
+            ((None, sender, receiver), SENDER_ID, RECEIVER_ID),
+        ):
+            with self.subTest(paths=paths, sender_id=sender_id, receiver_id=receiver_id):
+                self.assertFalse(gate.observer_paths_exact(*paths, sender_id, receiver_id))
 
 
 class MessagePersistenceTests(unittest.TestCase):
