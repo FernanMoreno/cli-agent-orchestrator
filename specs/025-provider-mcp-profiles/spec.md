@@ -270,3 +270,21 @@ SC057: Reproduce the native-renderer20-character ACK contamination synthetically
 FR073 boundary limitation: a leading unquoted row exactly identical to the native collapsed Thought+duration chrome is reserved TUI framing and cannot be disambiguated from deliberately emitted text. Quoted/fenced/unbound text and ordinary Thought prose/bullets remain unchanged. Truncated title rows without the complete native duration grammar are not silently stripped; their channel remains unproven. No universal reasoning-channel claim is made for those layouts or older Thinking variants.
 
 FR073 correction after T092: complete collapsed Thought chrome can occur between native tool/text parts, not only at the start of the extracted region. Exclude only complete reserved header rows with native blank-part separators and an active receipt; preserve every other public row in order. Expanded/unseparated native headers still fail closed. The literal reserved-row limitation applies at any such part boundary.
+
+FR074: Native profile acceptance must verify both the serialized selected prompt and explicit CLI-selected identity and the receipt-bound native assistant agent identity for sender and receiver. Configured tool catalogs alone cannot prove which native profile produced a response.
+
+SC058: Add bounded native-agent metadata checks (fixed expected role id, no raw name export), adversarial missing/mismatched/type/size controls, and a mandatory two-phase profile-binding gate in addition to every existing native acceptance predicate. Preserve each reviewed case’s prompts/model/permissions/deadlines during execution; no causal blame for an incorrect native ACK before profile selection is verified.
+
+FR075: Native-v1 transport acceptance must consume the existing explicit shared native-message profile fixture rather than a divergent inline prompt. Pin its bytes and verify its model/grants/required checks against unchanged acceptance predicates. Profile-input alignment is a new named case, not retroactive acceptance or causal attribution for earlier inline-profile failures.
+
+SC059: Confirm the inline/shared prompt difference, preserve original Unicode message bytes, MCP grants/catalogs, model,75s/6144MiB and every old gate; bind the canonical fixture and stronger native-profile identity checks in one independently reviewed current-source case. Record the profile-input change explicitly and keep all earlier failures.
+
+FR076: The additional native-profile acceptance predicate must reject any diagnostic whose own-root/active-receipt binding or timing evidence is missing or not literal true, even when status is observed and the expected native agent matches. Late observations can remain diagnostic evidence but cannot satisfy profile acceptance.
+
+SC060: Reproduce the predicate accepting false binding/deadline flags; test missing, false, null and integer-one values for each required witness on either role in either phase. Preserve strict ACK/Unicode/receipt/restart/cleanup gates, all historical failures and original three-second/phase deadlines. No inference rerun or runtime-provider change is needed for this diagnostic correction.
+
+FR077: Native-v1 diagnostic JSON row limits are UTF-8 byte limits, including user/assistant metadata and TEXT part containers. Multibyte JSON exceeding1MiB must be excluded before extraction even when its character count is lower. Native agent metadata retains its64-byte maximum and fixed-name comparison.
+
+SC061: Reproduce acceptance of a CJK-padded JSON container above1MiB; add user/assistant/part byte-bound regressions, agent size boundaries and mismatched-agent output minimization. Verify no raw name/text/receipt appears in diagnostic output; do not alter model, operator state, native acceptance or historical receipts.
+
+FR077 encoding boundary: require the native SQLite UTF-8 encoding before applying BLOB-length limits. Unsupported UTF-16 databases fail closed; database-encoding bytes must not be misrepresented as UTF-8 byte evidence.

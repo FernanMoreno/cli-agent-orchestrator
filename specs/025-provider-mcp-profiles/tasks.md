@@ -347,6 +347,16 @@ T090 actual: native receiver public TEXT exactly ACK3chars, API20chars/3lines, o
 
 - [ ] T092 [US4] [FR073/SC057] Reanchor the reviewed strong native-v1 generation/managed acceptance to the integrated T091 source and exact diagnostic artifact, verify unchanged gates/507pins/nativebinary/owned PostgreSQL, execute generation then one serial two-message/ACK/AG-UI/restart/cleanup acceptance and preserve its source-bound result.
 
-- [ ] T093 [US4] [FR073/SC057] Correct the T091 leading-only regression reproduced after T092 on native tool/text-part layouts; preserve all public rows and strict active-receipt/expanded-channel guards, add interleaving regressions, review and revalidate.
+- [x] T093 [US4] [FR073/SC057] Correct the T091 leading-only regression reproduced after T092 on native tool/text-part layouts; preserve all public rows and strict active-receipt/expanded-channel guards, add interleaving regressions, review and revalidate. Bounded correction verified by208 tests and T094 sender recovery/native–API equality; full message acceptance still failed, recorded separately.
 
-- [ ] T094 [US4] [FR073/SC057] Run freshly pinned generation and the unchanged strong two-message native-v1 acceptance after T093, preserving all earlier failed receipts and distinguishing bounded current acceptance from global gates.
+- [x] T094 [US4] [FR073/SC057] Run freshly pinned generation and the unchanged strong two-message native-v1 acceptance after T093, preserving all earlier failed receipts and distinguishing bounded current acceptance from global gates. Run completed: generation PASS, managed FAILED on native/API-equal non-ACK; no acceptance credited ([T094](validation-t094.md)).
+
+- [ ] T095 [US4] [FR074/SC058] Audit actual native sender/receiver profile identity and exact staged prompt/selected-agent after T094 native/API-equal non-ACK, add metadata/privacy/stronger-gate controls and independently review one source-bound real diagnostic without weakening old acceptance gates (T096 selects and pins its canonical profile input before execution).
+
+- [ ] T096 [US4] [FR075/SC059] Align native-v1 transport harness with the existing shared explicit native-message profile fixture, preserve all old criteria/message bytes and historical inline cases, verify actual prompt/profile binding via T095, and record one reviewed canonical-case real result.
+
+- [x] T097 [US4] [FR076/SC060] Reject missing/false/nonboolean own-root, receipt and deadline evidence in native profile acceptance; reproduce the gap, test all four role/phase positions and observer timing, independently review and validate offline without changing native output or acceptance criteria.
+
+T095/T096 partial actual evidence: prompts exact and sender native agent matched; managed run FAILED on native sender missing Unicode. Receiver identity/ACK/restart remain unverified. See [T096](validation-t096.md). Private originals absent on resumption; public sanitization preserved. These tasks remain open on their complete criteria.
+
+- [x] T098 [US4] [FR077/SC061] Enforce the existing1MiB native-v1 JSON row cap in bytes rather than characters; reproduce multibyte oversize acceptance, test each JSON container and agent boundary/privacy, independently review and verify offline.

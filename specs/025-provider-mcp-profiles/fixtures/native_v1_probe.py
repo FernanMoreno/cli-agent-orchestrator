@@ -39,7 +39,7 @@ def _authorizer(action, table, column, database, trigger):
     return sqlite3.SQLITE_DENY
 
 
-def _native_parts(path, nonce, stop):
+def _native_parts(path, nonce, stop, *, expected_agent=None):
     """Read v1 message/part TEXT only, pinned to the current user parent."""
     if time.monotonic() >= stop:
         raise ProbeError("deadline")
@@ -47,6 +47,8 @@ def _native_parts(path, nonce, stop):
     try:
         c.execute("PRAGMA query_only=ON")
         c.execute("BEGIN")
+        if c.execute("PRAGMA encoding").fetchone() != ("UTF-8",):
+            raise ProbeError("native_schema_mismatch")
         required = {
             "message": {"id": "TEXT", "session_id": "TEXT", "data": "TEXT"},
             "part": {"id": "TEXT", "message_id": "TEXT", "session_id": "TEXT", "data": "TEXT"},
@@ -64,8 +66,8 @@ def _native_parts(path, nonce, stop):
         users = c.execute(
             """SELECT DISTINCT m.id,m.session_id FROM message m
             JOIN part p ON p.message_id=m.id AND p.session_id=m.session_id
-            WHERE length(m.data)<=1048576 AND json_extract(m.data,'$.role')='user'
-              AND length(p.data)<=1048576 AND json_extract(p.data,'$.type')='text'
+            WHERE length(CAST(m.data AS BLOB))<=1048576 AND json_extract(m.data,'$.role')='user'
+              AND length(CAST(p.data AS BLOB))<=1048576 AND json_extract(p.data,'$.type')='text'
               AND instr(json_extract(p.data,'$.text'),?)>0 LIMIT 2""",
             (nonce,),
         ).fetchall()
@@ -74,12 +76,12 @@ def _native_parts(path, nonce, stop):
         user, session = users[0]
         source = """ FROM message m JOIN part p
             ON p.message_id=m.id AND p.session_id=m.session_id
-            WHERE m.session_id=? AND length(m.data)<=1048576
+            WHERE m.session_id=? AND length(CAST(m.data AS BLOB))<=1048576
               AND json_extract(m.data,'$.role')='assistant'
               AND json_extract(m.data,'$.parentID')=?
               AND json_type(m.data,'$.time.completed')='integer'
               AND json_extract(m.data,'$.time.completed')>0
-              AND length(p.data)<=1048576 AND json_extract(p.data,'$.type')='text'
+              AND length(CAST(p.data AS BLOB))<=1048576 AND json_extract(p.data,'$.type')='text'
             ORDER BY m.id,p.id LIMIT 17"""
         params = (session, user)
         sizes = c.execute(
@@ -102,8 +104,8 @@ def _native_parts(path, nonce, stop):
                 raise ProbeError("text_size_or_type")
             groups.setdefault(mid, []).append(text)
         matched = [
-            parts
-            for parts in groups.values()
+            (mid, parts)
+            for mid, parts in groups.items()
             if any(
                 re.search(r"(?m)^[ \t]*" + re.escape(nonce) + r"[ \t]*$", text) for text in parts
             )
@@ -112,7 +114,32 @@ def _native_parts(path, nonce, stop):
             raise ProbeError("assistant_receipt_not_unique")
         if time.monotonic() >= stop:
             raise ProbeError("deadline")
-        return matched[0]
+        if expected_agent is not None:
+            if type(expected_agent) is not str or not re.fullmatch(
+                r"[A-Za-z0-9_-]{1,64}", expected_agent
+            ):
+                raise ProbeError("expected_agent_invalid")
+            mid = matched[0][0]
+            metadata = c.execute(
+                "SELECT json_type(data,'$.agent'),length(CAST(json_extract(data,'$.agent') AS BLOB)) FROM message WHERE id=? AND session_id=? AND length(CAST(data AS BLOB))<=1048576 LIMIT 2",
+                (mid, session),
+            ).fetchall()
+            if (
+                len(metadata) != 1
+                or metadata[0][0] != "text"
+                or type(metadata[0][1]) is not int
+                or not 1 <= metadata[0][1] <= 64
+            ):
+                raise ProbeError("native_agent_metadata_invalid")
+            agent = c.execute(
+                "SELECT json_extract(data,'$.agent') FROM message WHERE id=? AND session_id=? AND length(CAST(data AS BLOB))<=1048576",
+                (mid, session),
+            ).fetchone()[0]
+            if agent != expected_agent:
+                raise ProbeError("native_agent_mismatch")
+        if time.monotonic() >= stop:
+            raise ProbeError("deadline")
+        return matched[0][1]
     finally:
         c.close()
 
@@ -198,7 +225,16 @@ def _digest(target, terminal_id, stop):
 
 
 def observe(
-    run_root, cao_home, terminal_id, target, viewport, rendered, deadline, *, expected=MARKER
+    run_root,
+    cao_home,
+    terminal_id,
+    target,
+    viewport,
+    rendered,
+    deadline,
+    *,
+    expected=MARKER,
+    expected_agent=None,
 ):
     start = time.monotonic()
     stop = min(deadline, start + 3.0)
@@ -229,7 +265,7 @@ def observe(
         if len(active) != 1:
             raise ProbeError("active_nonce_not_unique")
         path, identity = _owned_db(Path(run_root), Path(cao_home), terminal_id)
-        parts = _native_parts(path, active[0], stop)
+        parts = _native_parts(path, active[0], stop, expected_agent=expected_agent)
         after = path.lstat()
         if (after.st_dev, after.st_ino) != identity or not stat.S_ISREG(after.st_mode):
             raise ProbeError("db_identity_changed")
@@ -260,6 +296,7 @@ def observe(
             exact_owned_root=True,
             text_parts=len(parts),
             native_equals_api=public == rendered,
+            native_agent_matches=True if expected_agent is not None else None,
             native_public=native_shape,
             rendered_public=render_shape,
             any_single_text_contains_exact_marker=any(expected in p for p in parts),
@@ -269,11 +306,42 @@ def observe(
         )
     except ProbeError as e:
         out["reason"] = str(e)
+        if str(e) == "native_agent_mismatch":
+            out["native_agent_matches"] = False
     except (OSError, ValueError, TypeError, sqlite3.Error):
         out["reason"] = "readonly_probe_error"
     except Exception:
         # No exception message: it could contain connection strings or native text.
         out["reason"] = "probe_dependency_error"
-    out["elapsed_ms"] = round((time.monotonic() - start) * 1000)
-    out["within_three_seconds"] = time.monotonic() <= stop
+    finished = time.monotonic()
+    out["elapsed_ms"] = round((finished - start) * 1000)
+    out["within_three_seconds"] = finished <= stop
+    out["within_original_deadline"] = finished <= deadline
     return out
+
+
+def native_profiles_exact(phases):
+    """Additional acceptance gate; never substitutes for the existing predicates."""
+    if type(phases) is not list or len(phases) != 2:
+        return False
+    for phase in phases:
+        if type(phase) is not dict:
+            return False
+        for key in ("native_text_diagnostic", "receiver_native_text_diagnostic"):
+            diagnostic = phase.get(key)
+            if (
+                type(diagnostic) is not dict
+                or diagnostic.get("status") != "observed"
+                or any(
+                    diagnostic.get(key) is not True
+                    for key in (
+                        "native_agent_matches",
+                        "active_receipt_bound",
+                        "exact_owned_root",
+                        "within_three_seconds",
+                        "within_original_deadline",
+                    )
+                )
+            ):
+                return False
+    return True

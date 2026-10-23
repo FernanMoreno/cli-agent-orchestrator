@@ -1,6 +1,6 @@
 # T093 — Collapsed native headers between rendered parts
 
-Date: 2026-10-23. Status: correction verified offline; fresh T094 acceptance pending.
+Date: 2026-10-23. Status: correction verified offline; T094 confirms sender recovery and native/API fidelity, but full acceptance fails on a native non-ACK reply. See [T094](validation-t094.md).
 
 T092 exposed a liveness regression in the first T091 correction. A source-derived native tool-summary→blank→complete collapsed Thought header→blank→Unicode/receipt frame raises the same interleaved-reasoning rejection under1d46ccbc. Native tool rows and intermediate public rows are not all final TextPart boundaries. The pinned renderer gives each Reasoning/Text/Tool part its own layout.
 
