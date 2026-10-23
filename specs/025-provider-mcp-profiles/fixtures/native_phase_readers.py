@@ -72,6 +72,14 @@ def capture_bytes(argv, stop, max_bytes):
                 process.stdout.close()
 
 
+class HTTPStatusError(ValueError):
+    """Expose only the numeric HTTP status, never response text or headers."""
+
+    def __init__(self, status_code):
+        super().__init__("http_status")
+        self.status_code = status_code
+
+
 def http_json_bytes(api, path, stop, wire_limit):
     """Nonblocking owned JSON HTTP/1.x with an absolute deadline, not inactivity timeout."""
     parsed = urlsplit(api)
@@ -129,9 +137,12 @@ def http_json_bytes(api, path, stop, wire_limit):
                     if (
                         len(status) < 2
                         or status[0] not in (b"HTTP/1.1", b"HTTP/1.0")
-                        or status[1] != b"200"
+                        or len(status[1]) != 3
+                        or not status[1].isdigit()
                     ):
                         raise ValueError("http_status")
+                    if status[1] != b"200":
+                        raise HTTPStatusError(int(status[1]))
                     values = {}
                     for line in lines[1:]:
                         key, separator, value = line.partition(b":")

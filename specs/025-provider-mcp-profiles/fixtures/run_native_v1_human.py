@@ -145,7 +145,7 @@ sys.path[:0] = [
     str(repo / "test/live_provider"),
 ]
 import native_acceptance_contract as acceptance
-from native_phase_readers import OwnedPhaseReaders, http_json_bytes
+from native_phase_readers import HTTPStatusError, OwnedPhaseReaders, http_json_bytes
 
 case = json.loads(
     (
@@ -1068,12 +1068,23 @@ try:
     )
     receipt["ack_audit"] = diag
     while time.monotonic() < min(deadline, start + 180):
-        body = http_json_bytes(
-            server.url,
-            "/terminals/" + terminal_id + "/output?mode=last",
-            min(deadline, start + 180, time.monotonic() + 2),
-            6 * 65537 + 4096,
-        )
+        try:
+            body = http_json_bytes(
+                server.url,
+                "/terminals/" + terminal_id + "/output?mode=last",
+                min(deadline, start + 180, time.monotonic() + 2),
+                6 * 65537 + 4096,
+            )
+        except HTTPStatusError as exc:
+            receipt["last_output_http_status"] = exc.status_code
+            if exc.status_code != 202:
+                raise
+            receipt["last_output_pending_observations"] = (
+                receipt.get("last_output_pending_observations", 0) + 1
+            )
+            time.sleep(min(0.1, max(0, min(deadline, start + 180) - time.monotonic())))
+            continue
+        receipt["last_output_http_status"] = 200
         value = json.loads(body)
         state = requests.get(
             server.url + "/terminals/" + terminal_id, timeout=remaining_timeout(2)
@@ -1193,6 +1204,13 @@ try:
 except Exception as exc:
     receipt["error_type"] = type(exc).__name__
     allowed_errors = {
+        "http_status",
+        "http_transport",
+        "reader_deadline",
+        "http_framing",
+        "http_eof",
+        "http_body_limit",
+        "http_header_limit",
         "created_terminal_target_invalid",
         "protocol_sidecar_invalid",
         "invalid_native_send_phase",

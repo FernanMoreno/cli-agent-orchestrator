@@ -1,9 +1,13 @@
 """Execute execution/deadline gates without starting native resources."""
 
 import ast
+import json
 import subprocess
 import sys
+import threading
+import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -12,6 +16,89 @@ SOURCE = Path(__file__).with_name("run_native_v1_human.py")
 
 
 class HumanLauncherTests(unittest.TestCase):
+    def test_actual_final_poll_retries_pending_http_but_rejects_errors(self):
+        import native_phase_readers as readers
+
+        tree = ast.parse(SOURCE.read_text())
+        main = next(node for node in tree.body if isinstance(node, ast.Try))
+        loop = next(
+            node
+            for node in main.body
+            if isinstance(node, ast.While)
+            and any(
+                isinstance(child, ast.Name) and child.id == "http_json_bytes"
+                for child in ast.walk(node)
+            )
+        )
+        for statuses in ([202, 200], [409], [500], [202], []):
+            with self.subTest(statuses=statuses):
+                calls = []
+
+                class Handler(BaseHTTPRequestHandler):
+                    def log_message(self, *args):
+                        pass
+
+                    def do_GET(self):
+                        status = statuses[min(len(calls), len(statuses) - 1)]
+                        calls.append(status)
+                        body = json.dumps({"output": "Validado ñ, 中文.", "mode": "last"}).encode()
+                        self.send_response(status)
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+
+                server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+                thread = threading.Thread(
+                    target=server.serve_forever, kwargs={"poll_interval": 0.01}
+                )
+                thread.start()
+                scope = dict(
+                    time=time,
+                    deadline=time.monotonic() + (0.15 if statuses == [202] else 3),
+                    start=time.monotonic() - (180 if statuses == [] else 0),
+                    http_json_bytes=readers.http_json_bytes,
+                    HTTPStatusError=readers.HTTPStatusError,
+                    server=SimpleNamespace(url="http://127.0.0.1:" + str(server.server_port)),
+                    terminal_id="abcd1234",
+                    json=json,
+                    requests=SimpleNamespace(
+                        get=lambda *a, **kw: SimpleNamespace(json=lambda: {"status": "completed"})
+                    ),
+                    remaining_timeout=lambda limit: limit,
+                    receipt={},
+                )
+                try:
+                    code = compile(ast.Module(body=[loop], type_ignores=[]), str(SOURCE), "exec")
+                    if statuses == []:
+                        with self.assertRaisesRegex(RuntimeError, "human_final_output_missing"):
+                            exec(code, scope)
+                        self.assertEqual(calls, [])
+                    elif statuses == [202]:
+                        with self.assertRaisesRegex(RuntimeError, "human_final_output_missing"):
+                            exec(code, scope)
+                        self.assertTrue(calls and set(calls) == {202})
+                        self.assertLessEqual(len(calls), 3)
+                    elif statuses[0] == 202:
+                        exec(code, scope)
+                        self.assertEqual(calls, [202, 200])
+                        self.assertEqual(scope["value"]["mode"], "last")
+                        self.assertEqual(scope["receipt"]["last_output_http_status"], 200)
+                        self.assertEqual(scope["receipt"]["last_output_pending_observations"], 1)
+                    else:
+                        with self.assertRaises(ValueError) as caught:
+                            exec(code, scope)
+                        self.assertEqual(
+                            getattr(caught.exception, "status_code", None), statuses[0]
+                        )
+                        self.assertEqual(calls, statuses)
+                        self.assertEqual(str(caught.exception), "http_status")
+                        self.assertEqual(scope["receipt"]["last_output_http_status"], statuses[0])
+                        self.assertNotIn("last_output_pending_observations", scope["receipt"])
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=1)
+
     def test_actual_create_binding_uses_returned_normalized_backend_session(self):
         tree = ast.parse(SOURCE.read_text())
         main = next(node for node in tree.body if isinstance(node, ast.Try))
