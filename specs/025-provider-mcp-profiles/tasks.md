@@ -332,3 +332,5 @@ T085 preparation: current headless generation PASS 16.499 s, native exit 0 and c
 T085/T086 actual: mandatory receiver ACK gate correctly rejected phase one; sender completed, receiver cause unproved. Original cleanup failed on Chromium zombies; T087 correction passed 123 tests and separately recovered only the current run resources. T085/T086 acceptance remains open; no weaker retry. [Result and limits](validation-t085.md).
 
 - [ ] T088 [US4] [FR070/SC054] Add bounded content-free receiver observations after T085 failure, preserve all strict acceptance predicates, test privacy and unchanged helpers, bind current source plus fresh generation, independently review and perform one serial diagnostic before any behavior fix.
+
+T088 actual (2026-10-23, f7fc120f): fresh generation PASS13.970s; managed FAILED before receiver probe because public sender LAST lacked literal/compacted Unicode marker despite completed metadata. Receiver samples0; full original-run cleanup PASS, minimum7167MiB and operator/source unchanged. Keep T088 and native-v1 acceptance open; do not retry unchanged or infer model/extractor cause. [Evidence](validation-t088.md).
