@@ -14,11 +14,23 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
-def native_launch_model_exact(identities, binary, model, agent, alive, *, proc_root=Path("/proc")):
+def native_launch_model_exact(
+    identities, binary, model, agent, alive, *, proc_root=Path("/proc"), peer_agents=None
+):
     """Return booleans only for the exact owned native executable and argv."""
     try:
         expected = binary.stat()
-        matches = 0
+        if peer_agents is not None and (
+            type(peer_agents) is not frozenset
+            or not peer_agents
+            or agent not in peer_agents
+            or any(type(name) is not str or not name for name in peer_agents)
+        ):
+            return False
+        expected_agents = {
+            os.fsencode(name) for name in (peer_agents if peer_agents is not None else {agent})
+        }
+        observed_agents = []
         for identity in identities:
             if identity.uid != os.getuid() or not alive(identity):
                 return False
@@ -34,16 +46,23 @@ def native_launch_model_exact(identities, binary, model, agent, alive, *, proc_r
             if len(raw) > 65536 or not raw.endswith(b"\0"):
                 return False
             argv = raw[:-1].split(b"\0")
-            for flag, value in ((b"--model", os.fsencode(model)), (b"--agent", os.fsencode(agent))):
+            arguments = {}
+            for flag in (b"--model", b"--agent"):
                 if argv.count(flag) != 1:
                     return False
                 index = argv.index(flag)
-                if index == 0 or index + 1 >= len(argv) or argv[index + 1] != value:
+                if index == 0 or index + 1 >= len(argv):
                     return False
+                arguments[flag] = argv[index + 1]
+            if (
+                arguments[b"--model"] != os.fsencode(model)
+                or arguments[b"--agent"] not in expected_agents
+            ):
+                return False
             if not alive(identity):
                 return False
-            matches += 1
-        return matches == 1
+            observed_agents.append(arguments[b"--agent"])
+        return sorted(observed_agents) == sorted(expected_agents)
     except (OSError, ValueError, TypeError, AttributeError):
         return False
 

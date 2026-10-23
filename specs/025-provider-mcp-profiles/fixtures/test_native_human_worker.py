@@ -64,6 +64,86 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(client.get("/").text, "synthetic UI")
             self.assertEqual([r for r in app.router.routes if r in existing], existing)
 
+    def test_two_owned_native_peers_are_distinguished_by_exact_agent_argument(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            binary = root / "native"
+            binary.write_bytes(b"synthetic executable")
+            identities = []
+            for pid, agent in ((123, "v1-collaboration"), (124, "v1-receiver")):
+                process = root / str(pid)
+                process.mkdir()
+                (process / "exe").symlink_to(binary)
+                (process / "cmdline").write_bytes(
+                    b"native\0--model\0explicit\0--agent\0" + agent.encode() + b"\0"
+                )
+                identities.append(SimpleNamespace(pid=pid, uid=os.getuid()))
+            kwargs = {"proc_root": root}
+            if "peer_agents" in inspect.signature(worker.native_launch_model_exact).parameters:
+                kwargs["peer_agents"] = frozenset({"v1-collaboration", "v1-receiver"})
+            for agent in ("v1-collaboration", "v1-receiver"):
+                self.assertTrue(
+                    worker.native_launch_model_exact(
+                        identities, binary, "explicit", agent, lambda _: True, **kwargs
+                    )
+                )
+            runner = Path(worker.__file__).with_name("run_native_v1_human.py")
+            selected = {
+                "native_model_argv_before_restart_exact",
+                "native_model_argv_after_restart_exact",
+                "receiver_model_argv_exact",
+            }
+            statements = [
+                node
+                for node in ast.walk(ast.parse(runner.read_text()))
+                if isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Subscript)
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id == "receipt"
+                    and isinstance(target.slice, ast.Constant)
+                    and target.slice.value in selected
+                    for target in node.targets
+                )
+            ]
+            scope = dict(
+                receipt={},
+                mixed=True,
+                profile="v1-collaboration",
+                before_native=identities,
+                after_native=identities,
+                receiver_native_before=identities,
+                receiver_native_after=identities,
+                binary=binary,
+                model="explicit",
+                journey=SimpleNamespace(_process_identity_alive=lambda _: True),
+                native_launch_model_exact=lambda *args, **kw: worker.native_launch_model_exact(
+                    *args, proc_root=root, **kw
+                ),
+            )
+            exec(
+                compile(
+                    ast.Module(body=sorted(statements, key=lambda n: n.lineno), type_ignores=[]),
+                    str(runner),
+                    "exec",
+                ),
+                scope,
+            )
+            self.assertTrue(all(scope["receipt"][name] is True for name in selected))
+            path = root / "124" / "cmdline"
+            path.write_bytes(path.read_bytes().replace(b"explicit", b"other"))
+            self.assertFalse(
+                worker.native_launch_model_exact(
+                    identities, binary, "explicit", "v1-collaboration", lambda _: True, **kwargs
+                )
+            )
+            path.write_bytes(b"native\0--model\0explicit\0--agent\0unknown\0")
+            self.assertFalse(
+                worker.native_launch_model_exact(
+                    identities, binary, "explicit", "v1-collaboration", lambda _: True, **kwargs
+                )
+            )
+
     def test_native_argv_requires_exact_owned_executable_and_single_model_agent(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -376,3 +376,13 @@ T101 fresh canonical v1 case PASS onffe7de5c: generation15.125s, two phases12.90
 - [x] T102 [US4] [FR081/SC065] Implement/test/review a dedicated current-source restricted native-v1 human Q&A runner with the real pre-wait API response barrier, two exact human answers/receipt ACKs, three PG/AG-UI identity snapshots, one post-init75s budget and complete owned cleanup; freshly bind committed source/generation and record one serial actual result. Keep expanded-profile operations/global gates separate.
 
 T102 R5 PASS on709b3769: fresh generation13.626s; real human19.775s/journey56.876s, exact questions/answers/ACK/pre-wait restart/three snapshots/LAST/durable receipt, native argv/model/COMPLETED, exact catalogs/protocol and owned cleanup. R1–R4 FAILED evidence retained; expanded OC1-05/global gates stay open. [Result](validation-t102.md).
+
+- [ ] T103 [US4] [FR082/SC066] Implement/test/review a source-bound native-v1 full-collaboration mixed human+message journey with exact8-tool grants/catalog, real passive native receiver ACK, pre-wait API restart and message/PG/API/AG-UI identity, retaining all T102 limits/gates; execute fresh generation and one serial actual result without closing unrelated expanded/global claims.
+
+- [ ] T104 [US4] [FR083/SC067] Recover/review a source-bound default-closed native-v2 collaboration message launcher with full8-tool catalog, actual messages/ACK/PG/API/AG-UI/restart/isolation/cleanup and unchanged phase/memory gates; integrate and execute the distinct current-source case. Do not close OAuth/all-model/historical-reconciliation gates.
+
+- [x] T105 [US4] [FR084/SC068] Reproduce tied-timestamp generic inbox ordering against PostgreSQL; correct the deterministic query order with its id tie-break, verify paginated/limit1 and exactly-once concurrency cases, review source impact and integrate before source-bound mixed native acceptance.
+
+- [x] T106 [US4] [FR085/SC069] Reproduce real inbox-thread cancellation versus API teardown using barriers; if confirmed, implement/review an owned bounded drain preserving cancellation and refusing unsafe resource release, then verify lifecycle/concurrency regressions. Real-thread production-lifespan RED reproduced; correction verified by82 integrated lifecycle tests and independent review. See [T106](validation-t106.md).
+
+T105 bounded order correction: real PostgreSQL RED/GREEN46 tests plus final query/profile50 checkpoint, architecture5/0 and independent review. [Evidence](validation-t105.md). T106 bounded lifecycle correction: real-thread RED, normal-coverage82-test integrated GREEN, bounded fail-closed drain and reviewed FIFO/plugin ownership. These completions do not close native scale or global acceptance.

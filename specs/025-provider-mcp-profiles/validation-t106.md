@@ -1,0 +1,15 @@
+# T106 — drain owned inbox operations before API teardown
+
+Status: bounded lifecycle correction verified on the integrated, formatted source and independently reviewed. No native/global acceptance claim.
+
+The regression runs the real InboxService consumer with a fresh event bus and a real worker held by threading.Event, then exits the production API lifespan. On the baseline, cancelling the asyncio.to_thread waiter leaves the synchronous worker alive: FIFO teardown observes worker_finished=False. The ordinary project-coverage RED run failed at that intended assertion. An earlier agent run without coverage is not credited as a project gate.
+
+InboxService now owns outer synchronous operations under a condition and thread-local nesting depth. Shutdown fences new top-level submissions before cancelling consumers; accepted poll/reconciliation batches retain ownership through nested deliveries. The event-loop drain waits on notified futures rather than occupying the executor pool. It uses a positive finite timeout derived from the maximum existing provider initialization/MCP server budget. Expiry retains the ownership count and raises before FIFO/plugin teardown. Cancelled drains remove their waiter and propagate cancellation. Admission cannot reopen while an older operation is alive.
+
+Tests cover a real worker surviving waiter cancellation, safe FIFO/plugin ordering, deadline expiry without teardown, nested accepted batch work after fencing, new-work rejection, and invalid budgets. Agent focused checkpoint:10 passed with normal coverage. After integration, the lead ran the inbox/API/lifespan/dispatcher/plugin/AG-UI/startup regression group against the independently verified owned PostgreSQL service:82 passed,5 existing warnings in100.22s. Focused coverage23% is not global coverage acceptance; no thresholds were changed. After formatting, the same82-test group passed again in105.89s with normal project coverage and5 existing warnings.
+
+Claude read-only review c66392da510549ed8f02c57a91fde7d6 approved the ownership, lost-wakeup, lock ordering, nested leases, cancellation and timeout boundaries. The lead reviewed the complete diff. Architecture: Import Linter412 files/1834 dependencies,5 kept/0 broken. Composition: service operations→real threads→API lifespan→FIFO/plugin ownership; no transaction/schema/API payload change. No new contract framework is needed for this internal lifecycle boundary. Graphify callers were verified against source; unrelated generated changes are preserved.
+
+Residual limits: this does not interrupt a stuck synchronous provider call, prove arbitrary multi-loop operation, or close native scale/model/authentication gates. Timeout deliberately leaves resources open rather than claiming completed shutdown. Synchronous event-bus work and unrelated process owners retain their existing behavior. No vault write: detailed implementation and executable lifecycle evidence belong to this repository.
+
+Final verdict: PASS for the reproduced T106 boundary. Architecture5/0 and complete owned thread/lifespan tests pass; native/model/scale gates remain independent.

@@ -28,6 +28,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--manifest", type=Path, required=True)
 parser.add_argument("--expected-head", required=True)
 parser.add_argument("--go", action="store_true")
+parser.add_argument("--case", choices=("interaction", "collaboration"), default="interaction")
 args = parser.parse_args()
 if sys.flags.optimize:
     raise RuntimeError("optimized_python_not_supported")
@@ -54,11 +55,14 @@ def private_json(path):
 
 
 m = private_json(args.manifest)
+mixed = args.case == "collaboration"
+if m.get("case", "interaction") != args.case:
+    raise RuntimeError("case_binding_mismatch")
 if m.get("execution_authorized") is not True:
     raise RuntimeError("execution_gate_closed")
 repo = Path(m["workspace"])
 cache = Path(m["evidence_dir"])
-label = "t102-v1-human"
+label = "t103-v1-collaboration" if mixed else "t102-v1-human"
 expected_head = m["source_head"]
 if args.expected_head != expected_head:
     raise RuntimeError("source_head_confirmation_mismatch")
@@ -108,6 +112,15 @@ required_artifacts = {
         "native_human_api_worker.py",
     )
 } | {"specs/025-provider-mcp-profiles/opencode-v1-pin.json"}
+if mixed:
+    required_artifacts |= {
+        "specs/025-provider-mcp-profiles/fixtures/" + name
+        for name in (
+            "native-collaboration-interaction-profile.json",
+            "native_collaboration_contract.py",
+            "native-message-acceptance-profiles.json",
+        )
+    }
 if set(m["artifacts"]) != required_artifacts:
     raise RuntimeError("artifact_inventory_mismatch")
 sourcepins = {**m["source_files"], **m["artifacts"]}
@@ -149,7 +162,13 @@ from native_phase_readers import HTTPStatusError, OwnedPhaseReaders, http_json_b
 
 case = json.loads(
     (
-        repo / "specs/025-provider-mcp-profiles/fixtures/native-human-interaction-profile.json"
+        repo
+        / "specs/025-provider-mcp-profiles/fixtures"
+        / (
+            "native-collaboration-interaction-profile.json"
+            if mixed
+            else "native-human-interaction-profile.json"
+        )
     ).read_text()
 )
 if case["required_checks"] != {
@@ -164,6 +183,25 @@ if case["required_checks"] != {
 }:
     raise RuntimeError("native_case_contract_mismatch")
 import native_human_contract as human
+
+if mixed:
+    import native_collaboration_contract as mixed_contract
+
+    restricted_case = json.loads(
+        (
+            repo / "specs/025-provider-mcp-profiles/fixtures/native-human-interaction-profile.json"
+        ).read_text()
+    )
+    if any(
+        case.get(key) != restricted_case.get(key)
+        for key in ("model", "questions", "human_answers", "required_checks", "allowed_tools")
+    ):
+        raise RuntimeError("native_case_contract_mismatch")
+
+    if case["mcp_profile"] != "collaboration" or sorted(case["tools"]) != sorted(
+        mixed_contract.TOOLS
+    ):
+        raise RuntimeError("native_case_contract_mismatch")
 
 generation_path = Path(m["generation_receipt"])
 generation = private_json(generation_path)
@@ -264,9 +302,14 @@ receipt = {
     "source_files": sourcepins,
     "binary_sha256": pin["binary_sha256"],
     "runner_sha256": runner_sha256,
-    "scope": "current managed-v1 human Q&A; committed-response pre-wait API restart; not expanded profiles or global acceptance",
+    "scope": (
+        "current native-v1 full-collaboration human+message case; not all profiles or global acceptance"
+        if mixed
+        else "current managed-v1 human Q&A; committed-response pre-wait API restart; not expanded profiles or global acceptance"
+    ),
     "model": case["model"],
-    "case": "T102",
+    "case": "T103" if mixed else "T102",
+    "mcp_profile": "collaboration" if mixed else "interaction",
     "diagnostic_only": True,
     "acceptance_claimed": False,
     "original_model_acceptance_claimed": False,
@@ -587,6 +630,20 @@ try:
 
     for name in ("mcp-home", "mcp-data"):
         (root / name).mkdir(mode=0o700)
+    observer_directory = repo / "test/live_provider"
+    if mixed:
+        observer_directory = root / "mixed-observer"
+        observer_directory.mkdir(mode=0o700)
+        observer_source = (repo / "test/live_provider/opencode_mcp_observer.py").read_text()
+        observer_source += (
+            "\nINTERACTION_TOOLS = frozenset(" + repr(tuple(sorted(case["tools"]))) + ")\n"
+        )
+        observer_file = observer_directory / "opencode_mcp_observer.py"
+        observer_file.write_text(observer_source)
+        observer_file.chmod(0o600)
+        spec = importlib.util.spec_from_file_location("mixed_opencode_mcp_observer", observer_file)
+        observer_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(observer_module)
     childenv = {
         "HOME": str(root / "mcp-home"),
         "XDG_DATA_HOME": str(root / "mcp-data"),
@@ -596,7 +653,12 @@ try:
         "CAO_API_PORT": str(api_port),
         "CAO_MCP_APPS_ENABLED": "0",
         "PYTHONPATH": os.pathsep.join(
-            [str(repo / "test/live_provider"), str(repo / "src"), str(repo)]
+            [
+                str(observer_directory),
+                str(repo / "test/live_provider"),
+                str(repo / "src"),
+                str(repo),
+            ]
         ),
         "CAO_OPENCODE_MCP_OBSERVER": "1",
         "CAO_OPENCODE_MCP_OBSERVER_PATH": str(observation),
@@ -617,8 +679,19 @@ try:
         "TMPDIR": str(root),
         "CAO_MCP_APPS_ENABLED": "0",
     }
+    if mixed:
+        childenv["CAO_ENABLE_SENDER_ID_INJECTION"] = "true"
     profile = case["profile_name"]
     source = root / (profile + ".md")
+    mcp_definition = {
+        "command": sys.executable,
+        "args": ["-m", "cli_agent_orchestrator.mcp_server.server"],
+        "env": childenv,
+        "cao_tool_profile": "collaboration" if mixed else "interaction",
+        "timeout": 60000,
+    }
+    if not mixed:
+        mcp_definition["enabled_tools"] = case["tools"]
     source.write_text(
         frontmatter.dumps(
             frontmatter.Post(
@@ -628,16 +701,7 @@ try:
                 provider="opencode_cli",
                 role="developer",
                 allowedTools=case["allowed_tools"],
-                mcpServers={
-                    "cao-mcp-server": {
-                        "command": sys.executable,
-                        "args": ["-m", "cli_agent_orchestrator.mcp_server.server"],
-                        "env": childenv,
-                        "cao_tool_profile": "interaction",
-                        "enabled_tools": case["tools"],
-                        "timeout": 60000,
-                    }
-                },
+                mcpServers={"cao-mcp-server": mcp_definition},
             ),
             sort_keys=False,
         )
@@ -660,6 +724,45 @@ try:
     )
     if installed.returncode != 0:
         raise RuntimeError("production_install_failed")
+    if mixed:
+        receiver_case = json.loads(
+            (
+                repo
+                / "specs/025-provider-mcp-profiles/fixtures/native-message-acceptance-profiles.json"
+            ).read_text()
+        )["profiles"]["receiver"]
+        receiver_source = root / "v1-receiver.md"
+        receiver_source.write_text(
+            frontmatter.dumps(
+                frontmatter.Post(
+                    receiver_case["prompt"],
+                    name="v1-receiver",
+                    description="Private native passive receiver",
+                    provider="opencode_cli",
+                    role="developer",
+                    allowedTools=[],
+                    mcpServers={},
+                ),
+                sort_keys=False,
+            )
+        )
+        receiver_install = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "cli_agent_orchestrator.cli.main",
+                "install",
+                str(receiver_source),
+                "--provider",
+                "opencode_cli",
+            ],
+            env=installenv,
+            cwd=repo,
+            capture_output=True,
+            timeout=60,
+        )
+        if receiver_install.returncode != 0:
+            raise RuntimeError("production_install_failed")
     receipt["production_install_exact"] = True
     _copy_private_state_bundle(source_db, home / ".local/share/opencode")
     if legacy.exists():
@@ -700,6 +803,8 @@ try:
         "OPENCODE_DISABLE_PROJECT_CONFIG": "1",
         "OPENCODE_DISABLE_MODELS_FETCH": "1",
     }
+    if mixed:
+        extra["CAO_ENABLE_SENDER_ID_INJECTION"] = "true"
     approved = frozenset(
         {
             "OPENCODE_DISABLE_AUTOUPDATE",
@@ -746,7 +851,7 @@ try:
     server = start_api("api_a", stop=start + 180)
     receipt["api_healthy"] = True
     admit("terminal")
-    session_name = "t102-" + root.name[-8:]
+    session_name = ("t103-" if mixed else "t102-") + root.name[-8:]
     created = requests.post(
         server.url + "/sessions",
         params={
@@ -795,8 +900,13 @@ try:
     )
     receipt["native_permissions_exact"] = (
         set(data.get("allowed_tools") or []) == set(case["allowed_tools"])
-        and native_env.get("CAO_INTERNAL_MCP_TOOL_PROFILE") == "interaction"
-        and set(json.loads(native_env["CAO_INTERNAL_MCP_ENABLED_TOOLS"])) == set(human.TOOLS)
+        and native_env.get("CAO_INTERNAL_MCP_TOOL_PROFILE")
+        == ("collaboration" if mixed else "interaction")
+        and (
+            ("CAO_INTERNAL_MCP_ENABLED_TOOLS" not in native_env)
+            if mixed
+            else set(json.loads(native_env["CAO_INTERNAL_MCP_ENABLED_TOOLS"])) == set(human.TOOLS)
+        )
     )
     receipt["mcp_ready_exact"] = (
         has_ready_signal(Path(native_env[READY_FILE_ENV]), native_env[READY_TOKEN_ENV])
@@ -807,7 +917,11 @@ try:
     receipt["runtime_capability_exact"] = (
         cap.is_file()
         and not cap.is_symlink()
-        and native_env.get("CAO_INTERNAL_INTERACTION_PULL_FLOW_ONLY") == "1"
+        and (
+            ("CAO_INTERNAL_INTERACTION_PULL_FLOW_ONLY" not in native_env)
+            if mixed
+            else native_env.get("CAO_INTERNAL_INTERACTION_PULL_FLOW_ONLY") == "1"
+        )
     )
     authfile = private / "data/opencode/auth.json"
     receipt["credentials_isolated"] = (
@@ -835,6 +949,191 @@ try:
         raise RuntimeError("native_profile_preflight_failed")
     data = requests.get(server.url + "/terminals/" + terminal_id, timeout=3).json()
     incarnation = data["session_incarnation_id"]
+    if mixed:
+        receipt["mixed_profile_configuration_exact"] = all(
+            receipt.get(k) is True
+            for k in (
+                "profile_configuration_exact",
+                "native_permissions_exact",
+                "runtime_capability_exact",
+            )
+        )
+        admit("receiver_terminal")
+        receiver_created = requests.post(
+            server.url + "/sessions/" + session_name + "/terminals",
+            params={
+                "provider": "opencode_cli",
+                "agent_profile": "v1-receiver",
+                "working_directory": str(home),
+                "model": model,
+            },
+            timeout=min(120, start + 180 - time.monotonic()),
+        )
+        if receiver_created.status_code != 201:
+            raise RuntimeError("production_terminal_creation_failed")
+        receiver = receiver_created.json()
+        receiver_id, receiver_session, receiver_pane = _created_terminal_target(receiver)
+        if receiver_session != session_name or receiver_id == terminal_id:
+            raise RuntimeError("receiver_identity_failed")
+        terminals["receiver"] = receiver
+        owned |= journey._snapshot_and_recheck_private_tmux_server(
+            sid, sockid, socket_path, terminal_id=receiver_id
+        )
+        receiver_roots = set((caohome / "opencode-v1").glob("terminal-*")) - {private}
+        if len(receiver_roots) != 1:
+            raise RuntimeError("private_native_root_mismatch")
+        receiver_root = next(iter(receiver_roots))
+        receiver_config = json.loads((receiver_root / "opencode.json").read_text())
+        receiver_config_info = (receiver_root / "opencode.json").stat()
+        receiver_config_binding = (
+            receiver_config_info.st_dev,
+            receiver_config_info.st_ino,
+            _sha256(receiver_root / "opencode.json"),
+            _sha256(receiver_root / ".cao-ownership.json"),
+        )
+        receipt["receiver_profile_configuration_exact"] = (
+            receiver_config.get("model") == model
+            and set(receiver_config.get("agent", {})) == {"v1-receiver"}
+            and receiver_config["agent"]["v1-receiver"]["prompt"] == receiver_case["prompt"]
+            and not receiver_config.get("mcp")
+            and receiver_config.get("permission", {}).get("*") == "deny"
+            and receiver.get("allowed_tools") == []
+        )
+        settled = 0
+        while time.monotonic() < start + 180:
+            rs = requests.get(
+                server.url + "/terminals/" + receiver_id,
+                timeout=min(3, start + 180 - time.monotonic()),
+            ).json()
+            good = (
+                rs.get("status") in {"idle", "completed"}
+                and type(rs.get("turn_sequence")) is int
+                and rs["turn_sequence"] == rs.get("turn_completed")
+            )
+            settled = settled + 1 if good else 0
+            if settled == 3:
+                break
+            time.sleep(min(0.1, max(0, start + 180 - time.monotonic())))
+        else:
+            raise RuntimeError("receiver_identity_failed")
+        if not receipt["receiver_profile_configuration_exact"]:
+            raise RuntimeError("receiver_identity_failed")
+        receiver_initial_counts = (rs["turn_sequence"], rs["turn_completed"])
+        if receiver_initial_counts != (0, 0):
+            raise RuntimeError("receiver_identity_failed")
+        from message_api_restart import PRE_RESTART_MESSAGE, expected_persisted_message
+
+        if case["message"] != PRE_RESTART_MESSAGE:
+            raise RuntimeError("native_case_contract_mismatch")
+        message_expected = expected_persisted_message(case["message"], terminal_id)
+
+        def message_rows():
+            with connect(targets.main, readonly=True) as con:
+                rows = con.execute(
+                    "SELECT id,sender_id,receiver_id,message,status,created_at FROM inbox WHERE receiver_id=%s ORDER BY created_at,id",
+                    (receiver_id,),
+                ).fetchall()
+                result = [dict(zip(row.keys(), row)) for row in rows]
+            for row in result:
+                row["created_at"] = row["created_at"].isoformat()
+            response = requests.get(
+                server.url + "/terminals/" + receiver_id + "/inbox/messages",
+                params={"limit": 10},
+                timeout=remaining_timeout(3) if deadline is not None else 3,
+            )
+            if response.status_code != 200:
+                raise RuntimeError("mixed_message_failed")
+            return result, response.json()
+
+        def receiver_ack_snapshot(expected_identity, expected_counts, phase):
+            while time.monotonic() < min(deadline, start + 180):
+                try:
+                    body = json.loads(
+                        http_json_bytes(
+                            server.url,
+                            "/terminals/" + receiver_id + "/output?mode=last",
+                            min(deadline, start + 180, time.monotonic() + 2),
+                            6 * 65537 + 4096,
+                        )
+                    )
+                except HTTPStatusError as exc:
+                    if exc.status_code != 202:
+                        raise
+                else:
+                    response = requests.get(
+                        server.url + "/terminals/" + receiver_id, timeout=remaining_timeout(2)
+                    )
+                    if response.status_code != 200:
+                        raise RuntimeError("mixed_receiver_ack_failed")
+                    state = response.json()
+                    counts = (state.get("turn_sequence"), state.get("turn_completed"))
+                    if any(type(value) is not int or value < 0 for value in counts) or any(
+                        value > limit for value, limit in zip(counts, expected_counts)
+                    ):
+                        raise RuntimeError("mixed_receiver_ack_failed")
+                    receipt["receiver_" + phase + "_sequence"] = counts[0]
+                    receipt["receiver_" + phase + "_completed"] = counts[1]
+                    if (
+                        body.get("mode") == "last"
+                        and body.get("output") == "ACK"
+                        and state.get("status") == "completed"
+                        and counts == expected_counts
+                    ):
+                        with connect(targets.main, readonly=True) as con:
+                            rows = con.execute(
+                                "SELECT generation,receipt_sha256,result_sha256,phase FROM terminal_turn_receipts WHERE terminal_id=%s",
+                                (receiver_id,),
+                            ).fetchall()
+                        valid = (
+                            len(rows) == 1
+                            and rows[0]["phase"] == "result_verified"
+                            and (
+                                expected_identity is None
+                                or (rows[0]["generation"], rows[0]["receipt_sha256"])
+                                == expected_identity
+                            )
+                            and all(
+                                type(rows[0][key]) is str
+                                and re.fullmatch(pattern, rows[0][key]) is not None
+                                for key, pattern in (
+                                    ("generation", r"[0-9a-f]{32}"),
+                                    ("receipt_sha256", r"[0-9a-f]{64}"),
+                                    ("result_sha256", r"[0-9a-f]{64}"),
+                                )
+                            )
+                        )
+                        if not valid:
+                            raise RuntimeError("mixed_receiver_ack_failed")
+                        check_deadline()
+                        if expected_identity is None:
+                            receipt["receiver_before_restart_identity"] = (
+                                rows[0]["generation"],
+                                rows[0]["receipt_sha256"],
+                            )
+                        return counts
+                time.sleep(min(0.1, max(0, min(deadline, start + 180) - time.monotonic())))
+            raise RuntimeError("mixed_receiver_ack_failed")
+
+        deadline = None
+        if any(message_rows()):
+            raise RuntimeError("mixed_message_failed")
+        import message_api_restart_live as message_live
+
+        namespace = dict(vars(message_live))
+        namespace["requests"] = SimpleNamespace(
+            get=http_session.get,
+            RequestException=message_live.requests.RequestException,
+            Response=message_live.requests.Response,
+        )
+        exec(
+            compile(
+                inspect.getsource(message_live.AguiCapture), "<source-bound-private-agui>", "exec"
+            ),
+            namespace,
+        )
+        message_capture = namespace["AguiCapture"](server.url, terminal_id, receiver_id)
+        captures.append(message_capture)
+        message_capture.start(timeout=min(20, start + 180 - time.monotonic()))
     receipt["initialization_complete"] = True
 
     def ledger():
@@ -907,11 +1206,23 @@ try:
         + names["cao_acknowledge_user_answers"]
         + ". Never answer on behalf of the human. Finish with the exact line: Validado ñ, 中文."
     )
+    if mixed:
+        prompt = (
+            "First call cao_mcp_server_send_message exactly once with receiver_id="
+            + repr(receiver_id)
+            + " and exact message="
+            + repr(case["message"])
+            + ". Require success; do not retry or call discovery. Then "
+            + prompt.replace("Use only the three CAO interaction tools. ", "")
+            + " Use no other offered tools."
+        )
     forbidden = tuple(q["prompt"] for q in case["questions"]) + (
         case["human_answers"]["test-color"]["text"],
         "Sapphire",
         "Amber",
     )
+    if mixed:
+        forbidden += (case["message"], message_expected)
     admit("model")
     deadline = None
     model_start = None
@@ -969,10 +1280,66 @@ try:
     from native_human_api_worker import native_launch_model_exact
 
     receipt["native_model_argv_before_restart_exact"] = native_launch_model_exact(
-        before_native, binary, model, profile, journey._process_identity_alive
+        before_native,
+        binary,
+        model,
+        profile,
+        journey._process_identity_alive,
+        peer_agents=frozenset({profile, "v1-receiver"}) if mixed else None,
     )
     if not receipt["native_model_argv_before_restart_exact"]:
         raise RuntimeError("native_model_argv_failed")
+    if mixed:
+        receiver_native_before = journey._terminal_tagged_processes(
+            receiver_id, socket_path, server_identity=sid
+        )
+        receipt["receiver_model_argv_exact"] = native_launch_model_exact(
+            receiver_native_before,
+            binary,
+            model,
+            "v1-receiver",
+            journey._process_identity_alive,
+            peer_agents=frozenset({profile, "v1-receiver"}),
+        )
+        receiver_ack_snapshot(
+            None,
+            tuple(value + 1 for value in receiver_initial_counts),
+            "before_restart",
+        )
+        before_receiver_turn = receipt["receiver_before_restart_identity"]
+        before_message_pg, before_message_api = message_rows()
+        receipt["receiver_one_turn_before_restart_exact"] = True
+        receipt["message_pair_before_restart_exact"] = mixed_contract.message_pair_exact(
+            before_message_pg, before_message_api, terminal_id, receiver_id, message_expected
+        )
+        notifications = []
+        while time.monotonic() < min(deadline, start + 180):
+            notifications.extend(
+                message_capture.take_until(min(deadline, start + 180, time.monotonic() + 0.1))
+            )
+            if notifications:
+                break
+        duplicate_window_stop = time.monotonic() + 1
+        if duplicate_window_stop >= min(deadline, start + 180):
+            raise RuntimeError("mixed_message_failed")
+        notifications.extend(message_capture.take_until(duplicate_window_stop))
+        message_capture.stop()
+        notifications.extend(message_capture.take_until(time.monotonic()))
+        check_deadline()
+        receipt["message_agui_notification_exact"] = (
+            notifications == [True]
+            and not message_capture._failed
+            and not message_capture._thread.is_alive()
+        )
+        if not all(
+            receipt.get(k) is True
+            for k in (
+                "receiver_model_argv_exact",
+                "message_pair_before_restart_exact",
+                "message_agui_notification_exact",
+            )
+        ):
+            raise RuntimeError("mixed_message_failed")
     preaudit = common._agui_observation_diagnostics(audit_path, group_id, expected)
     receipt["restart_before_wait_exact"] = (
         barrier_reached(barrier)
@@ -1007,7 +1374,12 @@ try:
         journey._process_identity_alive(p) for p in after_native
     )
     receipt["native_model_argv_after_restart_exact"] = native_launch_model_exact(
-        after_native, binary, model, profile, journey._process_identity_alive
+        after_native,
+        binary,
+        model,
+        profile,
+        journey._process_identity_alive,
+        peer_agents=frozenset({profile, "v1-receiver"}) if mixed else None,
     )
     native_config_binding["launch_model_observed"] = (
         receipt["native_model_argv_before_restart_exact"] is True
@@ -1027,6 +1399,78 @@ try:
         )
     ):
         raise RuntimeError("human_restart_identity_failed")
+    if mixed:
+        after_message_pg, after_message_api = message_rows()
+        receipt["message_pair_after_restart_exact"] = mixed_contract.message_pair_exact(
+            after_message_pg, after_message_api, terminal_id, receiver_id, message_expected
+        )
+        receipt["message_identity_survives_restart"] = mixed_contract.message_survives_restart(
+            before_message_pg, after_message_pg
+        ) and mixed_contract.message_survives_restart(before_message_api, after_message_api)
+        receiver_native_after = journey._terminal_tagged_processes(
+            receiver_id, socket_path, server_identity=sid
+        )
+        receiver_after_info = (receiver_root / "opencode.json").stat()
+        receiver_binding_stable = receiver_config_binding == (
+            receiver_after_info.st_dev,
+            receiver_after_info.st_ino,
+            _sha256(receiver_root / "opencode.json"),
+            _sha256(receiver_root / ".cao-ownership.json"),
+        )
+        receipt["receiver_model_argv_exact"] = receipt[
+            "receiver_model_argv_exact"
+        ] and native_launch_model_exact(
+            receiver_native_after,
+            binary,
+            model,
+            "v1-receiver",
+            journey._process_identity_alive,
+            peer_agents=frozenset({profile, "v1-receiver"}),
+        )
+        receipt["receiver_native_identity_stable"] = (
+            bool(receiver_native_before)
+            and receiver_binding_stable
+            and receiver_native_before == receiver_native_after
+            and all(journey._process_identity_alive(p) for p in receiver_native_after)
+        )
+        if not all(
+            receipt.get(k) is True
+            for k in (
+                "message_pair_after_restart_exact",
+                "receiver_model_argv_exact",
+                "message_identity_survives_restart",
+                "receiver_native_identity_stable",
+            )
+        ):
+            raise RuntimeError("mixed_message_failed")
+    if mixed:
+        receiver_settled = 0
+        receiver_last_counts = None
+        while time.monotonic() < min(deadline, start + 180):
+            response = requests.get(
+                server.url + "/terminals/" + receiver_id, timeout=remaining_timeout(2)
+            )
+            if response.status_code != 200:
+                raise RuntimeError("receiver_identity_failed")
+            value = response.json()
+            counts = (value.get("turn_sequence"), value.get("turn_completed"))
+            valid = (
+                all(type(v) is int and v >= 0 for v in counts)
+                and counts[0] == counts[1]
+                and value.get("status") in {"idle", "completed"}
+            )
+            receiver_settled = (
+                receiver_settled + 1
+                if valid and counts == receiver_last_counts
+                else (1 if valid else 0)
+            )
+            receiver_last_counts = counts
+            if receiver_settled == 3:
+                receiver_restart_counts = counts
+                break
+            time.sleep(min(0.1, max(0, min(deadline, start + 180) - time.monotonic())))
+        else:
+            raise RuntimeError("receiver_identity_failed")
     release_barrier(barrier)
     barrier_resolved = True
     receipt["create_response_released"] = True
@@ -1203,6 +1647,12 @@ try:
         and state.get("status") == "completed"
         and receipt["last_active_receipt_exact"]
     )
+    if mixed:
+        receiver_ack_snapshot(before_receiver_turn, receiver_restart_counts, "final")
+        receipt["receiver_ack_exact"] = True
+        receipt["receiver_verified_receipt_exact"] = True
+        receipt["receiver_no_new_turn_after_restart_exact"] = True
+        check_deadline()
     receipt["model_seconds"] = time.monotonic() - model_start
     outer_remaining = start + 180 - time.monotonic()
     if outer_remaining <= 0:
@@ -1228,7 +1678,9 @@ try:
             seal_stop,
         )
     )
-    receipt["protocol_exact"] = human.protocol_exact(observed_protocol)
+    receipt["protocol_exact"] = (mixed_contract if mixed else human).protocol_exact(
+        observed_protocol
+    )
     with os.fdopen(
         os.open(observation, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb"
     ) as stream:
@@ -1249,7 +1701,7 @@ try:
         or not all(type(row) is dict and row.get("nonce") == nonce for row in rows)
     ):
         raise RuntimeError("protocol_sidecar_invalid")
-    receipt["every_catalog_exact"] = human.catalogs_exact(rows)
+    receipt["every_catalog_exact"] = (mixed_contract if mixed else human).catalogs_exact(rows)
     receipt["protocol_observation"] = observed_protocol
     receipt["journey_seconds"] = time.monotonic() - start
     receipt["journey_within_180_seconds"] = receipt["journey_seconds"] <= 180
@@ -1257,6 +1709,9 @@ try:
 except Exception as exc:
     receipt["error_type"] = type(exc).__name__
     allowed_errors = {
+        "receiver_identity_failed",
+        "mixed_message_failed",
+        "mixed_receiver_ack_failed",
         "native_model_argv_failed",
         "native_probe_http_failed",
         "native_probe_shape_invalid",
@@ -1575,7 +2030,7 @@ finally:
     )
     values = [v for k, v in receipt.items() if k.endswith("_admission_mib") and type(v) is int]
     receipt["minimum_admission_mib"] = min(values) if values else 0
-    receipt["success"] = human.final_exact(receipt)
+    receipt["success"] = (mixed_contract if mixed else human).final_exact(receipt)
     for child in raw.rglob("*"):
         if child.is_file() and not child.is_symlink():
             child.chmod(0o600)

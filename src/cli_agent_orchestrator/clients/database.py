@@ -3087,14 +3087,14 @@ def _managed_inbox_target(
 
 
 def get_pending_messages(receiver_id: str, limit: int = 1) -> List[InboxMessage]:
-    """Get pending messages ordered by created_at ASC (oldest first)."""
+    """Get pending messages ordered by created_at ASC, then id ASC (oldest first)."""
     return get_inbox_messages(receiver_id, limit=limit, status=MessageStatus.PENDING)
 
 
 def get_inbox_messages(
     receiver_id: str, limit: int = 10, status: Optional[MessageStatus] = None
 ) -> List[InboxMessage]:
-    """Get inbox messages with optional status filter ordered by created_at ASC (oldest first).
+    """Get inbox messages ordered by created_at ASC, then id ASC (oldest first).
 
     Args:
         receiver_id: Terminal ID to get messages for
@@ -3102,7 +3102,7 @@ def get_inbox_messages(
         status: Optional filter by message status (None = all statuses)
 
     Returns:
-        List of inbox messages ordered by creation time (oldest first)
+        List of inbox messages ordered by creation time, then id (oldest first)
     """
     with SessionLocal() as db:
         query = db.query(InboxModel).filter(InboxModel.receiver_id == receiver_id)
@@ -3110,7 +3110,9 @@ def get_inbox_messages(
         if status is not None:
             query = query.filter(InboxModel.status == status.value)
 
-        messages = query.order_by(InboxModel.created_at.asc()).limit(limit).all()
+        messages = (
+            query.order_by(InboxModel.created_at.asc(), InboxModel.id.asc()).limit(limit).all()
+        )
 
         return [
             InboxMessage(

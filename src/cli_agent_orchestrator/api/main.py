@@ -175,7 +175,10 @@ from cli_agent_orchestrator.services.event_primitives import KINDS as EVENT_KIND
 from cli_agent_orchestrator.services.fifo_reader import fifo_manager
 from cli_agent_orchestrator.services.herdr_inbox_registry import set_herdr_inbox_service
 from cli_agent_orchestrator.services.herdr_inbox_service import HerdrInboxService
-from cli_agent_orchestrator.services.inbox_service import inbox_service
+from cli_agent_orchestrator.services.inbox_service import (
+    InboxServiceDrainTimeout,
+    inbox_service,
+)
 from cli_agent_orchestrator.services.install_service import InstallResult, install_agent
 from cli_agent_orchestrator.services.log_writer import log_writer
 from cli_agent_orchestrator.services.profile_search import (
@@ -1728,6 +1731,17 @@ async def lifespan(app: FastAPI):
     work_dispatcher_task: Optional[asyncio.Task] = None
     owned_work_runtime: Dict[str, Any] = {}
 
+    def inbox_shutdown_drain_timeout_s() -> float:
+        """Bound drain by the longest existing server operation budget (seconds).
+
+        Both settings are operator-configured in seconds; using their maximum
+        avoids imposing a new, shorter inbox-specific shutdown limit.
+        """
+        from cli_agent_orchestrator.services.settings_service import get_server_settings
+
+        settings = get_server_settings()
+        return float(max(settings["provider_init_timeout"], settings["mcp_request_timeout"]))
+
     def start_lifespan_task(coroutine):
         task = asyncio.create_task(coroutine)
         startup_tasks.append(task)
@@ -1765,6 +1779,7 @@ async def lifespan(app: FastAPI):
             logger.warning("Error shutting down telemetry during startup cleanup", exc_info=True)
 
     async def cleanup_failed_startup() -> None:
+        inbox_service.stop_accepting()
         if startup_tasks:
             try:
                 await asyncio.gather(*startup_tasks, return_exceptions=True)
@@ -1777,6 +1792,7 @@ async def lifespan(app: FastAPI):
                 logger.warning(
                     "Error clearing Herdr inbox service during startup cleanup", exc_info=True
                 )
+        await inbox_service.drain(timeout_s=inbox_shutdown_drain_timeout_s())
         await shutdown_lifespan_resources(best_effort=True)
 
     try:
@@ -1787,6 +1803,7 @@ async def lifespan(app: FastAPI):
             )
         await registry.load()
         app.state.plugin_registry = registry
+        inbox_service.start_accepting()
 
         # Run cleanup in background
         start_lifespan_task(asyncio.to_thread(cleanup_old_data))
@@ -1904,6 +1921,7 @@ async def lifespan(app: FastAPI):
             logger.info("Herdr inbox service started")
 
     except BaseException:
+        inbox_service.stop_accepting()
         for task in startup_tasks:
             try:
                 task.cancel()
@@ -1964,6 +1982,10 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # Fence direct API/Herdr submissions and all batch workers before
+        # cancelling their async waiters. Already-admitted nested deliveries
+        # remain part of their outer operation and are allowed to finish.
+        inbox_service.stop_accepting()
         if local_peer_registered:
             try:
                 await asyncio.to_thread(unregister_instance)
@@ -2039,6 +2061,16 @@ async def lifespan(app: FastAPI):
 
     if work_dispatcher_task is not None:
         await _stop_registered_work_dispatcher(work_dispatcher_task)
+
+    try:
+        await inbox_service.drain(timeout_s=inbox_shutdown_drain_timeout_s())
+    except InboxServiceDrainTimeout:
+        logger.critical(
+            "Inbox operations did not drain before the shutdown deadline; "
+            "leaving FIFO readers and plugins open while workers remain active",
+            exc_info=True,
+        )
+        raise
 
     # Stop the pipe-pane liveness watchdog thread, then release shared services.
     await shutdown_lifespan_resources(best_effort=False)

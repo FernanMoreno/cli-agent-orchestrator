@@ -1,0 +1,67 @@
+{
+  "schema": "caos.native-v1-collaboration-case.v1",
+  "model": "opencode-go/glm-5.3-flash",
+  "profile_name": "v1-collaboration",
+  "prompt": "Use only the CAO operations explicitly required by the task. Send exactly one message to the specified peer, then ask the exact human questions, wait for and acknowledge their receipts. Never answer for a human or call other offered operations. Keep the standalone turn receipt separate from final visible text.",
+  "tools": [
+    "cao_acknowledge_user_answers",
+    "cao_ask_user",
+    "cao_escalate_interaction",
+    "cao_get_interaction",
+    "cao_list_interactions",
+    "cao_wait_for_user_answers",
+    "list_siblings",
+    "send_message"
+  ],
+  "allowed_tools": [
+    "@cao-mcp-server"
+  ],
+  "questions": [
+    {
+      "client_key": "test-color",
+      "kind": "text",
+      "prompt": "¿Qué color ñ, 中文 usar?",
+      "required": true
+    },
+    {
+      "client_key": "test-shade",
+      "kind": "single_choice",
+      "prompt": "Elige tono ñ, 中文.",
+      "required": true,
+      "options": [
+        {
+          "id": "sapphire",
+          "label": "Sapphire"
+        },
+        {
+          "id": "amber",
+          "label": "Amber"
+        }
+      ]
+    }
+  ],
+  "human_answers": {
+    "test-color": {
+      "kind": "text",
+      "text": "azul ñ 中文"
+    },
+    "test-shade": {
+      "kind": "options",
+      "option_ids": [
+        "sapphire"
+      ]
+    }
+  },
+  "required_checks": {
+    "question_count": 2,
+    "agui_snapshot_count": 3,
+    "model_seconds": 75,
+    "outer_seconds": 180,
+    "memory_floor_mib": 6144,
+    "restart_boundary": "committed_create_response_before_return_to_mcp",
+    "unicode_marker": "Validado ñ, 中文.",
+    "owned_cleanup": true
+  },
+  "mcp_profile": "collaboration",
+  "message": "Antes del reinicio: café, español y 日本語."
+}

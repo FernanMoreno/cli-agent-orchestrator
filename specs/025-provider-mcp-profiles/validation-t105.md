@@ -1,0 +1,11 @@
+# T105 — deterministic generic inbox order
+
+Status: bounded correction verified against real PostgreSQL; independent source review and composition approved. This closes a bounded ordering defect, not native scale or global acceptance.
+
+Source at baseline053063f8 ordered generic inbox reads only by created_at. A regression inserted tied rows in reverse ID order40,30,20, plus a later row10 and final50. The real PostgreSQL run failed: expected[20,30,40,10,50], observed[40,30,20,10,50]. It used the existing verified pinned owned PostgreSQL service with autostart disabled; no SQLite substitute or mocked query execution.
+
+The canonical query now orders by created_at ASC,id ASC; receiver/status filters, limits, timestamps, delivery locks and separate Work mailbox are unchanged. Pending reads delegate to that query. The test covers full rows, limit2/limit1 and pending limit1/status filtering, so the tie-break cannot override primary timestamp order.
+
+After integration to main,46 tests passed in57.55s across TestInboxOperations, InboxService and inbox API. Coverage configuration/thresholds were unchanged; this focused result is not global coverage acceptance. Claude read-only source review approved; the lead independently reviewed the minimal query/test diff and adopted the docstring clarification. No model/CLI or historical job ran for this test. The private shared owned service remains available for later serial current-source cases; its original identity/image/loopback port was independently verified before use.
+
+Final query/docstring checkpoint: 50 tests passed in32.46s, including the real tied-timestamp regression and existing mixed-profile/managed-surface contracts. Import Linter analyzed412 files/1834 dependencies:5 contracts kept,0 broken. Composition review: database→service→API preserves canonical ordering, receiver/status filters, query limits and delivery serialization; no migration or external API change. Exactly-once concurrency coverage remains in the existing inbox service/API tests; this tie-break does not claim to solve native process concurrency or scale. Graphify impact was verified against source; generated files were preserved because they contain unrelated changes. No additional vault entry: this query contract and its evidence are repository-owned. Verdict: PASS for T105.

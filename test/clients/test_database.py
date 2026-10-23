@@ -1997,6 +1997,72 @@ class TestListSiblingsByGroupPrefix:
 class TestInboxOperations:
     """Tests for inbox database operations."""
 
+    def test_inbox_reads_order_equal_timestamps_by_id_across_limits(self, test_db):
+        """Tied creation times keep a deterministic message order in every read."""
+        tied_at = datetime(2026, 10, 23, 12, 0, 0)
+        # Insert the equal-time rows in reverse ID order so a timestamp-only
+        # ORDER BY cannot accidentally pass by following insertion order.
+        rows = [
+            InboxModel(
+                id=40,
+                sender_id="sender",
+                receiver_id="ordered-receiver",
+                message="oldest tied row, inserted first",
+                status=MessageStatus.PENDING.value,
+                created_at=tied_at,
+            ),
+            InboxModel(
+                id=30,
+                sender_id="sender",
+                receiver_id="ordered-receiver",
+                message="middle tied row",
+                status=MessageStatus.DELIVERED.value,
+                created_at=tied_at,
+            ),
+            InboxModel(
+                id=20,
+                sender_id="sender",
+                receiver_id="ordered-receiver",
+                message="oldest ID in tied group, inserted last",
+                status=MessageStatus.PENDING.value,
+                created_at=tied_at,
+            ),
+            InboxModel(
+                id=10,
+                sender_id="sender",
+                receiver_id="ordered-receiver",
+                message="later row with smaller ID",
+                status=MessageStatus.PENDING.value,
+                created_at=tied_at + timedelta(seconds=1),
+            ),
+            InboxModel(
+                id=50,
+                sender_id="sender",
+                receiver_id="ordered-receiver",
+                message="latest row",
+                status=MessageStatus.DELIVERED.value,
+                created_at=tied_at + timedelta(seconds=2),
+            ),
+        ]
+        with test_db() as session:
+            for row in rows:
+                session.add(row)
+                session.flush()
+            session.commit()
+
+        with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
+            all_rows = get_inbox_messages("ordered-receiver", limit=10, status=None)
+            limited_rows = get_inbox_messages("ordered-receiver", limit=2, status=None)
+            first_row = get_inbox_messages("ordered-receiver", limit=1, status=None)
+            pending_rows = get_pending_messages("ordered-receiver", limit=10)
+            first_pending = get_pending_messages("ordered-receiver", limit=1)
+
+        assert [row.id for row in all_rows] == [20, 30, 40, 10, 50]
+        assert [row.id for row in limited_rows] == [20, 30]
+        assert [row.id for row in first_row] == [20]
+        assert [row.id for row in pending_rows] == [20, 40, 10]
+        assert [row.id for row in first_pending] == [20]
+
     @patch("cli_agent_orchestrator.clients.database.SessionLocal")
     def test_update_message_status(self, mock_session_class):
         """Test updating message status."""

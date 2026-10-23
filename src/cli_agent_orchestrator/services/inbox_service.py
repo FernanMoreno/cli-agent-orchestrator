@@ -5,9 +5,11 @@ Consumer: terminal.{id}.status
 
 import asyncio
 import logging
+import math
 import threading
+from contextlib import contextmanager
 from itertools import groupby
-from typing import Dict
+from typing import Dict, Iterable, Iterator, Set, Tuple
 
 from cli_agent_orchestrator.backends.base import TerminalNotFoundError
 from cli_agent_orchestrator.clients.database import (
@@ -35,6 +37,22 @@ from cli_agent_orchestrator.utils.event import terminal_id_from_topic
 logger = logging.getLogger(__name__)
 
 
+class InboxServiceStoppingError(RuntimeError):
+    """Raised when inbox work is requested after shutdown has closed admission."""
+
+
+class InboxServiceDrainTimeout(TimeoutError):
+    """Raised when active inbox work does not finish before shutdown's deadline."""
+
+    def __init__(self, *, active_operations: int, timeout_s: float) -> None:
+        self.active_operations = active_operations
+        self.timeout_s = timeout_s
+        super().__init__(
+            f"Inbox service drain timed out after {timeout_s:g}s with "
+            f"{active_operations} operation(s) still active"
+        )
+
+
 class InboxService:
     """Delivers one pending message per terminal per IDLE cycle."""
 
@@ -51,6 +69,114 @@ class InboxService:
         # reaped — terminal ids are bounded by session lifecycle.
         self._delivery_locks_guard = threading.Lock()
         self._delivery_locks: Dict[str, threading.Lock] = {}
+        self._operations = threading.Condition()
+        self._operation_context = threading.local()
+        self._accepting_operations = True
+        self._active_operations = 0
+        self._drain_waiters: Set[Tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]] = set()
+
+    def start_accepting(self) -> None:
+        """Open service admission for a new server lifespan.
+
+        A prior lifespan must have drained before this instance is reused; an
+        old worker must never be mistaken for work owned by a replacement API.
+        """
+        with self._operations:
+            if self._active_operations:
+                raise RuntimeError(
+                    "cannot reopen inbox admission while prior operations are active"
+                )
+            self._accepting_operations = True
+
+    def stop_accepting(self) -> None:
+        """Fence new top-level work while allowing already-owned batches to finish."""
+        with self._operations:
+            self._accepting_operations = False
+
+    async def drain(self, *, timeout_s: float) -> None:
+        """Wait for every admitted sync operation, including nested batch work.
+
+        Call ``stop_accepting`` first. The worker thread notifies this future
+        only after the outermost operation has returned, so cancelling an
+        ``asyncio.to_thread`` waiter cannot make shutdown mistake a live worker
+        for completed work.
+        """
+        if (
+            isinstance(timeout_s, bool)
+            or not isinstance(timeout_s, (int, float))
+            or not math.isfinite(timeout_s)
+            or timeout_s <= 0
+        ):
+            raise ValueError("inbox drain timeout must be a positive finite number of seconds")
+
+        loop = asyncio.get_running_loop()
+        with self._operations:
+            if self._accepting_operations:
+                raise RuntimeError("inbox admission must stop before draining operations")
+            if self._active_operations == 0:
+                return
+            waiter = loop.create_future()
+            key = (loop, waiter)
+            self._drain_waiters.add(key)
+
+        try:
+            await asyncio.wait_for(waiter, timeout=timeout_s)
+        except asyncio.TimeoutError:
+            with self._operations:
+                self._drain_waiters.discard(key)
+                active_operations = self._active_operations
+            if active_operations == 0:
+                return
+            raise InboxServiceDrainTimeout(
+                active_operations=active_operations,
+                timeout_s=timeout_s,
+            ) from None
+        except BaseException:
+            with self._operations:
+                self._drain_waiters.discard(key)
+            raise
+
+    @staticmethod
+    def _resolve_drain_waiter(waiter: asyncio.Future[None]) -> None:
+        if not waiter.done():
+            waiter.set_result(None)
+
+    def _notify_drainers(
+        self,
+        waiters: Iterable[Tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]],
+    ) -> None:
+        for loop, waiter in waiters:
+            try:
+                loop.call_soon_threadsafe(self._resolve_drain_waiter, waiter)
+            except RuntimeError:
+                # A cancelled drain removes itself. A closed loop may only
+                # remain here during process shutdown; no worker ownership is
+                # inferred from that failed notification.
+                logger.debug("Inbox drain loop already closed")
+
+    @contextmanager
+    def _track_operation(self) -> Iterator[None]:
+        depth = getattr(self._operation_context, "depth", 0)
+        is_outermost = depth == 0
+        if is_outermost:
+            with self._operations:
+                if not self._accepting_operations:
+                    raise InboxServiceStoppingError("inbox service is stopping")
+                self._active_operations += 1
+
+        self._operation_context.depth = depth + 1
+        try:
+            yield
+        finally:
+            self._operation_context.depth = depth
+            if is_outermost:
+                with self._operations:
+                    self._active_operations -= 1
+                    waiters: Tuple[Tuple[asyncio.AbstractEventLoop, asyncio.Future[None]], ...] = ()
+                    if self._active_operations == 0:
+                        waiters = tuple(self._drain_waiters)
+                        self._drain_waiters.clear()
+                self._notify_drainers(waiters)
 
     def _delivery_lock(self, terminal_id: str) -> threading.Lock:
         with self._delivery_locks_guard:
@@ -100,8 +226,9 @@ class InboxService:
         Safe to call from any thread: the whole read→mark→send sequence is
         serialized per terminal (see __init__ for why that is load-bearing).
         """
-        with self._delivery_lock(terminal_id):
-            self._deliver_pending_locked(terminal_id, num_messages, registry)
+        with self._track_operation():
+            with self._delivery_lock(terminal_id):
+                self._deliver_pending_locked(terminal_id, num_messages, registry)
 
     def _deliver_pending_locked(
         self,
@@ -236,11 +363,13 @@ class InboxService:
         change after the TUI settles, so the FIFO-driven StatusMonitor may not
         emit an IDLE/COMPLETED transition to trigger delivery on its own.
         """
-        for terminal_id in list_pending_receiver_ids_by_provider(ProviderType.OPENCODE_CLI.value):
-            try:
-                self.deliver_pending(terminal_id, registry=registry)
-            except Exception as e:
-                logger.debug(f"OpenCode inbox poll failed for {terminal_id}: {e}")
+        with self._track_operation():
+            receiver_ids = list_pending_receiver_ids_by_provider(ProviderType.OPENCODE_CLI.value)
+            for terminal_id in receiver_ids:
+                try:
+                    self.deliver_pending(terminal_id, registry=registry)
+                except Exception as e:
+                    logger.debug(f"OpenCode inbox poll failed for {terminal_id}: {e}")
 
     def reconcile_orphaned_messages(self, registry: PluginRegistry | None = None) -> None:
         """Re-attempt delivery for messages stuck in PENDING past the grace window.
@@ -256,11 +385,12 @@ class InboxService:
         so the sweep never competes with the fast paths for freshly queued
         messages — it only adopts ones they have already missed.
         """
-        for terminal_id in list_pending_receiver_ids_older_than(INBOX_RECONCILE_GRACE_SECONDS):
-            try:
-                self.deliver_pending(terminal_id, registry=registry)
-            except Exception as e:
-                logger.debug(f"Inbox reconciliation failed for {terminal_id}: {e}")
+        with self._track_operation():
+            for terminal_id in list_pending_receiver_ids_older_than(INBOX_RECONCILE_GRACE_SECONDS):
+                try:
+                    self.deliver_pending(terminal_id, registry=registry)
+                except Exception as e:
+                    logger.debug(f"Inbox reconciliation failed for {terminal_id}: {e}")
 
 
 inbox_service = InboxService()

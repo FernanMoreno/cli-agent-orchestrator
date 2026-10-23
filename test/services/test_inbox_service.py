@@ -1,6 +1,7 @@
 """Tests for the event-driven InboxService."""
 
 import asyncio
+import threading
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -10,7 +11,11 @@ from cli_agent_orchestrator.backends.base import TerminalNotFoundError
 from cli_agent_orchestrator.constants import INBOX_RECONCILE_GRACE_SECONDS
 from cli_agent_orchestrator.models.inbox import InboxMessage, MessageStatus, OrchestrationType
 from cli_agent_orchestrator.models.terminal import TerminalInputBlockedError, TerminalStatus
-from cli_agent_orchestrator.services.inbox_service import InboxService
+from cli_agent_orchestrator.services.inbox_service import (
+    InboxService,
+    InboxServiceDrainTimeout,
+    InboxServiceStoppingError,
+)
 
 
 def _make_message(id=1, receiver_id="term-1", message="hello", status=MessageStatus.PENDING):
@@ -751,3 +756,130 @@ class TestRun:
                 pass
 
         mock_to_thread.assert_awaited_once_with(svc.deliver_pending, "abc123", registry=None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.offline_database
+@pytest.mark.parametrize(
+    ("batch_method", "receiver_list_method"),
+    [
+        ("poll_opencode_pending_messages", "list_pending_receiver_ids_by_provider"),
+        ("reconcile_orphaned_messages", "list_pending_receiver_ids_older_than"),
+    ],
+)
+async def test_cancelled_nested_batch_remains_owned_until_drain(
+    monkeypatch,
+    batch_method,
+    receiver_list_method,
+):
+    """An outer poll/reconcile batch owns nested delivery through shutdown."""
+    service = InboxService()
+    first_started = threading.Event()
+    release_first = threading.Event()
+    second_started = threading.Event()
+    poll_finished = threading.Event()
+    worker_timeout = 5.0
+
+    monkeypatch.setattr(
+        f"cli_agent_orchestrator.services.inbox_service.{receiver_list_method}",
+        lambda *_args: ["first", "second"],
+    )
+
+    def _deliver_locked(terminal_id, _num_messages, _registry):
+        if terminal_id == "first":
+            first_started.set()
+            release_first.wait(worker_timeout)
+        else:
+            second_started.set()
+
+    monkeypatch.setattr(service, "_deliver_pending_locked", _deliver_locked)
+
+    def _poll():
+        try:
+            getattr(service, batch_method)()
+        finally:
+            poll_finished.set()
+
+    poll_task = asyncio.create_task(asyncio.to_thread(_poll))
+    drain_task = None
+    try:
+        assert await asyncio.to_thread(first_started.wait, worker_timeout)
+        service.stop_accepting()
+
+        poll_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await poll_task
+        assert not poll_finished.is_set(), "cancelling the waiter must not stop its worker"
+
+        drain_task = asyncio.create_task(service.drain(timeout_s=worker_timeout))
+        await asyncio.sleep(0)  # Let drain register while the first nested send is held.
+        assert not drain_task.done()
+        with pytest.raises(InboxServiceStoppingError):
+            service.deliver_pending("late")
+
+        release_first.set()
+        await asyncio.wait_for(drain_task, timeout=worker_timeout)
+        assert (
+            second_started.is_set()
+        ), "an already-admitted poll must be allowed to enter its nested delivery after stop"
+        assert await asyncio.to_thread(poll_finished.wait, worker_timeout)
+    finally:
+        release_first.set()
+        if drain_task is not None and not drain_task.done():
+            await asyncio.gather(drain_task, return_exceptions=True)
+        assert await asyncio.to_thread(
+            poll_finished.wait, worker_timeout
+        ), "nested poll worker did not finish after its barrier was released"
+        service.start_accepting()
+
+
+@pytest.mark.asyncio
+@pytest.mark.offline_database
+async def test_drain_timeout_keeps_active_worker_tracked_and_admission_closed(monkeypatch):
+    service = InboxService()
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+    worker_finished = threading.Event()
+    worker_timeout = 5.0
+
+    def _deliver_locked(_terminal_id, _num_messages, _registry):
+        worker_started.set()
+        release_worker.wait(worker_timeout)
+        worker_finished.set()
+
+    monkeypatch.setattr(service, "_deliver_pending_locked", _deliver_locked)
+    worker = asyncio.create_task(asyncio.to_thread(service.deliver_pending, "held"))
+    try:
+        assert await asyncio.to_thread(worker_started.wait, worker_timeout)
+        service.stop_accepting()
+
+        with pytest.raises(InboxServiceDrainTimeout) as raised:
+            await service.drain(timeout_s=0.05)
+
+        assert raised.value.active_operations == 1
+        assert not worker_finished.is_set()
+        with pytest.raises(RuntimeError, match="prior operations are active"):
+            service.start_accepting()
+        with pytest.raises(InboxServiceStoppingError):
+            service.deliver_pending("late")
+
+        release_worker.set()
+        await asyncio.wait_for(worker, timeout=worker_timeout)
+        await service.drain(timeout_s=worker_timeout)
+        assert worker_finished.is_set()
+    finally:
+        release_worker.set()
+        if not worker.done():
+            await asyncio.gather(worker, return_exceptions=True)
+        assert await asyncio.to_thread(
+            worker_finished.wait, worker_timeout
+        ), "delivery worker did not finish after its barrier was released"
+        service.start_accepting()
+
+
+@pytest.mark.asyncio
+@pytest.mark.offline_database
+@pytest.mark.parametrize("timeout_s", [0, -0.1, float("inf"), float("nan"), True])
+async def test_drain_requires_a_positive_finite_timeout(timeout_s):
+    with pytest.raises(ValueError, match="positive finite"):
+        await InboxService().drain(timeout_s=timeout_s)
