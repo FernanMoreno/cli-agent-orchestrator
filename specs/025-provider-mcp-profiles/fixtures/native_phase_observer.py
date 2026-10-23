@@ -219,6 +219,14 @@ class NativePhaseObserver:
             "native_observation_states": dict(self._states),
         }
 
+    def abort(self):
+        """Close an interrupted phase without observing or accepting missing work."""
+        for role in ROLES:
+            if self._states[role] == "pending":
+                self._fail(role, "phase_aborted")
+        self._close()
+        return self.snapshot()
+
     def finish(self):
         if self._closed:
             return self.snapshot()

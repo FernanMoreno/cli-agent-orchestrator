@@ -1,0 +1,23 @@
+{
+  "reference_file_sha256": "cc908fce8765f39d39136227450e7c2cdbc5b2b02e3abe6eef67733e5578d8b9",
+  "reference_scope": "Historical R11 structural helpers only, not runnable T094/T096 or acceptance evidence",
+  "inherited_helper_ast_sha256": {
+    "fingerprints": "5735657eaf639dfca88c1594a3c24b5afc4a40d91dea5ae5348b99dd13508e2c",
+    "_temporary_environment": "0d754dd2cd9ce6f1925d493acb94b4927e9bfcd595bea6d4f53c049ea4527fc2",
+    "admit": "957f796cd22fd4efbdc7f9cd0cc10573b697e601b16ea47ec62ee6a9c090286a",
+    "_bounded_count": "cab42a68c41ab152899d925506524aae4ca8ac64f32f7aa95294f7a0b7b12b48",
+    "_sha256": "54a2156c2678e1f0d699750bbc5a41d3611bb1254d976eaa68dd4a5aa59497e0",
+    "_guard_contextmanager_finalbody": "b0b7f25291d352cdcb459d74d0f2c0bc904bdb3143b9c9f994e536d21775a7ec",
+    "_install_guarded_postgres_cleanup": "9e7b5bc289e5bf19fff2e57ea53ec4465db8c7503c3460adf29ea6fe0a00f0f7",
+    "_enter_guarded_postgres_context": "f4ab763a045a284ed01c41a273261d2ad1dc24789951073d5db73fdf91229832",
+    "_exit_guarded_postgres_context": "13c5851e1b87b895e746b963273d5e96b2503a97eb464283fba648c056ea43ae",
+    "_api_launches_confirmed_dead": "a894a5ad9b1a372dc1a1fe730643e0e366630e03460381a2e6c53a866230ac72",
+    "_capture_api_identity": "b254a2a73e0c183511b81f7f8a118a429d4d56a79163203a625522b9123ba6ae",
+    "_accept_last_receipt": "9942e0db130badf277aa15ce8716c13ffe5dcf0578fba990c65ef2538c1e91f9",
+    "_graceful_seals_seen_by_deadline": "feaff0cc7b0a8c2a7e36577570a1875e6dbc0eef676c2340dbcdcad899de78a1",
+    "_postgres_runtime_identity_matches": "503d0a47079dc9a3ac065dbae21f4876249ca46d9b5e27cb1d73f49ba6d11a18",
+    "_final_success": "d7c9a78422ed26ede2d0222b71aed9edb860f79fdff01038950e25ebf78cb0e1",
+    "_observe_state": "68275ee2da2ec93e03dee1c2cbcad58206c35fc71e55f7c4b1a128157553e5db",
+    "_read_terminal_completion": "8ea31bd8c0fe1bffd9a7803005fdf95f035d8827f04cbae5e6ddc1e20a7a4d3a"
+  }
+}

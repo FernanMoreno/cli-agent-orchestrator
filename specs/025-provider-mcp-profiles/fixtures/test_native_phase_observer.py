@@ -392,6 +392,15 @@ class PhaseTests(unittest.TestCase):
             observer.tick()
         self.assertTrue(all(event[2] == 75.0 for event in self.events))
 
+    def test_abort_releases_pending_context_without_io_or_profile_claim(self):
+        observer = self.make()
+        result = observer.abort()
+        self.assertEqual(self.events, [])
+        self.assertEqual(result["receiver_native_text_diagnostic"]["reason"], "phase_aborted")
+        self.assertNotIn("native_agent_matches", result["receiver_native_text_diagnostic"])
+        self.assertEqual(observer._scopes, {})
+        self.assertFalse(phase.probe.native_profiles_exact([result, result]))
+
     def test_finish_cannot_hide_pending_receiver_before_deadline(self):
         observer = self.make()
         with self.assertRaisesRegex(ValueError, "phase_not_finished"):
