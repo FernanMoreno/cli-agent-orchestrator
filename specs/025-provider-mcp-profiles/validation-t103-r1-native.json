@@ -1,0 +1,49 @@
+{
+  "cleanup": {
+    "agui_capture_threads_confirmed_dead_before_postgres_teardown": true,
+    "api_cleanup": true,
+    "api_launches_confirmed_dead_before_postgres_teardown": true,
+    "binary_unchanged": true,
+    "operator_auth_unchanged": true,
+    "postgres_cleanup": true,
+    "private_state_removed": true,
+    "runner_unchanged": true,
+    "shared_postgres_untouched": true,
+    "source_head_pinned_at_end": true,
+    "source_runtime_tree_clean_at_end": true,
+    "source_unchanged": true,
+    "tmux_cleanup": true,
+    "tmux_processes_confirmed_dead_before_postgres_teardown": true
+  },
+  "cleanup_failure_codes": [],
+  "elapsed_seconds": 167.2233257810003,
+  "error_code": "local_diagnostic_error",
+  "error_type": "ReadTimeout",
+  "execution_gates_closed": true,
+  "failure_boundary": "receiver synchronous POST creation before response/configuration and before any model input",
+  "generation": {
+    "minimum_admission_mib": 9964,
+    "receipt_sha256": "3a16585af2e19fa055661bc45282cf48b9961ff56a8c1bd76532ea907c61b681",
+    "result": "PASS",
+    "seconds": 16.43061207700157
+  },
+  "global_acceptance_claimed": false,
+  "historical_cases_modified": false,
+  "minimum_admission_mib": 9843,
+  "model_input_started": false,
+  "native_provider_delay_root_cause": "unproved",
+  "owned_postgres_service_retained_for_next_serial_case": true,
+  "preflight": {
+    "credentials_isolated": true,
+    "mcp_ready_exact": true,
+    "mixed_profile_configuration_exact": true,
+    "native_model_ready": true,
+    "native_permissions_exact": true,
+    "profile_configuration_exact": true,
+    "runtime_capability_exact": true
+  },
+  "private_receipt_sha256": "e5f2c5faf52404cede857545eadcd4f870847dbb7343e8ae57bbb8a4f5def885",
+  "result": "FAILED",
+  "schema": "caos.spec025.t103.r1.sanitized.v1",
+  "source_head": "7a6bc207dae260870c707aaa1e562002240b6c75"
+}
