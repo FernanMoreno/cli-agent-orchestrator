@@ -365,4 +365,8 @@ T095/T096 partial actual evidence: prompts exact and sender native agent matched
 
 T099 closes the portable offline component only (57 synthetic tests, including26 coordinator tests); T095/T096 remain open. A fresh reviewed live caller still needs to integrate this observer with every unchanged native acceptance gate and fresh generation/source/ownership/PostgreSQL bindings. No historical receipt was recreated.
 
-- [ ] T100 [US4] [FR079/SC063] Integrate T099 into a default-closed current-source native-v1 launcher with bounded owned transport readers and every independent acceptance/cleanup predicate; restore exact pinned binary and current owned PostgreSQL safely, test/review bindings, then run fresh generation and one serial managed diagnostic with unchanged limits and record the source-bound outcome.
+- [x] T100 [US4] [FR079/SC063] Integrate T099 into a default-closed current-source native-v1 launcher with bounded owned transport readers and every independent acceptance/cleanup predicate; restore exact pinned binary and current owned PostgreSQL safely, test/review bindings, then run fresh generation and one serial managed diagnostic with unchanged limits and record the source-bound outcome.
+
+T100 actual diagnostic complete, acceptance FAILED after phase0/restart identity PASS at receiver baseline before phase1. All cleanup/operator-preservation passed; [actual record](validation-t100.md). This closes the integration/diagnostic task, not T095/T096/native/global acceptance.
+
+- [ ] T101 [US4] [FR080/SC064] Reproduce and correct the restart-baseline owner mismatch with bounded three-sample readiness, exact durable verified receipt identity across processes and strict per-message local completion; retain T100 failure, test negative boundaries, review and execute one freshly source-bound generation/managed case.

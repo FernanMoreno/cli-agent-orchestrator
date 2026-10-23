@@ -239,6 +239,17 @@ class OwnedPhaseReaders:
         self._turns[terminal] = (state["status"], state["turn_sequence"], state["turn_completed"])
         return state
 
+    def read_turn(self, terminal, stop):
+        self._check(terminal, stop)
+        payload = http_json_bytes(self._api, "/terminals/" + terminal + "/turn", stop, 8192)
+        self._check(terminal, stop)
+        value = json.loads(payload)
+        if type(value) is not dict or value.get("terminal_id") != terminal:
+            raise ValueError("terminal_turn_binding")
+        return {
+            key: value.get(key) for key in ("generation", "state", "attempts", "allowed_actions")
+        }
+
     def _frame_turn(self, terminal, stop, expected=None):
         if expected is None:
             expected = self._turns.get(terminal)

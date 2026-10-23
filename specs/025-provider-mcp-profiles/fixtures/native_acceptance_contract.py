@@ -45,8 +45,7 @@ def turn_exact(state, expected):
 def receiver_phases_exact(phases):
     if type(phases) is not list or len(phases) != 2:
         return False
-    previous = None
-    for phase in phases:
+    for index, phase in enumerate(phases):
         if type(phase) is not dict or any(
             phase.get(key) is not True
             for key in (
@@ -67,9 +66,48 @@ def receiver_phases_exact(phases):
         if any(type(value) is not int or value < 0 for value in values):
             return False
         before, after, completed = values
-        if after != before + 1 or completed != after or previous is not None and before != previous:
+        if after != before + 1 or completed != after:
             return False
-        previous = after
+        if index and phase.get("restart_durable_receipts_exact") is not True:
+            return False
+    return True
+
+
+def settled_local_state(state):
+    return (
+        type(state) is dict
+        and type(state.get("http_status")) is int
+        and state["http_status"] == 200
+        and type(state.get("status")) is str
+        and state["status"] in {"idle", "completed"}
+        and type(state.get("turn_sequence")) is int
+        and 0 <= state["turn_sequence"] <= 2**63 - 1
+        and type(state.get("turn_completed")) is int
+        and state["turn_completed"] == state["turn_sequence"]
+    )
+
+
+def durable_turns_exact(before, after):
+    if type(before) is not dict or type(after) is not dict:
+        return False
+    if set(before) != {"sender", "receiver"} or set(after) != set(before):
+        return False
+    for role in before:
+        row = before[role]
+        if (
+            type(row) is not dict
+            or set(row) != {"generation", "receipt_sha256", "result_sha256", "phase"}
+            or row.get("phase") != "result_verified"
+        ):
+            return False
+        for key, length in (("generation", 32), ("receipt_sha256", 64), ("result_sha256", 64)):
+            if (
+                type(row.get(key)) is not str
+                or re.fullmatch("[0-9a-f]{" + str(length) + "}", row[key]) is None
+            ):
+                return False
+        if type(after[role]) is not dict or after[role] != row:
+            return False
     return True
 
 
@@ -169,5 +207,6 @@ def final_exact(receipt):
             "api_restart_identity_exact",
             "inbox_pairs_exact",
             "terminal_groups_exact",
+            "durable_turn_identity_survives_restart",
         )
     )

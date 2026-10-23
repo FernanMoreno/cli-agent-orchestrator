@@ -696,18 +696,126 @@ def _private_agui_type(module, requester):
     return namespace["AguiCapture"]
 
 
+def _read_durable_turns(stop):
+    import psycopg
+    from psycopg import sql
+
+    target = targets.main
+    if stop - time.monotonic() < 2 or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", target.schema):
+        raise RuntimeError("restart_durable_receipt_unavailable")
+    params = target.connection_parameters()
+    params.update(
+        connect_timeout=1,
+        options="-c statement_timeout=500 -c lock_timeout=500 -c default_transaction_read_only=on",
+        application_name="t101-restart-readonly",
+    )
+    with psycopg.connect(**params) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                sql.SQL(
+                    "SELECT terminal_id,generation,receipt_sha256,result_sha256,phase "
+                    "FROM {}.terminal_turn_receipts WHERE terminal_id=ANY(%s) LIMIT 3"
+                ).format(sql.Identifier(target.schema)),
+                ([terminals[role]["id"] for role in ("sender", "receiver")],),
+            )
+            rows = cursor.fetchall()
+    by_id = {
+        row[0]: dict(zip(("generation", "receipt_sha256", "result_sha256", "phase"), row[1:]))
+        for row in rows
+    }
+    if (
+        len(rows) != 2
+        or set(by_id) != {terminals[role]["id"] for role in ("sender", "receiver")}
+        or time.monotonic() >= stop
+    ):
+        raise RuntimeError("restart_durable_receipt_unavailable")
+    result = {role: by_id[terminals[role]["id"]] for role in ("sender", "receiver")}
+    if not acceptance.durable_turns_exact(result, result):
+        raise RuntimeError("restart_durable_receipt_unavailable")
+    return result
+
+
+def _wait_native_ready(readers, stop, phase):
+    started = time.monotonic()
+    streaks = {role: 0 for role in ("receiver", "sender")}
+    previous = {}
+    while time.monotonic() < stop:
+        states = {}
+        for role in streaks:
+            read_stop = min(stop, time.monotonic() + 1)
+            if time.monotonic() >= read_stop:
+                raise RuntimeError("receiver_baseline_unavailable")
+            state = readers.read_state(terminals[role]["id"], read_stop)
+            if time.monotonic() >= read_stop:
+                raise RuntimeError("receiver_baseline_unavailable")
+            valid = time.monotonic() < stop and acceptance.settled_local_state(state)
+            counters = (
+                state.get("status"),
+                state.get("turn_sequence"),
+                state.get("turn_completed"),
+            )
+            streaks[role] = (
+                streaks[role] + 1 if valid and previous.get(role) == counters else 1 if valid else 0
+            )
+            previous[role] = counters
+            states[role] = state
+            phase[role + "_readiness_samples"] = streaks[role]
+            phase[role + "_baseline_ready"] = valid
+            phase[role + "_baseline_status"] = (
+                state.get("status")
+                if state.get("status")
+                in (
+                    "idle",
+                    "completed",
+                    "unknown",
+                    "processing",
+                    "reconcile",
+                    "error",
+                    "waiting_user_answer",
+                    "waiting_quota",
+                )
+                else "other"
+            )
+        phase["readiness_seconds"] = time.monotonic() - started
+        if time.monotonic() < stop and all(count >= 3 for count in streaks.values()):
+            return states
+        remaining = stop - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(0.4, remaining))
+    raise RuntimeError("receiver_baseline_unavailable")
+
+
 def _collect_message_phase(index, message, phase, readers):
     coordinator = None
     try:
-        baseline = readers.read_state(receiver_id, time.monotonic() + 2)
+        readiness_stop = restart_readiness_stop if index else time.monotonic() + 2
+        ready = _wait_native_ready(readers, readiness_stop, phase)
+        baseline = ready["receiver"]
         receiver_before = baseline.get("turn_sequence")
         assert (
             type(receiver_before) is int
             and receiver_before >= 0
             and baseline.get("status") in {"idle", "completed"}
         ), "receiver_baseline_unavailable"
-        if index and receiver_before != receipt["phases"][index - 1]["receiver_sequence_after"]:
-            raise RuntimeError("receiver_counter_changed_on_restart")
+        if index:
+            durable_after = _read_durable_turns(min(readiness_stop, time.monotonic() + 3))
+            exact = acceptance.durable_turns_exact(restart_receipts_before, durable_after)
+            for role in ("receiver", "sender"):
+                turn = readers.read_turn(
+                    terminals[role]["id"], min(readiness_stop, time.monotonic() + 1)
+                )
+                exact = exact and (
+                    turn.get("generation") == durable_after[role]["generation"]
+                    and turn.get("state") == "verified"
+                    and type(turn.get("attempts")) is int
+                    and turn["attempts"] == 0
+                    and turn.get("allowed_actions") == []
+                )
+            exact = exact and time.monotonic() < readiness_stop
+            phase["restart_durable_receipts_exact"] = exact
+            receipt["durable_turn_identity_survives_restart"] = exact
+            if exact is not True:
+                raise RuntimeError("restart_durable_receipt_mismatch")
         phase["receiver_sequence_before"] = receiver_before
         t = time.monotonic()
         deadline = t + 75.0
@@ -1253,6 +1361,7 @@ try:
         assert phase["agui_one_redacted_notification"], "agui_notification_mismatch"
         assert phase["agui_capture_clean"], "agui_capture_thread_leaked"
         if index == 0:
+            restart_receipts_before = _read_durable_turns(time.monotonic() + 3)
             first_pg = {k: v for k, v in rows[0].items() if k != "status"}
             first_api = {k: v for k, v in arows[0].items() if k != "status"}
             native_before = {
@@ -1267,6 +1376,7 @@ try:
             previous_server.stop()
             server_stop_confirmed.add(id(previous_server))
             server = start_api("api_b")
+            restart_readiness_stop = time.monotonic() + 75
             receipt["api_restart_identity_exact"] = (
                 not journey._process_identity_alive(previous_api_identity)
                 and api_launch_attempts[-1]["identity"] != previous_api_identity
@@ -1335,6 +1445,8 @@ except Exception as exc:
             "native_profile_configuration_mismatch",
             "terminal_group_mismatch",
             "receiver_baseline_unavailable",
+            "restart_durable_receipt_unavailable",
+            "restart_durable_receipt_mismatch",
             "receiver_counter_changed_on_restart",
             "receiver_ack_not_observed",
             "memory_below_unchanged_6144_MiB_floor",

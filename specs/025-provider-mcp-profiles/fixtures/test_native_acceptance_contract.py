@@ -38,8 +38,8 @@ class ContractTests(unittest.TestCase):
         for value in (0, True, None, "1"):
             self.assertFalse(gate.turn_exact(state, value))
 
-    def test_receiver_contract_requires_all_phases_and_counter_continuity(self):
-        good = [phase(0), phase(1)]
+    def test_receiver_contract_requires_local_completion_and_durable_restart(self):
+        good = [phase(0), {**phase(1), "restart_durable_receipts_exact": True}]
         self.assertTrue(gate.receiver_phases_exact(good))
         for value in (None, [], [phase(0)], [phase(0), phase(0)], [phase(0), phase(2)]):
             self.assertFalse(gate.receiver_phases_exact(value))
@@ -54,6 +54,53 @@ class ContractTests(unittest.TestCase):
                     changed[index][key] = bad
                     self.assertFalse(gate.receiver_phases_exact(changed))
 
+    def test_restart_accepts_reset_local_counters_with_durable_identity(self):
+        self.assertTrue(
+            gate.receiver_phases_exact(
+                [phase(0), {**phase(0), "restart_durable_receipts_exact": True}]
+            )
+        )
+        for bad in (False, None, 1):
+            self.assertFalse(
+                gate.receiver_phases_exact(
+                    [phase(0), {**phase(0), "restart_durable_receipts_exact": bad}]
+                )
+            )
+
+    def test_settled_baseline_rejects_inflight_invalid_and_truthy_types(self):
+        good = dict(http_status=200, status="completed", turn_sequence=0, turn_completed=0)
+        self.assertTrue(gate.settled_local_state(good))
+        for field, value in [
+            ("status", "unknown"),
+            ("status", []),
+            ("turn_sequence", True),
+            ("turn_sequence", -1),
+            ("turn_completed", 1),
+            ("http_status", True),
+        ]:
+            self.assertFalse(gate.settled_local_state({**good, field: value}))
+
+    def test_durable_restart_rejects_changed_missing_unverified_or_malformed_rows(self):
+        row = dict(
+            generation="a" * 32,
+            receipt_sha256="b" * 64,
+            result_sha256="c" * 64,
+            phase="result_verified",
+        )
+        good = {role: dict(row) for role in ("sender", "receiver")}
+        self.assertTrue(gate.durable_turns_exact(good, copy.deepcopy(good)))
+        for role in good:
+            for field in row:
+                changed = copy.deepcopy(good)
+                changed[role][field] = "different"
+                self.assertFalse(gate.durable_turns_exact(good, changed))
+                self.assertFalse(gate.durable_turns_exact(changed, changed))
+            missing = copy.deepcopy(good)
+            missing.pop(role)
+            self.assertFalse(gate.durable_turns_exact(missing, missing))
+        for bad in (None, [], True, {"sender": row}, {"sender": row, "receiver": None}):
+            self.assertFalse(gate.durable_turns_exact(bad, bad))
+
     def test_profile_evidence_never_substitutes_for_inherited_gates(self):
         data = dict(
             inherited_acceptance_passed=True,
@@ -65,6 +112,7 @@ class ContractTests(unittest.TestCase):
             api_restart_identity_exact=True,
             inbox_pairs_exact=True,
             terminal_groups_exact=True,
+            durable_turn_identity_survives_restart=True,
         )
         self.assertTrue(gate.final_exact(data))
         for key in data:

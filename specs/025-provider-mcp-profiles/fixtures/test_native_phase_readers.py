@@ -87,6 +87,26 @@ class ReaderTests(unittest.TestCase):
                         1,
                     )
 
+    def test_durable_turn_projection_is_owned_bounded_and_does_not_export_extra_fields(self):
+        good = dict(
+            terminal_id="abc12345",
+            generation="a" * 32,
+            state="verified",
+            attempts=0,
+            allowed_actions=[],
+            private_extra=SECRET,
+        )
+        with api(json.dumps(good).encode()) as url:
+            value = self.make(url).read_turn("abc12345", time.monotonic() + 2)
+            self.assertNotIn(SECRET, json.dumps(value))
+            self.assertEqual(value["state"], "verified")
+        with api(json.dumps({**good, "terminal_id": "other"}).encode()) as url:
+            with self.assertRaisesRegex(ValueError, "terminal_turn_binding"):
+                self.make(url).read_turn("abc12345", time.monotonic() + 2)
+        with api(b" " * 8193) as url:
+            with self.assertRaisesRegex(ValueError, "http_body_limit"):
+                self.make(url).read_turn("abc12345", time.monotonic() + 2)
+
     def frame_reader(self, url, verify=lambda: True):
         reader = self.make(url, verify)
         reader._turns["abc12345"] = ("completed", 1, 1)
