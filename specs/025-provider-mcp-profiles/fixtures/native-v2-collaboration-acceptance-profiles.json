@@ -11,7 +11,8 @@
   "evidence_handling": {
     "receipt": "The public receipt is redacted; private raw terminal and installer evidence is stored separately under the owned evidence directory.",
     "operator_auth_material": "Operator auth files are fingerprinted but are never copied into raw evidence.",
-    "credential_snapshot_cleanup": "The private OpenCode credential database and SQLite WAL/SHM sidecars are removed only with confirmed owned-process teardown. If any remain or their state is unknown, credentials_cleanup_deferred is true, retained_private_state contains only status labels, and acceptance cannot pass."
+    "credential_snapshot_cleanup": "The private OpenCode credential database and SQLite WAL/SHM sidecars are removed only with confirmed owned-process teardown. If any remain or their state is unknown, credentials_cleanup_deferred is true, retained_private_state contains only status labels, and acceptance cannot pass.",
+    "pre_runtime_failure_cleanup": "Before session creation, cleanup may remove the private root only after proving no API, tmux, PostgreSQL context, credential snapshot, capture, or owned process was started and current private provider-root and capability counts are both zero. Writer, source, operator, binary, and interpreter proofs still apply; these counts are recorded separately from any post-delete counts."
   },
   "model": "opencode-go/glm-5.3-flash",
   "authentication_scope": "Only this selected OpenCode Go model lane in an isolated CAO_AUTH_MODE=off run with an unowned principal; this case makes no cross-provider, OAuth, or global authentication claim",
@@ -71,6 +72,7 @@
     "private_credential_snapshot_never_unlinked_while_owned_writers_uncertain": true,
     "sigterm_uses_safe_cancellation_checkpoints_and_cleanup_finishes": true,
     "python_venv_launch_path_and_canonical_interpreter_hash_bound": true,
+    "pre_runtime_failure_cleanup_requires_zero_private_resources_and_all_writer_proofs": true,
     "sender_mcp_child_catalog_exact_unfiltered_eight": true,
     "sender_calls_exact": ["list_siblings", "send_message", "send_message"],
     "sender_calls_from_canonical_cao_mcp_server": true,

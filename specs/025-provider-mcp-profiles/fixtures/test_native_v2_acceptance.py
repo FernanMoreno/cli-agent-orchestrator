@@ -192,7 +192,17 @@ def test_profile_fixture_has_separate_unfiltered_full_eight_surface():
         case["required_checks"]["python_venv_launch_path_and_canonical_interpreter_hash_bound"]
         is True
     )
+    assert (
+        case["required_checks"][
+            "pre_runtime_failure_cleanup_requires_zero_private_resources_and_all_writer_proofs"
+        ]
+        is True
+    )
     assert "acceptance cannot pass" in case["evidence_handling"]["credential_snapshot_cleanup"]
+    assert (
+        "recorded separately from any post-delete counts"
+        in case["evidence_handling"]["pre_runtime_failure_cleanup"]
+    )
     assert case["authentication_scope"].startswith("Only this selected OpenCode Go model lane")
     assert (
         "no cross-provider, OAuth, or global authentication claim" in case["authentication_scope"]
@@ -262,6 +272,128 @@ def test_profile_fixture_has_separate_unfiltered_full_eight_surface():
     assert (
         "selected-model primary requests only" in case["native_model_request_observation"]["scope"]
     )
+
+
+def test_offer_observer_startup_ast_keeps_verified_journey_module_bound(monkeypatch, tmp_path):
+    import ast
+    from types import SimpleNamespace
+
+    source_tree = ast.parse(RUNNER_PATH.read_text(encoding="utf-8"))
+    run_enabled = next(
+        node
+        for node in source_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_run_enabled"
+    )
+    journey_import = next(
+        node
+        for node in ast.walk(run_enabled)
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "test.live_provider"
+        and any(
+            alias.name == "opencode_interaction_journey" and alias.asname == "journey"
+            for alias in node.names
+        )
+    )
+    preparation_loop = next(
+        node
+        for node in ast.walk(run_enabled)
+        if isinstance(node, ast.For)
+        and any(
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "_initialize_private_git_repository"
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "journey"
+            for call in ast.walk(node)
+        )
+    )
+    journey_resets = [
+        node
+        for node in ast.walk(run_enabled)
+        if isinstance(node, ast.Assign)
+        and journey_import.lineno < node.lineno < preparation_loop.lineno
+        and isinstance(node.value, ast.Constant)
+        and node.value.value is None
+        and any(isinstance(target, ast.Name) and target.id == "journey" for target in node.targets)
+    ]
+
+    receiver_workdir = tmp_path / "receiver-workdir"
+    sender_workdir = tmp_path / "sender-workdir"
+    for path in (receiver_workdir, sender_workdir):
+        path.mkdir(mode=0o700)
+        path.chmod(0o700)
+    observer_dir = tmp_path / "observer"
+    observer_dir.mkdir(mode=0o700)
+    observer_dir.chmod(0o700)
+
+    namespace = {"__builtins__": __builtins__}
+    exec(
+        compile(
+            ast.Module(body=[journey_import], type_ignores=[]),
+            str(RUNNER_PATH),
+            "exec",
+        ),
+        namespace,
+        namespace,
+    )
+    verified_journey = namespace["journey"]
+    assert (
+        Path(verified_journey.__file__).resolve()
+        == (runner.REPO / "test/live_provider/opencode_interaction_journey.py").resolve()
+    )
+    initialized_workdirs = []
+    monkeypatch.setattr(
+        verified_journey,
+        "_initialize_private_git_repository",
+        lambda workdir: initialized_workdirs.append(workdir),
+    )
+    installations = []
+
+    def install_project_plugin(*, working_directory, source_path, nonce):
+        installations.append((working_directory, source_path, nonce))
+        return source_path
+
+    namespace.update(
+        {
+            "role_workdirs": {
+                "receiver": receiver_workdir,
+                "sender": sender_workdir,
+            },
+            "offer_nonces": {},
+            "derived_plugin_hashes": {},
+            "offer_plugin_bytes": (
+                runner.REPO / "test/live_provider/opencode_http_tool_offer_observer.js"
+            ).read_bytes(),
+            "HTTP_OFFER_TOOL_NAMES": runner.HTTP_OFFER_TOOL_NAMES,
+            "observer_dir": observer_dir,
+            "offer_directories": {},
+            "offer_observer": SimpleNamespace(install_project_plugin=install_project_plugin),
+            "_http_tool_offer_plugin_bytes": runner._http_tool_offer_plugin_bytes,
+            "_write_private": runner._write_private,
+            "hashlib": hashlib,
+            "os": __import__("os"),
+        }
+    )
+    for reset in journey_resets:
+        exec(
+            compile(ast.Module(body=[reset], type_ignores=[]), str(RUNNER_PATH), "exec"),
+            namespace,
+            namespace,
+        )
+    exec(
+        compile(
+            ast.Module(body=[preparation_loop], type_ignores=[]),
+            str(RUNNER_PATH),
+            "exec",
+        ),
+        namespace,
+        namespace,
+    )
+
+    assert set(initialized_workdirs) == {receiver_workdir, sender_workdir}
+    assert {item[0] for item in installations} == {receiver_workdir, sender_workdir}
+    assert set(namespace["offer_nonces"]) == {"receiver", "sender"}
+    assert set(namespace["derived_plugin_hashes"]) == {"receiver", "sender"}
 
 
 def test_observer_requires_full_unfiltered_catalog_but_only_three_expected_calls():
@@ -1076,6 +1208,117 @@ def test_lifecycle_teardown_guards_require_exact_booleans_and_dead_identities():
     ):
         unknown = {**safe, field: 1}
         assert not runner._private_root_cleanup_safe(unknown)
+
+
+def test_pre_runtime_failure_cleanup_requires_zero_private_resources_and_all_proofs(
+    tmp_path, monkeypatch
+):
+    import shutil
+
+    cao_home = tmp_path / "private-home" / ".aws" / "cli-agent-orchestrator"
+
+    def early_receipt():
+        receipt = {key: True for key in runner._REQUIRED_TRUE_RECEIPT_FIELDS}
+        receipt.update(
+            {
+                "api_a_launch_attempted": False,
+                "api_b_launch_attempted": False,
+                "api_a_cleanup": False,
+                "api_b_cleanup": False,
+                "tmux_launch_attempted": False,
+                "postgres_context_entered": False,
+                "postgres_context_present": False,
+                "private_v2_credential_snapshot_created": False,
+                "session_creation_attempted": False,
+                "session_deletion_attempted": False,
+                "api_server_record_count": 0,
+                "capture_started_count": 0,
+                "owned_process_identity_count": 0,
+                "postgres_cleanup_deferred": False,
+                "credentials_cleanup_deferred": False,
+            }
+        )
+        return receipt
+
+    safe = early_receipt()
+    assert runner._record_early_failure_cleanup_observation(safe, cao_home, tmp_path)
+    assert safe["early_failure_cleanup_case"] is True
+    assert safe["early_failure_resource_scan_complete"] is True
+    assert safe["native_provider_roots_at_early_failure"] == 0
+    assert safe["capability_files_at_early_failure"] == 0
+    assert "native_provider_roots_immediately_after_delete" not in safe
+    assert "capability_files_immediately_after_delete" not in safe
+    assert runner._private_root_cleanup_safe(safe)
+
+    partial_credential_copy = early_receipt()
+    partial_run_root = tmp_path / "partial-run"
+    private_database = partial_run_root / "opencode-data" / "opencode"
+    private_database.mkdir(parents=True)
+    (private_database / "opencode.db-wal").write_bytes(b"partial-copy")
+    assert not runner._record_early_failure_cleanup_observation(
+        partial_credential_copy,
+        tmp_path / "partial-cao-home",
+        partial_run_root,
+    )
+    assert partial_credential_copy["credential_snapshot_status_at_early_failure"] == ("retained")
+    assert not runner._private_root_cleanup_safe(partial_credential_copy)
+
+    for field in (
+        "api_a_launch_attempted",
+        "api_b_launch_attempted",
+        "tmux_launch_attempted",
+        "postgres_context_entered",
+        "postgres_context_present",
+        "private_v2_credential_snapshot_created",
+        "session_creation_attempted",
+        "session_deletion_attempted",
+    ):
+        active = early_receipt()
+        active[field] = True
+        assert not runner._record_early_failure_cleanup_observation(active, cao_home, tmp_path)
+        assert not runner._private_root_cleanup_safe(active)
+
+    existing_provider = early_receipt()
+    provider_parent = cao_home / "opencode-v2"
+    provider_parent.mkdir(parents=True)
+    (provider_parent / "terminal-abcd1234").mkdir()
+    assert not runner._record_early_failure_cleanup_observation(
+        existing_provider, cao_home, tmp_path
+    )
+    assert existing_provider["native_provider_roots_at_early_failure"] == 1
+    assert not runner._private_root_cleanup_safe(existing_provider)
+    shutil.rmtree(provider_parent)
+
+    existing_capability = early_receipt()
+    capability_directory = cao_home / "tmp" / "interaction-capabilities"
+    capability_directory.mkdir(parents=True)
+    (capability_directory / "existing.cap").write_bytes(b"x")
+    assert not runner._record_early_failure_cleanup_observation(
+        existing_capability, cao_home, tmp_path
+    )
+    assert existing_capability["capability_files_at_early_failure"] == 1
+    assert not runner._private_root_cleanup_safe(existing_capability)
+
+    for field in ("operator_auth_unchanged", "source_unchanged"):
+        missing_proof = early_receipt()
+        assert runner._record_early_failure_cleanup_observation(
+            missing_proof, tmp_path / field, tmp_path
+        )
+        missing_proof[field] = False
+        assert not runner._private_root_cleanup_safe(missing_proof)
+
+    unknown = early_receipt()
+    with monkeypatch.context() as context:
+        context.setattr(
+            runner,
+            "_provider_roots",
+            lambda _home: (_ for _ in ()).throw(runner.GateError("unknown")),
+        )
+        assert not runner._record_early_failure_cleanup_observation(
+            unknown, tmp_path / "unknown-home", tmp_path
+        )
+    assert unknown["early_failure_resource_scan_complete"] is False
+    assert not runner._private_root_cleanup_safe(unknown)
 
 
 def test_private_output_range_controls_cover_all_eight_existing_clock_checks():

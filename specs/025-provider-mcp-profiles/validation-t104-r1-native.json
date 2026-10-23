@@ -1,0 +1,44 @@
+{
+  "API_launch_attempted": false,
+  "cause": "verified journey module overwritten with None before private workspace initialization",
+  "credential_snapshot_created": false,
+  "elapsed_seconds": 5.653,
+  "error_code": "private_runtime_diagnostic_error",
+  "error_type": "AttributeError",
+  "execution_gates_closed": true,
+  "global_acceptance_claimed": false,
+  "historical_resources_touched": false,
+  "minimum_admission_mib": 10288,
+  "native_model_input_started": false,
+  "original_cleanup": {
+    "agui_capture_threads_confirmed_dead_before_postgres_teardown": true,
+    "api_processes_confirmed_dead_before_postgres_teardown": true,
+    "binary_unchanged": true,
+    "operator_auth_unchanged": true,
+    "postgres_cleanup": true,
+    "python_interpreter_unchanged": true,
+    "runner_unchanged": true,
+    "source_unchanged": true,
+    "tmux_processes_confirmed_dead_before_postgres_teardown": true
+  },
+  "original_cleanup_failures": [
+    "private_files_preserved"
+  ],
+  "original_private_state_removed": false,
+  "owned_recovery": {
+    "atomic_owned_quarantine": true,
+    "credential_material_present": false,
+    "evidence_copy_verified": true,
+    "exact_created_root_verified": true,
+    "original_failed_receipt_unchanged": true,
+    "owned_temp_root_removed_after_copy": true,
+    "proof_sha256": "f47d7d0d320c8b77897518e9033c226279a10b121008fce2f724c058de4c655d",
+    "sole_source_derived_observer_verified": true
+  },
+  "private_receipt_sha256": "ef2a9626910b64c143e461b824a1c9a708b8b75990e39727d5973b94d786d78d",
+  "product_provider_failure_proved": false,
+  "result": "FAILED",
+  "schema": "caos.spec025.t104.r1.sanitized.v1",
+  "shared_owned_postgres_retained_for_next_case": true,
+  "source_head": "2a7aad91751e8dac3efdf419a201d5b6d3736320"
+}

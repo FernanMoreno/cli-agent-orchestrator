@@ -1412,6 +1412,52 @@ def _api_launches_confirmed_dead(
     return True
 
 
+def _record_early_failure_cleanup_observation(
+    receipt: dict[str, Any], cao_home: Path, private_run_root: Path
+) -> bool:
+    """Allow pre-runtime cleanup only after proving no writers and zero CAO roots."""
+    no_resources_started = all(
+        type(receipt.get(field)) is bool and receipt.get(field) is False
+        for field in (
+            "api_a_launch_attempted",
+            "api_b_launch_attempted",
+            "tmux_launch_attempted",
+            "postgres_context_entered",
+            "postgres_context_present",
+            "private_v2_credential_snapshot_created",
+            "session_creation_attempted",
+            "session_deletion_attempted",
+        )
+    ) and all(
+        type(receipt.get(field)) is int and receipt.get(field) == 0
+        for field in (
+            "api_server_record_count",
+            "capture_started_count",
+            "owned_process_identity_count",
+        )
+    )
+    receipt["early_failure_resource_scan_complete"] = False
+    if not no_resources_started:
+        receipt["early_failure_cleanup_case"] = False
+        return False
+    credential_status = _credential_snapshot_status(private_run_root, snapshot_created=False)
+    receipt["credential_snapshot_status_at_early_failure"] = credential_status
+    if credential_status != "not_created":
+        receipt["early_failure_cleanup_case"] = False
+        return False
+    try:
+        provider_roots = _provider_roots(cao_home)
+        capability_files = _capability_files(cao_home)
+    except Exception:
+        receipt["early_failure_cleanup_case"] = True
+        return False
+    receipt["early_failure_cleanup_case"] = True
+    receipt["native_provider_roots_at_early_failure"] = len(provider_roots)
+    receipt["capability_files_at_early_failure"] = len(capability_files)
+    receipt["early_failure_resource_scan_complete"] = True
+    return not provider_roots and not capability_files
+
+
 def _within_budget(value: Any, budget: float) -> bool:
     if type(value) not in (int, float):
         return False
@@ -1595,13 +1641,44 @@ def _private_root_cleanup_safe(receipt: Any) -> bool:
         "runner_unchanged",
         "python_interpreter_unchanged",
     )
-    return (
-        all(receipt.get(key) is True for key in required_true)
-        and receipt.get("postgres_cleanup_deferred") is False
-        and type(receipt.get("native_provider_roots_immediately_after_delete")) is int
+    post_delete_counts_safe = (
+        type(receipt.get("native_provider_roots_immediately_after_delete")) is int
         and receipt.get("native_provider_roots_immediately_after_delete") == 0
         and type(receipt.get("capability_files_immediately_after_delete")) is int
         and receipt.get("capability_files_immediately_after_delete") == 0
+    )
+    early_failure_counts_safe = (
+        receipt.get("early_failure_cleanup_case") is True
+        and receipt.get("early_failure_resource_scan_complete") is True
+        and receipt.get("credential_snapshot_status_at_early_failure") == "not_created"
+        and all(
+            type(receipt.get(field)) is bool and receipt.get(field) is False
+            for field in (
+                "api_a_launch_attempted",
+                "api_b_launch_attempted",
+                "tmux_launch_attempted",
+                "postgres_context_entered",
+                "postgres_context_present",
+                "private_v2_credential_snapshot_created",
+                "session_creation_attempted",
+                "session_deletion_attempted",
+            )
+        )
+        and all(
+            type(receipt.get(field)) is int and receipt.get(field) == 0
+            for field in (
+                "api_server_record_count",
+                "capture_started_count",
+                "owned_process_identity_count",
+                "native_provider_roots_at_early_failure",
+                "capability_files_at_early_failure",
+            )
+        )
+    )
+    return (
+        all(receipt.get(key) is True for key in required_true)
+        and receipt.get("postgres_cleanup_deferred") is False
+        and (post_delete_counts_safe or early_failure_counts_safe)
     )
 
 
@@ -3905,7 +3982,6 @@ def _run_enabled(
     start = time.monotonic()
     original_run_environment = dict(os.environ)
     sender_capability_path: Path | None = None
-    journey = None
     try:
         _admit(receipt, "production_profile_install")
         import frontmatter
@@ -3936,8 +4012,6 @@ def _run_enabled(
         raw_dir = _private_directory(EVIDENCE / "raw")
         raw_observer_dir = _private_directory(raw_dir / "observer")
         receipt["private_raw_evidence_present"] = True
-
-        from test.live_provider import opencode_interaction_journey as _journey_source
 
         offer_plugin_source = REPO / "test/live_provider/opencode_http_tool_offer_observer.js"
         offer_plugin_relative = "test/live_provider/opencode_http_tool_offer_observer.js"
@@ -5445,6 +5519,22 @@ def _run_enabled(
         except Exception:
             receipt["python_interpreter_unchanged"] = False
         receipt["elapsed_seconds"] = round(time.monotonic() - start, 3)
+        receipt["tmux_launch_attempted"] = tmux_launch_attempted
+        receipt["postgres_context_entered"] = pg_entered
+        receipt["postgres_context_present"] = pg_context is not None
+        receipt["private_v2_credential_snapshot_created"] = credential_snapshot_created
+        receipt["session_creation_attempted"] = session_creation_attempted
+        receipt["session_deletion_attempted"] = deletion_attempted
+        receipt["api_server_record_count"] = len(api_servers)
+        receipt["capture_started_count"] = len(capture_history)
+        receipt["owned_process_identity_count"] = len(owned_processes)
+        receipt["early_failure_cleanup_observation_passed"] = (
+            _record_early_failure_cleanup_observation(
+                receipt,
+                root / "home/.aws/cli-agent-orchestrator",
+                root,
+            )
+        )
         safe_to_remove = _private_root_cleanup_safe(receipt)
         try:
             if safe_to_remove:

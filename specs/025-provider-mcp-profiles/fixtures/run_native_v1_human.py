@@ -158,7 +158,7 @@ sys.path[:0] = [
     str(repo / "test/live_provider"),
 ]
 import native_acceptance_contract as acceptance
-from native_phase_readers import HTTPStatusError, OwnedPhaseReaders, http_json_bytes
+from native_phase_readers import HTTPStatusError, OwnedPhaseReaders, capture_bytes, http_json_bytes
 
 case = json.loads(
     (
@@ -371,6 +371,219 @@ def admit(phase):
 
 def _bounded_count(value):
     return value if type(value) is int and 0 <= value <= 2**63 - 1 else None
+
+
+def _read_deferred_receiver_variant(
+    capture,
+    *,
+    python,
+    source_root,
+    config_file,
+    receiver_id,
+    stop,
+    monotonic,
+):
+    """Read only the owned receiver variant in a bounded isolated Python child."""
+    if (
+        type(python) is not str
+        or not python
+        or type(source_root) is not str
+        or not source_root
+        or type(config_file) is not str
+        or not config_file
+        or type(receiver_id) is not str
+        or re.fullmatch(r"[0-9a-f]{8}", receiver_id) is None
+    ):
+        raise ValueError("receiver_readiness_database_binding")
+    child_source = """import json, os, re, sys
+os.environ["CAO_DATABASE_CONFIG_FILE"] = sys.argv[2]
+sys.path.insert(0, sys.argv[1])
+from cli_agent_orchestrator.clients.postgres.config import DatabaseTarget
+from cli_agent_orchestrator.clients.postgres.connection import connect
+terminal_id = sys.argv[3]
+if re.fullmatch(r"[0-9a-f]{8}", terminal_id) is None:
+    raise SystemExit(2)
+target = DatabaseTarget.from_settings("main")
+with connect(target, readonly=True) as con:
+    row = con.execute("SELECT provider_variant FROM terminals WHERE id=%s", (terminal_id,)).fetchone()
+ready = row is not None and type(row["provider_variant"]) is str and row["provider_variant"] == "opencode-v1"
+sys.stdout.write('{"ready":' + ("true" if ready else "false") + "}\\n")
+"""
+    argv = [python, "-I", "-c", child_source, source_root, config_file, receiver_id]
+    try:
+        output = capture(argv, stop, 64)
+    except Exception:
+        raise ValueError("receiver_readiness_database_failed") from None
+    if monotonic() > stop:
+        raise ValueError("receiver_readiness_database_deadline")
+    if output == b'{"ready":true}\n':
+        return True
+    if output == b'{"ready":false}\n':
+        return False
+    raise ValueError("receiver_readiness_database_response")
+
+
+def _wait_for_deferred_receiver_ready(
+    get_terminal,
+    read_provider_variant,
+    *,
+    receipt,
+    journey_start,
+    outer_deadline,
+    monotonic,
+    sleep,
+):
+    """Wait for deferred receiver initialization without persisting its content."""
+    observations = []
+    receipt["receiver_startup_observations"] = observations
+    receipt["receiver_initialization_complete"] = False
+    receipt["receiver_initialization_complete_exact"] = False
+    receipt["receiver_initialization_deadline_reached"] = False
+    receipt["receiver_deferred_failure_present"] = False
+    receipt["receiver_initialization_settled_samples"] = 0
+    receipt["receiver_startup_poll_count"] = 0
+    settled = 0
+    fixed_statuses = {
+        "unknown",
+        "idle",
+        "processing",
+        "completed",
+        "waiting_user_answer",
+        "waiting_quota",
+        "reconcile",
+        "error",
+    }
+
+    while True:
+        poll_started = monotonic()
+        remaining = outer_deadline - poll_started
+        if remaining <= 0:
+            receipt["receiver_initialization_deadline_reached"] = True
+            raise RuntimeError("receiver_initialization_deadline")
+
+        try:
+            response = get_terminal(timeout=min(2.0, remaining))
+        except Exception:
+            request_finished = monotonic()
+            observations.append(
+                {
+                    "elapsed_seconds": round(max(0.0, request_finished - journey_start), 3),
+                    "status": "request_error",
+                    "http_status": None,
+                    "turn_sequence": None,
+                    "turn_completed": None,
+                    "deferred_failure_present": False,
+                    "provider_variant_ready": False,
+                    "provider_variant_read_error": False,
+                }
+            )
+            receipt["receiver_startup_poll_count"] = len(observations)
+            if request_finished >= outer_deadline:
+                receipt["receiver_initialization_deadline_reached"] = True
+                raise RuntimeError("receiver_initialization_deadline") from None
+            raise RuntimeError("receiver_readiness_request_failed") from None
+
+        if monotonic() >= outer_deadline:
+            receipt["receiver_initialization_deadline_reached"] = True
+            raise RuntimeError("receiver_initialization_deadline")
+
+        status_code = getattr(response, "status_code", None)
+        if type(status_code) is not int or status_code != 200:
+            observations.append(
+                {
+                    "elapsed_seconds": round(max(0.0, monotonic() - journey_start), 3),
+                    "status": "http_error",
+                    "http_status": status_code if type(status_code) is int else None,
+                    "turn_sequence": None,
+                    "turn_completed": None,
+                    "deferred_failure_present": False,
+                    "provider_variant_ready": False,
+                    "provider_variant_read_error": False,
+                }
+            )
+            receipt["receiver_startup_poll_count"] = len(observations)
+            raise RuntimeError("receiver_readiness_http_failed")
+
+        try:
+            state = response.json()
+        except Exception:
+            state = None
+        if type(state) is not dict:
+            observations.append(
+                {
+                    "elapsed_seconds": round(max(0.0, monotonic() - journey_start), 3),
+                    "status": "invalid_response",
+                    "http_status": status_code,
+                    "turn_sequence": None,
+                    "turn_completed": None,
+                    "deferred_failure_present": False,
+                    "provider_variant_ready": False,
+                    "provider_variant_read_error": False,
+                }
+            )
+            receipt["receiver_startup_poll_count"] = len(observations)
+            raise RuntimeError("receiver_readiness_response_invalid")
+
+        raw_status = state.get("status")
+        status = raw_status if type(raw_status) is str and raw_status in fixed_statuses else "other"
+        sequence = _bounded_count(state.get("turn_sequence"))
+        completed = _bounded_count(state.get("turn_completed"))
+        deferred_failure_present = type(state.get("deferred_init_failure")) is dict
+        provider_variant_read_error = False
+        if deferred_failure_present:
+            provider_variant_ready = False
+        else:
+            try:
+                provider_variant_ready = read_provider_variant(min(outer_deadline, monotonic() + 3))
+                if type(provider_variant_ready) is not bool:
+                    raise ValueError("receiver_readiness_database_response")
+            except Exception:
+                provider_variant_ready = False
+                provider_variant_read_error = True
+        receipt["receiver_deferred_failure_present"] = deferred_failure_present
+        observations.append(
+            {
+                "elapsed_seconds": round(max(0.0, monotonic() - journey_start), 3),
+                "status": status,
+                "http_status": status_code,
+                "turn_sequence": sequence,
+                "turn_completed": completed,
+                "deferred_failure_present": deferred_failure_present,
+                "provider_variant_ready": provider_variant_ready,
+                "provider_variant_read_error": provider_variant_read_error,
+            }
+        )
+        receipt["receiver_startup_poll_count"] = len(observations)
+
+        if deferred_failure_present:
+            raise RuntimeError("receiver_deferred_initialization_failed")
+        if monotonic() >= outer_deadline:
+            receipt["receiver_initialization_deadline_reached"] = True
+            raise RuntimeError("receiver_initialization_deadline")
+        if provider_variant_read_error:
+            raise RuntimeError("receiver_readiness_database_failed")
+
+        if (
+            provider_variant_ready
+            and status in {"idle", "completed"}
+            and sequence == 0
+            and completed == 0
+        ):
+            settled += 1
+        else:
+            settled = 0
+        receipt["receiver_initialization_settled_samples"] = settled
+        if settled >= 3:
+            receipt["receiver_initialization_complete"] = True
+            receipt["receiver_initialization_complete_exact"] = True
+            receipt["receiver_initialization_ready_status"] = status
+            return state
+
+        remaining = outer_deadline - monotonic()
+        if remaining <= 0:
+            receipt["receiver_initialization_deadline_reached"] = True
+            raise RuntimeError("receiver_initialization_deadline")
+        sleep(min(0.25, remaining))
 
 
 class _GateError(RuntimeError):
@@ -959,15 +1172,35 @@ try:
             )
         )
         admit("receiver_terminal")
-        receiver_created = requests.post(
-            server.url + "/sessions/" + session_name + "/terminals",
-            params={
-                "provider": "opencode_cli",
-                "agent_profile": "v1-receiver",
-                "working_directory": str(home),
-                "model": model,
-            },
-            timeout=min(120, start + 180 - time.monotonic()),
+        receiver_create_remaining = start + 180 - time.monotonic()
+        if receiver_create_remaining <= 0:
+            receipt["receiver_initialization_deadline_reached"] = True
+            raise RuntimeError("human_journey_deadline")
+        receipt["receiver_create_http_status"] = None
+        receipt["receiver_create_transport_error"] = False
+        receiver_create_started = time.monotonic()
+        try:
+            receiver_created = requests.post(
+                server.url + "/sessions/" + session_name + "/terminals",
+                params={
+                    "provider": "opencode_cli",
+                    "agent_profile": "v1-receiver",
+                    "working_directory": str(home),
+                    "model": model,
+                    "defer_init": "true",
+                },
+                timeout=min(120, receiver_create_remaining),
+            )
+        except requests.RequestException:
+            receipt["receiver_create_transport_error"] = True
+            raise
+        finally:
+            receipt["receiver_create_elapsed_seconds"] = round(
+                max(0.0, time.monotonic() - receiver_create_started), 3
+            )
+        receiver_created_status = getattr(receiver_created, "status_code", None)
+        receipt["receiver_create_http_status"] = (
+            receiver_created_status if type(receiver_created_status) is int else None
         )
         if receiver_created.status_code != 201:
             raise RuntimeError("production_terminal_creation_failed")
@@ -978,6 +1211,44 @@ try:
         terminals["receiver"] = receiver
         owned |= journey._snapshot_and_recheck_private_tmux_server(
             sid, sockid, socket_path, terminal_id=receiver_id
+        )
+
+        def receiver_provider_variant(stop):
+            return _read_deferred_receiver_variant(
+                capture_bytes,
+                python=sys.executable,
+                source_root=str(repo / "src"),
+                config_file=str(targets.config_file),
+                receiver_id=receiver_id,
+                stop=stop,
+                monotonic=time.monotonic,
+            )
+
+        def receiver_terminal(timeout):
+            stop = min(start + 180, time.monotonic() + min(3, timeout))
+            try:
+                payload = http_json_bytes(
+                    server.url,
+                    "/terminals/" + receiver_id,
+                    stop,
+                    65536,
+                )
+            except HTTPStatusError as exc:
+                return SimpleNamespace(status_code=exc.status_code, json=lambda: None)
+            try:
+                state = json.loads(payload)
+            except (ValueError, UnicodeError):
+                state = None
+            return SimpleNamespace(status_code=200, json=lambda: state)
+
+        rs = _wait_for_deferred_receiver_ready(
+            receiver_terminal,
+            receiver_provider_variant,
+            receipt=receipt,
+            journey_start=start,
+            outer_deadline=start + 180,
+            monotonic=time.monotonic,
+            sleep=time.sleep,
         )
         receiver_roots = set((caohome / "opencode-v1").glob("terminal-*")) - {private}
         if len(receiver_roots) != 1:
@@ -999,23 +1270,6 @@ try:
             and receiver_config.get("permission", {}).get("*") == "deny"
             and receiver.get("allowed_tools") == []
         )
-        settled = 0
-        while time.monotonic() < start + 180:
-            rs = requests.get(
-                server.url + "/terminals/" + receiver_id,
-                timeout=min(3, start + 180 - time.monotonic()),
-            ).json()
-            good = (
-                rs.get("status") in {"idle", "completed"}
-                and type(rs.get("turn_sequence")) is int
-                and rs["turn_sequence"] == rs.get("turn_completed")
-            )
-            settled = settled + 1 if good else 0
-            if settled == 3:
-                break
-            time.sleep(min(0.1, max(0, start + 180 - time.monotonic())))
-        else:
-            raise RuntimeError("receiver_identity_failed")
         if not receipt["receiver_profile_configuration_exact"]:
             raise RuntimeError("receiver_identity_failed")
         receiver_initial_counts = (rs["turn_sequence"], rs["turn_completed"])
@@ -1729,6 +1983,12 @@ except Exception as exc:
         "private_api_route_invalid",
         "production_install_failed",
         "production_terminal_creation_failed",
+        "receiver_deferred_initialization_failed",
+        "receiver_initialization_deadline",
+        "receiver_readiness_request_failed",
+        "receiver_readiness_http_failed",
+        "receiver_readiness_response_invalid",
+        "receiver_readiness_database_failed",
         "private_native_root_mismatch",
         "native_profile_preflight_failed",
         "durable_turn_unavailable",

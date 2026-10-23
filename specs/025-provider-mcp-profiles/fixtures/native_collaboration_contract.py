@@ -36,6 +36,7 @@ _TERMINAL_ID = re.compile(r"[0-9a-f]{8}\Z")
 FINAL_TRUE = (
     "mixed_profile_configuration_exact",
     "receiver_profile_configuration_exact",
+    "receiver_initialization_complete_exact",
     "message_pair_before_restart_exact",
     "message_pair_after_restart_exact",
     "message_identity_survives_restart",

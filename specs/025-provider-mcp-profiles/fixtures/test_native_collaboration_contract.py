@@ -14,6 +14,7 @@ for _path in (REPO_ROOT / "src", FIXTURE_DIR):
 
 import native_collaboration_contract as gate
 import native_human_contract as human
+
 from cli_agent_orchestrator.utils.mcp_tool_policy import TOOL_PROFILES
 
 SENDER_ID = "a1b2c3d4"
@@ -113,6 +114,7 @@ def receipt():
             "original_model_acceptance_claimed": False,
             "mixed_profile_configuration_exact": True,
             "receiver_profile_configuration_exact": True,
+            "receiver_initialization_complete_exact": True,
             "message_pair_before_restart_exact": True,
             "message_pair_after_restart_exact": True,
             "message_identity_survives_restart": True,
