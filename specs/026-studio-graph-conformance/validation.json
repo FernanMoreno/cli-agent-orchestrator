@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-23",
+  "scope": "documentation and static source audit only",
+  "status": "PASS_DOCUMENTATION_ONLY",
+  "source_head": "f2c381ed87fab87631a363097da50898de96cd06",
+  "specifications": 15,
+  "details": 129,
+  "functional_requirements": 158,
+  "implementation_tasks_pending": 308,
+  "static_assertions": 1288,
+  "static_controls": 30,
+  "named_functions": 88,
+  "source_anchors": 27,
+  "composition": {
+    "files": 412,
+    "dependencies": 1834,
+    "kept": 5,
+    "broken": 0
+  },
+  "independent_review": {
+    "agent": "Codex Luna",
+    "mode": "read",
+    "verdict": "no remaining documentary blocker after corrections",
+    "runtime_acceptance": false
+  },
+  "claude_review": {
+    "job_id": "78d46f9e219c4fb98dfa45e0b76ff16d",
+    "status": "failed",
+    "reason": "session limit",
+    "counts_as_review": false
+  },
+  "product_changes": false,
+  "runtime_tests_run": false,
+  "foreign_graphify_hashes_preserved": 12
+}

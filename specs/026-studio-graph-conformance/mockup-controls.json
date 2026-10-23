@@ -1,0 +1,589 @@
+{
+  "scope": "static markup controls plus named dynamic functions; semantic ownership in inventory.json",
+  "static_controls": [
+    {
+      "tag": "button",
+      "line": 291,
+      "id": "menuClose",
+      "attributes": {}
+    },
+    {
+      "tag": "a",
+      "line": 297,
+      "id": null,
+      "attributes": {
+        "href": "#"
+      }
+    },
+    {
+      "tag": "a",
+      "line": 298,
+      "id": null,
+      "attributes": {
+        "href": "#"
+      }
+    },
+    {
+      "tag": "a",
+      "line": 299,
+      "id": null,
+      "attributes": {
+        "href": "#"
+      }
+    },
+    {
+      "tag": "a",
+      "line": 300,
+      "id": null,
+      "attributes": {
+        "href": "#"
+      }
+    },
+    {
+      "tag": "a",
+      "line": 301,
+      "id": null,
+      "attributes": {
+        "href": "#"
+      }
+    },
+    {
+      "tag": "a",
+      "line": 304,
+      "id": null,
+      "attributes": {
+        "href": "#"
+      }
+    },
+    {
+      "tag": "a",
+      "line": 305,
+      "id": null,
+      "attributes": {
+        "href": "#"
+      }
+    },
+    {
+      "tag": "a",
+      "line": 306,
+      "id": null,
+      "attributes": {
+        "href": "#"
+      }
+    },
+    {
+      "tag": "a",
+      "line": 309,
+      "id": null,
+      "attributes": {
+        "href": "#"
+      }
+    },
+    {
+      "tag": "a",
+      "line": 310,
+      "id": null,
+      "attributes": {
+        "href": "#"
+      }
+    },
+    {
+      "tag": "a",
+      "line": 311,
+      "id": null,
+      "attributes": {
+        "href": "#"
+      }
+    },
+    {
+      "tag": "button",
+      "line": 318,
+      "id": "menuBtn",
+      "attributes": {
+        "aria-label": "Abrir navegación"
+      }
+    },
+    {
+      "tag": "button",
+      "line": 320,
+      "id": null,
+      "attributes": {
+        "data-sim": "Cambiar de proyecto"
+      }
+    },
+    {
+      "tag": "select",
+      "line": 323,
+      "id": "ctxInstance",
+      "attributes": {}
+    },
+    {
+      "tag": "input",
+      "line": 330,
+      "id": "q",
+      "attributes": {}
+    },
+    {
+      "tag": "button",
+      "line": 349,
+      "id": "tabGraph",
+      "attributes": {
+        "role": "tab"
+      }
+    },
+    {
+      "tag": "button",
+      "line": 350,
+      "id": "tabList",
+      "attributes": {
+        "role": "tab"
+      }
+    },
+    {
+      "tag": "button",
+      "line": 353,
+      "id": null,
+      "attributes": {
+        "data-kind": "agent"
+      }
+    },
+    {
+      "tag": "button",
+      "line": 354,
+      "id": null,
+      "attributes": {
+        "data-kind": "task"
+      }
+    },
+    {
+      "tag": "button",
+      "line": 355,
+      "id": null,
+      "attributes": {
+        "data-kind": "decision"
+      }
+    },
+    {
+      "tag": "select",
+      "line": 358,
+      "id": "stateFilter",
+      "attributes": {}
+    },
+    {
+      "tag": "button",
+      "line": 365,
+      "id": null,
+      "attributes": {
+        "data-sim": "Nueva tarea"
+      }
+    },
+    {
+      "tag": "select",
+      "line": 372,
+      "id": "scaleSel",
+      "attributes": {}
+    },
+    {
+      "tag": "select",
+      "line": 378,
+      "id": "groupSel",
+      "attributes": {}
+    },
+    {
+      "tag": "button",
+      "line": 385,
+      "id": null,
+      "attributes": {
+        "data-zoom": "out",
+        "aria-label": "Alejar"
+      }
+    },
+    {
+      "tag": "button",
+      "line": 387,
+      "id": null,
+      "attributes": {
+        "data-zoom": "in",
+        "aria-label": "Acercar"
+      }
+    },
+    {
+      "tag": "button",
+      "line": 389,
+      "id": null,
+      "attributes": {
+        "data-zoom": "fit"
+      }
+    },
+    {
+      "tag": "button",
+      "line": 390,
+      "id": null,
+      "attributes": {
+        "data-zoom": "reset"
+      }
+    },
+    {
+      "tag": "button",
+      "line": 391,
+      "id": null,
+      "attributes": {
+        "data-zoom": "center"
+      }
+    }
+  ],
+  "named_functions": [
+    {
+      "name": "create",
+      "line": 453
+    },
+    {
+      "name": "children",
+      "line": 462
+    },
+    {
+      "name": "segs",
+      "line": 470
+    },
+    {
+      "name": "counts",
+      "line": 474
+    },
+    {
+      "name": "nthWithState",
+      "line": 479
+    },
+    {
+      "name": "agent",
+      "line": 489
+    },
+    {
+      "name": "pathOf",
+      "line": 491
+    },
+    {
+      "name": "label",
+      "line": 492
+    },
+    {
+      "name": "pageByState",
+      "line": 500
+    },
+    {
+      "name": "find",
+      "line": 506
+    },
+    {
+      "name": "feedPage",
+      "line": 507
+    },
+    {
+      "name": "edgesOf",
+      "line": 529
+    },
+    {
+      "name": "agentAtoms",
+      "line": 548
+    },
+    {
+      "name": "relations",
+      "line": 555
+    },
+    {
+      "name": "neighbourhood",
+      "line": 582
+    },
+    {
+      "name": "loadData",
+      "line": 708
+    },
+    {
+      "name": "branchSet",
+      "line": 711
+    },
+    {
+      "name": "visible",
+      "line": 718
+    },
+    {
+      "name": "neighbours",
+      "line": 731
+    },
+    {
+      "name": "filtersActive",
+      "line": 733
+    },
+    {
+      "name": "resetFilters",
+      "line": 734
+    },
+    {
+      "name": "pos",
+      "line": 745
+    },
+    {
+      "name": "colX",
+      "line": 746
+    },
+    {
+      "name": "wrap",
+      "line": 747
+    },
+    {
+      "name": "fitsId",
+      "line": 757
+    },
+    {
+      "name": "ortho",
+      "line": 761
+    },
+    {
+      "name": "route",
+      "line": 768
+    },
+    {
+      "name": "markers",
+      "line": 778
+    },
+    {
+      "name": "applyVp",
+      "line": 790
+    },
+    {
+      "name": "fit",
+      "line": 791
+    },
+    {
+      "name": "resetZoom",
+      "line": 792
+    },
+    {
+      "name": "zoomBy",
+      "line": 793
+    },
+    {
+      "name": "box",
+      "line": 795
+    },
+    {
+      "name": "centerOn",
+      "line": 796
+    },
+    {
+      "name": "ensureVisible",
+      "line": 797
+    },
+    {
+      "name": "renderMinimap",
+      "line": 799
+    },
+    {
+      "name": "glyph",
+      "line": 812
+    },
+    {
+      "name": "renderGraph",
+      "line": 819
+    },
+    {
+      "name": "moveFocus",
+      "line": 878
+    },
+    {
+      "name": "legendSw",
+      "line": 887
+    },
+    {
+      "name": "renderTools",
+      "line": 888
+    },
+    {
+      "name": "renderList",
+      "line": 904
+    },
+    {
+      "name": "blockingPath",
+      "line": 922
+    },
+    {
+      "name": "up",
+      "line": 924
+    },
+    {
+      "name": "relRow",
+      "line": 928
+    },
+    {
+      "name": "relGroups",
+      "line": 929
+    },
+    {
+      "name": "renderInspector",
+      "line": 934
+    },
+    {
+      "name": "renderDecisions",
+      "line": 959
+    },
+    {
+      "name": "renderFeed",
+      "line": 966
+    },
+    {
+      "name": "renderStats",
+      "line": 969
+    },
+    {
+      "name": "renderCritical",
+      "line": 974
+    },
+    {
+      "name": "levelItems",
+      "line": 985
+    },
+    {
+      "name": "itemPass",
+      "line": 993
+    },
+    {
+      "name": "stackedBar",
+      "line": 1001
+    },
+    {
+      "name": "relQuery",
+      "line": 1008
+    },
+    {
+      "name": "computeRel",
+      "line": 1014
+    },
+    {
+      "name": "bundlePath",
+      "line": 1027
+    },
+    {
+      "name": "bundleAria",
+      "line": 1031
+    },
+    {
+      "name": "renderAgg",
+      "line": 1032
+    },
+    {
+      "name": "pagerHtml",
+      "line": 1087
+    },
+    {
+      "name": "renderToolsAgg",
+      "line": 1089
+    },
+    {
+      "name": "renderListAgg",
+      "line": 1103
+    },
+    {
+      "name": "bundleBtn",
+      "line": 1122
+    },
+    {
+      "name": "linkSecs",
+      "line": 1123
+    },
+    {
+      "name": "renderInspectorBundle",
+      "line": 1126
+    },
+    {
+      "name": "renderInspectorAgg",
+      "line": 1138
+    },
+    {
+      "name": "renderDecisionsSynth",
+      "line": 1155
+    },
+    {
+      "name": "renderFeedSynth",
+      "line": 1166
+    },
+    {
+      "name": "renderScope",
+      "line": 1171
+    },
+    {
+      "name": "selectAgg",
+      "line": 1178
+    },
+    {
+      "name": "selectBundle",
+      "line": 1180
+    },
+    {
+      "name": "descend",
+      "line": 1184
+    },
+    {
+      "name": "itemFromKey",
+      "line": 1187
+    },
+    {
+      "name": "focusFirst",
+      "line": 1188
+    },
+    {
+      "name": "openItem",
+      "line": 1189
+    },
+    {
+      "name": "openAgent",
+      "line": 1192
+    },
+    {
+      "name": "goTo",
+      "line": 1194
+    },
+    {
+      "name": "jumpToAgent",
+      "line": 1196
+    },
+    {
+      "name": "frame",
+      "line": 1202
+    },
+    {
+      "name": "setScale",
+      "line": 1204
+    },
+    {
+      "name": "renderNav",
+      "line": 1209
+    },
+    {
+      "name": "renderAll",
+      "line": 1211
+    },
+    {
+      "name": "refocus",
+      "line": 1222
+    },
+    {
+      "name": "select",
+      "line": 1226
+    },
+    {
+      "name": "selectEdge",
+      "line": 1227
+    },
+    {
+      "name": "toast",
+      "line": 1228
+    },
+    {
+      "name": "setView",
+      "line": 1288
+    },
+    {
+      "name": "closeMenu",
+      "line": 1291
+    }
+  ]
+}
