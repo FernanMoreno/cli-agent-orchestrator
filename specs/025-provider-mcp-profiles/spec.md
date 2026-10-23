@@ -234,3 +234,23 @@ FR053 catalog-schema detail: an omitted/null native catalog status is the docume
 
 - FR064: Managed native-v2 Mini must suppress rendering of typed reasoning parts in its private child CLI configuration, preserving assistant text, model reasoning, MCP permissions, summary/footer and current receipt checks. Never edit the operator CLI configuration or use a global display toggle.
 - SC048: The launched v2 child must receive the exact supported CLI config override mini.thinking=hide, overriding ambient display input; v1 launch stays unchanged. Current-version upstream schema/transport evidence must show reasoning-only filtering, with focused launch/extraction/service checks and one reviewed source-bound native revalidation.
+
+- FR065: Diagnose exact Unicode LAST failures without relaxing literal equality: only when LAST differs solely in whitespace, permit one contemporaneous tmux logical-line (-J) observation on the same verified pane/generation. Preserve the model deadline and all acceptance checks; diagnostics cannot replace LAST as acceptance input.
+- SC049: The probe must stay within2s and the original75s deadline, pin/recheck pane identity, bound geometry/output, compare normal/joined/normal stable observations using the same parser/receipt, and persist shapes only. A positive exact marker after -J can establish terminal soft-wrap; a negative is inconclusive. No trace or operator-DB inspection.
+
+- FR066: Diagnose the remaining Unicode linebreak only from typed assistant text in the owned native-v2 database, binding the fresh echoed nonce to the current sender's durable CAO receipt and selecting its unique user message/session/turn range. Do not read operator databases or credential/reasoning/tool fields, mutate state, export content, or change acceptance.
+- SC050: Read-only scoped diagnostic must reject mismatched/ambiguous receipts, sessions, schemas, paths and oversized data; bound connection/query time and row/text size, enforce no credential-table access, persist only fixed-marker shape comparisons and preserve all native deadline/cleanup gates.
+
+- FR067: Refresh pinned native-v1 generation and managed acceptance against the actual current source, using only a newly successful same-source generation receipt. Preserve all existing deadlines, memory floors, authorization, exact output and cleanup criteria; no historical generation receipt may unlock a new source run.
+- SC051: Rebased closed candidates must prove binding-only differences and unchanged acceptance helpers before one serial current-source generation and, only after its PASS, a reviewed managed run with two Unicode/ACK messages and API restart. Record source, runner, binary, PostgreSQL identity, operator preservation and cleanup separately from global acceptance.
+
+- FR068: Managed-v1 message acceptance must require the receiver's public API output to be exactly ACK, relying on the service's existing active receipt verification and removal rather than stripping or normalizing it in the acceptance guard, and exactly one newly completed receiver turn per sent message. Preserve every inherited predicate and reject missing/false/truthy-nonboolean evidence; require receiver-counter continuity across API restart.
+- SC052: Reproduce the inherited v1 acceptance predicate ignoring absent/false ACK evidence, then add a mandatory stricter final conjunction with pure negative controls for body, counter, deadline, duplicate-turn and restart continuity. The receiver profile must separate public ACK from protocol metadata without adding tool permissions. Observe completion and public output within the unchanged original 75-second phase deadline and verify current counter state before and after LAST. No historical v1 PASS is retroactively credited with this stronger gate.
+
+FR069: Native cleanup inventories must not read environments of revalidated same-identity zombie processes. Live unreadable processes, changed identities and zombie-to-live races must remain fail-closed.
+
+SC053: Reproduce a newer unrelated Chromium zombie with denied environ; both ownership scanners pass without reading its environment, while live unreadable and PID-reuse controls still fail closed. Historical failed receipts remain unchanged.
+
+FR070: A receiver-ACK diagnostic must retain bounded content-free observations of both terminal metadata and LAST HTTP results on failure, without changing literal ACK, completion counters, deadlines or authority.
+
+SC054: Pure controls prove observation privacy and bounded size; an independently reviewed closed runner is freshly bound to current source and successful generation before one justified actual diagnostic. Missing evidence cannot be upgraded into acceptance.

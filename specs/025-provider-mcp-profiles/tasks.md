@@ -309,4 +309,26 @@ T080/T081 offline2026-10-23:218pruebas/5contratos PASS; replay T079 ambiguo rech
 
 T080 revalidado2026-10-23 en f3e4c354: ejecución real FAILED por75s en fase1, replay receptor rechazado por canal ambiguo; limpieza completa y gate cerrado. T080 cierra la corrección y su ensayo, no aceptación v2. T077/T079 y OC-05 siguen abiertos; investigar canal estructurado antes de repetir. [Resultado](validation-t080.md).
 
-- [ ] T082 [US4] [FR064/SC048] Verify v2.0.18 Mini typed reasoning filtering and CLI-config override, reproduce absent private launch override, implement child-only mini.thinking=hide without changing model/MCP/receipt criteria, test launch and provider/service boundaries, review composition and one freshly pinned native-v2 run.
+- [x] T082 [US4] [FR064/SC048] Verify v2.0.18 Mini typed reasoning filtering and CLI-config override, reproduce absent private launch override, implement child-only mini.thinking=hide without changing model/MCP/receipt criteria, test launch and provider/service boundaries, review composition and one freshly pinned native-v2 run.
+
+- [x] T083 [US4] [FR065/SC049] Diagnose sender Unicode literal-vs-linebreak discrepancy with one bounded same-pane tmux -J observer, shapes only and unchanged acceptance; validate identity/deadline/size/privacy, review closed runner and record one source-bound actual outcome before any extraction change.
+
+T082 resultado actual: filtro de razonamiento confirmado y receptor ACK/turno PASS6,799s; recorrido global FAILED por Unicode LAST del emisor partido en2líneas. No se relaja igualdad. T083 investiga la frontera de captura; T077 y OC-05 siguen abiertos. [Evidencia](validation-t082.md).
+
+T083 actual: probe estable0,089s sin recuperación por-J; recorrido FAILED, limpieza completa. No implementar join lógico sin evidencia. Falta comparar el texto tipado privado con el render, sin traza completa ni DB del operador. [Resultado](validation-t083.md).
+
+- [ ] T084 [US4] [FR066/SC050] Compare current sender typed native text with rendered linebreak using a bounded, read-only, active-receipt/session-bound query of owned private DBs; validate minimization/identity/schema/size/deadlines, review and perform one justified serial diagnostic without changing LAST acceptance.
+
+T084 actual 2026-10-23 on 682797ec: native-v2 two-phase PASS in 100.593 s, exact Unicode/ACK, API restart/stable identities and full cleanup; minimum 7305 MiB. Conditional native-text observer never triggered because the linebreak did not recur. Keep T084 causal comparison open, preserve the actual PASS separately, and do not claim the historical discrepancy fixed. [Evidence](validation-t084.md).
+
+- [ ] T085 [US4] [FR067/SC051] Prepare/review closed v1 generation and managed-turn refresh on the current source; execute fresh generation, bind only its successful current receipt, and perform the unchanged two-message/restart/Unicode/ACK/AG-UI/cleanup acceptance serially. Keep all failures and source/ownership evidence.
+
+- [ ] T086 [US4] [FR068/SC052] Strengthen managed-v1 message acceptance after reproducing the inherited predicate's missing ACK gate. Keep 17 old helper bodies and all inherited checks, add mandatory public ACK/exactly-one-completed-turn and restart-counter continuity with unchanged 75s deadline, test profile/body/counters/final conjunction, review and run the current-source managed case only after fresh generation PASS.
+
+T085 preparation: current headless generation PASS 16.499 s, native exit 0 and cleanup/operator preservation. Managed transplant closed; root detected ACK gate absent in the inherited source, so no managed run was executed before the T086 strengthening. [Evidence](validation-t085.md).
+
+- [x] T087 [US4] [FR069/SC053] Fix reproduced native-cleanup failure on unrelated same-UID zombies with denied environ, using identity/state revalidation. Preserve live unreadable fail-closed checks and PID-reuse rejection; run both scanner regressions, focused journey tests, composition and independent review. Keep failed T085 immutable and record later recovery separately.
+
+T085/T086 actual: mandatory receiver ACK gate correctly rejected phase one; sender completed, receiver cause unproved. Original cleanup failed on Chromium zombies; T087 correction passed 123 tests and separately recovered only the current run resources. T085/T086 acceptance remains open; no weaker retry. [Result and limits](validation-t085.md).
+
+- [ ] T088 [US4] [FR070/SC054] Add bounded content-free receiver observations after T085 failure, preserve all strict acceptance predicates, test privacy and unchanged helpers, bind current source plus fresh generation, independently review and perform one serial diagnostic before any behavior fix.

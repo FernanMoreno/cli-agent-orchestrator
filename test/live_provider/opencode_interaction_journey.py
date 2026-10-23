@@ -1299,6 +1299,13 @@ def _owned_process_snapshot(
             if current[0] != identity:
                 raise RuntimeError("private_process_identity_changed")
             continue
+        if processes[pid][2] == "Z":
+            current = _process_info(pid, proc_root=proc_root)
+            if current is None:
+                continue
+            if current[0] != identity or current[2] != "Z":
+                raise RuntimeError("private_process_identity_changed")
+            continue
         try:
             raw_environment = (proc_root / str(pid) / "environ").read_bytes()
         except (FileNotFoundError, ProcessLookupError):
@@ -1385,6 +1392,13 @@ def _terminal_tagged_processes(
             if current is None:
                 continue
             if current[0] != info[0]:
+                raise RuntimeError("private_process_identity_changed")
+            continue
+        if info[2] == "Z":
+            current = _process_info(info[0].pid, proc_root=proc_root)
+            if current is None:
+                continue
+            if current[0] != info[0] or current[2] != "Z":
                 raise RuntimeError("private_process_identity_changed")
             continue
         try:

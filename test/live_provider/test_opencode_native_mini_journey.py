@@ -3497,3 +3497,64 @@ def test_cleanup_rechecks_pinned_server_immediately_before_kill(
     finally:
         listener.close()
         socket_path.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize("scanner", ["snapshot", "terminal_tags"])
+@pytest.mark.parametrize("second_sample", ["zombie", "gone", "reused", "live"])
+def test_process_scans_revalidate_unreadable_zombies(
+    scanner: str,
+    second_sample: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir(mode=0o700)
+    socket_path = tmp_path / "private-tmux" / "default"
+    server = journey._ProcessIdentity(801, os.getuid(), 100, 801, 801)
+    if scanner == "snapshot":
+        _add_fake_process(proc_root, 801, parent_pid=1, start_time=100)
+    environ = _add_fake_process(proc_root, 802, parent_pid=1, start_time=101)
+    original = journey._process_info
+    zombie = journey._ProcessIdentity(802, os.getuid(), 101, 802, 802)
+    calls = 0
+    reads: list[Path] = []
+    original_read = Path.read_bytes
+
+    def read_bytes(path: Path) -> bytes:
+        if path == environ:
+            reads.append(path)
+            raise PermissionError("synthetic zombie environ")
+        return original_read(path)
+
+    def process_info(pid: int, *, proc_root: Path) -> Any:
+        nonlocal calls
+        if pid != 802:
+            return original(pid, proc_root=proc_root)
+        calls += 1
+        if calls == 1 or second_sample == "zombie":
+            return zombie, 1, "Z"
+        if second_sample == "gone":
+            return None
+        if second_sample == "reused":
+            return journey._ProcessIdentity(802, os.getuid(), 102, 802, 802), 1, "S"
+        return zombie, 1, "S"
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    monkeypatch.setattr(journey, "_process_info", process_info)
+
+    def scan() -> set[Any]:
+        if scanner == "snapshot":
+            return journey._owned_process_snapshot(
+                server, "oc-private", socket_path, proc_root=proc_root
+            )
+        return journey._terminal_tagged_processes(
+            "oc-private", socket_path, proc_root=proc_root, server_identity=server
+        )
+
+    if second_sample in {"reused", "live"}:
+        with pytest.raises(RuntimeError, match="private_process_identity_changed"):
+            scan()
+    else:
+        assert scan() == set()
+    assert calls == 2
+    assert reads == []

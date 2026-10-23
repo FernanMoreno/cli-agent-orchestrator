@@ -342,3 +342,8 @@ La observación mínima [T078](../specs/025-provider-mcp-profiles/validation-t07
 T080 actual en f3e4c354: timeout75s de fase1, sin reinicio; un mensaje persistido, receptor reconcile y replay rechazado por Thinking ambiguo. Limpieza/operador preservados; gate cerrado. No se repite sin señal nueva. Hace falta identidad y separación estructurada del canal final; OC-05/06 permanecen abiertos.
 
 T082: implementado override privado soportado por Mini v2.0.18 para ocultar solo las partes tipadas de razonamiento, manteniendo texto final/ACK y la guardia de ambigüedad.219pruebas y composición5/0 PASS; revisión independiente aprobada. [Fuente y alcance](../specs/025-provider-mcp-profiles/validation-t082.md). Aceptación real nueva todavía pendiente.
+
+
+2026-10-23 — Actualización posterior T082–T084: T083 descartó recuperar el caso observado con tmux -J (misma forma en dos líneas). La nueva ejecución v2 en682797ec pasó ambas fases con Unicode y ACK exactos, AG-UI, reinicio y limpieza completa en 100,593 s; mínimo 7305 MiB y operador intacto. La discrepancia no reapareció y el observador nativo condicional no se activó: causa histórica aún no demostrada. [Resultado y límites](../specs/025-provider-mcp-profiles/validation-t084.md). T085 prepara generación y aceptación v1 frescas; OC-05/06, perfiles/modelos y gates globales siguen abiertos.
+
+2026-10-23 T085/T086: generación v1 actual PASS; recorrido administrado FAILED por ACK receptor no observado, sin aceptación de reinicio. T087 corrigió el inventario de procesos zombi (8 RED → 123 PASS) y recuperó por separado los recursos de ese ensayo; recibo fallido intacto. Falta diagnóstico content-free del ACK y nueva aceptación sobre fuente actual. [Evidencia](../specs/025-provider-mcp-profiles/validation-t085.md).
