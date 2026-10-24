@@ -19,6 +19,7 @@ The provider detects the following terminal states:
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -42,7 +43,7 @@ from cli_agent_orchestrator.constants import (
     OPENCODE_CONFIG_FILE,
 )
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.providers.base import BaseProvider
+from cli_agent_orchestrator.providers.base import BaseProvider, OutputExtractionError
 from cli_agent_orchestrator.providers.mcp_interactions import (
     is_bundled_cao_mcp_entry,
     overlay_interaction_capability_file,
@@ -118,6 +119,23 @@ COMPLETION_MARKER_PATTERN = r"▣[ \t]+[^·\n]+·[ \t]+[^·\n]+·[ \t]+(?:\d+m[ 
 V2_COMPLETION_MARKER_PATTERN = (
     r"(?m)^\s*[^\n·┃›]+\s+·\s+[^\n]+?\s+·\s+(?:\d+m\s+)?\d+(?:\.\d+)?s\s*$"
 )
+_ACTIVE_TURN_RECEIPT_LINE = re.compile(
+    r"(?m)^[ \t]*((?:CAO-TURN-RECEIPT-|CAO_TURN_RECEIPT_)[0-9a-f]{32})[ \t]*$"
+)
+
+
+def _without_active_turn_receipt(text: str, nonce: str) -> str:
+    pattern = re.compile(r"(?m)^[ \t]*" + re.escape(nonce) + r"[ \t]*$")
+    public, count = pattern.subn("", text)
+    if count != 1:
+        raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+    return public.strip()
+
+
+def _render_guard_signature(text: str) -> str:
+    """Ignore display wrapping only for equivalence; never return this form."""
+    return "".join(text.split())
+
 
 # Processing footer — keybind hint present while the agent is generating.
 PROCESSING_FOOTER_PATTERN = r"\besc interrupt\b"
@@ -557,6 +575,11 @@ class OpenCodeCliProvider(BaseProvider):
         return f"opencode-v{self._cli_major}"
 
     @property
+    def supports_canonical_turn_receipt_result(self) -> bool:
+        """Use owned native text only for OpenCode v2 receipts."""
+        return self._cli_major == 2
+
+    @property
     def interaction_capabilities(self):
         """Advertise native interaction only after its strict dialect preflight."""
         capabilities = super().interaction_capabilities
@@ -691,6 +714,84 @@ class OpenCodeCliProvider(BaseProvider):
         if self._result_has_active_receipt(response):
             return textwrap.dedent(response)
         return None
+
+    def canonicalize_turn_receipt_result(self, result: str) -> str:
+        """Return the exact completed v2 TEXT after the caller's TUI witness.
+
+        The service calls this only for a normal completed receipt witness and
+        rechecks both the receipt fingerprint and witness before its unchanged
+        durable CAS. A native read is authoritative only when it joins the
+        unique active nonce to this launch's privately bound selected agent.
+        """
+        if self._cli_major != 2:
+            return result
+        if type(result) is not str or not result:
+            raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+        state = self.pending_turn_receipt_state()
+        if state is None:
+            return result
+        try:
+            receipt_lines = _ACTIVE_TURN_RECEIPT_LINE.findall(result)
+            if len(receipt_lines) != 1:
+                raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+            nonce = receipt_lines[0]
+            if hashlib.sha256(nonce.encode("utf-8")).hexdigest() != state["receipt_sha256"]:
+                raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+            if self._pending_turn_receipt is not None and self._pending_turn_receipt != nonce:
+                raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+
+            from cli_agent_orchestrator.utils.opencode_v2_result_binding import (
+                assert_v2_database_unchanged,
+                assert_v2_result_binding_unchanged,
+                read_v2_result_binding,
+            )
+            from cli_agent_orchestrator.utils.opencode_v2_store import _native_parts
+
+            stop = time.monotonic() + 3.0
+            expected_agent = None
+            if self._agent_profile:
+                from cli_agent_orchestrator.utils.opencode_config import to_opencode_agent_id
+
+                expected_agent = to_opencode_agent_id(self._agent_profile)
+            binding = read_v2_result_binding(
+                self._config_ownership(),
+                expected_agent,
+                stop=stop,
+            )
+            if binding.mode == "rendered":
+                assert_v2_result_binding_unchanged(binding, stop=stop)
+                return result
+            if (
+                binding.mode != "native_text"
+                or binding.agent_id is None
+                or binding.database_path is None
+                or binding.database_identity is None
+            ):
+                raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+            parts = _native_parts(
+                binding.database_path,
+                nonce,
+                stop,
+                expected_agent=binding.agent_id,
+            )
+            assert_v2_database_unchanged(binding, stop=stop)
+            if time.monotonic() >= stop or type(parts) not in (tuple, list) or not parts:
+                raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+            if any(type(part) is not str for part in parts):
+                raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+            native = "".join(parts)
+            native_receipts = _ACTIVE_TURN_RECEIPT_LINE.findall(native)
+            if native_receipts != [nonce]:
+                raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+            native_public = _without_active_turn_receipt(native, nonce)
+            rendered_public = _without_active_turn_receipt(result, nonce)
+            if _render_guard_signature(native_public) != _render_guard_signature(rendered_public):
+                raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+            return native
+        except OutputExtractionError:
+            raise
+        except Exception:
+            raise OutputExtractionError("OpenCode v2 canonical result is unavailable") from None
 
     @staticmethod
     def _v2_without_delivery_contract(
@@ -983,6 +1084,15 @@ class OpenCodeCliProvider(BaseProvider):
                 selected_agent_source=self._native_agent_source,
             )
             self._v2_config_dir = v2_config_dir
+            from cli_agent_orchestrator.utils.opencode_v2_result_binding import (
+                write_v2_result_binding,
+            )
+
+            write_v2_result_binding(
+                self._config_ownership(),
+                self._native_agent_source,
+                v2_config_dir / "opencode.json",
+            )
             if self._interaction_source_requested and self._v2_cao_mcp_server_name is not None:
                 profiled_mcp_servers.add(self._v2_cao_mcp_server_name)
             for server_name in sorted(profiled_mcp_servers):

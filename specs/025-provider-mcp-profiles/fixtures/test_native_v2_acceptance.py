@@ -140,10 +140,16 @@ def test_failure_diagnostic_source_pins_and_shared_deadline_wiring():
         "test_native_v2_text_probe.py",
         "native_v2_store.py",
         "test_native_v2_store.py",
+        "test_opencode_v2_store.py",
+        "test_opencode_v2_result_binding.py",
+        "test_opencode_v2_canonical_result.py",
         "native_phase_readers.py",
         "native_v1_probe.py",
     ):
-        assert "specs/025-provider-mcp-profiles/fixtures/" + filename in paths
+        if filename.startswith("test_opencode_"):
+            assert "test/providers/" + filename in paths
+        else:
+            assert "specs/025-provider-mcp-profiles/fixtures/" + filename in paths
     tree = ast.parse(inspect.getsource(runner._run_enabled))
     calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
     sender_call = next(
@@ -2563,6 +2569,26 @@ def test_runtime_source_map_is_complete_and_exact():
         runner.RUN_SOURCE_RELATIVE_PATHS["cli_agent_orchestrator.api.interactions"]
         == "src/cli_agent_orchestrator/api/interactions.py"
     )
+    assert (
+        runner.RUN_SOURCE_RELATIVE_PATHS["cli_agent_orchestrator.utils.opencode_v2_store"]
+        == "src/cli_agent_orchestrator/utils/opencode_v2_store.py"
+    )
+    assert (
+        runner.RUN_SOURCE_RELATIVE_PATHS["cli_agent_orchestrator.utils.opencode_ownership"]
+        == "src/cli_agent_orchestrator/utils/opencode_ownership.py"
+    )
+    assert (
+        runner.RUN_SOURCE_RELATIVE_PATHS["cli_agent_orchestrator.utils.opencode_config"]
+        == "src/cli_agent_orchestrator/utils/opencode_config.py"
+    )
+    assert (
+        runner.RUN_SOURCE_RELATIVE_PATHS["cli_agent_orchestrator.utils.opencode_v2_result_binding"]
+        == "src/cli_agent_orchestrator/utils/opencode_v2_result_binding.py"
+    )
+    assert "cli_agent_orchestrator.utils.opencode_v2_store" in runner.RUN_SOURCE_MODULES
+    assert "cli_agent_orchestrator.utils.opencode_v2_result_binding" in runner.RUN_SOURCE_MODULES
+    assert "cli_agent_orchestrator.utils.opencode_ownership" in runner.RUN_SOURCE_MODULES
+    assert "cli_agent_orchestrator.utils.opencode_config" in runner.RUN_SOURCE_MODULES
     incomplete = dict(runner.RUN_SOURCE_RELATIVE_PATHS)
     incomplete.pop("cli_agent_orchestrator.api.main")
     assert not runner._runtime_source_modules_match(incomplete)

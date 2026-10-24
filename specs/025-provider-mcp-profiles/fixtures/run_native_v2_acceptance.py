@@ -240,6 +240,10 @@ SOURCE_PATHS = (
     "specs/025-provider-mcp-profiles/fixtures/test_native_v2_text_probe.py",
     "specs/025-provider-mcp-profiles/fixtures/native_v2_store.py",
     "specs/025-provider-mcp-profiles/fixtures/test_native_v2_store.py",
+    "test/providers/test_opencode_v2_store.py",
+    "test/services/test_turn_receipt_canonicalization.py",
+    "test/providers/test_opencode_v2_result_binding.py",
+    "test/providers/test_opencode_v2_canonical_result.py",
     "specs/025-provider-mcp-profiles/fixtures/native_phase_readers.py",
     "specs/025-provider-mcp-profiles/fixtures/native_v1_probe.py",
 )
@@ -273,7 +277,11 @@ RUN_SOURCE_MODULES = (
     "cli_agent_orchestrator.providers.mcp_interactions",
     "cli_agent_orchestrator.utils.mcp_tool_policy",
     "test.live_provider.opencode_http_tool_offer_observer",
+    "cli_agent_orchestrator.utils.opencode_config",
+    "cli_agent_orchestrator.utils.opencode_ownership",
     "cli_agent_orchestrator.utils.opencode_v2",
+    "cli_agent_orchestrator.utils.opencode_v2_store",
+    "cli_agent_orchestrator.utils.opencode_v2_result_binding",
 )
 RUN_SOURCE_RELATIVE_PATHS = {
     "test.fixtures.cao_server": "test/fixtures/cao_server.py",
@@ -318,7 +326,19 @@ RUN_SOURCE_RELATIVE_PATHS = {
     "test.live_provider.opencode_http_tool_offer_observer": (
         "test/live_provider/opencode_http_tool_offer_observer.py"
     ),
+    "cli_agent_orchestrator.utils.opencode_config": (
+        "src/cli_agent_orchestrator/utils/opencode_config.py"
+    ),
+    "cli_agent_orchestrator.utils.opencode_ownership": (
+        "src/cli_agent_orchestrator/utils/opencode_ownership.py"
+    ),
     "cli_agent_orchestrator.utils.opencode_v2": ("src/cli_agent_orchestrator/utils/opencode_v2.py"),
+    "cli_agent_orchestrator.utils.opencode_v2_store": (
+        "src/cli_agent_orchestrator/utils/opencode_v2_store.py"
+    ),
+    "cli_agent_orchestrator.utils.opencode_v2_result_binding": (
+        "src/cli_agent_orchestrator/utils/opencode_v2_result_binding.py"
+    ),
 }
 
 

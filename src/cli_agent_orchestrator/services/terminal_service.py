@@ -5169,6 +5169,44 @@ def _verify_receipt_bearing_result(
         raise TurnResultUnavailableError(
             "output was extractable but its active task receipt was not yet complete"
         )
+    # Some native stores preserve the logical response more accurately than
+    # the terminal renderer.  Ask concrete overrides to canonicalize normally
+    # completed responses; provider-specific blockers keep their rendered path.
+    # Resolve from the concrete class so proxy/mock instance attributes cannot
+    # inject an unreviewed canonicalizer. The inherited identity hook preserves
+    # existing providers' single-witness behavior.
+    canonicalizer = getattr(type(provider), "canonicalize_turn_receipt_result", None)
+    if (
+        terminal_status is TerminalStatus.COMPLETED
+        and callable(canonicalizer)
+        and canonicalizer is not BaseProvider.canonicalize_turn_receipt_result
+        and getattr(provider, "supports_canonical_turn_receipt_result", False) is True
+    ):
+        try:
+            canonical_result = canonicalizer(provider, result)
+            if (
+                type(canonical_result) is not str
+                or not canonical_result
+                or not BaseProvider._result_has_active_receipt(provider, canonical_result)
+            ):
+                raise TurnResultUnavailableError(
+                    "canonical receipt result did not contain the active receipt"
+                )
+            current_receipt_state = provider.pending_turn_receipt_state()
+            if current_receipt_state != receipt_state:
+                raise TurnResultUnavailableError(
+                    "active turn changed while its result was being canonicalized"
+                )
+            canonical_status = receipt_witness(transcript, canonical_result)
+            if canonical_status is not terminal_status:
+                raise TurnResultUnavailableError(
+                    "canonical receipt result did not preserve the completion witness"
+                )
+        except Exception:
+            raise TurnResultUnavailableError(
+                "canonical receipt result could not be verified"
+            ) from None
+        result = canonical_result
     result_sha256 = hashlib.sha256(result.encode("utf-8")).hexdigest()
     public_result = re.sub(
         r"(?m)^[ \t]*(?:CAO-TURN-RECEIPT-|CAO_TURN_RECEIPT_)[0-9a-f]{32}[ \t]*$",

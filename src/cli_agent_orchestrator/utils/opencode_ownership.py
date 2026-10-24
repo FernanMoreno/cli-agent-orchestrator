@@ -225,6 +225,38 @@ class PrivateConfigOwnership:
                 self._snapshot = True
                 self.managed = True
 
+    def active_v2_root_and_claim(self) -> tuple[Path, dict[str, Any]]:
+        """Return the already-bound active v2 root and a copy of its exact claim.
+
+        Result readers may use this read-only seam to address a private file
+        below the root they already own. It never scans the pool or adopts a
+        path supplied by terminal metadata, and a retiring or replaced claim
+        is unavailable.
+        """
+        if not self._snapshot or self._bound is None or self._bound.get("major") != 2:
+            _refuse()
+        # This read path deliberately avoids `_transaction`: its bounded
+        # ownership lock can wait for several seconds, while result reads run
+        # under the terminal dispatch deadline. Atomic receipt publication
+        # lets this validate either complete version; the private index,
+        # immutable local snapshot, root inode, and marker must all agree.
+        if not _private_directory(self.base) or not _private_directory(self.directory):
+            _refuse()
+        document = self._read()
+        if document is None or document["phase"] != "active" or document["claim"] != self._bound:
+            _refuse()
+        claim = document["claim"]
+        if type(claim["major"]) is not int or claim["major"] != 2:
+            _refuse()
+        root = self._root(claim)
+        if root is None or root.resolve(strict=True) != root:
+            _refuse()
+        # Detect a concurrent retire/replace that raced the root+marker checks.
+        latest = self._read()
+        if latest != document:
+            _refuse()
+        return root, dict(claim)
+
     def allocate(self, major: int) -> Path:
         if type(major) is not int or major not in (1, 2):
             _refuse()

@@ -397,6 +397,11 @@ class BaseProvider(ABC):
     # provider's literal input contract.
     requires_turn_receipt: bool = False
 
+    # Opt-in for adapters that can replace a rendered receipt result with a
+    # stronger native-store result. The service performs an extra active-state
+    # recheck and completion witness only when this capability is True.
+    supports_canonical_turn_receipt_result: bool = False
+
     # Whether an explicit provider quota pause can continue the already
     # delivered turn without any CAO or operator input.  The shared terminal
     # state is ``WAITING_QUOTA`` either way; this capability only keeps the API
@@ -629,6 +634,17 @@ class BaseProvider(ABC):
             if self.get_status(transcript) == TerminalStatus.COMPLETED
             else None
         )
+
+    def canonicalize_turn_receipt_result(self, result: str) -> str:
+        """Return the receipt-bearing result used for durable settlement.
+
+        Most providers already expose their logical result in the rendered
+        transcript, so their default is identity.  An adapter may override this
+        when its native store preserves the response more faithfully than its
+        terminal renderer.  The service still requires the returned text to
+        contain the active receipt and to pass the same live completion witness.
+        """
+        return result
 
     def receipt_result_viewport_terminal_status(
         self,
