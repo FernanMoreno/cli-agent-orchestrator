@@ -1,0 +1,91 @@
+{
+  "case_id": "generic_message",
+  "cleanup_failures": [],
+  "elapsed_seconds": 127.126,
+  "error_code": "sender_last_unicode_not_verified",
+  "execution_gates_closed": true,
+  "global_acceptance_claimed": false,
+  "minimum_admission_mib": 9338,
+  "model_acceptance_claimed": false,
+  "operator_auth_unchanged": true,
+  "owned_cleanup_complete": true,
+  "parent_postgres_cleanup": {
+    "admission_record_sha256": "88a11b8e80969e0a8b76266f6f6c0452d2db57306f6d1988db38cf386383336e",
+    "exact_owned_container_absent": true,
+    "exact_owned_network_absent": true,
+    "owner_cleanup_record_sha256": "2634f931b4bbbb8ef5812985725e124e6ce1e48264979cce5db84a2df26c16b8",
+    "owner_exit_code": 0,
+    "unrelated_container_ids_preserved": true,
+    "unrelated_networks_preserved_owner_witness": true
+  },
+  "parent_postgres_cleanup_independently_verified": true,
+  "parent_postgres_owner_exit_code": 0,
+  "phases": [
+    {
+      "agui_redacted_one_notification": null,
+      "durable_turn_completed": false,
+      "elapsed_seconds": 75.184,
+      "last_receipt_unicode_verified": false,
+      "name": "before_restart",
+      "one_exact_pg_api_message": null,
+      "receiver_ack_exact": true,
+      "receiver_model_seconds": 6.191,
+      "receiver_turn_completed_once": true,
+      "sender_model_seconds": null
+    }
+  ],
+  "private_receipt_sha256": "cee44bf936fc02f69b255340f613677afa884c0e2066ec9943afee776fd81a64",
+  "raw_model_response_observed": false,
+  "result": "FAILED",
+  "schema": "caos.spec025.t116.r2.sanitized.v1",
+  "sender_native_text_observation": {
+    "acceptance_input_changed": false,
+    "active_nonce_candidate_count": 1,
+    "active_receipt_bound": true,
+    "assistant_agent_matches": true,
+    "assistant_turn_completed": true,
+    "classification": "native_marker_rendered_missing",
+    "diagnostic_only": true,
+    "elapsed_ms": 964,
+    "native_equals_rendered": false,
+    "native_public": {
+      "characters": 15,
+      "compact_marker": true,
+      "contains_marker": true,
+      "exact_marker": true,
+      "lines": 1,
+      "standalone_marker_line": true
+    },
+    "native_text_part_count": 1,
+    "owned_major2_root": true,
+    "raw_model_response_observed": false,
+    "raw_text_exported": false,
+    "reason": null,
+    "rendered_public": {
+      "characters": 15,
+      "compact_marker": true,
+      "contains_marker": false,
+      "exact_marker": false,
+      "lines": 2,
+      "standalone_marker_line": false
+    },
+    "schema": "caos.t111.native-v2-text-probe.v1",
+    "status": "observed",
+    "target_kind": "unicode",
+    "text_part_shapes": [
+      {
+        "characters": 15,
+        "compact_marker": true,
+        "contains_marker": true,
+        "exact_marker": true,
+        "lines": 1,
+        "standalone_marker_line": true
+      }
+    ],
+    "user_parent_bound": true,
+    "within_original_deadline": true,
+    "within_three_seconds": true
+  },
+  "source_head": "4c243f6b88e4a2fea1534f6952acede89b4578aa",
+  "source_unchanged": true
+}
