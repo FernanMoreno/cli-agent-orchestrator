@@ -468,3 +468,6 @@ T127 R4 FAILED/not_observed3,331s con configuración generada por producción: o
 
 
 T128 integrada offline: observador de respuesta HTTP ligado a petición/fase/nonce compara argumentos JSON/SSE exactos sin consumir los originales ni exportar texto/IDs.108 pruebas Python y43 Node; ensamblaje extendido hasta el recolector real pasa3 casos. Fuentes completas de HEAD, cierre y copia privada verificados; no cambia aceptación ni límites. Regresión del lanzador120 pruebas y revisión Claude sin bloqueos materiales; composición5/0. Falta ejecución real fresca de full8 para localizar el límite de la alteración. [Validación](../specs/025-provider-mcp-profiles/validation-t128.md).
+
+
+T128 real ab6b5476/535: full8 PASS103,836s/mínimo8520MiB, dos mensajes exactos, ACK/Unicode/PG/API/AG-UI y reinicio con identidad estable; oferta final8/0 y solo skill opcional. T104 cierra su aceptación funcional actual. Observador HTTP: primera fase exacta; segunda no disponible por malformed_response en dos clones completos, por lo que T128 sigue abierta. El fallo histórico de puntuación no se reprodujo ni se atribuye su causa. Gates y PostgreSQL propios cerrados, limpieza completa y credenciales intactas. Se investiga el contrato del parser fijado antes de repetir. [Recibo](../specs/025-provider-mcp-profiles/validation-t128-native.json).
