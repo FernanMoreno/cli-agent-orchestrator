@@ -114,6 +114,7 @@ Use `verification-before-completion` before substantial completion.
 - Separate harness defects, offline evidence, actual diagnostics and final acceptance. After a harness failure, reproduce and fix its first incorrect boundary before another expensive run; preserve the failed receipt and use fresh source-bound launchers.
 - Keep reviews scoped to the observation needed. Optional diagnostics, generic hardening and unrelated refactors do not block progress unless they affect that observation's correctness, privacy or cleanup. Do not add fields or review rounds merely to improve an otherwise adequate control.
 - Preserve acceptance criteria and coverage. Record durable causes and prevention rules in Obsidian; keep raw logs and temporary execution details in the repository/private receipts instead.
+- When workspace aliases differ from editable-import paths (including OneDrive letter case), run verification from the same canonical checkout path used by imports. Verify coverage measures the executed source; fix the invocation rather than changing coverage settings or thresholds.
 
 ## 7. Significant composition review
 

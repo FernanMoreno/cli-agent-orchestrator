@@ -9,13 +9,17 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
+from cli_agent_orchestrator.clients import database
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import (
     BaseProvider,
     OutputExtractionError,
     TurnResultUnavailableError,
 )
+from cli_agent_orchestrator.providers.opencode_cli import OpenCodeCliProvider
 from cli_agent_orchestrator.services import remote_terminal_service as remote
 from cli_agent_orchestrator.services import terminal_service as terminal
 
@@ -401,8 +405,12 @@ def test_two_poll_probe_stays_rendered_until_settlement(monkeypatch):
     assert provider.canonical_calls == [RENDERED_RESULT]
 
 
-def test_verified_last_read_returns_persisted_text_without_canonicalizing(monkeypatch):
-    persisted = "Previously verified logical result\nwith LF"
+@pytest.mark.parametrize(
+    "persisted",
+    ["Previously verified logical result\nwith LF", ""],
+    ids=["nonempty", "empty"],
+)
+def test_verified_last_read_returns_persisted_text_without_canonicalizing(monkeypatch, persisted):
     monkeypatch.setattr(remote, "placement", lambda _id: None)
     monkeypatch.setattr(
         terminal,
@@ -422,6 +430,121 @@ def test_verified_last_read_returns_persisted_text_without_canonicalizing(monkey
     )
 
     assert terminal.get_output(TERMINAL_ID, terminal.OutputMode.LAST) == persisted
+    assert terminal.get_output(TERMINAL_ID, terminal.OutputMode.LAST) == persisted
+
+
+@pytest.mark.parametrize(
+    "result_text",
+    [None, 7],
+    ids=["absent", "non-string"],
+)
+def test_verified_last_read_without_string_result_fails_before_provider_lookup(
+    monkeypatch, result_text
+):
+    recovery = {"state": "verified", "generation": GENERATION, "result_text": result_text}
+    monkeypatch.setattr(remote, "placement", lambda _id: None)
+    monkeypatch.setattr(
+        terminal,
+        "get_terminal_metadata",
+        lambda _id: {"tmux_session": "session", "tmux_window": "window", "provider": "opencode"},
+    )
+    monkeypatch.setattr(terminal.status_monitor, "get_buffer", lambda _id: "current pane")
+    monkeypatch.setattr(terminal, "get_terminal_turn_recovery", lambda _id: recovery.copy())
+    provider_lookup = MagicMock(return_value=None)
+    monkeypatch.setattr(terminal.provider_manager, "get_provider", provider_lookup)
+
+    with pytest.raises(TurnResultUnavailableError):
+        terminal.get_output(TERMINAL_ID, terminal.OutputMode.LAST)
+
+    provider_lookup.assert_not_called()
+
+
+def test_legacy_split_verification_without_retained_text_cannot_return_receipt_transcript(
+    monkeypatch, request
+):
+    engine = create_engine("sqlite:///:memory:")
+    request.addfinalizer(engine.dispose)
+    tables = [
+        database.TerminalModel.__table__,
+        database.TerminalTurnReceiptModel.__table__,
+        database.TerminalTurnRecoveryModel.__table__,
+    ]
+    database.Base.metadata.create_all(engine, tables=tables)
+    session_factory = sessionmaker(bind=engine)
+    monkeypatch.setattr(database, "SessionLocal", session_factory)
+    with session_factory() as session:
+        session.add(
+            database.TerminalModel(
+                id=TERMINAL_ID,
+                tmux_session="session",
+                tmux_window="window",
+                provider="opencode",
+                insertion_sequence=1,
+            )
+        )
+        session.add(
+            database.TerminalTurnReceiptModel(
+                terminal_id=TERMINAL_ID,
+                provider="opencode",
+                generation=GENERATION,
+                receipt_sha256=RECEIPT_SHA256,
+                phase="sent",
+            )
+        )
+        session.commit()
+
+    assert database.verify_terminal_turn_receipt_result(
+        TERMINAL_ID, GENERATION, RECEIPT_SHA256, "c" * 64
+    )
+    legacy_recovery = database.get_terminal_turn_recovery(TERMINAL_ID)
+    assert legacy_recovery is not None
+    assert legacy_recovery["state"] == "verified"
+    assert legacy_recovery["result_text"] is None
+
+    transcript = (
+        "› request\n\nACK\n" + NONCE + "\n\nagent · model · 1.0s\n┃\nagent · model · ctrl+p menu"
+    )
+    provider = OpenCodeCliProvider(TERMINAL_ID, "session", "window")
+    provider._cli_major = 2
+    assert provider.pending_turn_receipt_state() is None
+    assert provider.extract_last_message_from_script(transcript) == "ACK\n" + NONCE
+
+    monkeypatch.setattr(remote, "placement", lambda _id: None)
+    monkeypatch.setattr(
+        terminal,
+        "get_terminal_metadata",
+        lambda _id: {"tmux_session": "session", "tmux_window": "window", "provider": "opencode"},
+    )
+    monkeypatch.setattr(terminal.status_monitor, "get_buffer", lambda _id: "current pane")
+    monkeypatch.setattr(
+        terminal,
+        "get_terminal_turn_recovery",
+        lambda _id: database.get_terminal_turn_recovery(TERMINAL_ID),
+    )
+    provider_lookup = MagicMock(return_value=provider)
+    monkeypatch.setattr(terminal.provider_manager, "get_provider", provider_lookup)
+    backend = MagicMock()
+    backend.get_history.return_value = transcript
+    monkeypatch.setattr(terminal, "get_backend", lambda: backend)
+
+    with pytest.raises(TurnResultUnavailableError):
+        terminal.get_output(TERMINAL_ID, terminal.OutputMode.LAST)
+
+    provider_lookup.assert_not_called()
+    assert database.get_terminal_turn_recovery(TERMINAL_ID) == legacy_recovery
+
+
+def test_full_output_remains_the_transcript_when_verified_text_is_missing(monkeypatch):
+    transcript = "full transcript\n" + NONCE
+    monkeypatch.setattr(remote, "placement", lambda _id: None)
+    monkeypatch.setattr(
+        terminal,
+        "get_terminal_metadata",
+        lambda _id: {"tmux_session": "session", "tmux_window": "window"},
+    )
+    monkeypatch.setattr(terminal.status_monitor, "get_buffer", lambda _id: transcript)
+
+    assert terminal.get_output(TERMINAL_ID, terminal.OutputMode.FULL) == transcript
 
 
 @pytest.mark.parametrize("phase_index", [0, 1], ids=["before-restart", "after-restart"])

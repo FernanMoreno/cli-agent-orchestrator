@@ -5521,8 +5521,12 @@ def get_output(
                     and recovery["generation"] != expected_generation
                 ):
                     raise TurnResultUnavailableError("requested turn generation changed")
-                if recovery["state"] == "verified" and recovery.get("result_text") is not None:
-                    recovered_result: str = recovery["result_text"]
+                if recovery["state"] == "verified":
+                    recovered_result = recovery.get("result_text")
+                    if type(recovered_result) is not str:
+                        raise TurnResultUnavailableError(
+                            "verified turn has no retained public result"
+                        )
                     return recovered_result
                 if recovery["state"] in {"cancelling", "cancelled"}:
                     raise TurnResultUnavailableError(

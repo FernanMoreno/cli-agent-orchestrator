@@ -5407,7 +5407,7 @@ async def get_terminal_output(
         from cli_agent_orchestrator.services.turn_recovery_service import get_turn
 
         turn = await asyncio.to_thread(get_turn, terminal_id)
-        code = 409 if turn["state"] in {"reconcile", "cancelling", "cancelled"} else 202
+        code = 409 if turn["state"] in {"verified", "reconcile", "cancelling", "cancelled"} else 202
         raise HTTPException(status_code=code, detail=turn) from e
     except OutputExtractionError as e:
         # Ordered before the ValueError arm it subclasses, same as run_step: the

@@ -8,7 +8,7 @@ from cli_agent_orchestrator.providers.base import OutputExtractionError, TurnRes
 
 
 @pytest.mark.parametrize(
-    ("state", "code"), [("pending", 202), ("reconcile", 409), ("cancelled", 409)]
+    ("state", "code"), [("pending", 202), ("reconcile", 409), ("cancelled", 409), ("verified", 409)]
 )
 def test_last_unavailable_result_is_typed(client, state, code):
     turn = {
