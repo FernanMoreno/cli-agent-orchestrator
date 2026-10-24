@@ -460,7 +460,9 @@ function parseSseResponse(bodyText, expectedMessage, expectedToolName, expectedB
       if (finishSeen) fail("sse_terminal_order")
 
       const choice = event.choices[0]
-      if (!isRecord(choice) || choice.index !== 0) fail("sse_choice")
+      if (!isRecord(choice) || (Object.hasOwn(choice, "index") && choice.index !== 0)) {
+        fail("sse_choice")
+      }
       const delta = choice.delta
       if (delta !== undefined && delta !== null && !isRecord(delta)) {
         fail("sse_delta")

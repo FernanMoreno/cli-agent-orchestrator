@@ -38,7 +38,7 @@ const cleanup=await module.default.setup({session:{hook:async(name,fn)=>{
   hooks.set(name,fn);return {dispose:async()=>{}};
 }}});
 if(typeof cleanup!=='function'||hooks.size!==2)throw new Error('observer_not_started');
-for(const phase of (['exact','sse'].includes(mode)?[1,2]:[1])){
+for(const phase of (['exact','sse','sse_no_choice_index'].includes(mode)?[1,2]:[1])){
   const body=JSON.stringify({messages:[{role:'user',content:prompts.phase_prompts[phase-1]+
     prompts.receipt_prefix+'CAO-TURN-RECEIPT-'+'b'.repeat(32)+prompts.receipt_suffix}]});
   const request=new Request('https://example.invalid/PRIVATE_URL',{method:'POST',body,
@@ -53,12 +53,14 @@ for(const phase of (['exact','sse'].includes(mode)?[1,2]:[1])){
       arguments:JSON.stringify({message,receiver_id:'PRIVATE_RECEIVER'})}
   };
   const wire=mode==='bad_sse'?
-    'data: '+JSON.stringify({choices:[{index:0,delta:7,finish_reason:'stop'}]})+'\n\n':mode==='sse'?
-    'data: '+JSON.stringify({choices:[{index:0,delta:{tool_calls:[{index:0,...call}]}}]})+'\n\n'+
-    'data: '+JSON.stringify({choices:[{index:0,delta:null,finish_reason:'tool_calls'}]})+'\n\n'+
+    'data: '+JSON.stringify({choices:[{index:0,delta:7,finish_reason:'stop'}]})+'\n\n':mode.startsWith('sse')?
+    'data: '+JSON.stringify({choices:[{...(mode==='sse_no_choice_index'?{}:{index:0}),
+      delta:{tool_calls:[{index:0,...call}]}}]})+'\n\n'+
+    'data: '+JSON.stringify({choices:[{...(mode==='sse_no_choice_index'?{}:{index:0}),
+      delta:null,finish_reason:'tool_calls'}]})+'\n\n'+
     'data: [DONE]\n\n':JSON.stringify({choices:[{message:{role:'assistant',tool_calls:[call]},
       finish_reason:'tool_calls'}]});
-  const result=new Response(wire,{headers:{'content-type':['sse','bad_sse'].includes(mode)?
+  const result=new Response(wire,{headers:{'content-type':(mode.startsWith('sse')||mode==='bad_sse')?
     'text/event-stream':'application/json'}});
   const actual=mode==='identity'?new Request('https://example.invalid/OTHER',{method:'POST',body}):request;
   if(hooks.get('http.response')({...event,request:actual,response:result})!==undefined)
@@ -69,7 +71,9 @@ await cleanup();
 """
 
 
-@pytest.mark.parametrize("mode", ["exact", "variant", "identity", "sse", "bad_sse"])
+@pytest.mark.parametrize(
+    "mode", ["exact", "variant", "identity", "sse", "bad_sse", "sse_no_choice_index"]
+)
 def test_private_installed_js_hooks_and_strict_python_reader(
     tmp_path: Path, mode: str, monkeypatch
 ) -> None:
@@ -118,7 +122,7 @@ def test_private_installed_js_hooks_and_strict_python_reader(
     ]:
         assert private not in serialized
     first, second = diagnostic["phase_results"]
-    if mode in {"exact", "sse"}:
+    if mode in {"exact", "sse", "sse_no_choice_index"}:
         assert diagnostic["trace_complete"] is True
         assert first["status"] == second["status"] == "exact"
     elif mode == "variant":

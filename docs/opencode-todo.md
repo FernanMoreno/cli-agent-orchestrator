@@ -475,3 +475,5 @@ T128 real ab6b5476/535: full8 PASS103,836s/mínimo8520MiB, dos mensajes exactos,
 T128 corrección offline posterior: el SDK fijado admite delta:null/ausente en SSE; el parser lo rechazaba. Corregido sin perder comprobación de finalización;46 Node y4 ensamblajes hasta recolector pasan. No demuestra la forma real de las respuestas rechazadas ni altera el PASS anterior; falta validar la corrección en una fuente nueva.
 
 T128 R2 real dd9c1d3d/535: full8 vuelve a PASS100,816s/mínimo8486MiB. Los5 clones completos siguen rechazados; delta:null no explica por sí solo el fallo real del observador. Se prepara clasificación fija del punto de rechazo antes de otra ejecución, sin cuerpos ni IDs. T128 permanece abierta; gates/PG cerrados y credenciales intactas. [R2](../specs/025-provider-mcp-profiles/validation-t128-r2-native.json).
+
+T128 segunda incompatibilidad probada con el SDK: una choice única puede omitir index. Se corrige solo la omisión, manteniendo rechazo de índices explícitos inválidos y varias choices. RED/GREEN raíz,49 Node y6 ensamblajes completos pasan; revisión Luna conforme. Nuevo diagnóstico incluirá códigos de rechazo precisos.

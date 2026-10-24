@@ -573,6 +573,21 @@ test("SSE accepts SDK-null or omitted delta on a terminal finish chunk", () => {
   assert.equal(omittedDelta.known_punctuation_variant_exact, true)
 })
 
+test("SSE binds a single SDK choice without its optional index", () => {
+  const start = targetStart({ argumentsText: JSON.stringify({ message: EXPECTED }) })
+  delete start.choices[0].index
+  const result = sseResult([start, { choices: [{ delta: null, finish_reason: "tool_calls" }] }])
+  assert.equal(result.status, "observed")
+  assert.equal(result.argument_exact, true)
+  for (const index of [1, null, false, "0"]) {
+    const invalid = sseResult([start, { choices: [{ index, delta: null, finish_reason: "tool_calls" }] }])
+    assert.equal(invalid.status, "unavailable")
+    assert.equal(invalid.reason, "sse_choice")
+  }
+  const ambiguous = sseResult([{ choices: [start.choices[0], start.choices[0]] }])
+  assert.equal(ambiguous.reason, "ambiguous_response")
+})
+
 test("SSE null delta without a terminal signal remains incomplete", () => {
   const result = sseResult([
     targetStart({ argumentsText: JSON.stringify({ message: EXPECTED }) }),
