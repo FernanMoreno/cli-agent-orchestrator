@@ -65,6 +65,7 @@ REASONS = frozenset(
         "owned_root_invalid",
         "owned_database_invalid",
         "native_schema_mismatch",
+        "user_parent_missing",
         "user_parent_not_unique",
         "native_text_size_limit",
         "native_parts_limit",
@@ -407,6 +408,8 @@ def _native_text_parts(
             "native_agent_metadata_invalid": "native_agent_metadata_invalid",
             "native_agent_mismatch": "native_agent_mismatch",
         }.get(str(exc), "probe_dependency_error")
+        if reason == "user_parent_not_unique" and exc.user_parent_status == "missing":
+            reason = "user_parent_missing"
         if progress is not None and reason in {
             "native_parts_limit",
             "native_text_size_limit",

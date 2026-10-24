@@ -1,6 +1,6 @@
 # T117 — align receiver ACK body and completion-receipt metadata
 
-Status: implemented and offline verified; final read reviews completed; fresh source-bound actual pending. T104/T117 remain open.
+Status: implemented and offline verified; final read reviews completed; fresh source-bound actual executed and FAILED. T104/T117 remain open.
 
 R6 source76b33892 FAILED132.678s,min8705MiB. Its ACK HTTP body was not read because receiver completion/sequence did not settle. PG stayed sent; API reconciled receipt_result_unverifiable after3 attempts. The label receiver_ack_not_exact did not establish an observed wrong body. Original receipt, executed bindings and full source cleanup proof are preserved and closed. [R6](validation-t104-r6-native.json).
 
@@ -13,3 +13,6 @@ Failure reporting distinguishes terminal status/sequence not completed, output n
 RED:9 initial prompt/classifier regressions failed in17.75s. Independent Luna review found an unread completed-turn mislabel still present;10 additional observation cases reproduced it before correction. Final configured three-module pytest136 passed in49.63s;212 offline native unittests passed in11.112s. Black/isort and scoped diff checks pass. These are offline results, not native acceptance or global coverage. Completed final Claude read review and independent final Luna review found no blocker after the correction. Earlier128-test/source-review checkpoints predate that correction and are not final evidence.
 
 Composition: role/fixture prompt → existing task-delivery receipt wrapper → source parser and durable result gate → observation/error label; all parsing/persistence/cleanup code remains unchanged. Case T116 must carry this canonical prompt, helper, gate and test suffix during integration, and its full8 fixture dependency must match. Source-verified Graphify fixture impact remains outside the stale graph; all12 foreign graph files are preserved. Existing repository Specs carry the durable contract; routine private transcripts are not copied into the vault. Final post-test composition passed five contracts with zero broken; scoped diff verification passed.
+
+
+Current-source full8 R7 on335bd8f0 exercised the canonical wording: pre-restart message/ACK/Unicode/PG/API/AG-UI passed, but post-restart receiver completion failed with PGsent/APIreconcile receipt_result_unverifiable. The new receiver_turn_not_completed_once label correctly preserves ACK as unobserved instead of reporting a wrong response. Runtime acceptance remainsFalse; the prompt correction does not establish a complete remedy or a historical model cause. All owned cleanup passed; bindings/receipt archived unchanged and gates closed. [R7](validation-t104-r7-native.json). The distinct generic R1 has an actually observed nonexact ACK with verified receipt and is recorded separately in [T116](validation-t116.md).

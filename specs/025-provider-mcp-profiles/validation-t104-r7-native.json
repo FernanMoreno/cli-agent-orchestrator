@@ -1,0 +1,53 @@
+{
+  "acceptance_claimed": false,
+  "case_id": "collaboration",
+  "cleanup_failures": [],
+  "elapsed_seconds": 160.274,
+  "error_code": "receiver_turn_not_completed_once",
+  "execution_gates_closed": true,
+  "final_offer_gate_reached": false,
+  "global_acceptance_claimed": false,
+  "historical_failure_cause_proven": false,
+  "minimum_admission_mib": 8938,
+  "operator_auth_unchanged": true,
+  "owned_cleanup_complete": true,
+  "phases": [
+    {
+      "agui_redacted_one_notification": true,
+      "durable_turn_completed": true,
+      "elapsed_seconds": 24.35,
+      "last_receipt_unicode_verified": true,
+      "name": "before_restart",
+      "one_exact_pg_api_message": true,
+      "receiver_ack_exact": true,
+      "receiver_model_seconds": 7.308,
+      "receiver_turn_completed_once": true,
+      "sender_model_seconds": 24.331
+    },
+    {
+      "agui_redacted_one_notification": null,
+      "durable_turn_completed": true,
+      "elapsed_seconds": 80.303,
+      "last_receipt_unicode_verified": true,
+      "name": "after_restart",
+      "one_exact_pg_api_message": null,
+      "receiver_ack_exact": null,
+      "receiver_model_seconds": null,
+      "receiver_turn_completed_once": false,
+      "sender_model_seconds": 9.987
+    }
+  ],
+  "private_receipt_sha256": "3ad556f9e7b1dd9fb136c4e9dc8638c779e94708787b5ceadfc783d6db950323",
+  "receiver_api_attempts": 3,
+  "receiver_api_turn_reason": "receipt_result_unverifiable",
+  "receiver_api_turn_state": "reconcile",
+  "receiver_native_current_turn_bound": false,
+  "receiver_native_probe_reason": null,
+  "receiver_native_probe_status": "current_turn_unverified",
+  "receiver_pg_generation_matches_api_turn": true,
+  "receiver_pg_receipt_phase": "sent",
+  "result": "FAILED",
+  "schema": "caos.spec025.current-native-v2.sanitized.v1",
+  "source_head": "335bd8f03fcd728e8a05d5da169d138211273d33",
+  "source_unchanged": true
+}

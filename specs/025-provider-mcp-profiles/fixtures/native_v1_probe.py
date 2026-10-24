@@ -16,7 +16,11 @@ PARTS = 16
 
 
 class ProbeError(Exception):
-    pass
+    def __init__(self, reason, *, user_parent_status=None):
+        self.user_parent_status = (
+            user_parent_status if user_parent_status in {"missing", "multiple"} else None
+        )
+        super().__init__(reason)
 
 
 def shape(text, expected=MARKER):
@@ -72,7 +76,8 @@ def _native_parts(path, nonce, stop, *, expected_agent=None):
             (nonce,),
         ).fetchall()
         if len(users) != 1:
-            raise ProbeError("user_not_unique")
+            parent_status = "missing" if not users else "multiple"
+            raise ProbeError("user_not_unique", user_parent_status=parent_status)
         user, session = users[0]
         source = """ FROM message m JOIN part p
             ON p.message_id=m.id AND p.session_id=m.session_id

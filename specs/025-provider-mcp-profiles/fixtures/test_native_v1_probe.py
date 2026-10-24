@@ -59,8 +59,20 @@ class NativeTextTests(unittest.TestCase):
     def test_duplicate_user_rejected(self):
         self.message("u2", "user")
         self.part("u2", "p2", NONCE)
-        with self.assertRaisesRegex(probe.ProbeError, "user_not_unique"):
+        with self.assertRaisesRegex(probe.ProbeError, "user_not_unique") as raised:
             self.read()
+        self.assertEqual(raised.exception.args, ("user_not_unique",))
+        self.assertEqual(str(raised.exception), "user_not_unique")
+        self.assertEqual(raised.exception.user_parent_status, "multiple")
+
+    def test_missing_user_keeps_legacy_error(self):
+        self.db.execute("DELETE FROM part WHERE message_id='u'")
+        self.db.execute("DELETE FROM message WHERE id='u'")
+        with self.assertRaisesRegex(probe.ProbeError, "user_not_unique") as raised:
+            self.read()
+        self.assertEqual(raised.exception.args, ("user_not_unique",))
+        self.assertEqual(str(raised.exception), "user_not_unique")
+        self.assertEqual(raised.exception.user_parent_status, "missing")
 
     def test_wrong_parent_and_cross_session_rejected(self):
         self.db.execute(

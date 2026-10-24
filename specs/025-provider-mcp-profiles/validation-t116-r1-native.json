@@ -1,0 +1,47 @@
+{
+  "acceptance_claimed": false,
+  "capability_counts_observed": {
+    "capability_files_at_receiver_initialization": 0,
+    "capability_files_at_sender_initialization": 0,
+    "capability_files_before_first_input": 0,
+    "capability_files_immediately_after_delete": 0
+  },
+  "case_id": "generic_message",
+  "cleanup_failures": [],
+  "elapsed_seconds": 122.748,
+  "error_code": "receiver_ack_not_exact",
+  "execution_gates_closed": true,
+  "final_offer_gate_reached": false,
+  "global_acceptance_claimed": false,
+  "historical_failure_cause_proven": false,
+  "minimum_admission_mib": 9010,
+  "operator_auth_unchanged": true,
+  "owned_cleanup_complete": true,
+  "phases": [
+    {
+      "agui_redacted_one_notification": null,
+      "durable_turn_completed": false,
+      "elapsed_seconds": 75.265,
+      "last_receipt_unicode_verified": false,
+      "name": "before_restart",
+      "one_exact_pg_api_message": null,
+      "receiver_ack_exact": false,
+      "receiver_model_seconds": 5.552,
+      "receiver_turn_completed_once": true,
+      "sender_model_seconds": null
+    }
+  ],
+  "private_receipt_sha256": "2bb372133fa3a1fce6488636113d8e40c9891f9b51c5fe5df1d1dbcc1b52b73f",
+  "receiver_api_attempts": 0,
+  "receiver_api_turn_reason": "none",
+  "receiver_api_turn_state": "verified",
+  "receiver_native_current_turn_bound": false,
+  "receiver_native_probe_reason": "user_parent_not_unique",
+  "receiver_native_probe_status": "unavailable",
+  "receiver_pg_generation_matches_api_turn": true,
+  "receiver_pg_receipt_phase": "result_verified",
+  "result": "FAILED",
+  "schema": "caos.spec025.current-native-v2.sanitized.v1",
+  "source_head": "335bd8f03fcd728e8a05d5da169d138211273d33",
+  "source_unchanged": true
+}

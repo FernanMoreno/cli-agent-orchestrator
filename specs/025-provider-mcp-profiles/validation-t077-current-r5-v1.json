@@ -1,0 +1,46 @@
+{
+  "all_provider_model_auth_acceptance_claimed": false,
+  "bounded_generic_v1_acceptance_passed": true,
+  "elapsed_seconds": 127.703,
+  "execution_gates_closed": true,
+  "generation_seconds": 16.414,
+  "global_acceptance_claimed": false,
+  "minimum_admission_mib": 8698,
+  "native_model_http_offer_acceptance_claimed": false,
+  "operator_auth_unchanged": true,
+  "owned_cleanup_complete": true,
+  "phases": [
+    {
+      "agui_capture_clean": true,
+      "agui_capture_thread_stopped": true,
+      "agui_one_redacted_notification": true,
+      "inbox_pair_exact": true,
+      "last_receipt_unicode_verified": true,
+      "model_seconds": 10.511418032998336,
+      "one_exact_new_persisted_message": true,
+      "phase": 0,
+      "receiver_ack_exact": true,
+      "receiver_ack_within_deadline": true,
+      "receiver_turn_completed_once": true,
+      "sender_completed": true
+    },
+    {
+      "agui_capture_clean": true,
+      "agui_capture_thread_stopped": true,
+      "agui_one_redacted_notification": true,
+      "inbox_pair_exact": true,
+      "last_receipt_unicode_verified": true,
+      "model_seconds": 9.349330889002886,
+      "one_exact_new_persisted_message": true,
+      "phase": 1,
+      "receiver_ack_exact": true,
+      "receiver_ack_within_deadline": true,
+      "receiver_turn_completed_once": true,
+      "sender_completed": true
+    }
+  ],
+  "private_receipt_sha256": "198bbf489a2f861c71ebd67ee4452e5f3574e8086700cd527deb0d087fc11d50",
+  "result": "PASS",
+  "schema": "caos.spec025.t077.current-r5-v1.sanitized.v1",
+  "source_head": "335bd8f03fcd728e8a05d5da169d138211273d33"
+}
