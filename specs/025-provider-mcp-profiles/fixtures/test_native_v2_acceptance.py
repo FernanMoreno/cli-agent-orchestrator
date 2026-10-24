@@ -3988,3 +3988,231 @@ def test_t122_argument_diagnostic_keyboardinterrupt_fails_closed_for_cleanup(
         "two_phase_arguments_exact": False,
         "acceptance_input_changed": False,
     }
+
+
+@pytest.fixture
+def http_prompt_assembly(tmp_path, monkeypatch):
+    from test.live_provider import opencode_http_prompt_observer as prompt
+
+    root = tmp_path / "private-run"
+    root.mkdir(mode=0o700)
+    working = root / "sender-workdir"
+    working.mkdir(mode=0o700)
+    evidence = tmp_path / "evidence"
+    evidence.mkdir(mode=0o700)
+    raw = evidence / "raw"
+    raw.mkdir(mode=0o700)
+    nonce = "a" * 32
+    relative = "test/live_provider/opencode_http_prompt_observer.js"
+    original = (runner.REPO / relative).read_bytes()
+    derived = runner._http_prompt_plugin_bytes(original, nonce=nonce)
+    source = tmp_path / "derived-prompt.js"
+    runner._write_private(source, derived)
+    ledger = prompt.install_project_plugin(
+        working_directory=working, source_path=source, nonce=nonce
+    )
+    phases = tuple(
+        runner._phase_prompt(index, "8765abcd", message)
+        for index, (_name, message) in enumerate(runner.PHASES)
+    )
+    document = runner._http_prompt_expectations(
+        sender_id="1234abcd", nonce=nonce, phase_prompts=phases
+    )
+    expectation = prompt.write_expectations(working_directory=working, document=document)
+    context = {
+        "working_directory": working,
+        "directory": ledger,
+        "nonce": nonce,
+        "plugin_bytes": derived,
+        "expectation_bytes": expectation.read_bytes(),
+    }
+    source_hashes = {
+        name: hashlib.sha256((runner.REPO / name).read_bytes()).hexdigest()
+        for name in (
+            relative,
+            "test/live_provider/opencode_http_prompt_observer.py",
+        )
+    }
+    monkeypatch.setattr(runner, "RUN_MANIFEST", {"source_sha256s": source_hashes})
+    monkeypatch.setattr(runner, "_ACTIVE_PRIVATE_RUN_ROOT", root)
+    monkeypatch.setattr(runner, "EVIDENCE", evidence)
+    return context, root, raw, phases, document
+
+
+def _dispatch_derived_http_prompt_plugin(context, messages):
+    # Actual installed default export, not a pure comparator or mocked reader.
+    script = r"""
+import fs from 'node:fs/promises';
+import {pathToFileURL} from 'node:url';
+let callback;
+try {
+  const plugin = await import(pathToFileURL(process.argv[1]).href);
+  const cleanup = await plugin.default.setup({session:{hook:async (name, fn, options)=>{
+    if(name !== 'http.request' || options.providerID !== 'opencode-go') throw Error();
+    callback = fn; return {dispose:async()=>{}};
+  }}});
+  let raw=''; for await (const chunk of process.stdin) raw+=chunk;
+  for (const messages of JSON.parse(raw)) {
+    const request = new Request('https://example.invalid/never-fetched', {
+      method:'POST',body:JSON.stringify({messages})
+    });
+    const before = await request.clone().text();
+    const event = {kind:'primary',model:{providerID:'opencode-go',id:'glm-5.3-flash'},request};
+    const result = await callback(event);
+    if(result !== undefined || event.request !== request || await request.text() !== before) throw Error();
+  }
+  await cleanup();
+} catch { process.stderr.write('t125_full_assembly_failed'); process.exitCode=1; }
+"""
+    result = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            script,
+            str(context["working_directory"] / ".opencode/plugins/cao-http-prompt-observer.js"),
+        ],
+        input=json.dumps(messages),
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, "actual installed HTTP prompt plugin did not seal"
+
+
+@pytest.mark.parametrize("mode", ["exact", "memory", "wrong-body", "history-only"])
+def test_actual_http_prompt_install_request_seal_reader_and_collector(http_prompt_assembly, mode):
+    from types import SimpleNamespace
+
+    from cli_agent_orchestrator.providers.base import BaseProvider
+
+    context, root, raw, phases, _document = http_prompt_assembly
+    requests = []
+    for index, phase in enumerate(phases):
+        task = phase
+        if mode in {"wrong-body", "history-only"}:
+            before = json.dumps(runner.PHASES[index][1], ensure_ascii=False)
+            after = json.dumps(runner.PHASES[index][1][:-1] + "。", ensure_ascii=False)
+            assert before != after and before in task
+            task = task.replace(before, after, 1)
+        prepared = BaseProvider._format_turn_receipt_input(
+            SimpleNamespace(terminal_id="1234abcd"),
+            task,
+            "CAO-TURN-RECEIPT-" + "b" * 32,
+        )
+        if mode == "memory":
+            prepared = "<cao-memory>\nprivate-memory-canary\n</cao-memory>\n\n" + prepared
+        history = []
+        if mode == "history-only":
+            history = [{"role": "user", "content": phase}, {"role": "assistant", "content": phase}]
+        # Exercise native-compatible string and single text-part forms.
+        content = prepared if index == 0 else [{"type": "text", "text": prepared}]
+        requests.extend([history + [{"role": "user", "content": content}]] * 2)
+    _dispatch_derived_http_prompt_plugin(context, requests)
+    result = runner._capture_http_prompt_diagnostic_safely(
+        context=context, root=root, raw_dir=raw, writers_dead=True
+    )
+    assert result["status"] == "sealed_observation_available"
+    assert result["sealed_raw_copy_verified"] is True
+    assert result["active_receipt_identity_attested"] is False
+    assert result["acceptance_input_changed"] is False
+    records = result["observation"]["records"]
+    assert len(records) == 4
+    assert result["observation"]["phase_observation"] == (
+        "both" if mode in {"exact", "memory"} else "none"
+    )
+    assert [item["source_prompt_exact"] for item in records] == [mode in {"exact", "memory"}] * 4
+    assert [item["last_instruction_present"] for item in records] == [True] * 4
+    assert [item["receipt_envelope_shape_valid"] for item in records] == [True] * 4
+    assert [item["phase_ordinal"] for item in records] == (
+        [1, 1, 2, 2] if mode in {"exact", "memory"} else [None] * 4
+    )
+    encoded = json.dumps(result, ensure_ascii=False)
+    for forbidden in (
+        *phases,
+        "1234abcd",
+        "8765abcd",
+        "CAO-TURN-RECEIPT-",
+        "private-memory-canary",
+    ):
+        assert forbidden not in encoded
+
+
+def test_http_prompt_collector_never_reads_before_writer_shutdown(
+    http_prompt_assembly, monkeypatch
+):
+    context, root, raw, _phases, _document = http_prompt_assembly
+    monkeypatch.setattr(
+        runner, "_read_source_bound_prompt_file", lambda *_: pytest.fail("read before stopped")
+    )
+    result = runner._capture_http_prompt_diagnostic_safely(
+        context=context, root=root, raw_dir=raw, writers_dead=False
+    )
+    assert result["status"] == "unavailable"
+    assert result["sealed_raw_copy_verified"] is False
+
+
+def test_http_prompt_diagnostic_interrupt_cannot_abort_cleanup(monkeypatch):
+    def interrupted(**_kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(runner, "_capture_http_prompt_diagnostic", interrupted)
+    assert runner._capture_http_prompt_diagnostic_safely()["status"] == "unavailable"
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "expectation",
+        "installed-plugin",
+        "source-pin",
+        "foreign-directory",
+        "unsealed",
+        "copy",
+        "overflow",
+    ],
+)
+def test_http_prompt_collector_rejects_tampered_or_unbound_evidence(
+    http_prompt_assembly, monkeypatch, tamper
+):
+    from types import SimpleNamespace
+
+    from cli_agent_orchestrator.providers.base import BaseProvider
+
+    context, root, raw, phases, _document = http_prompt_assembly
+    prepared = BaseProvider._format_turn_receipt_input(
+        SimpleNamespace(terminal_id="1234abcd"), phases[0], "CAO-TURN-RECEIPT-" + "b" * 32
+    )
+    _dispatch_derived_http_prompt_plugin(context, [[{"role": "user", "content": prepared}]])
+    if tamper == "expectation":
+        path = context["working_directory"] / ".opencode/http-prompt-expectations.json"
+        path.write_bytes(path.read_bytes() + b"\n")
+    elif tamper == "installed-plugin":
+        path = context["working_directory"] / ".opencode/plugins/cao-http-prompt-observer.js"
+        path.write_bytes(path.read_bytes() + b"\n")
+    elif tamper == "source-pin":
+        runner.RUN_MANIFEST["source_sha256s"][
+            "test/live_provider/opencode_http_prompt_observer.py"
+        ] = ("0" * 64)
+    elif tamper == "foreign-directory":
+        context["directory"] = root / "some-other-ledger"
+    elif tamper == "unsealed":
+        (context["directory"] / "seal.json").unlink()
+    elif tamper == "overflow":
+        for index in range(2, 19):
+            runner._write_private(context["directory"] / f"request-{index:04d}.json", b"{}")
+    elif tamper == "copy":
+        original = runner._write_private
+
+        def changed_copy(path, data):
+            original(path, data)
+            if path.parent.name == "sender-http-prompt-observer-copy" and path.name != "seal.json":
+                path.write_bytes(b"{}")
+
+        monkeypatch.setattr(runner, "_write_private", changed_copy)
+    result = runner._capture_http_prompt_diagnostic_safely(
+        context=context, root=root, raw_dir=raw, writers_dead=True
+    )
+    assert result["status"] == "unavailable"
+    assert result["sealed_raw_copy_verified"] is False
+    assert result["acceptance_input_changed"] is False

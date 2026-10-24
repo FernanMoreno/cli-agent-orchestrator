@@ -483,3 +483,9 @@ T123 diagnostic correction verified: actual SQLite observer RED;144 tests/3 warn
 
 
 T124 harness alignment integrated and verified offline:131 tests/3 warnings, normal focused coverage20%, composition5/0, style/diff and independent read review. Both source phase prompts compose with real receipt formatting/native reader/public stripping in8 fresh/restored/LF variants. This is instruction alignment, not historical causality or native acceptance. T077/T116/T120 acceptance and upstream MCP argument provenance remain open. [Validation](validation-t124.md).
+
+
+- [ ] T125 [US4] [FR104/SC088] Implement separate opt-in source-bound selected-model latest-user HTTP prompt comparison and failure-safe sealed collection. Preserve offer/MCP schemas, requests, cleanup, exact literals and acceptance. RED/GREEN schema/privacy/oversize/history/memory/envelope controls; full actual derived install/dispatch/seal/read/collection assembly; independent reviews, root regression/composition and main integration. Any real case requires fresh source-bound closed launchers, memory admission and serialized execution; offline implementation alone does not close native acceptance.
+
+
+T125 offline integrado:173 pytest/28 Node, composición5/0, source prompt/acceptance AST intactos y revisiones independientes. Ensamblaje derivado real y negativos de privacidad/schema/copia/lifecycle pasan; no native/model/PG ni aceptación inferida. Inventario527/runtime24; lanzadores nuevos cerrados. [Resultado](validation-t125.md).

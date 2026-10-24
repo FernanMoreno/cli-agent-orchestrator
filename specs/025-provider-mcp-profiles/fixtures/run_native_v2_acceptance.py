@@ -36,6 +36,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -277,6 +278,7 @@ RUN_SOURCE_MODULES = (
     "cli_agent_orchestrator.providers.mcp_interactions",
     "cli_agent_orchestrator.utils.mcp_tool_policy",
     "test.live_provider.opencode_http_tool_offer_observer",
+    "test.live_provider.opencode_http_prompt_observer",
     "cli_agent_orchestrator.utils.opencode_config",
     "cli_agent_orchestrator.utils.opencode_ownership",
     "cli_agent_orchestrator.utils.opencode_v2",
@@ -325,6 +327,9 @@ RUN_SOURCE_RELATIVE_PATHS = {
     ),
     "test.live_provider.opencode_http_tool_offer_observer": (
         "test/live_provider/opencode_http_tool_offer_observer.py"
+    ),
+    "test.live_provider.opencode_http_prompt_observer": (
+        "test/live_provider/opencode_http_prompt_observer.py"
     ),
     "cli_agent_orchestrator.utils.opencode_config": (
         "src/cli_agent_orchestrator/utils/opencode_config.py"
@@ -3058,6 +3063,226 @@ def _http_tool_offer_plugin_bytes(
     return text.replace(old_nonce, f'nonce = "{nonce}"', 1).encode("utf-8")
 
 
+def _http_prompt_plugin_bytes(source: bytes, *, nonce: str) -> bytes:
+    if type(nonce) is not str or re.fullmatch(r"[0-9a-f]{32}", nonce) is None:
+        raise GateError("http_prompt_nonce_invalid")
+    old = b"nonce = process.env.CAO_OPENCODE_HTTP_PROMPT_NONCE"
+    if source.count(old) != 1:
+        raise GateError("http_prompt_plugin_binding_shape_invalid")
+    return source.replace(old, ('nonce = "' + nonce + '"').encode(), 1)
+
+
+def _http_prompt_expectations(*, sender_id, nonce, phase_prompts):
+    from types import SimpleNamespace
+
+    from cli_agent_orchestrator.providers.base import BaseProvider
+
+    if (
+        not _safe_terminal_identity(sender_id)
+        or type(nonce) is not str
+        or re.fullmatch(r"[0-9a-f]{32}", nonce) is None
+        or type(phase_prompts) is not tuple
+        or len(phase_prompts) != len(PHASES)
+        or any(type(value) is not str for value in phase_prompts)
+    ):
+        raise GateError("http_prompt_expectation_context_invalid")
+    placeholder = "CAO-TURN-RECEIPT-" + "0" * 32
+    formatted = BaseProvider._format_turn_receipt_input(
+        SimpleNamespace(terminal_id=sender_id), "", placeholder
+    )
+    if formatted.count(placeholder) != 1:
+        raise GateError("http_prompt_receipt_formatter_shape_invalid")
+    prefix, suffix = formatted.split(placeholder)
+    return {
+        "schema_version": 1,
+        "nonce": nonce,
+        "phase_prompts": list(phase_prompts),
+        "receipt_prefix": prefix,
+        "receipt_suffix": suffix,
+        "last_instruction": "the public result body must be exactly this line: " + LAST_RECEIPT,
+    }
+
+
+def _read_source_bound_prompt_file(relative):
+    if relative not in {
+        "test/live_provider/opencode_http_prompt_observer.py",
+        "test/live_provider/opencode_http_prompt_observer.js",
+    }:
+        raise GateError("http_prompt_source_binding_invalid")
+    source = REPO / relative
+    expected = (RUN_MANIFEST or {}).get("source_sha256s", {}).get(relative)
+    if source.is_symlink() or not _digest_shape(expected):
+        raise GateError("http_prompt_source_binding_invalid")
+    before = source.stat()
+    if not stat.S_ISREG(before.st_mode) or before.st_size > 128 * 1024:
+        raise GateError("http_prompt_source_binding_invalid")
+    data = source.read_bytes()
+    after = source.lstat()
+    if (
+        source.is_symlink()
+        or (before.st_dev, before.st_ino, before.st_mtime_ns, before.st_size)
+        != (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_size)
+        or hashlib.sha256(data).hexdigest() != expected
+        or _sha256(source) != expected
+    ):
+        raise GateError("http_prompt_source_binding_invalid")
+    return data
+
+
+def _capture_http_prompt_diagnostic(*, context, root, raw_dir, writers_dead):
+    unavailable = {
+        "schema": "spec025.t125.http-prompt-diagnostic.v1",
+        "status": "unavailable",
+        "sealed_raw_copy_verified": False,
+        "active_receipt_identity_attested": False,
+        "acceptance_input_changed": False,
+    }
+    if writers_dead is not True or type(context) is not dict:
+        return unavailable
+    if (
+        not isinstance(root, Path)
+        or root != _ACTIVE_PRIVATE_RUN_ROOT
+        or not isinstance(raw_dir, Path)
+        or raw_dir != EVIDENCE / "raw"
+        or context.get("working_directory") != root / "sender-workdir"
+        or context.get("directory") != root / "sender-workdir/.opencode/http-prompt-observation"
+        or type(context.get("expectation_bytes")) is not bytes
+        or type(context.get("plugin_bytes")) is not bytes
+        or type(context.get("nonce")) is not str
+        or re.fullmatch(r"[0-9a-f]{32}", context["nonce"]) is None
+    ):
+        return unavailable
+    work = context["working_directory"]
+    ledger = context["directory"]
+    directories = (
+        root,
+        work,
+        work / ".opencode",
+        work / ".opencode/plugins",
+        ledger,
+        EVIDENCE,
+        raw_dir,
+    )
+    directory_identities = {}
+    for directory in directories:
+        info = directory.lstat()
+        directory_identities[directory] = (info.st_dev, info.st_ino)
+        if (
+            directory.is_symlink()
+            or directory.resolve(strict=True) != directory
+            or not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != os.getuid()
+            or stat.S_IMODE(info.st_mode) != 0o700
+        ):
+            return unavailable
+    source = _read_source_bound_prompt_file("test/live_provider/opencode_http_prompt_observer.js")
+    if _http_prompt_plugin_bytes(source, nonce=context["nonce"]) != context["plugin_bytes"]:
+        return unavailable
+    if (
+        _read_owned_private_file(
+            work / ".opencode/plugins/cao-http-prompt-observer.js", maximum=128 * 1024
+        )
+        != context["plugin_bytes"]
+    ):
+        return unavailable
+    if (
+        _read_owned_private_file(
+            work / ".opencode/http-prompt-expectations.json", maximum=64 * 1024
+        )
+        != context["expectation_bytes"]
+    ):
+        return unavailable
+    reader_relative = "test/live_provider/opencode_http_prompt_observer.py"
+    reader_bytes = _read_source_bound_prompt_file(reader_relative)
+    module = types.ModuleType("spec025_t125_http_prompt_reader")
+    module.__file__ = str(REPO / reader_relative)
+    exec(compile(reader_bytes, module.__file__, "exec"), module.__dict__)
+    if _read_source_bound_prompt_file(reader_relative) != reader_bytes:
+        return unavailable
+    # Snapshot only the closed vocabulary; never adopt another run's directory.
+    names = []
+    with os.scandir(ledger) as entries:
+        for entry in entries:
+            if len(names) >= 17:
+                return unavailable
+            names.append(entry.name)
+    names.sort()
+    if (
+        "seal.json" not in names
+        or len(names) > 17
+        or any(
+            name != "seal.json" and re.fullmatch(r"request-[0-9]{4}\.json", name) is None
+            for name in names
+        )
+    ):
+        return unavailable
+    snapshot = {}
+    for name in names:
+        snapshot[name] = _read_owned_private_file(
+            ledger / name, maximum=2048 if name == "seal.json" else 4096
+        )
+    if sum(map(len, snapshot.values())) > 72 * 1024:
+        return unavailable
+    current_names = []
+    with os.scandir(ledger) as entries:
+        for entry in entries:
+            if len(current_names) >= 17:
+                return unavailable
+            current_names.append(entry.name)
+    if sorted(current_names) != names:
+        return unavailable
+    destination = raw_dir / "sender-http-prompt-observer-copy"
+    destination.mkdir(mode=0o700)  # O_EXCL directory semantics: existing evidence is never adopted.
+    for name, data in snapshot.items():
+        _write_private(destination / name, data)
+    for name, data in snapshot.items():
+        if (
+            _read_owned_private_file(
+                destination / name, maximum=2048 if name == "seal.json" else 4096
+            )
+            != data
+            or _read_owned_private_file(
+                ledger / name, maximum=2048 if name == "seal.json" else 4096
+            )
+            != data
+        ):
+            return unavailable
+    for directory, identity in directory_identities.items():
+        info = directory.lstat()
+        if (
+            directory.is_symlink()
+            or not stat.S_ISDIR(info.st_mode)
+            or (info.st_dev, info.st_ino) != identity
+            or info.st_uid != os.getuid()
+            or stat.S_IMODE(info.st_mode) != 0o700
+        ):
+            return unavailable
+    summary = module.read_observation(destination, expected_nonce=context["nonce"])
+    if summary.get("observer_status") != "observed" or summary.get("trace_complete") is not True:
+        return unavailable
+    return {
+        "schema": "spec025.t125.http-prompt-diagnostic.v1",
+        "status": "sealed_observation_available",
+        "observation": summary,
+        "sealed_raw_copy_verified": True,
+        "active_receipt_identity_attested": False,
+        "acceptance_input_changed": False,
+    }
+
+
+def _capture_http_prompt_diagnostic_safely(**kwargs):
+    try:
+        return _capture_http_prompt_diagnostic(**kwargs)
+    except BaseException:
+        return {
+            "schema": "spec025.t125.http-prompt-diagnostic.v1",
+            "status": "unavailable",
+            "sealed_raw_copy_verified": False,
+            "active_receipt_identity_attested": False,
+            "acceptance_input_changed": False,
+        }
+
+
 def _http_tool_offer_contract(
     observation: Any,
     *,
@@ -5183,6 +5408,7 @@ def _run_enabled(
     try:
         from test.fixtures.cao_server import _pick_free_port, _start_cao_server
         from test.live_provider import message_api_restart_live as message_live
+        from test.live_provider import opencode_http_prompt_observer as prompt_observer
         from test.live_provider import opencode_http_tool_offer_observer as offer_observer
         from test.live_provider import opencode_interaction_journey as journey
         from test.postgres import fixtures as postgres_fixtures
@@ -5358,6 +5584,7 @@ def _run_enabled(
     role_workdirs: dict[str, Path] = {}
     offer_nonces: dict[str, str] = {}
     offer_directories: dict[str, Path] = {}
+    prompt_context: dict[str, Any] | None = None
     failures: set[str] = set()
     start = time.monotonic()
     original_run_environment = dict(os.environ)
@@ -5430,6 +5657,26 @@ def _run_enabled(
         receipt["http_tool_offer_observer_source_sha256"] = expected_offer_plugin_sha256
         receipt["http_tool_offer_plugin_sha256_by_role"] = derived_plugin_hashes
         receipt["http_tool_offer_observer_installed"] = True
+        prompt_relative = "test/live_provider/opencode_http_prompt_observer.js"
+        prompt_source = REPO / prompt_relative
+        prompt_source_bytes = _read_source_bound_prompt_file(prompt_relative)
+        prompt_nonce = os.urandom(16).hex()
+        derived_prompt = _http_prompt_plugin_bytes(prompt_source_bytes, nonce=prompt_nonce)
+        private_prompt_source = observer_dir / "opencode-http-prompt-sender.js"
+        _write_private(private_prompt_source, derived_prompt)
+        prompt_directory = prompt_observer.install_project_plugin(
+            working_directory=role_workdirs["sender"],
+            source_path=private_prompt_source,
+            nonce=prompt_nonce,
+        )
+        prompt_context = {
+            "working_directory": role_workdirs["sender"],
+            "directory": prompt_directory,
+            "nonce": prompt_nonce,
+            "plugin_bytes": derived_prompt,
+            "expectation_bytes": None,
+        }
+        receipt["http_prompt_observer_installed"] = True
         receipt["private_run_root_path_sha256"] = hashlib.sha256(
             os.fsencode(str(root.resolve(strict=True)))
         ).hexdigest()
@@ -6070,6 +6317,23 @@ def _run_enabled(
         ):
             raise GateError("initial_inbox_not_empty")
 
+        phase_prompts = tuple(
+            _phase_prompt(index, receiver_id, message)
+            for index, (_phase_name, message) in enumerate(PHASES)
+        )
+        expected_prompt_document = _http_prompt_expectations(
+            sender_id=sender_id,
+            nonce=prompt_nonce,
+            phase_prompts=phase_prompts,
+        )
+        expectation_path = prompt_observer.write_expectations(
+            working_directory=role_workdirs["sender"], document=expected_prompt_document
+        )
+        expected_bytes = _read_owned_private_file(expectation_path, maximum=64 * 1024)
+        if json.loads(expected_bytes) != expected_prompt_document:
+            raise GateError("http_prompt_expectation_copy_mismatch")
+        prompt_context["expectation_bytes"] = expected_bytes
+
         first_row_identity = None
         first_api_identity = None
         provider_processes_before_restart = None
@@ -6114,7 +6378,7 @@ def _run_enabled(
             sender_deadline = model_start + MODEL_PHASE_SECONDS
             response = requests.post(
                 f"{server.url}/terminals/{sender_id}/input",
-                params={"message": _phase_prompt(index, receiver_id, message)},
+                params={"message": phase_prompts[index]},
                 timeout=30,
             )
             _cancellation_checkpoint()
@@ -7036,6 +7300,16 @@ def _run_enabled(
                         and tmux_processes_confirmed_dead is True
                     ),
                 )
+            )
+
+        if prompt_context is not None:
+            receipt["sender_http_prompt_diagnostic"] = _capture_http_prompt_diagnostic_safely(
+                context=prompt_context,
+                root=root,
+                raw_dir=cleanup_locals.get("raw_dir"),
+                writers_dead=(
+                    api_processes_confirmed_dead is True and tmux_processes_confirmed_dead is True
+                ),
             )
 
         if pg_context is not None:
