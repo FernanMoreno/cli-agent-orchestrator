@@ -464,6 +464,15 @@ def test_offline_self_check_executes_existing_output_range_controls():
     result = runner._self_check()
     assert result["success"] is True
     assert result["checks"]["private_output_range_controls"] is True
+    assert result["checks"]["http_offer_observer_case_bound"] is True
+
+
+def test_offline_self_check_rejects_diagnostic_offer_vocabulary_drift(monkeypatch):
+    changed = runner.DIAGNOSTIC_ONLY_OPENCODE_TOOL_NAMES[:-1]
+    monkeypatch.setattr(runner, "DIAGNOSTIC_ONLY_OPENCODE_TOOL_NAMES", changed)
+    result = runner._self_check()
+    assert result["checks"]["http_offer_observer_case_bound"] is False
+    assert result["success"] is False
 
 
 def test_go_without_exact_source_and_review_bindings_stays_closed(monkeypatch, capsys):
@@ -901,14 +910,14 @@ def test_observer_requires_full_unfiltered_catalog_but_only_three_expected_calls
     assert not runner._observer_contract(receiver_tool)
 
 
-def _http_offer_summary(offers):
+def _http_offer_summary(offers, *, tracked_tool_names=runner.HTTP_OFFER_TOOL_NAMES):
     records = [
         {
             "model_match": True,
             "kind": "primary",
             "status": "observed" if offer else "valid_empty",
             "tool_count": len(offer),
-            "name_counts": {name: int(name in offer) for name in runner.HTTP_OFFER_TOOL_NAMES},
+            "name_counts": {name: int(name in offer) for name in tracked_tool_names},
             "other_name_count": 0,
         }
         for offer in offers
@@ -926,7 +935,7 @@ def _http_offer_summary(offers):
         "valid_target_primary_request_count": len(records),
         "tool_name_counts": {
             name: sum(record["name_counts"][name] for record in records)
-            for name in runner.HTTP_OFFER_TOOL_NAMES
+            for name in tracked_tool_names
         },
         "other_tool_name_count": 0,
         "requests": records,
@@ -1002,6 +1011,75 @@ def test_outbound_model_requests_prove_per_role_tool_offers():
     )
 
 
+@pytest.mark.parametrize("tool_name", runner.DIAGNOSTIC_ONLY_OPENCODE_TOOL_NAMES)
+def test_diagnostic_only_offer_names_are_visible_and_rejected(tool_name):
+    observation = _http_offer_summary([{"skill"}, {"todowrite"}])
+    record = observation["requests"][0]
+    record["tool_count"] += 1
+    record["name_counts"][tool_name] = 1
+    observation["tool_name_counts"][tool_name] = 1
+
+    assert record["name_counts"][tool_name] == 1
+    assert not runner._http_tool_offer_contract(
+        observation,
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=(),
+    )
+
+
+def test_offer_contract_rejects_narrow_catalogs_diagnostic_grants_and_duplicate_builtins():
+    sender = _http_offer_summary(
+        [set(runner.MCP_HTTP_OFFER_TOOL_NAMES), set(runner.MCP_HTTP_OFFER_TOOL_NAMES)]
+    )
+    diagnostic_catalog = (runner.DIAGNOSTIC_ONLY_OPENCODE_TOOL_NAMES[0],)
+    assert not runner._http_tool_offer_contract(
+        _http_offer_summary([{"apply_patch"}, {"apply_patch"}]),
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=diagnostic_catalog,
+    )
+    narrow = _http_offer_summary(
+        [set(runner.MCP_HTTP_OFFER_TOOL_NAMES), set(runner.MCP_HTTP_OFFER_TOOL_NAMES)],
+        tracked_tool_names=runner.MCP_HTTP_OFFER_TOOL_NAMES,
+    )
+    assert not runner._http_tool_offer_contract(
+        narrow,
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=runner.MCP_HTTP_OFFER_TOOL_NAMES,
+        tracked_tool_names=runner.MCP_HTTP_OFFER_TOOL_NAMES,
+    )
+
+    receiver = _http_offer_summary([{"skill"}, {"skill"}])
+    assert runner._http_tool_offer_contract(
+        receiver,
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=(),
+    )
+    assert not runner._http_tool_offer_contract(
+        receiver,
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=("skill",),
+    )
+
+    forged_aggregate = json.loads(json.dumps(sender))
+    forged_aggregate["other_tool_name_count"] = False
+    assert not runner._http_tool_offer_contract(
+        forged_aggregate,
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=runner.MCP_HTTP_OFFER_TOOL_NAMES,
+    )
+
+    optional_receiver = _http_offer_summary([{"skill"}, {"todowrite"}])
+    duplicate_builtin = optional_receiver["requests"][0]
+    duplicate_builtin["tool_count"] += 1
+    duplicate_builtin["name_counts"]["skill"] = 2
+    optional_receiver["tool_name_counts"]["skill"] += 1
+    assert not runner._http_tool_offer_contract(
+        optional_receiver,
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=(),
+    )
+
+
 def test_derived_offer_plugin_is_model_nonce_and_profile_bound():
     source = (runner.REPO / "test/live_provider/opencode_http_tool_offer_observer.js").read_bytes()
     sender = runner._http_tool_offer_plugin_bytes(
@@ -1027,6 +1105,116 @@ def test_derived_offer_plugin_is_model_nonce_and_profile_bound():
             nonce="invalid",
             tool_names=runner.HTTP_OFFER_TOOL_NAMES,
         )
+
+
+def test_derived_offer_plugin_and_python_reader_diagnose_but_reject_tool_names(tmp_path):
+    source = (runner.REPO / "test/live_provider/opencode_http_tool_offer_observer.js").read_bytes()
+    nonce = "c" * 32
+    plugin = runner._http_tool_offer_plugin_bytes(
+        source,
+        nonce=nonce,
+        tool_names=runner.HTTP_OFFER_TOOL_NAMES,
+    )
+    working = tmp_path
+    working.chmod(0o700)
+    opencode = working / ".opencode"
+    opencode.mkdir(mode=0o700)
+    plugins = opencode / "plugins"
+    plugins.mkdir(mode=0o700)
+    plugin_path = plugins / "observer.mjs"
+    plugin_path.write_bytes(plugin)
+    plugin_path.chmod(0o600)
+
+    harness = r"""
+import assert from "node:assert/strict"
+import { pathToFileURL } from "node:url"
+
+const moduleUrl = pathToFileURL(process.argv[1]).href
+const observerModule = await import(moduleUrl)
+let callback
+let disposed = 0
+const cleanup = await observerModule.default.setup({
+  session: {
+    hook: async (_name, handler) => {
+      callback = handler
+      return { dispose: async () => { disposed += 1 } }
+    },
+  },
+})
+const names = __TOOLS_JSON__
+const makeRequest = (toolNames) => new Request("https://example.invalid/", {
+  method: "POST",
+  body: JSON.stringify({ tools: toolNames.map((name) => ({ type: "function", function: { name } })) }),
+})
+await callback({
+  kind: "primary",
+  model: { providerID: "opencode-go", id: "glm-5.3-flash" },
+  request: makeRequest(names),
+})
+await callback({
+  kind: "primary",
+  model: { providerID: "opencode-go", id: "glm-5.3-flash" },
+  request: makeRequest(names.filter((name) => !["apply_patch", "execute"].includes(name))),
+})
+await cleanup()
+assert.equal(disposed, 1)
+""".replace(
+        "__TOOLS_JSON__",
+        json.dumps([*runner.MCP_HTTP_OFFER_TOOL_NAMES, "skill", "apply_patch", "execute"]),
+    )
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", harness, str(plugin_path)],
+        cwd=working,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": str(working),
+            "TMPDIR": str(working),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, "the derived observer failed its fake-hook exercise"
+
+    observer_spec = importlib.util.spec_from_file_location(
+        "native_v2_offer_observer_test",
+        runner.REPO / "test/live_provider/opencode_http_tool_offer_observer.py",
+    )
+    assert observer_spec is not None and observer_spec.loader is not None
+    observer = importlib.util.module_from_spec(observer_spec)
+    sys.modules[observer_spec.name] = observer
+    observer_spec.loader.exec_module(observer)
+    observation = runner._read_http_tool_offer_observation(
+        observer,
+        opencode / "http-tool-offer-observation",
+        expected_nonce=nonce,
+        tracked_tool_names=runner.HTTP_OFFER_TOOL_NAMES,
+    )
+
+    assert observation["observer_status"] == "observed"
+    assert observation["requests"][0]["name_counts"]["skill"] == 1
+    assert observation["other_tool_name_count"] == 0
+    for tool_name in ("apply_patch", "execute"):
+        assert observation["requests"][0]["name_counts"][tool_name] == 1
+        assert observation["tool_name_counts"][tool_name] == 1
+    assert not runner._http_tool_offer_contract(
+        observation,
+        expected_nonce=nonce,
+        expected_mcp_tool_names=runner.MCP_HTTP_OFFER_TOOL_NAMES,
+    )
+
+    clean_observation = json.loads(json.dumps(observation))
+    first_record = clean_observation["requests"][0]
+    for tool_name in ("apply_patch", "execute"):
+        first_record["tool_count"] -= first_record["name_counts"][tool_name]
+        first_record["name_counts"][tool_name] = 0
+        clean_observation["tool_name_counts"][tool_name] = 0
+    assert runner._http_tool_offer_contract(
+        clean_observation,
+        expected_nonce=nonce,
+        expected_mcp_tool_names=runner.MCP_HTTP_OFFER_TOOL_NAMES,
+    )
 
 
 def test_open_code_mcp_empty_operation_scope_keeps_only_source_hard_allowed_builtins():

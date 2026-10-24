@@ -1,0 +1,47 @@
+{
+  "acceptance_claimed": false,
+  "both_message_phases_passed": true,
+  "cleanup_failures": [],
+  "elapsed_seconds": 94.402,
+  "error_code": "native_model_request_tool_offer_mismatch",
+  "execution_gates_closed": true,
+  "global_acceptance_claimed": false,
+  "historical_ack_failure_cause_proven": false,
+  "minimum_admission_mib": 8505,
+  "native_catalog_and_calls_exact": true,
+  "native_model_request_cao_mcp_surfaces_exact": false,
+  "operator_auth_unchanged": true,
+  "owned_writer_database_private_cleanup_complete": true,
+  "phases": [
+    {
+      "agui_redacted_one_notification": true,
+      "elapsed_seconds": 15.758,
+      "last_receipt_unicode_verified": true,
+      "name": "before_restart",
+      "one_exact_pg_api_message": true,
+      "receiver_ack_exact": true,
+      "receiver_model_seconds": 7.964,
+      "receiver_turn_completed_once": true,
+      "sender_model_seconds": 13.404
+    },
+    {
+      "agui_redacted_one_notification": true,
+      "elapsed_seconds": 9.919,
+      "last_receipt_unicode_verified": true,
+      "name": "after_restart",
+      "one_exact_pg_api_message": true,
+      "receiver_ack_exact": true,
+      "receiver_model_seconds": 5.25,
+      "receiver_turn_completed_once": true,
+      "sender_model_seconds": 9.894
+    }
+  ],
+  "private_receipt_sha256": "58be6f7d9790c415c5005576b0ba01ae081edc51cce8dca3ad1218639f46f31d",
+  "receiver_target_primary_request_count": 2,
+  "result": "FAILED",
+  "schema": "caos.spec025.t104.r5.sanitized.v1",
+  "sender_target_primary_request_count": 5,
+  "source_head": "09a89192a6d09aa037c9f63815edc4fb39208470",
+  "t113_native_probe_status": "not_applicable",
+  "unknown_tool_offer_count_per_primary_request": 1
+}

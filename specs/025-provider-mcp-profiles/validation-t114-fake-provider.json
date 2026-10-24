@@ -1,0 +1,28 @@
+{
+  "acceptance_claimed": false,
+  "actual_config_sha256": "b797025bc915df5de46aff013b783aa10fd449c1d29a1067a064be44b58e1e94",
+  "actual_rules_helper_entries": 13,
+  "binary_sha256": "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f",
+  "canary_bound_tool_names": [
+    "skill",
+    "execute"
+  ],
+  "cli_exit_code": 1,
+  "custom_agent_canary_request_count": 2,
+  "effective_v2_rules": 12,
+  "evidence_kind": "isolated_native_cli_with_fake_local_provider",
+  "external_network_available": false,
+  "limitation": "Fake-provider source-bound offer evidence only; initial harness background-service controls do not prove permission ordering or R5 identity.",
+  "memory_floor_violated": false,
+  "minimum_available_mib": 9422,
+  "permission_helper_sha256": "8382fbc682117a8942f3f2fc9a004d771a6b83db432856cffae04a4955537464",
+  "private_harness_sha256": "2099a70517884a7fa80a210b9bd209053dc7a5b4ae5e7f7ad6183b46f2d3c0c3",
+  "r5_identity_or_cause_claimed": false,
+  "raw_private_result_sha256": "e004ffab835bfb5e580a4cddfa924dd9e2fd54ab63d66899e92eae6412bedc6a",
+  "real_credentials_mounted": false,
+  "real_model_called": false,
+  "schema": "caos.spec025.t114.fake-provider-offer.v1",
+  "source_head": "09a89192a6d09aa037c9f63815edc4fb39208470",
+  "v2_adapter_sha256": "c12244f9e62d0326a039d35530187842dfd4e478560c0222f9904228a8876c3c",
+  "wildcard_controls_inconclusive": true
+}

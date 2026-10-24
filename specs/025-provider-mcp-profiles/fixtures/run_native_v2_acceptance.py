@@ -92,7 +92,28 @@ SENDER_TOOLS = (
 SENDER_CALLS = ("list_siblings", "send_message", "send_message")
 MCP_HTTP_OFFER_TOOL_NAMES = tuple("cao-mcp-server_" + tool for tool in SENDER_TOOLS)
 OPTIONAL_OPENCODE_BUILTIN_TOOL_NAMES = ("skill", "todowrite")
-HTTP_OFFER_TOOL_NAMES = MCP_HTTP_OFFER_TOOL_NAMES + OPTIONAL_OPENCODE_BUILTIN_TOOL_NAMES
+DIAGNOSTIC_ONLY_OPENCODE_TOOL_NAMES = (
+    "apply_patch",
+    "bash",
+    "batch",
+    "codesearch",
+    "edit",
+    "execute",
+    "glob",
+    "grep",
+    "lsp",
+    "question",
+    "read",
+    "task",
+    "webfetch",
+    "websearch",
+    "write",
+)
+HTTP_OFFER_TOOL_NAMES = (
+    MCP_HTTP_OFFER_TOOL_NAMES
+    + OPTIONAL_OPENCODE_BUILTIN_TOOL_NAMES
+    + DIAGNOSTIC_ONLY_OPENCODE_TOOL_NAMES
+)
 CAPABILITY_BINDING_DIAGNOSTIC_FIELDS = (
     "trusted_api_context",
     "source_current",
@@ -1867,7 +1888,33 @@ def _self_check() -> dict[str, Any]:
         ),
         "http_offer_observer_case_bound": (
             MCP_HTTP_OFFER_TOOL_NAMES == tuple("cao-mcp-server_" + tool for tool in SENDER_TOOLS)
-            and set(OPTIONAL_OPENCODE_BUILTIN_TOOL_NAMES) == {"skill", "todowrite"}
+            and OPTIONAL_OPENCODE_BUILTIN_TOOL_NAMES == ("skill", "todowrite")
+            and DIAGNOSTIC_ONLY_OPENCODE_TOOL_NAMES
+            == (
+                "apply_patch",
+                "bash",
+                "batch",
+                "codesearch",
+                "edit",
+                "execute",
+                "glob",
+                "grep",
+                "lsp",
+                "question",
+                "read",
+                "task",
+                "webfetch",
+                "websearch",
+                "write",
+            )
+            and not set(DIAGNOSTIC_ONLY_OPENCODE_TOOL_NAMES)
+            & (set(MCP_HTTP_OFFER_TOOL_NAMES) | set(OPTIONAL_OPENCODE_BUILTIN_TOOL_NAMES))
+            and HTTP_OFFER_TOOL_NAMES
+            == (
+                MCP_HTTP_OFFER_TOOL_NAMES
+                + OPTIONAL_OPENCODE_BUILTIN_TOOL_NAMES
+                + DIAGNOSTIC_ONLY_OPENCODE_TOOL_NAMES
+            )
         ),
         "private_output_range_controls": output_range_controls_passed,
     }
@@ -2451,7 +2498,11 @@ def _http_tool_offer_contract(
     expected_mcp_tool_names: tuple[str, ...],
     tracked_tool_names: tuple[str, ...] = HTTP_OFFER_TOOL_NAMES,
 ) -> bool:
-    if not isinstance(observation, dict):
+    if (
+        not isinstance(observation, dict)
+        or expected_mcp_tool_names not in (MCP_HTTP_OFFER_TOOL_NAMES, ())
+        or tracked_tool_names != HTTP_OFFER_TOOL_NAMES
+    ):
         return False
     records = observation.get("requests")
     if (
@@ -2469,6 +2520,7 @@ def _http_tool_offer_contract(
         or observation.get("durable_record_count") != len(records)
         or type(observation.get("target_primary_request_count")) is not int
         or type(observation.get("valid_target_primary_request_count")) is not int
+        or type(observation.get("other_tool_name_count")) is not int
         or observation.get("valid_target_primary_request_count")
         != observation.get("target_primary_request_count")
     ):
@@ -2508,6 +2560,7 @@ def _http_tool_offer_contract(
                 for name in MCP_HTTP_OFFER_TOOL_NAMES
                 if name not in expected_mcp_tool_names
             )
+            or any(names[name] != 0 for name in DIAGNOSTIC_ONLY_OPENCODE_TOOL_NAMES)
         ):
             return False
     aggregate_counts = observation.get("tool_name_counts")
