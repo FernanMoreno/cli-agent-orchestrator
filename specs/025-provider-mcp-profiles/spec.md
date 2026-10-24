@@ -407,3 +407,6 @@ T122 integrity scope: argument exactness/length never grants or denies delivery 
 
 
 FR102/SC086 (T123): Preserve T122 source6373 FAILED and immutable receipts. Correct the reproduced diagnostic contradiction where equal native/rendered generic text with the target absent is labelled different. Feed the already-computed equality into the private classifier, preserve multipart/linebreak/ACK precedence and all marker flags/acceptance gates. Add actual SQLite observer-path RED/GREEN for equal and equal-shape unequal target-missing content; do not claim target correctness or rerun native acceptance for a diagnostic-only label.
+
+
+FR103/SC087 (T124): Align the native-v2 sender instruction with the production receipt envelope and the already explicit v1/receiver wording. Request the unchanged LAST literal as the public result body, with the active CAO receipt as separate final-line metadata. Preserve exact message bytes, tool counts, Unicode, all existing acceptance and limits. This is a source-proven format ambiguity, not established cause of T122 or its wrong incoming tool argument. Verify the actual source phase prompt composed with the production receipt formatter and native-store-to-public-result path; preserve historical failures and do not infer model-visible bytes from display reconstruction.

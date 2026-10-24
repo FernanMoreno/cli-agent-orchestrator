@@ -1301,8 +1301,12 @@ def _phase_prompt(index: int, receiver_id: str, message: str) -> str:
         + receiver_id
         + " and message "
         + json.dumps(message, ensure_ascii=False)
-        + ". Do not retry or redeliver. After a successful call, respond with exactly this line: "
+        + ". Do not retry or redeliver. After a successful call, the public result body "
+        + "must be exactly this line: "
         + LAST_RECEIPT
+        + "\nThen comply with this turn's CAO completion receipt contract: append its "
+        + "active receipt on a separate final line. That receipt is protocol metadata, "
+        + "separate from the public result body. Do not add other result text."
     )
 
 

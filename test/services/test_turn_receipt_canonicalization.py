@@ -2,6 +2,10 @@
 
 import contextlib
 import hashlib
+import importlib.util
+import json
+import sqlite3
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -420,6 +424,7 @@ def test_verified_last_read_returns_persisted_text_without_canonicalizing(monkey
     assert terminal.get_output(TERMINAL_ID, terminal.OutputMode.LAST) == persisted
 
 
+@pytest.mark.parametrize("phase_index", [0, 1], ids=["before-restart", "after-restart"])
 @pytest.mark.parametrize("restored", [False, True], ids=["fresh", "restored"])
 @pytest.mark.parametrize(
     "native_body",
@@ -427,7 +432,7 @@ def test_verified_last_read_returns_persisted_text_without_canonicalizing(monkey
     ids=["logical-one-line", "semantic-line-feed"],
 )
 def test_real_opencode_owned_store_reaches_existing_receipt_cas(
-    tmp_path, monkeypatch, restored, native_body
+    tmp_path, monkeypatch, restored, native_body, phase_index
 ):
     # Reuse the actual owned SQLite fixture, then compose both production
     # components. The parser and native reader remain real; only the external
@@ -441,6 +446,29 @@ def test_real_opencode_owned_store_reaches_existing_receipt_cas(
     provider, _owner, _root, database = _provider_and_store(
         tmp_path, parts=[native_body + "\n" + TOKEN], restored=restored
     )
+    # Materialize the actual acceptance input and production receipt envelope,
+    # rather than giving the native reader a generic nonce-only test request.
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "specs/025-provider-mcp-profiles/fixtures/run_native_v2_acceptance.py"
+    )
+    spec = importlib.util.spec_from_file_location("t124_source_phase", source)
+    assert spec is not None and spec.loader is not None
+    runner = importlib.util.module_from_spec(spec)
+    # Dataclasses in the source runner resolve their defining module here.
+    import sys
+
+    monkeypatch.setitem(sys.modules, spec.name, runner)
+    spec.loader.exec_module(runner)
+    phase_prompt = runner._phase_prompt(phase_index, "1234abcd", runner.PHASES[phase_index][1])
+    prepared = provider._format_turn_receipt_input(phase_prompt, TOKEN)
+    assert prepared.startswith(phase_prompt + "\n\n")
+    assert prepared.index(runner.LAST_RECEIPT) < prepared.index(TOKEN)
+    with contextlib.closing(sqlite3.connect(database)) as db, db:
+        db.execute(
+            "UPDATE session_message SET data=? WHERE id='user-1'",
+            (json.dumps({"text": prepared}, ensure_ascii=False),),
+        )
     transcript = "› current request\n\n" + RENDERED + "\n\n┃\nctrl+p menu"
     rendered = provider.extract_last_message_from_script(transcript)
     assert "Validado\n" in rendered

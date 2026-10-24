@@ -448,3 +448,6 @@ T122 plan: freeze/private-archive e609ead2 failed receiptSHA bafdbd5787c6b012abd
 
 
 T123: source-native text equality is already measured before classification. Reproduce the label-only information loss with actual owned SQLite observer fixtures, propagate that existing boolean into classification, preserve all marker/acceptance semantics, independently review and run focused observer/runner contracts and composition. Historical receipts remain immutable.
+
+
+T124 is a bounded harness alignment: change only sender output instructions to distinguish exact public body from mandatory separate receipt; no production receipt or acceptance changes. Compose both actual phase prompts with BaseProvider receipt formatting and the existing owned native SQLite/provider/service settlement tests; preserve genuine LF and restart variants. Run focused contracts/composition and independent read review before integrating. No claim of causal native fix or uninstrumented retry.

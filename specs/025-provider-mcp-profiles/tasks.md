@@ -477,3 +477,9 @@ T122 actual source6373c456 failed sender_last_unicode_not_verified123.317s/min87
 
 
 T123 diagnostic correction verified: actual SQLite observer RED;144 tests/3 warnings GREEN, composition5/0, Black/isort/diff checks and completed independent read review. Equality and target validity remain distinct; native FAILED/source6373 receipt unchanged and no native rerun. [Validation](validation-t123.md).
+
+
+- [x] T124 [US4] [FR103/SC087] Clarify native-v2 sender public-body versus active-receipt instructions using existing v1/receiver contract. Preserve literal/tool/acceptance limits. Verify source prompt → production envelope → owned native store → public-result/CAS composition for both phases and fresh/restored variants, review and integrate in main. Do not claim T122 cause or native acceptance.
+
+
+T124 harness alignment integrated and verified offline:131 tests/3 warnings, normal focused coverage20%, composition5/0, style/diff and independent read review. Both source phase prompts compose with real receipt formatting/native reader/public stripping in8 fresh/restored/LF variants. This is instruction alignment, not historical causality or native acceptance. T077/T116/T120 acceptance and upstream MCP argument provenance remain open. [Validation](validation-t124.md).

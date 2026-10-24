@@ -445,3 +445,6 @@ T122 recorrido real único en6373c456/523: FAILED sender_last_unicode_not_verifi
 
 
 T123 cerrada solo como corrección diagnóstica: se transmite la igualdad ya medida al clasificador; textos iguales sin el literal requerido dejan de aparecer como distintos. RED del observador SQLite real y144 pruebas GREEN, composición5/0 y revisión independiente sin bloqueo. Flags del literal y aceptación intactos; no cambia ni repite el FAILED nativo de6373c456. [Validación](../specs/025-provider-mcp-profiles/validation-t123.md).
+
+
+T124 cerrada como alineación del arnés: el emisor v2 distingue el cuerpo público literal y el recibo CAO final, como v1/receptor.131 pruebas/3 warnings, cobertura enfocada normal20%, composición5/0 y revisiones independientes; ocho casos componen los prompts reales con formatter, almacén nativo y resultado público. Criterios, mensajes y permisos intactos. No acredita causa del FAILED anterior ni arregla el argumento MCP alterado; no hubo otra inferencia real. Falta evidencia del prompt en la petición seleccionada al modelo, que la captura TUI no puede suplir. [Detalle](../specs/025-provider-mcp-profiles/validation-t124.md).
