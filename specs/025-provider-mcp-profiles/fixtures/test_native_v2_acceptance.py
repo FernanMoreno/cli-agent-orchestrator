@@ -3542,3 +3542,449 @@ print(json.dumps({'missing': missing, 'current_source_map_exact': module._runtim
     assert completed.returncode == 0, completed.stderr
     observed = json.loads(completed.stdout)
     assert observed == {"missing": [], "current_source_map_exact": True}
+
+
+@pytest.mark.parametrize(
+    "case_id",
+    [runner.DEFAULT_CASE_ID, runner.GENERIC_MESSAGE_CASE_ID],
+)
+def test_fixed_body_probe_is_enabled_only_in_derived_observer_copy(case_id: str) -> None:
+    source_path = (
+        Path(__file__).resolve().parents[3] / "test/live_provider/opencode_mcp_observer.py"
+    )
+    source = source_path.read_bytes()
+    expected = tuple(message for _phase_name, message in runner.PHASES)
+    assert b"_MESSAGE_ARGUMENT_EXPECTATIONS" not in source
+
+    derived = runner._derive_private_mcp_observer_source(
+        source,
+        sender_catalog=runner._case_definition(case_id).sender_catalog,
+        expected_message_bodies=expected,
+    )
+
+    assert (
+        f"INTERACTION_TOOLS = frozenset({repr(sorted(runner._case_definition(case_id).sender_catalog))})"
+        in derived
+    )
+    assert f"_MESSAGE_ARGUMENT_EXPECTATIONS = {expected!r}" in derived
+    assert "expected_message_bodies=_MESSAGE_ARGUMENT_EXPECTATIONS" in derived
+    assert derived.count("_MESSAGE_ARGUMENT_EXPECTATIONS") == 2
+    assert (
+        "return install_protocol_observer(low_level_server, Path(raw_path), nonce)" not in derived
+    )
+
+
+@pytest.mark.offline_database
+def test_t122_copies_only_sealed_send_message_prefix_after_writer_death(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from test.live_provider import opencode_mcp_observer
+
+    from fastmcp import FastMCP
+    from mcp import types
+
+    expected_messages = tuple(message for _phase_name, message in runner.PHASES)
+    nonce = "b" * 32
+    private_root = tmp_path / "t122-private-run"
+    private_root.mkdir(mode=0o700)
+    monkeypatch.setattr(runner, "EVIDENCE", private_root)
+    raw_dir = private_root / "raw"
+    raw_dir.mkdir(mode=0o700)
+    observer_dir = raw_dir / "observer"
+    observer_dir.mkdir(mode=0o700)
+    observation_path = observer_dir / "native-events-0123abcd"
+    source_path = (
+        Path(__file__).resolve().parents[3] / "test/live_provider/opencode_mcp_observer.py"
+    )
+    relative = "test/live_provider/opencode_mcp_observer.py"
+    monkeypatch.setattr(
+        runner,
+        "RUN_MANIFEST",
+        {"source_sha256s": {relative: hashlib.sha256(source_path.read_bytes()).hexdigest()}},
+    )
+    monkeypatch.setattr(
+        opencode_mcp_observer,
+        "INTERACTION_TOOLS",
+        frozenset(runner._case_definition(runner.GENERIC_MESSAGE_CASE_ID).sender_catalog),
+    )
+
+    server = FastMCP("t122-post-cleanup-observer")
+    dispatched: list[tuple[str, str]] = []
+
+    @server.tool()
+    async def send_message(message: str, target: str) -> dict[str, bool]:
+        dispatched.append((message, target))
+        return {"sent": True}
+
+    observer = opencode_mcp_observer.install_protocol_observer(
+        server._mcp_server,
+        observation_path,
+        nonce,
+        expected_message_bodies=expected_messages,
+    )
+    handler = server._mcp_server.request_handlers[types.CallToolRequest]
+
+    async def dispatch_first_phase() -> None:
+        result = await handler(
+            types.CallToolRequest(
+                method="tools/call",
+                params=types.CallToolRequestParams(
+                    name="send_message",
+                    arguments={"message": expected_messages[0], "target": "PRIVATE_TARGET"},
+                ),
+            )
+        )
+        assert isinstance(result.root, types.CallToolResult)
+
+    try:
+        asyncio.run(dispatch_first_phase())
+    finally:
+        observer.close()
+
+    unavailable = runner._capture_sender_message_argument_diagnostic(
+        observer_source_path=source_path,
+        observation_path=observation_path,
+        raw_dir=raw_dir,
+        expected_sender_id="0123abcd",
+        expected_nonce=nonce,
+        case_id=runner.GENERIC_MESSAGE_CASE_ID,
+        writers_dead=False,
+    )
+    assert unavailable["status"] == "unavailable"
+    assert unavailable["reason"] == "writers_not_confirmed_dead"
+    copied_trace = raw_dir / "sender-message-argument-observer.copy.jsonl"
+    assert not copied_trace.exists()
+
+    original_write_private = runner._write_private
+
+    def tamper_copied_trace(path: Path, value: str | bytes) -> None:
+        original_write_private(path, value)
+        if path == copied_trace:
+            path.write_bytes(b"tampered after copy\n")
+
+    monkeypatch.setattr(runner, "_write_private", tamper_copied_trace)
+    mismatched_copy = runner._capture_sender_message_argument_diagnostic(
+        observer_source_path=source_path,
+        observation_path=observation_path,
+        raw_dir=raw_dir,
+        expected_sender_id="0123abcd",
+        expected_nonce=nonce,
+        case_id=runner.GENERIC_MESSAGE_CASE_ID,
+        writers_dead=True,
+    )
+    assert mismatched_copy["status"] == "unavailable"
+    assert mismatched_copy["reason"] == "observer_trace_copy_mismatch"
+    monkeypatch.setattr(runner, "_write_private", original_write_private)
+    copied_trace.unlink()
+    copied_trace.with_name(copied_trace.name + ".complete").unlink()
+
+    diagnostic = runner._capture_sender_message_argument_diagnostic(
+        observer_source_path=source_path,
+        observation_path=observation_path,
+        raw_dir=raw_dir,
+        expected_sender_id="0123abcd",
+        expected_nonce=nonce,
+        case_id=runner.GENERIC_MESSAGE_CASE_ID,
+        writers_dead=True,
+    )
+    assert dispatched == [(expected_messages[0], "PRIVATE_TARGET")]
+    assert diagnostic == {
+        "schema": "spec025.t122.send-message-argument-diagnostic.v1",
+        "status": "observed_prefix",
+        "reason": "none",
+        "expected_phase_count": 2,
+        "observed_count": 1,
+        "observations": [
+            {
+                "ordinal": 1,
+                "status": "compared",
+                "exact": True,
+                "utf8_length": len(expected_messages[0].encode("utf-8")),
+            }
+        ],
+        "two_phase_arguments_exact": False,
+        "sealed_raw_copy_verified": True,
+        "acceptance_input_changed": False,
+    }
+    assert copied_trace.stat().st_mode & 0o777 == 0o600
+    assert copied_trace.with_name(copied_trace.name + ".complete").stat().st_mode & 0o777 == 0o600
+    copied_contents = copied_trace.read_text(encoding="utf-8")
+    assert expected_messages[0] not in copied_contents
+    assert "PRIVATE_TARGET" not in copied_contents
+
+
+@pytest.mark.offline_database
+def test_t122_derived_environment_observer_records_actual_fastmcp_dispatch_before_callback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastmcp import FastMCP
+    from mcp import types
+
+    case = runner._case_definition(runner.GENERIC_MESSAGE_CASE_ID)
+    source_path = (
+        Path(__file__).resolve().parents[3] / "test/live_provider/opencode_mcp_observer.py"
+    )
+    source = source_path.read_bytes()
+    expected = tuple(message for _phase_name, message in runner.PHASES)
+    assert expected[1].endswith(".")
+    actual = (expected[0], expected[1][:-1] + "。")
+    derived = runner._derive_private_mcp_observer_source(
+        source,
+        sender_catalog=case.sender_catalog,
+        expected_message_bodies=expected,
+    )
+
+    terminal_id = "a1b2c3d4"
+    nonce = "0123456789abcdef0123456789abcdef"
+    target = "PRIVATE_T122_TARGET_CANARY"
+    private_root = tmp_path / "t122-derived-assembly"
+    private_root.mkdir(mode=0o700)
+    runtime_observer_dir = private_root / "runtime-observer"
+    runtime_observer_dir.mkdir(mode=0o700)
+    evidence_root = private_root / "case-evidence"
+    evidence_root.mkdir(mode=0o700)
+    monkeypatch.setattr(runner, "EVIDENCE", evidence_root)
+    raw_dir = evidence_root / "raw"
+    raw_dir.mkdir(mode=0o700)
+    raw_observer_dir = raw_dir / "observer"
+    raw_observer_dir.mkdir(mode=0o700)
+    base_path = raw_observer_dir / "native-events"
+    observation_path = base_path.with_name(base_path.name + "-" + terminal_id)
+    derived_path = runtime_observer_dir / "derived_observer.py"
+    derived_path.write_text(derived, encoding="utf-8")
+    derived_path.chmod(0o600)
+    environment = {
+        "CAO_OPENCODE_MCP_OBSERVER": "1",
+        "CAO_OPENCODE_MCP_OBSERVER_PATH": str(base_path),
+        "CAO_OPENCODE_MCP_OBSERVER_NONCE": nonce,
+        "CAO_TERMINAL_ID": terminal_id,
+    }
+
+    spec = importlib.util.spec_from_file_location("t122_derived_observer_test", derived_path)
+    assert spec is not None and spec.loader is not None
+    observer_module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = observer_module
+    spec.loader.exec_module(observer_module)
+    server = FastMCP("t122-derived-fastmcp-assembly")
+    delivered: list[tuple[str, str]] = []
+    callback_observed_prefix: list[bool] = []
+
+    def verify_observed_before_callback(message: str, ordinal: int) -> None:
+        rows = [
+            json.loads(line) for line in observation_path.read_text(encoding="utf-8").splitlines()
+        ]
+        argument_rows = [row for row in rows if row.get("event") == "message_argument_observed"]
+        latest = argument_rows[-1] if argument_rows else {}
+        callback_observed_prefix.append(
+            len(argument_rows) == ordinal
+            and latest.get("ordinal") == ordinal
+            and latest.get("status") == "compared"
+            and latest.get("exact") is (ordinal == 1)
+            and latest.get("utf8_length") == len(message.encode("utf-8"))
+        )
+
+    @server.tool()
+    async def list_siblings() -> dict[str, object]:
+        return {"siblings": []}
+
+    @server.tool()
+    async def send_message(message: str, target: str) -> dict[str, bool]:
+        verify_observed_before_callback(message, len(delivered) + 1)
+        delivered.append((message, target))
+        return {"sent": True}
+
+    observer = observer_module.install_protocol_observer_from_env(server, environ=environment)
+    handlers = server._mcp_server.request_handlers
+
+    async def dispatch() -> None:
+        catalog = await handlers[types.ListToolsRequest](
+            types.ListToolsRequest(method="tools/list")
+        )
+        assert isinstance(catalog.root, types.ListToolsResult)
+        assert sorted(tool.name for tool in catalog.root.tools) == sorted(case.sender_catalog)
+        discovery = await handlers[types.CallToolRequest](
+            types.CallToolRequest(
+                method="tools/call",
+                params=types.CallToolRequestParams(name="list_siblings", arguments={}),
+            )
+        )
+        assert isinstance(discovery.root, types.CallToolResult)
+        assert discovery.root.isError is False
+        for message in actual:
+            result = await handlers[types.CallToolRequest](
+                types.CallToolRequest(
+                    method="tools/call",
+                    params=types.CallToolRequestParams(
+                        name="send_message",
+                        arguments={"message": message, "target": target},
+                    ),
+                )
+            )
+            assert isinstance(result.root, types.CallToolResult)
+            assert result.root.isError is False
+
+    try:
+        asyncio.run(dispatch())
+    finally:
+        observer.close()
+
+    assert delivered == [(message, target) for message in actual]
+    assert callback_observed_prefix == [True, True]
+    assert observation_path.name == "native-events-" + terminal_id
+    assert observation_path.with_name(observation_path.name + ".complete").is_file()
+    summary = observer_module.read_protocol_observations(
+        observation_path,
+        expected_nonce=nonce,
+        expected_message_bodies=expected,
+    )
+    assert summary["observer_status"] == "observed"
+    assert summary["mcp_catalog_tool_names"] == sorted(case.sender_catalog)
+    assert [call["tool"] for call in summary["mcp_tool_calls"]] == [
+        "list_siblings",
+        "send_message",
+        "send_message",
+    ]
+    assert summary["send_message_argument_observations"] == [
+        {
+            "ordinal": 1,
+            "status": "compared",
+            "exact": True,
+            "utf8_length": len(actual[0].encode("utf-8")),
+        },
+        {
+            "ordinal": 2,
+            "status": "compared",
+            "exact": False,
+            "utf8_length": len(actual[1].encode("utf-8")),
+        },
+    ]
+    assert all("call_id" not in item for item in summary["send_message_argument_observations"])
+
+    relative = "test/live_provider/opencode_mcp_observer.py"
+    monkeypatch.setattr(
+        runner,
+        "RUN_MANIFEST",
+        {"source_sha256s": {relative: hashlib.sha256(source).hexdigest()}},
+    )
+    diagnostic = runner._capture_sender_message_argument_diagnostic(
+        observer_source_path=source_path,
+        observation_path=observation_path,
+        raw_dir=raw_dir,
+        expected_sender_id=terminal_id,
+        expected_nonce=nonce,
+        case_id=case.case_id,
+        writers_dead=True,
+    )
+    assert diagnostic["status"] == "observed_two_phase_arguments"
+    assert diagnostic["observed_count"] == 2
+    assert diagnostic["two_phase_arguments_exact"] is False
+    assert [item["exact"] for item in diagnostic["observations"]] == [True, False]
+    assert all("call_id" not in item for item in diagnostic["observations"])
+    assert diagnostic["acceptance_input_changed"] is False
+
+    copied_trace = raw_dir / "sender-message-argument-observer.copy.jsonl"
+    copied_marker = copied_trace.with_name(copied_trace.name + ".complete")
+    assert copied_trace.read_bytes() == observation_path.read_bytes()
+    assert (
+        copied_marker.read_bytes()
+        == observation_path.with_name(observation_path.name + ".complete").read_bytes()
+    )
+    private_output = (
+        observation_path.read_text(encoding="utf-8")
+        + copied_trace.read_text(encoding="utf-8")
+        + json.dumps(summary, ensure_ascii=False)
+        + json.dumps(diagnostic, ensure_ascii=False)
+    )
+    assert all(value not in private_output for value in (*expected, *actual, target))
+
+
+def test_t122_runner_collects_failure_prefix_after_all_writers_stop_before_root_cleanup() -> None:
+    import inspect
+
+    source = inspect.getsource(runner._run_enabled)
+    writer_death = source.index("tmux_processes_confirmed_dead = (")
+    failure_gate = source.index('receipt.get("error_code") is not None')
+    diagnostic = source.index('"sender_message_argument_diagnostic"')
+    root_cleanup = source.index("_remove_private_run_root(")
+    assert writer_death < failure_gate < diagnostic < root_cleanup
+    assert "_capture_sender_message_argument_diagnostic_safely(" in source[diagnostic:root_cleanup]
+    assert "api_processes_confirmed_dead is True" in source[diagnostic:root_cleanup]
+    assert "tmux_processes_confirmed_dead is True" in source[diagnostic:root_cleanup]
+    assert 'type(cleanup_locals.get("phase")) is dict' in source[failure_gate:diagnostic]
+    assert "not _SIGTERM_PENDING" in source[failure_gate:diagnostic]
+
+
+@pytest.mark.parametrize("mutation", ["outside_raw_dir", "wrong_sender", "symlink_parent"])
+def test_t122_collector_rejects_unbound_or_linked_observation_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    private_evidence = tmp_path / "t122-evidence"
+    private_evidence.mkdir(mode=0o700)
+    monkeypatch.setattr(runner, "EVIDENCE", private_evidence)
+    raw_dir = private_evidence / "raw"
+    raw_dir.mkdir(mode=0o700)
+    observer_dir = raw_dir / "observer"
+    if mutation == "symlink_parent":
+        real_observer_dir = raw_dir / "real-observer"
+        real_observer_dir.mkdir(mode=0o700)
+        observer_dir.symlink_to(real_observer_dir, target_is_directory=True)
+    else:
+        observer_dir.mkdir(mode=0o700)
+    expected_sender_id = "0123abcd"
+    observation_path = observer_dir / f"native-events-{expected_sender_id}"
+    if mutation == "outside_raw_dir":
+        raw_dir = tmp_path / "outside-raw"
+        raw_dir.mkdir(mode=0o700)
+        outside_observer = raw_dir / "observer"
+        outside_observer.mkdir(mode=0o700)
+        observation_path = outside_observer / f"native-events-{expected_sender_id}"
+    elif mutation == "wrong_sender":
+        observation_path = observer_dir / "native-events-87654321"
+
+    source_path = (
+        Path(__file__).resolve().parents[3] / "test/live_provider/opencode_mcp_observer.py"
+    )
+    relative = "test/live_provider/opencode_mcp_observer.py"
+    monkeypatch.setattr(
+        runner,
+        "RUN_MANIFEST",
+        {"source_sha256s": {relative: hashlib.sha256(source_path.read_bytes()).hexdigest()}},
+    )
+    diagnostic = runner._capture_sender_message_argument_diagnostic(
+        observer_source_path=source_path,
+        observation_path=observation_path,
+        raw_dir=raw_dir,
+        expected_sender_id=expected_sender_id,
+        expected_nonce="e" * 32,
+        case_id=runner.GENERIC_MESSAGE_CASE_ID,
+        writers_dead=True,
+    )
+
+    assert diagnostic["status"] == "unavailable"
+    assert diagnostic["reason"] == "observation_path_binding_invalid"
+    assert not (private_evidence / "raw/sender-message-argument-observer.copy.jsonl").exists()
+
+
+def test_t122_argument_diagnostic_keyboardinterrupt_fails_closed_for_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def interrupt(**_kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(runner, "_capture_sender_message_argument_diagnostic", interrupt)
+    diagnostic = runner._capture_sender_message_argument_diagnostic_safely(
+        observer_source_path=Path("/private/source.py"),
+    )
+    cleanup_continued = True
+
+    assert cleanup_continued is True
+    assert diagnostic == {
+        "schema": "spec025.t122.send-message-argument-diagnostic.v1",
+        "status": "diagnostic_failed_closed",
+        "reason": "diagnostic_capture_failed",
+        "expected_phase_count": len(runner.PHASES),
+        "observed_count": 0,
+        "observations": [],
+        "two_phase_arguments_exact": False,
+        "acceptance_input_changed": False,
+    }

@@ -741,3 +741,460 @@ def test_source_bound_sitecustomize_rejects_server_outside_source_tree(
 
     assert calls == 0
     assert not path.exists()
+
+
+@pytest.mark.offline_database
+def test_private_send_message_probe_observes_calltool_arguments_without_changing_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastmcp import FastMCP
+    from mcp import types
+
+    expected_messages = ("phase one: café.", "phase two: 日本語.")
+    actual_messages = (expected_messages[0], expected_messages[1].replace(".", "。"))
+    receiver_id = "PRIVATE_RECEIVER_ID_SENTINEL"
+    nonce = "7" * 32
+    private_root = tmp_path / "phase-message-observer"
+    private_root.mkdir(mode=0o700)
+    path = private_root / "dispatch.jsonl"
+    server = FastMCP("message-argument-observer")
+    dispatched: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        opencode_mcp_observer,
+        "INTERACTION_TOOLS",
+        opencode_mcp_observer.INTERACTION_TOOLS | {"send_message"},
+    )
+
+    @server.tool()
+    async def send_message(message: str, target: str) -> dict[str, bool]:
+        dispatched.append((message, target))
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        observed = [row for row in rows if row["event"] == "message_argument_observed"]
+        assert len(observed) == len(dispatched)
+        assert observed[-1]["call_id"] == len(dispatched)
+        return {"sent": True}
+
+    observer = opencode_mcp_observer.install_protocol_observer(
+        server._mcp_server,
+        path,
+        nonce,
+        expected_message_bodies=expected_messages,
+    )
+    handler = server._mcp_server.request_handlers[types.CallToolRequest]
+
+    async def dispatch_messages() -> None:
+        for message in actual_messages:
+            result = await handler(
+                types.CallToolRequest(
+                    method="tools/call",
+                    params=types.CallToolRequestParams(
+                        name="send_message",
+                        arguments={"message": message, "target": receiver_id},
+                    ),
+                )
+            )
+            assert isinstance(result.root, types.CallToolResult)
+            assert result.root.isError is False
+
+    try:
+        asyncio.run(dispatch_messages())
+    finally:
+        observer.close()
+
+    assert dispatched == [(message, receiver_id) for message in actual_messages]
+    raw_sidecar = path.read_text(encoding="utf-8")
+    assert all(message not in raw_sidecar for message in actual_messages)
+    assert receiver_id not in raw_sidecar
+    summary = opencode_mcp_observer.read_protocol_observations(
+        path,
+        expected_nonce=nonce,
+        expected_message_bodies=expected_messages,
+    )
+    assert summary["observer_status"] == "observed"
+    assert summary["send_message_argument_observations"] == [
+        {
+            "ordinal": 1,
+            "status": "compared",
+            "exact": True,
+            "utf8_length": len(actual_messages[0].encode("utf-8")),
+        },
+        {
+            "ordinal": 2,
+            "status": "compared",
+            "exact": False,
+            "utf8_length": len(actual_messages[1].encode("utf-8")),
+        },
+    ]
+    assert all("call_id" not in item for item in summary["send_message_argument_observations"])
+    assert all(message not in json.dumps(summary) for message in actual_messages)
+    assert receiver_id not in json.dumps(summary)
+
+
+@pytest.mark.offline_database
+def test_private_send_message_probe_fails_closed_for_invalid_and_extra_arguments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typing import Any
+
+    from fastmcp import FastMCP
+    from mcp import types
+
+    expected_messages = ("expected phase one", "expected phase two")
+    nonce = "8" * 32
+    receiver_id = "PRIVATE_TARGET_SENTINEL"
+    oversized = "OVERSIZED_SENTINEL" + "x" * opencode_mcp_observer._MAX_MESSAGE_ARGUMENT_CHARACTERS
+    invalid_utf8 = "\ud800"
+    arguments = (
+        {"message": expected_messages[0], "target": receiver_id},
+        {"message": None, "target": receiver_id},
+        {"target": receiver_id},
+        {"message": oversized, "target": receiver_id},
+        {"message": invalid_utf8, "target": receiver_id},
+        {"message": "EXTRA_MESSAGE_SENTINEL", "target": receiver_id},
+    )
+    private_root = tmp_path / "invalid-phase-message-observer"
+    private_root.mkdir(mode=0o700)
+    path = private_root / "dispatch.jsonl"
+    server = FastMCP("invalid-message-argument-observer")
+    dispatched: list[tuple[Any, Any]] = []
+    monkeypatch.setattr(
+        opencode_mcp_observer,
+        "INTERACTION_TOOLS",
+        opencode_mcp_observer.INTERACTION_TOOLS | {"send_message"},
+    )
+
+    @server.tool()
+    async def send_message(message: Any = None, target: Any = None) -> dict[str, bool]:
+        dispatched.append((message, target))
+        return {"sent": True}
+
+    observer = opencode_mcp_observer.install_protocol_observer(
+        server._mcp_server,
+        path,
+        nonce,
+        expected_message_bodies=expected_messages,
+    )
+    handler = server._mcp_server.request_handlers[types.CallToolRequest]
+
+    async def dispatch_messages() -> None:
+        for call_arguments in arguments:
+            result = await handler(
+                types.CallToolRequest(
+                    method="tools/call",
+                    params=types.CallToolRequestParams(
+                        name="send_message",
+                        arguments=call_arguments,
+                    ),
+                )
+            )
+            assert isinstance(result.root, types.CallToolResult)
+
+    try:
+        asyncio.run(dispatch_messages())
+    finally:
+        observer.close()
+
+    expected_dispatched = [
+        (expected_messages[0], receiver_id),
+        (None, receiver_id),
+        (None, receiver_id),
+        (oversized, receiver_id),
+        (invalid_utf8, receiver_id),
+        ("EXTRA_MESSAGE_SENTINEL", receiver_id),
+    ]
+    assert dispatched == expected_dispatched
+    raw_sidecar = path.read_text(encoding="utf-8")
+    assert "OVERSIZED_SENTINEL" not in raw_sidecar
+    assert "EXTRA_MESSAGE_SENTINEL" not in raw_sidecar
+    assert receiver_id not in raw_sidecar
+    assert invalid_utf8 not in raw_sidecar
+    summary = opencode_mcp_observer.read_protocol_observations(
+        path,
+        expected_nonce=nonce,
+        expected_message_bodies=expected_messages,
+    )
+    assert summary["observer_status"] == "observed"
+    assert summary["send_message_argument_observations"] == [
+        {
+            "ordinal": 1,
+            "status": "compared",
+            "exact": True,
+            "utf8_length": len(expected_messages[0].encode("utf-8")),
+        },
+        {
+            "ordinal": 2,
+            "status": "invalid_type",
+            "exact": False,
+            "utf8_length": None,
+        },
+        {
+            "ordinal": 3,
+            "status": "missing",
+            "exact": False,
+            "utf8_length": None,
+        },
+        {
+            "ordinal": 4,
+            "status": "oversized",
+            "exact": False,
+            "utf8_length": None,
+        },
+        {
+            "ordinal": 5,
+            "status": "invalid_utf8",
+            "exact": False,
+            "utf8_length": None,
+        },
+        {
+            "ordinal": 6,
+            "status": "extra_call",
+            "exact": False,
+            "utf8_length": len("EXTRA_MESSAGE_SENTINEL".encode("utf-8")),
+        },
+    ]
+    assert all("call_id" not in item for item in summary["send_message_argument_observations"])
+    assert summary["send_message_argument_observation_status"] == "observed_prefix"
+    assert summary["send_message_argument_two_phase_exact"] is False
+
+
+@pytest.mark.offline_database
+def test_shared_observer_keeps_argument_probe_disabled_by_default(tmp_path: Path) -> None:
+    from fastmcp import FastMCP
+    from mcp import types
+
+    nonce = "9" * 32
+    private_root = tmp_path / "default-message-observer"
+    private_root.mkdir(mode=0o700)
+    path = private_root / "dispatch.jsonl"
+    server = FastMCP("default-message-argument-observer")
+
+    @server.tool()
+    async def send_message(message: str, target: str) -> dict[str, bool]:
+        return {"sent": bool(message and target)}
+
+    observer = opencode_mcp_observer.install_protocol_observer(server._mcp_server, path, nonce)
+    handler = server._mcp_server.request_handlers[types.CallToolRequest]
+
+    async def dispatch() -> None:
+        result = await handler(
+            types.CallToolRequest(
+                method="tools/call",
+                params=types.CallToolRequestParams(
+                    name="send_message",
+                    arguments={"message": "DEFAULT_PRIVATE_BODY", "target": "PRIVATE_ID"},
+                ),
+            )
+        )
+        assert isinstance(result.root, types.CallToolResult)
+
+    try:
+        asyncio.run(dispatch())
+    finally:
+        observer.close()
+
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert not any("message_argument" in row["event"] for row in rows)
+    summary = opencode_mcp_observer.read_protocol_observations(path, expected_nonce=nonce)
+    assert set(summary) == set(opencode_mcp_observer._empty_summary()) | {
+        "mcp_observer_shutdown_observed"
+    }
+    assert summary["observer_status"] == "observed"
+
+
+@pytest.mark.offline_database
+@pytest.mark.parametrize("corruption", ["duplicate", "missing", "unknown", "tampered"])
+def test_probe_reader_rejects_duplicate_unknown_and_malformed_diagnostic_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corruption: str
+) -> None:
+    from fastmcp import FastMCP
+    from mcp import types
+
+    expected_messages = ("phase one", "phase two")
+    nonce = "a" * 32
+    private_root = tmp_path / f"malformed-message-observer-{corruption}"
+    private_root.mkdir(mode=0o700)
+    path = private_root / "dispatch.jsonl"
+    server = FastMCP("malformed-message-argument-observer")
+    monkeypatch.setattr(
+        opencode_mcp_observer,
+        "INTERACTION_TOOLS",
+        opencode_mcp_observer.INTERACTION_TOOLS | {"send_message"},
+    )
+
+    @server.tool()
+    async def send_message(message: str, target: str) -> dict[str, bool]:
+        return {"sent": bool(message and target)}
+
+    observer = opencode_mcp_observer.install_protocol_observer(
+        server._mcp_server,
+        path,
+        nonce,
+        expected_message_bodies=expected_messages,
+    )
+    handler = server._mcp_server.request_handlers[types.CallToolRequest]
+
+    async def dispatch() -> None:
+        result = await handler(
+            types.CallToolRequest(
+                method="tools/call",
+                params=types.CallToolRequestParams(
+                    name="send_message",
+                    arguments={"message": expected_messages[0], "target": "PRIVATE_ID"},
+                ),
+            )
+        )
+        assert isinstance(result.root, types.CallToolResult)
+
+    try:
+        asyncio.run(dispatch())
+    finally:
+        observer.close()
+
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    argument_index = next(
+        index for index, row in enumerate(rows) if row["event"] == "message_argument_observed"
+    )
+    if corruption == "tampered":
+        rows[argument_index]["exact"] = "true"
+    elif corruption == "duplicate":
+        rows.insert(argument_index + 1, dict(rows[argument_index]))
+        for sequence, row in enumerate(rows, start=1):
+            row["sequence"] = sequence
+    elif corruption == "missing":
+        rows.pop(argument_index)
+        for sequence, row in enumerate(rows, start=1):
+            row["sequence"] = sequence
+    else:
+        rows.insert(
+            -1,
+            {
+                "version": 1,
+                "nonce": nonce,
+                "sequence": len(rows),
+                "event": "unknown_argument_event",
+            },
+        )
+        for sequence, row in enumerate(rows, start=1):
+            row["sequence"] = sequence
+    path.write_text(
+        "".join(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+    summary = opencode_mcp_observer.read_protocol_observations(
+        path,
+        expected_nonce=nonce,
+        expected_message_bodies=expected_messages,
+    )
+    assert summary["observer_status"] == "incomplete"
+    assert summary["send_message_argument_observation_status"] == "invalid"
+    assert summary["send_message_argument_observations"] == []
+
+
+@pytest.mark.offline_database
+@pytest.mark.parametrize("field", ["version", "sequence"])
+@pytest.mark.parametrize("probe_enabled", [False, True])
+def test_observer_reader_rejects_boolean_integer_framing_fields(
+    tmp_path: Path, field: str, probe_enabled: bool
+) -> None:
+    from mcp import types
+
+    nonce = "c" * 32
+    private_root = tmp_path / f"boolean-framing-{field}"
+    private_root.mkdir(mode=0o700)
+    path = private_root / "dispatch.jsonl"
+    observer = opencode_mcp_observer.install_protocol_observer(
+        SimpleNamespace(
+            request_handlers={
+                types.ListToolsRequest: object(),
+                types.CallToolRequest: object(),
+            }
+        ),
+        path,
+        nonce,
+        expected_message_bodies=("phase one", "phase two") if probe_enabled else (),
+    )
+    observer.close()
+
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    rows[-1][field] = True
+    path.write_text(
+        "".join(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+    summary = opencode_mcp_observer.read_protocol_observations(path, expected_nonce=nonce)
+    assert summary["observer_status"] == "incomplete"
+
+
+@pytest.mark.offline_database
+@pytest.mark.parametrize("field", ["exact", "sequence"])
+def test_probe_reader_rejects_duplicate_json_key_in_argument_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    from fastmcp import FastMCP
+    from mcp import types
+
+    expected_messages = ("expected phase one", "expected phase two")
+    nonce = "d" * 32
+    private_root = tmp_path / "duplicate-json-key"
+    private_root.mkdir(mode=0o700)
+    path = private_root / "dispatch.jsonl"
+    server = FastMCP("duplicate-json-key-observer")
+    monkeypatch.setattr(
+        opencode_mcp_observer,
+        "INTERACTION_TOOLS",
+        opencode_mcp_observer.INTERACTION_TOOLS | {"send_message"},
+    )
+
+    @server.tool()
+    async def send_message(message: str, target: str) -> dict[str, bool]:
+        return {"sent": bool(message and target)}
+
+    observer = opencode_mcp_observer.install_protocol_observer(
+        server._mcp_server,
+        path,
+        nonce,
+        expected_message_bodies=expected_messages,
+    )
+    handler = server._mcp_server.request_handlers[types.CallToolRequest]
+
+    async def dispatch() -> None:
+        result = await handler(
+            types.CallToolRequest(
+                method="tools/call",
+                params=types.CallToolRequestParams(
+                    name="send_message",
+                    arguments={"message": expected_messages[0], "target": "PRIVATE_TARGET"},
+                ),
+            )
+        )
+        assert isinstance(result.root, types.CallToolResult)
+
+    try:
+        asyncio.run(dispatch())
+    finally:
+        observer.close()
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    rewritten = []
+    for line in lines:
+        row = json.loads(line)
+        if row.get("event") == "message_argument_observed":
+            value = row.pop(field)
+            line = json.dumps(row, sort_keys=True, separators=(",", ":"))[:-1]
+            if field == "exact":
+                line += f',"{field}":true,"{field}":false' + "}"
+            else:
+                line += f',"{field}":{value},"{field}":{value}}}'
+        rewritten.append(line)
+    path.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+
+    summary = opencode_mcp_observer.read_protocol_observations(
+        path,
+        expected_nonce=nonce,
+        expected_message_bodies=expected_messages,
+    )
+    assert summary["observer_status"] == "incomplete"
+    assert summary["send_message_argument_observation_status"] == "invalid"
+    assert summary["send_message_argument_observations"] == []

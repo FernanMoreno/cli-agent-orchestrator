@@ -465,3 +465,6 @@ T120 checkpoint offline integrado:1299 pytest/433 subtests, composición5/0,13 a
 
 
 - [ ] T121 [US4] [FR100/SC084] Fix reproduced pre-resource runtime-source guard failure: declared lazy production modules are not yet imported when checked. Preserve02208df0 failed-attempt log/exit/no-native-receipt distinction, close admission/recover owned resources with measured provenance, add a fresh no-credentials/no-network/no-model actual-import-block RED/GREEN test, explicitly import the pinned helpers without weakening source checks, review/composition/integrate and freshly bind one corrected serial generic case. T120 native acceptance remains pending; the production correction is not blamed on the model.
+
+
+- [ ] T122 [US4] [FR101/SC085] Diagnose the first unobserved incoming send_message argument boundary after e609ead2's one-codepoint literal-body mismatch. Add disabled-by-default, privately source-bound fixed-body equality/length observations before MCP dispatch, preserve all input bytes and strict acceptance, collect sealed post-cleanup prefix evidence on partial failure, test privacy/shape/oversize/duplicate/default compatibility and pass-through, independently review/integrate/check composition, then run one newly instrumented source-bound serial case. Do not rewrite punctuation or claim model cause from PG/frame evidence.

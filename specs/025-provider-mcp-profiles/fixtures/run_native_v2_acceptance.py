@@ -967,6 +967,61 @@ def _write_private(path: Path, value: str | bytes) -> None:
         os.fsync(stream.fileno())
 
 
+def _derive_private_mcp_observer_source(
+    source: bytes,
+    *,
+    sender_catalog: tuple[str, ...],
+    expected_message_bodies: tuple[str, ...],
+) -> str:
+    """Enable the fixed-body argument probe only in the source-derived private copy."""
+    if (
+        type(source) is not bytes
+        or type(sender_catalog) is not tuple
+        or any(type(name) is not str for name in sender_catalog)
+        or type(expected_message_bodies) is not tuple
+        or len(expected_message_bodies) != len(PHASES)
+        or any(type(body) is not str for body in expected_message_bodies)
+    ):
+        raise GateError("observer_source_binding_shape_changed")
+    try:
+        original = source.decode("utf-8", errors="strict")
+    except UnicodeError:
+        raise GateError("observer_source_binding_shape_changed") from None
+    start_token = "INTERACTION_TOOLS = frozenset("
+    observer_end_token = "_NONCE_RE ="
+    old_return = "return install_protocol_observer(low_level_server, Path(raw_path), nonce)"
+    if (
+        original.count(start_token) != 1
+        or original.count(observer_end_token) != 1
+        or original.count(old_return) != 1
+    ):
+        raise GateError("observer_source_binding_shape_changed")
+    observer_start = original.index(start_token)
+    observer_end = original.index(observer_end_token, observer_start)
+    adapted = (
+        original[:observer_start]
+        + start_token
+        + repr(sorted(sender_catalog))
+        + ")\n"
+        + "_MESSAGE_ARGUMENT_EXPECTATIONS = "
+        + repr(expected_message_bodies)
+        + "\n"
+        + original[observer_end:]
+    )
+    new_return = (
+        "terminal = selected_environment.get('CAO_TERMINAL_ID', '')\n"
+        "    if not re.fullmatch(r'[0-9a-f]{8}', terminal):\n"
+        "        raise RuntimeError('mcp_observer_terminal_binding_invalid')\n"
+        "    return install_protocol_observer(\n"
+        "        low_level_server,\n"
+        "        Path(raw_path).with_name(Path(raw_path).name + '-' + terminal),\n"
+        "        nonce,\n"
+        "        expected_message_bodies=_MESSAGE_ARGUMENT_EXPECTATIONS,\n"
+        "    )"
+    )
+    return adapted.replace(old_return, new_return, 1)
+
+
 def _safe_terminal_identity(value: Any) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{8}", value) is not None
 
@@ -4552,6 +4607,211 @@ def _load_failure_diagnostic_fixture(filename):
     return module
 
 
+def _capture_sender_message_argument_diagnostic(
+    *,
+    observer_source_path,
+    observation_path,
+    raw_dir,
+    expected_sender_id,
+    expected_nonce,
+    case_id,
+    writers_dead,
+):
+    unavailable = {
+        "schema": "spec025.t122.send-message-argument-diagnostic.v1",
+        "status": "unavailable",
+        "reason": "context_unavailable",
+        "expected_phase_count": len(PHASES),
+        "observed_count": 0,
+        "observations": [],
+        "two_phase_arguments_exact": False,
+        "acceptance_input_changed": False,
+    }
+    if writers_dead is not True:
+        unavailable["reason"] = "writers_not_confirmed_dead"
+        return unavailable
+    if (
+        not isinstance(observer_source_path, Path)
+        or not isinstance(observation_path, Path)
+        or not isinstance(raw_dir, Path)
+        or type(expected_nonce) is not str
+        or re.fullmatch(r"[0-9a-f]{32}", expected_nonce) is None
+    ):
+        return unavailable
+    try:
+        case = _case_definition(case_id)
+    except (GateError, TypeError, ValueError):
+        return unavailable
+    expected_raw_dir = EVIDENCE / "raw"
+    expected_observer_dir = expected_raw_dir / "observer"
+    expected_observation_path = (
+        expected_observer_dir / f"native-events-{expected_sender_id}"
+        if _safe_terminal_identity(expected_sender_id)
+        else None
+    )
+    if (
+        not isinstance(raw_dir, Path)
+        or not isinstance(observation_path, Path)
+        or not expected_raw_dir.is_absolute()
+        or raw_dir != expected_raw_dir
+        or expected_observation_path is None
+        or observation_path != expected_observation_path
+    ):
+        unavailable["reason"] = "observation_path_binding_invalid"
+        return unavailable
+    try:
+        for directory in (EVIDENCE, expected_raw_dir, expected_observer_dir):
+            metadata = directory.lstat()
+            if (
+                directory.is_symlink()
+                or not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) != 0o700
+                or directory.resolve(strict=True) != directory
+            ):
+                unavailable["reason"] = "observation_path_binding_invalid"
+                return unavailable
+    except (OSError, RuntimeError):
+        unavailable["reason"] = "observation_path_binding_invalid"
+        return unavailable
+    expected_bodies = tuple(message for _phase_name, message in PHASES)
+    relative = "test/live_provider/opencode_mcp_observer.py"
+    expected_source_sha256 = (RUN_MANIFEST or {}).get("source_sha256s", {}).get(relative)
+    try:
+        source_info = observer_source_path.lstat()
+        raw_info = raw_dir.lstat()
+        if (
+            observer_source_path.is_symlink()
+            or not stat.S_ISREG(source_info.st_mode)
+            or source_info.st_size > 256 * 1024
+            or not _digest_shape(expected_source_sha256)
+            or _sha256(observer_source_path) != expected_source_sha256
+            or raw_dir.is_symlink()
+            or not stat.S_ISDIR(raw_info.st_mode)
+            or raw_info.st_uid != os.getuid()
+            or stat.S_IMODE(raw_info.st_mode) != 0o700
+        ):
+            unavailable["reason"] = "source_or_raw_binding_invalid"
+            return unavailable
+    except OSError:
+        unavailable["reason"] = "source_or_raw_binding_invalid"
+        return unavailable
+    spec = importlib.util.spec_from_file_location("spec025_t122_mcp_observer", observer_source_path)
+    if spec is None or spec.loader is None:
+        unavailable["reason"] = "observer_reader_unavailable"
+        return unavailable
+    observer_module = importlib.util.module_from_spec(spec)
+    try:
+        source_bytes = observer_source_path.read_bytes()
+        if hashlib.sha256(source_bytes).hexdigest() != expected_source_sha256:
+            unavailable["reason"] = "source_or_raw_binding_invalid"
+            return unavailable
+        exec(compile(source_bytes, str(observer_source_path), "exec"), observer_module.__dict__)
+        source_after = observer_source_path.lstat()
+        if (
+            observer_source_path.is_symlink()
+            or (source_info.st_dev, source_info.st_ino)
+            != (source_after.st_dev, source_after.st_ino)
+            or _sha256(observer_source_path) != expected_source_sha256
+        ):
+            unavailable["reason"] = "source_or_raw_binding_invalid"
+            return unavailable
+        observer_module.INTERACTION_TOOLS = frozenset(case.sender_catalog)
+        trace = _read_owned_private_file(
+            observation_path,
+            maximum=observer_module._MAX_BYTES,
+        )
+        marker_path = observation_path.with_name(observation_path.name + ".complete")
+        marker = _read_owned_private_file(marker_path, maximum=128)
+        if marker != observer_module._COMPLETE_CONTENT:
+            unavailable["reason"] = "observer_trace_unsealed_or_invalid"
+            return unavailable
+        copied_trace_path = raw_dir / "sender-message-argument-observer.copy.jsonl"
+        _write_private(copied_trace_path, trace)
+        copied_marker_path = copied_trace_path.with_name(copied_trace_path.name + ".complete")
+        _write_private(copied_marker_path, marker)
+        if (
+            _read_owned_private_file(copied_trace_path, maximum=observer_module._MAX_BYTES) != trace
+            or _read_owned_private_file(copied_marker_path, maximum=128) != marker
+        ):
+            unavailable["reason"] = "observer_trace_copy_mismatch"
+            return unavailable
+        summary = observer_module.read_protocol_observations(
+            copied_trace_path,
+            expected_nonce=expected_nonce,
+            expected_message_bodies=expected_bodies,
+        )
+    except Exception:
+        unavailable["reason"] = "observer_trace_copy_or_read_failed"
+        return unavailable
+    if summary.get("observer_status") != "observed" or summary.get(
+        "send_message_argument_observation_status"
+    ) not in {
+        "observed_prefix",
+        "unobserved",
+    }:
+        unavailable["reason"] = "observer_trace_unsealed_or_invalid"
+        return unavailable
+    observations = summary.get("send_message_argument_observations")
+    if type(observations) is not list or len(observations) > 256:
+        unavailable["reason"] = "observer_trace_unsealed_or_invalid"
+        return unavailable
+    projected = []
+    for item in observations:
+        if (
+            type(item) is not dict
+            or type(item.get("ordinal")) is not int
+            or type(item.get("status")) is not str
+            or type(item.get("exact")) is not bool
+            or (item.get("utf8_length") is not None and type(item.get("utf8_length")) is not int)
+        ):
+            unavailable["reason"] = "observer_trace_unsealed_or_invalid"
+            return unavailable
+        projected.append(
+            {
+                "ordinal": item["ordinal"],
+                "status": item["status"],
+                "exact": item["exact"],
+                "utf8_length": item["utf8_length"],
+            }
+        )
+    return {
+        "schema": "spec025.t122.send-message-argument-diagnostic.v1",
+        "status": (
+            "unobserved"
+            if not projected
+            else (
+                "observed_prefix"
+                if len(projected) < len(PHASES)
+                else "observed_two_phase_arguments"
+            )
+        ),
+        "reason": "none",
+        "expected_phase_count": len(PHASES),
+        "observed_count": len(projected),
+        "observations": projected,
+        "two_phase_arguments_exact": summary.get("send_message_argument_two_phase_exact") is True,
+        "sealed_raw_copy_verified": True,
+        "acceptance_input_changed": False,
+    }
+
+
+def _capture_sender_message_argument_diagnostic_safely(**kwargs):
+    try:
+        return _capture_sender_message_argument_diagnostic(**kwargs)
+    except BaseException:
+        return {
+            "schema": "spec025.t122.send-message-argument-diagnostic.v1",
+            "status": "diagnostic_failed_closed",
+            "reason": "diagnostic_capture_failed",
+            "expected_phase_count": len(PHASES),
+            "observed_count": 0,
+            "observations": [],
+            "two_phase_arguments_exact": False,
+            "acceptance_input_changed": False,
+        }
+
+
 def _capture_sender_native_failure_diagnostic(context, deadline):
     phase = context.get("phase")
     if (
@@ -5189,29 +5449,11 @@ def _run_enabled(
             or hashlib.sha256(mcp_observer_source).hexdigest() != mcp_observer_source_sha256
         ):
             raise GateError("mcp_observer_source_hash_mismatch")
-        original_observer = mcp_observer_source.decode("utf-8")
-        start_token = "INTERACTION_TOOLS = frozenset("
-        observer_start = original_observer.index(start_token)
-        observer_end = original_observer.index("_NONCE_RE =", observer_start)
-        adapted_observer = (
-            original_observer[:observer_start]
-            + "INTERACTION_TOOLS = frozenset("
-            + repr(sorted(case.sender_catalog))
-            + ")\n"
-            + original_observer[observer_end:]
+        adapted_observer = _derive_private_mcp_observer_source(
+            mcp_observer_source,
+            sender_catalog=case.sender_catalog,
+            expected_message_bodies=tuple(message for _phase_name, message in PHASES),
         )
-        old_return = "return install_protocol_observer(low_level_server, Path(raw_path), nonce)"
-        new_return = (
-            "terminal = selected_environment.get('CAO_TERMINAL_ID', '')\n"
-            "    if not re.fullmatch(r'[0-9a-f]{8}', terminal):\n"
-            "        raise RuntimeError('mcp_observer_terminal_binding_invalid')\n"
-            "    return install_protocol_observer(\n"
-            "        low_level_server, Path(raw_path).with_name(Path(raw_path).name + '-' + terminal), nonce\n"
-            "    )"
-        )
-        if adapted_observer.count(old_return) != 1:
-            raise GateError("observer_source_binding_shape_changed")
-        adapted_observer = adapted_observer.replace(old_return, new_return, 1)
         observer_path = observer_dir / "opencode_mcp_observer.py"
         _write_private(observer_path, adapted_observer)
         if (
@@ -6409,7 +6651,9 @@ def _run_enabled(
         spec.loader.exec_module(observer_module)
         native_observations = {
             role: observer_module.read_protocol_observations(
-                observation_paths[role], expected_nonce=nonce
+                observation_paths[role],
+                expected_nonce=nonce,
+                expected_message_bodies=tuple(message for _phase_name, message in PHASES),
             )
             for role in terminals
         }
@@ -6758,6 +7002,37 @@ def _run_enabled(
         receipt["tmux_processes_confirmed_dead_before_postgres_teardown"] = (
             tmux_processes_confirmed_dead
         )
+
+        cleanup_locals = locals()
+        if (
+            receipt.get("error_code") is not None
+            and type(cleanup_locals.get("phase")) is dict
+            and not _SIGTERM_PENDING
+        ):
+            terminal_map = cleanup_locals.get("terminals")
+            sender_data = terminal_map.get("sender") if type(terminal_map) is dict else None
+            sender_id = sender_data.get("id") if type(sender_data) is dict else None
+            base_observation_path = cleanup_locals.get("base_observation")
+            if isinstance(base_observation_path, Path) and _safe_terminal_identity(sender_id):
+                sender_observation_path = base_observation_path.with_name(
+                    base_observation_path.name + "-" + sender_id
+                )
+            else:
+                sender_observation_path = None
+            receipt["sender_message_argument_diagnostic"] = (
+                _capture_sender_message_argument_diagnostic_safely(
+                    observer_source_path=REPO / "test/live_provider/opencode_mcp_observer.py",
+                    observation_path=sender_observation_path,
+                    raw_dir=cleanup_locals.get("raw_dir"),
+                    expected_sender_id=sender_id,
+                    expected_nonce=cleanup_locals.get("nonce"),
+                    case_id=getattr(cleanup_locals.get("case"), "case_id", None),
+                    writers_dead=(
+                        api_processes_confirmed_dead is True
+                        and tmux_processes_confirmed_dead is True
+                    ),
+                )
+            )
 
         if pg_context is not None:
             if _postgres_teardown_allowed(

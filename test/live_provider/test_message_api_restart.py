@@ -231,8 +231,14 @@ def test_agui_notification_requires_redacted_send_message_metadata() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "message",
+    [PRE_RESTART_MESSAGE, PRE_RESTART_MESSAGE[:-1] + "。"],
+    ids=["exact-fixture-body", "ideographic-full-stop-near-match"],
+)
 def test_expected_message_matches_source_send_message_injection_with_fake_http(
     monkeypatch: pytest.MonkeyPatch,
+    message: str,
 ) -> None:
     source_root = _source_root_from_test_file()
     source_path = source_root / "src/cli_agent_orchestrator/utils/orchestration.py"
@@ -268,14 +274,24 @@ def test_expected_message_matches_source_send_message_injection_with_fake_http(
     monkeypatch.setattr(orchestration, "_mcp_timeout", lambda: 1.0)
     monkeypatch.setattr(orchestration.requests, "post", fake_post)
 
-    result = orchestration._send_message_impl(receiver_id, PRE_RESTART_MESSAGE)
+    result = orchestration._send_message_impl(receiver_id, message)
     expected = message_api_restart.expected_persisted_message(PRE_RESTART_MESSAGE, sender_id)
+    suffix = expected[len(PRE_RESTART_MESSAGE) :]
 
     assert result == {"id": "private-test-row"}
     assert isinstance(captured.get("params"), dict)
     assert captured["params"]["sender_id"] == sender_id
-    assert captured["params"]["message"] == expected
-    assert captured["params"]["message"] != PRE_RESTART_MESSAGE
+    assert captured["params"]["message"] == message + suffix
+    assert captured["params"]["message"] != message
+    if message == PRE_RESTART_MESSAGE:
+        assert captured["params"]["message"] == expected
+    else:
+        # A transport preserves even an incorrect near-match. The acceptance
+        # fixture must reject it rather than silently repair punctuation.
+        assert captured["params"]["message"] != expected
+        assert message[:-1] == PRE_RESTART_MESSAGE[:-1]
+        assert ord(message[-1]) == 0x3002
+        assert ord(PRE_RESTART_MESSAGE[-1]) == 0x002E
 
 
 def test_expected_persisted_message_is_the_exact_source_suffix() -> None:

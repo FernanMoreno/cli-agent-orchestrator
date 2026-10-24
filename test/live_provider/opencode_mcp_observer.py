@@ -28,6 +28,8 @@ INTERACTION_TOOLS = frozenset(
 _NONCE_RE = re.compile(r"[0-9a-f]{32}")
 _MAX_EVENTS = 256
 _MAX_BYTES = 128 * 1024
+_MAX_MESSAGE_ARGUMENT_CHARACTERS = 8192
+_MAX_MESSAGE_ARGUMENT_UTF8_BYTES = 32 * 1024
 _COMPLETE_SUFFIX = ".complete"
 _COMPLETE_PENDING_SUFFIX = ".complete.pending"
 _COMPLETE_CONTENT = b"CAO_OPEN_CODE_MCP_OBSERVER_COMPLETE\n"
@@ -37,6 +39,19 @@ OBSERVER_NONCE_ENV = "CAO_OPENCODE_MCP_OBSERVER_NONCE"
 _IN_TOOL_CALL: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "cao_opencode_mcp_internal_tool_call", default=False
 )
+
+
+class _DuplicateJSONKeyError(ValueError):
+    """Raised without exposing private trace data when a row repeats a key."""
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateJSONKeyError("observer_duplicate_json_key")
+        result[key] = value
+    return result
 
 
 def _empty_summary(status: str = "unobserved") -> dict[str, Any]:
@@ -69,9 +84,24 @@ def _private_directory(path: Path) -> bool:
 class ProtocolObserver:
     """Append only fixed MCP event fields to a fresh, private run sidecar."""
 
-    def __init__(self, path: Path, nonce: str) -> None:
+    def __init__(
+        self,
+        path: Path,
+        nonce: str,
+        *,
+        expected_message_bodies: tuple[str, ...] = (),
+    ) -> None:
         if not path.is_absolute() or not _NONCE_RE.fullmatch(nonce):
             raise ValueError("mcp_observer_binding_invalid")
+        if (
+            type(expected_message_bodies) is not tuple
+            or len(expected_message_bodies) not in {0, 2}
+            or any(
+                type(body) is not str or len(body) > _MAX_MESSAGE_ARGUMENT_CHARACTERS
+                for body in expected_message_bodies
+            )
+        ):
+            raise ValueError("mcp_observer_message_probe_invalid")
         completion_path = path.with_name(path.name + _COMPLETE_SUFFIX)
         pending_path = path.with_name(path.name + _COMPLETE_PENDING_SUFFIX)
         if (
@@ -103,6 +133,8 @@ class ProtocolObserver:
         self._descriptor = descriptor
         self._sequence = 0
         self._call_id = 0
+        self._message_ordinal = 0
+        self._expected_message_bodies = expected_message_bodies
         self._written_bytes = 0
         self._closed = False
         self._write_failed = False
@@ -166,13 +198,66 @@ class ProtocolObserver:
             tool_count=len(tools),
         )
 
-    def start_call(self, name: Any) -> tuple[int, str]:
+    def start_call(self, name: Any, arguments: Any = None) -> tuple[int, str]:
         with self._lock:
             self._call_id += 1
             call_id = self._call_id
+            ordinal = None
+            if self._expected_message_bodies and name == "send_message":
+                self._message_ordinal += 1
+                ordinal = self._message_ordinal
         tool = name if isinstance(name, str) and name in INTERACTION_TOOLS else "other"
         self._append("tool_call_started", call_id=call_id, tool=tool)
+        if ordinal is not None:
+            self._record_message_argument(call_id, ordinal, arguments)
         return call_id, tool
+
+    def _record_message_argument(self, call_id: int, ordinal: int, arguments: Any) -> None:
+        if not isinstance(arguments, Mapping) or "message" not in arguments:
+            self._append(
+                "message_argument_observed",
+                call_id=call_id,
+                ordinal=ordinal,
+                status="missing",
+                exact=False,
+                utf8_length=None,
+            )
+            return
+        message = arguments["message"]
+        if type(message) is not str:
+            status = "invalid_type"
+            exact = False
+            utf8_length = None
+        elif len(message) > _MAX_MESSAGE_ARGUMENT_CHARACTERS:
+            status = "oversized"
+            exact = False
+            utf8_length = None
+        else:
+            try:
+                utf8_length = len(message.encode("utf-8", errors="strict"))
+            except UnicodeError:
+                status = "invalid_utf8"
+                exact = False
+                utf8_length = None
+            else:
+                if utf8_length > _MAX_MESSAGE_ARGUMENT_UTF8_BYTES:
+                    status = "oversized"
+                    exact = False
+                    utf8_length = None
+                elif ordinal > len(self._expected_message_bodies):
+                    status = "extra_call"
+                    exact = False
+                else:
+                    status = "compared"
+                    exact = message == self._expected_message_bodies[ordinal - 1]
+        self._append(
+            "message_argument_observed",
+            call_id=call_id,
+            ordinal=ordinal,
+            status=status,
+            exact=exact,
+            utf8_length=utf8_length,
+        )
 
     def finish_call(
         self,
@@ -286,13 +371,23 @@ class ProtocolObserver:
         return success
 
 
-def install_protocol_observer(server: Any, path: Path, nonce: str) -> ProtocolObserver:
+def install_protocol_observer(
+    server: Any,
+    path: Path,
+    nonce: str,
+    *,
+    expected_message_bodies: tuple[str, ...] = (),
+) -> ProtocolObserver:
     """Wrap the real low-level request dispatchers without changing their results."""
     list_handler = server.request_handlers.get(types.ListToolsRequest)
     call_handler = server.request_handlers.get(types.CallToolRequest)
     if list_handler is None or call_handler is None:
         raise RuntimeError("mcp_observer_handlers_unavailable")
-    observer = ProtocolObserver(path, nonce)
+    observer = ProtocolObserver(
+        path,
+        nonce,
+        expected_message_bodies=expected_message_bodies,
+    )
 
     async def observed_list(request: Any) -> Any:
         result = await list_handler(request)
@@ -306,7 +401,14 @@ def install_protocol_observer(server: Any, path: Path, nonce: str) -> ProtocolOb
     async def observed_call(request: Any) -> Any:
         params = getattr(request, "params", None)
         try:
-            call_id, _tool = observer.start_call(getattr(params, "name", None))
+            name = getattr(params, "name", None)
+            if observer._expected_message_bodies:
+                call_id, _tool = observer.start_call(
+                    name,
+                    getattr(params, "arguments", None),
+                )
+            else:
+                call_id, _tool = observer.start_call(name)
         except Exception:
             call_id = None
         token = _IN_TOOL_CALL.set(True)
@@ -413,8 +515,22 @@ def _completion_marker_valid(path: Path) -> bool:
         return False
 
 
-def read_protocol_observations(path: Path, *, expected_nonce: str) -> dict[str, Any]:
+def read_protocol_observations(
+    path: Path,
+    *,
+    expected_nonce: str,
+    expected_message_bodies: tuple[str, ...] = (),
+) -> dict[str, Any]:
     """Read only a bounded, private sidecar and return closed protocol facts."""
+    if (
+        type(expected_message_bodies) is not tuple
+        or len(expected_message_bodies) not in {0, 2}
+        or any(
+            type(body) is not str or len(body) > _MAX_MESSAGE_ARGUMENT_CHARACTERS
+            for body in expected_message_bodies
+        )
+    ):
+        return _empty_summary("incomplete")
     if not _NONCE_RE.fullmatch(expected_nonce) or not _private_directory(path.parent):
         return _empty_summary()
     try:
@@ -461,15 +577,17 @@ def read_protocol_observations(path: Path, *, expected_nonce: str) -> dict[str, 
         if not raw_line.endswith(b"\n"):
             break
         try:
-            row = json.loads(raw_line)
-        except (UnicodeDecodeError, json.JSONDecodeError):
+            row = json.loads(raw_line, object_pairs_hook=_unique_json_object)
+        except (UnicodeDecodeError, json.JSONDecodeError, _DuplicateJSONKeyError):
             incomplete = True
             break
         if not isinstance(row, dict) or row.get("nonce") != expected_nonce:
             return _empty_summary()
         if (
-            row.get("version") != 1
-            or row.get("sequence") != len(rows) + 1
+            type(row.get("version")) is not int
+            or row["version"] != 1
+            or type(row.get("sequence")) is not int
+            or row["sequence"] != len(rows) + 1
             or not isinstance(row.get("event"), str)
         ):
             incomplete = True
@@ -494,6 +612,17 @@ def read_protocol_observations(path: Path, *, expected_nonce: str) -> dict[str, 
                 "event",
                 "call_id",
                 "tool",
+            },
+            "message_argument_observed": {
+                "version",
+                "nonce",
+                "sequence",
+                "event",
+                "call_id",
+                "ordinal",
+                "status",
+                "exact",
+                "utf8_length",
             },
             "tool_call_finished": {
                 "version",
@@ -524,6 +653,8 @@ def read_protocol_observations(path: Path, *, expected_nonce: str) -> dict[str, 
     catalogs: list[dict[str, Any]] = []
     calls: dict[int, dict[str, Any]] = {}
     call_order: list[int] = []
+    message_probe_invalid = False
+    message_argument_observations: list[dict[str, Any]] = []
     unexpected_calls = 0
     stopped = False
     for row in rows[1:]:
@@ -571,6 +702,61 @@ def read_protocol_observations(path: Path, *, expected_nonce: str) -> dict[str, 
             call_order.append(call_id)
             if tool == "other":
                 unexpected_calls += 1
+        elif event == "message_argument_observed":
+            call_id = row.get("call_id")
+            call = calls.get(call_id) if type(call_id) is int else None
+            ordinal = row.get("ordinal")
+            status = row.get("status")
+            exact = row.get("exact")
+            utf8_length = row.get("utf8_length")
+            valid_length = (
+                type(utf8_length) is int and 0 <= utf8_length <= _MAX_MESSAGE_ARGUMENT_UTF8_BYTES
+            )
+            valid_status = (
+                (
+                    status == "compared"
+                    and type(exact) is bool
+                    and valid_length
+                    and type(ordinal) is int
+                    and 1 <= ordinal <= len(expected_message_bodies)
+                )
+                or (
+                    status == "extra_call"
+                    and exact is False
+                    and valid_length
+                    and type(ordinal) is int
+                    and ordinal > len(expected_message_bodies)
+                )
+                or (
+                    type(status) is str
+                    and status in {"missing", "invalid_type", "oversized", "invalid_utf8"}
+                    and exact is False
+                    and utf8_length is None
+                    and type(ordinal) is int
+                    and ordinal > 0
+                )
+            )
+            if (
+                not expected_message_bodies
+                or call is None
+                or call["status"] != "in_progress"
+                or call["tool"] != "send_message"
+                or ordinal != len(message_argument_observations) + 1
+                or any(item["call_id"] == call_id for item in message_argument_observations)
+                or not valid_status
+            ):
+                incomplete = True
+                message_probe_invalid = True
+                break
+            message_argument_observations.append(
+                {
+                    "call_id": call_id,
+                    "ordinal": ordinal,
+                    "status": status,
+                    "exact": exact,
+                    "utf8_length": utf8_length,
+                }
+            )
         elif event == "tool_call_finished":
             call_id = row.get("call_id")
             call = calls.get(call_id) if type(call_id) is int else None
@@ -586,6 +772,14 @@ def read_protocol_observations(path: Path, *, expected_nonce: str) -> dict[str, 
                 or not isinstance(result_present, bool)
             ):
                 incomplete = True
+                break
+            if (
+                expected_message_bodies
+                and call["tool"] == "send_message"
+                and not any(item["call_id"] == call_id for item in message_argument_observations)
+            ):
+                incomplete = True
+                message_probe_invalid = True
                 break
             call.update(
                 {
@@ -638,4 +832,34 @@ def read_protocol_observations(path: Path, *, expected_nonce: str) -> dict[str, 
             "mcp_observer_shutdown_observed": stopped and completion_observed,
         }
     )
+    if expected_message_bodies:
+        if incomplete:
+            message_probe_invalid = True
+        accepted_observations = [] if message_probe_invalid else message_argument_observations
+        exported_observations = [
+            {
+                "ordinal": item["ordinal"],
+                "status": item["status"],
+                "exact": item["exact"],
+                "utf8_length": item["utf8_length"],
+            }
+            for item in accepted_observations
+        ]
+        summary.update(
+            {
+                "send_message_argument_observation_status": (
+                    "invalid"
+                    if message_probe_invalid
+                    else "observed_prefix" if accepted_observations else "unobserved"
+                ),
+                "send_message_argument_observations": exported_observations,
+                "send_message_argument_two_phase_exact": (
+                    len(accepted_observations) == len(expected_message_bodies)
+                    and all(
+                        item["status"] == "compared" and item["exact"] is True
+                        for item in accepted_observations
+                    )
+                ),
+            }
+        )
     return summary

@@ -1,0 +1,44 @@
+{
+  "case_gates_closed": true,
+  "case_id": "generic_message",
+  "cleanup_failures": [],
+  "elapsed_seconds": 87.423,
+  "error_code": "message_phase_acceptance_mismatch",
+  "failure_detail": {
+    "application_normalization_observed": false,
+    "body_index": 39,
+    "exact_source_prompt_matches_wrapped_frame": true,
+    "expected_codepoint": 46,
+    "fixed_body_difference_count": 1,
+    "incoming_mcp_argument_observed": false,
+    "observed_codepoint": 12290,
+    "raw_model_response_observed": false,
+    "sender_suffix_exact": true
+  },
+  "final_offer_gate_reached": false,
+  "minimum_admission_mib": 9346,
+  "native_acceptance_claimed": false,
+  "operator_auth_unchanged": true,
+  "parent_pg_retained_for_instrumented_serial_case": true,
+  "phases": [
+    {
+      "agui_redacted_one_notification": true,
+      "durable_turn_completed": true,
+      "elapsed_seconds": 36.881,
+      "last_receipt_unicode_verified": true,
+      "name": "before_restart",
+      "one_exact_pg_api_message": false,
+      "receiver_ack_exact": true,
+      "receiver_model_seconds": 5.019,
+      "receiver_turn_completed_once": true,
+      "sender_model_seconds": 36.862
+    }
+  ],
+  "private_native_receipt_sha256": "bafdbd5787c6b012abde5fcbca77b57489a96233a32c0eac3f9dcf7b0802f6c4",
+  "private_state_removed": true,
+  "result": "FAILED",
+  "schema": "caos.spec025.t120.corrected-native-failed.sanitized.v1",
+  "source_count": 523,
+  "source_head": "e609ead258c5399decbddbc5ebde9dbc08804f31",
+  "source_unchanged": true
+}
