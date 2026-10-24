@@ -79,7 +79,7 @@ function isPrivateRegularFile(info) {
   )
 }
 
-function parseJsonWithoutDuplicateKeys(text) {
+export function parseJsonWithoutDuplicateKeys(text) {
   let offset = 0
   let nodes = 0
 
@@ -268,17 +268,28 @@ async function readExpectations(fsApi, opencodeDirectory, nonce) {
   }
 }
 
-async function readBoundedBody(request) {
+async function readBoundedBody(request, signal) {
   if (!(request instanceof Request)) return { status: "body_unreadable" }
   let reader
+  let cancel
   try {
+    if (signal?.aborted) return { status: "body_unreadable" }
     const body = request.clone().body
     if (body === null) return { status: "body_invalid" }
     reader = body.getReader()
+    const stopped = new Promise((resolve) => {
+      cancel = () => {
+        void reader.cancel().catch(() => undefined)
+        resolve(null)
+      }
+      signal?.addEventListener("abort", cancel, { once: true })
+      if (signal?.aborted) cancel()
+    })
     const chunks = []
     let size = 0
     while (true) {
-      const part = await reader.read()
+      const part = signal ? await Promise.race([reader.read(), stopped]) : await reader.read()
+      if (part === null) return { status: "body_unreadable" }
       if (part.done) break
       if (!(part.value instanceof Uint8Array)) return { status: "body_unreadable" }
       size += part.value.byteLength
@@ -303,6 +314,7 @@ async function readBoundedBody(request) {
   } catch {
     return { status: "body_unreadable" }
   } finally {
+    if (cancel) signal?.removeEventListener("abort", cancel)
     try {
       reader?.releaseLock()
     } catch {
@@ -422,7 +434,7 @@ function blankRecord(nonce, ordinal, status) {
   }
 }
 
-async function inspectRequest(event, { fsApi, opencodeDirectory, nonce, ordinal }) {
+export async function inspectRequest(event, { fsApi, opencodeDirectory, nonce, ordinal, signal }) {
   try {
     const model = event?.model
     if (
@@ -445,7 +457,7 @@ async function inspectRequest(event, { fsApi, opencodeDirectory, nonce, ordinal 
     }
     const expectations = await readExpectations(fsApi, opencodeDirectory, nonce)
     if (expectations === null) return blankRecord(nonce, ordinal, "expectations_unavailable")
-    const body = await readBoundedBody(event.request)
+    const body = await readBoundedBody(event.request, signal)
     if (body.status !== "parsed") return blankRecord(nonce, ordinal, body.status)
     const content = latestUserContent(body.document)
     if (content === null) return blankRecord(nonce, ordinal, "message_shape_unavailable")
@@ -469,7 +481,7 @@ async function syncDirectory(fsApi, directory) {
   }
 }
 
-async function publishRecord({ fsApi, directory, fileName, payload, maximum }) {
+export async function publishRecord({ fsApi, directory, fileName, payload, maximum, shouldPublish = () => true }) {
   let handle
   let pendingCreated = false
   let finalPublished = false
@@ -486,10 +498,13 @@ async function publishRecord({ fsApi, directory, fileName, payload, maximum }) {
     await handle.sync()
     await handle.close()
     handle = undefined
+    if (!shouldPublish()) throw new Error("publication_cancelled")
     await fsApi.link(pendingPath, finalPath)
     finalPublished = true
+    if (!shouldPublish()) throw new Error("publication_cancelled")
     await fsApi.unlink(pendingPath)
     await syncDirectory(fsApi, directory)
+    if (!shouldPublish()) throw new Error("publication_cancelled")
     return encoded.byteLength
   } catch {
     if (handle !== undefined) await handle.close().catch(() => undefined)

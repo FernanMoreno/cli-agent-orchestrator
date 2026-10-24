@@ -279,6 +279,7 @@ RUN_SOURCE_MODULES = (
     "cli_agent_orchestrator.utils.mcp_tool_policy",
     "test.live_provider.opencode_http_tool_offer_observer",
     "test.live_provider.opencode_http_prompt_observer",
+    "test.live_provider.opencode_http_response_argument_observer",
     "cli_agent_orchestrator.utils.opencode_config",
     "cli_agent_orchestrator.utils.opencode_ownership",
     "cli_agent_orchestrator.utils.opencode_v2",
@@ -330,6 +331,9 @@ RUN_SOURCE_RELATIVE_PATHS = {
     ),
     "test.live_provider.opencode_http_prompt_observer": (
         "test/live_provider/opencode_http_prompt_observer.py"
+    ),
+    "test.live_provider.opencode_http_response_argument_observer": (
+        "test/live_provider/opencode_http_response_argument_observer.py"
     ),
     "cli_agent_orchestrator.utils.opencode_config": (
         "src/cli_agent_orchestrator/utils/opencode_config.py"
@@ -588,34 +592,29 @@ def _private_execution_copy_contract() -> bool:
     )
 
 
-def _source_files() -> list[str]:
-    tracked = subprocess.check_output(["git", "ls-files", "-z", *SOURCE_PATHS], cwd=REPO)
-    untracked = subprocess.check_output(
-        [
-            "git",
-            "ls-files",
-            "--others",
-            "--exclude-standard",
-            "-z",
-            "--",
-            *SOURCE_PATHS,
-        ],
+def _source_files(*, expected_head: str | None = None) -> list[str]:
+    head = expected_head if expected_head is not None else EXPECTED_HEAD
+    if head is None:
+        head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+    if type(head) is not str or re.fullmatch(r"[0-9a-f]{40}", head) is None:
+        raise GateError("source_head_invalid")
+    tracked = subprocess.check_output(
+        ["git", "ls-tree", "-r", "-z", "--name-only", head, "--", *SOURCE_PATHS],
         cwd=REPO,
     )
-    files = set()
-    index = 0
-    for raw in (tracked, untracked):
-        for item in raw.split(b"\0"):
-            if item:
-                if index % 64 == 0:
-                    _cancellation_checkpoint()
-                files.add(item.decode("utf-8"))
-                index += 1
+    files = []
+    for index, item in enumerate(tracked.split(b"\0")):
+        if item:
+            if index % 64 == 0:
+                _cancellation_checkpoint()
+            files.append(item.decode("utf-8"))
+    if not files:
+        raise GateError("source_file_inventory_empty")
     return sorted(files)
 
 
-def _source_fingerprints() -> dict[str, str]:
-    files = _source_files()
+def _source_fingerprints(*, expected_head: str | None = None) -> dict[str, str]:
+    files = _source_files(expected_head=expected_head)
     if not files:
         raise GateError("source_file_inventory_empty")
     fingerprints = {}
@@ -690,7 +689,7 @@ def _manifest_document_valid(
     ).hexdigest()
     if document.get("source_fingerprint_sha256") != fingerprint:
         return False
-    if set(source_hashes) != set(_source_files()):
+    if set(source_hashes) != set(_source_files(expected_head=expected_head)):
         return False
     if not _digest_shape(document.get("operator_auth_snapshot_sha256")):
         return False
@@ -825,7 +824,9 @@ def _load_run_manifest(
     ):
         raise GateError("private_run_manifest_contract_mismatch")
     try:
-        fingerprint = _source_fingerprints()
+        if not _source_head_tree_clean(expected_head):
+            raise GateError("source_head_or_runtime_tree_mismatch")
+        fingerprint = _source_fingerprints(expected_head=expected_head)
     except (OSError, subprocess.CalledProcessError):
         raise GateError("source_fingerprint_unavailable") from None
     if fingerprint != document["source_sha256s"]:
@@ -922,9 +923,45 @@ def _prepend_current_source() -> None:
     sys.path[:0] = list(SOURCE_ENTRIES)
 
 
-def _source_tree_clean() -> bool:
+def _source_head_tree_clean(expected_head: str) -> bool:
+    if type(expected_head) is not str or re.fullmatch(r"[0-9a-f]{40}", expected_head) is None:
+        return False
     try:
-        return _source_fingerprints() == (RUN_MANIFEST or {}).get("source_sha256s")
+        current_head = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=REPO, text=True
+        ).strip()
+        if current_head != expected_head:
+            return False
+        status = subprocess.check_output(
+            [
+                "git",
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+                "-z",
+                "--",
+                *SOURCE_PATHS,
+            ],
+            cwd=REPO,
+        )
+        return status == b""
+    except (OSError, subprocess.CalledProcessError):
+        return False
+
+
+def _source_tree_clean() -> bool:
+    expected_head = EXPECTED_HEAD
+    if expected_head is None:
+        try:
+            expected_head = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=REPO, text=True
+            ).strip()
+        except (OSError, subprocess.CalledProcessError):
+            return False
+    try:
+        return _source_head_tree_clean(expected_head) and _source_fingerprints(
+            expected_head=expected_head
+        ) == (RUN_MANIFEST or {}).get("source_sha256s")
     except (OSError, subprocess.CalledProcessError):
         return False
 
@@ -3103,6 +3140,24 @@ def _http_prompt_expectations(*, sender_id, nonce, phase_prompts):
     }
 
 
+def _http_response_expectations(*, nonce):
+    if type(nonce) is not str or re.fullmatch(r"[0-9a-f]{32}", nonce) is None:
+        raise GateError("http_response_expectation_context_invalid")
+    if type(PHASES) is not tuple or len(PHASES) != 2:
+        raise GateError("http_response_expectation_context_invalid")
+    messages = [message for _phase, message in PHASES]
+    try:
+        valid_messages = all(
+            type(message) is str and 0 < len(message.encode("utf-8", errors="strict")) <= 8192
+            for message in messages
+        )
+    except UnicodeEncodeError:
+        valid_messages = False
+    if not valid_messages:
+        raise GateError("http_response_expectation_context_invalid")
+    return {"schema_version": 1, "nonce": nonce, "phase_messages": messages}
+
+
 def _read_source_bound_prompt_file(relative):
     if relative not in {
         "test/live_provider/opencode_http_prompt_observer.py",
@@ -3126,6 +3181,54 @@ def _read_source_bound_prompt_file(relative):
         or _sha256(source) != expected
     ):
         raise GateError("http_prompt_source_binding_invalid")
+    return data
+
+
+_HTTP_RESPONSE_SOURCE_LIMITS = {
+    "test/live_provider/opencode_http_response_argument_observer.js": 128 * 1024,
+    "test/live_provider/opencode_http_response_protocol.js": 128 * 1024,
+    "test/live_provider/opencode_http_response_argument_observer.py": 128 * 1024,
+}
+
+
+def _read_source_bound_response_file(relative):
+    maximum = _HTTP_RESPONSE_SOURCE_LIMITS.get(relative)
+    expected = (RUN_MANIFEST or {}).get("source_sha256s", {}).get(relative)
+    if maximum is None or not _digest_shape(expected):
+        raise GateError("http_response_source_binding_invalid")
+    source = REPO / relative
+    try:
+        before = source.lstat()
+        if (
+            source.is_symlink()
+            or not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1
+            or before.st_size > maximum
+            or source.resolve(strict=True) != source.absolute()
+        ):
+            raise GateError("http_response_source_binding_invalid")
+        data = source.read_bytes()
+        after = source.lstat()
+    except GateError:
+        raise
+    except (OSError, RuntimeError, ValueError):
+        raise GateError("http_response_source_binding_invalid") from None
+    identity = lambda info: (
+        info.st_dev,
+        info.st_ino,
+        info.st_uid,
+        info.st_nlink,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+    if (
+        len(data) > maximum
+        or identity(before) != identity(after)
+        or hashlib.sha256(data).hexdigest() != expected
+        or _sha256(source) != expected
+    ):
+        raise GateError("http_response_source_binding_invalid")
     return data
 
 
@@ -3281,6 +3384,366 @@ def _capture_http_prompt_diagnostic_safely(**kwargs):
             "active_receipt_identity_attested": False,
             "acceptance_input_changed": False,
         }
+
+
+_HTTP_RESPONSE_PHASE_STATUSES = frozenset(
+    {
+        "exact",
+        "known_punctuation_variant",
+        "body_mismatch",
+        "target_call_missing",
+        "ambiguous_target_calls",
+        "unavailable",
+        "incomplete",
+        "not_observed",
+    }
+)
+_HTTP_RESPONSE_OBSERVER_STATUSES = frozenset({"observed", "incomplete", "unavailable"})
+_HTTP_RESPONSE_LEDGER_NAME_PATTERN = re.compile(r"response-[0-9]{4}\.json\Z")
+
+
+def _http_response_unavailable(reason):
+    return {
+        "schema": "spec025.t128.http-response-argument-diagnostic.v1",
+        "status": "unavailable",
+        "reason": reason,
+        "observation": {
+            "observer_status": "unavailable",
+            "trace_complete": False,
+            "overflow": None,
+            "request_count": None,
+            "response_count": None,
+            "durable_record_count": None,
+            "phase_results": [
+                {
+                    "phase_ordinal": phase,
+                    "status": "unavailable",
+                    "target_tool_call_count": None,
+                    "argument_exact": None,
+                    "known_punctuation_variant_exact": None,
+                    "expected_utf8_bytes": None,
+                    "observed_utf8_bytes": None,
+                }
+                for phase in (1, 2)
+            ],
+        },
+        "sealed_raw_copy_verified": False,
+        "active_receipt_identity_attested": False,
+        "acceptance_input_changed": False,
+    }
+
+
+def _project_http_response_observation(summary):
+    if type(summary) is not dict:
+        return None
+    status = summary.get("observer_status")
+    trace_complete = summary.get("trace_complete")
+    overflow = summary.get("overflow")
+    counters = tuple(
+        summary.get(key) for key in ("request_count", "response_count", "durable_record_count")
+    )
+    if (
+        status not in _HTTP_RESPONSE_OBSERVER_STATUSES
+        or type(trace_complete) is not bool
+        or (overflow is not None and type(overflow) is not bool)
+        or any(
+            value is not None and (type(value) is not int or not 0 <= value <= 16)
+            for value in counters
+        )
+    ):
+        return None
+    raw_phases = summary.get("phase_results")
+    if type(raw_phases) is not list or len(raw_phases) != 2:
+        return None
+    phases = []
+    for expected_phase, raw in enumerate(raw_phases, start=1):
+        if (
+            type(raw) is not dict
+            or type(raw.get("phase_ordinal")) is not int
+            or raw["phase_ordinal"] != expected_phase
+        ):
+            return None
+        phase_status = raw.get("status")
+        call_count = raw.get("target_tool_call_count")
+        exact = raw.get("argument_exact")
+        variant = raw.get("known_punctuation_variant_exact")
+        expected_bytes = raw.get("expected_utf8_bytes")
+        observed_bytes = raw.get("observed_utf8_bytes")
+        if (
+            phase_status not in _HTTP_RESPONSE_PHASE_STATUSES
+            or (
+                call_count is not None
+                and (type(call_count) is not int or not 0 <= call_count <= 32)
+            )
+            or (exact is not None and type(exact) is not bool)
+            or (variant is not None and type(variant) is not bool)
+            or (
+                expected_bytes is not None
+                and (type(expected_bytes) is not int or not 0 <= expected_bytes <= 8192)
+            )
+            or (
+                observed_bytes is not None
+                and (type(observed_bytes) is not int or not 0 <= observed_bytes <= 65536)
+            )
+        ):
+            return None
+        phases.append(
+            {
+                "phase_ordinal": expected_phase,
+                "status": phase_status,
+                "target_tool_call_count": call_count,
+                "argument_exact": exact,
+                "known_punctuation_variant_exact": variant,
+                "expected_utf8_bytes": expected_bytes,
+                "observed_utf8_bytes": observed_bytes,
+            }
+        )
+    return {
+        "observer_status": status,
+        "trace_complete": trace_complete,
+        "overflow": overflow,
+        "request_count": counters[0],
+        "response_count": counters[1],
+        "durable_record_count": counters[2],
+        "phase_results": phases,
+    }
+
+
+def _capture_http_response_argument_diagnostic(*, context, root, raw_dir, writers_dead):
+    if writers_dead is not True:
+        return _http_response_unavailable("writers_not_confirmed_dead")
+    if (
+        type(context) is not dict
+        or not isinstance(root, Path)
+        or root != _ACTIVE_PRIVATE_RUN_ROOT
+        or not isinstance(raw_dir, Path)
+        or raw_dir != EVIDENCE / "raw"
+        or context.get("working_directory") != root / "sender-workdir"
+        or context.get("directory")
+        != root / "sender-workdir/.opencode/http-response-argument-observation"
+        or type(context.get("nonce")) is not str
+        or re.fullmatch(r"[0-9a-f]{32}", context["nonce"]) is None
+        or any(
+            type(context.get(key)) is not bytes
+            for key in (
+                "plugin_bytes",
+                "protocol_bytes",
+                "prompt_plugin_bytes",
+                "prompt_expectation_bytes",
+                "expectation_bytes",
+            )
+        )
+    ):
+        return _http_response_unavailable("context_invalid")
+
+    work = context["working_directory"]
+    ledger = context["directory"]
+    opencode = work / ".opencode"
+    plugins = opencode / "plugins"
+    support = opencode / "cao-http-response-support"
+    directories = (root, work, opencode, plugins, support, ledger, EVIDENCE, raw_dir)
+    directory_identities = {}
+    try:
+        for directory in directories:
+            info = directory.lstat()
+            directory_identities[directory] = (info.st_dev, info.st_ino)
+            if (
+                directory.is_symlink()
+                or directory.resolve(strict=True) != directory
+                or not stat.S_ISDIR(info.st_mode)
+                or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != 0o700
+            ):
+                return _http_response_unavailable("private_directory_invalid")
+
+        prompt_source = _read_source_bound_prompt_file(
+            "test/live_provider/opencode_http_prompt_observer.js"
+        )
+        expected_prompt_plugin = _http_prompt_plugin_bytes(prompt_source, nonce=context["nonce"])
+        response_source = _read_source_bound_response_file(
+            "test/live_provider/opencode_http_response_argument_observer.js"
+        )
+        protocol_source = _read_source_bound_response_file(
+            "test/live_provider/opencode_http_response_protocol.js"
+        )
+        reader_relative = "test/live_provider/opencode_http_response_argument_observer.py"
+        reader_source = _read_source_bound_response_file(reader_relative)
+        reader_module = types.ModuleType("spec025_t128_http_response_reader")
+        reader_module.__file__ = str(REPO / reader_relative)
+        exec(compile(reader_source, reader_module.__file__, "exec"), reader_module.__dict__)
+        expected_response_plugin = reader_module.specialize_plugin_bytes(
+            response_source, context["nonce"]
+        )
+        if (
+            expected_prompt_plugin != context["prompt_plugin_bytes"]
+            or expected_response_plugin != context["plugin_bytes"]
+            or protocol_source != context["protocol_bytes"]
+        ):
+            return _http_response_unavailable("source_binding_mismatch")
+
+        prompt_plugin_path = plugins / "cao-http-prompt-observer.js"
+        response_plugin_path = plugins / "cao-http-response-argument-observer.js"
+        protocol_path = support / "opencode_http_response_protocol.js"
+        prompt_expectation_path = opencode / "http-prompt-expectations.json"
+        response_expectation_path = opencode / "http-response-argument-expectations.json"
+        installed_files = (
+            (prompt_plugin_path, context["prompt_plugin_bytes"], 128 * 1024),
+            (response_plugin_path, context["plugin_bytes"], 128 * 1024),
+            (protocol_path, context["protocol_bytes"], 128 * 1024),
+            (prompt_expectation_path, context["prompt_expectation_bytes"], 64 * 1024),
+            (response_expectation_path, context["expectation_bytes"], 64 * 1024),
+        )
+        for path, expected, maximum in installed_files:
+            if _read_owned_private_file(path, maximum=maximum) != expected:
+                return _http_response_unavailable("installed_source_mismatch")
+
+        if (
+            _read_source_bound_prompt_file("test/live_provider/opencode_http_prompt_observer.js")
+            != prompt_source
+        ):
+            return _http_response_unavailable("source_changed")
+        if (
+            _read_source_bound_response_file(
+                "test/live_provider/opencode_http_response_argument_observer.js"
+            )
+            != response_source
+            or _read_source_bound_response_file(
+                "test/live_provider/opencode_http_response_protocol.js"
+            )
+            != protocol_source
+            or _read_source_bound_response_file(reader_relative) != reader_source
+        ):
+            return _http_response_unavailable("source_changed")
+
+        names = []
+        with os.scandir(ledger) as entries:
+            for entry in entries:
+                if len(names) >= 17:
+                    return _http_response_unavailable("ledger_limit_exceeded")
+                names.append(entry.name)
+        names.sort()
+        if (
+            "seal.json" not in names
+            or len(names) > 17
+            or any(
+                name != "seal.json" and _HTTP_RESPONSE_LEDGER_NAME_PATTERN.fullmatch(name) is None
+                for name in names
+            )
+        ):
+            return _http_response_unavailable("ledger_shape_invalid")
+        ledger_snapshot = {}
+        for name in names:
+            ledger_snapshot[name] = _read_owned_private_file(
+                ledger / name, maximum=2048 if name == "seal.json" else 4096
+            )
+        ledger_bytes = sum(map(len, ledger_snapshot.values()))
+        total_bound = 128 * 1024 + 128 * 1024 + 128 * 1024 + 64 * 1024 + 64 * 1024 + 72 * 1024
+        snapshot_bytes = sum(len(item[1]) for item in installed_files) + ledger_bytes
+        if ledger_bytes > 72 * 1024 or snapshot_bytes > total_bound:
+            return _http_response_unavailable("ledger_limit_exceeded")
+
+        current_names = []
+        with os.scandir(ledger) as entries:
+            for entry in entries:
+                if len(current_names) >= 17:
+                    return _http_response_unavailable("ledger_limit_exceeded")
+                current_names.append(entry.name)
+        if sorted(current_names) != names:
+            return _http_response_unavailable("ledger_changed")
+
+        snapshot_root = raw_dir / "sender-http-response-argument-observer-copy"
+        snapshot_root.mkdir(mode=0o700)
+        _private_directory(snapshot_root, parent=raw_dir)
+        snapshot_opencode = _private_directory(snapshot_root / ".opencode", parent=snapshot_root)
+        snapshot_plugins = _private_directory(
+            snapshot_opencode / "plugins", parent=snapshot_opencode
+        )
+        snapshot_support = _private_directory(
+            snapshot_opencode / "cao-http-response-support", parent=snapshot_opencode
+        )
+        snapshot_ledger = _private_directory(
+            snapshot_opencode / "http-response-argument-observation", parent=snapshot_opencode
+        )
+        snapshot_files = (
+            (
+                snapshot_plugins / prompt_plugin_path.name,
+                context["prompt_plugin_bytes"],
+                128 * 1024,
+            ),
+            (snapshot_plugins / response_plugin_path.name, context["plugin_bytes"], 128 * 1024),
+            (snapshot_support / protocol_path.name, context["protocol_bytes"], 128 * 1024),
+            (
+                snapshot_opencode / prompt_expectation_path.name,
+                context["prompt_expectation_bytes"],
+                64 * 1024,
+            ),
+            (
+                snapshot_opencode / response_expectation_path.name,
+                context["expectation_bytes"],
+                64 * 1024,
+            ),
+        )
+        for path, content, maximum in snapshot_files:
+            _write_private(path, content)
+            if _read_owned_private_file(path, maximum=maximum) != content:
+                return _http_response_unavailable("snapshot_copy_mismatch")
+        for name, content in ledger_snapshot.items():
+            destination = snapshot_ledger / name
+            _write_private(destination, content)
+            maximum = 2048 if name == "seal.json" else 4096
+            if (
+                _read_owned_private_file(destination, maximum=maximum) != content
+                or _read_owned_private_file(ledger / name, maximum=maximum) != content
+            ):
+                return _http_response_unavailable("snapshot_copy_mismatch")
+
+        for directory, identity in directory_identities.items():
+            info = directory.lstat()
+            if (
+                directory.is_symlink()
+                or not stat.S_ISDIR(info.st_mode)
+                or (info.st_dev, info.st_ino) != identity
+                or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) != 0o700
+            ):
+                return _http_response_unavailable("private_directory_changed")
+
+        if (
+            _read_source_bound_response_file(reader_relative) != reader_source
+            or _read_source_bound_prompt_file("test/live_provider/opencode_http_prompt_observer.js")
+            != prompt_source
+        ):
+            return _http_response_unavailable("source_changed")
+        summary = reader_module.read_observation(snapshot_ledger, expected_nonce=context["nonce"])
+        observation = _project_http_response_observation(summary)
+        if observation is None:
+            return _http_response_unavailable("reader_projection_invalid")
+        return {
+            "schema": "spec025.t128.http-response-argument-diagnostic.v1",
+            "status": (
+                "sealed_observation_available"
+                if observation["observer_status"] in {"observed", "incomplete"}
+                else "unavailable"
+            ),
+            "reason": (
+                "none"
+                if observation["observer_status"] in {"observed", "incomplete"}
+                else "observer_unavailable"
+            ),
+            "observation": observation,
+            "sealed_raw_copy_verified": True,
+            "active_receipt_identity_attested": False,
+            "acceptance_input_changed": False,
+        }
+    except BaseException:
+        return _http_response_unavailable("collector_error")
+
+
+def _capture_http_response_argument_diagnostic_safely(**kwargs):
+    try:
+        return _capture_http_response_argument_diagnostic(**kwargs)
+    except BaseException:
+        return _http_response_unavailable("collector_error")
 
 
 def _http_tool_offer_contract(
@@ -5383,7 +5846,7 @@ def _run_enabled(
     receipt["source_head"] = head
     if head != EXPECTED_HEAD or not _source_tree_clean():
         raise GateError("source_head_or_runtime_tree_mismatch")
-    source_before = _source_fingerprints()
+    source_before = _source_fingerprints(expected_head=EXPECTED_HEAD)
     if source_before != runner_manifest.get("source_sha256s"):
         raise GateError("source_file_hash_mismatch")
     receipt["source_file_count"] = len(source_before)
@@ -5409,6 +5872,7 @@ def _run_enabled(
         from test.fixtures.cao_server import _pick_free_port, _start_cao_server
         from test.live_provider import message_api_restart_live as message_live
         from test.live_provider import opencode_http_prompt_observer as prompt_observer
+        from test.live_provider import opencode_http_response_argument_observer as response_observer
         from test.live_provider import opencode_http_tool_offer_observer as offer_observer
         from test.live_provider import opencode_interaction_journey as journey
         from test.postgres import fixtures as postgres_fixtures
@@ -5585,6 +6049,7 @@ def _run_enabled(
     offer_nonces: dict[str, str] = {}
     offer_directories: dict[str, Path] = {}
     prompt_context: dict[str, Any] | None = None
+    response_context: dict[str, Any] | None = None
     failures: set[str] = set()
     start = time.monotonic()
     original_run_environment = dict(os.environ)
@@ -5677,6 +6142,70 @@ def _run_enabled(
             "expectation_bytes": None,
         }
         receipt["http_prompt_observer_installed"] = True
+        response_context = {
+            "working_directory": role_workdirs["sender"],
+            "directory": role_workdirs["sender"] / ".opencode/http-response-argument-observation",
+            "nonce": prompt_nonce,
+            "plugin_bytes": None,
+            "protocol_bytes": None,
+            "prompt_plugin_bytes": derived_prompt,
+            "prompt_expectation_bytes": None,
+            "expectation_bytes": None,
+        }
+
+        response_plugin_relative = "test/live_provider/opencode_http_response_argument_observer.js"
+        response_protocol_relative = "test/live_provider/opencode_http_response_protocol.js"
+        response_plugin_source = _read_source_bound_response_file(response_plugin_relative)
+        response_protocol_source = _read_source_bound_response_file(response_protocol_relative)
+        private_response_plugin_source = observer_dir / "opencode-http-response-sender.js"
+        private_response_protocol_source = observer_dir / "opencode-http-response-protocol.js"
+        _write_private(private_response_plugin_source, response_plugin_source)
+        _write_private(private_response_protocol_source, response_protocol_source)
+        if (
+            _read_owned_private_file(
+                private_response_plugin_source,
+                maximum=response_observer.MAX_PLUGIN_BYTES,
+            )
+            != response_plugin_source
+            or _read_owned_private_file(
+                private_response_protocol_source,
+                maximum=response_observer.MAX_PROTOCOL_BYTES,
+            )
+            != response_protocol_source
+        ):
+            raise GateError("http_response_source_copy_mismatch")
+        derived_response_plugin = response_observer.specialize_plugin_bytes(
+            response_plugin_source, prompt_nonce
+        )
+        response_context["plugin_bytes"] = derived_response_plugin
+        response_context["protocol_bytes"] = response_protocol_source
+        response_ledger = response_observer.install_project_plugin(
+            working_directory=role_workdirs["sender"],
+            source_path=private_response_plugin_source,
+            protocol_source_path=private_response_protocol_source,
+            nonce=prompt_nonce,
+        )
+        response_plugin_installed = _read_owned_private_file(
+            role_workdirs["sender"] / ".opencode/plugins/cao-http-response-argument-observer.js",
+            maximum=response_observer.MAX_PLUGIN_BYTES,
+        )
+        response_protocol_installed = _read_owned_private_file(
+            role_workdirs["sender"]
+            / ".opencode/cao-http-response-support/opencode_http_response_protocol.js",
+            maximum=response_observer.MAX_PROTOCOL_BYTES,
+        )
+        prompt_plugin_installed = _read_owned_private_file(
+            role_workdirs["sender"] / ".opencode/plugins/cao-http-prompt-observer.js",
+            maximum=prompt_observer.MAX_PLUGIN_BYTES,
+        )
+        if (
+            response_plugin_installed != derived_response_plugin
+            or response_protocol_installed != response_protocol_source
+            or prompt_plugin_installed != derived_prompt
+        ):
+            raise GateError("http_response_plugin_install_mismatch")
+        response_context["directory"] = response_ledger
+        receipt["http_response_argument_observer_installed"] = True
         receipt["private_run_root_path_sha256"] = hashlib.sha256(
             os.fsencode(str(root.resolve(strict=True)))
         ).hexdigest()
@@ -6333,6 +6862,22 @@ def _run_enabled(
         if json.loads(expected_bytes) != expected_prompt_document:
             raise GateError("http_prompt_expectation_copy_mismatch")
         prompt_context["expectation_bytes"] = expected_bytes
+
+        if response_context is None:
+            raise GateError("http_response_observer_context_unavailable")
+        expected_response_document = _http_response_expectations(nonce=prompt_nonce)
+        response_expectation_path = response_observer.write_expectations(
+            working_directory=role_workdirs["sender"],
+            document=expected_response_document,
+        )
+        response_expectation_bytes = _read_owned_private_file(
+            response_expectation_path,
+            maximum=response_observer.MAX_EXPECTATION_BYTES,
+        )
+        if json.loads(response_expectation_bytes) != expected_response_document:
+            raise GateError("http_response_expectation_copy_mismatch")
+        response_context["prompt_expectation_bytes"] = expected_bytes
+        response_context["expectation_bytes"] = response_expectation_bytes
 
         first_row_identity = None
         first_api_identity = None
@@ -7310,6 +7855,19 @@ def _run_enabled(
                 writers_dead=(
                     api_processes_confirmed_dead is True and tmux_processes_confirmed_dead is True
                 ),
+            )
+
+        if response_context is not None:
+            receipt["sender_http_response_argument_diagnostic"] = (
+                _capture_http_response_argument_diagnostic_safely(
+                    context=response_context,
+                    root=root,
+                    raw_dir=cleanup_locals.get("raw_dir"),
+                    writers_dead=(
+                        api_processes_confirmed_dead is True
+                        and tmux_processes_confirmed_dead is True
+                    ),
+                )
             )
 
         if pg_context is not None:
