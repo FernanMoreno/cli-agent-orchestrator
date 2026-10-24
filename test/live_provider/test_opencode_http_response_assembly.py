@@ -38,7 +38,7 @@ const cleanup=await module.default.setup({session:{hook:async(name,fn)=>{
   hooks.set(name,fn);return {dispose:async()=>{}};
 }}});
 if(typeof cleanup!=='function'||hooks.size!==2)throw new Error('observer_not_started');
-for(const phase of (['exact','sse','sse_no_choice_index'].includes(mode)?[1,2]:[1])){
+for(const phase of (['exact','sse','sse_no_choice_index','sse_null_tools'].includes(mode)?[1,2]:[1])){
   const body=JSON.stringify({messages:[{role:'user',content:prompts.phase_prompts[phase-1]+
     prompts.receipt_prefix+'CAO-TURN-RECEIPT-'+'b'.repeat(32)+prompts.receipt_suffix}]});
   const request=new Request('https://example.invalid/PRIVATE_URL',{method:'POST',body,
@@ -56,6 +56,8 @@ for(const phase of (['exact','sse','sse_no_choice_index'].includes(mode)?[1,2]:[
     'data: '+JSON.stringify({choices:[{index:0,delta:7,finish_reason:'stop'}]})+'\n\n':mode.startsWith('sse')?
     'data: '+JSON.stringify({choices:[{...(mode==='sse_no_choice_index'?{}:{index:0}),
       delta:{tool_calls:[{index:0,...call}]}}]})+'\n\n'+
+    (mode==='sse_null_tools'?'data: '+JSON.stringify({choices:[{index:0,
+      delta:{tool_calls:null},finish_reason:null}]})+'\n\n':'')+
     'data: '+JSON.stringify({choices:[{...(mode==='sse_no_choice_index'?{}:{index:0}),
       delta:null,finish_reason:'tool_calls'}]})+'\n\n'+
     'data: [DONE]\n\n':JSON.stringify({choices:[{message:{role:'assistant',tool_calls:[call]},
@@ -72,7 +74,8 @@ await cleanup();
 
 
 @pytest.mark.parametrize(
-    "mode", ["exact", "variant", "identity", "sse", "bad_sse", "sse_no_choice_index"]
+    "mode",
+    ["exact", "variant", "identity", "sse", "bad_sse", "sse_no_choice_index", "sse_null_tools"],
 )
 def test_private_installed_js_hooks_and_strict_python_reader(
     tmp_path: Path, mode: str, monkeypatch
@@ -122,7 +125,7 @@ def test_private_installed_js_hooks_and_strict_python_reader(
     ]:
         assert private not in serialized
     first, second = diagnostic["phase_results"]
-    if mode in {"exact", "sse", "sse_no_choice_index"}:
+    if mode in {"exact", "sse", "sse_no_choice_index", "sse_null_tools"}:
         assert diagnostic["trace_complete"] is True
         assert first["status"] == second["status"] == "exact"
     elif mode == "variant":

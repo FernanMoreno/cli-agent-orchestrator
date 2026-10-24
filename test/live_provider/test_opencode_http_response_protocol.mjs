@@ -588,6 +588,20 @@ test("SSE binds a single SDK choice without its optional index", () => {
   assert.equal(ambiguous.reason, "ambiguous_response")
 })
 
+test("SSE treats SDK-null tool_calls as no fragment and still requires completion", () => {
+  const start = targetStart({ argumentsText: JSON.stringify({ message: EXPECTED }) })
+  const empty = { choices: [{ index: 0, delta: { tool_calls: null }, finish_reason: null }] }
+  const exact = sseResult([start, empty, { choices: [{ index: 0, delta: null, finish_reason: "tool_calls" }] }])
+  assert.equal(exact.status, "observed")
+  assert.equal(exact.argument_exact, true)
+  const incomplete = sseResult([start, empty])
+  assert.equal(incomplete.status, "unavailable")
+  assert.equal(incomplete.reason, "incomplete_response")
+  const absent = sseResult([empty, { choices: [{ index: 0, delta: null, finish_reason: "stop" }] }])
+  assert.equal(absent.status, "no_target_tool")
+  assert.equal(absent.target_tool_call_count, 0)
+})
+
 test("SSE null delta without a terminal signal remains incomplete", () => {
   const result = sseResult([
     targetStart({ argumentsText: JSON.stringify({ message: EXPECTED }) }),

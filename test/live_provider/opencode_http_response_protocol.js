@@ -468,7 +468,7 @@ function parseSseResponse(bodyText, expectedMessage, expectedToolName, expectedB
         fail("sse_delta")
       }
 
-      if (isRecord(delta) && Object.hasOwn(delta, "tool_calls")) {
+      if (isRecord(delta) && Object.hasOwn(delta, "tool_calls") && delta.tool_calls !== null) {
         if (!Array.isArray(delta.tool_calls)) fail("sse_delta")
         if (delta.tool_calls.length > MAX_TOOL_CALLS) fail("sse_tool_fragment")
         const eventIndexes = new Set()
