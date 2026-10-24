@@ -3477,3 +3477,68 @@ def test_receiver_completed_without_observed_output_is_not_a_wrong_ack(
         ),
     }
     assert runner._receiver_phase_failure_code(phase) == "receiver_ack_not_observed"
+
+
+def test_actual_pre_resource_import_block_loads_every_pinned_runtime_module(tmp_path):
+    """The real import block must establish the source proof before any actor."""
+    repository = RUNNER_PATH.resolve().parents[3]
+    worker = r"""
+import ast, importlib.util, json, socket, subprocess, sys, threading
+from pathlib import Path
+path = Path(sys.argv[1]).resolve()
+spec = importlib.util.spec_from_file_location('t121_actual_preflight_imports', path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+module._prepend_current_source()
+
+def no_runtime_io(*_args, **_kwargs):
+    raise AssertionError('pre-resource imports must not launch processes, threads or network')
+
+socket.socket.connect = no_runtime_io
+socket.create_connection = no_runtime_io
+class NoRuntimePopen(subprocess.Popen):
+    def __init__(self, *_args, **_kwargs):
+        no_runtime_io()
+
+subprocess.Popen = NoRuntimePopen
+threading.Thread.start = no_runtime_io
+function = next(node for node in ast.parse(path.read_text()).body
+                if isinstance(node, ast.FunctionDef) and node.name == '_run_enabled')
+blocks = [node for node in ast.walk(function) if isinstance(node, ast.Try)
+          and node.body and all(isinstance(item, ast.ImportFrom) for item in node.body)
+          and any(isinstance(item, ast.ImportFrom) and item.module == 'cli_agent_orchestrator.api'
+                  for item in node.body)]
+assert len(blocks) == 1
+namespace = dict(vars(module))
+exec(compile(ast.Module(body=blocks[0].body, type_ignores=[]), str(path), 'exec'), namespace)
+missing = [name for name in module.RUN_SOURCE_MODULES if name not in sys.modules]
+paths = {name: str(Path(sys.modules[name].__file__).resolve().relative_to(module.REPO))
+         for name in module.RUN_SOURCE_MODULES if name in sys.modules}
+print(json.dumps({'missing': missing, 'current_source_map_exact': module._runtime_source_modules_match(paths)}, sort_keys=True))
+"""
+    environment = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(tmp_path),
+        "XDG_CONFIG_HOME": str(tmp_path / "config"),
+        "XDG_DATA_HOME": str(tmp_path / "data"),
+        "XDG_CACHE_HOME": str(tmp_path / "cache"),
+        "PYTHONPATH": os.pathsep.join(
+            (str(repository / "src"), str(repository), str(repository / "test/live_provider"))
+        ),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "CAO_T104_REPOSITORY_ROOT": str(repository),
+        "CAO_TEST_POSTGRES_AUTOSTART": "0",
+    }
+    completed = subprocess.run(
+        [sys.executable, "-c", worker, str(RUNNER_PATH.resolve())],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    observed = json.loads(completed.stdout)
+    assert observed == {"missing": [], "current_source_map_exact": True}

@@ -4939,6 +4939,8 @@ def _run_enabled(
             opencode_permissions,
             opencode_policy,
             opencode_v2,
+            opencode_v2_result_binding,
+            opencode_v2_store,
         )
     except ModuleNotFoundError:
         raise GateError("current_source_import_missing") from None
