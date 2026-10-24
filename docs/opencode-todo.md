@@ -424,3 +424,6 @@ T116 integrado y verificado offline: caso generic_message v2 de dos herramientas
 
 
 T118 corregida y validada: diagnóstico v2 distingue entrada nativa ausente de duplicada sin cambiar errores históricos de v1, consultas ni gates.233 pruebas/154 subpruebas, composición5/0 y revisiones independientes pasan. Los fallos reales de v2 siguen abiertos; no se atribuyen al modelo ni al renderer. El PostgreSQL temporal padre ya terminó y se verificó la ausencia exacta de su contenedor/red, conservando los ajenos. [Detalle](../specs/025-provider-mcp-profiles/validation-t118.md).
+
+
+T119 integrada: el diagnóstico v2 ya lee su almacén real session_message/session_v2, con entrada actual, secuencia globalmente única, respuesta completada/agente/nonce y límites globales intactos; v1 conserva su lector. Control nativo sintético aislado y24/24 copias adversariales verifican el lector;248 pruebas/159 subpruebas, revisiones finales y composición5/0 pasan. No acredita causa histórica ni aceptación real actual de v2. Los nuevos lanzadores deberán fijar517 archivos; los anteriores permanecen cerrados. [Resultado](../specs/025-provider-mcp-profiles/validation-t119.md).

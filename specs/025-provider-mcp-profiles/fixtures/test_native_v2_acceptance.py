@@ -138,6 +138,8 @@ def test_failure_diagnostic_source_pins_and_shared_deadline_wiring():
     for filename in (
         "native_v2_text_probe.py",
         "test_native_v2_text_probe.py",
+        "native_v2_store.py",
+        "test_native_v2_store.py",
         "native_phase_readers.py",
         "native_v1_probe.py",
     ):

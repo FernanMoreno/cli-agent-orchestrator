@@ -67,6 +67,7 @@ REASONS = frozenset(
         "native_schema_mismatch",
         "user_parent_missing",
         "user_parent_not_unique",
+        "user_parent_not_current",
         "native_text_size_limit",
         "native_parts_limit",
         "assistant_receipt_not_unique",
@@ -371,7 +372,7 @@ def _native_text_parts(
     if time.monotonic() >= stop:
         raise ProbeFailure("deadline")
     fixtures = source_root / "specs/025-provider-mcp-profiles/fixtures"
-    helper_path = fixtures / "native_v1_probe.py"
+    helper_path = fixtures / "native_v2_store.py"
     try:
         if helper_path.resolve(strict=True) != helper_path or not stat.S_ISREG(
             helper_path.lstat().st_mode
@@ -381,8 +382,8 @@ def _native_text_parts(
             sys.path.insert(0, str(fixtures))
         import importlib
 
-        native_probe = importlib.import_module("native_v1_probe")
-        imported_path = Path(native_probe.__file__)
+        native_store = importlib.import_module("native_v2_store")
+        imported_path = Path(native_store.__file__)
         if imported_path.resolve(strict=True) != helper_path or not stat.S_ISREG(
             imported_path.lstat().st_mode
         ):
@@ -393,12 +394,13 @@ def _native_text_parts(
         raise ProbeFailure("source_root_invalid") from None
 
     try:
-        parts = native_probe._native_parts(database, nonce, stop, expected_agent=expected_agent)
-    except native_probe.ProbeError as exc:
+        parts = native_store._native_parts(database, nonce, stop, expected_agent=expected_agent)
+    except native_store.ProbeError as exc:
         reason = {
             "deadline": "deadline",
             "native_schema_mismatch": "native_schema_mismatch",
             "user_not_unique": "user_parent_not_unique",
+            "user_not_current": "user_parent_not_current",
             "parts_limit": "native_parts_limit",
             "text_size_or_type": "native_text_size_limit",
             "total_size": "native_text_size_limit",

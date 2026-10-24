@@ -238,6 +238,8 @@ SOURCE_PATHS = (
     "specs/025-provider-mcp-profiles/fixtures/test_native_v2_acceptance.py",
     "specs/025-provider-mcp-profiles/fixtures/native_v2_text_probe.py",
     "specs/025-provider-mcp-profiles/fixtures/test_native_v2_text_probe.py",
+    "specs/025-provider-mcp-profiles/fixtures/native_v2_store.py",
+    "specs/025-provider-mcp-profiles/fixtures/test_native_v2_store.py",
     "specs/025-provider-mcp-profiles/fixtures/native_phase_readers.py",
     "specs/025-provider-mcp-profiles/fixtures/native_v1_probe.py",
 )

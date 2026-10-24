@@ -1,0 +1,183 @@
+{
+  "all_passed": true,
+  "global_acceptance_claimed": false,
+  "helper_sha256": "12a749f2aa942cc97859bab59dce1442997c8c508b8c16ba6b37d25e4ac805da",
+  "model_acceptance_claimed": false,
+  "raw_model_response_observed": false,
+  "raw_text_exported": false,
+  "real_model_used": false,
+  "results": [
+    {
+      "accepted": true,
+      "case": "actual_native_positive",
+      "passed": true,
+      "reason": null,
+      "returned_text": true
+    },
+    {
+      "accepted": true,
+      "case": "legacy_decoys_do_not_override",
+      "passed": true,
+      "reason": null,
+      "returned_text": true
+    },
+    {
+      "accepted": true,
+      "case": "reasoning_tool_decoys_not_returned",
+      "passed": true,
+      "reason": null,
+      "returned_text": true
+    },
+    {
+      "accepted": false,
+      "case": "missing_user_rejected",
+      "passed": true,
+      "reason": "user_not_unique",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "duplicate_user_rejected",
+      "passed": true,
+      "reason": "user_not_unique",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "newer_user_rejects_stale_result",
+      "passed": true,
+      "reason": "user_not_current",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "ambiguous_native_user_sequence_rejected",
+      "passed": true,
+      "reason": "native_schema_mismatch",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "partial_unique_index_cannot_prove_sequence",
+      "passed": true,
+      "reason": "native_schema_mismatch",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "nonstring_user_text_rejected",
+      "passed": true,
+      "reason": "user_not_unique",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "assistant_before_user_rejected",
+      "passed": true,
+      "reason": "assistant_receipt_not_unique",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "foreign_assistant_session_rejected",
+      "passed": true,
+      "reason": "assistant_receipt_not_unique",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "wrong_agent_rejected",
+      "passed": true,
+      "reason": "native_agent_mismatch",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "incomplete_assistant_rejected",
+      "passed": true,
+      "reason": "assistant_receipt_not_unique",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "bool_completed_rejected",
+      "passed": true,
+      "reason": "assistant_receipt_not_unique",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "duplicate_nonce_assistants_rejected",
+      "passed": true,
+      "reason": "assistant_receipt_not_unique",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "split_nonce_rejected",
+      "passed": true,
+      "reason": "assistant_receipt_not_unique",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "oversize_text_rejected",
+      "passed": true,
+      "reason": "text_size_or_type",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "aggregate_size_rejected",
+      "passed": true,
+      "reason": "total_size",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "cross_candidate_global_bytes_rejected",
+      "passed": true,
+      "reason": "total_size",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "cross_candidate_global_parts_rejected",
+      "passed": true,
+      "reason": "parts_limit",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "text_part_limit_rejected",
+      "passed": true,
+      "reason": "parts_limit",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "malformed_json_rejected",
+      "passed": true,
+      "reason": "assistant_receipt_not_unique",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "legacy_only_never_fallback",
+      "passed": true,
+      "reason": "native_schema_mismatch",
+      "returned_text": false
+    },
+    {
+      "accepted": false,
+      "case": "expired_deadline_rejected",
+      "passed": true,
+      "reason": "deadline",
+      "returned_text": false
+    }
+  ],
+  "schema": "caos.spec025.t119.reader-replay.sanitized.v1",
+  "scope": "independent read-only native reader on copies of the synthetic control database",
+  "source_db_unchanged": true,
+  "synthetic_source_db_sha256": "010119362e533038466588856f8357335cc9b80a00cf9fd7354285e0e63a6f79"
+}

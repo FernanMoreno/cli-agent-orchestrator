@@ -448,3 +448,9 @@ T116 integrated offline result:148 configured pytest/212 offline native unittest
 
 
 T118 diagnostic-only completed: root real-SQLite RED1failed before helper integration, final233 configured native tests/154 subtests passed71.54s; style/diff and composition5/0 pass, completed Luna+Claude read reviews found no blocker. Missing versus duplicate native parents now distinguish fixed v2 unavailable reasons; historical v1 exceptions and all SQL/acceptance guards remain unchanged. This does not explain past native failures or close v2 acceptance. [T118](validation-t118.md).
+
+
+- [x] T119 [US4] [FR098/SC082] Establish native2.0.18 session_message schema/user-completed-assistant linkage with a bounded no-auth/network-isolated synthetic provider control; preserve evidence and implement/test a dedicated fail-closed v2 TEXT reader instead of the legacy v1 schema assumption. Independently review/integrate/check composition without changing acceptance or claiming historical model cause.
+
+
+T119 diagnostic storage correction complete: one isolated native2 synthetic control established actual session_message user/assistant fields and source-wire equality; dedicated v2 reader replaces legacy-table reuse. Root final248 pytest/159 subtests and24/24 independent native-copy checks pass after the partial-UNIQUE schema gap was reproduced and fixed. Completed Luna/Claude reviews and composition5/0 pass. Native model/ACK/Unicode cause remains unproved; current real v2 gates remain open and old515-file launchers closed. [T119](validation-t119.md), [synthetic storage](validation-t119-native-store-control.json), [reader replay](validation-t119-reader-replay.json).

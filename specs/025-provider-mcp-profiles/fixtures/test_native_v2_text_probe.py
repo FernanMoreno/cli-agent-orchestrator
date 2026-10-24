@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_ROOT = REPO_ROOT / "specs/025-provider-mcp-profiles/fixtures"
 sys.path[:0] = [str(FIXTURE_ROOT), str(REPO_ROOT / "src")]
 
-import native_v1_probe as native_v1_probe
+import native_v2_store as native_v2_store
 import native_v2_text_probe as probe
 
 NONCE = "CAO-TURN-RECEIPT-" + "b" * 32
@@ -102,23 +102,117 @@ class NativeV2TextProbeTests(unittest.TestCase):
         opencode.mkdir(mode=0o700)
         os.chmod(opencode, 0o700)
         self.db_path = opencode / "opencode.db"
+        self._replace_with_observed_v2_store()
+
+    def _replace_with_observed_v2_store(self, *, assistant=True, legacy_decoy=False):
+        """Use the observed v2 session_message/session_v2 layout in SQLite tests."""
         with closing(sqlite3.connect(self.db_path)) as db:
-            db.executescript("""CREATE TABLE message(id TEXT,session_id TEXT,data TEXT);
-                   CREATE TABLE part(id TEXT,message_id TEXT,session_id TEXT,data TEXT);
-                   CREATE TABLE credential(secret TEXT);""")
-            db.execute("INSERT INTO credential VALUES(?)", (SECRET,))
-            self._insert_message(db, "user-1", "user")
-            self._insert_part(db, "part-user", "user-1", "prompt\n" + NONCE)
-            self._insert_message(
-                db,
-                "assistant-1",
-                "assistant",
-                parentID="user-1",
-                agent=AGENT,
-                time={"completed": 1},
+            db.executescript("""DROP TABLE IF EXISTS part;
+                   DROP TABLE IF EXISTS message;
+                   DROP TABLE IF EXISTS credential;
+                   DROP TABLE IF EXISTS session_message;
+                   DROP TABLE IF EXISTS session_v2;
+                   CREATE TABLE session_v2 (
+                     id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
+                     slug TEXT NOT NULL, directory TEXT NOT NULL,
+                     version TEXT NOT NULL, cost REAL NOT NULL DEFAULT 0,
+                     time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL
+                   );
+                   CREATE TABLE session_message (
+                     id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+                     type TEXT NOT NULL, seq INTEGER NOT NULL,
+                     time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL,
+                     data TEXT NOT NULL
+                   );
+                   CREATE UNIQUE INDEX session_message_session_seq_idx
+                     ON session_message(session_id, seq);
+                   CREATE INDEX session_message_session_type_seq_idx
+                     ON session_message(session_id, type, seq);""")
+            db.execute(
+                "INSERT INTO session_v2 VALUES(?,?,?,?,?,?,?,?)",
+                ("session-1", "project-1", "slug", "/workspace", "2.0.18", 0, 1, 1),
             )
-            self._insert_part(db, "part-assistant", "assistant-1", probe.MARKER + "\n" + NONCE)
+            self._insert_v2_message(db, "switch-1", "agent-switched", 1, {"agent": AGENT})
+            self._insert_v2_message(
+                db,
+                "user-1",
+                "user",
+                5,
+                {
+                    "text": "Control nonce: " + NONCE + ". Do not send it again.",
+                    "files": [],
+                    "time": {"created": 2},
+                },
+            )
+            if assistant:
+                self._insert_v2_message(
+                    db,
+                    "assistant-1",
+                    "assistant",
+                    8,
+                    {
+                        "agent": AGENT,
+                        "content": [{"type": "text", "text": probe.MARKER + "\n" + NONCE}],
+                        "time": {"created": 3, "streamed": 4, "completed": 5},
+                        "finish": "stop",
+                        "rawFinish": "stop",
+                    },
+                )
+            self._insert_v2_message(db, "idle-1", "idle", 13, {"reason": "completed"})
+            if legacy_decoy:
+                db.executescript("""CREATE TABLE message(id TEXT,session_id TEXT,data TEXT);
+                       CREATE TABLE part(id TEXT,message_id TEXT,session_id TEXT,data TEXT);""")
+                self._insert_message(db, "legacy-user", "user")
+                self._insert_part(db, "legacy-user-part", "legacy-user", "legacy\n" + NONCE)
+                self._insert_message(
+                    db,
+                    "legacy-assistant",
+                    "assistant",
+                    parentID="legacy-user",
+                    agent=AGENT,
+                    time={"completed": 1},
+                )
+                self._insert_part(
+                    db,
+                    "legacy-assistant-part",
+                    "legacy-assistant",
+                    probe.MARKER + "\n" + NONCE,
+                )
             db.commit()
+
+    @staticmethod
+    def _insert_v2_message(db, message_id, kind, seq, data):
+        db.execute(
+            "INSERT INTO session_message VALUES(?,?,?,?,?,?,?)",
+            (
+                message_id,
+                "session-1",
+                kind,
+                seq,
+                seq,
+                seq,
+                json.dumps(data, ensure_ascii=False),
+            ),
+        )
+
+    def _replace_v2_assistant_data(self, data):
+        with closing(self._db()) as db:
+            db.execute(
+                "UPDATE session_message SET data=? WHERE id='assistant-1'",
+                (json.dumps(data, ensure_ascii=False),),
+            )
+            db.commit()
+
+    def _replace_v2_assistant_text(self, text):
+        self._replace_v2_assistant_data(
+            {
+                "agent": AGENT,
+                "content": [{"type": "text", "text": text}],
+                "time": {"created": 3, "streamed": 4, "completed": 5},
+                "finish": "stop",
+                "rawFinish": "stop",
+            }
+        )
 
     @staticmethod
     def _insert_message(db, message_id, role, **extra):
@@ -157,6 +251,30 @@ class NativeV2TextProbeTests(unittest.TestCase):
         with patch.object(probe, "_receipt_digest", return_value=digest):
             return probe._observe_payload(request, TARGET)
 
+    def test_observed_v2_session_store_is_read_without_legacy_tables(self):
+        self._replace_with_observed_v2_store()
+        result = self._observe_payload()
+        self.assertEqual(result["status"], "observed")
+        self.assertIsNone(result["reason"])
+        self.assertTrue(result["user_parent_bound"])
+        self.assertTrue(result["assistant_turn_completed"])
+        self.assertTrue(result["assistant_agent_matches"])
+        self.assertEqual(result["native_text_part_count"], 1)
+        self.assertFalse(result["raw_text_exported"])
+        self.assertNotIn(NONCE, json.dumps(result))
+        self.assertNotIn(probe.MARKER, json.dumps(result, ensure_ascii=False))
+
+    def test_legacy_decoys_cannot_replace_missing_v2_assistant(self):
+        self._replace_with_observed_v2_store(assistant=False, legacy_decoy=True)
+        result = self._observe_payload()
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["reason"], "assistant_receipt_not_unique")
+        self.assertTrue(result["user_parent_bound"])
+        self.assertEqual(result["native_text_part_count"], 0)
+        self.assertFalse(result["raw_text_exported"])
+        self.assertNotIn(NONCE, json.dumps(result))
+        self.assertNotIn(probe.MARKER, json.dumps(result, ensure_ascii=False))
+
     def test_red_green_native_v2_parent_agent_and_receipt_binding(self):
         result = self._observe_payload()
         self.assertEqual(result["schema"], probe.SCHEMA)
@@ -176,10 +294,13 @@ class NativeV2TextProbeTests(unittest.TestCase):
     def test_native_sqlite_authorizer_denies_other_tables_and_mutations(self):
         db = self._db()
         try:
-            db.set_authorizer(native_v1_probe._authorizer)
+            db.execute("CREATE TABLE credential(secret TEXT)")
+            db.execute("INSERT INTO credential VALUES(?)", (SECRET,))
+            db.commit()
+            db.set_authorizer(native_v2_store._authorizer)
             for query in (
                 "SELECT secret FROM credential",
-                "DELETE FROM part",
+                "DELETE FROM session_message",
                 "ATTACH DATABASE ':memory:' AS extra",
             ):
                 with self.subTest(query=query), self.assertRaises(sqlite3.DatabaseError):
@@ -189,7 +310,7 @@ class NativeV2TextProbeTests(unittest.TestCase):
 
     def test_native_text_primitive_must_resolve_to_current_source_fixture(self):
         foreign = SimpleNamespace(__file__="/tmp/unpinned-native-v1-probe.py")
-        with patch.dict(sys.modules, {"native_v1_probe": foreign}):
+        with patch.dict(sys.modules, {"native_v2_store": foreign}):
             with self.assertRaises(probe.ProbeFailure) as raised:
                 probe._native_text_parts(
                     self.source_root,
@@ -231,30 +352,40 @@ class NativeV2TextProbeTests(unittest.TestCase):
         self.assertIn(result["reason"], {"ownership_missing", "owned_root_invalid"})
 
     def test_assistant_from_wrong_agent_is_unavailable(self):
-        with closing(self._db()) as db:
-            db.execute(
-                "UPDATE message SET data=? WHERE id='assistant-1'",
-                (
-                    json.dumps(
-                        {
-                            "role": "assistant",
-                            "parentID": "user-1",
-                            "agent": "foreign-agent",
-                            "time": {"completed": 1},
-                        }
-                    ),
-                ),
-            )
-            db.commit()
+        self._replace_v2_assistant_data(
+            {
+                "agent": "foreign-agent",
+                "content": [{"type": "text", "text": probe.MARKER + "\n" + NONCE}],
+                "time": {"created": 1, "completed": 2},
+            }
+        )
         result = self._observe_payload()
         self.assertEqual(result["status"], "unavailable")
         self.assertEqual(result["reason"], "native_agent_mismatch")
         self.assertIs(result["assistant_agent_matches"], False)
 
+    def test_newer_user_invalidates_the_prior_completed_assistant(self):
+        with closing(self._db()) as db:
+            self._insert_v2_message(db, "user-later", "user", 100, {"text": "new turn"})
+            db.commit()
+        result = self._observe_payload()
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["reason"], "user_parent_not_current")
+        self.assertTrue(result["active_receipt_bound"])
+        self.assertTrue(result["owned_major2_root"])
+        self.assertFalse(result["user_parent_bound"])
+        self.assertEqual(result["native_text_part_count"], 0)
+        self.assertFalse(result["raw_text_exported"])
+
     def test_active_nonce_requires_one_current_user_parent(self):
         with closing(self._db()) as db:
-            self._insert_message(db, "user-2", "user")
-            self._insert_part(db, "part-user-2", "user-2", "quoted\n" + NONCE)
+            self._insert_v2_message(
+                db,
+                "user-2",
+                "user",
+                15,
+                {"text": "quoted\n" + NONCE, "files": [], "time": {"created": 6}},
+            )
             db.commit()
         result = self._observe_payload()
         self.assertEqual(result["status"], "unavailable")
@@ -272,8 +403,7 @@ class NativeV2TextProbeTests(unittest.TestCase):
 
     def test_missing_active_user_parent_has_distinct_fixed_reason(self):
         with closing(self._db()) as db:
-            db.execute("DELETE FROM part WHERE message_id='user-1'")
-            db.execute("DELETE FROM message WHERE id='user-1'")
+            db.execute("DELETE FROM session_message WHERE id='user-1'")
             db.commit()
         result = self._observe_payload()
         self.assertEqual(result["status"], "unavailable")
@@ -318,44 +448,32 @@ class NativeV2TextProbeTests(unittest.TestCase):
 
     def test_openecode_v2_schema_mismatch_is_unavailable(self):
         with closing(sqlite3.connect(self.db_path)) as db:
-            db.execute("ALTER TABLE part RENAME TO old_part")
+            db.execute("ALTER TABLE session_message RENAME TO old_session_message")
             db.commit()
         result = self._observe_payload()
         self.assertEqual(result["status"], "unavailable")
         self.assertEqual(result["reason"], "native_schema_mismatch")
 
     def test_native_parts_must_be_closed_assistant_messages(self):
-        with closing(self._db()) as db:
-            db.execute(
-                "UPDATE message SET data=? WHERE id='assistant-1'",
-                (json.dumps({"role": "assistant", "parentID": "user-1", "agent": AGENT}),),
-            )
-            db.commit()
+        self._replace_v2_assistant_data(
+            {
+                "agent": AGENT,
+                "content": [{"type": "text", "text": probe.MARKER + "\n" + NONCE}],
+            }
+        )
         result = self._observe_payload()
         self.assertEqual(result["status"], "unavailable")
         self.assertEqual(result["reason"], "assistant_receipt_not_unique")
         self.assertTrue(result["user_parent_bound"])
 
     def test_oversized_native_text_is_rejected_before_projection(self):
-        with closing(self._db()) as db:
-            self._insert_part(
-                db,
-                "part-large",
-                "assistant-1",
-                "x" * (probe.TEXT_CAP + 1) + "\n" + NONCE,
-            )
-            db.commit()
+        self._replace_v2_assistant_text("x" * (probe.TEXT_CAP + 1) + "\n" + NONCE)
         result = self._observe_payload()
         self.assertEqual(result["status"], "unavailable")
         self.assertEqual(result["reason"], "native_text_size_limit")
 
     def test_native_assistant_parts_are_compared_without_exporting_text(self):
-        with closing(self._db()) as db:
-            db.execute(
-                "UPDATE part SET data=? WHERE id='part-assistant'",
-                (json.dumps({"type": "text", "text": "Validado ñ,\n中文.\n" + NONCE}),),
-            )
-            db.commit()
+        self._replace_v2_assistant_text("Validado ñ,\n中文.\n" + NONCE)
         result = self._observe_payload(rendered="Validado ñ, 中文.")
         self.assertEqual(result["status"], "observed")
         self.assertFalse(result["native_equals_rendered"])
@@ -375,23 +493,18 @@ class NativeV2TextProbeTests(unittest.TestCase):
             ("A\nCK", "native_text_contains_linebreak", False, False),
             ("A\u00a0CK", "ack_not_exact", False, False),
         )
-        with closing(self._db()) as db:
-            for body, classification, exact, contains in cases:
-                with self.subTest(shape=classification, exact=exact):
-                    db.execute(
-                        "UPDATE part SET data=? WHERE id='part-assistant'",
-                        (json.dumps({"type": "text", "text": body + "\n" + NONCE}),),
-                    )
-                    db.commit()
-                    result = self._observe_payload(expected_marker="ACK", rendered="ACK")
-                    self.assertEqual(result["status"], "observed")
-                    self.assertEqual(result["target_kind"], "ack")
-                    self.assertEqual(result["native_public"]["exact_marker"], exact)
-                    self.assertEqual(result["native_public"]["contains_marker"], contains)
-                    self.assertEqual(result["classification"], classification)
-                    self.assertEqual(result["native_equals_rendered"], body == "ACK")
-                    for forbidden in (body, NONCE, SECRET, str(self.run_root), str(self.config)):
-                        self.assertNotIn(forbidden, json.dumps(result, ensure_ascii=False))
+        for body, classification, exact, contains in cases:
+            with self.subTest(shape=classification, exact=exact):
+                self._replace_v2_assistant_text(body + "\n" + NONCE)
+                result = self._observe_payload(expected_marker="ACK", rendered="ACK")
+                self.assertEqual(result["status"], "observed")
+                self.assertEqual(result["target_kind"], "ack")
+                self.assertEqual(result["native_public"]["exact_marker"], exact)
+                self.assertEqual(result["native_public"]["contains_marker"], contains)
+                self.assertEqual(result["classification"], classification)
+                self.assertEqual(result["native_equals_rendered"], body == "ACK")
+                for forbidden in (body, NONCE, SECRET, str(self.run_root), str(self.config)):
+                    self.assertNotIn(forbidden, json.dumps(result, ensure_ascii=False))
 
     def test_public_result_kind_is_bound_to_requested_ack_target(self):
         result = probe.observe_bounded(
@@ -413,12 +526,7 @@ class NativeV2TextProbeTests(unittest.TestCase):
         self.assertEqual(result["target_kind"], "ack")
 
     def test_ack_removes_only_one_active_nonce_line_delimiter(self):
-        with closing(self._db()) as db:
-            db.execute(
-                "UPDATE part SET data=? WHERE id='part-assistant'",
-                (json.dumps({"type": "text", "text": "ACK\n" + NONCE + "\n"}),),
-            )
-            db.commit()
+        self._replace_v2_assistant_text("ACK\n" + NONCE + "\n")
         result = self._observe_payload(expected_marker="ACK", rendered="ACK")
         self.assertEqual(result["status"], "observed")
         self.assertTrue(result["native_public"]["exact_marker"])
