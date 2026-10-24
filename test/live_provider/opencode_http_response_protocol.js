@@ -260,7 +260,7 @@ function validateResponseCall(call, expectedToolName) {
     !isUnicodeScalarString(call.function.name) ||
     typeof call.function.arguments !== "string"
   ) {
-    fail("malformed_response")
+    fail("json_shape")
   }
   return {
     id: call.id,
@@ -273,7 +273,7 @@ function validateResponseCall(call, expectedToolName) {
 function parseJsonResponse(bodyText, expectedMessage, expectedToolName, expectedBytes) {
   let document
   try {
-    document = parseJsonWithoutDuplicateKeys(bodyText, "malformed_response")
+    document = parseJsonWithoutDuplicateKeys(bodyText, "json_syntax_or_duplicate")
   } catch (error) {
     return unavailable(
       error instanceof ParseFailure ? error.reason : "malformed_response",
@@ -282,21 +282,21 @@ function parseJsonResponse(bodyText, expectedMessage, expectedToolName, expected
   }
 
   if (!isRecord(document) || !Array.isArray(document.choices)) {
-    return unavailable("malformed_response", expectedBytes)
+    return unavailable("json_shape", expectedBytes)
   }
   if (document.choices.length === 0) return unavailable("incomplete_response", expectedBytes)
   if (document.choices.length !== 1) return unavailable("ambiguous_response", expectedBytes)
 
   const choice = document.choices[0]
   if (!isRecord(choice) || !isRecord(choice.message)) {
-    return unavailable("malformed_response", expectedBytes)
+    return unavailable("json_shape", expectedBytes)
   }
   if (!Object.hasOwn(choice.message, "tool_calls")) return noTarget(expectedBytes)
   if (!Array.isArray(choice.message.tool_calls)) {
-    return unavailable("malformed_response", expectedBytes)
+    return unavailable("json_shape", expectedBytes)
   }
   if (choice.message.tool_calls.length > MAX_TOOL_CALLS) {
-    return unavailable("malformed_response", expectedBytes)
+    return unavailable("json_shape", expectedBytes)
   }
 
   const targetCalls = []
@@ -329,7 +329,7 @@ function parseSseEvents(text) {
 
   function processLine(line) {
     if (line.length === 0) {
-      if (events.length >= MAX_SSE_EVENTS) fail("malformed_response")
+      if (events.length >= MAX_SSE_EVENTS) fail("sse_event_envelope")
       events.push(dataLines.length === 0 ? null : dataLines.join("\n"))
       dataLines = []
       pendingEvent = false
@@ -385,7 +385,7 @@ function parseSseResponse(bodyText, expectedMessage, expectedToolName, expectedB
       eventIndexes.has(fragment.index) ||
       !isRecord(fragment.function)
     ) {
-      fail("malformed_response")
+      fail("sse_tool_fragment")
     }
     eventIndexes.add(fragment.index)
 
@@ -402,7 +402,7 @@ function parseSseResponse(bodyText, expectedMessage, expectedToolName, expectedB
         functionPart.name.length === 0 ||
         !isUnicodeScalarString(functionPart.name)
       ) {
-        fail("malformed_response")
+        fail("sse_initial_identity")
       }
       if (seenIds.has(fragment.id)) fail("ambiguous_response")
       seenIds.add(fragment.id)
@@ -420,7 +420,7 @@ function parseSseResponse(bodyText, expectedMessage, expectedToolName, expectedB
         (Object.hasOwn(fragment, "type") && fragment.type !== "function") ||
         (Object.hasOwn(functionPart, "name") && functionPart.name !== call.name)
       ) {
-        fail("malformed_response")
+        fail("sse_continuation_identity")
       }
     }
 
@@ -430,11 +430,11 @@ function parseSseResponse(bodyText, expectedMessage, expectedToolName, expectedB
         !isUnicodeScalarString(functionPart.name) ||
         functionPart.name !== call.name
       ) {
-        fail("malformed_response")
+        fail(existing === undefined ? "sse_initial_identity" : "sse_continuation_identity")
       }
     }
     if (Object.hasOwn(functionPart, "arguments")) {
-      if (typeof functionPart.arguments !== "string") fail("malformed_response")
+      if (typeof functionPart.arguments !== "string") fail("sse_arguments_fragment")
       if (call.target) {
         const partBytes = Buffer.byteLength(functionPart.arguments, "utf8")
         call.argumentBytes += partBytes
@@ -447,28 +447,28 @@ function parseSseResponse(bodyText, expectedMessage, expectedToolName, expectedB
   try {
     for (const eventData of parsedEvents.events) {
       if (eventData === null) continue
-      if (doneSeen) fail("malformed_response")
+      if (doneSeen) fail("sse_terminal_order")
       if (eventData === "[DONE]") {
         doneSeen = true
         continue
       }
 
-      const event = parseJsonWithoutDuplicateKeys(eventData, "malformed_response")
-      if (!isRecord(event) || !Array.isArray(event.choices)) fail("malformed_response")
+      const event = parseJsonWithoutDuplicateKeys(eventData, "json_syntax_or_duplicate")
+      if (!isRecord(event) || !Array.isArray(event.choices)) fail("sse_event_envelope")
       if (event.choices.length > 1) fail("ambiguous_response")
       if (event.choices.length === 0) continue
-      if (finishSeen) fail("malformed_response")
+      if (finishSeen) fail("sse_terminal_order")
 
       const choice = event.choices[0]
-      if (!isRecord(choice) || choice.index !== 0) fail("malformed_response")
+      if (!isRecord(choice) || choice.index !== 0) fail("sse_choice")
       const delta = choice.delta
       if (delta !== undefined && delta !== null && !isRecord(delta)) {
-        fail("malformed_response")
+        fail("sse_delta")
       }
 
       if (isRecord(delta) && Object.hasOwn(delta, "tool_calls")) {
-        if (!Array.isArray(delta.tool_calls)) fail("malformed_response")
-        if (delta.tool_calls.length > MAX_TOOL_CALLS) fail("malformed_response")
+        if (!Array.isArray(delta.tool_calls)) fail("sse_delta")
+        if (delta.tool_calls.length > MAX_TOOL_CALLS) fail("sse_tool_fragment")
         const eventIndexes = new Set()
         for (const fragment of delta.tool_calls) {
           applyToolFragment(fragment, eventIndexes)
@@ -481,7 +481,7 @@ function parseSseResponse(bodyText, expectedMessage, expectedToolName, expectedB
           typeof choice.finish_reason !== "string" ||
           !TERMINAL_FINISH_REASONS.has(choice.finish_reason)
         ) {
-          fail("malformed_response")
+          fail("sse_finish_reason")
         }
         finishSeen = true
       }

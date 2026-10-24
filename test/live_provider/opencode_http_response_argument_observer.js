@@ -21,6 +21,10 @@ const PARSER_REASONS = new Set([
   "none", "unsupported_content_type", "body_oversized", "malformed_response",
   "ambiguous_response", "incomplete_response", "malformed_arguments",
   "arguments_oversized", "invalid_expectation",
+  "json_syntax_or_duplicate", "json_shape", "sse_event_envelope", "sse_choice",
+  "sse_delta", "sse_tool_fragment", "sse_initial_identity",
+  "sse_continuation_identity", "sse_arguments_fragment", "sse_terminal_order",
+  "sse_finish_reason",
 ])
 
 function identity(info) {

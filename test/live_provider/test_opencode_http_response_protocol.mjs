@@ -290,7 +290,16 @@ test("JSON rejects duplicate keys, malformed JSON, and unknown target argument k
       expectedMessage: EXPECTED,
     }),
   )
-  assert.equal(duplicateOuter.reason, "malformed_response")
+  assert.equal(duplicateOuter.reason, "json_syntax_or_duplicate")
+
+  const invalidOuter = output(
+    parseResponseArguments({
+      bodyText: '{"choices":',
+      contentType: "application/json",
+      expectedMessage: EXPECTED,
+    }),
+  )
+  assert.equal(invalidOuter.reason, "json_syntax_or_duplicate")
 
   const duplicateArguments = jsonResult([call(TOOL, '{"message":"first","message":"second"}')])
   assert.equal(duplicateArguments.reason, "malformed_arguments")
@@ -368,6 +377,30 @@ test("JSON rejects non-scalar Unicode in body and target arguments", () => {
 
   const invalidArgument = jsonResult([call(TOOL, '{"message":"\\ud800"}')])
   assert.equal(invalidArgument.reason, "malformed_arguments")
+})
+
+test("JSON response shape failures have a fixed boundary reason", () => {
+  const invalidChoices = output(
+    parseResponseArguments({
+      bodyText: JSON.stringify({ choices: "private-invalid-shape" }),
+      contentType: "application/json",
+      expectedMessage: EXPECTED,
+    }),
+  )
+  assert.equal(invalidChoices.status, "unavailable")
+  assert.equal(invalidChoices.reason, "json_shape")
+
+  const invalidToolCalls = chatResponse([])
+  invalidToolCalls.choices[0].message.tool_calls = "private-invalid-shape"
+  const invalidCalls = output(
+    parseResponseArguments({
+      bodyText: JSON.stringify(invalidToolCalls),
+      contentType: "application/json",
+      expectedMessage: EXPECTED,
+    }),
+  )
+  assert.equal(invalidCalls.status, "unavailable")
+  assert.equal(invalidCalls.reason, "json_shape")
 })
 
 test("expectations and content types fail closed with distinct fixed reasons", () => {
@@ -450,7 +483,7 @@ test("outer JSON parser enforces depth and node limits", () => {
       parseResponseArguments({ bodyText, contentType: "application/json", expectedMessage: EXPECTED }),
     )
     assert.equal(result.status, "unavailable")
-    assert.equal(result.reason, "malformed_response")
+    assert.equal(result.reason, "json_syntax_or_duplicate")
   }
 
   const nestedArgument =
@@ -557,8 +590,40 @@ test("SSE rejects typed delta values other than object, null, or omission", () =
       { choices: [{ index: 0, delta, finish_reason: "tool_calls" }] },
     ])
     assert.equal(result.status, "unavailable")
-    assert.equal(result.reason, "malformed_response")
+    assert.equal(result.reason, "sse_delta")
   }
+})
+
+test("SSE choice, event-envelope, and argument-fragment failures stay distinct", () => {
+  const invalidChoice = sseResult([
+    { choices: [{ index: 1, delta: {}, finish_reason: "tool_calls" }] },
+  ])
+  assert.equal(invalidChoice.reason, "sse_choice")
+
+  const invalidEnvelope = sseResult([{ choices: "private-invalid-shape" }, "[DONE]"])
+  assert.equal(invalidEnvelope.reason, "sse_event_envelope")
+
+  const invalidToolCalls = sseResult([
+    { choices: [{ index: 0, delta: { tool_calls: {} }, finish_reason: null }] },
+    "[DONE]",
+  ])
+  assert.equal(invalidToolCalls.reason, "sse_delta")
+
+  const invalidArguments = sseResult([
+    targetStart(),
+    {
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [{ index: 0, function: { arguments: 7 } }],
+          },
+        },
+      ],
+    },
+    terminal(),
+  ])
+  assert.equal(invalidArguments.reason, "sse_arguments_fragment")
 })
 
 test("SSE without a terminal marker is incomplete even when arguments decode", () => {
@@ -592,13 +657,13 @@ test("SSE requires a valid terminal finish reason and no payload after terminal"
     targetStart({ argumentsText: JSON.stringify({ message: EXPECTED }) }),
     terminal("not-a-finish-reason"),
   ])
-  assert.equal(invalidTerminal.reason, "malformed_response")
+  assert.equal(invalidTerminal.reason, "sse_finish_reason")
 
   const lateCall = sseResult([
     terminal("tool_calls"),
     targetStart({ argumentsText: JSON.stringify({ message: EXPECTED }) }),
   ])
-  assert.equal(lateCall.reason, "malformed_response")
+  assert.equal(lateCall.reason, "sse_terminal_order")
 })
 
 test("SSE rejects missing indices, split initial names, and conflicting call identity", () => {
@@ -641,16 +706,26 @@ test("SSE rejects missing indices, split initial names, and conflicting call ide
   }
   const splitNameStart = targetStart({ name: "cao-mcp-server_" })
   const splitNameContinuation = targetContinuation(0, "", { name: "send_message" })
+  const missingIndexResult = sseResult([missingIndex, terminal()])
+  assert.equal(missingIndexResult.status, "unavailable")
+  assert.equal(missingIndexResult.reason, "sse_tool_fragment")
+
+  const noInitialNameResult = sseResult([
+    noInitialName,
+    targetContinuation(0, "", { name: TOOL }),
+    terminal(),
+  ])
+  assert.equal(noInitialNameResult.status, "unavailable")
+  assert.equal(noInitialNameResult.reason, "sse_initial_identity")
+
   for (const events of [
-    [missingIndex, terminal()],
-    [noInitialName, targetContinuation(0, "", { name: TOOL }), terminal()],
     [targetStart(), conflictingName, terminal()],
     [targetStart(), conflictingId, terminal()],
     [splitNameStart, splitNameContinuation, terminal()],
   ]) {
     const result = sseResult(events)
     assert.equal(result.status, "unavailable")
-    assert.equal(result.reason, "malformed_response")
+    assert.equal(result.reason, "sse_continuation_identity")
   }
 })
 
@@ -670,7 +745,10 @@ test("SSE rejects ambiguous choices, duplicate keys, duplicate target calls, and
     '{"choices":[{"index":0,"index":0,"delta":{}}]}',
     "[DONE]",
   ])
-  assert.equal(duplicateJsonKey.reason, "malformed_response")
+  assert.equal(duplicateJsonKey.reason, "json_syntax_or_duplicate")
+
+  const invalidJson = sseResult(['{"choices":', "[DONE]"])
+  assert.equal(invalidJson.reason, "json_syntax_or_duplicate")
 
   const duplicateArgs = sseResult([
     targetStart({ argumentsText: '{"message":"one","message":"two"}' }),
@@ -710,7 +788,7 @@ test("SSE rejects ambiguous choices, duplicate keys, duplicate target calls, and
     },
     "[DONE]",
   ])
-  assert.equal(tooManyCalls.reason, "malformed_response")
+  assert.equal(tooManyCalls.reason, "sse_tool_fragment")
 })
 
 test("SSE ignores unrelated argument values but still requires an unambiguous complete target call", () => {
@@ -778,7 +856,7 @@ test("SSE event and body bounds are enforced with fixed reasons", () => {
       expectedMessage: EXPECTED,
     }),
   )
-  assert.equal(tooManyEvents.reason, "malformed_response")
+  assert.equal(tooManyEvents.reason, "sse_event_envelope")
 
   const tooLargeBody = output(
     parseResponseArguments({

@@ -505,12 +505,30 @@ def test_read_observation_keeps_body_mismatch_distinct_from_unavailable(
     assert phase["known_punctuation_variant_exact"] is False
 
 
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "unsupported_content_type",
+        "json_syntax_or_duplicate",
+        "json_shape",
+        "sse_event_envelope",
+        "sse_choice",
+        "sse_delta",
+        "sse_tool_fragment",
+        "sse_initial_identity",
+        "sse_continuation_identity",
+        "sse_arguments_fragment",
+        "sse_terminal_order",
+        "sse_finish_reason",
+    ],
+)
 def test_read_observation_accepts_complete_mechanical_trace_with_unavailable_body(
     tmp_path: Path,
+    reason: str,
 ) -> None:
     record = _record(
         status="unavailable",
-        reason="unsupported_content_type",
+        reason=reason,
         target_count=None,
         argument_exact=False,
         expected_bytes=len(PHASE_MESSAGES[0].encode()),
