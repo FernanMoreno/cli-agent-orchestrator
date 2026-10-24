@@ -38,7 +38,7 @@ const cleanup=await module.default.setup({session:{hook:async(name,fn)=>{
   hooks.set(name,fn);return {dispose:async()=>{}};
 }}});
 if(typeof cleanup!=='function'||hooks.size!==2)throw new Error('observer_not_started');
-for(const phase of (mode==='exact'?[1,2]:[1])){
+for(const phase of (['exact','sse'].includes(mode)?[1,2]:[1])){
   const body=JSON.stringify({messages:[{role:'user',content:prompts.phase_prompts[phase-1]+
     prompts.receipt_prefix+'CAO-TURN-RECEIPT-'+'b'.repeat(32)+prompts.receipt_suffix}]});
   const request=new Request('https://example.invalid/PRIVATE_URL',{method:'POST',body,
@@ -48,11 +48,16 @@ for(const phase of (mode==='exact'?[1,2]:[1])){
   if(await request.text()!==body)throw new Error('request_changed');
   const original=expectation.phase_messages[phase-1];
   const message=mode==='variant'?original.slice(0,-1)+'。':original;
-  const wire=JSON.stringify({choices:[{message:{role:'assistant',tool_calls:[{
+  const call={
     id:'PRIVATE_CALL_ID',type:'function',function:{name:'cao-mcp-server_send_message',
       arguments:JSON.stringify({message,receiver_id:'PRIVATE_RECEIVER'})}
-  }]},finish_reason:'tool_calls'}]});
-  const result=new Response(wire,{headers:{'content-type':'application/json'}});
+  };
+  const wire=mode==='sse'?
+    'data: '+JSON.stringify({choices:[{index:0,delta:{tool_calls:[{index:0,...call}]}}]})+'\n\n'+
+    'data: '+JSON.stringify({choices:[{index:0,delta:null,finish_reason:'tool_calls'}]})+'\n\n'+
+    'data: [DONE]\n\n':JSON.stringify({choices:[{message:{role:'assistant',tool_calls:[call]},
+      finish_reason:'tool_calls'}]});
+  const result=new Response(wire,{headers:{'content-type':mode==='sse'?'text/event-stream':'application/json'}});
   const actual=mode==='identity'?new Request('https://example.invalid/OTHER',{method:'POST',body}):request;
   if(hooks.get('http.response')({...event,request:actual,response:result})!==undefined)
     throw new Error('response_callback_blocked');
@@ -62,7 +67,7 @@ await cleanup();
 """
 
 
-@pytest.mark.parametrize("mode", ["exact", "variant", "identity"])
+@pytest.mark.parametrize("mode", ["exact", "variant", "identity", "sse"])
 def test_private_installed_js_hooks_and_strict_python_reader(
     tmp_path: Path, mode: str, monkeypatch
 ) -> None:
@@ -111,7 +116,7 @@ def test_private_installed_js_hooks_and_strict_python_reader(
     ]:
         assert private not in serialized
     first, second = diagnostic["phase_results"]
-    if mode == "exact":
+    if mode in {"exact", "sse"}:
         assert diagnostic["trace_complete"] is True
         assert first["status"] == second["status"] == "exact"
     elif mode == "variant":

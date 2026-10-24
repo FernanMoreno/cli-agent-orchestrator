@@ -523,6 +523,44 @@ test("SSE permits an empty usage-only choice after a valid terminal finish reaso
   assert.equal(result.argument_exact, true)
 })
 
+test("SSE accepts SDK-null or omitted delta on a terminal finish chunk", () => {
+  const exact = sseResult([
+    targetStart({ argumentsText: JSON.stringify({ message: EXPECTED }) }),
+    { choices: [{ index: 0, delta: null, finish_reason: "tool_calls" }] },
+  ])
+  assert.equal(exact.status, "observed")
+  assert.equal(exact.argument_exact, true)
+
+  const variant = EXPECTED.slice(0, -1) + "。"
+  const omittedDelta = sseResult([
+    targetStart({ argumentsText: JSON.stringify({ message: variant }) }),
+    { choices: [{ index: 0, finish_reason: "tool_calls" }] },
+  ])
+  assert.equal(omittedDelta.status, "observed")
+  assert.equal(omittedDelta.known_punctuation_variant_exact, true)
+})
+
+test("SSE null delta without a terminal signal remains incomplete", () => {
+  const result = sseResult([
+    targetStart({ argumentsText: JSON.stringify({ message: EXPECTED }) }),
+    { choices: [{ index: 0, delta: null, finish_reason: null }] },
+  ])
+
+  assert.equal(result.status, "unavailable")
+  assert.equal(result.reason, "incomplete_response")
+  assert.equal(result.target_tool_call_count, null)
+})
+
+test("SSE rejects typed delta values other than object, null, or omission", () => {
+  for (const delta of ["invalid", [], 1, false]) {
+    const result = sseResult([
+      { choices: [{ index: 0, delta, finish_reason: "tool_calls" }] },
+    ])
+    assert.equal(result.status, "unavailable")
+    assert.equal(result.reason, "malformed_response")
+  }
+})
+
 test("SSE without a terminal marker is incomplete even when arguments decode", () => {
   const result = sseResult([
     targetStart({ argumentsText: JSON.stringify({ message: EXPECTED }) }),

@@ -460,19 +460,17 @@ function parseSseResponse(bodyText, expectedMessage, expectedToolName, expectedB
       if (finishSeen) fail("malformed_response")
 
       const choice = event.choices[0]
-      if (
-        !isRecord(choice) ||
-        choice.index !== 0 ||
-        !isRecord(choice.delta)
-      ) {
+      if (!isRecord(choice) || choice.index !== 0) fail("malformed_response")
+      const delta = choice.delta
+      if (delta !== undefined && delta !== null && !isRecord(delta)) {
         fail("malformed_response")
       }
 
-      if (Object.hasOwn(choice.delta, "tool_calls")) {
-        if (!Array.isArray(choice.delta.tool_calls)) fail("malformed_response")
-        if (choice.delta.tool_calls.length > MAX_TOOL_CALLS) fail("malformed_response")
+      if (isRecord(delta) && Object.hasOwn(delta, "tool_calls")) {
+        if (!Array.isArray(delta.tool_calls)) fail("malformed_response")
+        if (delta.tool_calls.length > MAX_TOOL_CALLS) fail("malformed_response")
         const eventIndexes = new Set()
-        for (const fragment of choice.delta.tool_calls) {
+        for (const fragment of delta.tool_calls) {
           applyToolFragment(fragment, eventIndexes)
         }
       }
