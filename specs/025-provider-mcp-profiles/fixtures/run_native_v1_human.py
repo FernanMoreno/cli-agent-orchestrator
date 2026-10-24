@@ -84,21 +84,27 @@ if subprocess.check_output(
     text=True,
 ).strip():
     raise RuntimeError("source_runtime_tree_dirty")
-sourcefiles = set(
-    subprocess.check_output(
+sourcefiles = {
+    entry.decode("utf-8")
+    for entry in subprocess.check_output(
         [
             "git",
-            "ls-files",
+            "ls-tree",
+            "-r",
+            "-z",
+            "--name-only",
+            expected_head,
+            "--",
             "src",
             "test/live_provider",
             "test/fixtures/cao_server.py",
             "test/postgres/fixtures.py",
         ],
         cwd=repo,
-        text=True,
-    ).splitlines()
-)
-if len(sourcefiles) != 507 or sourcefiles != set(m["source_files"]):
+    ).split(b"\0")
+    if entry
+}
+if not sourcefiles or sourcefiles != set(m["source_files"]):
     raise RuntimeError("source_inventory_mismatch")
 required_artifacts = {
     "specs/025-provider-mcp-profiles/fixtures/" + name
@@ -314,7 +320,7 @@ receipt = {
     "acceptance_claimed": False,
     "original_model_acceptance_claimed": False,
     "global_acceptance_claimed": False,
-    "source_pin_file_count": 507,
+    "source_pin_file_count": len(sourcefiles),
     "generation_gate_bound": True,
     "generation_receipt_sha256": m["generation_receipt_sha256"],
     "Claude": "read review only; no Claude provider execution",

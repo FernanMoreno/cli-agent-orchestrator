@@ -1,0 +1,102 @@
+{
+  "case_gates_closed": true,
+  "case_id": "collaboration",
+  "cleanup_failures": [],
+  "elapsed_seconds": 81.728,
+  "error_code": "message_phase_acceptance_mismatch",
+  "full_source_cleanup_predicate_verified": true,
+  "global_acceptance_claimed": false,
+  "mcp_incoming_argument_diagnostic": {
+    "acceptance_input_changed": false,
+    "expected_phase_count": 2,
+    "observations": [
+      {
+        "exact": false,
+        "ordinal": 1,
+        "status": "compared",
+        "utf8_length": 50
+      }
+    ],
+    "observed_count": 1,
+    "reason": "none",
+    "schema": "spec025.t122.send-message-argument-diagnostic.v1",
+    "sealed_raw_copy_verified": true,
+    "status": "observed_prefix",
+    "two_phase_arguments_exact": false
+  },
+  "minimum_admission_mib": 9187,
+  "native_acceptance_claimed": false,
+  "operator_auth_unchanged": true,
+  "parent_pg_closed": false,
+  "phases": [
+    {
+      "agui_redacted_one_notification": true,
+      "durable_turn_completed": true,
+      "elapsed_seconds": 36.351,
+      "last_receipt_unicode_verified": true,
+      "name": "before_restart",
+      "one_exact_pg_api_message": false,
+      "receiver_ack_exact": true,
+      "receiver_model_seconds": 11.195,
+      "receiver_turn_completed_once": true,
+      "sender_model_seconds": 31.798
+    }
+  ],
+  "private_native_receipt_sha256": "6d867edd93d2e1ea969bebd8d2ca5c786d1e5f95dff4b94b167bcc114e064bc7",
+  "private_state_removed": true,
+  "raw_model_response_observed": false,
+  "result": "FAILED",
+  "schema": "caos.spec025.t125.native-case.sanitized.v1",
+  "sender_http_prompt_diagnostic": {
+    "acceptance_input_changed": false,
+    "active_receipt_identity_attested": false,
+    "observation": {
+      "durable_record_count": 4,
+      "observer_status": "observed",
+      "overflow": false,
+      "phase_observation": "prefix",
+      "records": [
+        {
+          "last_instruction_present": true,
+          "ordinal": 1,
+          "phase_ordinal": 1,
+          "receipt_envelope_shape_valid": true,
+          "source_prompt_exact": true,
+          "status": "observed"
+        },
+        {
+          "last_instruction_present": false,
+          "ordinal": 2,
+          "phase_ordinal": null,
+          "receipt_envelope_shape_valid": false,
+          "source_prompt_exact": false,
+          "status": "model_mismatch"
+        },
+        {
+          "last_instruction_present": true,
+          "ordinal": 3,
+          "phase_ordinal": 1,
+          "receipt_envelope_shape_valid": true,
+          "source_prompt_exact": true,
+          "status": "observed"
+        },
+        {
+          "last_instruction_present": true,
+          "ordinal": 4,
+          "phase_ordinal": 1,
+          "receipt_envelope_shape_valid": true,
+          "source_prompt_exact": true,
+          "status": "observed"
+        }
+      ],
+      "request_count": 4,
+      "trace_complete": true
+    },
+    "schema": "spec025.t125.http-prompt-diagnostic.v1",
+    "sealed_raw_copy_verified": true,
+    "status": "sealed_observation_available"
+  },
+  "source_file_count": 527,
+  "source_head": "bed7cd44a2c2a4cc759c8953a476013aa7311f24",
+  "source_unchanged": true
+}

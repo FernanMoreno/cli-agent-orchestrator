@@ -18,6 +18,7 @@ import native_phase_observer as observers
 import native_phase_readers as phase_readers
 
 SOURCE = Path(__file__).with_name("run_native_v1_acceptance.py")
+HUMAN_SOURCE = Path(__file__).with_name("run_native_v1_human.py")
 
 
 def functions(*names):
@@ -28,6 +29,41 @@ def functions(*names):
         ],
         type_ignores=[],
     )
+
+
+def source_inventory_nodes(source_path=SOURCE):
+    tree = ast.parse(source_path.read_text())
+    for index, node in enumerate(tree.body[:-1]):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "sourcefiles" for target in node.targets
+        ):
+            continue
+        guard = tree.body[index + 1]
+        if not isinstance(guard, ast.If) or "source_inventory_mismatch" not in ast.unparse(guard):
+            raise AssertionError(
+                "actual source inventory guard not adjacent to inventory assignment"
+            )
+        return ast.Module(body=[node, guard], type_ignores=[])
+    raise AssertionError("actual source inventory assignment not found")
+
+
+def receipt_source_pin_count_expression(source_path=SOURCE):
+    tree = ast.parse(source_path.read_text())
+    receipt_assignment = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "receipt" for target in node.targets)
+    )
+    receipt = receipt_assignment.value
+    if not isinstance(receipt, ast.Dict):
+        raise AssertionError("receipt must remain a literal dictionary")
+    for key, value in zip(receipt.keys, receipt.values):
+        if isinstance(key, ast.Constant) and key.value == "source_pin_file_count":
+            return value
+    raise AssertionError("source_pin_file_count missing from actual receipt")
 
 
 class Clock:
@@ -1070,6 +1106,87 @@ class LauncherTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("execution_gate_closed", result.stderr)
         self.assertNotIn("FileNotFoundError", result.stderr)
+
+    def test_source_inventory_guard_uses_exact_pinned_head_tree_and_full_manifest(self):
+        expected_head = "a" * 40
+        scope = [
+            "src",
+            "test/live_provider",
+            "test/fixtures/cao_server.py",
+            "test/postgres/fixtures.py",
+        ]
+
+        def inventory(size):
+            values = [
+                "src/module with space.py",
+                "src/naïve_module.py",
+                "test/live_provider/test_with space.py",
+            ]
+            values.extend(
+                f"src/generated/inventory_{index:04d}.py" for index in range(size - len(values))
+            )
+            return values[:size]
+
+        def run_guard(paths, source_path=SOURCE, manifest_paths=None):
+            calls = []
+
+            def check_output(command, **kwargs):
+                calls.append((command, kwargs))
+                if kwargs.get("text") is True:
+                    return "\n".join(paths)
+                return b"\0".join(path.encode("utf-8") for path in paths) + (
+                    b"\0" if paths else b""
+                )
+
+            selected = paths if manifest_paths is None else manifest_paths
+            namespace = {
+                "expected_head": expected_head,
+                "repo": Path("/mock/repo"),
+                "m": {"source_files": dict.fromkeys(selected, "f" * 64)},
+                "subprocess": SimpleNamespace(check_output=check_output),
+            }
+            exec(
+                compile(source_inventory_nodes(source_path), str(source_path), "exec"),
+                namespace,
+            )
+            self.assertEqual(namespace["sourcefiles"], set(paths))
+            self.assertIn("src/naïve_module.py", namespace["sourcefiles"])
+            self.assertIn("src/module with space.py", namespace["sourcefiles"])
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(
+                calls[0][0],
+                ["git", "ls-tree", "-r", "-z", "--name-only", expected_head, "--", *scope],
+            )
+            self.assertEqual(calls[0][1], {"cwd": Path("/mock/repo")})
+
+        for source_path in (SOURCE, HUMAN_SOURCE):
+            with self.subTest(runner=source_path.name):
+                for size in (507, 513, 621):
+                    with self.subTest(size=size):
+                        paths = inventory(size)
+                        run_guard(paths, source_path)
+                        with self.assertRaisesRegex(RuntimeError, "source_inventory_mismatch"):
+                            run_guard(paths, source_path, paths[:-1])
+                        with self.assertRaisesRegex(RuntimeError, "source_inventory_mismatch"):
+                            run_guard(
+                                paths,
+                                source_path,
+                                [*paths, "test/live_provider/untracked.py"],
+                            )
+                with self.assertRaisesRegex(RuntimeError, "source_inventory_mismatch"):
+                    run_guard([], source_path, [])
+
+    def test_receipt_source_pin_file_count_is_derived_from_actual_inventory(self):
+        for source_path in (SOURCE, HUMAN_SOURCE):
+            with self.subTest(runner=source_path.name):
+                expression = receipt_source_pin_count_expression(source_path)
+                for size in (507, 513, 621):
+                    with self.subTest(size=size):
+                        value = eval(
+                            compile(ast.Expression(body=expression), str(source_path), "eval"),
+                            {"sourcefiles": {f"src/file_{index}.py" for index in range(size)}},
+                        )
+                        self.assertEqual(value, size)
 
     def test_optimized_python_cannot_disable_assertion_gates(self):
         result = subprocess.run(

@@ -1,0 +1,136 @@
+{
+  "both_message_phases_passed": true,
+  "capability_inventory_zero_before_first_input": true,
+  "case_gates_closed": true,
+  "case_id": "generic_message",
+  "cleanup_failures": [],
+  "elapsed_seconds": 84.873,
+  "error_code": null,
+  "full_source_cleanup_predicate_verified": true,
+  "global_acceptance_claimed": false,
+  "mcp_incoming_argument_observations": {
+    "send_message_argument_observations": [
+      {
+        "exact": true,
+        "ordinal": 1,
+        "status": "compared",
+        "utf8_length": 48
+      },
+      {
+        "exact": true,
+        "ordinal": 2,
+        "status": "compared",
+        "utf8_length": 51
+      }
+    ],
+    "send_message_argument_two_phase_exact": true
+  },
+  "minimum_admission_mib": 9170,
+  "native_acceptance_claimed": true,
+  "native_model_request_cao_mcp_surfaces_exact": true,
+  "no_full_eight_human_capability_claim": true,
+  "operator_auth_unchanged": true,
+  "parent_pg_closed": false,
+  "phases": [
+    {
+      "agui_redacted_one_notification": true,
+      "durable_turn_completed": true,
+      "elapsed_seconds": 12.302,
+      "last_receipt_unicode_verified": true,
+      "name": "before_restart",
+      "one_exact_pg_api_message": true,
+      "receiver_ack_exact": true,
+      "receiver_model_seconds": 5.278,
+      "receiver_turn_completed_once": true,
+      "sender_model_seconds": 11.106
+    },
+    {
+      "agui_redacted_one_notification": true,
+      "durable_turn_completed": true,
+      "elapsed_seconds": 9.829,
+      "last_receipt_unicode_verified": true,
+      "name": "after_restart",
+      "one_exact_pg_api_message": true,
+      "receiver_ack_exact": true,
+      "receiver_model_seconds": 5.575,
+      "receiver_turn_completed_once": true,
+      "sender_model_seconds": 9.244
+    }
+  ],
+  "private_native_receipt_sha256": "6c6e431ed84ebb8e47579a8fb4777aa8f447b70b4e490714e41a2b08a788858a",
+  "private_state_removed": true,
+  "raw_model_response_observed": false,
+  "receiver_model_request_zero_cao_mcp_tools": true,
+  "result": "PASS",
+  "schema": "caos.spec025.t125.native-case.sanitized.v1",
+  "sender_http_prompt_diagnostic": {
+    "acceptance_input_changed": false,
+    "active_receipt_identity_attested": false,
+    "observation": {
+      "durable_record_count": 6,
+      "observer_status": "observed",
+      "overflow": false,
+      "phase_observation": "both",
+      "records": [
+        {
+          "last_instruction_present": true,
+          "ordinal": 1,
+          "phase_ordinal": 1,
+          "receipt_envelope_shape_valid": true,
+          "source_prompt_exact": true,
+          "status": "observed"
+        },
+        {
+          "last_instruction_present": false,
+          "ordinal": 2,
+          "phase_ordinal": null,
+          "receipt_envelope_shape_valid": false,
+          "source_prompt_exact": false,
+          "status": "model_mismatch"
+        },
+        {
+          "last_instruction_present": true,
+          "ordinal": 3,
+          "phase_ordinal": 1,
+          "receipt_envelope_shape_valid": true,
+          "source_prompt_exact": true,
+          "status": "observed"
+        },
+        {
+          "last_instruction_present": true,
+          "ordinal": 4,
+          "phase_ordinal": 1,
+          "receipt_envelope_shape_valid": true,
+          "source_prompt_exact": true,
+          "status": "observed"
+        },
+        {
+          "last_instruction_present": true,
+          "ordinal": 5,
+          "phase_ordinal": 2,
+          "receipt_envelope_shape_valid": true,
+          "source_prompt_exact": true,
+          "status": "observed"
+        },
+        {
+          "last_instruction_present": true,
+          "ordinal": 6,
+          "phase_ordinal": 2,
+          "receipt_envelope_shape_valid": true,
+          "source_prompt_exact": true,
+          "status": "observed"
+        }
+      ],
+      "request_count": 6,
+      "trace_complete": true
+    },
+    "schema": "spec025.t125.http-prompt-diagnostic.v1",
+    "sealed_raw_copy_verified": true,
+    "status": "sealed_observation_available"
+  },
+  "sender_model_request_exact_two_cao_mcp_tools": true,
+  "source_file_count": 527,
+  "source_head": "bed7cd44a2c2a4cc759c8953a476013aa7311f24",
+  "source_unchanged": true,
+  "two_exact_pg_api_messages": true
+}
