@@ -1,0 +1,247 @@
+{
+  "api_worker_restarts": 0,
+  "case_gates_closed": true,
+  "case_id": "collaboration",
+  "cleanup_failures": [],
+  "elapsed_seconds": 67.856,
+  "error_code": "receiver_ack_not_exact",
+  "exact_owned_container_absent": true,
+  "exact_owned_network_absent": true,
+  "global_acceptance_claimed": false,
+  "historical_wrong_body_cause_demonstrated": false,
+  "mcp_incoming_argument_diagnostic": {
+    "acceptance_input_changed": false,
+    "expected_phase_count": 2,
+    "observations": [
+      {
+        "exact": true,
+        "ordinal": 1,
+        "status": "compared",
+        "utf8_length": 48
+      }
+    ],
+    "observed_count": 1,
+    "reason": "none",
+    "schema": "spec025.t122.send-message-argument-diagnostic.v1",
+    "sealed_raw_copy_verified": true,
+    "status": "observed_prefix",
+    "two_phase_arguments_exact": false
+  },
+  "minimum_admission_mib": 8529,
+  "native_full8_acceptance_claimed": false,
+  "native_process_identity_stable_on_api_restart": null,
+  "operator_auth_unchanged": true,
+  "parent_pg_closed": true,
+  "phases": [
+    {
+      "durable_turn_completed": true,
+      "elapsed_seconds": 19.937,
+      "last_receipt_unicode_verified": true,
+      "name": "before_restart",
+      "receiver_ack_exact": false,
+      "receiver_model_seconds": 5.45,
+      "receiver_turn_completed_once": true,
+      "sender_model_seconds": 19.184
+    }
+  ],
+  "private_native_receipt_sha256": "ad4f2378cce55b957fb38e8e54cc4c6eb57df2a855851fd01e99b0d17871b636",
+  "private_state_removed": true,
+  "provider_root_identity_stable_on_api_restart": null,
+  "receiver_last_observation": {
+    "acceptance_input_changed": false,
+    "body_state": "mapping",
+    "http_status": 200,
+    "observed_within_deadline": true,
+    "output_lines": 3,
+    "output_string_observed": true,
+    "output_utf8_bytes": 59,
+    "public_ack_exact": false
+  },
+  "receiver_native_text_diagnostic": {
+    "acceptance_input_changed": false,
+    "active_nonce_candidate_count": 1,
+    "active_receipt_bound": true,
+    "assistant_agent_matches": true,
+    "assistant_turn_completed": true,
+    "classification": "ack_not_exact",
+    "diagnostic_only": true,
+    "elapsed_ms": 782,
+    "native_equals_rendered": false,
+    "native_public": {
+      "characters": 58,
+      "compact_marker": false,
+      "contains_marker": true,
+      "exact_marker": false,
+      "lines": 3,
+      "standalone_marker_line": true
+    },
+    "native_text_part_count": 1,
+    "owned_major2_root": true,
+    "raw_model_response_observed": false,
+    "raw_text_exported": false,
+    "reason": null,
+    "rendered_public": {
+      "characters": 57,
+      "compact_marker": false,
+      "contains_marker": true,
+      "exact_marker": false,
+      "lines": 3,
+      "standalone_marker_line": true
+    },
+    "schema": "caos.t111.native-v2-text-probe.v1",
+    "status": "observed",
+    "target_kind": "ack",
+    "text_part_shapes": [
+      {
+        "characters": 58,
+        "compact_marker": false,
+        "contains_marker": true,
+        "exact_marker": false,
+        "lines": 3,
+        "standalone_marker_line": true
+      }
+    ],
+    "user_parent_bound": true,
+    "within_original_deadline": true,
+    "within_three_seconds": true
+  },
+  "response_argument_diagnostic_complete_both_phases": false,
+  "response_records": [
+    {
+      "argument_exact": false,
+      "clone_complete": true,
+      "expected_utf8_bytes": 48,
+      "known_punctuation_variant_exact": false,
+      "observed_utf8_bytes": null,
+      "ordinal": 1,
+      "original_not_replaced": true,
+      "phase_ordinal": 1,
+      "reason": "none",
+      "request_bound": true,
+      "schema_version": 1,
+      "status": "no_target_tool",
+      "target_tool_call_count": 0
+    },
+    {
+      "argument_exact": true,
+      "clone_complete": true,
+      "expected_utf8_bytes": 48,
+      "known_punctuation_variant_exact": false,
+      "observed_utf8_bytes": 48,
+      "ordinal": 2,
+      "original_not_replaced": true,
+      "phase_ordinal": 1,
+      "reason": "none",
+      "request_bound": true,
+      "schema_version": 1,
+      "status": "observed",
+      "target_tool_call_count": 1
+    },
+    {
+      "argument_exact": false,
+      "clone_complete": true,
+      "expected_utf8_bytes": 48,
+      "known_punctuation_variant_exact": false,
+      "observed_utf8_bytes": null,
+      "ordinal": 3,
+      "original_not_replaced": true,
+      "phase_ordinal": 1,
+      "reason": "none",
+      "request_bound": true,
+      "schema_version": 1,
+      "status": "no_target_tool",
+      "target_tool_call_count": 0
+    }
+  ],
+  "result": "FAILED",
+  "schema": "caos.spec025.t128.native-case.sanitized.v1",
+  "sender_http_prompt_diagnostic": {
+    "acceptance_input_changed": false,
+    "active_receipt_identity_attested": false,
+    "observation": {
+      "durable_record_count": 4,
+      "observer_status": "observed",
+      "overflow": false,
+      "phase_observation": "prefix",
+      "records": [
+        {
+          "last_instruction_present": true,
+          "ordinal": 1,
+          "phase_ordinal": 1,
+          "receipt_envelope_shape_valid": true,
+          "source_prompt_exact": true,
+          "status": "observed"
+        },
+        {
+          "last_instruction_present": false,
+          "ordinal": 2,
+          "phase_ordinal": null,
+          "receipt_envelope_shape_valid": false,
+          "source_prompt_exact": false,
+          "status": "model_mismatch"
+        },
+        {
+          "last_instruction_present": true,
+          "ordinal": 3,
+          "phase_ordinal": 1,
+          "receipt_envelope_shape_valid": true,
+          "source_prompt_exact": true,
+          "status": "observed"
+        },
+        {
+          "last_instruction_present": true,
+          "ordinal": 4,
+          "phase_ordinal": 1,
+          "receipt_envelope_shape_valid": true,
+          "source_prompt_exact": true,
+          "status": "observed"
+        }
+      ],
+      "request_count": 4,
+      "trace_complete": true
+    },
+    "schema": "spec025.t125.http-prompt-diagnostic.v1",
+    "sealed_raw_copy_verified": true,
+    "status": "sealed_observation_available"
+  },
+  "sender_http_response_argument_diagnostic": {
+    "acceptance_input_changed": false,
+    "active_receipt_identity_attested": false,
+    "observation": {
+      "durable_record_count": 3,
+      "observer_status": "observed",
+      "overflow": false,
+      "phase_results": [
+        {
+          "argument_exact": true,
+          "expected_utf8_bytes": 48,
+          "known_punctuation_variant_exact": false,
+          "observed_utf8_bytes": 48,
+          "phase_ordinal": 1,
+          "status": "exact",
+          "target_tool_call_count": 1
+        },
+        {
+          "argument_exact": null,
+          "expected_utf8_bytes": 51,
+          "known_punctuation_variant_exact": null,
+          "observed_utf8_bytes": null,
+          "phase_ordinal": 2,
+          "status": "not_observed",
+          "target_tool_call_count": null
+        }
+      ],
+      "request_count": 3,
+      "response_count": 3,
+      "trace_complete": true
+    },
+    "reason": "none",
+    "schema": "spec025.t128.http-response-argument-diagnostic.v1",
+    "sealed_raw_copy_verified": true,
+    "status": "sealed_observation_available"
+  },
+  "source_file_count": 535,
+  "source_head": "f9f5e833f852c0f2f0f7c76c75831dfc8544588b",
+  "source_unchanged": true,
+  "unrelated_resources_preserved": true
+}
