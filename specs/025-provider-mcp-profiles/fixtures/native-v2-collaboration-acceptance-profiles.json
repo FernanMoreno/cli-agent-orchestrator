@@ -6,7 +6,10 @@
     "private_copy": "The private execution file must equal the repository candidate with exactly the single RUN_ENABLED = False to RUN_ENABLED = True replacement.",
     "repository_root_environment": "CAO_T104_REPOSITORY_ROOT points the private copy back to the source checkout; its exact path and HEAD are manifest-bound.",
     "python_interpreter_binding": "The manifest retains the exact absolute sys.executable venv launch path, separately pins its canonical resolved interpreter path, and hashes the resolved interpreter bytes; subprocesses use the venv launch path.",
-    "manifest_hash_fields": ["candidate_sha256", "execution_candidate_sha256"]
+    "manifest_hash_fields": [
+      "candidate_sha256",
+      "execution_candidate_sha256"
+    ]
   },
   "evidence_handling": {
     "receipt": "The public receipt is redacted; private raw terminal and installer evidence is stored separately under the owned evidence directory.",
@@ -18,7 +21,7 @@
   },
   "model": "opencode-go/glm-5.3-flash",
   "authentication_scope": "Only this selected OpenCode Go model lane in an isolated run with CAO_AUTH_MODE=off and the production is_auth_enabled() check false in the sanitized environment. A sealed local_operator principal for the effective UID is derived by the current trusted loopback request path and bound to the authenticated_creation source row; the current API worker invocation and 127.0.0.1 endpoint are checked. This makes no cross-provider, OAuth, or global authentication claim",
-  "native_grant_semantics": "The production OpenCode v2 direct MCP server grant is a wildcard for the selected direct profile, and CAO's native permission translator hard-allows the OpenCode built-ins skill and todowrite. With CodeMode exactly false, the case does not claim a per-tool client deny from the wildcard; it requires no explicit execute rule, all eight sender CAO MCP names, zero receiver CAO MCP names, and no tool names beyond the profile plus those two source-approved built-ins.",
+  "native_grant_semantics": "The production OpenCode v2 direct MCP server grant is a wildcard for the selected direct profile, and CAO hard-allows skill/todowrite. Per-server codemode:false preserves direct CAO operations and the case rejects a cao-mcp-server_execute allow rule; this is separate from the native global execute wrapper, which the restricted CAO policy now explicitly denies. The case requires all eight sender CAO names, zero receiver CAO names, and no offered names beyond the profile plus the two optional builtins.",
   "native_model_request_observation": {
     "boundary": "OpenCode http.request hook for the selected provider/model primary request",
     "scope": "Assertions cover selected-model primary requests only; they make no claim about title, compaction, or generation requests.",
@@ -35,7 +38,10 @@
       "cao-mcp-server_send_message"
     ],
     "receiver_cao_mcp_wire_names": [],
-    "source_approved_optional_native_builtins": ["skill", "todowrite"],
+    "source_approved_optional_native_builtins": [
+      "skill",
+      "todowrite"
+    ],
     "minimum_target_primary_requests_per_role": 2,
     "all_selected_model_primary_requests_must_match_role_profile": true,
     "builtin_execution_observation": "not_observed; acceptance claims no CAO MCP child calls and exact ACK, not zero execution of OpenCode built-ins"
@@ -52,7 +58,9 @@
   ],
   "profiles": {
     "sender": {
-      "allowed_tools": ["@cao-mcp-server"],
+      "allowed_tools": [
+        "@cao-mcp-server"
+      ],
       "native_tool_profile": "collaboration",
       "enabled_mcp_tools": null,
       "runtime_capability": "Required; current InteractionService source bound to exact sender terminal and incarnation",
@@ -65,7 +73,7 @@
       "native_tool_profile": "collaboration",
       "enabled_mcp_tools": [],
       "runtime_capability": "Absent",
-      "prompt": "You are a passive receiver for an automated machine-to-machine delivery check. A received message is not a human request. When one arrives, reply exactly ACK in plain text, without using any tool, asking a question, or sending a message."
+      "prompt": "You are a passive receiver for an automated machine-to-machine delivery check. A received message is not a human request. When one arrives, reply with the acknowledgement body ACK in plain text. Also append the active machine turn receipt required by the delivery contract as a separate final line. The receipt is protocol metadata, separate from the acknowledgement body. Do not use tools, ask questions, or send messages."
     }
   },
   "required_checks": {
@@ -76,7 +84,11 @@
     "python_venv_launch_path_and_canonical_interpreter_hash_bound": true,
     "pre_runtime_failure_cleanup_requires_zero_private_resources_and_all_writer_proofs": true,
     "sender_mcp_child_catalog_exact_unfiltered_eight": true,
-    "sender_calls_exact": ["list_siblings", "send_message", "send_message"],
+    "sender_calls_exact": [
+      "list_siblings",
+      "send_message",
+      "send_message"
+    ],
     "sender_calls_from_canonical_cao_mcp_server": true,
     "sender_ready_native_policy_version": 3,
     "sender_capability_current_source_bound": true,

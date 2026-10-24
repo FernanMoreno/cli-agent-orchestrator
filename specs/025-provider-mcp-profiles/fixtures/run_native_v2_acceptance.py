@@ -881,10 +881,12 @@ def _profile_contract(role: str) -> tuple[list[str], list[str] | None, str]:
         allowed = []
         enabled = []
         body = (
-            "You are a passive receiver for an automated machine-to-machine delivery "
-            "check. A received message is not a human request. When one arrives, "
-            "reply exactly ACK in plain text, without using any tool, asking a "
-            "question, or sending a message."
+            "You are a passive receiver for an automated machine-to-machine delivery check. A "
+            "received message is not a human request. When one arrives, reply with the "
+            "acknowledgement body ACK in plain text. Also append the active machine turn receipt "
+            "required by the delivery contract as a separate final line. The receipt is protocol "
+            "metadata, separate from the acknowledgement body. Do not use tools, ask questions, "
+            "or send messages."
         )
     else:
         raise ValueError("invalid_role")
@@ -4097,6 +4099,24 @@ def _capture_receiver_native_failure_diagnostic(context, pane_observation, deadl
     )
 
 
+def _receiver_phase_failure_code(phase):
+    if phase.get("receiver_turn_completed_once") is not True:
+        return "receiver_turn_not_completed_once"
+    if phase.get("receiver_ack_exact") is True:
+        return None
+    observation = phase.get("receiver_last_observation")
+    if (
+        phase.get("receiver_ack_exact") is False
+        and type(observation) is dict
+        and observation.get("http_status") == 200
+        and observation.get("body_state") == "mapping"
+        and observation.get("output_string_observed") is True
+        and observation.get("observed_within_deadline") is True
+    ):
+        return "receiver_ack_not_exact"
+    return "receiver_ack_not_observed"
+
+
 def _receiver_last_observation(http_status, body, in_time, *, parse_failed=False):
     text = body.get("output") if type(body) is dict and http_status == 200 else None
     try:
@@ -5524,8 +5544,9 @@ def _run_enabled(
                 receiver_output_in_time,
                 parse_failed=receiver_output_parse_failed,
             )
-            if phase["receiver_ack_exact"] is not True:
-                raise GateError("receiver_ack_not_exact")
+            receiver_failure_code = _receiver_phase_failure_code(phase)
+            if receiver_failure_code is not None:
+                raise GateError(receiver_failure_code)
             _write_private(raw_dir / f"phase-{index + 1}-screen.private", last_viewport)
             _write_private(
                 raw_dir / f"phase-{index + 1}-pg.private",

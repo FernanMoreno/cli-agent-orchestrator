@@ -1,0 +1,26 @@
+{
+  "acceptance_claimed": false,
+  "active_nonce_only_in_echoed_delivery_contract": true,
+  "active_nonce_sha_matches_captured_pg_receipt": true,
+  "api_or_pg_or_model_called": false,
+  "api_output_read_in_actual_case": false,
+  "assistant_suffix_has_active_receipt": false,
+  "candidate_exact_ack": true,
+  "candidate_utf8_bytes": 3,
+  "durable_result_verified": false,
+  "evidence_kind": "pure_source_parser_replay_of_owned_frozen_frame",
+  "executed_source_head": "76b3389252584b02c62e7ae1117754e0679cce1d",
+  "model_or_renderer_cause_proven": false,
+  "native_status_backend_io_disabled": true,
+  "private_frame_sha256": "db835d90549bd3e5dd41c78934fe7cb1083457d69997e952d7a8be87f3cf0cca",
+  "private_pg_receipt_sha256": "8897e971884c8b32ad561bccbe7498a6052fb9b1cfc74c5bb08ab161caf83458",
+  "schema": "caos.spec025.t117.r6-parser-replay.v1",
+  "source_extractor_returned_candidate": true,
+  "source_sha256s": {
+    "src/cli_agent_orchestrator/providers/base.py": "b96e807e8c7719ae9f741cdc0360733635e59c836477f8e39b4c0fa12abea3a4",
+    "src/cli_agent_orchestrator/providers/opencode_cli.py": "17fbe202a07778e8da0668257bb824297900ed26ac85207d00f5404e03a7c7d2",
+    "src/cli_agent_orchestrator/services/inbox_service.py": "c22dff567e0c2ec1abd5e56616b5befa572a2500d267c932d7b936b6fdb464bc",
+    "src/cli_agent_orchestrator/services/terminal_service.py": "6bc03674863a30698c33587f8d1d0d05df12e9ef40699fa4a1dd300f6884d1e8"
+  },
+  "tui_local_status_completed": true
+}

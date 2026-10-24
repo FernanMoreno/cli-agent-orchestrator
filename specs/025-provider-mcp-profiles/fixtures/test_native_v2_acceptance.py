@@ -2612,3 +2612,68 @@ def test_acceptance_requires_exact_receiver_acknowledgement(monkeypatch):
     assert not runner._acceptance_contract(unrestricted_retention)
     receipt["phases"][0]["receiver_ack_exact"] = False
     assert not runner._acceptance_contract(receipt)
+
+
+def test_receiver_profile_separates_ack_body_from_required_delivery_receipt():
+    canonical_path = (
+        runner.REPO
+        / "specs/025-provider-mcp-profiles/fixtures/native-message-acceptance-profiles.json"
+    )
+    canonical = json.loads(canonical_path.read_text())["profiles"]["receiver"]
+    allowed, enabled, prompt = runner._profile_contract("receiver")
+    assert prompt == canonical["prompt"]
+    assert allowed == enabled == []
+    assert runner._receiver_ack_exact("ACK") is True
+    assert runner._receiver_ack_exact("ACK\nCAO-TURN-RECEIPT-" + "a" * 32) is False
+
+
+@pytest.mark.parametrize(
+    ("completed", "ack", "expected"),
+    [
+        (False, None, "receiver_turn_not_completed_once"),
+        (None, False, "receiver_turn_not_completed_once"),
+        (1, True, "receiver_turn_not_completed_once"),
+        (False, True, "receiver_turn_not_completed_once"),
+        (True, False, "receiver_ack_not_exact"),
+        (True, None, "receiver_ack_not_observed"),
+        (True, 1, "receiver_ack_not_observed"),
+        (True, True, None),
+    ],
+)
+def test_receiver_failure_code_distinguishes_unread_turn_from_nonexact_ack(
+    completed, ack, expected
+):
+    phase = {
+        "receiver_turn_completed_once": completed,
+        "receiver_ack_exact": ack,
+        "receiver_last_observation": runner._receiver_last_observation(
+            200, {"output": "ACK" if ack is True else "WRONG"}, True
+        ),
+    }
+    assert runner._receiver_phase_failure_code(phase) == expected
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "in_time", "parse_failed"),
+    [
+        (None, None, False, False),
+        (202, None, True, False),
+        (500, {"output": "WRONG"}, True, False),
+        (200, None, True, True),
+        (200, [], True, False),
+        (200, {}, True, False),
+        (200, {"output": None}, True, False),
+        (200, {"output": "WRONG"}, False, False),
+    ],
+)
+def test_receiver_completed_without_observed_output_is_not_a_wrong_ack(
+    status, body, in_time, parse_failed
+):
+    phase = {
+        "receiver_turn_completed_once": True,
+        "receiver_ack_exact": False,
+        "receiver_last_observation": runner._receiver_last_observation(
+            status, body, in_time, parse_failed=parse_failed
+        ),
+    }
+    assert runner._receiver_phase_failure_code(phase) == "receiver_ack_not_observed"
