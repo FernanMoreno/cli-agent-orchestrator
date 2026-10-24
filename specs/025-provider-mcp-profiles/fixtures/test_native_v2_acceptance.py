@@ -465,6 +465,40 @@ def test_offline_self_check_executes_existing_output_range_controls():
     assert result["success"] is True
     assert result["checks"]["private_output_range_controls"] is True
     assert result["checks"]["http_offer_observer_case_bound"] is True
+    generic = runner._self_check(runner.GENERIC_MESSAGE_CASE_ID)
+    assert generic["success"] is True
+    assert generic["schema"] == "spec025.t116.native-v2-generic-message-self-check.v1"
+    assert generic["checks"]["selected_case_profile_exact"] is True
+    assert "sender_has_full_collaboration_grant" not in generic["checks"]
+    assert generic["checks"]["default_collaboration_case_has_full_grant"] is True
+    assert generic["checks"]["generic_case_exact_two_tool_catalog_and_no_human_capability"] is True
+
+
+def test_cli_case_is_a_closed_source_choice_before_any_execution(monkeypatch, capsys):
+    monkeypatch.setattr(
+        sys, "argv", [str(RUNNER_PATH), "--case", "generic_message", "--self-check"]
+    )
+    assert runner.main() == 0
+    assert json.loads(capsys.readouterr().out)["success"] is True
+
+    monkeypatch.setattr(sys, "argv", [str(RUNNER_PATH), "--case", "arbitrary", "--go"])
+    with pytest.raises(SystemExit) as error:
+        runner.main()
+    assert error.value.code == 2
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [str(RUNNER_PATH), "--case", "generic_message", "--derive-execution-copy", "/tmp/nope"],
+    )
+    monkeypatch.setattr(
+        runner,
+        "_write_private_execution_copy",
+        lambda *_: pytest.fail("generic case must not derive an ambiguous artifact"),
+    )
+    with pytest.raises(SystemExit) as error:
+        runner.main()
+    assert error.value.code == 2
 
 
 def test_offline_self_check_rejects_diagnostic_offer_vocabulary_drift(monkeypatch):
@@ -724,6 +758,186 @@ def test_profile_fixture_has_separate_unfiltered_full_eight_surface():
     )
 
 
+def test_generic_message_case_has_fixed_exact_profile_and_fixture():
+    case = runner._case_definition("generic_message")
+    fixture = json.loads(
+        (RUNNER_PATH.parent / "native-v2-generic-message-acceptance-profiles.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert tuple(item.case_id for item in runner.CASE_DEFINITIONS) == (
+        "collaboration",
+        "generic_message",
+    )
+    assert case.label == "t116-native-v2-generic-message"
+    assert case.receipt_schema == "spec025.t116.opencode-v2-generic-message.private.v1"
+    assert case.profile_fixture_path.endswith("native-v2-generic-message-acceptance-profiles.json")
+    assert case.sender_allowed_tools == ("@cao-mcp-server", "discovery")
+    assert case.sender_enabled_mcp_tools == ("list_siblings", "send_message")
+    assert case.sender_catalog == ("list_siblings", "send_message")
+    assert case.sender_calls == ("list_siblings", "send_message", "send_message")
+    assert case.requires_human_capability is False
+    assert runner._case_fixture_contract("generic_message")
+    assert fixture["case_id"] == case.case_id
+    assert fixture["schema"] == case.profile_fixture_schema
+    assert fixture["label"] == case.label
+    assert fixture["receipt_schema"] == case.receipt_schema
+    assert fixture["profiles"]["sender"]["runtime_capability"] == "Absent"
+    assert fixture["profiles"]["receiver"]["runtime_capability"] == "Absent"
+    assert fixture["capability_inventory"] == {
+        "sender": 0,
+        "receiver": 0,
+        "before_first_input": 0,
+        "before_delete": 0,
+        "after_delete": 0,
+    }
+    assert runner._profile_contract("sender", "generic_message") == (
+        ["@cao-mcp-server", "discovery"],
+        ["list_siblings", "send_message"],
+        fixture["profiles"]["sender"]["prompt"],
+    )
+    assert runner._profile_contract("receiver", "generic_message") == (
+        [],
+        [],
+        fixture["profiles"]["receiver"]["prompt"],
+    )
+
+
+def test_generic_message_fixture_rejects_expanded_tools_calls_claims_and_budgets(
+    monkeypatch, tmp_path
+):
+    case = runner._case_definition(runner.GENERIC_MESSAGE_CASE_ID)
+    source_path = RUNNER_PATH.parent / case.profile_fixture_path.split("/")[-1]
+    baseline = json.loads(source_path.read_text(encoding="utf-8"))
+    fixture_path = tmp_path / case.profile_fixture_path
+    fixture_path.parent.mkdir(parents=True)
+    monkeypatch.setattr(runner, "REPO", tmp_path)
+
+    mutations = (
+        lambda doc: doc.update(catalog=["list_siblings", "send_message", "cao_ask_user"]),
+        lambda doc: doc["profiles"]["sender"].update(
+            enabled_mcp_tools=["list_siblings", "send_message", "cao_ask_user"]
+        ),
+        lambda doc: doc["profiles"]["sender"].update(
+            allowed_tools=["@cao-mcp-server", "discovery", "fs_read"]
+        ),
+        lambda doc: doc.update(
+            sender_calls=["list_siblings", "cao_ask_user", "send_message", "send_message"]
+        ),
+        lambda doc: doc["profiles"]["sender"].update(runtime_capability="Required"),
+        lambda doc: doc["capability_inventory"].update(before_delete=1),
+        lambda doc: doc["required_checks"].update(no_full_eight_human_capability_claim=False),
+        lambda doc: doc["native_model_request_observation"].update(
+            sender_cao_mcp_wire_names=list(runner.MCP_HTTP_OFFER_TOOL_NAMES)
+        ),
+        lambda doc: doc["shared_acceptance"].update(memory_floor_mib=512),
+        lambda doc: doc.update(unrecognized_case_override=["*"]),
+    )
+    for mutate in mutations:
+        document = json.loads(json.dumps(baseline))
+        mutate(document)
+        fixture_path.write_text(json.dumps(document), encoding="utf-8")
+        assert not runner._case_fixture_contract(case.case_id)
+    fixture_path.write_text(json.dumps(baseline), encoding="utf-8")
+    assert runner._case_fixture_contract(case.case_id)
+
+
+@pytest.mark.parametrize("case_id", [runner.DEFAULT_CASE_ID, runner.GENERIC_MESSAGE_CASE_ID])
+def test_case_fixture_requires_two_primary_requests_for_each_role(case_id, monkeypatch, tmp_path):
+    case = runner._case_definition(case_id)
+    source_path = RUNNER_PATH.parent / case.profile_fixture_path.split("/")[-1]
+    baseline = json.loads(source_path.read_text(encoding="utf-8"))
+    fixture_path = tmp_path / case.profile_fixture_path
+    fixture_path.parent.mkdir(parents=True)
+    monkeypatch.setattr(runner, "REPO", tmp_path)
+
+    fixture_path.write_text(json.dumps(baseline), encoding="utf-8")
+    assert runner._case_fixture_contract(case_id)
+    changed = json.loads(json.dumps(baseline))
+    changed["native_model_request_observation"]["minimum_target_primary_requests_per_role"] = 1
+    fixture_path.write_text(json.dumps(changed), encoding="utf-8")
+    assert not runner._case_fixture_contract(case_id)
+
+
+def test_capability_inventory_counts_actual_owned_case_files_without_reading_them(tmp_path):
+    cao_home = tmp_path / "cao"
+    cao_home.mkdir(mode=0o700)
+    assert runner._capability_files(cao_home) == []
+    directory = cao_home / "tmp" / "interaction-capabilities"
+    directory.mkdir(mode=0o700, parents=True)
+    capability = directory / "synthetic.cap"
+    capability.write_text("not-read-by-contract", encoding="ascii")
+    capability.chmod(0o600)
+    assert runner._capability_files(cao_home) == [capability]
+    capability.unlink()
+    assert runner._capability_files(cao_home) == []
+
+
+def test_generic_message_profile_rendering_metadata_and_session_names_are_case_bound():
+    import frontmatter
+
+    case = runner._case_definition(runner.GENERIC_MESSAGE_CASE_ID)
+    child_env = {
+        "CAO_HOME_DIR": "/private/home",
+        "CAO_DATABASE_CONFIG_FILE": "/private/db.json",
+    }
+    post = frontmatter.loads(runner._profile_text(frontmatter, "sender", child_env, case.case_id))
+    assert post.metadata["name"] == "t116-v2-generic-message-sender"
+    assert post.metadata["allowedTools"] == ["@cao-mcp-server", "discovery"]
+    server = post.metadata["mcpServers"]["cao-mcp-server"]
+    assert server["cao_tool_profile"] == "collaboration"
+    assert server["enabled_tools"] == ["list_siblings", "send_message"]
+    assert server["env"] == child_env
+    assert post.content == case.sender_prompt
+
+    metadata = {
+        "id": "a1b2c3d4",
+        "name": "private-native-name",
+        "session_name": "cao-t116gm-0123456789abcdef",
+        "provider": "opencode_cli",
+        "agent_profile": "t116-v2-generic-message-sender",
+        "caller_id": "e5f6a7b8",
+        "allowed_tools": ["@cao-mcp-server", "discovery"],
+        "group": [case.group_prefix, "0123456789ab"],
+        "metadata": {},
+        "session_incarnation_id": "1" * 32,
+    }
+    assert (
+        runner._safe_metadata(
+            metadata,
+            role="sender",
+            expected_group=metadata["group"],
+            case_id=case.case_id,
+        )
+        == metadata
+    )
+    changed = {**metadata, "allowed_tools": ["@cao-mcp-server"]}
+    with pytest.raises(runner.GateError, match="terminal_metadata_contract_mismatch"):
+        runner._safe_metadata(
+            changed,
+            role="sender",
+            expected_group=metadata["group"],
+            case_id=case.case_id,
+        )
+    assert (
+        runner._validated_returned_session_name(
+            "t116gm-0123456789abcdef", "cao-t116gm-0123456789abcdef", case.case_id
+        )
+        == "cao-t116gm-0123456789abcdef"
+    )
+    with pytest.raises(runner.GateError, match="requested_session_name_invalid"):
+        runner._validated_returned_session_name(
+            "t104v2-0123456789abcdef", "cao-t104v2-0123456789abcdef", case.case_id
+        )
+
+
+def test_generic_message_case_registry_rejects_unknown_case():
+    with pytest.raises(runner.GateError, match="acceptance_case_invalid"):
+        runner._case_definition("arbitrary-tools")
+    with pytest.raises((AttributeError, TypeError)):
+        runner.CASE_DEFINITIONS[1].case_id = "arbitrary-tools"
+
+
 def test_offer_observer_startup_ast_keeps_verified_journey_module_bound(monkeypatch, tmp_path):
     import ast
     from types import SimpleNamespace
@@ -910,6 +1124,57 @@ def test_observer_requires_full_unfiltered_catalog_but_only_three_expected_calls
     assert not runner._observer_contract(receiver_tool)
 
 
+def test_generic_message_observer_requires_exact_two_catalog_and_canonical_calls():
+    observations = {
+        "sender": {
+            "observer_status": "observed",
+            "mcp_observer_shutdown_observed": True,
+            "mcp_catalog_observation_status": "observed",
+            "mcp_catalog_observation_count": 1,
+            "mcp_catalog_tool_names": ["list_siblings", "send_message"],
+            "mcp_catalog_unexpected_tool_count": 0,
+            "mcp_tool_observation_status": "observed",
+            "mcp_tool_calls": [
+                {
+                    "server": "cao-mcp-server",
+                    "tool": name,
+                    "status": "completed",
+                    "error_present": False,
+                    "result_present": True,
+                }
+                for name in ("list_siblings", "send_message", "send_message")
+            ],
+            "mcp_tool_unexpected_call_count": 0,
+        },
+        "receiver": {
+            "observer_status": "observed",
+            "mcp_observer_shutdown_observed": True,
+            "mcp_catalog_observation_status": "unobserved",
+            "mcp_catalog_observation_count": 0,
+            "mcp_catalog_tool_names": [],
+            "mcp_catalog_unexpected_tool_count": 0,
+            "mcp_tool_observation_status": "unobserved",
+            "mcp_tool_calls": [],
+            "mcp_tool_unexpected_call_count": 0,
+        },
+    }
+    assert runner._observer_contract(observations, runner.GENERIC_MESSAGE_CASE_ID)
+    for mutate in (
+        lambda value: value["sender"].update(
+            mcp_catalog_tool_names=["list_siblings", "send_message", "cao_ask_user"]
+        ),
+        lambda value: value["sender"].update(mcp_catalog_tool_names=["send_message"]),
+        lambda value: value["sender"]["mcp_tool_calls"].__setitem__(
+            0, {**value["sender"]["mcp_tool_calls"][0], "tool": "cao_ask_user"}
+        ),
+        lambda value: value["sender"].update(mcp_tool_unexpected_call_count=1),
+        lambda value: value["receiver"].update(mcp_catalog_tool_names=["send_message"]),
+    ):
+        changed = json.loads(json.dumps(observations))
+        mutate(changed)
+        assert not runner._observer_contract(changed, runner.GENERIC_MESSAGE_CASE_ID)
+
+
 def _http_offer_summary(offers, *, tracked_tool_names=runner.HTTP_OFFER_TOOL_NAMES):
     records = [
         {
@@ -1008,6 +1273,79 @@ def test_outbound_model_requests_prove_per_role_tool_offers():
         incomplete_target,
         expected_nonce="1" * 32,
         expected_mcp_tool_names=(),
+    )
+
+
+def test_generic_message_http_offer_requires_exact_two_sender_and_zero_receiver():
+    generic_wire = tuple("cao-mcp-server_" + name for name in ("list_siblings", "send_message"))
+    sender = _http_offer_summary([{*generic_wire, "skill"}, {*generic_wire, "todowrite"}])
+    receiver = _http_offer_summary([{"skill"}, {"todowrite"}])
+    assert runner._http_tool_offer_contract(
+        sender,
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=generic_wire,
+        case_id=runner.GENERIC_MESSAGE_CASE_ID,
+    )
+    assert runner._http_tool_offer_contract(
+        receiver,
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=(),
+        case_id=runner.GENERIC_MESSAGE_CASE_ID,
+    )
+    sender_one_primary = _http_offer_summary([{*generic_wire, "skill"}])
+    receiver_one_primary = _http_offer_summary([{"skill"}])
+    assert not runner._http_tool_offer_contract(
+        sender_one_primary,
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=generic_wire,
+        case_id=runner.GENERIC_MESSAGE_CASE_ID,
+    )
+    assert not runner._http_tool_offer_contract(
+        receiver_one_primary,
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=(),
+        case_id=runner.GENERIC_MESSAGE_CASE_ID,
+    )
+
+    extra_human_tool = json.loads(json.dumps(sender))
+    first_record = extra_human_tool["requests"][0]
+    extra_human_tool_name = "cao-mcp-server_cao_ask_user"
+    first_record["name_counts"][extra_human_tool_name] = 1
+    first_record["tool_count"] += 1
+    extra_human_tool["tool_name_counts"][extra_human_tool_name] = 1
+    assert not runner._http_tool_offer_contract(
+        extra_human_tool,
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=generic_wire,
+        case_id=runner.GENERIC_MESSAGE_CASE_ID,
+    )
+    missing_discovery = json.loads(json.dumps(sender))
+    missing_discovery["requests"][0]["name_counts"][generic_wire[0]] = 0
+    assert not runner._http_tool_offer_contract(
+        missing_discovery,
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=generic_wire,
+        case_id=runner.GENERIC_MESSAGE_CASE_ID,
+    )
+    missing_transport = json.loads(json.dumps(sender))
+    missing_transport["requests"][1]["name_counts"][generic_wire[1]] = 0
+    assert not runner._http_tool_offer_contract(
+        missing_transport,
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=generic_wire,
+        case_id=runner.GENERIC_MESSAGE_CASE_ID,
+    )
+    assert not runner._http_tool_offer_contract(
+        sender,
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=runner.MCP_HTTP_OFFER_TOOL_NAMES,
+        case_id=runner.GENERIC_MESSAGE_CASE_ID,
+    )
+    assert not runner._http_tool_offer_contract(
+        receiver,
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=("skill",),
+        case_id=runner.GENERIC_MESSAGE_CASE_ID,
     )
 
 
@@ -1685,7 +2023,9 @@ def _write_private_provider_root(
     environment: dict[str, str],
     permissions: list[dict[str, str]],
     command: str | list[str] | None = None,
+    case_id: str = runner.DEFAULT_CASE_ID,
 ):
+    case = runner._case_definition(case_id)
     terminal_id = "a1b2c3d4" if role == "sender" else "e5f6a7b8"
     root_parent = cao_home / "opencode-v2"
     root_parent.mkdir(mode=0o700, parents=True)
@@ -1718,7 +2058,7 @@ def _write_private_provider_root(
     }
     config = {
         "mcp": {"servers": {"cao-mcp-server": server}},
-        "agents": {f"t104-v2-{role}": {"permissions": permissions}},
+        "agents": {f"{case.profile_prefix}-{role}": {"permissions": permissions}},
     }
     config_path = root / "opencode.json"
     config_path.write_text(json.dumps(config), encoding="utf-8")
@@ -1816,6 +2156,241 @@ def test_private_v2_root_requires_current_owned_canonical_full_profile(tmp_path)
     )
 
 
+def test_generic_message_provider_config_requires_real_exact_filter_without_capability(
+    monkeypatch, tmp_path
+):
+    from cli_agent_orchestrator.utils import opencode_v2
+    from cli_agent_orchestrator.utils.mcp_tool_policy import (
+        MCP_TOOL_FILTER_ENV,
+        MCP_TOOL_PROFILE_ENV,
+    )
+
+    case_id = runner.GENERIC_MESSAGE_CASE_ID
+    sender_home = tmp_path / "sender-home"
+    sender_home.mkdir(mode=0o700)
+    sender_environment = {
+        MCP_TOOL_PROFILE_ENV: "collaboration",
+        MCP_TOOL_FILTER_ENV: '["list_siblings","send_message"]',
+    }
+    sender_permissions = [{"action": "cao-mcp-server_*", "resource": "*", "effect": "allow"}]
+    sender_id, _, sender_config_path = _write_private_provider_root(
+        sender_home,
+        role="sender",
+        environment=sender_environment,
+        permissions=sender_permissions,
+        case_id=case_id,
+    )
+
+    receiver_home = tmp_path / "receiver-home"
+    receiver_home.mkdir(mode=0o700)
+    receiver_id, _, _ = _write_private_provider_root(
+        receiver_home,
+        role="receiver",
+        environment={MCP_TOOL_PROFILE_ENV: "collaboration", MCP_TOOL_FILTER_ENV: "[]"},
+        permissions=[],
+        case_id=case_id,
+    )
+
+    original_validate = opencode_v2.validate_v2_mcp_configuration
+    interaction_requirements = []
+
+    def capture_validation(*args, **kwargs):
+        interaction_requirements.append(kwargs["require_interaction"])
+        return original_validate(*args, **kwargs)
+
+    monkeypatch.setattr(opencode_v2, "validate_v2_mcp_configuration", capture_validation)
+    sender_terminal = {
+        "id": sender_id,
+        "agent_profile": "t116-v2-generic-message-sender",
+    }
+    receiver_terminal = {
+        "id": receiver_id,
+        "agent_profile": "t116-v2-generic-message-receiver",
+    }
+    assert runner._provider_config_contract(
+        sender_home,
+        sender_terminal,
+        role="sender",
+        capability_path=None,
+        case_id=case_id,
+    )
+    assert runner._provider_config_contract(
+        receiver_home,
+        receiver_terminal,
+        role="receiver",
+        capability_path=None,
+        case_id=case_id,
+    )
+    assert interaction_requirements == [False, False]
+
+    changed = json.loads(sender_config_path.read_text(encoding="utf-8"))
+    changed["mcp"]["servers"]["cao-mcp-server"]["environment"][MCP_TOOL_FILTER_ENV] = "[]"
+    sender_config_path.write_text(json.dumps(changed), encoding="utf-8")
+    sender_config_path.chmod(0o600)
+    assert not runner._provider_config_contract(
+        sender_home,
+        sender_terminal,
+        role="sender",
+        capability_path=None,
+        case_id=case_id,
+    )
+
+    changed["mcp"]["servers"]["cao-mcp-server"]["environment"][
+        MCP_TOOL_FILTER_ENV
+    ] = '["cao_ask_user","list_siblings","send_message"]'
+    changed["mcp"]["servers"]["cao-mcp-server"]["environment"][
+        "CAO_INTERACTION_CAPABILITY_FILE"
+    ] = "/private/untrusted.cap"
+    sender_config_path.write_text(json.dumps(changed), encoding="utf-8")
+    sender_config_path.chmod(0o600)
+    assert not runner._provider_config_contract(
+        sender_home,
+        sender_terminal,
+        role="sender",
+        capability_path=None,
+        case_id=case_id,
+    )
+
+
+def test_generic_sender_runtime_gate_emits_legacy_marker_flag_only_after_config_validation(
+    tmp_path,
+):
+    import ast
+    from typing import Any
+
+    from cli_agent_orchestrator.constants import _CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV
+    from cli_agent_orchestrator.utils.mcp_tool_policy import (
+        MCP_TOOL_FILTER_ENV,
+        MCP_TOOL_PROFILE_ENV,
+    )
+
+    case = runner._case_definition(runner.GENERIC_MESSAGE_CASE_ID)
+    sender_home = tmp_path / "sender-home"
+    sender_home.mkdir(mode=0o700)
+    sender_environment = {
+        MCP_TOOL_PROFILE_ENV: "collaboration",
+        MCP_TOOL_FILTER_ENV: '["list_siblings","send_message"]',
+    }
+    sender_id, _, config_path = _write_private_provider_root(
+        sender_home,
+        role="sender",
+        environment=sender_environment,
+        permissions=[{"action": "cao-mcp-server_*", "resource": "*", "effect": "allow"}],
+        case_id=case.case_id,
+    )
+    terminals = {
+        "sender": {
+            "id": sender_id,
+            "agent_profile": f"{case.profile_prefix}-sender",
+        }
+    }
+
+    source = RUNNER_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    run_enabled = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_run_enabled"
+    )
+    role_loop = next(
+        node
+        for node in ast.walk(run_enabled)
+        if isinstance(node, ast.For)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "role"
+        and isinstance(node.iter, ast.Tuple)
+        and [item.value for item in node.iter.elts if isinstance(item, ast.Constant)]
+        == ["receiver", "sender"]
+        and any(
+            isinstance(candidate, ast.If)
+            and isinstance(candidate.test, ast.Compare)
+            and isinstance(candidate.test.left, ast.Name)
+            and candidate.test.left.id == "role"
+            and len(candidate.test.comparators) == 1
+            and isinstance(candidate.test.comparators[0], ast.Constant)
+            and candidate.test.comparators[0].value == "receiver"
+            and any(
+                isinstance(child, ast.Name) and child.id == "capability_projection"
+                for statement in candidate.orelse
+                for child in ast.walk(statement)
+            )
+            for candidate in ast.walk(node)
+        )
+    )
+    sender_gate = next(
+        node
+        for node in ast.walk(role_loop)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Compare)
+        and isinstance(node.test.left, ast.Name)
+        and node.test.left.id == "role"
+        and len(node.test.ops) == 1
+        and isinstance(node.test.ops[0], ast.Eq)
+        and len(node.test.comparators) == 1
+        and isinstance(node.test.comparators[0], ast.Constant)
+        and node.test.comparators[0].value == "receiver"
+        and any(
+            isinstance(child, ast.AnnAssign)
+            and isinstance(child.target, ast.Name)
+            and child.target.id == "capability_projection"
+            for statement in node.orelse
+            for child in ast.walk(statement)
+        )
+    )
+
+    def run_sender_branch():
+        namespace = {
+            "Any": Any,
+            "GateError": runner.GateError,
+            "_capability_files": runner._capability_files,
+            "_provider_config_contract": runner._provider_config_contract,
+            "cao_home": sender_home,
+            "case": case,
+            "receipt": {},
+            "role": "sender",
+            "sender_capability_path": None,
+            "terminals": terminals,
+        }
+        exec(
+            compile(ast.Module(body=sender_gate.orelse, type_ignores=[]), str(RUNNER_PATH), "exec"),
+            namespace,
+            namespace,
+        )
+        assert namespace["capability_projection"] is None
+        return namespace["receipt"]
+
+    valid_receipt = run_sender_branch()
+    assert valid_receipt["sender_no_runtime_human_capability"] is True
+    assert valid_receipt["sender_legacy_three_tool_marker_absent"] is True
+
+    changed = json.loads(config_path.read_text(encoding="utf-8"))
+    changed["mcp"]["servers"]["cao-mcp-server"]["environment"][
+        _CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV
+    ] = "1"
+    config_path.write_text(json.dumps(changed), encoding="utf-8")
+    config_path.chmod(0o600)
+    invalid_receipt = {}
+    namespace = {
+        "Any": Any,
+        "GateError": runner.GateError,
+        "_capability_files": runner._capability_files,
+        "_provider_config_contract": runner._provider_config_contract,
+        "cao_home": sender_home,
+        "case": case,
+        "receipt": invalid_receipt,
+        "role": "sender",
+        "sender_capability_path": None,
+        "terminals": terminals,
+    }
+    with pytest.raises(runner.GateError, match="sender_v2_profile_contract_mismatch"):
+        exec(
+            compile(ast.Module(body=sender_gate.orelse, type_ignores=[]), str(RUNNER_PATH), "exec"),
+            namespace,
+            namespace,
+        )
+    assert "sender_legacy_three_tool_marker_absent" not in invalid_receipt
+
+
 def test_current_manifest_contract_binds_source_binary_python_postgres_and_review(
     tmp_path,
 ):
@@ -1834,6 +2409,11 @@ def test_current_manifest_contract_binds_source_binary_python_postgres_and_revie
     expected = "a" * 64
     document = {
         "schema": runner.RUN_MANIFEST_SCHEMA,
+        "case_id": runner.DEFAULT_CASE_ID,
+        "case_profile_fixture_path": runner.CASE_DEFINITIONS[0].profile_fixture_path,
+        "case_profile_fixture_schema": runner.CASE_DEFINITIONS[0].profile_fixture_schema,
+        "receipt_schema": runner.CASE_DEFINITIONS[0].receipt_schema,
+        "artifact_label": runner.CASE_DEFINITIONS[0].label,
         "run_enabled": True,
         "expected_source_head": head,
         "review_digest": expected,
@@ -1868,6 +2448,47 @@ def test_current_manifest_contract_binds_source_binary_python_postgres_and_revie
         expected_head=head,
         review_digest=expected,
         runner_sha256=executed_digest,
+    )
+    generic_case = runner._case_definition(runner.GENERIC_MESSAGE_CASE_ID)
+    generic_document = {
+        **document,
+        "schema": generic_case.manifest_schema,
+        "case_id": generic_case.case_id,
+        "case_profile_fixture_path": generic_case.profile_fixture_path,
+        "case_profile_fixture_schema": generic_case.profile_fixture_schema,
+        "receipt_schema": generic_case.receipt_schema,
+        "artifact_label": generic_case.label,
+        "profile_fixture_sha256": digest(
+            RUNNER_PATH.parent / generic_case.profile_fixture_path.split("/")[-1]
+        ),
+    }
+    assert runner._manifest_document_valid(
+        generic_document,
+        expected_head=head,
+        review_digest=expected,
+        runner_sha256=executed_digest,
+        expected_case_id=generic_case.case_id,
+    )
+    for field, value in (
+        ("case_id", runner.DEFAULT_CASE_ID),
+        ("case_profile_fixture_path", runner.CASE_DEFINITIONS[0].profile_fixture_path),
+        ("case_profile_fixture_schema", runner.CASE_DEFINITIONS[0].profile_fixture_schema),
+        ("receipt_schema", runner.CASE_DEFINITIONS[0].receipt_schema),
+        ("artifact_label", runner.CASE_DEFINITIONS[0].label),
+    ):
+        assert not runner._manifest_document_valid(
+            {**generic_document, field: value},
+            expected_head=head,
+            review_digest=expected,
+            runner_sha256=executed_digest,
+            expected_case_id=generic_case.case_id,
+        )
+    assert not runner._manifest_document_valid(
+        {**generic_document, "sender_allowed_tools": ["*"]},
+        expected_head=head,
+        review_digest=expected,
+        runner_sha256=executed_digest,
+        expected_case_id=generic_case.case_id,
     )
     assert not runner._manifest_document_valid(
         document,
@@ -2325,7 +2946,7 @@ module.RUN_ENABLED = True
 module._private_execution_copy_contract = lambda: True
 module.RECEIPT = None
 module._write_private = lambda path, content: None
-module._acceptance_contract = lambda receipt: receipt.get("actual_cancel_observed") is False
+module._acceptance_contract = lambda receipt, case_id=None: receipt.get("actual_cancel_observed") is False
 def fake_run_enabled(*args, **kwargs):
     os.kill(os.getpid(), signal.SIGTERM)
     return {{"actual_cancel_observed": False, "cleanup_failures": [], "error_code": None}}
@@ -2472,9 +3093,17 @@ def test_working_directory_request_uses_remaining_deadline_and_rejects_late_arri
 
 
 def test_acceptance_requires_exact_receiver_acknowledgement(monkeypatch):
+    collaboration_case = runner._case_definition(runner.DEFAULT_CASE_ID)
+    generic_case = runner._case_definition(runner.GENERIC_MESSAGE_CASE_ID)
     manifest = {
         "profile_fixture_sha256": "1" * 64,
         "operator_auth_snapshot_sha256": "2" * 64,
+        "schema": collaboration_case.manifest_schema,
+        "case_id": collaboration_case.case_id,
+        "artifact_label": collaboration_case.label,
+        "case_profile_fixture_path": collaboration_case.profile_fixture_path,
+        "case_profile_fixture_schema": collaboration_case.profile_fixture_schema,
+        "receipt_schema": collaboration_case.receipt_schema,
     }
     for name, value in (
         ("EXPECTED_HEAD", "3" * 40),
@@ -2496,7 +3125,15 @@ def test_acceptance_requires_exact_receiver_acknowledgement(monkeypatch):
     receipt = {field: True for field in runner._REQUIRED_TRUE_RECEIPT_FIELDS}
     receipt.update(
         {
-            "schema": runner.RECEIPT_SCHEMA,
+            "schema": collaboration_case.receipt_schema,
+            "case_id": collaboration_case.case_id,
+            "artifact_label": collaboration_case.label,
+            "profile_fixture_path": collaboration_case.profile_fixture_path,
+            "profile_fixture_schema": collaboration_case.profile_fixture_schema,
+            "scope": (
+                "one full-collaboration sender, one empty-tool receiver, two generic "
+                "send_message phases around API restart"
+            ),
             "model": runner.MODEL,
             "auth_lane": runner.MODEL,
             "cao_auth_mode": "off",
@@ -2571,6 +3208,36 @@ def test_acceptance_requires_exact_receiver_acknowledgement(monkeypatch):
         }
     )
     assert runner._acceptance_contract(receipt)
+    assert runner._acceptance_contract(receipt, collaboration_case.case_id)
+    assert not runner._acceptance_contract(receipt, generic_case.case_id)
+    generic_scope = (
+        "one exact two-tool generic-message sender, one zero-tool receiver, two generic "
+        "send_message phases around API restart"
+    )
+    full8_identity_mutations = (
+        ("case_id", generic_case.case_id),
+        ("artifact_label", generic_case.label),
+        ("profile_fixture_path", generic_case.profile_fixture_path),
+        ("profile_fixture_schema", generic_case.profile_fixture_schema),
+        ("schema", generic_case.receipt_schema),
+        ("scope", generic_scope),
+    )
+    for field, value in full8_identity_mutations:
+        changed = {**receipt, field: value}
+        assert not runner._acceptance_contract(changed, collaboration_case.case_id)
+        assert not runner._acceptance_contract(changed)
+    manifest_identity_mutations = (
+        ("schema", generic_case.manifest_schema),
+        ("case_id", generic_case.case_id),
+        ("artifact_label", generic_case.label),
+        ("case_profile_fixture_path", generic_case.profile_fixture_path),
+        ("case_profile_fixture_schema", generic_case.profile_fixture_schema),
+        ("receipt_schema", generic_case.receipt_schema),
+    )
+    for field, value in manifest_identity_mutations:
+        monkeypatch.setattr(runner, "RUN_MANIFEST", {**manifest, field: value})
+        assert not runner._acceptance_contract(receipt, collaboration_case.case_id)
+    monkeypatch.setattr(runner, "RUN_MANIFEST", manifest)
     for changed in (
         {**receipt, "sender_capability_source_owner_kind": "unowned"},
         {
@@ -2610,6 +3277,111 @@ def test_acceptance_requires_exact_receiver_acknowledgement(monkeypatch):
         },
     }
     assert not runner._acceptance_contract(unrestricted_retention)
+
+    generic_manifest = {
+        "profile_fixture_sha256": manifest["profile_fixture_sha256"],
+        "operator_auth_snapshot_sha256": manifest["operator_auth_snapshot_sha256"],
+        "schema": generic_case.manifest_schema,
+        "case_id": generic_case.case_id,
+        "artifact_label": generic_case.label,
+        "case_profile_fixture_path": generic_case.profile_fixture_path,
+        "case_profile_fixture_schema": generic_case.profile_fixture_schema,
+        "receipt_schema": generic_case.receipt_schema,
+    }
+    monkeypatch.setattr(runner, "RUN_MANIFEST", generic_manifest)
+    generic = json.loads(json.dumps(receipt))
+    generic.update(
+        {
+            "schema": generic_case.receipt_schema,
+            "case_id": generic_case.case_id,
+            "artifact_label": generic_case.label,
+            "profile_fixture_path": generic_case.profile_fixture_path,
+            "profile_fixture_schema": generic_case.profile_fixture_schema,
+            "scope": (
+                "one exact two-tool generic-message sender, one zero-tool receiver, two generic "
+                "send_message phases around API restart"
+            ),
+            "native_surface": generic_case.native_surface,
+            "capability_files_at_sender_initialization": 0,
+            "capability_files_at_receiver_initialization": 0,
+            "capability_files_before_first_input": 0,
+            "capability_files_before_delete": 0,
+            "capability_files_immediately_after_delete": 0,
+            "sender_native_v3_exact_two_tool_filter": True,
+            "sender_no_runtime_human_capability": True,
+            "receiver_no_runtime_human_capability": True,
+            "capability_inventory_zero_before_first_input": True,
+            "capability_inventory_zero_before_delete": True,
+            "capability_inventory_zero_after_delete": True,
+            "sender_model_request_exact_two_cao_mcp_tools": True,
+            "no_full_eight_human_capability_claim": True,
+        }
+    )
+    for forbidden in runner._GENERIC_MESSAGE_FORBIDDEN_RECEIPT_FIELDS:
+        generic.pop(forbidden, None)
+    for key in tuple(generic):
+        if key.startswith("sender_capability_"):
+            generic.pop(key)
+    assert runner._acceptance_contract(generic, generic_case.case_id)
+    assert not runner._acceptance_contract(generic)
+    assert not runner._acceptance_contract(generic, runner.DEFAULT_CASE_ID)
+    for field, value in (
+        ("schema", collaboration_case.manifest_schema),
+        ("case_id", runner.DEFAULT_CASE_ID),
+        ("artifact_label", collaboration_case.label),
+        ("case_profile_fixture_path", collaboration_case.profile_fixture_path),
+        ("case_profile_fixture_schema", collaboration_case.profile_fixture_schema),
+        ("receipt_schema", collaboration_case.receipt_schema),
+    ):
+        monkeypatch.setattr(runner, "RUN_MANIFEST", {**generic_manifest, field: value})
+        assert not runner._acceptance_contract(generic, generic_case.case_id)
+    monkeypatch.setattr(runner, "RUN_MANIFEST", generic_manifest)
+    generic_mutations = (
+        {**generic, "case_id": runner.DEFAULT_CASE_ID},
+        {**generic, "schema": runner.RECEIPT_SCHEMA},
+        {**generic, "artifact_label": "t104-native-v2-full-collaboration"},
+        {**generic, "profile_fixture_path": "wrong.json"},
+        {**generic, "profile_fixture_schema": "wrong.v1"},
+        {
+            **generic,
+            "scope": "one full-collaboration sender, one empty-tool receiver, two generic messages",
+        },
+        {**generic, "native_surface": "full unfiltered collaboration profile"},
+        {**generic, "sender_native_v3_full_collaboration_unfiltered": True},
+        {**generic, "sender_capability_source_owner_kind": "authenticated_creation"},
+        {**generic, "sender_no_runtime_human_capability": False},
+        {
+            key: value
+            for key, value in generic.items()
+            if key != "sender_no_runtime_human_capability"
+        },
+        {
+            key: value
+            for key, value in generic.items()
+            if key != "receiver_no_runtime_human_capability"
+        },
+        {**generic, "capability_files_at_sender_initialization": 1},
+        {**generic, "capability_files_at_sender_initialization": False},
+        {**generic, "capability_files_at_receiver_initialization": 1},
+        {**generic, "capability_files_before_first_input": 1},
+        {**generic, "capability_files_before_delete": 1},
+        {**generic, "capability_files_immediately_after_delete": 1},
+        {
+            key: value
+            for key, value in generic.items()
+            if key != "no_full_eight_human_capability_claim"
+        },
+        {
+            key: value
+            for key, value in generic.items()
+            if key != "sender_model_request_exact_two_cao_mcp_tools"
+        },
+    )
+    assert all(
+        not runner._acceptance_contract(changed, generic_case.case_id)
+        for changed in generic_mutations
+    )
+    monkeypatch.setattr(runner, "RUN_MANIFEST", manifest)
     receipt["phases"][0]["receiver_ack_exact"] = False
     assert not runner._acceptance_contract(receipt)
 

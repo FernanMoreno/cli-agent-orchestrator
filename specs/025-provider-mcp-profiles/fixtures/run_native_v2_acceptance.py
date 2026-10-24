@@ -36,6 +36,7 @@ import sys
 import tempfile
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -129,6 +130,103 @@ PHASES = (
     ("before_restart", PRE_RESTART_MESSAGE),
     ("after_restart", POST_RESTART_MESSAGE),
 )
+
+
+@dataclass(frozen=True)
+class NativeV2AcceptanceCase:
+    case_id: str
+    label: str
+    manifest_schema: str
+    receipt_schema: str
+    profile_fixture_path: str
+    profile_fixture_schema: str
+    profile_prefix: str
+    group_prefix: str
+    session_prefix: str
+    sender_allowed_tools: tuple[str, ...]
+    sender_enabled_mcp_tools: tuple[str, ...] | None
+    sender_catalog: tuple[str, ...]
+    sender_calls: tuple[str, ...]
+    sender_prompt: str
+    receiver_prompt: str
+    requires_human_capability: bool
+    native_surface: str
+
+
+DEFAULT_CASE_ID = "collaboration"
+GENERIC_MESSAGE_CASE_ID = "generic_message"
+_COLLABORATION_SENDER_PROMPT = (
+    "This profile is for a machine-to-machine transport diagnostic. "
+    "Use exactly one cao-mcp-server_list_siblings call, then exactly one "
+    "cao-mcp-server_send_message call for each requested delivery phase. "
+    "Do not use any human-interaction, delegation, supervision, or memory tool."
+)
+_GENERIC_MESSAGE_SENDER_PROMPT = (
+    "This profile is for a machine-to-machine transport diagnostic. Use exactly one "
+    "cao-mcp-server_list_siblings discovery call, then exactly one "
+    "cao-mcp-server_send_message call for each requested delivery phase. Do not use any "
+    "human-interaction, delegation, supervision, or memory tool."
+)
+_RECEIVER_PROMPT = (
+    "You are a passive receiver for an automated machine-to-machine delivery check. "
+    "A received message is not a human request. When one arrives, reply with the "
+    "acknowledgement body ACK in plain text. Also append the active machine turn receipt "
+    "required by the delivery contract as a separate final line. The receipt is protocol "
+    "metadata, separate from the acknowledgement body. Do not use tools, ask questions, "
+    "or send messages."
+)
+_GENERIC_RECEIVER_PROMPT = _RECEIVER_PROMPT
+CASE_DEFINITIONS = (
+    NativeV2AcceptanceCase(
+        case_id=DEFAULT_CASE_ID,
+        label="t104-native-v2-full-collaboration",
+        manifest_schema="spec025.t104.native-v2-collaboration-manifest.v2",
+        receipt_schema="spec025.t104.opencode-v2-collaboration-messages.private.v2",
+        profile_fixture_path=(
+            "specs/025-provider-mcp-profiles/fixtures/"
+            "native-v2-collaboration-acceptance-profiles.json"
+        ),
+        profile_fixture_schema="caos.native-v2-collaboration-acceptance-profiles.v1",
+        profile_prefix="t104-v2",
+        group_prefix="spec025-t104-v2",
+        session_prefix="t104v2",
+        sender_allowed_tools=("@cao-mcp-server",),
+        sender_enabled_mcp_tools=None,
+        sender_catalog=SENDER_TOOLS,
+        sender_calls=SENDER_CALLS,
+        sender_prompt=_COLLABORATION_SENDER_PROMPT,
+        receiver_prompt=_RECEIVER_PROMPT,
+        requires_human_capability=True,
+        native_surface=(
+            "full unfiltered collaboration profile; human capability issued and source-bound"
+        ),
+    ),
+    NativeV2AcceptanceCase(
+        case_id=GENERIC_MESSAGE_CASE_ID,
+        label="t116-native-v2-generic-message",
+        manifest_schema="spec025.t116.native-v2-generic-message-manifest.v1",
+        receipt_schema="spec025.t116.opencode-v2-generic-message.private.v1",
+        profile_fixture_path=(
+            "specs/025-provider-mcp-profiles/fixtures/"
+            "native-v2-generic-message-acceptance-profiles.json"
+        ),
+        profile_fixture_schema="caos.native-v2-generic-message-acceptance-profiles.v1",
+        profile_prefix="t116-v2-generic-message",
+        group_prefix="spec025-t116-generic-v2",
+        session_prefix="t116gm",
+        sender_allowed_tools=("@cao-mcp-server", "discovery"),
+        sender_enabled_mcp_tools=("list_siblings", "send_message"),
+        sender_catalog=("list_siblings", "send_message"),
+        sender_calls=("list_siblings", "send_message", "send_message"),
+        sender_prompt=_GENERIC_MESSAGE_SENDER_PROMPT,
+        receiver_prompt=_RECEIVER_PROMPT,
+        requires_human_capability=False,
+        native_surface=(
+            "exact two-tool generic-message profile; no human capability claimed or issued"
+        ),
+    ),
+)
+
 SOURCE_PATHS = (
     "src",
     "test/live_provider",
@@ -136,6 +234,7 @@ SOURCE_PATHS = (
     "test/postgres/fixtures.py",
     "specs/025-provider-mcp-profiles/fixtures/run_native_v2_acceptance.py",
     "specs/025-provider-mcp-profiles/fixtures/native-v2-collaboration-acceptance-profiles.json",
+    "specs/025-provider-mcp-profiles/fixtures/native-v2-generic-message-acceptance-profiles.json",
     "specs/025-provider-mcp-profiles/fixtures/test_native_v2_acceptance.py",
     "specs/025-provider-mcp-profiles/fixtures/native_v2_text_probe.py",
     "specs/025-provider-mcp-profiles/fixtures/test_native_v2_text_probe.py",
@@ -227,6 +326,15 @@ class GateError(RuntimeError):
     def __init__(self, code: str):
         super().__init__(code)
         self.code = code
+
+
+def _case_definition(case_id: Any = DEFAULT_CASE_ID) -> NativeV2AcceptanceCase:
+    """Resolve only one of the immutable source-defined native v2 cases."""
+    if type(case_id) is str:
+        for case in CASE_DEFINITIONS:
+            if case.case_id == case_id:
+                return case
+    raise GateError("acceptance_case_invalid")
 
 
 class _ControlledSigterm(BaseException):
@@ -513,12 +621,22 @@ def _manifest_document_valid(
     expected_head: str,
     review_digest: str,
     runner_sha256: str,
+    expected_case_id: str = DEFAULT_CASE_ID,
 ) -> bool:
     if not isinstance(document, dict):
         return False
+    try:
+        case = _case_definition(expected_case_id)
+    except GateError:
+        return False
     source_hashes = document.get("source_sha256s")
     if (
-        document.get("schema") != RUN_MANIFEST_SCHEMA
+        document.get("schema") != case.manifest_schema
+        or document.get("case_id") != case.case_id
+        or document.get("case_profile_fixture_path") != case.profile_fixture_path
+        or document.get("case_profile_fixture_schema") != case.profile_fixture_schema
+        or document.get("receipt_schema") != case.receipt_schema
+        or document.get("artifact_label") != case.label
         or document.get("run_enabled") is not True
         or document.get("expected_source_head") != expected_head
         or document.get("review_digest") != review_digest
@@ -549,6 +667,21 @@ def _manifest_document_valid(
         return False
     if not _digest_shape(document.get("operator_auth_snapshot_sha256")):
         return False
+    if any(
+        field in document
+        for field in (
+            "allowed_tools",
+            "sender_allowed_tools",
+            "sender_catalog",
+            "sender_tools",
+            "receiver_allowed_tools",
+            "receiver_tools",
+            "enabled_mcp_tools",
+            "mcp_tool_filter",
+            "tool_names",
+        )
+    ):
+        return False
     for field in (
         "candidate_sha256",
         "execution_candidate_sha256",
@@ -561,10 +694,8 @@ def _manifest_document_valid(
         if not _digest_shape(document.get(field)):
             return False
     if (
-        document.get("profile_fixture_sha256")
-        != source_hashes.get(
-            "specs/025-provider-mcp-profiles/fixtures/native-v2-collaboration-acceptance-profiles.json"
-        )
+        document.get("profile_fixture_sha256") != source_hashes.get(case.profile_fixture_path)
+        or not _case_fixture_contract(case.case_id)
         or document.get("postgres_fixture_sha256") != source_hashes.get("test/postgres/fixtures.py")
         or document.get("candidate_sha256") != source_hashes.get(CLOSED_CANDIDATE_RELATIVE_PATH)
     ):
@@ -628,7 +759,12 @@ def _load_run_manifest(
     manifest_sha256: str,
     expected_head: str,
     review_digest: str,
+    case_id: str = DEFAULT_CASE_ID,
 ) -> dict[str, Any]:
+    try:
+        case = _case_definition(case_id)
+    except GateError:
+        raise GateError("acceptance_case_invalid") from None
     try:
         resolved_manifest_path = path.resolve(strict=True)
     except OSError:
@@ -658,6 +794,7 @@ def _load_run_manifest(
         expected_head=expected_head,
         review_digest=review_digest,
         runner_sha256=runner_sha256,
+        expected_case_id=case.case_id,
     ):
         raise GateError("private_run_manifest_contract_mismatch")
     try:
@@ -722,8 +859,8 @@ def _load_run_manifest(
     PINNED_POSTGRES_FIXTURE_SHA256 = document["postgres_fixture_sha256"]
     PINNED_POSTGRES_GUARD_DERIVATION_SHA256 = document["postgres_guard_derivation_sha256"]
     PREP = run_root
-    RECEIPT = PREP / f"{LABEL}-receipt.json"
-    EVIDENCE = PREP / f"{LABEL}-evidence"
+    RECEIPT = PREP / f"{case.label}-receipt.json"
+    EVIDENCE = PREP / f"{case.label}-evidence"
     RUN_MANIFEST = document
     RUN_MANIFEST_SHA256 = manifest_sha256
     REVIEW_DIGEST = review_digest
@@ -812,25 +949,31 @@ def _safe_terminal_identity(value: Any) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{8}", value) is not None
 
 
-def _validated_returned_session_name(requested: Any, returned: Any) -> str:
+def _validated_returned_session_name(
+    requested: Any, returned: Any, case_id: Any = DEFAULT_CASE_ID
+) -> str:
     """Bind the API's normalized receiver name and return that exact value."""
-    if not isinstance(requested, str) or re.fullmatch(r"t104v2-[0-9a-f]{16}", requested) is None:
+    case = _case_definition(case_id)
+    request_pattern = rf"{re.escape(case.session_prefix)}-[0-9a-f]{{16}}"
+    if not isinstance(requested, str) or re.fullmatch(request_pattern, requested) is None:
         raise GateError("requested_session_name_invalid")
-    if not isinstance(returned, str) or re.fullmatch(r"cao-t104v2-[0-9a-f]{16}", returned) is None:
+    if not isinstance(returned, str) or re.fullmatch(r"cao-" + request_pattern, returned) is None:
         raise GateError("returned_session_name_invalid")
     if returned != f"cao-{requested}":
         raise GateError("returned_session_name_mismatch")
     return returned
 
 
-def _owned_session_cleanup_name(requested: Any) -> str:
+def _owned_session_cleanup_name(requested: Any, case_id: Any = DEFAULT_CASE_ID) -> str:
     """Return only this run's validated request token for best-effort cleanup.
 
     The pinned API normalizes the create token with ``cao-`` on response and
     accepts the original token on DELETE. This fallback never trusts response
     data and is established before the creation request is sent.
     """
-    if not isinstance(requested, str) or re.fullmatch(r"t104v2-[0-9a-f]{16}", requested) is None:
+    case = _case_definition(case_id)
+    request_pattern = rf"{re.escape(case.session_prefix)}-[0-9a-f]{{16}}"
+    if not isinstance(requested, str) or re.fullmatch(request_pattern, requested) is None:
         raise GateError("owned_cleanup_session_name_invalid")
     return requested
 
@@ -842,15 +985,16 @@ def _receiver_cleanup_target(
     status_code: Any,
     json_parsed: Any,
     returned: Any,
+    case_id: Any = DEFAULT_CASE_ID,
 ) -> str | None:
     """Use a valid returned name, otherwise retain only the own request token."""
     if creation_attempted is not True:
         return None
-    own_target = _owned_session_cleanup_name(requested)
+    own_target = _owned_session_cleanup_name(requested, case_id)
     if type(status_code) is not int or status_code != 201 or json_parsed is not True:
         return own_target
     try:
-        return _validated_returned_session_name(requested, returned)
+        return _validated_returned_session_name(requested, returned, case_id)
     except GateError:
         return own_target
 
@@ -866,31 +1010,193 @@ def _session_cleanup_due(
     )
 
 
-def _profile_contract(role: str) -> tuple[list[str], list[str] | None, str]:
-    """Return CAO grants, an optional native filter, and the role prompt."""
+def _case_fixture_contract(case_id: Any = DEFAULT_CASE_ID) -> bool:
+    """Require the private profile fixture to match its fixed source definition."""
+    try:
+        case = _case_definition(case_id)
+        document = json.loads((REPO / case.profile_fixture_path).read_text(encoding="utf-8"))
+    except (GateError, OSError, ValueError, UnicodeError):
+        return False
+    profiles = document.get("profiles") if isinstance(document, dict) else None
+    sender = profiles.get("sender") if isinstance(profiles, dict) else None
+    receiver = profiles.get("receiver") if isinstance(profiles, dict) else None
+    checks = document.get("required_checks") if isinstance(document, dict) else None
+    request_observation = (
+        document.get("native_model_request_observation") if isinstance(document, dict) else None
+    )
+    expected_sender_filter = (
+        None if case.sender_enabled_mcp_tools is None else list(case.sender_enabled_mcp_tools)
+    )
+    sender_capability = "Required" if case.requires_human_capability else "Absent"
+    if (
+        not isinstance(document, dict)
+        or document.get("schema") != case.profile_fixture_schema
+        or ("case_id" in document and document.get("case_id") != case.case_id)
+        or not isinstance(sender, dict)
+        or sender.get("allowed_tools") != list(case.sender_allowed_tools)
+        or sender.get("native_tool_profile") != "collaboration"
+        or sender.get("enabled_mcp_tools") != expected_sender_filter
+        or not isinstance(sender.get("runtime_capability"), str)
+        or (
+            not sender["runtime_capability"].startswith(sender_capability)
+            if case.requires_human_capability
+            else sender["runtime_capability"] != "Absent"
+        )
+        or sender.get("prompt") != case.sender_prompt
+        or not isinstance(receiver, dict)
+        or receiver.get("allowed_tools") != []
+        or receiver.get("native_tool_profile") != "collaboration"
+        or receiver.get("enabled_mcp_tools") != []
+        or receiver.get("runtime_capability") != "Absent"
+        or receiver.get("prompt") != case.receiver_prompt
+        or document.get("catalog") != list(case.sender_catalog)
+        or not isinstance(checks, dict)
+        or not isinstance(request_observation, dict)
+        or type(request_observation.get("minimum_target_primary_requests_per_role")) is not int
+        or request_observation.get("minimum_target_primary_requests_per_role") != len(PHASES)
+    ):
+        return False
+    expected_calls = list(case.sender_calls)
+    if case.case_id == DEFAULT_CASE_ID:
+        if checks.get("sender_calls_exact") != expected_calls:
+            return False
+    elif document.get("case_id") != case.case_id or (
+        document.get("label") != case.label
+        or document.get("receipt_schema") != case.receipt_schema
+        or document.get("sender_calls") != expected_calls
+        or document.get("receiver_catalog") != []
+        or document.get("capability_inventory")
+        != {
+            "sender": 0,
+            "receiver": 0,
+            "before_first_input": 0,
+            "before_delete": 0,
+            "after_delete": 0,
+        }
+    ):
+        return False
+    if case.case_id == GENERIC_MESSAGE_CASE_ID:
+        observation = document.get("native_model_request_observation")
+        expected_shared_acceptance = {
+            "message_phases": 2,
+            "api_restart_between_phases": True,
+            "exact_pg_api_and_agui_rows": True,
+            "exact_receiver_ack": "ACK",
+            "literal_sender_unicode": LAST_RECEIPT,
+            "model_phase_seconds": int(MODEL_PHASE_SECONDS),
+            "memory_floor_mib": MEMORY_FLOOR_MIB,
+            "owned_cleanup": True,
+        }
+        expected_capability_inventory = {
+            "sender": 0,
+            "receiver": 0,
+            "before_first_input": 0,
+            "before_delete": 0,
+            "after_delete": 0,
+        }
+        expected_observation = {
+            "sender_cao_mcp_wire_names": [
+                "cao-mcp-server_list_siblings",
+                "cao-mcp-server_send_message",
+            ],
+            "receiver_cao_mcp_wire_names": [],
+            "source_approved_optional_native_builtins": list(OPTIONAL_OPENCODE_BUILTIN_TOOL_NAMES),
+            "diagnostic_only_native_names_must_be_zero": True,
+            "minimum_target_primary_requests_per_role": len(PHASES),
+            "all_selected_model_primary_requests_must_match_role_profile": True,
+            "builtin_execution_observation": "not_observed",
+        }
+        expected_checks = {
+            "case_id_and_artifacts_bound_before_resources": True,
+            "sender_exact_two_tool_catalog": list(case.sender_catalog),
+            "sender_calls_exact": list(case.sender_calls),
+            "sender_calls_from_canonical_cao_mcp_server": True,
+            "receiver_catalog_empty": True,
+            "receiver_calls_empty": True,
+            "sender_has_no_runtime_human_capability": True,
+            "receiver_has_no_runtime_human_capability": True,
+            "capability_inventory_zero_before_first_input": True,
+            "capability_inventory_zero_before_delete": True,
+            "capability_inventory_zero_after_delete": True,
+            "diagnostic_and_unexpected_model_tools_rejected": True,
+            "shared_two_message_ack_unicode_restart_and_owned_cleanup_gates": True,
+            "no_full_eight_human_capability_claim": True,
+            "receipt_redacted_only_private_raw_evidence_separate": True,
+        }
+        expected_keys = {
+            "schema",
+            "case_id",
+            "label",
+            "receipt_schema",
+            "scope",
+            "profiles",
+            "catalog",
+            "sender_calls",
+            "receiver_catalog",
+            "capability_inventory",
+            "native_model_request_observation",
+            "shared_acceptance",
+            "required_checks",
+        }
+        return (
+            set(document) == expected_keys
+            and set(sender)
+            == {
+                "allowed_tools",
+                "native_tool_profile",
+                "enabled_mcp_tools",
+                "runtime_capability",
+                "prompt",
+            }
+            and set(receiver)
+            == {
+                "allowed_tools",
+                "native_tool_profile",
+                "enabled_mcp_tools",
+                "runtime_capability",
+                "prompt",
+            }
+            and document.get("label") == case.label
+            and document.get("receipt_schema") == case.receipt_schema
+            and document.get("scope")
+            == (
+                "Source-defined native OpenCode v2 generic-message transport case with an exact "
+                "two-tool sender and a zero-tool receiver. It does not exercise or claim human "
+                "interaction capability."
+            )
+            and document.get("sender_calls") == list(case.sender_calls)
+            and document.get("receiver_catalog") == []
+            and document.get("capability_inventory") == expected_capability_inventory
+            and document.get("shared_acceptance") == expected_shared_acceptance
+            and isinstance(observation, dict)
+            and observation == expected_observation
+            and checks == expected_checks
+            and sender.get("runtime_capability") == "Absent"
+            and "capability_owner" not in sender
+            and "legacy_three_tool_marker" not in sender
+            and document.get("catalog") == list(case.sender_catalog)
+            and len(case.sender_catalog) == 2
+            and case.sender_enabled_mcp_tools == case.sender_catalog
+            and case.sender_calls == ("list_siblings", "send_message", "send_message")
+            and case.requires_human_capability is False
+        )
+    return True
+
+
+def _profile_contract(
+    role: str, case_id: Any = DEFAULT_CASE_ID
+) -> tuple[list[str], list[str] | None, str]:
+    """Return fixed case grants, native filter and profile prompt for one role."""
+    case = _case_definition(case_id)
     if role == "sender":
-        allowed = ["@cao-mcp-server"]
-        enabled = None
-        body = (
-            "This profile is for a machine-to-machine transport diagnostic. "
-            "Use exactly one cao-mcp-server_list_siblings call, then exactly one "
-            "cao-mcp-server_send_message call for each requested delivery phase. "
-            "Do not use any human-interaction, delegation, supervision, or memory tool."
+        allowed = list(case.sender_allowed_tools)
+        enabled = (
+            None if case.sender_enabled_mcp_tools is None else list(case.sender_enabled_mcp_tools)
         )
-    elif role == "receiver":
-        allowed = []
-        enabled = []
-        body = (
-            "You are a passive receiver for an automated machine-to-machine delivery check. A "
-            "received message is not a human request. When one arrives, reply with the "
-            "acknowledgement body ACK in plain text. Also append the active machine turn receipt "
-            "required by the delivery contract as a separate final line. The receipt is protocol "
-            "metadata, separate from the acknowledgement body. Do not use tools, ask questions, "
-            "or send messages."
-        )
-    else:
-        raise ValueError("invalid_role")
-    return allowed, enabled, body
+        return allowed, enabled, case.sender_prompt
+    if role == "receiver":
+        return [], [], case.receiver_prompt
+    raise ValueError("invalid_role")
 
 
 def _native_permission_matches(metadata: Any, allowed_tools: list[str], translator: Any) -> bool:
@@ -1076,7 +1382,11 @@ def _persisted_pair_contract(
     return True
 
 
-def _observer_contract(observations: dict[str, Any]) -> bool:
+def _observer_contract(observations: dict[str, Any], case_id: Any = DEFAULT_CASE_ID) -> bool:
+    try:
+        case = _case_definition(case_id)
+    except GateError:
+        return False
     sender = observations.get("sender", {})
     receiver = observations.get("receiver", {})
     if not isinstance(sender, dict) or not isinstance(receiver, dict):
@@ -1097,8 +1407,8 @@ def _observer_contract(observations: dict[str, Any]) -> bool:
         and type(sender_catalog_count) is int
         and sender_catalog_count >= 1
         and isinstance(catalog, list)
-        and len(catalog) == len(SENDER_TOOLS)
-        and set(catalog) == set(SENDER_TOOLS)
+        and len(catalog) == len(case.sender_catalog)
+        and catalog == list(case.sender_catalog)
         and sender.get("mcp_catalog_unexpected_tool_count") == 0
         and sender.get("mcp_tool_observation_status") == "observed"
         and receiver.get("mcp_catalog_tool_names") == []
@@ -1115,7 +1425,7 @@ def _observer_contract(observations: dict[str, Any]) -> bool:
                 and receiver_catalog_count >= 1
             )
         )
-        and [call.get("tool") for call in calls] == list(SENDER_CALLS)
+        and [call.get("tool") for call in calls] == list(case.sender_calls)
         and all(
             call.get("server") == "cao-mcp-server"
             and call.get("status") == "completed"
@@ -1128,6 +1438,33 @@ def _observer_contract(observations: dict[str, Any]) -> bool:
         and receiver.get("mcp_tool_unexpected_call_count") == 0
         and receiver.get("mcp_tool_observation_status") == "unobserved"
     )
+
+
+_COLLABORATION_ONLY_RECEIPT_FIELDS = frozenset(
+    {
+        "sender_native_v3_full_collaboration_unfiltered",
+        "sender_runtime_capability_current_source_bound",
+        "sender_capability_authenticated_local_operator_owner_bound",
+        "sender_capability_auth_off_loopback_api_process_binding_verified",
+        "sender_capability_file_private_owned",
+        "sender_model_request_full_eight_cao_mcp_tools",
+        "expected_capability_set_before_delete",
+    }
+)
+_GENERIC_MESSAGE_FORBIDDEN_RECEIPT_FIELDS = frozenset(
+    {
+        "sender_native_v3_full_collaboration_unfiltered",
+        "sender_runtime_capability_current_source_bound",
+        "sender_capability_source_owner_kind",
+        "sender_capability_authenticated_local_operator_owner_bound",
+        "sender_capability_auth_off_loopback_api_process_binding_verified",
+        "sender_capability_binding_diagnostics",
+        "sender_capability_file_private_owned",
+        "sender_capability_path_sha256",
+        "sender_model_request_full_eight_cao_mcp_tools",
+        "expected_capability_set_before_delete",
+    }
+)
 
 
 def _runtime_source_modules_match(source_module_paths: Any) -> bool:
@@ -1345,6 +1682,20 @@ _REQUIRED_TRUE_RECEIPT_FIELDS = (
     "private_state_removed",
     "owned_process_snapshot_refresh_complete",
     "output_range_controls_passed",
+)
+_GENERIC_MESSAGE_TRUE_RECEIPT_FIELDS = tuple(
+    field
+    for field in _REQUIRED_TRUE_RECEIPT_FIELDS
+    if field not in _COLLABORATION_ONLY_RECEIPT_FIELDS
+) + (
+    "sender_native_v3_exact_two_tool_filter",
+    "sender_no_runtime_human_capability",
+    "receiver_no_runtime_human_capability",
+    "capability_inventory_zero_before_first_input",
+    "capability_inventory_zero_before_delete",
+    "capability_inventory_zero_after_delete",
+    "sender_model_request_exact_two_cao_mcp_tools",
+    "no_full_eight_human_capability_claim",
 )
 
 _SUCCESS_MEMORY_ADMISSIONS = (
@@ -1764,15 +2115,61 @@ def _private_root_cleanup_safe(receipt: Any) -> bool:
     )
 
 
-def _acceptance_contract(receipt: Any) -> bool:
+def _acceptance_contract(receipt: Any, case_id: Any = DEFAULT_CASE_ID) -> bool:
     """Pure final receipt predicate using the exact emitted receipt shape."""
     if not isinstance(receipt, dict):
         return False
+    try:
+        selected_case = _case_definition(case_id)
+    except GateError:
+        return False
+    is_generic = selected_case.case_id == GENERIC_MESSAGE_CASE_ID
+    manifest = RUN_MANIFEST if isinstance(RUN_MANIFEST, dict) else {}
+    required_true_fields = (
+        _GENERIC_MESSAGE_TRUE_RECEIPT_FIELDS if is_generic else _REQUIRED_TRUE_RECEIPT_FIELDS
+    )
+    expected_scope = (
+        "one exact two-tool generic-message sender, one zero-tool receiver, two generic "
+        "send_message phases around API restart"
+        if is_generic
+        else "one full-collaboration sender, one empty-tool receiver, two generic "
+        "send_message phases around API restart"
+    )
+    case_identity_exact = (
+        receipt.get("case_id") == selected_case.case_id
+        and receipt.get("artifact_label") == selected_case.label
+        and receipt.get("profile_fixture_path") == selected_case.profile_fixture_path
+        and receipt.get("profile_fixture_schema") == selected_case.profile_fixture_schema
+        and receipt.get("schema") == selected_case.receipt_schema
+        and receipt.get("scope") == expected_scope
+        and manifest.get("schema") == selected_case.manifest_schema
+        and manifest.get("case_id") == selected_case.case_id
+        and manifest.get("artifact_label") == selected_case.label
+        and manifest.get("case_profile_fixture_path") == selected_case.profile_fixture_path
+        and manifest.get("case_profile_fixture_schema") == selected_case.profile_fixture_schema
+        and manifest.get("receipt_schema") == selected_case.receipt_schema
+    )
+    capability_inventory_exact = not is_generic or (
+        all(
+            type(receipt.get(field)) is int and receipt.get(field) == 0
+            for field in (
+                "capability_files_at_sender_initialization",
+                "capability_files_at_receiver_initialization",
+                "capability_files_before_first_input",
+                "capability_files_before_delete",
+                "capability_files_immediately_after_delete",
+            )
+        )
+        and all(field not in receipt for field in _GENERIC_MESSAGE_FORBIDDEN_RECEIPT_FIELDS)
+        and not any(field.startswith("sender_capability_") for field in receipt)
+    )
     phases = receipt.get("phases")
     admissions = receipt.get("memory_admissions_mib")
     if (
         "error_code" in receipt
-        or receipt.get("schema") != RECEIPT_SCHEMA
+        or receipt.get("schema") != selected_case.receipt_schema
+        or not case_identity_exact
+        or not capability_inventory_exact
         or receipt.get("model") != MODEL
         or receipt.get("auth_lane") != MODEL
         or receipt.get("cao_auth_mode") != "off"
@@ -1788,13 +2185,18 @@ def _acceptance_contract(receipt: Any) -> bool:
         != (RUN_MANIFEST or {}).get("profile_fixture_sha256")
         or receipt.get("operator_auth_snapshot_sha256")
         != (RUN_MANIFEST or {}).get("operator_auth_snapshot_sha256")
-        or receipt.get("sender_capability_source_owner_kind") != "authenticated_creation"
-        or receipt.get("sender_capability_authenticated_local_operator_owner_bound") is not True
-        or receipt.get("sender_capability_auth_off_loopback_api_process_binding_verified")
-        is not True
-        or not _capability_binding_diagnostics_pass(receipt)
-        or receipt.get("native_surface")
-        != "full unfiltered collaboration profile; human capability issued and source-bound"
+        or (
+            not is_generic
+            and (
+                receipt.get("sender_capability_source_owner_kind") != "authenticated_creation"
+                or receipt.get("sender_capability_authenticated_local_operator_owner_bound")
+                is not True
+                or receipt.get("sender_capability_auth_off_loopback_api_process_binding_verified")
+                is not True
+                or not _capability_binding_diagnostics_pass(receipt)
+            )
+        )
+        or receipt.get("native_surface") != selected_case.native_surface
         or receipt.get("cross_model_or_oauth_claimed") is not False
         or receipt.get("receiver_native_builtin_execution_observation") != "not_observed"
         or receipt.get("native_model_offer_scope") != "selected_model_primary_requests_only"
@@ -1821,7 +2223,7 @@ def _acceptance_contract(receipt: Any) -> bool:
         or receipt.get("native_provider_roots_immediately_after_delete") != 0
         or type(receipt.get("capability_files_immediately_after_delete")) is not int
         or receipt.get("capability_files_immediately_after_delete") != 0
-        or any(receipt.get(key) is not True for key in _REQUIRED_TRUE_RECEIPT_FIELDS)
+        or any(receipt.get(key) is not True for key in required_true_fields)
         or receipt.get("cleanup_failures") != []
         or not _within_budget(receipt.get("observer_seal_seconds"), OBSERVER_GRACE_SECONDS)
         or not _api_process_identities_valid(receipt)
@@ -1858,19 +2260,41 @@ def _acceptance_contract(receipt: Any) -> bool:
     )
 
 
-def _self_check() -> dict[str, Any]:
+def _self_check(case_id: Any = DEFAULT_CASE_ID) -> dict[str, Any]:
     """Offline contract check. It never opens a service or reads credentials."""
-    sender_allowed, sender_filter, _ = _profile_contract("sender")
-    receiver_allowed, receiver_filter, _ = _profile_contract("receiver")
+    try:
+        case = _case_definition(case_id)
+    except GateError:
+        return {
+            "schema": "spec025.native-v2-self-check.v1",
+            "success": False,
+            "checks": {"case_id_source_defined": False},
+        }
+    self_check_schema = (
+        "spec025.t116.native-v2-generic-message-self-check.v1"
+        if case.case_id == GENERIC_MESSAGE_CASE_ID
+        else "spec025.t104.native-v2-self-check.v1"
+    )
+    sender_allowed, sender_filter, _ = _profile_contract("sender", case.case_id)
+    receiver_allowed, receiver_filter, _ = _profile_contract("receiver", case.case_id)
     try:
         output_range_controls_passed = _output_range_controls() == 8
     except (AssertionError, GateError, TypeError, ValueError):
         output_range_controls_passed = False
     checks = {
         "default_closed": RUN_ENABLED is False,
-        "sender_has_full_collaboration_grant": sender_allowed == ["@cao-mcp-server"]
-        and sender_filter is None,
         "receiver_has_no_cao_mcp_tools": receiver_allowed == [] and receiver_filter == [],
+        "selected_case_profile_exact": (
+            sender_allowed == list(case.sender_allowed_tools)
+            and sender_filter
+            == (
+                None
+                if case.sender_enabled_mcp_tools is None
+                else list(case.sender_enabled_mcp_tools)
+            )
+            and receiver_allowed == []
+            and receiver_filter == []
+        ),
         "full_eight_tool_catalog": len(SENDER_TOOLS) == 8
         and set(SENDER_TOOLS)
         == {
@@ -1883,7 +2307,7 @@ def _self_check() -> dict[str, Any]:
             "cao_get_interaction",
             "cao_escalate_interaction",
         },
-        "only_two_message_operations": SENDER_CALLS
+        "only_two_message_operations": case.sender_calls
         == ("list_siblings", "send_message", "send_message"),
         "no_execute_in_full_tool_offer": (
             "cao-mcp-server_execute" not in MCP_HTTP_OFFER_TOOL_NAMES
@@ -1918,10 +2342,28 @@ def _self_check() -> dict[str, Any]:
                 + DIAGNOSTIC_ONLY_OPENCODE_TOOL_NAMES
             )
         ),
+        "case_profile_fixture_exact": _case_fixture_contract(case.case_id),
+        "generic_case_exact_two_tool_catalog_and_no_human_capability": (
+            case.case_id != GENERIC_MESSAGE_CASE_ID
+            or (
+                case.sender_catalog == ("list_siblings", "send_message")
+                and case.sender_enabled_mcp_tools == ("list_siblings", "send_message")
+                and case.sender_calls == ("list_siblings", "send_message", "send_message")
+                and case.requires_human_capability is False
+            )
+        ),
         "private_output_range_controls": output_range_controls_passed,
     }
+    checks["default_collaboration_case_has_full_grant"] = (
+        _profile_contract("sender", DEFAULT_CASE_ID)[0] == ["@cao-mcp-server"]
+        and _profile_contract("sender", DEFAULT_CASE_ID)[1] is None
+    )
+    if case.case_id == DEFAULT_CASE_ID:
+        checks["sender_has_full_collaboration_grant"] = checks[
+            "default_collaboration_case_has_full_grant"
+        ]
     return {
-        "schema": "spec025.t104.native-v2-self-check.v1",
+        "schema": self_check_schema,
         "success": all(checks.values()),
         "checks": checks,
     }
@@ -2015,9 +2457,15 @@ def _private_opencode_root() -> Path:
     return root
 
 
-def _profile_text(frontmatter: Any, role: str, child_env: dict[str, str]) -> str:
-    allowed, enabled, prompt = _profile_contract(role)
-    profile_name = f"t104-v2-{role}"
+def _profile_text(
+    frontmatter: Any,
+    role: str,
+    child_env: dict[str, str],
+    case_id: Any = DEFAULT_CASE_ID,
+) -> str:
+    case = _case_definition(case_id)
+    allowed, enabled, prompt = _profile_contract(role, case.case_id)
+    profile_name = f"{case.profile_prefix}-{role}"
     server = {
         "command": sys.executable,
         "args": ["-m", "cli_agent_orchestrator.mcp_server.server"],
@@ -2029,7 +2477,7 @@ def _profile_text(frontmatter: Any, role: str, child_env: dict[str, str]) -> str
     post = frontmatter.Post(
         prompt,
         name=profile_name,
-        description="Private actual OpenCode v2 generic-message acceptance profile",
+        description=f"Private native OpenCode v2 {case.case_id} acceptance profile",
         provider="opencode_cli",
         role="developer",
         allowedTools=allowed,
@@ -2038,7 +2486,14 @@ def _profile_text(frontmatter: Any, role: str, child_env: dict[str, str]) -> str
     return frontmatter.dumps(post, sort_keys=False)
 
 
-def _safe_metadata(data: dict[str, Any], *, role: str, expected_group: list[str]) -> dict[str, Any]:
+def _safe_metadata(
+    data: dict[str, Any],
+    *,
+    role: str,
+    expected_group: list[str],
+    case_id: Any = DEFAULT_CASE_ID,
+) -> dict[str, Any]:
+    case = _case_definition(case_id)
     fields = (
         "id",
         "name",
@@ -2053,7 +2508,7 @@ def _safe_metadata(data: dict[str, Any], *, role: str, expected_group: list[str]
     )
     if any(field not in data for field in fields):
         raise GateError("terminal_metadata_shape_invalid")
-    expected_allowed = _profile_contract(role)[0]
+    expected_allowed = _profile_contract(role, case.case_id)[0]
     if (
         not _safe_terminal_identity(data.get("id"))
         or not isinstance(data.get("name"), str)
@@ -2064,7 +2519,7 @@ def _safe_metadata(data: dict[str, Any], *, role: str, expected_group: list[str]
             data.get("caller_id") is not None and not _safe_terminal_identity(data.get("caller_id"))
         )
         or data.get("provider") != "opencode_cli"
-        or data.get("agent_profile") != f"t104-v2-{role}"
+        or data.get("agent_profile") != f"{case.profile_prefix}-{role}"
         or data.get("allowed_tools") != expected_allowed
         or data.get("group") != expected_group
         or (data.get("metadata") is not None and not isinstance(data.get("metadata"), dict))
@@ -2319,6 +2774,7 @@ def _provider_config_contract(
     *,
     role: str,
     capability_path: Path | None,
+    case_id: Any = DEFAULT_CASE_ID,
 ) -> bool:
     from cli_agent_orchestrator.constants import _CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV
     from cli_agent_orchestrator.providers.mcp_interactions import (
@@ -2334,7 +2790,11 @@ def _provider_config_contract(
 
     terminal_id = terminal.get("id")
     agent_profile = terminal.get("agent_profile")
-    if not _safe_terminal_identity(terminal_id) or not isinstance(agent_profile, str):
+    try:
+        case = _case_definition(case_id)
+    except GateError:
+        return False
+    if not _safe_terminal_identity(terminal_id) or agent_profile != f"{case.profile_prefix}-{role}":
         return False
     matches: list[tuple[Path, dict[str, Any]]] = []
     for root in _provider_roots(cao_home):
@@ -2395,6 +2855,7 @@ def _provider_config_contract(
         environment,
         permissions,
         capability_path=capability_path,
+        case_id=case.case_id,
         filter_env=MCP_TOOL_FILTER_ENV,
         profile_env=MCP_TOOL_PROFILE_ENV,
         legacy_marker=_CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV,
@@ -2405,7 +2866,7 @@ def _provider_config_contract(
             root,
             agent_name=agent_profile,
             server_name="cao-mcp-server",
-            require_interaction=role == "sender",
+            require_interaction=case.requires_human_capability and role == "sender",
         )
     except (OSError, ValueError):
         return False
@@ -2419,11 +2880,17 @@ def _native_mcp_profile_contract(
     permissions: Any,
     *,
     capability_path: Path | None,
+    case_id: Any = DEFAULT_CASE_ID,
     filter_env: str,
     profile_env: str,
     legacy_marker: str,
 ) -> bool:
     from cli_agent_orchestrator.utils.opencode_v2 import _effective_permission
+
+    try:
+        case = _case_definition(case_id)
+    except GateError:
+        return False
 
     if (
         not isinstance(server, dict)
@@ -2436,18 +2903,35 @@ def _native_mcp_profile_contract(
     ):
         return False
     if role == "sender":
+        if case.requires_human_capability:
+            profile_binding = (
+                filter_env not in environment
+                and capability_path is not None
+                and environment.get("CAO_INTERACTION_CAPABILITY_FILE") == str(capability_path)
+            )
+        else:
+            expected_filter = json.dumps(
+                list(case.sender_enabled_mcp_tools or ()), separators=(",", ":")
+            )
+            profile_binding = (
+                case.sender_enabled_mcp_tools is not None
+                and environment.get(filter_env) == expected_filter
+                and capability_path is None
+                and "CAO_INTERACTION_CAPABILITY_FILE" not in environment
+            )
         return (
-            filter_env not in environment
-            and capability_path is not None
-            and environment.get("CAO_INTERACTION_CAPABILITY_FILE") == str(capability_path)
+            profile_binding
             and all(
                 _effective_permission(permissions, "cao-mcp-server_" + tool) == "allow"
-                for tool in SENDER_TOOLS
+                for tool in case.sender_catalog
             )
-            and not any(
-                rule.get("action") == "cao-mcp-server_execute" and rule.get("effect") == "allow"
-                for rule in permissions
-                if isinstance(rule, dict)
+            and (
+                not case.requires_human_capability
+                or not any(
+                    rule.get("action") == "cao-mcp-server_execute" and rule.get("effect") == "allow"
+                    for rule in permissions
+                    if isinstance(rule, dict)
+                )
             )
         )
     if role == "receiver":
@@ -2499,10 +2983,16 @@ def _http_tool_offer_contract(
     expected_nonce: str,
     expected_mcp_tool_names: tuple[str, ...],
     tracked_tool_names: tuple[str, ...] = HTTP_OFFER_TOOL_NAMES,
+    case_id: Any = DEFAULT_CASE_ID,
 ) -> bool:
+    try:
+        case = _case_definition(case_id)
+    except GateError:
+        return False
+    expected_sender_wire_names = tuple("cao-mcp-server_" + tool for tool in case.sender_catalog)
     if (
         not isinstance(observation, dict)
-        or expected_mcp_tool_names not in (MCP_HTTP_OFFER_TOOL_NAMES, ())
+        or expected_mcp_tool_names not in (expected_sender_wire_names, ())
         or tracked_tool_names != HTTP_OFFER_TOOL_NAMES
     ):
         return False
@@ -3423,11 +3913,18 @@ def _api_rows(requests: Any, base_url: str, receiver_id: str) -> list[dict[str, 
 
 
 def _api_metadata_snapshot(
-    requests: Any, base_url: str, terminals: dict[str, dict[str, Any]], group: list[str]
+    requests: Any,
+    base_url: str,
+    terminals: dict[str, dict[str, Any]],
+    group: list[str],
+    case_id: Any = DEFAULT_CASE_ID,
 ) -> dict[str, dict[str, Any]]:
     return {
         role: _safe_metadata(
-            _read_terminal(requests, base_url, data["id"]), role=role, expected_group=group
+            _read_terminal(requests, base_url, data["id"]),
+            role=role,
+            expected_group=group,
+            case_id=case_id,
         )
         for role, data in terminals.items()
     }
@@ -3995,6 +4492,24 @@ def _model_phase_failure_code(phase):
     return "model_phase_exceeded_75_seconds"
 
 
+def _receiver_phase_failure_code(phase):
+    if phase.get("receiver_turn_completed_once") is not True:
+        return "receiver_turn_not_completed_once"
+    if phase.get("receiver_ack_exact") is True:
+        return None
+    observation = phase.get("receiver_last_observation")
+    if (
+        phase.get("receiver_ack_exact") is False
+        and type(observation) is dict
+        and observation.get("http_status") == 200
+        and observation.get("body_state") == "mapping"
+        and observation.get("output_string_observed") is True
+        and observation.get("observed_within_deadline") is True
+    ):
+        return "receiver_ack_not_exact"
+    return "receiver_ack_not_observed"
+
+
 def _load_failure_diagnostic_fixture(filename):
     if filename not in {"native_v2_text_probe.py", "native_phase_readers.py"}:
         raise GateError("failure_diagnostic_source_binding_invalid")
@@ -4061,7 +4576,9 @@ def _capture_role_native_text(context, *, role, viewport, rendered, expected_mar
         database_config_file=server.database_config_path,
         viewport=viewport,
         rendered=rendered,
-        expected_agent=f"t104-v2-{role}",
+        expected_agent=(
+            f"{_case_definition(context.get('case_id', DEFAULT_CASE_ID)).profile_prefix}-{role}"
+        ),
         expected_marker=expected_marker,
         deadline=deadline,
         capture=readers.capture_bytes,
@@ -4097,24 +4614,6 @@ def _capture_receiver_native_failure_diagnostic(context, pane_observation, deadl
         expected_marker="ACK",
         deadline=deadline,
     )
-
-
-def _receiver_phase_failure_code(phase):
-    if phase.get("receiver_turn_completed_once") is not True:
-        return "receiver_turn_not_completed_once"
-    if phase.get("receiver_ack_exact") is True:
-        return None
-    observation = phase.get("receiver_last_observation")
-    if (
-        phase.get("receiver_ack_exact") is False
-        and type(observation) is dict
-        and observation.get("http_status") == 200
-        and observation.get("body_state") == "mapping"
-        and observation.get("output_string_observed") is True
-        and observation.get("observed_within_deadline") is True
-    ):
-        return "receiver_ack_not_exact"
-    return "receiver_ack_not_observed"
 
 
 def _receiver_last_observation(http_status, body, in_time, *, parse_failed=False):
@@ -4292,8 +4791,10 @@ def _run_enabled(
     manifest_path: Path,
     manifest_sha256: str,
     review_digest: str,
+    case_id: Any = DEFAULT_CASE_ID,
 ) -> dict[str, Any]:
     global _ACTIVE_PRIVATE_RUN_ROOT, _SIGTERM_CLEANUP_ACTIVE
+    case = _case_definition(case_id)
     if RUN_ENABLED is not True:
         raise GateError("private_execution_copy_required")
     if not _private_execution_copy_contract():
@@ -4307,24 +4808,35 @@ def _run_enabled(
         manifest_sha256=manifest_sha256,
         expected_head=expected_head,
         review_digest=review_digest,
+        case_id=case.case_id,
     )
     _prepend_current_source()
     receipt: dict[str, Any] = {
-        "schema": RECEIPT_SCHEMA,
+        "schema": case.receipt_schema,
+        "case_id": case.case_id,
+        "artifact_label": case.label,
+        "profile_fixture_path": case.profile_fixture_path,
+        "profile_fixture_schema": case.profile_fixture_schema,
         "utc_started": dt.datetime.now(dt.timezone.utc).isoformat(),
         "source_head_expected": EXPECTED_HEAD,
         "binary_sha256_expected": PINNED_OPENCODE_SHA256,
         "postgres_container_id_expected": PINNED_POSTGRES_ID,
         "postgres_image_id_expected": PINNED_POSTGRES_IMAGE,
         "model": model,
-        "scope": "one full-collaboration sender, one empty-tool receiver, two generic send_message phases around API restart",
+        "scope": (
+            "one exact two-tool generic-message sender, one zero-tool receiver, two generic "
+            "send_message phases around API restart"
+            if not case.requires_human_capability
+            else "one full-collaboration sender, one empty-tool receiver, two generic "
+            "send_message phases around API restart"
+        ),
         "run_manifest_sha256": RUN_MANIFEST_SHA256,
         "review_digest": REVIEW_DIGEST,
         "source_fingerprint_sha256_expected": SOURCE_FINGERPRINT_SHA256,
         "runner_sha256_expected": RUNNER_SHA256_AT_ADMISSION,
         "profile_fixture_sha256_expected": runner_manifest["profile_fixture_sha256"],
         "operator_auth_snapshot_sha256_expected": runner_manifest["operator_auth_snapshot_sha256"],
-        "native_surface": "full unfiltered collaboration profile; human capability issued and source-bound",
+        "native_surface": case.native_surface,
         "auth_lane": MODEL,
         "cao_auth_mode": "off",
         "cross_model_or_oauth_claimed": False,
@@ -4660,7 +5172,7 @@ def _run_enabled(
         adapted_observer = (
             original_observer[:observer_start]
             + "INTERACTION_TOOLS = frozenset("
-            + repr(sorted(SENDER_TOOLS))
+            + repr(sorted(case.sender_catalog))
             + ")\n"
             + original_observer[observer_end:]
         )
@@ -4759,7 +5271,7 @@ def _run_enabled(
         for role in ("receiver", "sender"):
             _admit(receipt, f"install_{role}")
             source = root / f"{role}.md"
-            profile = _profile_text(frontmatter, role, child_env)
+            profile = _profile_text(frontmatter, role, child_env, case.case_id)
             _write_private(source, profile)
             result = subprocess.run(
                 [
@@ -4785,7 +5297,7 @@ def _run_enabled(
             receipt[f"{role}_production_install_passed"] = result.returncode == 0
             if result.returncode != 0:
                 raise GateError("production_profile_install_failed")
-            native_path = opencode_agents_dir / f"t104-v2-{role}.md"
+            native_path = opencode_agents_dir / f"{case.profile_prefix}-{role}.md"
             if (
                 not native_path.is_file()
                 or native_path.is_symlink()
@@ -4793,15 +5305,16 @@ def _run_enabled(
             ):
                 raise GateError("installed_native_profile_missing_or_not_private")
             native_text = native_path.read_text(encoding="utf-8")
-            native_agent, native_policy = parse_native_agent(native_text, f"t104-v2-{role}")
-            expected_prompt = _profile_contract(role)[2]
+            profile_name = f"{case.profile_prefix}-{role}"
+            native_agent, native_policy = parse_native_agent(native_text, profile_name)
+            expected_prompt = _profile_contract(role, case.case_id)[2]
             if native_agent.content.rstrip("\n") != expected_prompt.rstrip("\n"):
                 raise GateError("installed_native_prompt_differs_from_fixture")
             receipt[f"{role}_installed_prompt_matches_fixture"] = True
             source_config = json.loads(
                 (opencode_config_dir / "opencode.json").read_text(encoding="utf-8")
             )
-            allowed, enabled, _ = _profile_contract(role)
+            allowed, enabled, _ = _profile_contract(role, case.case_id)
             if (
                 native_policy is None
                 or native_policy.state != "ready"
@@ -4820,7 +5333,10 @@ def _run_enabled(
             receipt[f"{role}_installed_native_v3_verified"] = True
             receipt[f"{role}_allowed_tools_exact"] = True
             if role == "sender":
-                receipt["sender_native_v3_full_collaboration_unfiltered"] = True
+                if case.requires_human_capability:
+                    receipt["sender_native_v3_full_collaboration_unfiltered"] = True
+                else:
+                    receipt["sender_native_v3_exact_two_tool_filter"] = True
             else:
                 receipt["receiver_native_v3_empty_tool_filter"] = True
 
@@ -5006,15 +5522,15 @@ def _run_enabled(
         receipt["api_a_pid"] = api_identity_a.pid
         receipt["api_a_process_start"] = api_identity_a.start_time
         receipt["api_healthy"] = True
-        group = ["spec025-t104-v2", os.urandom(6).hex()]
-        requested_session_name = "t104v2-" + os.urandom(8).hex()
+        group = [case.group_prefix, os.urandom(6).hex()]
+        requested_session_name = case.session_prefix + "-" + os.urandom(8).hex()
         for role in ("receiver", "sender"):
             _admit(receipt, f"terminal_{role}")
             terminal_started = time.monotonic()
             terminal_deadline = terminal_started + MODEL_PHASE_SECONDS
             params: dict[str, Any] = {
                 "provider": "opencode_cli",
-                "agent_profile": f"t104-v2-{role}",
+                "agent_profile": f"{case.profile_prefix}-{role}",
                 "working_directory": str(role_workdirs[role]),
                 "model": model,
             }
@@ -5023,7 +5539,9 @@ def _run_enabled(
                 params["session_name"] = requested_session_name
                 # Bind a unique, validated fallback before POST so malformed or
                 # missing create-response data cannot orphan this own session.
-                cleanup_session_name = _owned_session_cleanup_name(requested_session_name)
+                cleanup_session_name = _owned_session_cleanup_name(
+                    requested_session_name, case.case_id
+                )
                 session_creation_attempted = True
             else:
                 if not isinstance(session_name, str):
@@ -5045,6 +5563,7 @@ def _run_enabled(
                     status_code=response.status_code,
                     json_parsed=False,
                     returned=None,
+                    case_id=case.case_id,
                 )
             if response.status_code != 201:
                 raise GateError("production_terminal_creation_failed")
@@ -5056,9 +5575,10 @@ def _run_enabled(
                     status_code=response.status_code,
                     json_parsed=True,
                     returned=data.get("session_name"),
+                    case_id=case.case_id,
                 )
             returned_session_name = _validated_returned_session_name(
-                requested_session_name, data.get("session_name")
+                requested_session_name, data.get("session_name"), case.case_id
             )
             if role == "receiver":
                 session_name = returned_session_name
@@ -5092,14 +5612,14 @@ def _run_enabled(
             if (
                 session_name is None
                 or _validated_returned_session_name(
-                    requested_session_name, data.get("session_name")
+                    requested_session_name, data.get("session_name"), case.case_id
                 )
                 != session_name
             ):
                 raise GateError("terminal_session_name_changed")
             terminals[role] = data
-            _safe_metadata(data, role=role, expected_group=group)
-            expected_allowed = _profile_contract(role)[0]
+            _safe_metadata(data, role=role, expected_group=group, case_id=case.case_id)
+            expected_allowed = _profile_contract(role, case.case_id)[0]
             if data.get("allowed_tools") != expected_allowed:
                 raise GateError("operation_permissions_mismatch")
             receipt[f"{role}_operation_permissions_exact"] = True
@@ -5137,58 +5657,89 @@ def _run_enabled(
             if receipt[f"{role}_model_phase_within_75_seconds"] is not True:
                 raise GateError("model_phase_exceeded_75_seconds")
             if role == "receiver":
-                if _capability_files(cao_home):
+                receiver_capabilities = _capability_files(cao_home)
+                if receiver_capabilities:
                     raise GateError("receiver_runtime_capability_unexpected")
+                if not case.requires_human_capability:
+                    receipt["capability_files_at_receiver_initialization"] = len(
+                        receiver_capabilities
+                    )
                 if not _provider_config_contract(
-                    cao_home, terminals[role], role="receiver", capability_path=None
+                    cao_home,
+                    terminals[role],
+                    role="receiver",
+                    capability_path=None,
+                    case_id=case.case_id,
                 ):
                     raise GateError("receiver_v2_empty_tool_profile_contract_mismatch")
                 receipt["receiver_no_runtime_capability"] = True
             else:
-                sender_capability_diagnostics: dict[str, Any] = {}
-                try:
-                    sender_capability_path, capability_projection = _runtime_capability_contract(
-                        cao_home,
-                        targets.main,
-                        terminals[role],
-                        api_server=server,
-                        api_process=api_process,
-                        api_identity=api_identity_a,
-                        python_path=PINNED_PYTHON,
-                        diagnostics=sender_capability_diagnostics,
-                    )
-                finally:
-                    _record_capability_binding_diagnostics(receipt, sender_capability_diagnostics)
+                capability_projection: dict[str, Any] | None = None
+                if case.requires_human_capability:
+                    sender_capability_diagnostics: dict[str, Any] = {}
+                    try:
+                        sender_capability_path, capability_projection = (
+                            _runtime_capability_contract(
+                                cao_home,
+                                targets.main,
+                                terminals[role],
+                                api_server=server,
+                                api_process=api_process,
+                                api_identity=api_identity_a,
+                                python_path=PINNED_PYTHON,
+                                diagnostics=sender_capability_diagnostics,
+                            )
+                        )
+                    finally:
+                        _record_capability_binding_diagnostics(
+                            receipt, sender_capability_diagnostics
+                        )
+                else:
+                    sender_capabilities = _capability_files(cao_home)
+                    if sender_capabilities:
+                        raise GateError("sender_runtime_capability_unexpected")
+                    receipt["capability_files_at_sender_initialization"] = len(sender_capabilities)
+                    receipt["sender_no_runtime_human_capability"] = True
                 if not _provider_config_contract(
                     cao_home,
                     terminals[role],
                     role="sender",
                     capability_path=sender_capability_path,
+                    case_id=case.case_id,
                 ):
-                    raise GateError("sender_v2_full_profile_contract_mismatch")
-                receipt.update(
-                    {
-                        "sender_runtime_capability_current_source_bound": capability_projection[
-                            "current_source_bound"
-                        ],
-                        "sender_capability_file_private_owned": capability_projection[
-                            "capability_file_private_owned"
-                        ],
-                        "sender_capability_source_owner_kind": capability_projection[
-                            "source_owner_kind"
-                        ],
-                        "sender_capability_authenticated_local_operator_owner_bound": (
-                            capability_projection["source_owner_matches_expected_local_operator"]
-                        ),
-                        "sender_capability_auth_off_loopback_api_process_binding_verified": (
-                            capability_projection["auth_off_loopback_api_process_binding_verified"]
-                        ),
-                        "sender_capability_path_sha256": capability_projection[
-                            "capability_file_path_sha256"
-                        ],
-                        "sender_legacy_three_tool_marker_absent": True,
-                    }
-                )
+                    raise GateError(
+                        "sender_v2_profile_contract_mismatch"
+                        if not case.requires_human_capability
+                        else "sender_v2_full_profile_contract_mismatch"
+                    )
+                receipt["sender_legacy_three_tool_marker_absent"] = True
+                if capability_projection is not None:
+                    receipt.update(
+                        {
+                            "sender_runtime_capability_current_source_bound": capability_projection[
+                                "current_source_bound"
+                            ],
+                            "sender_capability_file_private_owned": capability_projection[
+                                "capability_file_private_owned"
+                            ],
+                            "sender_capability_source_owner_kind": capability_projection[
+                                "source_owner_kind"
+                            ],
+                            "sender_capability_authenticated_local_operator_owner_bound": (
+                                capability_projection[
+                                    "source_owner_matches_expected_local_operator"
+                                ]
+                            ),
+                            "sender_capability_auth_off_loopback_api_process_binding_verified": (
+                                capability_projection[
+                                    "auth_off_loopback_api_process_binding_verified"
+                                ]
+                            ),
+                            "sender_capability_path_sha256": capability_projection[
+                                "capability_file_path_sha256"
+                            ],
+                        }
+                    )
 
         sender_id = terminals["sender"]["id"]
         receiver_id = terminals["receiver"]["id"]
@@ -5206,23 +5757,44 @@ def _run_enabled(
         root_identity_before = _native_config_roots(roots_before)
         receipt["two_native_v2_provider_roots"] = True
         if (
-            sender_capability_path is None
-            or _capability_files(cao_home) != [sender_capability_path]
+            (
+                case.requires_human_capability
+                and (
+                    sender_capability_path is None
+                    or _capability_files(cao_home) != [sender_capability_path]
+                )
+            )
+            or (not case.requires_human_capability and bool(_capability_files(cao_home)))
             or not _provider_config_contract(
                 cao_home,
                 terminals["sender"],
                 role="sender",
                 capability_path=sender_capability_path,
+                case_id=case.case_id,
             )
             or not _provider_config_contract(
                 cao_home,
                 terminals["receiver"],
                 role="receiver",
                 capability_path=None,
+                case_id=case.case_id,
             )
         ):
             raise GateError("pre_delete_capability_or_profile_binding_mismatch")
-        receipt["expected_capability_set_before_delete"] = True
+        if case.requires_human_capability:
+            if sender_capability_path is None or _capability_files(cao_home) != [
+                sender_capability_path
+            ]:
+                raise GateError("pre_delete_capability_or_profile_binding_mismatch")
+            receipt["expected_capability_set_before_delete"] = True
+        else:
+            capability_count = len(_capability_files(cao_home))
+            receipt["capability_files_before_first_input"] = capability_count
+            if capability_count != 0:
+                raise GateError("generic_message_capability_inventory_nonzero")
+            receipt["capability_inventory_zero_before_first_input"] = True
+            receipt["receiver_no_runtime_human_capability"] = True
+            receipt["no_full_eight_human_capability_claim"] = True
         if _pg_rows(connect, targets.main, receiver_id) or _api_rows(
             requests, server.url, receiver_id
         ):
@@ -5598,7 +6170,7 @@ def _run_enabled(
                     for key in ("id", "sender_id", "receiver_id", "message", "created_at")
                 }
                 metadata_before_restart = _api_metadata_snapshot(
-                    requests, server.url, terminals, group
+                    requests, server.url, terminals, group, case.case_id
                 )
                 lifecycle_before_restart = _api_lifecycle_snapshot(
                     requests,
@@ -5693,7 +6265,7 @@ def _run_enabled(
                 ):
                     raise GateError("persisted_first_message_identity_changed")
                 metadata_after_restart = _api_metadata_snapshot(
-                    requests, server.url, terminals, group
+                    requests, server.url, terminals, group, case.case_id
                 )
                 if metadata_after_restart != metadata_before_restart:
                     raise GateError("terminal_metadata_changed_on_api_restart")
@@ -5818,12 +6390,14 @@ def _run_enabled(
             for role in terminals
         }
         receipt["native_observations"] = native_observations
-        receipt["native_catalog_and_calls_exact"] = _observer_contract(native_observations)
+        receipt["native_catalog_and_calls_exact"] = _observer_contract(
+            native_observations, case.case_id
+        )
         if not receipt["native_catalog_and_calls_exact"]:
             raise GateError("native_catalog_or_call_contract_mismatch")
 
         role_expected_mcp_tools = {
-            "sender": MCP_HTTP_OFFER_TOOL_NAMES,
+            "sender": tuple("cao-mcp-server_" + tool for tool in case.sender_catalog),
             "receiver": (),
         }
         offer_observations = {
@@ -5846,7 +6420,11 @@ def _run_enabled(
         }
         for role in ("sender", "receiver"):
             contract_key = (
-                "sender_model_request_full_eight_cao_mcp_tools"
+                (
+                    "sender_model_request_full_eight_cao_mcp_tools"
+                    if case.requires_human_capability
+                    else "sender_model_request_exact_two_cao_mcp_tools"
+                )
                 if role == "sender"
                 else "receiver_model_request_zero_cao_mcp_tools"
             )
@@ -5855,9 +6433,16 @@ def _run_enabled(
                 expected_nonce=offer_nonces[role],
                 expected_mcp_tool_names=role_expected_mcp_tools[role],
                 tracked_tool_names=HTTP_OFFER_TOOL_NAMES,
+                case_id=case.case_id,
             )
         receipt["native_model_request_cao_mcp_surfaces_exact"] = (
-            receipt["sender_model_request_full_eight_cao_mcp_tools"]
+            receipt[
+                (
+                    "sender_model_request_full_eight_cao_mcp_tools"
+                    if case.requires_human_capability
+                    else "sender_model_request_exact_two_cao_mcp_tools"
+                )
+            ]
             and receipt["receiver_model_request_zero_cao_mcp_tools"]
         )
         if not receipt["native_model_request_cao_mcp_surfaces_exact"]:
@@ -5869,24 +6454,37 @@ def _run_enabled(
         caps_before_delete = _capability_files(cao_home)
         if (
             roots_before_delete != root_identity_before
-            or sender_capability_path is None
-            or caps_before_delete != [sender_capability_path]
+            or (
+                case.requires_human_capability
+                and (
+                    sender_capability_path is None or caps_before_delete != [sender_capability_path]
+                )
+            )
+            or (not case.requires_human_capability and bool(caps_before_delete))
             or not _provider_config_contract(
                 cao_home,
                 terminals["sender"],
                 role="sender",
                 capability_path=sender_capability_path,
+                case_id=case.case_id,
             )
             or not _provider_config_contract(
                 cao_home,
                 terminals["receiver"],
                 role="receiver",
                 capability_path=None,
+                case_id=case.case_id,
             )
         ):
             raise GateError("native_roots_or_capabilities_changed_before_delete")
         receipt["two_native_provider_roots_before_delete"] = True
-        receipt["expected_capability_set_before_delete"] = True
+        if case.requires_human_capability:
+            receipt["expected_capability_set_before_delete"] = True
+        else:
+            receipt["capability_files_before_delete"] = len(caps_before_delete)
+            if receipt["capability_files_before_delete"] != 0:
+                raise GateError("generic_message_capability_inventory_nonzero")
+            receipt["capability_inventory_zero_before_delete"] = True
 
         deletion_attempted = True
         delete_response = requests.delete(f"{server.url}/sessions/{session_name}", timeout=60)
@@ -5902,6 +6500,8 @@ def _run_enabled(
         receipt["capability_files_immediately_after_delete"] = post_delete_caps
         if post_delete_roots != 0 or post_delete_caps != 0:
             raise GateError("native_roots_or_capabilities_remain_after_delete")
+        if not case.requires_human_capability:
+            receipt["capability_inventory_zero_after_delete"] = True
     except BaseException as error:
         _SIGTERM_CLEANUP_ACTIVE = True
         if isinstance(error, _ControlledSigterm):
@@ -6244,7 +6844,7 @@ def _run_enabled(
     if receipt["actual_cancel_observed"]:
         failures.add("sigterm_requested")
         receipt["cleanup_failures"] = sorted(failures)
-    receipt["success"] = _acceptance_contract(receipt)
+    receipt["success"] = _acceptance_contract(receipt, case.case_id)
     receipt["utc_finished"] = dt.datetime.now(dt.timezone.utc).isoformat()
     return receipt
 
@@ -6257,7 +6857,9 @@ def _run(
     manifest_path: Path,
     manifest_sha256: str,
     review_digest: str,
+    case_id: Any = DEFAULT_CASE_ID,
 ) -> dict[str, Any]:
+    case = _case_definition(case_id)
     if RUN_ENABLED is not True:
         raise GateError("private_execution_copy_required")
     if not _private_execution_copy_contract():
@@ -6271,6 +6873,7 @@ def _run(
                 manifest_path=manifest_path,
                 manifest_sha256=manifest_sha256,
                 review_digest=review_digest,
+                case_id=case.case_id,
             )
     except _ControlledSigterm:
         global _ACTIVE_PRIVATE_RUN_ROOT
@@ -6287,7 +6890,7 @@ def _run(
         failures = set(receipt.get("cleanup_failures", []))
         failures.add("sigterm_requested")
         receipt["cleanup_failures"] = sorted(failures)
-    receipt["success"] = _acceptance_contract(receipt)
+    receipt["success"] = _acceptance_contract(receipt, case.case_id)
     _write_private(RECEIPT, json.dumps(receipt, indent=2, ensure_ascii=False) + "\n")
     print(
         json.dumps(
@@ -6318,6 +6921,12 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--manifest-sha256", default=None)
     parser.add_argument("--review-digest", default=None)
+    parser.add_argument(
+        "--case",
+        choices=tuple(case.case_id for case in CASE_DEFINITIONS),
+        default=DEFAULT_CASE_ID,
+        help="source-defined case; defaults to the existing full8 collaboration case",
+    )
     parser.add_argument("--self-check", action="store_true")
     args = parser.parse_args()
     if args.self_check:
@@ -6336,12 +6945,13 @@ def main() -> int:
             )
         ):
             parser.error("--self-check cannot be combined with execution gates")
-        check = _self_check()
+        check = _self_check(args.case)
         print(json.dumps(check, sort_keys=True))
         return 0 if check["success"] else 1
     if args.derive_execution_copy is not None:
         if (
-            args.go
+            args.case != DEFAULT_CASE_ID
+            or args.go
             or args.model is not None
             or any(
                 value is not None
@@ -6394,6 +7004,7 @@ def main() -> int:
             manifest_path=args.manifest,
             manifest_sha256=args.manifest_sha256,
             review_digest=args.review_digest,
+            case_id=args.case,
         )
     except GateError as error:
         print(json.dumps({"success": False, "error_code": error.code}, sort_keys=True))
