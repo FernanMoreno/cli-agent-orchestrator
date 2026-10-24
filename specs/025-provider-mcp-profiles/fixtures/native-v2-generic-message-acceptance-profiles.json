@@ -6,9 +6,15 @@
   "scope": "Source-defined native OpenCode v2 generic-message transport case with an exact two-tool sender and a zero-tool receiver. It does not exercise or claim human interaction capability.",
   "profiles": {
     "sender": {
-      "allowed_tools": ["@cao-mcp-server", "discovery"],
+      "allowed_tools": [
+        "@cao-mcp-server",
+        "discovery"
+      ],
       "native_tool_profile": "collaboration",
-      "enabled_mcp_tools": ["list_siblings", "send_message"],
+      "enabled_mcp_tools": [
+        "list_siblings",
+        "send_message"
+      ],
       "runtime_capability": "Absent",
       "prompt": "This profile is for a machine-to-machine transport diagnostic. Use exactly one cao-mcp-server_list_siblings discovery call, then exactly one cao-mcp-server_send_message call for each requested delivery phase. Do not use any human-interaction, delegation, supervision, or memory tool."
     },
@@ -17,11 +23,18 @@
       "native_tool_profile": "collaboration",
       "enabled_mcp_tools": [],
       "runtime_capability": "Absent",
-      "prompt": "You are a passive receiver for an automated machine-to-machine delivery check. A received message is not a human request. When one arrives, reply with the acknowledgement body ACK in plain text. Also append the active machine turn receipt required by the delivery contract as a separate final line. The receipt is protocol metadata, separate from the acknowledgement body. Do not use tools, ask questions, or send messages."
+      "prompt": "You are a passive receiver for an automated machine-to-machine delivery check. A received message is not a human request. When one arrives, the public acknowledgement body must be exactly ACK. Do not add summaries, explanations, quotes, or message echoes to that body. Also append the active machine turn receipt required by the delivery contract as a separate final line. The receipt is protocol metadata, separate from the acknowledgement body. Do not use tools, ask questions, or send messages."
     }
   },
-  "catalog": ["list_siblings", "send_message"],
-  "sender_calls": ["list_siblings", "send_message", "send_message"],
+  "catalog": [
+    "list_siblings",
+    "send_message"
+  ],
+  "sender_calls": [
+    "list_siblings",
+    "send_message",
+    "send_message"
+  ],
   "receiver_catalog": [],
   "capability_inventory": {
     "sender": 0,
@@ -36,7 +49,10 @@
       "cao-mcp-server_send_message"
     ],
     "receiver_cao_mcp_wire_names": [],
-    "source_approved_optional_native_builtins": ["skill", "todowrite"],
+    "source_approved_optional_native_builtins": [
+      "skill",
+      "todowrite"
+    ],
     "diagnostic_only_native_names_must_be_zero": true,
     "minimum_target_primary_requests_per_role": 2,
     "all_selected_model_primary_requests_must_match_role_profile": true,
@@ -54,8 +70,15 @@
   },
   "required_checks": {
     "case_id_and_artifacts_bound_before_resources": true,
-    "sender_exact_two_tool_catalog": ["list_siblings", "send_message"],
-    "sender_calls_exact": ["list_siblings", "send_message", "send_message"],
+    "sender_exact_two_tool_catalog": [
+      "list_siblings",
+      "send_message"
+    ],
+    "sender_calls_exact": [
+      "list_siblings",
+      "send_message",
+      "send_message"
+    ],
     "sender_calls_from_canonical_cao_mcp_server": true,
     "receiver_catalog_empty": true,
     "receiver_calls_empty": true,

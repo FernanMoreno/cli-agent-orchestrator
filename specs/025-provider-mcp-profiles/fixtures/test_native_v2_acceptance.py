@@ -4216,3 +4216,36 @@ def test_http_prompt_collector_rejects_tampered_or_unbound_evidence(
     assert result["status"] == "unavailable"
     assert result["sealed_raw_copy_verified"] is False
     assert result["acceptance_input_changed"] is False
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "native-message-acceptance-profiles.json",
+        "native-v2-generic-message-acceptance-profiles.json",
+        "native-v2-collaboration-acceptance-profiles.json",
+    ],
+)
+def test_passive_receiver_public_ack_only_contract_composes_with_receipt(filename):
+    from cli_agent_orchestrator.providers.base import BaseProvider
+
+    fixture = json.loads(RUNNER_PATH.with_name(filename).read_text())
+    prompt = fixture["profiles"]["receiver"]["prompt"]
+    assert "public acknowledgement body must be exactly ACK" in prompt
+    assert "Do not add summaries, explanations, quotes, or message echoes" in prompt
+    assert "separate final line" in prompt
+    incoming = "Mensaje de prueba: estado de la entrega."
+    if filename != "native-message-acceptance-profiles.json":
+        case_id = "generic_message" if "generic" in filename else "collaboration"
+        assert runner._case_fixture_contract(case_id) is True
+        assert runner._profile_contract("receiver", case_id)[2] == prompt
+    prepared = BaseProvider._format_turn_receipt_input(
+        SimpleNamespace(terminal_id="receiver-test"),
+        incoming,
+        "CAO-TURN-RECEIPT-" + "a" * 32,
+    )
+    assert incoming in prepared
+    assert prompt not in prepared  # Native profile and delivered input are separate.
+    assert "exactly this receipt: CAO-TURN-RECEIPT-" + "a" * 32 in prepared
+    assert runner._receiver_ack_exact("ACK") is True
+    assert runner._receiver_ack_exact("ACK\n\nMensaje recibido correctamente.") is False

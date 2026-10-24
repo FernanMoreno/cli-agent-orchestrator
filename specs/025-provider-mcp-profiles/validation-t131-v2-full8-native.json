@@ -1,0 +1,76 @@
+{
+  "schema": "caos.native-acceptance-summary.v1",
+  "source_head": "f580d5ae026d0dd7d2a44aeaaaa74d23f0dac4d5",
+  "case": "v2-full8",
+  "success": false,
+  "elapsed_seconds": 66.178,
+  "private_native_receipt_sha256": "e9e13e3a97e84e33caa900258bfaadc5d0e8b617d86077a1209c1acc66744b1d",
+  "error_code": "receiver_ack_not_exact",
+  "global_acceptance_claimed": false,
+  "external_cao_work_message_acceptance_claimed": false,
+  "historical_failure_cause_demonstrated": false,
+  "case_gates_closed": true,
+  "parent_pg_closed": true,
+  "exact_owned_container_absent": true,
+  "exact_owned_network_absent": true,
+  "unrelated_resources_preserved": true,
+  "private_state_removed": true,
+  "operator_auth_unchanged": true,
+  "source_runtime_file_count": 535,
+  "separate_artifact_count": 0,
+  "cleanup_failures": [],
+  "phases": [
+    {
+      "name": "before_restart",
+      "receiver_ack_exact": false,
+      "receiver_turn_completed_once": true,
+      "last_receipt_unicode_verified": true,
+      "durable_turn_completed": true,
+      "elapsed_seconds": 13.475,
+      "model_seconds": 12.865,
+      "receiver_last_observation": {
+        "http_status": 200,
+        "body_state": "mapping",
+        "output_utf8_bytes": 110,
+        "output_lines": 3,
+        "output_string_observed": true,
+        "public_ack_exact": false,
+        "observed_within_deadline": true,
+        "acceptance_input_changed": false
+      },
+      "receiver_output_failure_snapshot": {
+        "status": "captured",
+        "reason": "none"
+      }
+    }
+  ],
+  "minimum_admission_mib": 10073,
+  "response_argument_observation": {
+    "observer_status": "observed",
+    "trace_complete": true,
+    "overflow": false,
+    "request_count": 3,
+    "response_count": 3,
+    "durable_record_count": 3,
+    "phase_results": [
+      {
+        "phase_ordinal": 1,
+        "status": "exact",
+        "target_tool_call_count": 1,
+        "argument_exact": true,
+        "known_punctuation_variant_exact": false,
+        "expected_utf8_bytes": 48,
+        "observed_utf8_bytes": 48
+      },
+      {
+        "phase_ordinal": 2,
+        "status": "not_observed",
+        "target_tool_call_count": null,
+        "argument_exact": null,
+        "known_punctuation_variant_exact": null,
+        "expected_utf8_bytes": 51,
+        "observed_utf8_bytes": null
+      }
+    ]
+  }
+}

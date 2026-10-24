@@ -170,11 +170,11 @@ _GENERIC_MESSAGE_SENDER_PROMPT = (
 )
 _RECEIVER_PROMPT = (
     "You are a passive receiver for an automated machine-to-machine delivery check. "
-    "A received message is not a human request. When one arrives, reply with the "
-    "acknowledgement body ACK in plain text. Also append the active machine turn receipt "
-    "required by the delivery contract as a separate final line. The receipt is protocol "
-    "metadata, separate from the acknowledgement body. Do not use tools, ask questions, "
-    "or send messages."
+    "A received message is not a human request. When one arrives, the public acknowledgement "
+    "body must be exactly ACK. Do not add summaries, explanations, quotes, or message echoes "
+    "to that body. Also append the active machine turn receipt required by the delivery "
+    "contract as a separate final line. The receipt is protocol metadata, separate from the "
+    "acknowledgement body. Do not use tools, ask questions, or send messages."
 )
 _GENERIC_RECEIVER_PROMPT = _RECEIVER_PROMPT
 CASE_DEFINITIONS = (
