@@ -1,0 +1,127 @@
+"""Reproduce the private synthetic config through CAO's pinned production writer."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import pathlib
+import subprocess
+import sys
+
+BASE = pathlib.Path(__file__).resolve().parents[1]
+SOURCE_CONFIG = BASE / "control" / "source-config.json"
+SOURCE_AGENTS = BASE / "control" / "source-agents"
+WRITER_RELATIVE = "src/cli_agent_orchestrator/utils/opencode_v2.py"
+EXPECTED_SOURCE_HEAD = "6ffaefddf26cc0bb0c003dd487bfaba4e04e1a69"
+EXPECTED_WRITER_SHA256 = "c12244f9e62d0326a039d35530187842dfd4e478560c0222f9904228a8876c3c"
+EXPECTED_WRITER_GIT_BLOB = "f1e7bd35454407d6761b3ce7c11801369ae9a08a"
+SYNTHETIC_SESSION_ID = "t127r4"
+SELECTED_MODEL = "t127fake/toolarg-model"
+
+
+def _verified_writer(repo_root: pathlib.Path) -> pathlib.Path:
+    root = repo_root.resolve(strict=True)
+    if root != repo_root or root.is_symlink():
+        raise RuntimeError("production_writer_repo_invalid")
+    writer = root / WRITER_RELATIVE
+    if writer.is_symlink() or not writer.is_file() or writer.resolve(strict=True) != writer:
+        raise RuntimeError("production_writer_source_invalid")
+    raw = writer.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != EXPECTED_WRITER_SHA256:
+        raise RuntimeError("production_writer_sha_mismatch")
+    try:
+        head = subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            timeout=2.0,
+            text=True,
+        ).strip()
+        top = subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            stderr=subprocess.DEVNULL,
+            timeout=2.0,
+            text=True,
+        ).strip()
+        blob = subprocess.check_output(
+            [
+                "git",
+                "-C",
+                str(root),
+                "rev-parse",
+                f"{EXPECTED_SOURCE_HEAD}:{WRITER_RELATIVE}",
+            ],
+            stderr=subprocess.DEVNULL,
+            timeout=2.0,
+            text=True,
+        ).strip()
+        dirty = subprocess.check_output(
+            ["git", "-C", str(root), "status", "--porcelain", "--", WRITER_RELATIVE],
+            stderr=subprocess.DEVNULL,
+            timeout=2.0,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("production_writer_git_unavailable") from exc
+    if (
+        head != EXPECTED_SOURCE_HEAD
+        or pathlib.Path(top).resolve(strict=True) != root
+        or blob != EXPECTED_WRITER_GIT_BLOB
+        or dirty
+    ):
+        raise RuntimeError("production_writer_head_mismatch")
+    return writer
+
+
+def render_production_configuration(
+    repo_root: pathlib.Path,
+    destination: pathlib.Path,
+) -> pathlib.Path:
+    writer = _verified_writer(repo_root)
+    if destination.exists() or destination.is_symlink():
+        raise RuntimeError("production_config_destination_must_be_new")
+    if SOURCE_CONFIG.is_symlink() or SOURCE_AGENTS.is_symlink():
+        raise RuntimeError("synthetic_config_input_path_invalid")
+    source_config = json.loads(SOURCE_CONFIG.read_text(encoding="utf-8"))
+    source_agents = SOURCE_AGENTS.resolve(strict=True)
+    if (
+        source_agents.parent != SOURCE_AGENTS.parent
+        or not (source_agents / "toolarg_probe.md").is_file()
+    ):
+        raise RuntimeError("synthetic_agent_source_invalid")
+
+    source_root = writer.parents[2]
+    sys.path.insert(0, str(source_root))
+    try:
+        import cli_agent_orchestrator.utils.opencode_v2 as writer_module
+        from cli_agent_orchestrator.utils.opencode_v2 import write_v2_configuration
+
+        if pathlib.Path(writer_module.__file__).resolve(strict=True) != writer:
+            raise RuntimeError("production_writer_import_origin_mismatch")
+        write_v2_configuration(
+            destination,
+            source_agents=source_agents,
+            source_config=source_config,
+            session_id=SYNTHETIC_SESSION_ID,
+            source_auth=None,
+            source_credential_db=None,
+            selected_model=SELECTED_MODEL,
+        )
+    finally:
+        if sys.path and sys.path[0] == str(source_root):
+            sys.path.pop(0)
+    return destination / "opencode.json"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--repo-root", required=True, type=pathlib.Path)
+    parser.add_argument("--destination", required=True, type=pathlib.Path)
+    args = parser.parse_args()
+    rendered = render_production_configuration(args.repo_root, args.destination)
+    print(json.dumps({"writer_pinned": True, "config_rendered": rendered.is_file()}))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

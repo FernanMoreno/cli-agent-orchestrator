@@ -1,0 +1,11 @@
+{
+  "schema": "t127.synthetic-toolarg-source-binding.v1",
+  "source_head": "6ffaefddf26cc0bb0c003dd487bfaba4e04e1a69",
+  "source_file_relative": "test/live_provider/message_api_restart.py",
+  "source_git_blob_sha1": "cfcb37a90264aa8a1ba5c51ffbfa54e724aa5375",
+  "source_file_sha256": "eb941fdd84c3b4706c8ac1caa671507238f9115b14c18d65a2bcef7ae9f11ca8",
+  "working_tree_file_clean_at_preparation": true,
+  "bound_constant": "PRE_RESTART_MESSAGE",
+  "source_fixture_body_exact_ordinals": [1],
+  "native_wire_mutant_ordinal": 2
+}

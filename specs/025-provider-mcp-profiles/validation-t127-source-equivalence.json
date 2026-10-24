@@ -1,0 +1,70 @@
+{
+  "executed_source_head": "bed7cd44a2c2a4cc759c8953a476013aa7311f24",
+  "current_main_head": "6ffaefddf26cc0bb0c003dd487bfaba4e04e1a69",
+  "current_head_execution_claimed": false,
+  "source_equivalence_is_not_acceptance": true,
+  "original_receipt_head_preserved": true,
+  "generic_case_result": "PASS",
+  "full8_case_result": "FAILED",
+  "v2_generic_runtime_equivalence": {
+    "at_current_head": {
+      "declared_count": 527,
+      "executed_and_current_git_blobs_byte_equal": 527,
+      "manifest_hash_matches_git_blobs": 527,
+      "worktree_byte_matches_current_head": 527,
+      "worktree_matches_manifest_hashes": 527
+    },
+    "at_executed_head": {
+      "declared_count": 527,
+      "executed_and_current_git_blobs_byte_equal": 527,
+      "manifest_hash_matches_git_blobs": 527,
+      "worktree_byte_matches_executed_head": 527,
+      "worktree_matches_manifest_hashes": 527
+    }
+  },
+  "v2_full8_runtime_equivalence": {
+    "at_current_head": {
+      "declared_count": 527,
+      "executed_and_current_git_blobs_byte_equal": 527,
+      "manifest_hash_matches_git_blobs": 527,
+      "worktree_byte_matches_current_head": 527,
+      "worktree_matches_manifest_hashes": 527
+    },
+    "at_executed_head": {
+      "declared_count": 527,
+      "executed_and_current_git_blobs_byte_equal": 527,
+      "manifest_hash_matches_git_blobs": 527,
+      "worktree_byte_matches_executed_head": 527,
+      "worktree_matches_manifest_hashes": 527
+    }
+  },
+  "v1_runtime_inventory": {
+    "at_current_head": {
+      "declared_count": 513,
+      "executed_and_current_git_blobs_byte_equal": 513,
+      "manifest_hash_matches_git_blobs": 513,
+      "worktree_byte_matches_current_head": 513,
+      "worktree_matches_manifest_hashes": 513
+    },
+    "at_executed_head": {
+      "declared_count": 513,
+      "executed_and_current_git_blobs_byte_equal": 513,
+      "manifest_hash_matches_git_blobs": 513,
+      "worktree_byte_matches_executed_head": 513,
+      "worktree_matches_manifest_hashes": 513
+    }
+  },
+  "v1_base_artifact_pin_count": 7,
+  "v1_artifact_git_blob_differences_bed7_to_current_head": 1,
+  "v1_artifact_paths_differing": [
+    "specs/025-provider-mcp-profiles/fixtures/run_native_v1_acceptance.py"
+  ],
+  "v1_changed_artifact_path_in_v2_runtime_map": false,
+  "limits": [
+    "The original T125 execution and receipt remain pinned to bed7; byte equivalence does not relabel them as executions at current HEAD.",
+    "This is a source-equivalence result only; no global acceptance claim is made.",
+    "The T125 full8 case remains FAILED as recorded in its safe projection.",
+    "The v1 inventory has 513 runtime files; its seven base artifact pins are a separate set."
+  ],
+  "schema": "caos.t127.source-equivalence.public.v1"
+}

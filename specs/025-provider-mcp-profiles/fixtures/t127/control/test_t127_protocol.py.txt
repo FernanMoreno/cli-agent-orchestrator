@@ -1,0 +1,1663 @@
+from __future__ import annotations
+
+import ast
+import hashlib
+import json
+import os
+import tempfile
+import unittest
+from contextlib import redirect_stdout
+from io import StringIO
+from pathlib import Path
+from unittest.mock import patch
+
+import inside_control as control
+
+
+CONTROL_DIR = Path(__file__).resolve().parent
+
+
+class T127PureProtocolTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.expectations = control.load_expectations(CONTROL_DIR / "expectations.json")
+
+    def _request(self, *, stream: bool = False) -> dict[str, object]:
+        return {
+            "messages": [{"role": "user", "content": "fixed diagnostic prompt"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "t127fake_send_message",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "message": {"type": "string"},
+                                "target": {"type": "string"},
+                            },
+                            "required": ["message", "target"],
+                            "additionalProperties": False,
+                        },
+                    },
+                }
+            ],
+            "stream": stream,
+        }
+
+    def test_expectations_are_bound_to_authoritative_public_phase_source(self) -> None:
+        binding = json.loads(
+            (CONTROL_DIR / "source-binding.json").read_text(encoding="utf-8")
+        )
+        repo_root = Path(os.environ["T127_TEST_REPO_ROOT"]).resolve(strict=True)
+        self.assertEqual(binding["source_head"], "6ffaefddf26cc0bb0c003dd487bfaba4e04e1a69")
+        raw = (repo_root / binding["source_file_relative"]).read_bytes()
+        self.assertTrue(
+            hashlib.sha256(raw).hexdigest() == binding["source_file_sha256"]
+        )
+        git_blob = hashlib.sha1(
+            b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw
+        ).hexdigest()
+        self.assertTrue(git_blob == binding["source_git_blob_sha1"])
+        module = ast.parse(raw.decode("utf-8", "strict"))
+        node = next(
+            statement
+            for statement in module.body
+            if isinstance(statement, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "PRE_RESTART_MESSAGE"
+                for target in statement.targets
+            )
+        )
+        source_message = ast.literal_eval(node.value)
+        baseline = self.expectations["source_baseline"]
+        mutant = self.expectations["unicode_punctuation_mutant"]
+        self.assertTrue(baseline["source_message"] == source_message)
+        self.assertTrue(baseline["wire_message"] == source_message)
+        self.assertTrue(mutant["source_message"] == source_message)
+        self.assertTrue(mutant["wire_message"] == source_message[:-1] + "。")
+        self.assertEqual(len(source_message), 40)
+        self.assertEqual(len(source_message.encode("utf-8")), 48)
+        self.assertEqual(len(mutant["wire_message"].encode("utf-8")), 50)
+        import driver
+
+        driver._verify_source_binding(binding["source_head"], repo_root)
+        with self.assertRaises(RuntimeError):
+            driver._verify_source_binding("0" * 40, repo_root)
+
+    def test_synthetic_system_files_have_exact_content_pins(self) -> None:
+        import driver
+
+        self.assertEqual(
+            driver._sha(CONTROL_DIR / "synthetic-passwd"),
+            driver.EXPECTED_SYNTHETIC_PASSWD_SHA256,
+        )
+        self.assertEqual(
+            driver._sha(CONTROL_DIR / "synthetic-hosts"),
+            driver.EXPECTED_SYNTHETIC_HOSTS_SHA256,
+        )
+
+    def test_response_probe_install_copies_are_derived_and_bound(self) -> None:
+        import driver
+
+        for kind, expected_hash in driver.EXPECTED_DERIVED_PROBE_SHA256.items():
+            derived = driver._derived_probe_bytes(kind)
+            self.assertEqual(hashlib.sha256(derived).hexdigest(), expected_hash)
+            self.assertIn(b'providerID:"t127fake"', derived)
+            self.assertIn(b'modelID:"toolarg-model"', derived)
+            self.assertNotIn(b"context?.options", derived)
+            destination = (
+                driver.WORKSPACES
+                / kind
+                / ".opencode"
+                / "plugins"
+                / "response_hook_probe.js"
+            )
+            self.assertEqual(destination.read_bytes(), derived)
+
+    def _write_probe_ledger(self, root: Path, workspace: Path, *, duplicate: bool = False) -> None:
+        opencode = workspace / ".opencode"
+        plugin_dir = opencode / "plugins"
+        opencode.mkdir(mode=0o700)
+        plugin_dir.mkdir(mode=0o700)
+        plugin_source = (
+            CONTROL_DIR / "workspaces" / "source_baseline" / ".opencode" / "plugins" / "response_hook_probe.js"
+        )
+        plugin = plugin_dir / "response_hook_probe.js"
+        plugin.write_bytes(plugin_source.read_bytes())
+        plugin.chmod(0o600)
+        ledger = opencode / "http-response-probe"
+        ledger.mkdir(mode=0o700)
+        hook = {
+            "schema_version": 1,
+            "event": "hook",
+            "status": "registered",
+            "ordinal": 0,
+            "hook_registered": True,
+            "selected_primary_response_seen": False,
+            "synthetic_wire_marker_seen": False,
+            "clone_completed": False,
+            "inspection_unavailable": False,
+            "original_not_replaced": True,
+            "cleanup_complete": False,
+        }
+        responses = [
+            {
+                "schema_version": 1,
+                "event": "response",
+                "status": "clone_completed",
+                "ordinal": ordinal,
+                "hook_registered": True,
+                "selected_primary_response_seen": True,
+                "synthetic_wire_marker_seen": ordinal == 1,
+                "clone_completed": True,
+                "inspection_unavailable": False,
+                "original_not_replaced": True,
+                "cleanup_complete": False,
+            }
+            for ordinal in (1, 2)
+        ]
+        if duplicate:
+            events = b'{"schema_version":1,"schema_version":1}\n'
+        else:
+            events = ("\n".join(json.dumps(item, sort_keys=True) for item in [hook, *responses]) + "\n").encode()
+        events_path = ledger / "events.jsonl"
+        events_path.write_bytes(events)
+        events_path.chmod(0o600)
+        seal = {
+            "schema_version": 1,
+            "event": "seal",
+            "status": "sealed",
+            "ordinal": 2,
+            "hook_registered": True,
+            "selected_primary_response_seen": True,
+            "synthetic_wire_marker_seen": True,
+            "clone_completed": True,
+            "inspection_unavailable": False,
+            "original_not_replaced": True,
+            "cleanup_complete": True,
+        }
+        seal_path = ledger / "seal.json"
+        seal_path.write_text(json.dumps(seal, sort_keys=True) + "\n", encoding="utf-8")
+        seal_path.chmod(0o600)
+
+    def test_response_probe_reader_requires_closed_copy_and_sanitizes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            private = root / "private"
+            private.mkdir(mode=0o700)
+            workspace = root / "workspaces" / "source_baseline"
+            workspace.mkdir(mode=0o700, parents=True)
+            workspace.chmod(0o700)
+            self._write_probe_ledger(root, workspace)
+            with patch.object(control, "ROOT", root):
+                summary = control.read_response_probe(
+                    workspace, "source_baseline", writers_dead=True
+                )
+                denied = control.read_response_probe(
+                    workspace, "source_baseline", writers_dead=False
+                )
+            self.assertEqual(summary["status"], "sealed")
+            self.assertTrue(summary["marker_seen"])
+            self.assertTrue(summary["cleanup_complete"])
+            self.assertTrue(summary["diagnostic_only"])
+            self.assertEqual(summary["selected_response_count"], 2)
+            self.assertEqual(
+                set(summary),
+                {
+                    "status",
+                    "hook_registered",
+                    "selected_response_count",
+                    "marker_seen",
+                    "all_clones_completed",
+                    "original_never_replaced",
+                    "cleanup_complete",
+                    "diagnostic_only",
+                },
+            )
+            self.assertEqual(denied["status"], "unavailable")
+            copied = private / "response-probe-source_baseline"
+            self.assertEqual({item.name for item in copied.iterdir()}, {"events.jsonl", "seal.json"})
+            self.assertEqual((copied / "events.jsonl").read_bytes(), (workspace / ".opencode/http-response-probe/events.jsonl").read_bytes())
+            for item in copied.iterdir():
+                self.assertEqual(item.stat().st_mode & 0o777, 0o600)
+
+    def test_response_probe_reader_rejects_duplicate_json_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            (root / "private").mkdir(mode=0o700)
+            workspace = root / "workspaces" / "source_baseline"
+            workspace.mkdir(mode=0o700, parents=True)
+            workspace.chmod(0o700)
+            self._write_probe_ledger(root, workspace, duplicate=True)
+            with patch.object(control, "ROOT", root):
+                summary = control.read_response_probe(
+                    workspace, "source_baseline", writers_dead=True
+                )
+            self.assertEqual(summary["status"], "unavailable")
+            copied = root / "private/response-probe-source_baseline/events.jsonl"
+            self.assertEqual(copied.read_bytes(), b'{"schema_version":1,"schema_version":1}\n')
+
+    def test_source_baseline_nonstream_call_reaches_exact_fixed_arguments(self) -> None:
+        expected = self.expectations["source_baseline"]
+        response, bound, streaming = control.build_provider_response(
+            self._request(), expected, case_ordinal=1
+        )
+        self.assertTrue(bound)
+        self.assertFalse(streaming)
+        call = response["choices"][0]["message"]["tool_calls"][0]
+        parsed = control.strict_json_loads(call["function"]["arguments"])
+        summary = control.summarize_tool_arguments(parsed, expected)
+        self.assertTrue(summary["argument_exact"])
+        self.assertTrue(summary["utf8_byte_length_equal"])
+        self.assertTrue(summary["unicode_scalar_count_equal"])
+        self.assertTrue(summary["no_extra_argument_keys"])
+        self.assertTrue(summary["target_exact"])
+        self.assertEqual(set(parsed), {"message", "target"})
+        self.assertTrue(parsed["message"] == expected["source_message"])
+
+    def test_cjk_punctuation_mutant_stream_reaches_exact_declared_wire(self) -> None:
+        expected = self.expectations["unicode_punctuation_mutant"]
+        response, bound, streaming = control.build_provider_response(
+            self._request(stream=True), expected, case_ordinal=2
+        )
+        self.assertTrue(bound)
+        self.assertTrue(streaming)
+        frames = control._sse_bytes(response, split_arguments=True)
+        events = [
+            json.loads(line.removeprefix(b"data: "))
+            for line in frames.splitlines()
+            if line.startswith(b"data: {")
+        ]
+        self.assertEqual(len(events), 3)
+        argument_parts: list[str] = []
+        chosen_name = None
+        for event in events:
+            calls = event["choices"][0]["delta"].get("tool_calls", [])
+            if calls:
+                function = calls[0].get("function", {})
+                if "name" in function:
+                    chosen_name = function["name"]
+                argument_parts.append(function.get("arguments", ""))
+        self.assertEqual(chosen_name, "t127fake_send_message")
+        parsed = control.strict_json_loads("".join(argument_parts))
+        summary = control.summarize_tool_arguments(parsed, expected)
+        self.assertTrue(summary["argument_exact"])
+        self.assertTrue(summary["utf8_byte_length_equal"])
+        self.assertTrue(summary["unicode_scalar_count_equal"])
+        self.assertTrue(summary["target_exact"])
+        self.assertTrue(parsed["message"] == expected["wire_message"])
+        self.assertTrue(expected["wire_message"] != expected["source_message"])
+
+    def test_u3002_mutant_negative_compares_against_unmutated_source(self) -> None:
+        baseline = self.expectations["source_baseline"]
+        mutant = self.expectations["unicode_punctuation_mutant"]
+        source_message = baseline["source_message"]
+        mutant_message = mutant["wire_message"]
+        self.assertEqual(len(source_message), 40)
+        self.assertEqual(len(source_message.encode("utf-8")), 48)
+        self.assertEqual(len(mutant_message), 40)
+        self.assertEqual(len(mutant_message.encode("utf-8")), 50)
+        self.assertTrue(mutant_message == source_message[:-1] + "。")
+        summary = control.summarize_tool_arguments(
+            {"message": source_message, "target": mutant["target"]}, mutant
+        )
+        self.assertFalse(summary["argument_exact"])
+        self.assertFalse(summary["utf8_byte_length_equal"])
+        self.assertTrue(summary["unicode_scalar_count_equal"])
+        self.assertEqual(summary["failure_class"], "mismatch")
+        same_length_change = source_message[:-1] + "!"
+        equal_counts = control.summarize_tool_arguments(
+            {"message": same_length_change, "target": baseline["target"]}, baseline
+        )
+        self.assertFalse(equal_counts["argument_exact"])
+        self.assertTrue(equal_counts["utf8_byte_length_equal"])
+        self.assertTrue(equal_counts["unicode_scalar_count_equal"])
+        self.assertNotIn("message", summary)
+        self.assertNotIn("hash", summary)
+
+    def test_extra_argument_key_and_wrong_target_do_not_count_as_exact(self) -> None:
+        expected = self.expectations["source_baseline"]
+        with_extra = control.summarize_tool_arguments(
+            {
+                "message": expected["wire_message"],
+                "target": expected["target"],
+                "extra": "not exported",
+            },
+            expected,
+        )
+        wrong_target = control.summarize_tool_arguments(
+            {"message": expected["wire_message"], "target": "other-sink"}, expected
+        )
+        self.assertFalse(with_extra["no_extra_argument_keys"])
+        self.assertFalse(wrong_target["target_exact"])
+        self.assertEqual(with_extra["failure_class"], "mismatch")
+        self.assertEqual(wrong_target["failure_class"], "mismatch")
+        self.assertNotIn("other-sink", repr(wrong_target))
+
+    def test_non_object_tool_arguments_fail_closed_without_payload_projection(self) -> None:
+        expected = self.expectations["source_baseline"]
+        summary = control.summarize_tool_arguments(["not", "an", "object"], expected)
+        self.assertEqual(summary["failure_class"], "malformed_input")
+        self.assertFalse(summary["argument_exact"])
+        self.assertFalse(summary["target_exact"])
+        self.assertNotIn("message", summary)
+        self.assertNotIn("target", summary)
+
+    def test_driver_execute_flag_stays_closed_and_never_starts_a_process(self) -> None:
+        import driver
+
+        output = StringIO()
+        with (
+            patch.object(
+                driver.sys,
+                "argv",
+                [
+                    "driver.py",
+                    "--execute",
+                    "--expected-head",
+                    "0" * 40,
+                    "--repo-root",
+                    os.environ["T127_TEST_REPO_ROOT"],
+                ],
+            ),
+            patch.object(driver.subprocess, "Popen") as popen,
+            redirect_stdout(output),
+        ):
+            result = driver.main()
+        self.assertEqual(result, 2)
+        popen.assert_not_called()
+        projection = json.loads(output.getvalue())
+        self.assertEqual(projection["status"], "closed")
+        self.assertFalse(projection["run_enabled"])
+        self.assertFalse(projection["private_admission_approved"])
+        self.assertFalse(projection["native_invoked"])
+
+    def test_outer_exception_after_launch_reports_launch_and_reaps_owned_group(self) -> None:
+        import driver
+        from types import SimpleNamespace
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "private").mkdir(mode=0o700)
+            class Process:
+                pid = 43218
+                returncode = None
+
+                def poll(self) -> None:
+                    return None
+
+            process = Process()
+            killpg_calls: list[tuple[int, int]] = []
+
+            def killpg(process_group: int, signal_number: int) -> None:
+                killpg_calls.append((process_group, signal_number))
+                raise ProcessLookupError
+
+            output = StringIO()
+            with (
+                patch.object(driver, "RUN_ENABLED", True),
+                patch.object(driver, "PRIVATE_ADMISSION_APPROVED", True),
+                patch.object(driver, "CONTROL", root),
+                patch.object(driver, "_validate_inputs"),
+                patch.object(driver, "_create_runtime_dirs"),
+                patch.object(driver, "_make_argv", return_value=["sandbox"]),
+                patch.object(
+                    driver,
+                    "_mem_available_kib",
+                    side_effect=[driver.FLOOR_KIB, driver.FLOOR_KIB, RuntimeError("post launch")],
+                ),
+                patch.object(driver.subprocess, "Popen", return_value=process),
+                patch.object(
+                    driver,
+                    "_cleanup_owned_process_group",
+                    wraps=driver._cleanup_owned_process_group,
+                ) as cleanup,
+                patch.object(driver.os, "killpg", side_effect=killpg),
+                patch.object(
+                    driver.sys,
+                    "argv",
+                    ["driver.py", "--execute", "--expected-head", "0" * 40, "--repo-root", "/tmp"],
+                ),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(driver.main(), 1)
+
+            projection = json.loads(output.getvalue())
+            self.assertTrue(projection["native_invoked"])
+            cleanup.assert_called_once_with(process)
+            self.assertEqual({group for group, _signal in killpg_calls}, {process.pid})
+
+    def test_nonzero_inner_exit_preserves_failure_without_faking_isolation_failure(self) -> None:
+        import driver
+
+        failed_turn = {
+            "failure_class": "timeout",
+            "both_baseline_cases_exact": False,
+        }
+        outcome = driver._apply_outer_process_outcome(
+            failed_turn,
+            isolation_failed=False,
+            timed_out=False,
+            returncode=1,
+        )
+        self.assertEqual(outcome["failure_class"], "timeout")
+        self.assertFalse(outcome["both_baseline_cases_exact"])
+
+        incomplete_turn = {
+            "failure_class": "none",
+            "both_baseline_cases_exact": True,
+        }
+        outcome = driver._apply_outer_process_outcome(
+            incomplete_turn,
+            isolation_failed=False,
+            timed_out=False,
+            returncode=1,
+        )
+        self.assertEqual(outcome["failure_class"], "not_observed")
+        self.assertFalse(outcome["both_baseline_cases_exact"])
+
+        isolation_failure = {
+            "failure_class": "mismatch",
+            "both_baseline_cases_exact": False,
+        }
+        outcome = driver._apply_outer_process_outcome(
+            isolation_failure,
+            isolation_failed=True,
+            timed_out=False,
+            returncode=1,
+        )
+        self.assertEqual(outcome["failure_class"], "isolation_failed")
+
+        success = {
+            "failure_class": "none",
+            "both_baseline_cases_exact": True,
+        }
+        self.assertEqual(
+            driver._apply_outer_process_outcome(
+                success,
+                isolation_failed=False,
+                timed_out=False,
+                returncode=0,
+            ),
+            success,
+        )
+
+    def test_outer_cleanup_targets_only_the_owned_process_group(self) -> None:
+        import driver
+        from types import SimpleNamespace
+
+        calls: list[tuple[int, int]] = []
+        alive = True
+
+        def killpg(process_group: int, signal_number: int) -> None:
+            nonlocal alive
+            calls.append((process_group, signal_number))
+            if signal_number == 0:
+                if alive:
+                    return
+                raise ProcessLookupError
+            if signal_number == driver.signal.SIGTERM:
+                alive = False
+                return
+            self.fail("cleanup unexpectedly escalated to SIGKILL")
+
+        with patch.object(driver.os, "killpg", side_effect=killpg):
+            result = driver._cleanup_owned_process_group(SimpleNamespace(pid=43217))
+        self.assertEqual(result, {
+            "owned_process_group_cleanup_attempted": True,
+            "owned_process_group_remaining": False,
+        })
+        self.assertTrue(calls)
+        self.assertEqual({process_group for process_group, _signal in calls}, {43217})
+        self.assertNotIn((43217, driver.signal.SIGKILL), calls)
+        self.assertFalse(hasattr(driver, "_scan_and_reap_marker"))
+
+    def test_provider_refuses_unbound_or_extra_tool_catalog(self) -> None:
+        expected = self.expectations["source_baseline"]
+        request = self._request()
+        request["tools"] = []
+        response, bound, _streaming = control.build_provider_response(
+            request, expected, case_ordinal=1
+        )
+        self.assertFalse(bound)
+        self.assertEqual(response["choices"][0]["finish_reason"], "stop")
+        request = self._request()
+        request["tools"].append(request["tools"][0])
+        _response, bound, _streaming = control.build_provider_response(
+            request, expected, case_ordinal=1
+        )
+        self.assertFalse(bound)
+
+        _response, bound, _streaming = control.build_provider_response(
+            request, expected, case_ordinal=1, allow_tool_call=False
+        )
+        self.assertFalse(bound)
+        request = self._request()
+        request["tools"][0]["function"]["name"] = "t127fake_other_send_message"
+        _response, bound, _streaming = control.build_provider_response(
+            request, expected, case_ordinal=1
+        )
+        self.assertFalse(bound)
+        request = self._request()
+        request["tools"][0]["function"]["parameters"]["properties"]["message"] = {
+            "type": "array"
+        }
+        _response, bound, _streaming = control.build_provider_response(
+            request, expected, case_ordinal=1
+        )
+        self.assertFalse(bound)
+
+    def test_provider_accepts_other_bounded_tools_but_one_exact_fake_function(self) -> None:
+        expected = self.expectations["source_baseline"]
+        request = self._request()
+        request["tools"].insert(
+            0,
+            {"type": "function", "function": {"name": "unrelated_tool", "parameters": {}}},
+        )
+        _response, bound, _streaming = control.build_provider_response(
+            request, expected, case_ordinal=1
+        )
+        self.assertTrue(bound)
+
+        request["tools"].append(request["tools"][-1])
+        _response, bound, _streaming = control.build_provider_response(
+            request, expected, case_ordinal=1
+        )
+        self.assertFalse(bound)
+
+        request = self._request()
+        fake_tool = request["tools"][0]
+        unrelated = {
+            "type": "function",
+            "function": {"name": "unrelated_tool", "parameters": {}},
+        }
+        request["tools"] = [fake_tool, *([unrelated] * (control.MAX_PROVIDER_TOOLS - 1))]
+        _response, bound, _streaming = control.build_provider_response(
+            request, expected, case_ordinal=1
+        )
+        self.assertTrue(bound)
+        request["tools"].append(unrelated)
+        _response, bound, _streaming = control.build_provider_response(
+            request, expected, case_ordinal=1
+        )
+        self.assertFalse(bound)
+
+    def test_provider_post_budget_allows_four_per_case_eight_total(self) -> None:
+        self.assertEqual(control.MAX_PROVIDER_POSTS_PER_CASE, 4)
+        self.assertEqual(control.MAX_PROVIDER_POSTS, 8)
+        original = {
+            key: value
+            for key, value in control.STATE.items()
+            if key != "lock"
+        }
+        try:
+            control.STATE.update(
+                {
+                    "active_kind": "source_baseline",
+                    "provider_post_count": 0,
+                    "provider_limit_hit": False,
+                    "cases": {
+                        "source_baseline": {"provider_case_post_count": 0, "limit_hit": False},
+                        "unicode_punctuation_mutant": {
+                            "provider_case_post_count": 0,
+                            "limit_hit": False,
+                        },
+                    },
+                }
+            )
+            for _ in range(4):
+                self.assertTrue(control._claim_provider_post("source_baseline"))
+            control.STATE["active_kind"] = "unicode_punctuation_mutant"
+            for _ in range(4):
+                self.assertTrue(control._claim_provider_post("unicode_punctuation_mutant"))
+            self.assertFalse(control._claim_provider_post("unicode_punctuation_mutant"))
+            self.assertEqual(control.STATE["provider_post_count"], 9)
+            self.assertTrue(control.STATE["provider_limit_hit"])
+            control.STATE.update(
+                {
+                    "active_kind": "source_baseline",
+                    "provider_post_count": 0,
+                    "provider_limit_hit": False,
+                    "cases": {
+                        "source_baseline": {"provider_case_post_count": 0, "limit_hit": False},
+                        "unicode_punctuation_mutant": {
+                            "provider_case_post_count": 0,
+                            "limit_hit": False,
+                        },
+                    },
+                }
+            )
+            for _ in range(4):
+                self.assertTrue(control._claim_provider_post("source_baseline"))
+            self.assertFalse(control._claim_provider_post("source_baseline"))
+            self.assertTrue(control.STATE["cases"]["source_baseline"]["limit_hit"])
+        finally:
+            control.STATE.update(original)
+
+    def test_case_home_matches_bound_private_home_directory(self) -> None:
+        import driver
+
+        argv = driver._make_argv()
+        source_index = argv.index(str(driver.CONTROL / "home"))
+        self.assertEqual(argv[source_index - 1], "--bind")
+        self.assertEqual(argv[source_index + 1], "/home/t127")
+        allowlist = driver._environment_allowlist()
+        self.assertEqual(
+            allowlist["child_environment"]["home_case_path"],
+            "/home/t127/<fixed-case>",
+        )
+        self.assertTrue(
+            allowlist["child_environment"][
+                "home_is_per_case_under_the_bound_private_mount"
+            ]
+        )
+        self.assertEqual(
+            allowlist["child_environment"]["opencode_config_case_path"],
+            "/work/config-dir/<fixed-case>/t127-opencode.json",
+        )
+        self.assertEqual(
+            json.loads((CONTROL_DIR / "environment-allowlist.json").read_text()),
+            allowlist,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            private = root / "private"
+            private.mkdir(mode=0o700)
+            home_root = root / "bound-home"
+            home_root.mkdir(mode=0o700)
+            with (
+                patch.object(control, "ROOT", root),
+                patch.object(control, "HOME_ROOT", home_root),
+                patch.object(control, "BASE_CONFIG", CONTROL_DIR / "config" / "opencode.json"),
+            ):
+                control._new_case_runtime_dirs("source_baseline")
+                child_env = control._case_environment(
+                    "source_baseline", private / "callback-source_baseline.jsonl"
+                )
+            self.assertEqual(child_env["HOME"], "/home/t127/source_baseline")
+            actual_home = home_root / "source_baseline"
+            self.assertTrue(actual_home.is_dir())
+            self.assertEqual(actual_home.stat().st_mode & 0o777, 0o700)
+            derived_config = root / "config-dir" / "source_baseline" / "t127-opencode.json"
+            self.assertTrue(derived_config.is_file())
+            self.assertEqual(derived_config.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(derived_config.stat().st_nlink, 1)
+            self.assertEqual(
+                (root / "config-dir" / "source_baseline").stat().st_mode & 0o777,
+                0o700,
+            )
+            base_document = json.loads(
+                (CONTROL_DIR / "config" / "opencode.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                driver._sha(CONTROL_DIR / "config" / "opencode.json"),
+                control.EXPECTED_BASE_CONFIG_SHA256,
+            )
+            derived_document = json.loads(derived_config.read_text(encoding="utf-8"))
+            expected_document = json.loads(json.dumps(base_document))
+            expected_document["mcp"]["servers"]["t127fake"]["environment"].update(
+                {
+                    "T127_CASE": "source_baseline",
+                    "T127_EVIDENCE_PATH": str(
+                        private / "callback-source_baseline.jsonl"
+                    ),
+                }
+            )
+            self.assertEqual(derived_document, expected_document)
+            self.assertEqual(
+                set(derived_document["mcp"]["servers"]["t127fake"]["environment"]),
+                {"T127_CONTROL_MARKER", "T127_CASE", "T127_EVIDENCE_PATH"},
+            )
+            self.assertEqual(child_env["OPENCODE_CONFIG"], str(derived_config))
+            self.assertEqual(
+                base_document["mcp"]["servers"]["t127fake"]["environment"],
+                {"T127_CONTROL_MARKER": "2F67A41D9B0C"},
+            )
+            with patch.object(control, "EXPECTED_BASE_CONFIG_SHA256", "0" * 64):
+                with self.assertRaises(control.ControlError):
+                    control._case_config_bytes(
+                        "source_baseline", private / "callback-source_baseline.jsonl"
+                    )
+            derived_document["mcp"]["servers"]["t127fake"]["environment"][
+                "T127_CASE"
+            ] = "unicode_punctuation_mutant"
+            derived_config.write_text(
+                json.dumps(derived_document, sort_keys=True), encoding="utf-8"
+            )
+            with self.assertRaises(control.ControlError):
+                control._case_environment(
+                    "source_baseline", private / "callback-source_baseline.jsonl"
+                )
+
+    def test_mcp_summary_is_available_after_signal_without_stdin_eof(self) -> None:
+        expected = self.expectations["source_baseline"]
+        request = {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "send_message",
+                "arguments": {
+                    "message": expected["wire_message"],
+                    "target": expected["target"],
+                },
+            },
+        }
+        rejected_extra = {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "other_tool", "arguments": {}},
+        }
+
+        class SignalAfterCalls:
+            def __init__(self, lines: list[bytes], summary_path: Path) -> None:
+                self.lines = iter(lines)
+                self.handler = None
+                self.summary_path = summary_path
+                self.initial_state_seen = False
+
+            def readline(self, _limit: int) -> bytes:
+                try:
+                    if not self.initial_state_seen:
+                        initial = control._read_mcp_summary(
+                            self.summary_path, "source_baseline", 1
+                        )
+                        if (
+                            initial is None
+                            or initial["tool_call_attempt_count"] != 0
+                            or initial["fake_mcp_dispatch_count"] != 0
+                        ):
+                            raise AssertionError("initial MCP summary was not available")
+                        self.initial_state_seen = True
+                    return next(self.lines)
+                except StopIteration:
+                    if self.handler is None:
+                        raise AssertionError("SIGTERM handler was not installed")
+                    self.handler(control.signal.SIGTERM, None)
+                    raise AssertionError("SIGTERM handler returned")
+
+        class Input:
+            def __init__(self, buffer: SignalAfterCalls) -> None:
+                self.buffer = buffer
+
+        class OutputBuffer:
+            def write(self, _data: bytes) -> int:
+                return len(_data)
+
+            def flush(self) -> None:
+                return None
+
+        class Output:
+            buffer = OutputBuffer()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            private = root / "private"
+            private.mkdir(mode=0o700)
+            expectation_path = root / "expectations.json"
+            expectation_path.write_text(
+                (CONTROL_DIR / "expectations.json").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            expectation_path.chmod(0o600)
+            summary_path = private / "mcp-summary-source_baseline.json"
+            stream = SignalAfterCalls(
+                [
+                    json.dumps(request, separators=(",", ":")).encode() + b"\n",
+                    json.dumps(rejected_extra, separators=(",", ":")).encode() + b"\n",
+                ],
+                summary_path,
+            )
+            real_signal = control.signal.getsignal
+
+            def install(sig: int, handler: object) -> object:
+                previous = real_signal(sig)
+                stream.handler = handler
+                return previous
+
+            with (
+                patch.object(control, "ROOT", root),
+                patch.object(control, "EXPECTATIONS", expectation_path),
+                patch.object(control.sys, "stdin", Input(stream)),
+                patch.object(control.sys, "stdout", Output()),
+                patch.object(control.signal, "signal", side_effect=install),
+                patch.dict(
+                    os.environ,
+                    {
+                        "T127_CASE": "source_baseline",
+                        "T127_EVIDENCE_PATH": str(private / "callback-source_baseline.jsonl"),
+                    },
+                    clear=False,
+                ),
+            ):
+                self.assertEqual(control.run_mcp_stdio(), 2)
+            summary = control._read_mcp_summary(
+                private / "mcp-summary-source_baseline.json", "source_baseline", 1
+            )
+            self.assertEqual(summary["tool_call_attempt_count"], 2)
+            self.assertEqual(summary["fake_mcp_dispatch_count"], 1)
+            self.assertTrue(stream.initial_state_seen)
+            self.assertEqual(summary_path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(summary_path.stat().st_nlink, 1)
+            self.assertEqual(
+                set(summary),
+                {"case_ordinal", "case_kind", "tool_call_attempt_count", "fake_mcp_dispatch_count"},
+            )
+
+    def test_native_config_enables_only_the_fixed_fake_tool_path(self) -> None:
+        import driver
+
+        config = json.loads(driver.CONFIG.read_text(encoding="utf-8"))
+        model = config["providers"]["t127fake"]["models"]["toolarg-model"]
+        self.assertIs(model["tool_call"], True)
+        servers = config["mcp"]["servers"]
+        self.assertEqual(set(servers), {"t127fake"})
+        self.assertIs(servers["t127fake"]["codemode"], False)
+        self.assertNotIn("disabled", servers["t127fake"])
+        self.assertNotIn("enabled", servers["t127fake"])
+        rules = config["agents"]["toolarg_probe"]["permissions"]
+        self.assertEqual(
+            rules,
+            [
+                {"action": "*", "resource": "*", "effect": "deny"},
+                {
+                    "action": "t127fake_send_message",
+                    "resource": "*",
+                    "effect": "allow",
+                },
+            ],
+        )
+
+    def test_tool_offer_diagnostic_keeps_only_fixed_flags_and_bounded_count(self) -> None:
+        def tool(name):
+            return {
+                "type": "function",
+                "function": {"name": name, "parameters": {"type": "object"}},
+            }
+
+        diagnostic = control._fixed_tool_offer_summary(
+            {
+                "tools": [
+                    tool("t127fake_send_message"),
+                    tool("t127fake_execute"),
+                    tool("unlisted_synthetic_tool"),
+                ]
+            }
+        )
+        self.assertEqual(
+            diagnostic,
+            {
+                "observation_valid": True,
+                "offer_count": 3,
+                "expected_native_tool_seen": True,
+                "expected_native_schema_match": False,
+                "execute_tool_seen": True,
+            },
+        )
+        self.assertNotIn("unlisted_synthetic_tool", repr(diagnostic))
+        self.assertNotIn("t127fake_send_message", repr(diagnostic))
+        too_many = control._fixed_tool_offer_summary(
+            {"tools": [tool("t127fake_send_message")] * (control.MAX_PROVIDER_TOOLS + 1)}
+        )
+        self.assertEqual(
+            too_many,
+            {
+                "observation_valid": False,
+                "offer_count": None,
+                "expected_native_tool_seen": False,
+                "expected_native_schema_match": False,
+                "execute_tool_seen": False,
+            },
+        )
+
+    def test_tool_offer_diagnostic_handles_missing_tools_and_native_schema(self) -> None:
+        no_tools = control._fixed_tool_offer_summary({"model": "synthetic-title-request"})
+        self.assertEqual(
+            no_tools,
+            {
+                "observation_valid": True,
+                "offer_count": 0,
+                "expected_native_tool_seen": False,
+                "expected_native_schema_match": False,
+                "execute_tool_seen": False,
+            },
+        )
+        self.assertFalse(control._fixed_tool_offer_summary({"tools": None})["observation_valid"])
+        previous = control.STATE["tool_offer_observations"]
+        try:
+            control.STATE["tool_offer_observations"] = {
+                "source_baseline": control._empty_tool_offer_observation(
+                    1, "source_baseline"
+                ),
+                "unicode_punctuation_mutant": control._empty_tool_offer_observation(
+                    2, "unicode_punctuation_mutant"
+                ),
+            }
+            control._record_tool_offer_observation(
+                "source_baseline", {"model": "synthetic-title-request"}
+            )
+            observed = control._tool_offer_diagnostic_report()[0]
+            self.assertEqual(observed["parsed_request_count"], 1)
+            self.assertTrue(observed["parsed_request_count_valid"])
+            self.assertTrue(observed["observation_complete"])
+            self.assertFalse(observed["expected_native_tool_seen"])
+            self.assertFalse(observed["expected_native_schema_match"])
+            self.assertEqual(observed["max_offer_count"], 0)
+        finally:
+            control.STATE["tool_offer_observations"] = previous
+
+        correct_tool = self._request()["tools"][0]
+        schema_match = control._fixed_tool_offer_summary({"tools": [correct_tool]})
+        self.assertTrue(schema_match["expected_native_tool_seen"])
+        self.assertTrue(schema_match["expected_native_schema_match"])
+
+        wrong_schema_tool = {
+            "type": "function",
+            "function": {
+                "name": "t127fake_send_message",
+                "parameters": {"type": "object"},
+            },
+        }
+        wrong_schema = control._fixed_tool_offer_summary({"tools": [wrong_schema_tool]})
+        self.assertTrue(wrong_schema["observation_valid"])
+        self.assertEqual(wrong_schema["offer_count"], 1)
+        self.assertTrue(wrong_schema["expected_native_tool_seen"])
+        self.assertFalse(wrong_schema["expected_native_schema_match"])
+
+        execute_tools = control._fixed_tool_offer_summary(
+            {
+                "tools": [
+                    {"type": "function", "function": {"name": "execute"}},
+                    {"type": "function", "function": {"name": "t127fake_execute"}},
+                ]
+            }
+        )
+        self.assertTrue(execute_tools["observation_valid"])
+        self.assertTrue(execute_tools["execute_tool_seen"])
+        self.assertFalse(execute_tools["expected_native_schema_match"])
+
+    def test_production_writer_reproduces_pinned_synthetic_config(self) -> None:
+        import stat
+        import driver
+        import config_recipe
+
+        repo_root = Path(os.environ["T127_TEST_REPO_ROOT"]).resolve(strict=True)
+        self.assertEqual(config_recipe._verified_writer(repo_root).name, "opencode_v2.py")
+        source_config = json.loads(config_recipe.SOURCE_CONFIG.read_text(encoding="utf-8"))
+        self.assertEqual(set(source_config["mcp"]), {"t127fake"})
+        self.assertNotIn("codemode", source_config["mcp"]["t127fake"])
+        self.assertEqual(config_recipe.SELECTED_MODEL, "t127fake/toolarg-model")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "rendered"
+            rendered_path = config_recipe.render_production_configuration(
+                repo_root, destination
+            )
+            rendered = json.loads(rendered_path.read_text(encoding="utf-8"))
+            prepared = json.loads(driver.CONFIG.read_text(encoding="utf-8"))
+            self.assertEqual(rendered, prepared)
+            self.assertEqual(
+                rendered["providers"]["t127fake"]["settings"]["baseURL"],
+                "http://127.0.0.1:40127/v1",
+            )
+            model = rendered["providers"]["t127fake"]["models"]["toolarg-model"]
+            self.assertIs(model["tool_call"], True)
+            self.assertEqual(model["limit"], {"context": 65536, "output": 256})
+            server = rendered["mcp"]["servers"]["t127fake"]
+            self.assertIs(server["codemode"], False)
+            self.assertNotIn("disabled", server)
+            self.assertIsNot(server.get("enabled"), False)
+            permissions = rendered["agents"]["toolarg_probe"]["permissions"]
+            self.assertEqual(
+                permissions,
+                [
+                    {"action": "*", "resource": "*", "effect": "deny"},
+                    {
+                        "action": "t127fake_send_message",
+                        "resource": "*",
+                        "effect": "allow",
+                    },
+                ],
+            )
+            provider_env = destination / "provider.env"
+            self.assertEqual(provider_env.stat().st_size, 0)
+            self.assertEqual(stat.S_IMODE(provider_env.stat().st_mode), 0o600)
+            self.assertEqual(
+                rendered["providers"]["opencode-go"]["headers"]["User-Agent"],
+                "opencode/2.0.18",
+            )
+
+    def test_case_config_rejects_missing_or_enabled_codemode(self) -> None:
+        import driver
+        import hashlib
+
+        for codemode in (None, True):
+            with self.subTest(codemode_present=codemode is not None):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    source = json.loads(driver.CONFIG.read_text(encoding="utf-8"))
+                    server = source["mcp"]["servers"]["t127fake"]
+                    if codemode is None:
+                        server.pop("codemode")
+                    else:
+                        server["codemode"] = codemode
+                    base_config = root / "opencode.json"
+                    raw = json.dumps(source, ensure_ascii=True).encode("ascii")
+                    base_config.write_bytes(raw)
+                    base_config.chmod(0o600)
+                    with (
+                        patch.object(control, "ROOT", root),
+                        patch.object(control, "BASE_CONFIG", base_config),
+                        patch.object(
+                            control,
+                            "EXPECTED_BASE_CONFIG_SHA256",
+                            hashlib.sha256(raw).hexdigest(),
+                        ),
+                    ):
+                        with self.assertRaisesRegex(
+                            control.ControlError, "case_config_base_shape_invalid"
+                        ):
+                            control._case_config_document(
+                                "source_baseline",
+                                root / "private" / "callback-source_baseline.jsonl",
+                            )
+
+    def test_run_control_loaded_expectations_reach_real_loopback_handler(self) -> None:
+        import http.client
+        import threading
+
+        real_server = control.LocalProvider
+        servers = []
+        observations = []
+        fresh_state = {
+            "lock": threading.RLock(),
+            "active_kind": None,
+            "expectations": {},
+            "cases": {},
+            "provider_post_count": 0,
+            "provider_get_count": 0,
+            "provider_get_limit_hit": False,
+            "provider_limit_hit": False,
+            "provider_malformed": False,
+            "started_at": 0.0,
+        }
+
+        def make_server(_address, handler):
+            server = real_server(("127.0.0.1", 0), handler)
+            servers.append(server)
+            return server
+
+        class CompletedProcess:
+            pid = 43210
+            returncode = 0
+
+            def poll(self):
+                return 0
+
+        def fake_popen(*_args, **_kwargs):
+            server = servers[0]
+            kind = fresh_state["active_kind"]
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", server.server_address[1], timeout=2
+            )
+            try:
+                raw_request = json.dumps(self._request(), separators=(",", ":")).encode(
+                    "utf-8"
+                )
+                connection.request(
+                    "POST",
+                    "/v1/chat/completions",
+                    body=raw_request,
+                    headers={"Content-Type": "application/json"},
+                )
+                response = connection.getresponse()
+                raw_response = response.read()
+                exact = False
+                if response.status == 200:
+                    payload = control.strict_json_loads(raw_response)
+                    choices = payload.get("choices") if type(payload) is dict else None
+                    message = (
+                        choices[0].get("message")
+                        if type(choices) is list and len(choices) == 1
+                        else None
+                    )
+                    calls = message.get("tool_calls") if type(message) is dict else None
+                    if type(calls) is list and len(calls) == 1:
+                        call = calls[0]
+                        function = call.get("function") if type(call) is dict else None
+                        if type(function) is dict and type(function.get("arguments")) is str:
+                            arguments = control.strict_json_loads(function["arguments"])
+                            expected = self.expectations[kind]
+                            exact = (
+                                function.get("name") == "t127fake_send_message"
+                                and type(arguments) is dict
+                                and set(arguments) == {"message", "target"}
+                                and arguments.get("message") == expected["wire_message"]
+                                and arguments.get("target") == expected["target"]
+                            )
+                observations.append((kind, response.status == 200, exact))
+            finally:
+                connection.close()
+            return CompletedProcess()
+
+        unavailable_probe = {
+            "status": "unavailable",
+            "hook_registered": False,
+            "selected_response_count": 0,
+            "marker_seen": False,
+            "all_clones_completed": False,
+            "original_never_replaced": False,
+            "cleanup_complete": False,
+            "diagnostic_only": True,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch.object(control, "ROOT", root),
+                patch.object(control, "EXPECTATIONS", CONTROL_DIR / "expectations.json"),
+                patch.object(control, "STATE", fresh_state),
+                patch.object(control, "PORT", 0),
+                patch.object(control, "LocalProvider", side_effect=make_server),
+                patch.object(control, "_mem_available_kib", return_value=control.FLOOR_KIB + 1024),
+                patch.object(control, "_new_runtime_dirs"),
+                patch.object(control, "_new_case_runtime_dirs"),
+                patch.object(control, "_validate_case_workspace", return_value=root),
+                patch.object(control, "_case_environment", return_value={}),
+                patch.object(control.subprocess, "Popen", side_effect=fake_popen),
+                patch.object(control, "_stop_case_process_group", return_value=True),
+                patch.object(control, "_read_callback_lines", return_value=[]),
+                patch.object(control, "_read_mcp_summary", return_value=None),
+                patch.object(control, "_marked_child_count", return_value=0),
+                patch.object(control, "read_response_probe", return_value=unavailable_probe),
+                patch.object(control, "_loopback_only_interfaces", return_value=True),
+            ):
+                report = control.run_control()
+
+        self.assertEqual(
+            observations,
+            [
+                ("source_baseline", True, True),
+                ("unicode_punctuation_mutant", True, True),
+            ],
+        )
+        self.assertEqual(report["provider_request_count"], 2)
+        self.assertTrue(fresh_state["expectations"])
+        offer_diagnostics = report["provider_tool_offer_diagnostics"]
+        self.assertEqual(len(offer_diagnostics), 2)
+        for item in offer_diagnostics:
+            self.assertEqual(item["parsed_request_count"], 1)
+            self.assertTrue(item["parsed_request_count_valid"])
+            self.assertTrue(item["observation_complete"])
+            self.assertTrue(item["expected_native_tool_seen"])
+            self.assertTrue(item["expected_native_schema_match"])
+            self.assertFalse(item["execute_tool_seen"])
+            self.assertEqual(item["max_offer_count"], 1)
+
+    def test_fake_model_context_stays_above_native_auto_compaction_buffer(self) -> None:
+        import driver
+
+        config = control.strict_json_loads(driver.CONFIG.read_bytes())
+        limits = config["providers"]["t127fake"]["models"]["toolarg-model"]["limit"]
+        context = limits["context"]
+        output = limits["output"]
+
+        # Pinned v2.0.18 defaults: buffer=20,000 and output cap=32,000.
+        # Its auto-compaction threshold is min(input_limit-buffer or infinity,
+        # context-max(min(output, output_cap), buffer)).
+        buffer_tokens = 20_000
+        output_cap = 32_000
+        input_limit = None
+        threshold = min(
+            float("inf") if input_limit is None else input_limit - buffer_tokens,
+            context - max(min(output, output_cap), buffer_tokens),
+        )
+
+        self.assertEqual(threshold, 45_536)
+        self.assertEqual(context, 65_536)
+        self.assertEqual(output, 256)
+        with tempfile.TemporaryDirectory() as temporary:
+            private_root = Path(temporary)
+            callback = private_root / "private" / "callback-source_baseline.jsonl"
+            with (
+                patch.object(control, "ROOT", private_root),
+                patch.object(control, "BASE_CONFIG", driver.CONFIG),
+            ):
+                runtime_config = control._case_config_document("source_baseline", callback)
+        runtime_limit = runtime_config["providers"]["t127fake"]["models"][
+            "toolarg-model"
+        ]["limit"]
+        self.assertEqual(runtime_limit["context"], 65_536)
+        self.assertEqual(runtime_limit["output"], 256)
+
+    def test_partial_inner_diagnostic_is_private_and_does_not_complete_the_pair(self) -> None:
+        import inspect
+        import driver
+
+        expected_message = self.expectations["source_baseline"]["wire_message"]
+        case = control._case_report(
+            "source_baseline",
+            {
+                "ordinal": 1,
+                "wire_message": expected_message,
+                "source_message": expected_message,
+                "expected_utf8_bytes": 48,
+                "expected_unicode_scalars": 40,
+            },
+            {
+                "provider_case_bound": False,
+                "provider_request_count": 6,
+                "provider_tool_call_count": 0,
+            },
+            [],
+            {
+                "case_ordinal": 1,
+                "case_kind": "source_baseline",
+                "tool_call_attempt_count": 0,
+                "fake_mcp_dispatch_count": 0,
+            },
+            cli_exit_code=1,
+            timed_out=False,
+        )
+        probe = {
+            "case_ordinal": 1,
+            "case_kind": "source_baseline",
+            "status": "incomplete",
+            "hook_registered": True,
+            "selected_response_count": 0,
+            "marker_seen": False,
+            "all_clones_completed": False,
+            "original_never_replaced": True,
+            "cleanup_complete": True,
+            "diagnostic_only": True,
+        }
+        inner = {
+            "schema": "t127.synthetic-native-toolarg-control.v1",
+            "scope": "synthetic_native_fake_provider_fake_mcp",
+            "diagnostic_only": True,
+            "provider_request_count": 6,
+            "provider_get_count": 0,
+            "fake_mcp_dispatch_count": 0,
+            "cases": [case],
+            "response_probe_cases": [probe],
+            "provider_tool_offer_diagnostics": [
+                {
+                    "case_ordinal": 1,
+                    "case_kind": "source_baseline",
+                    "parsed_request_count": 1,
+                    "parsed_request_count_valid": True,
+                    "observation_complete": True,
+                    "expected_native_tool_seen": True,
+                    "expected_native_schema_match": True,
+                    "execute_tool_seen": False,
+                    "max_offer_count": 2,
+                },
+                {
+                    "case_ordinal": 2,
+                    "case_kind": "unicode_punctuation_mutant",
+                    "parsed_request_count": 0,
+                    "parsed_request_count_valid": True,
+                    "observation_complete": False,
+                    "expected_native_tool_seen": False,
+                    "expected_native_schema_match": False,
+                    "execute_tool_seen": False,
+                    "max_offer_count": None,
+                },
+            ],
+            "both_baseline_cases_exact": False,
+            "failure_class": "isolation_failed",
+            "isolation_stop_reason": "memory_floor",
+            "network_namespace_sha256": "private-test-only",
+            "pid_namespace_sha256": "private-test-only",
+        }
+        outer = {
+            "network_namespace_differs": True,
+            "pid_namespace_differs": True,
+            "memory_floor_kib": driver.FLOOR_KIB,
+            "minimum_memory_available_kib": driver.FLOOR_KIB,
+            "timed_out": False,
+            "process_cleanup": {
+                "owned_process_group_cleanup_attempted": True,
+                "owned_process_group_remaining": False,
+            },
+        }
+
+        diagnostic = driver._private_inner_diagnostic_projection(inner)
+        self.assertIsNotNone(diagnostic)
+        self.assertEqual(diagnostic["isolation_stop_reason"], "memory_floor")
+        self.assertEqual(diagnostic["provider_request_count"], 6)
+        self.assertEqual(len(diagnostic["cases"]), 1)
+        self.assertEqual(len(diagnostic["response_probe_cases"]), 1)
+        self.assertEqual(
+            diagnostic["provider_tool_offer_diagnostics"],
+            [
+                {
+                    "case_ordinal": 1,
+                    "case_kind": "source_baseline",
+                    "parsed_request_count": 1,
+                    "parsed_request_count_valid": True,
+                    "observation_complete": True,
+                    "expected_native_tool_seen": True,
+                    "expected_native_schema_match": True,
+                    "execute_tool_seen": False,
+                    "max_offer_count": 2,
+                },
+                {
+                    "case_ordinal": 2,
+                    "case_kind": "unicode_punctuation_mutant",
+                    "parsed_request_count": 0,
+                    "parsed_request_count_valid": True,
+                    "observation_complete": False,
+                    "expected_native_tool_seen": False,
+                    "expected_native_schema_match": False,
+                    "execute_tool_seen": False,
+                    "max_offer_count": None,
+                },
+            ],
+        )
+        serialized = json.dumps(diagnostic, sort_keys=True)
+        self.assertNotIn(expected_message, serialized)
+        self.assertNotIn("network_namespace_sha256", serialized)
+        admitted_source = inspect.getsource(driver._main_admitted)
+        self.assertLess(
+            admitted_source.index("_write_private_inner_diagnostic"),
+            admitted_source.index("_report_projection"),
+        )
+        self.assertIn("_apply_outer_process_outcome(", admitted_source)
+
+        public = driver._report_projection(inner, outer)
+        self.assertEqual(public["cases"], [])
+        self.assertEqual(public["failure_class"], "isolation_failed")
+        self.assertFalse(public["both_baseline_cases_exact"])
+        self.assertNotIn("provider_tool_offer_diagnostics", public)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            private = Path(temporary) / "private"
+            private.mkdir(mode=0o700)
+            path = private / "inner-diagnostic.json"
+            self.assertTrue(driver._write_private_inner_diagnostic(path, inner))
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.stat().st_nlink, 1)
+            stored = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(stored["isolation_stop_reason"], "memory_floor")
+            self.assertEqual(len(stored["cases"]), 1)
+            self.assertEqual(
+                stored["provider_tool_offer_diagnostics"],
+                diagnostic["provider_tool_offer_diagnostics"],
+            )
+
+        early = control._early_isolation_failure("memory_floor")
+        early_diagnostic = driver._private_inner_diagnostic_projection(early)
+        self.assertEqual(early_diagnostic["isolation_stop_reason"], "memory_floor")
+        self.assertEqual(early_diagnostic["provider_request_count"], 0)
+        self.assertEqual(early_diagnostic["cases"], [])
+
+    def test_private_offer_projection_rejects_raw_names_and_unbounded_counts(self) -> None:
+        import driver
+
+        inner = control._early_isolation_failure("process_limit")
+        row = inner["provider_tool_offer_diagnostics"][0]
+        row.update(
+            {
+                "parsed_request_count": 1,
+                "parsed_request_count_valid": True,
+                "observation_complete": True,
+                "expected_native_tool_seen": True,
+                "expected_native_schema_match": False,
+                "execute_tool_seen": False,
+                "max_offer_count": 1,
+            }
+        )
+        for bad_field in ("tool_names", "arguments", "request_body"):
+            with self.subTest(bad_field=bad_field):
+                candidate = json.loads(json.dumps(inner))
+                candidate["provider_tool_offer_diagnostics"][0][bad_field] = [
+                    "private-synthetic-value"
+                ]
+                projected = driver._private_inner_diagnostic_projection(candidate)
+                self.assertFalse(projected["provider_tool_offer_diagnostics_valid"])
+                self.assertEqual(projected["provider_tool_offer_diagnostics"], [])
+                self.assertNotIn("private-synthetic-value", json.dumps(projected))
+
+        candidate = json.loads(json.dumps(inner))
+        candidate["provider_tool_offer_diagnostics"][0]["max_offer_count"] = (
+            control.MAX_PROVIDER_TOOLS + 1
+        )
+        projected = driver._private_inner_diagnostic_projection(candidate)
+        self.assertFalse(projected["provider_tool_offer_diagnostics_valid"])
+        self.assertEqual(projected["provider_tool_offer_diagnostics"], [])
+
+    def test_invalid_offer_counter_is_not_reported_as_zero(self) -> None:
+        import driver
+
+        previous = control.STATE["tool_offer_observations"]
+        try:
+            control.STATE["tool_offer_observations"] = {
+                "source_baseline": {"parsed_request_count": "invalid"}
+            }
+            rows = control._tool_offer_diagnostic_report()
+            self.assertEqual(rows[0]["parsed_request_count"], None)
+            self.assertFalse(rows[0]["parsed_request_count_valid"])
+            self.assertFalse(rows[0]["observation_complete"])
+            self.assertIsNone(rows[0]["max_offer_count"])
+
+            inner = control._early_isolation_failure("process_limit")
+            inner["provider_tool_offer_diagnostics"] = rows
+            diagnostic = driver._private_inner_diagnostic_projection(inner)
+            self.assertTrue(diagnostic["provider_tool_offer_diagnostics_valid"])
+            projected = diagnostic["provider_tool_offer_diagnostics"][0]
+            self.assertIsNone(projected["parsed_request_count"])
+            self.assertFalse(projected["parsed_request_count_valid"])
+            self.assertFalse(projected["observation_complete"])
+
+            malformed = json.loads(json.dumps(inner))
+            malformed["provider_tool_offer_diagnostics"][1].update(
+                {
+                    "parsed_request_count": 0,
+                    "parsed_request_count_valid": True,
+                    "observation_complete": False,
+                    "expected_native_tool_seen": False,
+                    "expected_native_schema_match": False,
+                    "execute_tool_seen": False,
+                    "max_offer_count": 0,
+                }
+            )
+            rejected = driver._private_inner_diagnostic_projection(malformed)
+            self.assertFalse(rejected["provider_tool_offer_diagnostics_valid"])
+            self.assertEqual(rejected["provider_tool_offer_diagnostics"], [])
+        finally:
+            control.STATE["tool_offer_observations"] = previous
+
+    def test_private_inner_timeout_keeps_a_known_isolation_stop_reason(self) -> None:
+        import driver
+
+        inner = control._early_isolation_failure("memory_floor")
+        inner["failure_class"] = "timeout"
+        diagnostic = driver._private_inner_diagnostic_projection(inner)
+        self.assertIsNotNone(diagnostic)
+        self.assertEqual(diagnostic["failure_class"], "timeout")
+        self.assertEqual(diagnostic["isolation_stop_reason"], "memory_floor")
+
+    def test_private_inner_counts_are_preserved_or_explicitly_unavailable(self) -> None:
+        import driver
+
+        inner = control._early_isolation_failure("process_limit")
+        inner["provider_request_count"] = 12
+        inner["provider_get_count"] = 4
+        inner["fake_mcp_dispatch_count"] = 3
+        diagnostic = driver._private_inner_diagnostic_projection(inner)
+        self.assertEqual(diagnostic["provider_request_count"], 12)
+        self.assertTrue(diagnostic["provider_request_count_valid"])
+        self.assertEqual(diagnostic["provider_get_count"], 4)
+        self.assertTrue(diagnostic["provider_get_count_valid"])
+        self.assertEqual(diagnostic["fake_mcp_dispatch_count"], 3)
+        self.assertTrue(diagnostic["fake_mcp_dispatch_count_valid"])
+
+        inner["provider_request_count"] = 14
+        invalid = driver._private_inner_diagnostic_projection(inner)
+        self.assertIsNone(invalid["provider_request_count"])
+        self.assertFalse(invalid["provider_request_count_valid"])
+
+    def test_private_inner_mcp_attempt_counts_keep_producer_bound(self) -> None:
+        import driver
+
+        for attempts in (3, 64):
+            with self.subTest(attempts=attempts):
+                inner = control._early_isolation_failure("process_limit")
+                inner["cases"] = [
+                    {
+                        "case_ordinal": 1,
+                        "case_kind": "source_baseline",
+                        "provider_request_count": 9,
+                        "provider_tool_call_response_count": 0,
+                        "provider_case_bound": False,
+                        "fake_mcp_tool_call_attempt_count": attempts,
+                        "source_fixture_body_exact": True,
+                        "fake_mcp_dispatch_count": 3,
+                        "fake_mcp_dispatch_once": False,
+                        "argument_exact": False,
+                        "utf8_byte_length_equal": False,
+                        "unicode_scalar_count_equal": False,
+                        "no_extra_argument_keys": False,
+                        "target_exact": False,
+                        "expected_utf8_bytes": 48,
+                        "observed_utf8_bytes": 0,
+                        "expected_unicode_scalars": 40,
+                        "observed_unicode_scalars": 0,
+                        "failure_class": "cap_hit",
+                    }
+                ]
+                diagnostic = driver._private_inner_diagnostic_projection(inner)
+                self.assertTrue(diagnostic["cases_valid"])
+                self.assertEqual(
+                    diagnostic["cases"][0]["fake_mcp_tool_call_attempt_count"],
+                    attempts,
+                )
+
+    def test_extra_rejected_mcp_call_cannot_count_as_one_exact_dispatch(self) -> None:
+        expected = {
+            "ordinal": 1,
+            "wire_message": self.expectations["source_baseline"]["wire_message"],
+            "source_message": self.expectations["source_baseline"]["source_message"],
+            "expected_utf8_bytes": 48,
+            "expected_unicode_scalars": 40,
+        }
+        provider_case = {
+            "provider_case_bound": True,
+            "provider_request_count": 1,
+            "provider_tool_call_count": 1,
+        }
+        callback_rows = [
+            {
+                "case_kind": "source_baseline",
+                "argument_exact": True,
+                "utf8_byte_length_equal": True,
+                "unicode_scalar_count_equal": True,
+                "no_extra_argument_keys": True,
+                "target_exact": True,
+                "observed_utf8_bytes": 48,
+                "observed_unicode_scalars": 40,
+                "failure_class": "none",
+            }
+        ]
+        report = control._case_report(
+            "source_baseline",
+            expected,
+            provider_case,
+            callback_rows,
+            {
+                "case_ordinal": 1,
+                "case_kind": "source_baseline",
+                "tool_call_attempt_count": 2,
+                "fake_mcp_dispatch_count": 1,
+            },
+            cli_exit_code=0,
+            timed_out=False,
+        )
+        self.assertEqual(report["fake_mcp_tool_call_attempt_count"], 2)
+        self.assertEqual(report["fake_mcp_dispatch_count"], 1)
+        self.assertFalse(report["fake_mcp_dispatch_once"])
+        self.assertEqual(report["failure_class"], "not_observed")
+
+    def test_strict_json_rejects_duplicate_nested_keys(self) -> None:
+        with self.assertRaises(control.ControlError) as caught:
+            control.strict_json_loads(
+                b'{"messages":[{"role":"user","role":"tool"}],"tools":[]}'
+            )
+        self.assertEqual(caught.exception.reason, "duplicate_json_key")
+
+    def test_mcp_catalog_and_call_projection_are_fixed_and_payload_free(self) -> None:
+        response, record = control._mcp_response(
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+        )
+        self.assertIsNone(record)
+        self.assertEqual(len(response["result"]["tools"]), 1)
+        self.assertEqual(response["result"]["tools"][0]["name"], "send_message")
+        self.assertEqual(
+            set(response["result"]["tools"][0]["inputSchema"]["properties"]),
+            {"message", "target"},
+        )
+        self.assertEqual(
+            response["result"]["tools"][0]["inputSchema"]["required"],
+            ["message", "target"],
+        )
+        self.assertIs(
+            response["result"]["tools"][0]["inputSchema"]["additionalProperties"],
+            False,
+        )
+
+        expected = self.expectations["source_baseline"]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            private = root / "private"
+            private.mkdir(mode=0o700)
+            expectation_path = root / "expectations.json"
+            expectation_path.write_text(
+                (CONTROL_DIR / "expectations.json").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            expectation_path.chmod(0o600)
+            callback_path = private / "callback-source_baseline.jsonl"
+            environment = {
+                "T127_CASE": "source_baseline",
+                "T127_EVIDENCE_PATH": str(callback_path),
+            }
+            with (
+                patch.object(control, "ROOT", root),
+                patch.object(control, "EXPECTATIONS", expectation_path),
+                patch.dict(os.environ, environment, clear=False),
+            ):
+                response, record = control._mcp_response(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "send_message",
+                            "arguments": {
+                                "message": expected["wire_message"],
+                                "target": expected["target"],
+                            },
+                        },
+                    }
+                )
+            self.assertTrue(response["result"]["isError"] is False)
+            self.assertTrue(record["argument_exact"])
+            self.assertTrue(record["target_exact"])
+            self.assertTrue(record["source_fixture_body_exact"])
+            projected = control.strict_json_loads(callback_path.read_bytes())
+            self.assertTrue(projected["argument_exact"])
+            self.assertNotIn("message", projected)
+            self.assertNotIn("target", projected)
+            self.assertNotIn("hash", repr(projected))
+            self.assertEqual(callback_path.stat().st_mode & 0o777, 0o600)
+
+
+if __name__ == "__main__":
+    unittest.main()

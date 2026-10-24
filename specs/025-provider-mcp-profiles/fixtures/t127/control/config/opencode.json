@@ -1,0 +1,68 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "update": "disable",
+  "snapshots": false,
+  "agents": {
+    "toolarg_probe": {
+      "description": "One isolated synthetic provider-to-MCP argument control",
+      "mode": "all",
+      "system": "Use the single synthetic t127fake_send_message tool once with its fixed synthetic text. Do not use any other tool.",
+      "permissions": [
+        {
+          "action": "*",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "t127fake_send_message",
+          "resource": "*",
+          "effect": "allow"
+        }
+      ]
+    }
+  },
+  "mcp": {
+    "servers": {
+      "t127fake": {
+        "command": [
+          "/usr/bin/python3",
+          "/work/inside_control.py",
+          "--mcp"
+        ],
+        "environment": {
+          "T127_CONTROL_MARKER": "2F67A41D9B0C"
+        },
+        "type": "local",
+        "codemode": false
+      }
+    }
+  },
+  "providers": {
+    "t127fake": {
+      "env": [
+        "T127_FAKE_API_KEY"
+      ],
+      "models": {
+        "toolarg-model": {
+          "limit": {
+            "context": 65536,
+            "output": 256
+          },
+          "name": "T127 Synthetic Tool Argument Control",
+          "tool_call": true
+        }
+      },
+      "name": "T127 Local Synthetic Provider",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "http://127.0.0.1:40127/v1"
+      }
+    },
+    "opencode-go": {
+      "headers": {
+        "x-opencode-session": "cao-t127r4",
+        "User-Agent": "opencode/2.0.18"
+      }
+    }
+  }
+}

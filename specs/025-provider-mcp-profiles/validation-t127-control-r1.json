@@ -1,0 +1,102 @@
+{
+  "schema": "caos.t127.synthetic-native-control.public.v1",
+  "execution_source_head": "6ffaefddf26cc0bb0c003dd487bfaba4e04e1a69",
+  "result": "FAILED",
+  "elapsed_seconds": 31.417,
+  "preparation_sha256": "104b2609ccd7ace501d5d3502915f4d6037191de646be4885ad74f3536c0ee3d",
+  "private_outer_summary_sha256": "b4f00b338f7c69e2848bb62f990096358263e12be4b72b41fb2c01b3ec9b5702",
+  "native_binary_sha256": "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f",
+  "observation": {
+    "both_baseline_cases_exact": false,
+    "cao_endpoint_configured": false,
+    "cao_side_effects_possible": false,
+    "cases": [],
+    "diagnostic_only": true,
+    "external_network_available": false,
+    "failure_class": "isolation_failed",
+    "fake_mcp_dispatch_count": 0,
+    "global_acceptance_claimed": false,
+    "loopback_only_network_interfaces": true,
+    "memory_floor_kib": 6291456,
+    "minimum_memory_available_kib": 10140848,
+    "model_acceptance_claimed": false,
+    "native_actual_model_inference": false,
+    "network_namespace_differs_from_host": true,
+    "network_namespace_stable_during_run": true,
+    "operator_auth_used": false,
+    "pid_namespace_differs_from_host": true,
+    "pid_namespace_stable_during_run": true,
+    "process_cleanup": {
+      "owned_process_group_cleanup_attempted": false,
+      "owned_process_group_remaining": false
+    },
+    "provider_get_count": 0,
+    "provider_request_count": 6,
+    "real_go_provider_used": false,
+    "real_provider_used": false,
+    "response_probe_cases": [
+      {
+        "all_clones_completed": false,
+        "case_kind": "source_baseline",
+        "case_ordinal": 1,
+        "cleanup_complete": true,
+        "diagnostic_only": true,
+        "hook_registered": true,
+        "marker_seen": false,
+        "original_never_replaced": false,
+        "selected_response_count": 0,
+        "status": "incomplete"
+      },
+      {
+        "all_clones_completed": false,
+        "case_kind": "unicode_punctuation_mutant",
+        "case_ordinal": 2,
+        "cleanup_complete": false,
+        "diagnostic_only": true,
+        "hook_registered": false,
+        "marker_seen": false,
+        "original_never_replaced": false,
+        "selected_response_count": 0,
+        "status": "unavailable"
+      }
+    ],
+    "response_probe_complete": false,
+    "schema": "t127.synthetic-native-toolarg-control.outer.v1",
+    "scope": "synthetic_native_fake_provider_fake_mcp",
+    "timed_out": false
+  },
+  "closure": {
+    "execution_exit_code": 1,
+    "elapsed_seconds": 31.417,
+    "owned_native_processes_remaining": 0,
+    "source_binary_hashes_unchanged": true,
+    "driver_gates_restored_closed": true,
+    "process_group_remaining": false,
+    "real_provider_used": false,
+    "operator_auth_mounted": false,
+    "private_synthetic_evidence_retained": true,
+    "no_unchanged_retry": true
+  },
+  "native_store_sanitized": {
+    "session_message_count": 3,
+    "message_types": [
+      "agent-switched",
+      "user",
+      "compaction"
+    ],
+    "compaction_reason": "auto",
+    "compaction_status": "failed",
+    "compaction_error_type": "compaction.interrupted",
+    "assistant_message_count": 0,
+    "fake_mcp_summary_attempts": 0,
+    "fake_mcp_summary_dispatches": 0
+  },
+  "limits": [
+    "Only the first case started; the outer strict pair projection has no accepted case rows.",
+    "No argument-preservation or successful native response-hook callback claim.",
+    "Compaction records do not by themselves prove the triggering threshold.",
+    "No real provider or full8 acceptance; no unchanged retry.",
+    "The outer driver maps any nonzero inner exit to isolation_failed; this label does not establish an isolation failure.",
+    "timed_out=false refers to the outer collector; no preserved inner report rules out the 30-second inner timeout."
+  ]
+}

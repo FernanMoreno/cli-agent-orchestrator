@@ -1,0 +1,1419 @@
+from __future__ import annotations
+
+import argparse
+import ast
+import hashlib
+import json
+import os
+import pathlib
+import re
+import signal
+import stat
+import subprocess
+import sys
+import time
+from typing import Any
+
+
+BASE = pathlib.Path(__file__).resolve().parents[1]
+CONTROL = BASE / "control"
+WORKSPACES = CONTROL / "workspaces"
+PROBE_SOURCE = BASE / "response-probe" / "response_hook_probe.js"
+BINARY = BASE / "bin" / "opencode"
+CONFIG = CONTROL / "config" / "opencode.json"
+CONFIG_RECIPE = CONTROL / "config_recipe.py"
+SOURCE_CONFIG = CONTROL / "source-config.json"
+SOURCE_AGENTS = CONTROL / "source-agents"
+SOURCE_AGENT = SOURCE_AGENTS / "toolarg_probe.md"
+EXPECTATIONS = CONTROL / "expectations.json"
+SOURCE_BINDING = CONTROL / "source-binding.json"
+INNER = CONTROL / "inside_control.py"
+INNER_DIAGNOSTIC = CONTROL / "private" / "inner-diagnostic.json"
+BWRAP = pathlib.Path("/usr/bin/bwrap")
+RUN_ENABLED = False
+PRIVATE_ADMISSION_APPROVED = False
+
+EXPECTED_BINARY_SHA256 = "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f"
+EXPECTED_CONFIG_SHA256 = "daf873b888643c903479ff956387bdfb663f6a698714f37de3fa99c38ea07a1d"
+EXPECTED_CONFIG_RECIPE_SHA256 = (
+    "5e9c568f89315a76e45a7eb615dea94d1df4afe05bc68fb3379442e29195a099"
+)
+EXPECTED_SOURCE_CONFIG_SHA256 = "125284f06590a19d0eace2aec485839ad60923fab637be63175a6986c366cb9d"
+EXPECTED_SOURCE_AGENT_SHA256 = "45e9e80feb3cefe9263ffcafe7b3d8af35cbab462861c54ad3b424a92b554564"
+EXPECTED_EXPECTATIONS_SHA256 = "0c6ff33783ea687bf3d21a20d9d078e58bf61aab65d9baa1df0f93a7162687f9"
+EXPECTED_SOURCE_BINDING_SHA256 = "d891a12cedade44ba571482dc5deedfe49da56daf5b9b03ce210bd1d0614bd75"
+EXPECTED_INNER_SHA256 = (
+    "9fbe0d6405f2f29b49b89b85a75d71b0e1f34aefd22dfb4dd861f54c9ce9648c"
+)
+EXPECTED_SYNTHETIC_PASSWD_SHA256 = (
+    "01f737a4334a1c8ade3986982a6a8540ae1e9bf88cb387be7e545ed4070034d7"
+)
+EXPECTED_SYNTHETIC_HOSTS_SHA256 = (
+    "b69b2c741be48691edabe3771c644c70473ccd6aa8effd9f17cc07fa129917f9"
+)
+EXPECTED_PROBE_SOURCE_SHA256 = "90d98ba08529e25cc347dd4dcdca65133253ad774f1976a10491b8667e7c1dcb"
+EXPECTED_DERIVED_PROBE_SHA256 = {
+    "source_baseline": "9efe4ea6ebeb3abba6432055b64e029291f68f6bbd955b74f48024759eac9fdb",
+    "unicode_punctuation_mutant": "9836e8c4c9502a92de8cbf621a0aba7b2c34e2cc0cfcd683fe9702196d78176a",
+}
+EXPECTED_BWRAP_SHA256 = "523da3e7399044be5163aee6f57a77a6bef7454376e28f0a0627920bae1b76b6"
+
+MARKER_NAME = "T127_CONTROL_MARKER"
+MARKER_VALUE = "2F67A41D9B0C"
+FLOOR_KIB = 6 * 1024 * 1024
+INNER_SECONDS = 70.0
+OUTER_SECONDS = 74.0
+MAX_RAW_REPORT_BYTES = 65536
+MAX_PRIVATE_INNER_DIAGNOSTIC_BYTES = 8192
+_NATIVE_PROCESS_STARTED = False
+
+
+def _sha(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _strict_json(raw: bytes) -> Any:
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        output: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in output:
+                raise RuntimeError("duplicate_json_key")
+            output[key] = value
+        return output
+
+    return json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=unique)
+
+
+def _derived_probe_bytes(case_kind: str) -> bytes:
+    source = PROBE_SOURCE.read_bytes()
+    if hashlib.sha256(source).hexdigest() != EXPECTED_PROBE_SOURCE_SHA256:
+        raise RuntimeError("probe_source_hash_mismatch")
+    text = source.decode("utf-8", "strict")
+    anchor = "const options = context?.options"
+    if text.count(anchor) != 1:
+        raise RuntimeError("probe_source_anchor_mismatch")
+    case_values = {
+        "source_baseline": (
+            "0123456789abcdef0123456789abcdef",
+            "/workspaces/source_baseline/.opencode/http-response-probe",
+        ),
+        "unicode_punctuation_mutant": (
+            "fedcba9876543210fedcba9876543210",
+            "/workspaces/unicode_punctuation_mutant/.opencode/http-response-probe",
+        ),
+    }
+    if case_kind not in case_values:
+        raise RuntimeError("probe_case_invalid")
+    nonce, ledger_path = case_values[case_kind]
+    replacement = (
+        "const options = Object.freeze({"
+        f"nonce:{nonce!r},providerID:\"t127fake\",modelID:\"toolarg-model\",ledgerPath:{ledger_path!r}"
+        "})"
+    )
+    return text.replace(anchor, replacement).encode("utf-8")
+
+
+def _verify_source_binding(expected_head: str, repo_root: pathlib.Path) -> None:
+    document = _strict_json(SOURCE_BINDING.read_bytes())
+    if type(document) is not dict or set(document) != {
+        "schema",
+        "source_head",
+        "source_file_relative",
+        "source_git_blob_sha1",
+        "source_file_sha256",
+        "working_tree_file_clean_at_preparation",
+        "bound_constant",
+        "source_fixture_body_exact_ordinals",
+        "native_wire_mutant_ordinal",
+    }:
+        raise RuntimeError("source_binding_shape_invalid")
+    if (
+        document.get("schema") != "t127.synthetic-toolarg-source-binding.v1"
+        or type(expected_head) is not str
+        or re.fullmatch(r"[0-9a-f]{40}", expected_head) is None
+        or document.get("source_head") != expected_head
+        or document.get("bound_constant") != "PRE_RESTART_MESSAGE"
+        or document.get("source_fixture_body_exact_ordinals") != [1]
+        or document.get("native_wire_mutant_ordinal") != 2
+        or document.get("working_tree_file_clean_at_preparation") is not True
+    ):
+        raise RuntimeError("source_binding_contract_invalid")
+    if not isinstance(repo_root, pathlib.Path) or not repo_root.is_absolute():
+        raise RuntimeError("source_binding_repo_invalid")
+    if repo_root.is_symlink() or repo_root.resolve(strict=True) != repo_root:
+        raise RuntimeError("source_binding_repo_invalid")
+    relative_text = document.get("source_file_relative")
+    if (
+        type(relative_text) is not str
+        or not relative_text
+        or relative_text.startswith("/")
+        or ".." in pathlib.PurePosixPath(relative_text).parts
+        or "\\" in relative_text
+    ):
+        raise RuntimeError("source_binding_path_invalid")
+    source_file = repo_root.joinpath(*pathlib.PurePosixPath(relative_text).parts)
+    if source_file.is_symlink() or source_file.resolve(strict=True) != source_file.absolute():
+        raise RuntimeError("source_binding_path_invalid")
+    info = source_file.stat(follow_symlinks=False)
+    if not stat.S_ISREG(info.st_mode) or info.st_size > 2_000_000:
+        raise RuntimeError("source_binding_file_invalid")
+    raw = source_file.read_bytes()
+    blob_sha1 = hashlib.sha1(
+        b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw
+    ).hexdigest()
+    if (
+        _sha(source_file) != document.get("source_file_sha256")
+        or blob_sha1 != document.get("source_git_blob_sha1")
+    ):
+        raise RuntimeError("source_binding_hash_mismatch")
+    try:
+        actual_head = subprocess.check_output(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            timeout=2.0,
+            text=True,
+        ).strip()
+        actual_root = subprocess.check_output(
+            ["git", "-C", str(repo_root), "rev-parse", "--show-toplevel"],
+            stderr=subprocess.DEVNULL,
+            timeout=2.0,
+            text=True,
+        ).strip()
+        committed_blob = subprocess.check_output(
+            ["git", "-C", str(repo_root), "rev-parse", f"{expected_head}:{relative_text}"],
+            stderr=subprocess.DEVNULL,
+            timeout=2.0,
+            text=True,
+        ).strip()
+        dirty = subprocess.check_output(
+            ["git", "-C", str(repo_root), "status", "--porcelain", "--", relative_text],
+            stderr=subprocess.DEVNULL,
+            timeout=2.0,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("source_binding_git_unavailable") from exc
+    if (
+        pathlib.Path(actual_root).resolve(strict=True) != repo_root
+        or actual_head != expected_head
+        or committed_blob != document.get("source_git_blob_sha1")
+        or dirty
+    ):
+        raise RuntimeError("source_binding_head_mismatch")
+    module = ast.parse(raw.decode("utf-8", "strict"))
+    source_node = next(
+        (
+            node
+            for node in module.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "PRE_RESTART_MESSAGE"
+                for target in node.targets
+            )
+        ),
+        None,
+    )
+    if source_node is None:
+        raise RuntimeError("source_binding_constant_missing")
+    source_message = ast.literal_eval(source_node.value)
+    expectations = _strict_json(EXPECTATIONS.read_bytes())
+    cases = expectations.get("cases") if type(expectations) is dict else None
+    if (
+        type(source_message) is not str
+        or type(cases) is not list
+        or len(cases) != 2
+        or cases[0].get("source_message") != source_message
+        or cases[0].get("wire_message") != source_message
+        or cases[1].get("source_message") != source_message
+        or cases[1].get("wire_message") != source_message[:-1] + "。"
+    ):
+        raise RuntimeError("source_binding_payload_mismatch")
+
+
+def _mem_available_kib() -> int:
+    try:
+        for line in pathlib.Path("/proc/meminfo").read_text(encoding="ascii").splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1])
+    except (OSError, ValueError, UnicodeError):
+        pass
+    return 0
+
+
+def _require_private_dir(path: pathlib.Path) -> os.stat_result:
+    if path.is_symlink():
+        raise RuntimeError("private_directory_symlink")
+    info = path.stat(follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != os.getuid()
+        or stat.S_IMODE(info.st_mode) != 0o700
+    ):
+        raise RuntimeError("private_directory_identity_invalid")
+    return info
+
+
+def _require_private_file(path: pathlib.Path, mode: int, maximum: int) -> os.stat_result:
+    if path.is_symlink():
+        raise RuntimeError("private_file_symlink")
+    info = path.stat(follow_symlinks=False)
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_nlink != 1
+        or stat.S_IMODE(info.st_mode) != mode
+        or info.st_size > maximum
+    ):
+        raise RuntimeError("private_file_identity_invalid")
+    return info
+
+
+def _require_system_file(path: pathlib.Path, expected_sha: str) -> None:
+    if path.is_symlink():
+        raise RuntimeError("system_file_symlink")
+    info = path.stat(follow_symlinks=False)
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_uid != 0
+        or info.st_nlink != 1
+        or stat.S_IMODE(info.st_mode) != 0o755
+    ):
+        raise RuntimeError("system_file_identity_invalid")
+    if _sha(path) != expected_sha:
+        raise RuntimeError("system_file_hash_mismatch")
+
+
+def _clear_environment() -> dict[str, str]:
+    return {
+        "HOME": "/home/t127",
+        "PATH": "/usr/bin:/bin",
+        "LANG": "C.UTF-8",
+        "TERM": "dumb",
+        "XDG_CONFIG_HOME": "/work/xdg-config",
+        "XDG_DATA_HOME": "/work/data",
+        "XDG_CACHE_HOME": "/work/cache",
+        "XDG_STATE_HOME": "/work/state",
+        "TMPDIR": "/work/tmp",
+        "OPENCODE_CONFIG": "/work/config/opencode.json",
+        "OPENCODE_CONFIG_DIR": "/work/config-dir",
+        "OPENCODE_DISABLE_AUTOUPDATE": "true",
+        "OPENCODE_DISABLE_MOUSE": "true",
+        "OPENCODE_DISABLE_TERMINAL_TITLE": "true",
+        "OPENCODE_API_KEY": "offline-dummy-only",
+        "T127_FAKE_API_KEY": "offline-dummy-only",
+        MARKER_NAME: MARKER_VALUE,
+    }
+
+
+def _make_argv() -> list[str]:
+    return [
+        str(BWRAP),
+        "--unshare-all",
+        "--unshare-pid",
+        "--die-with-parent",
+        "--new-session",
+        "--ro-bind",
+        "/usr",
+        "/usr",
+        "--ro-bind",
+        "/lib",
+        "/lib",
+        "--ro-bind",
+        "/lib64",
+        "/lib64",
+        "--symlink",
+        "/usr/bin",
+        "/bin",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--dir",
+        "/etc",
+        "--ro-bind",
+        str(CONTROL / "synthetic-passwd"),
+        "/etc/passwd",
+        "--ro-bind",
+        str(CONTROL / "synthetic-hosts"),
+        "/etc/hosts",
+        "--dir",
+        "/work",
+        "--dir",
+        "/work/config",
+        "--dir",
+        "/work/data",
+        "--dir",
+        "/work/cache",
+        "--dir",
+        "/work/state",
+        "--dir",
+        "/work/private",
+        "--dir",
+        "/work/tmp",
+        "--dir",
+        "/work/xdg-config",
+        "--dir",
+        "/work/config-dir",
+        "--dir",
+        "/workspaces",
+        "--ro-bind",
+        str(INNER),
+        "/work/inside_control.py",
+        "--ro-bind",
+        str(EXPECTATIONS),
+        "/work/expectations.json",
+        "--ro-bind",
+        str(CONFIG),
+        "/work/config/opencode.json",
+        "--bind",
+        str(CONTROL / "data"),
+        "/work/data",
+        "--bind",
+        str(CONTROL / "cache"),
+        "/work/cache",
+        "--bind",
+        str(CONTROL / "state"),
+        "/work/state",
+        "--bind",
+        str(CONTROL / "private"),
+        "/work/private",
+        "--bind",
+        str(CONTROL / "tmp"),
+        "/work/tmp",
+        "--bind",
+        str(CONTROL / "xdg-config"),
+        "/work/xdg-config",
+        "--bind",
+        str(CONTROL / "config-dir"),
+        "/work/config-dir",
+        "--bind",
+        str(WORKSPACES),
+        "/workspaces",
+        "--ro-bind",
+        str(BINARY),
+        "/opencode",
+        "--dir",
+        "/home",
+        "--bind",
+        str(CONTROL / "home"),
+        "/home/t127",
+        "--chdir",
+        "/work",
+        "--clearenv",
+        *sum((["--setenv", key, value] for key, value in _clear_environment().items()), []),
+        "--",
+        "/usr/bin/python3",
+        "/work/inside_control.py",
+    ]
+
+
+def _environment_allowlist() -> dict[str, Any]:
+    env = _clear_environment()
+    return {
+        "allowed_names": sorted(env),
+        "values": {
+            key: value
+            for key, value in env.items()
+            if key not in ("OPENCODE_API_KEY", "T127_FAKE_API_KEY", MARKER_NAME)
+        },
+        "dummy_credentials": {
+            "OPENCODE_API_KEY": "fixed dummy only",
+            "T127_FAKE_API_KEY": "fixed dummy only",
+        },
+        "host_environment_forwarded": False,
+        "operator_home_mounted": False,
+        "operator_auth_read": False,
+        "real_provider_configured": False,
+        "external_network_configured": False,
+        "cao_endpoint_configured": False,
+        "child_environment": {
+            "names": [
+                "HOME",
+                "PATH",
+                "LANG",
+                "TERM",
+                "XDG_CONFIG_HOME",
+                "XDG_DATA_HOME",
+                "XDG_CACHE_HOME",
+                "XDG_STATE_HOME",
+                "TMPDIR",
+                "OPENCODE_CONFIG",
+                "OPENCODE_CONFIG_DIR",
+                "OPENCODE_DB",
+                "OPENCODE_DISABLE_AUTOUPDATE",
+                "OPENCODE_DISABLE_MOUSE",
+                "OPENCODE_DISABLE_TERMINAL_TITLE",
+                "OPENCODE_API_KEY",
+                "T127_FAKE_API_KEY",
+                "T127_CONTROL_MARKER",
+                "T127_CASE",
+                "T127_EVIDENCE_PATH",
+            ],
+            "home_case_path": "/home/t127/<fixed-case>",
+            "home_is_per_case_under_the_bound_private_mount": True,
+            "opencode_config_case_path": (
+                "/work/config-dir/<fixed-case>/t127-opencode.json"
+            ),
+            "credentials_dummy_only": True,
+            "case_paths_from_fixed_case_enum": True,
+        },
+    }
+
+
+def _process_group_exists(process_group: int) -> bool:
+    try:
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _cleanup_owned_process_group(proc: subprocess.Popen[bytes]) -> dict[str, bool]:
+    """Clean up only the session created for this exact bwrap child."""
+    process_group = proc.pid  # start_new_session=True makes the child PID its PGID.
+    existed = _process_group_exists(process_group)
+    if existed:
+        try:
+            os.killpg(process_group, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            pass
+        deadline = time.monotonic() + 0.2
+        while _process_group_exists(process_group) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if _process_group_exists(process_group):
+            try:
+                os.killpg(process_group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                pass
+    return {
+        "owned_process_group_cleanup_attempted": existed,
+        "owned_process_group_remaining": _process_group_exists(process_group),
+    }
+
+
+def _collect_owned_process(
+    proc: subprocess.Popen[bytes], *, deadline: float, minimum_memory: int
+) -> tuple[bytes, bool, bool, int]:
+    timed_out = False
+    memory_stop = False
+    while proc.poll() is None:
+        available = _mem_available_kib()
+        if available:
+            minimum_memory = min(minimum_memory, available)
+        if available < FLOOR_KIB:
+            memory_stop = True
+            _stop_group(proc)
+            break
+        if time.monotonic() >= deadline:
+            timed_out = True
+            _stop_group(proc)
+            break
+        time.sleep(0.1)
+    try:
+        stdout, _stderr = proc.communicate(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        _stop_group(proc)
+        stdout, _stderr = proc.communicate(timeout=1.0)
+        timed_out = True
+    return stdout, timed_out, memory_stop, minimum_memory
+
+
+def _stop_group(proc: subprocess.Popen[bytes]) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        proc.wait(timeout=0.75)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            proc.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def _create_runtime_dirs() -> None:
+    for relative in (
+        "data",
+        "cache",
+        "state",
+        "tmp",
+        "tmp/work",
+        "private",
+        "xdg-config",
+        "config-dir",
+    ):
+        path = CONTROL / relative
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _require_private_dir(path)
+
+
+def _report_projection(inner: dict[str, Any] | None, outer: dict[str, Any]) -> dict[str, Any]:
+    safe_case_fields = {
+        "case_ordinal",
+        "case_kind",
+        "provider_request_count",
+        "provider_tool_call_response_count",
+        "provider_case_bound",
+        "fake_mcp_tool_call_attempt_count",
+        "source_fixture_body_exact",
+        "fake_mcp_dispatch_count",
+        "fake_mcp_dispatch_once",
+        "argument_exact",
+        "utf8_byte_length_equal",
+        "unicode_scalar_count_equal",
+        "no_extra_argument_keys",
+        "target_exact",
+        "expected_utf8_bytes",
+        "observed_utf8_bytes",
+        "expected_unicode_scalars",
+        "observed_unicode_scalars",
+        "failure_class",
+    }
+    source_cases = inner.get("cases") if type(inner) is dict else None
+    cases: list[dict[str, Any]] = []
+    case_fields = {
+        "case_ordinal",
+        "case_kind",
+        "provider_request_count",
+        "provider_tool_call_response_count",
+        "provider_case_bound",
+        "fake_mcp_tool_call_attempt_count",
+        "source_fixture_body_exact",
+        "fake_mcp_dispatch_count",
+        "fake_mcp_dispatch_once",
+        "argument_exact",
+        "utf8_byte_length_equal",
+        "unicode_scalar_count_equal",
+        "no_extra_argument_keys",
+        "target_exact",
+        "expected_utf8_bytes",
+        "observed_utf8_bytes",
+        "expected_unicode_scalars",
+        "observed_unicode_scalars",
+        "failure_class",
+    }
+    case_valid = type(source_cases) is list and len(source_cases) == 2
+    if case_valid:
+        for ordinal, item in enumerate(source_cases, start=1):
+            expected_kind = (
+                "source_baseline" if ordinal == 1 else "unicode_punctuation_mutant"
+            )
+            bool_fields = (
+                "provider_case_bound",
+                "source_fixture_body_exact",
+                "fake_mcp_dispatch_once",
+                "argument_exact",
+                "utf8_byte_length_equal",
+                "unicode_scalar_count_equal",
+                "no_extra_argument_keys",
+                "target_exact",
+            )
+            int_bounds = {
+                "provider_request_count": 8,
+                "provider_tool_call_response_count": 4,
+                "fake_mcp_tool_call_attempt_count": 2,
+                "fake_mcp_dispatch_count": 2,
+                "expected_utf8_bytes": 512,
+                "observed_utf8_bytes": 512,
+                "expected_unicode_scalars": 512,
+                "observed_unicode_scalars": 512,
+            }
+            if (
+                type(item) is not dict
+                or set(item) != case_fields
+                or type(item.get("case_ordinal")) is not int
+                or item["case_ordinal"] != ordinal
+                or item.get("case_kind") != expected_kind
+                or item.get("expected_utf8_bytes") != (48 if ordinal == 1 else 50)
+                or item.get("expected_unicode_scalars") != 40
+                or type(item.get("failure_class")) is not str
+                or item["failure_class"] not in {
+                    "none",
+                    "not_observed",
+                    "mismatch",
+                    "malformed_input",
+                    "cap_hit",
+                    "timeout",
+                    "isolation_failed",
+                }
+                or any(type(item.get(field)) is not bool for field in bool_fields)
+                or any(
+                    type(item.get(field)) is not int
+                    or item[field] < 0
+                    or item[field] > maximum
+                    for field, maximum in int_bounds.items()
+                )
+            ):
+                case_valid = False
+                break
+            cases.append({key: item[key] for key in safe_case_fields})
+    if not case_valid:
+        cases = []
+    provider_count = inner.get("provider_request_count") if type(inner) is dict else None
+    provider_get_count = inner.get("provider_get_count") if type(inner) is dict else None
+    dispatch_count = inner.get("fake_mcp_dispatch_count") if type(inner) is dict else None
+    counts_valid = (
+        type(provider_count) is int
+        and 0 <= provider_count <= 8
+        and type(provider_get_count) is int
+        and 0 <= provider_get_count <= 4
+        and type(dispatch_count) is int
+        and 0 <= dispatch_count <= 4
+    )
+    derived_pair = (
+        case_valid
+        and counts_valid
+        and inner is not None
+        and inner.get("both_baseline_cases_exact") is True
+        and [item["source_fixture_body_exact"] for item in cases] == [True, False]
+        and provider_count == provider_get_count + sum(
+            item["provider_request_count"] for item in cases
+        )
+        and dispatch_count == sum(item["fake_mcp_dispatch_count"] for item in cases)
+        and all(
+            item["provider_case_bound"]
+            and item["fake_mcp_tool_call_attempt_count"] == 1
+            and item["fake_mcp_dispatch_count"] == 1
+            and item["fake_mcp_dispatch_once"]
+            and item["argument_exact"]
+            and item["utf8_byte_length_equal"]
+            and item["unicode_scalar_count_equal"]
+            and item["no_extra_argument_keys"]
+            and item["target_exact"]
+            and item["failure_class"] == "none"
+            for item in cases
+        )
+        and dispatch_count == 2
+    )
+    raw_status = inner.get("failure_class") if type(inner) is dict else None
+    status = (
+        raw_status
+        if type(raw_status) is str and raw_status in {
+            "none",
+            "not_observed",
+            "mismatch",
+            "malformed_input",
+            "cap_hit",
+            "timeout",
+            "isolation_failed",
+        }
+        else "not_observed"
+    )
+    if status == "none" and not derived_pair:
+        status = "not_observed"
+    raw_probe_cases = inner.get("response_probe_cases") if type(inner) is dict else None
+    response_probe_cases: list[dict[str, Any]] = []
+    probe_valid = type(raw_probe_cases) is list and len(raw_probe_cases) == 2
+    probe_fields = {
+        "case_ordinal",
+        "case_kind",
+        "status",
+        "hook_registered",
+        "selected_response_count",
+        "marker_seen",
+        "all_clones_completed",
+        "original_never_replaced",
+        "cleanup_complete",
+        "diagnostic_only",
+    }
+    if probe_valid:
+        for ordinal, item in enumerate(raw_probe_cases, start=1):
+            expected_kind = (
+                "source_baseline" if ordinal == 1 else "unicode_punctuation_mutant"
+            )
+            if (
+                type(item) is not dict
+                or set(item) != probe_fields
+                or type(item.get("case_ordinal")) is not int
+                or item.get("case_ordinal") != ordinal
+                or item.get("case_kind") != expected_kind
+                or type(item.get("status")) is not str
+                or item.get("status") not in {"sealed", "incomplete", "unavailable"}
+                or any(
+                    type(item.get(name)) is not bool
+                    for name in (
+                        "hook_registered",
+                        "marker_seen",
+                        "all_clones_completed",
+                        "original_never_replaced",
+                        "cleanup_complete",
+                        "diagnostic_only",
+                    )
+                )
+                or type(item.get("selected_response_count")) is not int
+                or item["selected_response_count"] < 0
+                or item["selected_response_count"] > 16
+                or item.get("diagnostic_only") is not True
+            ):
+                probe_valid = False
+                break
+            response_probe_cases.append({key: item[key] for key in probe_fields})
+    if not probe_valid:
+        response_probe_cases = []
+    response_probe_complete = (
+        probe_valid
+        and all(
+            item["status"] == "sealed"
+            and item["hook_registered"]
+            and item["selected_response_count"] > 0
+            and item["marker_seen"]
+            and item["all_clones_completed"]
+            and item["original_never_replaced"]
+            and item["cleanup_complete"]
+            for item in response_probe_cases
+        )
+    )
+    return {
+        "schema": "t127.synthetic-native-toolarg-control.outer.v1",
+        "scope": "synthetic_native_fake_provider_fake_mcp",
+        "diagnostic_only": True,
+        "real_provider_used": False,
+        "real_go_provider_used": False,
+        "native_actual_model_inference": False,
+        "external_network_available": False,
+        "loopback_only_network_interfaces": (
+            inner.get("loopback_only_network_interfaces") is True
+            if type(inner) is dict
+            else False
+        ),
+        "operator_auth_used": False,
+        "cao_endpoint_configured": False,
+        "cao_side_effects_possible": False,
+        "global_acceptance_claimed": False,
+        "model_acceptance_claimed": False,
+        "provider_request_count": provider_count if counts_valid else 0,
+        "provider_get_count": provider_get_count if counts_valid else 0,
+        "fake_mcp_dispatch_count": dispatch_count if counts_valid else 0,
+        "cases": cases,
+        "response_probe_cases": response_probe_cases,
+        "response_probe_complete": bool(response_probe_complete),
+        "both_baseline_cases_exact": bool(derived_pair),
+        "network_namespace_differs_from_host": outer["network_namespace_differs"],
+        "pid_namespace_differs_from_host": outer["pid_namespace_differs"],
+        "memory_floor_kib": outer["memory_floor_kib"],
+        "minimum_memory_available_kib": outer["minimum_memory_available_kib"],
+        "timed_out": outer["timed_out"],
+        "process_cleanup": outer["process_cleanup"],
+        "failure_class": status if status in {
+            "none",
+            "not_observed",
+            "mismatch",
+            "malformed_input",
+            "cap_hit",
+            "timeout",
+            "isolation_failed",
+        } else "not_observed",
+    }
+
+
+def _write_summary(path: pathlib.Path, summary: dict[str, Any]) -> None:
+    raw = json.dumps(summary, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode(
+        "ascii"
+    ) + b"\n"
+    fd = os.open(
+        path,
+        os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    with os.fdopen(fd, "wb") as out:
+        out.write(raw)
+        out.flush()
+        os.fsync(out.fileno())
+
+
+def _private_inner_diagnostic_projection(
+    inner: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    failure_classes = {
+        "none",
+        "not_observed",
+        "mismatch",
+        "malformed_input",
+        "cap_hit",
+        "timeout",
+        "isolation_failed",
+    }
+    isolation_reasons = {
+        "none",
+        "process_limit",
+        "memory_floor",
+        "child_wait_timeout",
+        "owned_group_remaining",
+        "case_setup_invalid",
+        "writers_remaining",
+    }
+    if (
+        type(inner) is not dict
+        or inner.get("schema") != "t127.synthetic-native-toolarg-control.v1"
+        or inner.get("scope") != "synthetic_native_fake_provider_fake_mcp"
+        or type(inner.get("diagnostic_only")) is not bool
+        or inner.get("diagnostic_only") is not True
+    ):
+        return None
+
+    case_fields = {
+        "case_ordinal",
+        "case_kind",
+        "provider_request_count",
+        "provider_tool_call_response_count",
+        "provider_case_bound",
+        "fake_mcp_tool_call_attempt_count",
+        "source_fixture_body_exact",
+        "fake_mcp_dispatch_count",
+        "fake_mcp_dispatch_once",
+        "argument_exact",
+        "utf8_byte_length_equal",
+        "unicode_scalar_count_equal",
+        "no_extra_argument_keys",
+        "target_exact",
+        "expected_utf8_bytes",
+        "observed_utf8_bytes",
+        "expected_unicode_scalars",
+        "observed_unicode_scalars",
+        "failure_class",
+    }
+    bool_fields = {
+        "provider_case_bound",
+        "source_fixture_body_exact",
+        "fake_mcp_dispatch_once",
+        "argument_exact",
+        "utf8_byte_length_equal",
+        "unicode_scalar_count_equal",
+        "no_extra_argument_keys",
+        "target_exact",
+    }
+    int_bounds = {
+        "provider_request_count": 9,
+        "provider_tool_call_response_count": 4,
+        "fake_mcp_tool_call_attempt_count": 64,
+        "fake_mcp_dispatch_count": 64,
+        "expected_utf8_bytes": 512,
+        "observed_utf8_bytes": 512,
+        "expected_unicode_scalars": 512,
+        "observed_unicode_scalars": 512,
+    }
+    raw_cases = inner.get("cases")
+    cases: list[dict[str, Any]] = []
+    cases_valid = type(raw_cases) is list and len(raw_cases) <= 2
+    if cases_valid:
+        for ordinal, item in enumerate(raw_cases, start=1):
+            expected_kind = (
+                "source_baseline" if ordinal == 1 else "unicode_punctuation_mutant"
+            )
+            if (
+                type(item) is not dict
+                or set(item) != case_fields
+                or type(item.get("case_ordinal")) is not int
+                or item["case_ordinal"] != ordinal
+                or item.get("case_kind") != expected_kind
+                or type(item.get("source_fixture_body_exact")) is not bool
+                or item["source_fixture_body_exact"] is not (ordinal == 1)
+                or item.get("expected_utf8_bytes") != (48 if ordinal == 1 else 50)
+                or item.get("expected_unicode_scalars") != 40
+                or type(item.get("failure_class")) is not str
+                or item["failure_class"] not in failure_classes
+                or any(type(item.get(field)) is not bool for field in bool_fields)
+                or any(
+                    type(item.get(field)) is not int
+                    or item[field] < 0
+                    or item[field] > maximum
+                    for field, maximum in int_bounds.items()
+                )
+            ):
+                cases_valid = False
+                break
+            cases.append({key: item[key] for key in case_fields})
+        if not cases_valid:
+            cases = []
+
+    probe_fields = {
+        "case_ordinal",
+        "case_kind",
+        "status",
+        "hook_registered",
+        "selected_response_count",
+        "marker_seen",
+        "all_clones_completed",
+        "original_never_replaced",
+        "cleanup_complete",
+        "diagnostic_only",
+    }
+    raw_probes = inner.get("response_probe_cases")
+    probes: list[dict[str, Any]] = []
+    probes_valid = type(raw_probes) is list and len(raw_probes) <= 2
+    if probes_valid:
+        for ordinal, item in enumerate(raw_probes, start=1):
+            expected_kind = (
+                "source_baseline" if ordinal == 1 else "unicode_punctuation_mutant"
+            )
+            if (
+                type(item) is not dict
+                or set(item) != probe_fields
+                or type(item.get("case_ordinal")) is not int
+                or item["case_ordinal"] != ordinal
+                or item.get("case_kind") != expected_kind
+                or type(item.get("status")) is not str
+                or item["status"] not in {"sealed", "incomplete", "unavailable"}
+                or any(
+                    type(item.get(field)) is not bool
+                    for field in (
+                        "hook_registered",
+                        "marker_seen",
+                        "all_clones_completed",
+                        "original_never_replaced",
+                        "cleanup_complete",
+                        "diagnostic_only",
+                    )
+                )
+                or type(item.get("selected_response_count")) is not int
+                or not 0 <= item["selected_response_count"] <= 16
+                or item.get("diagnostic_only") is not True
+            ):
+                probes_valid = False
+                break
+            probes.append({key: item[key] for key in probe_fields})
+        if not probes_valid:
+            probes = []
+
+    offer_fields = {
+        "case_ordinal",
+        "case_kind",
+        "parsed_request_count",
+        "parsed_request_count_valid",
+        "observation_complete",
+        "expected_native_tool_seen",
+        "expected_native_schema_match",
+        "execute_tool_seen",
+        "max_offer_count",
+    }
+    raw_offers = inner.get("provider_tool_offer_diagnostics")
+    offers: list[dict[str, Any]] = []
+    offers_valid = type(raw_offers) is list and len(raw_offers) == 2
+    if offers_valid:
+        for ordinal, item in enumerate(raw_offers, start=1):
+            expected_kind = "source_baseline" if ordinal == 1 else "unicode_punctuation_mutant"
+            count = item.get("parsed_request_count") if type(item) is dict else None
+            count_valid = item.get("parsed_request_count_valid") if type(item) is dict else None
+            complete = item.get("observation_complete") if type(item) is dict else None
+            max_count = item.get("max_offer_count") if type(item) is dict else None
+            expected_seen = item.get("expected_native_tool_seen") if type(item) is dict else None
+            schema_match = item.get("expected_native_schema_match") if type(item) is dict else None
+            execute_seen = item.get("execute_tool_seen") if type(item) is dict else None
+            if count_valid is True:
+                count_shape_valid = (
+                    type(count) is int
+                    and 0 <= count <= 4
+                    and (
+                        (count == 0 and max_count is None and complete is False)
+                        or (
+                            count > 0
+                            and (
+                                (complete is True and type(max_count) is int)
+                                or (complete is False and max_count is None)
+                            )
+                        )
+                    )
+                    and not (
+                        count == 0 and (expected_seen or schema_match or execute_seen)
+                    )
+                    and (not schema_match or expected_seen)
+                )
+            else:
+                count_shape_valid = (
+                    count_valid is False
+                    and count is None
+                    and complete is False
+                    and max_count is None
+                    and expected_seen is False
+                    and schema_match is False
+                    and execute_seen is False
+                )
+            if (
+                type(item) is not dict
+                or set(item) != offer_fields
+                or type(item.get("case_ordinal")) is not int
+                or item["case_ordinal"] != ordinal
+                or item.get("case_kind") != expected_kind
+                or type(count_valid) is not bool
+                or not count_shape_valid
+                or type(complete) is not bool
+                or type(expected_seen) is not bool
+                or type(schema_match) is not bool
+                or type(execute_seen) is not bool
+                or (
+                    max_count is not None
+                    and (type(max_count) is not int or not 0 <= max_count <= 128)
+                )
+            ):
+                offers_valid = False
+                break
+            offers.append({key: item[key] for key in offer_fields})
+        if not offers_valid:
+            offers = []
+
+    def bounded_count(name: str, maximum: int) -> tuple[int | None, bool]:
+        value = inner.get(name)
+        if type(value) is int and 0 <= value <= maximum:
+            return value, True
+        return None, False
+
+    failure_class = inner.get("failure_class")
+    if type(failure_class) is not str or failure_class not in failure_classes:
+        failure_class = "not_observed"
+    isolation_reason = inner.get("isolation_stop_reason")
+    if type(isolation_reason) is not str or isolation_reason not in isolation_reasons:
+        return None
+    if failure_class == "isolation_failed" and isolation_reason == "none":
+        return None
+    if failure_class not in {"isolation_failed", "timeout"} and isolation_reason != "none":
+        return None
+    request_count, request_count_valid = bounded_count("provider_request_count", 13)
+    get_count, get_count_valid = bounded_count("provider_get_count", 5)
+    dispatch_count, dispatch_count_valid = bounded_count("fake_mcp_dispatch_count", 128)
+    return {
+        "schema": "t127.synthetic-native-toolarg-control.inner-diagnostic.v1",
+        "failure_class": failure_class,
+        "isolation_stop_reason": isolation_reason,
+        "provider_request_count": request_count,
+        "provider_request_count_valid": request_count_valid,
+        "provider_get_count": get_count,
+        "provider_get_count_valid": get_count_valid,
+        "fake_mcp_dispatch_count": dispatch_count,
+        "fake_mcp_dispatch_count_valid": dispatch_count_valid,
+        "cases_valid": cases_valid,
+        "cases": cases,
+        "response_probe_cases_valid": probes_valid,
+        "response_probe_cases": probes,
+        "provider_tool_offer_diagnostics_valid": offers_valid,
+        "provider_tool_offer_diagnostics": offers,
+    }
+
+
+def _write_private_inner_diagnostic(
+    path: pathlib.Path, inner: dict[str, Any] | None
+) -> bool:
+    projection = _private_inner_diagnostic_projection(inner)
+    if projection is None:
+        return False
+    raw = json.dumps(projection, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode(
+        "ascii"
+    ) + b"\n"
+    if len(raw) > MAX_PRIVATE_INNER_DIAGNOSTIC_BYTES:
+        raise RuntimeError("inner_diagnostic_cap_exceeded")
+    _write_summary(path, projection)
+    return True
+
+
+def _validate_inputs(expected_head: str, repo_root: pathlib.Path) -> None:
+    _require_private_dir(BASE)
+    _require_private_dir(CONTROL)
+    _require_private_dir(BASE / "bin")
+    for name in (
+        "config",
+        "data",
+        "cache",
+        "state",
+        "private",
+        "tmp",
+        "xdg-config",
+        "config-dir",
+        "home",
+        "workspaces",
+        "source-agents",
+    ):
+        _require_private_dir(CONTROL / name)
+    if {entry.name for entry in WORKSPACES.iterdir()} != {
+        "source_baseline",
+        "unicode_punctuation_mutant",
+    }:
+        raise RuntimeError("case_workspace_set_invalid")
+    _require_private_file(BINARY, 0o700, 300_000_000)
+    _require_private_file(CONFIG, 0o600, 100_000)
+    _require_private_file(EXPECTATIONS, 0o600, 4096)
+    _require_private_file(SOURCE_BINDING, 0o600, 4096)
+    _require_private_file(INNER, 0o600, 100_000)
+    _require_private_file(PROBE_SOURCE, 0o600, 128 * 1024)
+    _require_private_file(CONFIG_RECIPE, 0o600, 32 * 1024)
+    _require_private_file(SOURCE_CONFIG, 0o600, 100_000)
+    _require_private_file(SOURCE_AGENT, 0o600, 16 * 1024)
+    _require_private_file(CONTROL / "synthetic-passwd", 0o600, 4096)
+    _require_private_file(CONTROL / "synthetic-hosts", 0o600, 4096)
+    if _sha(CONTROL / "synthetic-passwd") != EXPECTED_SYNTHETIC_PASSWD_SHA256:
+        raise RuntimeError("synthetic_passwd_hash_mismatch")
+    if _sha(CONTROL / "synthetic-hosts") != EXPECTED_SYNTHETIC_HOSTS_SHA256:
+        raise RuntimeError("synthetic_hosts_hash_mismatch")
+    _require_private_file(CONTROL / "sandbox-argv.json", 0o600, 100_000)
+    _require_private_file(CONTROL / "environment-allowlist.json", 0o600, 10_000)
+    if _sha(BINARY) != EXPECTED_BINARY_SHA256:
+        raise RuntimeError("pinned_binary_hash_mismatch")
+    if _sha(CONFIG) != EXPECTED_CONFIG_SHA256:
+        raise RuntimeError("pinned_config_hash_mismatch")
+    if _sha(CONFIG_RECIPE) != EXPECTED_CONFIG_RECIPE_SHA256:
+        raise RuntimeError("pinned_config_recipe_hash_mismatch")
+    if _sha(SOURCE_CONFIG) != EXPECTED_SOURCE_CONFIG_SHA256:
+        raise RuntimeError("pinned_source_config_hash_mismatch")
+    if _sha(SOURCE_AGENT) != EXPECTED_SOURCE_AGENT_SHA256:
+        raise RuntimeError("pinned_source_agent_hash_mismatch")
+    if _sha(EXPECTATIONS) != EXPECTED_EXPECTATIONS_SHA256:
+        raise RuntimeError("pinned_expectations_hash_mismatch")
+    if _sha(SOURCE_BINDING) != EXPECTED_SOURCE_BINDING_SHA256:
+        raise RuntimeError("pinned_source_binding_hash_mismatch")
+    _verify_source_binding(expected_head, repo_root)
+    if _sha(INNER) != EXPECTED_INNER_SHA256:
+        raise RuntimeError("pinned_inner_hash_mismatch")
+    _require_system_file(BWRAP, EXPECTED_BWRAP_SHA256)
+    for case_kind in ("source_baseline", "unicode_punctuation_mutant"):
+        workspace = WORKSPACES / case_kind
+        _require_private_dir(workspace)
+        _require_private_dir(workspace / ".git")
+        _require_private_dir(workspace / ".opencode")
+        _require_private_dir(workspace / ".opencode" / "plugins")
+        plugin_path = workspace / ".opencode" / "plugins" / "response_hook_probe.js"
+        _require_private_file(plugin_path, 0o600, 128 * 1024)
+        if plugin_path.read_bytes() != _derived_probe_bytes(case_kind):
+            raise RuntimeError("derived_probe_copy_mismatch")
+        if any(
+            path.exists() or path.is_symlink()
+            for path in (
+                workspace / ".opencode" / "http-response-probe",
+                CONTROL / "data" / case_kind,
+                CONTROL / "private" / ("response-probe-" + case_kind),
+            )
+        ):
+            raise RuntimeError("one_shot_probe_state_already_used")
+    argv_path = CONTROL / "sandbox-argv.json"
+    allowlist_path = CONTROL / "environment-allowlist.json"
+    if json.loads(argv_path.read_text(encoding="utf-8")) != _make_argv():
+        raise RuntimeError("sandbox_argv_plan_mismatch")
+    if json.loads(allowlist_path.read_text(encoding="utf-8")) != _environment_allowlist():
+        raise RuntimeError("environment_allowlist_mismatch")
+    if any(
+        (CONTROL / relative).exists()
+        for relative in (
+            "run.lock",
+            "private/outer-summary.json",
+            "private/inner-diagnostic.json",
+        )
+    ):
+        raise RuntimeError("one_shot_control_already_used")
+    for path in (
+        CONTROL / "private" / "callback-source_baseline.jsonl",
+        CONTROL / "private" / "callback-unicode_punctuation_mutant.jsonl",
+        CONTROL / "private" / "mcp-summary-source_baseline.json",
+        CONTROL / "private" / "mcp-summary-unicode_punctuation_mutant.json",
+    ):
+        if path.exists() or path.is_symlink():
+            raise RuntimeError("one_shot_callback_already_used")
+    for relative in (
+        "data",
+        "cache",
+        "state",
+        "private",
+        "tmp",
+        "xdg-config",
+        "config-dir",
+        "home",
+    ):
+        if any((CONTROL / relative).iterdir()):
+            raise RuntimeError("runtime_state_not_empty")
+
+
+def _apply_outer_process_outcome(
+    report: dict[str, Any],
+    *,
+    isolation_failed: bool,
+    timed_out: bool,
+    returncode: int | None,
+) -> dict[str, Any]:
+    outcome = dict(report)
+    if isolation_failed:
+        outcome["failure_class"] = "isolation_failed"
+        outcome["both_baseline_cases_exact"] = False
+    if timed_out:
+        outcome["failure_class"] = "timeout"
+        outcome["both_baseline_cases_exact"] = False
+    if type(returncode) is int and returncode != 0:
+        outcome["both_baseline_cases_exact"] = False
+        if outcome.get("failure_class") == "none":
+            outcome["failure_class"] = "not_observed"
+    return outcome
+
+
+def _main_admitted(expected_head: str, repo_root: pathlib.Path) -> int:
+    global _NATIVE_PROCESS_STARTED
+    _NATIVE_PROCESS_STARTED = False
+    _validate_inputs(expected_head, repo_root)
+    if _mem_available_kib() < FLOOR_KIB:
+        raise RuntimeError("memory_floor_not_met")
+    lock_path = CONTROL / "run.lock"
+    fd = os.open(
+        lock_path,
+        os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    with os.fdopen(fd, "w", encoding="ascii") as lock:
+        lock.write("one-shot; no retry\n")
+        lock.flush()
+        os.fsync(lock.fileno())
+    _create_runtime_dirs()
+    argv = _make_argv()
+    started = time.monotonic()
+    before_net = hashlib.sha256(os.readlink("/proc/self/ns/net").encode()).hexdigest()
+    before_pid = hashlib.sha256(os.readlink("/proc/self/ns/pid").encode()).hexdigest()
+    minimum_memory = _mem_available_kib()
+    timed_out = False
+    memory_stop = False
+    proc: subprocess.Popen[bytes] | None = None
+    try:
+        proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", MARKER_NAME: MARKER_VALUE},
+        )
+        _NATIVE_PROCESS_STARTED = True
+        stdout, timed_out, memory_stop, minimum_memory = _collect_owned_process(
+            proc,
+            deadline=started + OUTER_SECONDS,
+            minimum_memory=minimum_memory,
+        )
+    finally:
+        cleaned = (
+            _cleanup_owned_process_group(proc)
+            if proc is not None
+            else {
+                "owned_process_group_cleanup_attempted": False,
+                "owned_process_group_remaining": False,
+            }
+        )
+    if proc is None:
+        raise RuntimeError("sandbox_process_missing")
+    inner: dict[str, Any] | None = None
+    if len(stdout) <= MAX_RAW_REPORT_BYTES:
+        try:
+            parsed = json.loads(stdout.decode("utf-8", "strict").splitlines()[-1])
+            if type(parsed) is dict:
+                inner = parsed
+        except Exception:
+            inner = None
+    if inner is not None:
+        _write_private_inner_diagnostic(INNER_DIAGNOSTIC, inner)
+    after_net = hashlib.sha256(os.readlink("/proc/self/ns/net").encode()).hexdigest()
+    after_pid = hashlib.sha256(os.readlink("/proc/self/ns/pid").encode()).hexdigest()
+    report = _report_projection(
+        inner,
+        {
+            "network_namespace_differs": bool(
+                inner
+                and type(inner.get("network_namespace_sha256")) is str
+                and inner.get("network_namespace_sha256") != before_net
+            ),
+            "pid_namespace_differs": bool(
+                inner
+                and type(inner.get("pid_namespace_sha256")) is str
+                and inner.get("pid_namespace_sha256") != before_pid
+            ),
+            "memory_floor_kib": FLOOR_KIB,
+            "minimum_memory_available_kib": minimum_memory,
+            "timed_out": timed_out or memory_stop,
+            "process_cleanup": cleaned,
+        },
+    )
+    report["network_namespace_stable_during_run"] = before_net == after_net
+    report["pid_namespace_stable_during_run"] = before_pid == after_pid
+    isolation_failed = (
+        memory_stop
+        or cleaned["owned_process_group_remaining"]
+        or not report["network_namespace_differs_from_host"]
+        or not report["pid_namespace_differs_from_host"]
+        or not report["network_namespace_stable_during_run"]
+        or not report["pid_namespace_stable_during_run"]
+        or not report["loopback_only_network_interfaces"]
+    )
+    report = _apply_outer_process_outcome(
+        report,
+        isolation_failed=isolation_failed,
+        timed_out=timed_out,
+        returncode=proc.returncode,
+    )
+    summary_path = CONTROL / "private" / "outer-summary.json"
+    _write_summary(summary_path, report)
+    print(json.dumps(report, ensure_ascii=True, sort_keys=True, separators=(",", ":")))
+    if report["failure_class"] != "none" or proc.returncode != 0:
+        return 1
+    return 0
+
+
+def main() -> int:
+    global _NATIVE_PROCESS_STARTED
+    _NATIVE_PROCESS_STARTED = False
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--expected-head", required=True)
+    parser.add_argument("--repo-root", required=True)
+    args = parser.parse_args()
+    if not args.execute or RUN_ENABLED is not True or PRIVATE_ADMISSION_APPROVED is not True:
+        print(
+            json.dumps(
+                {
+                    "schema": "t127.synthetic-native-toolarg-control.driver.v1",
+                    "status": "closed",
+                    "run_enabled": False,
+                    "private_admission_approved": False,
+                    "native_invoked": False,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        return 2
+    try:
+        if type(args.expected_head) is not str or type(args.repo_root) is not str:
+            raise RuntimeError("source_binding_runtime_arguments_missing")
+        repo_root = pathlib.Path(args.repo_root)
+        if not repo_root.is_absolute() or repo_root.is_symlink():
+            raise RuntimeError("source_binding_repo_invalid")
+        resolved_repo_root = repo_root.resolve(strict=True)
+        if resolved_repo_root != repo_root.absolute():
+            raise RuntimeError("source_binding_repo_invalid")
+        repo_root = resolved_repo_root
+        return _main_admitted(args.expected_head, repo_root)
+    except Exception as exc:
+        # Do not serialize exception text, paths, environment, or argument values.
+        reason = exc.reason if type(exc) is RuntimeError and hasattr(exc, "reason") else "isolation_failed"
+        print(
+            json.dumps(
+                {
+                    "schema": "t127.synthetic-native-toolarg-control.driver.v1",
+                    "status": "failed_closed",
+                    "run_enabled": True,
+                    "private_admission_approved": True,
+                    "native_invoked": _NATIVE_PROCESS_STARTED,
+                    "failure_class": reason if reason in {"memory_floor_not_met"} else "isolation_failed",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

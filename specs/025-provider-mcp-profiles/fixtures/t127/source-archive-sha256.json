@@ -1,0 +1,23 @@
+{
+  "schema": "caos.t127.source-only-archive.v1",
+  "project_fixture_binding_head": "6ffaefddf26cc0bb0c003dd487bfaba4e04e1a69",
+  "private_preparation_sha256": "db4a7a8e55a693205c7888f99009449ff35d03ddeaa5273924b88e630be2f7a0",
+  "runnable_control_claimed": false,
+  "execution_flags_closed": true,
+  "control_source_files": {
+    "driver.py.txt": "513244b1fad6c711d5e4fd9a21cf879adb541c7f927780aeeceb49ba9117e091",
+    "inside_control.py.txt": "9fbe0d6405f2f29b49b89b85a75d71b0e1f34aefd22dfb4dd861f54c9ce9648c",
+    "test_t127_protocol.py.txt": "14ddc0d79b0cc93d630d257ec796464ab069abd0b41a247afe7b46ebd0d7b90b",
+    "config_recipe.py.txt": "5e9c568f89315a76e45a7eb615dea94d1df4afe05bc68fb3379442e29195a099",
+    "source-config.json": "125284f06590a19d0eace2aec485839ad60923fab637be63175a6986c366cb9d",
+    "source-agents/toolarg_probe.md": "45e9e80feb3cefe9263ffcafe7b3d8af35cbab462861c54ad3b424a92b554564",
+    "config/opencode.json": "daf873b888643c903479ff956387bdfb663f6a698714f37de3fa99c38ea07a1d",
+    "source-binding.json": "d891a12cedade44ba571482dc5deedfe49da56daf5b9b03ce210bd1d0614bd75",
+    "synthetic-passwd": "01f737a4334a1c8ade3986982a6a8540ae1e9bf88cb387be7e545ed4070034d7",
+    "synthetic-hosts": "b69b2c741be48691edabe3771c644c70473ccd6aa8effd9f17cc07fa129917f9"
+  },
+  "portable_probe_files": {
+    "response_hook_probe.js": "90d98ba08529e25cc347dd4dcdca65133253ad774f1976a10491b8667e7c1dcb",
+    "test_response_hook_probe.mjs": "04f34374b8617f9f2a78ab40b009a34f7c9286140f11cf205a87389fe42298c5"
+  }
+}

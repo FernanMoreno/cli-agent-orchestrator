@@ -454,3 +454,14 @@ T125 implementada y verificada offline: observador HTTP separado/desactivado por
 
 
 T125 real enbed7cd44/527: genérico2/0 PASS84,873s/mínimo9170MiB, dos fases exactas con ACK/Unicode/PG/API/AG-UI/reinicio y oferta final; prompt HTTP y argumentos MCP exactos en ambas. T116/T120 cierran ese gate; T121/T122/T125 cierran corrección/diagnóstico. Full8 actual FAILED81,728s/mínimo9187: prompt HTTP exacto pero argumento MCP ya cambiado de U+002E a U+3002; no se atribuye al proveedor o cliente sin observar respuesta/conversión. T104 se reabre para la fuente actual; R8 histórico queda intacto. T077 sigue pendiente de v1 actual, cuyo arnés bloqueó antes del modelo por507 fijo frente a513; T126 lo corrige sin aceptar subconjuntos. [Genérico](../specs/025-provider-mcp-profiles/validation-t125-generic-native.json), [full8](../specs/025-provider-mcp-profiles/validation-t125-full8-native.json).
+
+
+T127 en curso: control nativo2 aislado sin proveedor real,22 pruebas Python/5 Node y revisión Claude. Primera ejecución sintética FAILED31,417s: compactación automática antes de respuesta principal, cero llamadas MCP; no prueba conservación de argumentos ni causa del full8. Fuentes/binario intactos, flags cerrados y procesos propios ausentes; evidencia sintética privada conservada. [Diagnóstico](../specs/025-provider-mcp-profiles/validation-t127.md).
+
+T127 causa acotada del control: contexto simulado8192 frente a reserva nativa20000 produce umbral−11808 y fuerza compactación. R2 se prepara en un directorio nuevo con contexto65536, sin rebajar límites ni criterios; aún no ejecutada. Esto no atribuye la sustitución de puntuación del full8 real.
+
+T127 R2 FAILED31,176s: contexto corregido (cero compactaciones),28 pruebas/5 Node y callback HTTP nativo observado, pero timeout30s sin llamada MCP. El mapa validado de expectativas no se inicializaba en el estado leído por el servidor HTTP; devolvía503. R3 corrige ese enlace con una prueba HTTP de ensamblaje, sin cambiar criterios. [R2](../specs/025-provider-mcp-profiles/validation-t127-control-r2.json).
+
+T127 R3 FAILED/not_observed3,300s: sonda HTTP nativa completa en ambos casos, pero ninguna herramienta MCP llamada. Se revisa el modo nativo/Code Mode frente al generador de configuración de producción antes de otra ejecución. La causa del full8 real sigue sin atribuirse. [R3](../specs/025-provider-mcp-profiles/validation-t127-control-r3.json).
+
+T127 R4 FAILED/not_observed3,331s con configuración generada por producción: oferta HTTP observada vacía en ambos casos, cero MCP; sonda de respuesta completa. Gate sintético de argumentos sigue abierto y no se repite sin demostrar inicialización/catálogo. T128 (pendiente, aún no implementada) observará los argumentos en la respuesta del perfil real Go/full8, donde ya hubo llamadas MCP en T125. [R4](../specs/025-provider-mcp-profiles/validation-t127-control-r4.json).

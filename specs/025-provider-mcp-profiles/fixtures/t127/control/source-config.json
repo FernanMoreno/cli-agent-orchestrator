@@ -1,0 +1,38 @@
+{
+  "mcp": {
+    "t127fake": {
+      "command": [
+        "/usr/bin/python3",
+        "/work/inside_control.py",
+        "--mcp"
+      ],
+      "enabled": true,
+      "environment": {
+        "T127_CONTROL_MARKER": "2F67A41D9B0C"
+      },
+      "type": "local"
+    }
+  },
+  "providers": {
+    "t127fake": {
+      "env": [
+        "T127_FAKE_API_KEY"
+      ],
+      "models": {
+        "toolarg-model": {
+          "limit": {
+            "context": 65536,
+            "output": 256
+          },
+          "name": "T127 Synthetic Tool Argument Control",
+          "tool_call": true
+        }
+      },
+      "name": "T127 Local Synthetic Provider",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "http://127.0.0.1:40127/v1"
+      }
+    }
+  }
+}

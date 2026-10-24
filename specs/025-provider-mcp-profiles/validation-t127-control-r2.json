@@ -1,0 +1,160 @@
+{
+  "schema": "caos.t127.synthetic-native-control.public.v1",
+  "execution_source_head": "6ffaefddf26cc0bb0c003dd487bfaba4e04e1a69",
+  "result": "FAILED",
+  "elapsed_seconds": 31.176,
+  "preparation_sha256": "44bef1ad0b37e2650977d045c19f0c3e24a0373860631ddc8fe9b4007784cb3a",
+  "observation": {
+    "both_baseline_cases_exact": false,
+    "cao_endpoint_configured": false,
+    "cao_side_effects_possible": false,
+    "cases": [],
+    "diagnostic_only": true,
+    "external_network_available": false,
+    "failure_class": "timeout",
+    "fake_mcp_dispatch_count": 0,
+    "global_acceptance_claimed": false,
+    "loopback_only_network_interfaces": true,
+    "memory_floor_kib": 6291456,
+    "minimum_memory_available_kib": 10299832,
+    "model_acceptance_claimed": false,
+    "native_actual_model_inference": false,
+    "network_namespace_differs_from_host": true,
+    "network_namespace_stable_during_run": true,
+    "operator_auth_used": false,
+    "pid_namespace_differs_from_host": true,
+    "pid_namespace_stable_during_run": true,
+    "process_cleanup": {
+      "owned_process_group_cleanup_attempted": false,
+      "owned_process_group_remaining": false
+    },
+    "provider_get_count": 0,
+    "provider_request_count": 6,
+    "real_go_provider_used": false,
+    "real_provider_used": false,
+    "response_probe_cases": [
+      {
+        "all_clones_completed": true,
+        "case_kind": "source_baseline",
+        "case_ordinal": 1,
+        "cleanup_complete": true,
+        "diagnostic_only": true,
+        "hook_registered": true,
+        "marker_seen": false,
+        "original_never_replaced": true,
+        "selected_response_count": 5,
+        "status": "incomplete"
+      },
+      {
+        "all_clones_completed": false,
+        "case_kind": "unicode_punctuation_mutant",
+        "case_ordinal": 2,
+        "cleanup_complete": false,
+        "diagnostic_only": true,
+        "hook_registered": false,
+        "marker_seen": false,
+        "original_never_replaced": false,
+        "selected_response_count": 0,
+        "status": "unavailable"
+      }
+    ],
+    "response_probe_complete": false,
+    "schema": "t127.synthetic-native-toolarg-control.outer.v1",
+    "scope": "synthetic_native_fake_provider_fake_mcp",
+    "timed_out": false
+  },
+  "private_inner_projection": {
+    "cases": [
+      {
+        "argument_exact": false,
+        "case_kind": "source_baseline",
+        "case_ordinal": 1,
+        "expected_unicode_scalars": 40,
+        "expected_utf8_bytes": 48,
+        "failure_class": "timeout",
+        "fake_mcp_dispatch_count": 0,
+        "fake_mcp_dispatch_once": false,
+        "fake_mcp_tool_call_attempt_count": 0,
+        "no_extra_argument_keys": false,
+        "observed_unicode_scalars": 0,
+        "observed_utf8_bytes": 0,
+        "provider_case_bound": false,
+        "provider_request_count": 6,
+        "provider_tool_call_response_count": 0,
+        "source_fixture_body_exact": true,
+        "target_exact": false,
+        "unicode_scalar_count_equal": false,
+        "utf8_byte_length_equal": false
+      }
+    ],
+    "cases_valid": true,
+    "failure_class": "timeout",
+    "fake_mcp_dispatch_count": 0,
+    "fake_mcp_dispatch_count_valid": true,
+    "isolation_stop_reason": "none",
+    "provider_get_count": 0,
+    "provider_get_count_valid": true,
+    "provider_request_count": 6,
+    "provider_request_count_valid": true,
+    "response_probe_cases": [
+      {
+        "all_clones_completed": true,
+        "case_kind": "source_baseline",
+        "case_ordinal": 1,
+        "cleanup_complete": true,
+        "diagnostic_only": true,
+        "hook_registered": true,
+        "marker_seen": false,
+        "original_never_replaced": true,
+        "selected_response_count": 5,
+        "status": "incomplete"
+      },
+      {
+        "all_clones_completed": false,
+        "case_kind": "unicode_punctuation_mutant",
+        "case_ordinal": 2,
+        "cleanup_complete": false,
+        "diagnostic_only": true,
+        "hook_registered": false,
+        "marker_seen": false,
+        "original_never_replaced": false,
+        "selected_response_count": 0,
+        "status": "unavailable"
+      }
+    ],
+    "response_probe_cases_valid": true,
+    "schema": "t127.synthetic-native-toolarg-control.inner-diagnostic.v1"
+  },
+  "closure": {
+    "schema": "caos.t127.control-closure.v1",
+    "source_head": "6ffaefddf26cc0bb0c003dd487bfaba4e04e1a69",
+    "execution_exit_code": 1,
+    "elapsed_seconds": 31.176,
+    "owned_native_processes_remaining": 0,
+    "source_binary_hashes_unchanged": true,
+    "driver_gates_restored_closed": true,
+    "process_group_remaining": false,
+    "real_provider_used": false,
+    "operator_auth_mounted": false,
+    "private_synthetic_evidence_retained": true,
+    "no_unchanged_retry": true,
+    "outer_summary_sha256": "e67544908b2a2128e707ea9fc0b7f6c54e3f90edc7b02cd8ca516f1d0e8b7cfe",
+    "inner_diagnostic_sha256": "e0fdb985b27a885c1c5bd1d2e4292423d586114617da3af79f20444397609265"
+  },
+  "native_store_sanitized": {
+    "session_message_count": 3,
+    "message_type_counts": {
+      "agent-switched": 1,
+      "user": 1,
+      "assistant": 1
+    },
+    "compaction_message_count": 0
+  },
+  "limits": [
+    "First case timed out at its unchanged 30-second limit; outer collector itself did not time out.",
+    "No fake MCP attempt/dispatch or argument preservation; no complete probe claim.",
+    "Five selected native http.response callbacks cloned and preserved original response objects, but the expected synthetic success marker was absent.",
+    "Handler expectations were never initialized from the validated loader; STATE.expectations stayed empty and the handler returned503. This is a control defect, not real-provider attribution.",
+    "No unchanged retry; current full8 remains FAILED."
+  ]
+}

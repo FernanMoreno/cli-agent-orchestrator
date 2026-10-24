@@ -4,6 +4,8 @@
   "cleanup_failures": [],
   "elapsed_seconds": 81.728,
   "error_code": "message_phase_acceptance_mismatch",
+  "exact_owned_container_absent": true,
+  "exact_owned_network_absent": true,
   "full_source_cleanup_predicate_verified": true,
   "global_acceptance_claimed": false,
   "mcp_incoming_argument_diagnostic": {
@@ -27,7 +29,7 @@
   "minimum_admission_mib": 9187,
   "native_acceptance_claimed": false,
   "operator_auth_unchanged": true,
-  "parent_pg_closed": false,
+  "parent_pg_closed": true,
   "phases": [
     {
       "agui_redacted_one_notification": true,
@@ -98,5 +100,6 @@
   },
   "source_file_count": 527,
   "source_head": "bed7cd44a2c2a4cc759c8953a476013aa7311f24",
-  "source_unchanged": true
+  "source_unchanged": true,
+  "unrelated_resources_preserved": true
 }

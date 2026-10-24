@@ -1,0 +1,2164 @@
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import signal
+import socket
+import stat
+import subprocess
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+
+
+ROOT = Path("/work")
+EXPECTATIONS = ROOT / "expectations.json"
+BASE_CONFIG = ROOT / "config" / "opencode.json"
+EXPECTED_BASE_CONFIG_SHA256 = "daf873b888643c903479ff956387bdfb663f6a698714f37de3fa99c38ea07a1d"
+HOME_GUEST_ROOT = "/home/t127"
+HOME_ROOT = Path(HOME_GUEST_ROOT)
+PORT = 40127
+MODEL = "toolarg-model"
+SERVER_NAME = "t127fake"
+TOOL_NAME = "send_message"
+TARGET = "synthetic-sink"
+CASE_ORDER = ("source_baseline", "unicode_punctuation_mutant")
+PROBE_NONCES = {
+    "source_baseline": "0123456789abcdef0123456789abcdef",
+    "unicode_punctuation_mutant": "fedcba9876543210fedcba9876543210",
+}
+PROBE_FILE_SHA256 = {
+    "source_baseline": "9efe4ea6ebeb3abba6432055b64e029291f68f6bbd955b74f48024759eac9fdb",
+    "unicode_punctuation_mutant": "9836e8c4c9502a92de8cbf621a0aba7b2c34e2cc0cfcd683fe9702196d78176a",
+}
+MAX_EXPECTATION_BYTES = 4096
+MAX_CASE_CONFIG_BYTES = 100_000
+MAX_PROVIDER_REQUEST_BYTES = 1024 * 1024
+MAX_PROVIDER_RESPONSE_BYTES = 256 * 1024
+MAX_PROVIDER_GETS = 4
+MAX_PROVIDER_POSTS_PER_CASE = 4
+MAX_PROVIDER_POSTS = 8
+MAX_PROVIDER_TOOLS = 128
+MAX_MCP_LINE_BYTES = 64 * 1024
+MAX_MCP_MESSAGES = 64
+MAX_MCP_TOOL_CALLS = 2
+MAX_MCP_SUMMARY_COUNT = MAX_MCP_MESSAGES
+MAX_CALLBACK_LEDGER_BYTES = 8192
+MAX_RESPONSE_EVENTS_BYTES = 16 * 1024
+MAX_RESPONSE_SEAL_BYTES = 2048
+MAX_PROCESS_COUNT = 24
+MAX_CASE_SECONDS = 30.0
+MAX_TOTAL_SECONDS = 70.0
+FLOOR_KIB = 6 * 1024 * 1024
+FINAL_TEXT = "Synthetic MCP callback control completed."
+ERROR_TEXT = "Synthetic MCP callback did not match."
+MARKER = "T127_CONTROL_MARKER=2F67A41D9B0C"
+
+
+class ControlError(Exception):
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ControlError("duplicate_json_key")
+        result[key] = value
+    return result
+
+
+def strict_json_loads(raw: bytes | str) -> Any:
+    try:
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", "strict")
+        return json.loads(raw, object_pairs_hook=_unique_object)
+    except ControlError:
+        raise
+    except Exception as exc:
+        raise ControlError("invalid_json") from exc
+
+
+def _private_file(path: Path, mode: int, max_bytes: int) -> os.stat_result:
+    if path.is_symlink():
+        raise ControlError("private_file_symlink")
+    try:
+        info = path.stat(follow_symlinks=False)
+    except OSError as exc:
+        raise ControlError("private_file_unavailable") from exc
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_nlink != 1
+        or stat.S_IMODE(info.st_mode) != mode
+        or info.st_size > max_bytes
+    ):
+        raise ControlError("private_file_identity_invalid")
+    return info
+
+
+def _private_directory(path: Path) -> os.stat_result:
+    if path.is_symlink():
+        raise ControlError("private_directory_symlink")
+    try:
+        info = path.stat(follow_symlinks=False)
+    except OSError as exc:
+        raise ControlError("private_directory_unavailable") from exc
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != os.getuid()
+        or stat.S_IMODE(info.st_mode) != 0o700
+        or path.resolve(strict=True) != path.absolute()
+    ):
+        raise ControlError("private_directory_identity_invalid")
+    return info
+
+
+def _read_stable_private_file(path: Path, maximum: int) -> bytes:
+    before = _private_file(path, 0o600, maximum)
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise ControlError("private_file_read_failed") from exc
+    after = _private_file(path, 0o600, maximum)
+    if (
+        len(raw) != before.st_size
+        or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+    ):
+        raise ControlError("private_file_changed_during_read")
+    return raw
+
+
+def _probe_record_valid(item: object, *, event: str) -> bool:
+    fields = {
+        "schema_version",
+        "event",
+        "status",
+        "ordinal",
+        "hook_registered",
+        "selected_primary_response_seen",
+        "synthetic_wire_marker_seen",
+        "clone_completed",
+        "inspection_unavailable",
+        "original_not_replaced",
+        "cleanup_complete",
+    }
+    if type(item) is not dict or set(item) != fields:
+        return False
+    if (
+        type(item.get("schema_version")) is not int
+        or item["schema_version"] != 1
+        or item.get("event") != event
+        or type(item.get("status")) is not str
+        or type(item.get("ordinal")) is not int
+        or item["ordinal"] < 0
+        or item["ordinal"] > 16
+        or any(
+            type(item.get(name)) is not bool
+            for name in (
+                "hook_registered",
+                "selected_primary_response_seen",
+                "synthetic_wire_marker_seen",
+                "clone_completed",
+                "inspection_unavailable",
+                "original_not_replaced",
+                "cleanup_complete",
+            )
+        )
+    ):
+        return False
+    if event == "hook":
+        return (
+            item["ordinal"] == 0
+            and item["status"] in {"registered", "registration_unavailable"}
+            and item["hook_registered"] is (item["status"] == "registered")
+            and not item["selected_primary_response_seen"]
+            and not item["synthetic_wire_marker_seen"]
+            and not item["clone_completed"]
+            and not item["cleanup_complete"]
+        )
+    if event == "response":
+        complete = item["status"] == "clone_completed"
+        unavailable = item["status"] == "inspection_unavailable"
+        return (
+            item["ordinal"] > 0
+            and (complete or unavailable)
+            and item["selected_primary_response_seen"]
+            and item["clone_completed"] is complete
+            and item["inspection_unavailable"] is unavailable
+            and not item["cleanup_complete"]
+        )
+    if event == "seal":
+        return (
+            item["status"] in {"sealed", "incomplete"}
+            and (item["status"] != "sealed" or item["cleanup_complete"])
+            and (item["status"] != "sealed" or not item["inspection_unavailable"])
+            and item["selected_primary_response_seen"] is (item["ordinal"] > 0)
+        )
+    return False
+
+
+def read_response_probe(
+    workspace: Path, case_kind: str, *, writers_dead: bool
+) -> dict[str, Any]:
+    """Read the closed HTTP response probe ledger as a sanitized side diagnostic."""
+    unavailable = {
+        "status": "unavailable",
+        "hook_registered": False,
+        "selected_response_count": 0,
+        "marker_seen": False,
+        "all_clones_completed": False,
+        "original_never_replaced": False,
+        "cleanup_complete": False,
+        "diagnostic_only": True,
+    }
+    if case_kind not in CASE_ORDER or not isinstance(workspace, Path) or writers_dead is not True:
+        return unavailable
+    opencode = workspace / ".opencode"
+    plugin_dir = opencode / "plugins"
+    plugin = plugin_dir / "response_hook_probe.js"
+    ledger = opencode / "http-response-probe"
+    try:
+        for directory in (workspace, opencode, plugin_dir, ledger):
+            _private_directory(directory)
+        plugin_raw = _read_stable_private_file(plugin, 128 * 1024)
+        if hashlib.sha256(plugin_raw).hexdigest() != PROBE_FILE_SHA256[case_kind]:
+            return unavailable
+        if set(entry.name for entry in ledger.iterdir()) != {"events.jsonl", "seal.json"}:
+            return unavailable
+        events_raw = _read_stable_private_file(
+            ledger / "events.jsonl", MAX_RESPONSE_EVENTS_BYTES
+        )
+        seal_raw = _read_stable_private_file(ledger / "seal.json", MAX_RESPONSE_SEAL_BYTES)
+        copy_directory = ROOT / "private" / ("response-probe-" + case_kind)
+        copy_directory.mkdir(mode=0o700)
+        _private_directory(copy_directory)
+        copied_events = _write_exclusive_probe_copy(
+            copy_directory / "events.jsonl", events_raw, MAX_RESPONSE_EVENTS_BYTES
+        )
+        copied_seal = _write_exclusive_probe_copy(
+            copy_directory / "seal.json", seal_raw, MAX_RESPONSE_SEAL_BYTES
+        )
+        if copied_events != events_raw or copied_seal != seal_raw:
+            return unavailable
+        event_lines = copied_events.splitlines()
+        if not event_lines or len(event_lines) > 17 or not all(event_lines):
+            return unavailable
+        records = [strict_json_loads(line) for line in event_lines]
+        seal = strict_json_loads(copied_seal)
+    except (ControlError, OSError, ValueError, TypeError):
+        return unavailable
+    if (
+        type(records) is not list
+        or not _probe_record_valid(records[0], event="hook")
+        or any(not _probe_record_valid(item, event="response") for item in records[1:])
+        or not _probe_record_valid(seal, event="seal")
+    ):
+        return unavailable
+    hook = records[0]
+    responses = records[1:]
+    if (
+        sorted(item["ordinal"] for item in responses) != list(range(1, len(responses) + 1))
+        or seal["ordinal"] != len(responses)
+        or seal["hook_registered"] is not hook["hook_registered"]
+        or seal["hook_registered"] is not all(
+            item["hook_registered"] for item in responses
+        )
+        or seal["synthetic_wire_marker_seen"]
+        is not any(item["synthetic_wire_marker_seen"] for item in responses)
+        or seal["clone_completed"]
+        is not (bool(responses) and all(item["clone_completed"] for item in responses))
+        or seal["original_not_replaced"]
+        is not (bool(responses) and all(item["original_not_replaced"] for item in responses))
+        or seal["inspection_unavailable"]
+        is not any(item["inspection_unavailable"] for item in responses)
+        or seal["status"]
+        != ("sealed" if seal["cleanup_complete"] and not seal["inspection_unavailable"] else "incomplete")
+    ):
+        return unavailable
+    complete = (
+        hook["hook_registered"]
+        and seal["status"] == "sealed"
+        and len(responses) > 0
+        and seal["synthetic_wire_marker_seen"]
+        and seal["clone_completed"]
+        and seal["original_not_replaced"]
+        and seal["cleanup_complete"]
+    )
+    return {
+        "status": "sealed" if complete else "incomplete",
+        "hook_registered": hook["hook_registered"],
+        "selected_response_count": len(responses),
+        "marker_seen": seal["synthetic_wire_marker_seen"],
+        "all_clones_completed": seal["clone_completed"],
+        "original_never_replaced": seal["original_not_replaced"],
+        "cleanup_complete": seal["cleanup_complete"],
+        "diagnostic_only": True,
+    }
+
+
+def _write_exclusive_probe_copy(path: Path, raw: bytes, maximum: int) -> bytes:
+    if len(raw) > maximum:
+        raise ControlError("response_probe_copy_oversized")
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            path,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0),
+            0o600,
+        )
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) != 0o600
+        ):
+            raise ControlError("response_probe_copy_identity_invalid")
+        with os.fdopen(descriptor, "wb") as output:
+            descriptor = -1
+            output.write(raw)
+            output.flush()
+            os.fsync(output.fileno())
+        copied = _read_stable_private_file(path, maximum)
+        if copied != raw:
+            raise ControlError("response_probe_copy_mismatch")
+        return copied
+    except OSError as exc:
+        raise ControlError("response_probe_copy_failed") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def load_expectations(path: Path | None = None) -> dict[str, dict[str, Any]]:
+    if path is None:
+        path = EXPECTATIONS
+    before = _private_file(path, 0o600, MAX_EXPECTATION_BYTES)
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise ControlError("expectations_read_failed") from exc
+    after = _private_file(path, 0o600, MAX_EXPECTATION_BYTES)
+    if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+    ):
+        raise ControlError("expectations_changed_during_read")
+    document = strict_json_loads(raw)
+    if type(document) is not dict or set(document) != {"schema", "cases"}:
+        raise ControlError("expectations_shape_invalid")
+    if document.get("schema") != "t127.synthetic-toolarg-expectations.v1":
+        raise ControlError("expectations_schema_invalid")
+    cases = document.get("cases")
+    if type(cases) is not list or len(cases) != 2:
+        raise ControlError("expectations_case_set_invalid")
+    result: dict[str, dict[str, Any]] = {}
+    for expected_ordinal, expected_kind, expected_wire_change in (
+        (1, "source_baseline", "source"),
+        (2, "unicode_punctuation_mutant", "final_cjk_punctuation"),
+    ):
+        item = cases[expected_ordinal - 1]
+        if (
+            type(item) is not dict
+            or set(item) != {"ordinal", "kind", "source_message", "wire_message", "target"}
+            or type(item.get("ordinal")) is not int
+            or item.get("ordinal") != expected_ordinal
+            or item.get("kind") != expected_kind
+            or type(item.get("source_message")) is not str
+            or type(item.get("wire_message")) is not str
+            or type(item.get("target")) is not str
+            or item.get("target") != TARGET
+        ):
+            raise ControlError("expectations_case_invalid")
+        source_message = item["source_message"]
+        message = item["wire_message"]
+        try:
+            source_message.encode("utf-8", "strict")
+            message.encode("utf-8", "strict")
+        except UnicodeEncodeError as exc:
+            raise ControlError("expectations_unicode_invalid") from exc
+        if (
+            not message
+            or len(message.encode("utf-8")) > 512
+            or len(source_message.encode("utf-8")) > 512
+        ):
+            raise ControlError("expectations_message_size_invalid")
+        if expected_wire_change == "source" and message != source_message:
+            raise ControlError("expectations_case_source_mismatch")
+        if expected_wire_change == "final_cjk_punctuation" and (
+            len(source_message) == 0 or message != source_message[:-1] + "。"
+        ):
+            raise ControlError("expectations_case_mutation_invalid")
+        if not any("\u3400" <= char <= "\u9fff" for char in message):
+            raise ControlError("expectations_cjk_marker_missing")
+        result[expected_kind] = item
+    return result
+
+
+def _safe_counts(expected: str, observed: object) -> dict[str, Any]:
+    expected_bytes = expected.encode("utf-8", "strict")
+    output: dict[str, Any] = {
+        "argument_exact": False,
+        "utf8_byte_length_equal": False,
+        "unicode_scalar_count_equal": False,
+        "no_extra_argument_keys": False,
+        "expected_utf8_bytes": len(expected_bytes),
+        "observed_utf8_bytes": 0,
+        "expected_unicode_scalars": len(expected),
+        "observed_unicode_scalars": 0,
+    }
+    if type(observed) is not str:
+        return output
+    try:
+        observed_bytes = observed.encode("utf-8", "strict")
+    except UnicodeEncodeError:
+        return output
+    output.update(
+        {
+            "argument_exact": observed == expected,
+            "utf8_byte_length_equal": len(observed_bytes) == len(expected_bytes),
+            "unicode_scalar_count_equal": len(observed) == len(expected),
+            "observed_utf8_bytes": len(observed_bytes),
+            "observed_unicode_scalars": len(observed),
+        }
+    )
+    return output
+
+
+def summarize_tool_arguments(arguments: object, expected: dict[str, Any]) -> dict[str, Any]:
+    expected_message = expected["wire_message"]
+    if type(arguments) is not dict:
+        metrics = _safe_counts(expected_message, None)
+        metrics["target_exact"] = False
+        metrics["failure_class"] = "malformed_input"
+        return metrics
+    no_extra = set(arguments) == {"message", "target"}
+    message = arguments.get("message")
+    target_ok = type(arguments.get("target")) is str and arguments.get("target") == TARGET
+    metrics = _safe_counts(expected_message, message)
+    metrics["no_extra_argument_keys"] = no_extra
+    metrics["target_exact"] = target_ok
+    exact = (
+        metrics["argument_exact"]
+        and metrics["utf8_byte_length_equal"]
+        and metrics["unicode_scalar_count_equal"]
+        and metrics["no_extra_argument_keys"]
+        and metrics["target_exact"]
+    )
+    metrics["failure_class"] = "none" if exact else "mismatch"
+    return metrics
+
+
+def _function_tools(request: object) -> tuple[str | None, bool]:
+    if type(request) is not dict:
+        return None, False
+    tools = request.get("tools")
+    if type(tools) is not list or not tools or len(tools) > MAX_PROVIDER_TOOLS:
+        return None, False
+    expected_name = SERVER_NAME + "_" + TOOL_NAME
+    matches = []
+    for item in tools:
+        if type(item) is not dict or item.get("type") != "function":
+            continue
+        function = item.get("function")
+        if type(function) is dict and function.get("name") == expected_name:
+            matches.append(function)
+    if len(matches) != 1:
+        return None, False
+    function = matches[0]
+    parameters = function.get("parameters")
+    properties = parameters.get("properties") if type(parameters) is dict else None
+    if (
+        type(parameters) is not dict
+        or parameters.get("type") != "object"
+        or type(properties) is not dict
+        or set(properties) != {"message", "target"}
+        or any(
+            type(properties.get(key)) is not dict
+            or properties[key].get("type") != "string"
+            for key in ("message", "target")
+        )
+        or parameters.get("required") != ["message", "target"]
+        or parameters.get("additionalProperties") is not False
+    ):
+        return None, False
+    return expected_name, True
+
+
+def _fixed_tool_offer_summary(request: object) -> dict[str, Any]:
+    """Project only the expected direct-tool/Code-Mode flags and bounded count."""
+    result: dict[str, Any] = {
+        "observation_valid": False,
+        "offer_count": None,
+        "expected_native_tool_seen": False,
+        "expected_native_schema_match": False,
+        "execute_tool_seen": False,
+    }
+    if type(request) is not dict:
+        return result
+    tools = [] if "tools" not in request else request.get("tools")
+    if type(tools) is not list or len(tools) > MAX_PROVIDER_TOOLS:
+        return result
+    expected_name = SERVER_NAME + "_" + TOOL_NAME
+    execute_name = SERVER_NAME + "_execute"
+    schema_tool_name, schema_matches = _function_tools(request)
+    result["expected_native_schema_match"] = (
+        schema_matches is True and schema_tool_name == expected_name
+    )
+    valid = True
+    for item in tools:
+        if type(item) is not dict or item.get("type") != "function":
+            valid = False
+            continue
+        function = item.get("function")
+        if type(function) is not dict or type(function.get("name")) is not str:
+            valid = False
+            continue
+        name = function["name"]
+        if name == expected_name:
+            result["expected_native_tool_seen"] = True
+        elif name in {"execute", execute_name}:
+            result["execute_tool_seen"] = True
+    if valid:
+        result["observation_valid"] = True
+        result["offer_count"] = len(tools)
+    return result
+
+
+def _empty_tool_offer_observation(ordinal: int, kind: str) -> dict[str, Any]:
+    return {
+        "case_ordinal": ordinal,
+        "case_kind": kind,
+        "parsed_request_count": 0,
+        "parsed_request_count_valid": True,
+        "observation_complete": True,
+        "expected_native_tool_seen": False,
+        "expected_native_schema_match": False,
+        "execute_tool_seen": False,
+        "max_offer_count": 0,
+    }
+
+
+def _mark_tool_offer_observation_incomplete(kind: object) -> None:
+    with STATE["lock"]:
+        state = STATE.get("tool_offer_observations", {}).get(kind)
+        if type(state) is dict:
+            state["observation_complete"] = False
+
+
+def _tool_offer_diagnostic_report() -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    states = STATE.get("tool_offer_observations", {})
+    for ordinal, kind in enumerate(CASE_ORDER, start=1):
+        state = states.get(kind) if type(states) is dict else None
+        if (
+            type(state) is not dict
+            or type(state.get("parsed_request_count")) is not int
+            or not 0 <= state["parsed_request_count"] <= MAX_PROVIDER_POSTS_PER_CASE
+        ):
+            output.append(
+                {
+                    "case_ordinal": ordinal,
+                    "case_kind": kind,
+                    "parsed_request_count": None,
+                    "parsed_request_count_valid": False,
+                    "observation_complete": False,
+                    "expected_native_tool_seen": False,
+                    "expected_native_schema_match": False,
+                    "execute_tool_seen": False,
+                    "max_offer_count": None,
+                }
+            )
+            continue
+        complete = state.get("observation_complete") is True and state[
+            "parsed_request_count"
+        ] > 0
+        max_offer_count = state.get("max_offer_count") if complete else None
+        if (
+            complete
+            and (type(max_offer_count) is not int or not 0 <= max_offer_count <= MAX_PROVIDER_TOOLS)
+        ):
+            complete = False
+            max_offer_count = None
+        output.append(
+            {
+                "case_ordinal": ordinal,
+                "case_kind": kind,
+                "parsed_request_count": state["parsed_request_count"],
+                "parsed_request_count_valid": True,
+                "observation_complete": complete,
+                "expected_native_tool_seen": state.get("expected_native_tool_seen") is True,
+                "expected_native_schema_match": (state.get("expected_native_schema_match") is True),
+                "execute_tool_seen": state.get("execute_tool_seen") is True,
+                "max_offer_count": max_offer_count,
+            }
+        )
+    return output
+
+
+def _arguments_json(expected: dict[str, Any], *, escape_unicode: bool) -> str:
+    return json.dumps(
+        {"message": expected["wire_message"], "target": expected["target"]},
+        ensure_ascii=escape_unicode,
+        separators=(",", ":"),
+    )
+
+
+def build_provider_response(
+    request: object,
+    expected: dict[str, Any],
+    *,
+    case_ordinal: int,
+    allow_tool_call: bool = True,
+) -> tuple[dict[str, Any], bool, bool]:
+    messages = request.get("messages") if type(request) is dict else None
+    if type(messages) is not list or len(messages) > 128:
+        messages = []
+    tool_result_seen = any(
+        type(message) is dict and message.get("role") == "tool" for message in messages
+    )
+    stream = type(request) is dict and type(request.get("stream")) is bool and request["stream"]
+    if tool_result_seen:
+        return (
+            {
+                "id": "t127-wire-control",
+                "object": "chat.completion",
+                "created": 0,
+                "model": MODEL,
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": FINAL_TEXT},
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+            False,
+            stream,
+        )
+    tool_name, bound = _function_tools(request) if allow_tool_call else (None, False)
+    if not bound or tool_name is None:
+        return (
+            {
+                "id": "t127-wire-control",
+                "object": "chat.completion",
+                "created": 0,
+                "model": MODEL,
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": FINAL_TEXT},
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+            False,
+            stream,
+        )
+    arguments = _arguments_json(expected, escape_unicode=case_ordinal == 2)
+    call = {
+        "id": "t127-synthetic-tool-call",
+        "type": "function",
+        "function": {"name": tool_name, "arguments": arguments},
+    }
+    return (
+        {
+            "id": "t127-wire-control",
+            "object": "chat.completion",
+            "created": 0,
+            "model": MODEL,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "tool_calls": [call]},
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        },
+        True,
+        stream,
+    )
+
+
+def _sse_bytes(response: dict[str, Any], *, split_arguments: bool = True) -> bytes:
+    choice = response["choices"][0]
+    message = choice.get("message", {})
+    tool_calls = message.get("tool_calls")
+    deltas: list[dict[str, Any]] = []
+    if type(tool_calls) is list and len(tool_calls) == 1:
+        call = tool_calls[0]
+        function = call["function"]
+        argument_text = function["arguments"]
+        middle = max(1, len(argument_text) // 2)
+        if split_arguments and len(argument_text) > 1:
+            deltas = [
+                {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": call["id"],
+                            "type": call["type"],
+                            "function": {
+                                "name": function["name"],
+                                "arguments": argument_text[:middle],
+                            },
+                        }
+                    ]
+                },
+                {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "function": {"arguments": argument_text[middle:]},
+                        }
+                    ]
+                },
+            ]
+        else:
+            deltas = [
+                {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": call["id"],
+                            "type": call["type"],
+                            "function": function,
+                        }
+                    ]
+                }
+            ]
+    else:
+        deltas = [{"content": message.get("content", "")}]
+    chunks = []
+    for delta in deltas:
+        chunks.append(
+            {
+                "id": response["id"],
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": MODEL,
+                "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+            }
+        )
+    chunks.append(
+        {
+            "id": response["id"],
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": MODEL,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": choice.get("finish_reason", "stop"),
+                }
+            ],
+        }
+    )
+    return b"".join(
+        b"data: "
+        + json.dumps(chunk, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+        + b"\n\n"
+        for chunk in chunks
+    ) + b"data: [DONE]\n\n"
+
+
+def _empty_case(item: dict[str, Any]) -> dict[str, Any]:
+    message = item["wire_message"]
+    return {
+        "case_ordinal": item["ordinal"],
+        "case_kind": item["kind"],
+        "provider_request_count": 0,
+        "provider_case_post_count": 0,
+        "limit_hit": False,
+        "provider_case_bound": False,
+        "source_fixture_body_exact": item["wire_message"] == item["source_message"],
+        "fake_mcp_dispatch_count": 0,
+        "fake_mcp_dispatch_once": False,
+        "argument_exact": False,
+        "utf8_byte_length_equal": False,
+        "unicode_scalar_count_equal": False,
+        "no_extra_argument_keys": False,
+        "target_exact": False,
+                "expected_utf8_bytes": len(message.encode("utf-8")),
+        "observed_utf8_bytes": 0,
+        "expected_unicode_scalars": len(message),
+        "observed_unicode_scalars": 0,
+        "failure_class": "not_observed",
+    }
+
+
+STATE: dict[str, Any] = {
+    "lock": threading.RLock(),
+    "active_kind": None,
+    "expectations": {},
+    "cases": {},
+    "tool_offer_observations": {
+        kind: _empty_tool_offer_observation(ordinal, kind)
+        for ordinal, kind in enumerate(CASE_ORDER, start=1)
+    },
+    "provider_post_count": 0,
+    "provider_get_count": 0,
+    "provider_get_limit_hit": False,
+    "provider_limit_hit": False,
+    "provider_malformed": False,
+    "started_at": 0.0,
+}
+
+
+def _claim_provider_post(expected_kind: str | None = None) -> bool:
+    """Count a bounded POST for its active case before parsing its body."""
+    with STATE["lock"]:
+        STATE["provider_post_count"] += 1
+        kind = STATE["active_kind"]
+        case = STATE["cases"].get(kind)
+        if (
+            kind not in CASE_ORDER
+            or case is None
+            or (expected_kind is not None and expected_kind != kind)
+        ):
+            return False
+        case["provider_case_post_count"] = case.get("provider_case_post_count", 0) + 1
+        case["provider_request_count"] = case.get("provider_request_count", 0) + 1
+        if (
+            STATE["provider_post_count"] > MAX_PROVIDER_POSTS
+            or case["provider_case_post_count"] > MAX_PROVIDER_POSTS_PER_CASE
+        ):
+            case["limit_hit"] = True
+            STATE["provider_limit_hit"] = True
+            return False
+        return True
+
+
+def _record_tool_offer_observation(kind: object, request: object) -> None:
+    summary = _fixed_tool_offer_summary(request)
+    with STATE["lock"]:
+        observation = STATE.get("tool_offer_observations", {}).get(kind)
+        if type(observation) is not dict:
+            return
+        count = observation.get("parsed_request_count")
+        if type(count) is not int or count >= MAX_PROVIDER_POSTS_PER_CASE:
+            observation["observation_complete"] = False
+            return
+        observation["parsed_request_count"] = count + 1
+        observation["expected_native_tool_seen"] = (
+            observation.get("expected_native_tool_seen") is True
+            or summary["expected_native_tool_seen"] is True
+        )
+        observation["expected_native_schema_match"] = (
+            observation.get("expected_native_schema_match") is True
+            or summary["expected_native_schema_match"] is True
+        )
+        observation["execute_tool_seen"] = (
+            observation.get("execute_tool_seen") is True
+            or summary["execute_tool_seen"] is True
+        )
+        if summary["observation_valid"] is not True:
+            observation["observation_complete"] = False
+            observation["max_offer_count"] = None
+            return
+        if observation.get("observation_complete") is True:
+            prior = observation.get("max_offer_count")
+            offer_count = summary["offer_count"]
+            if type(prior) is not int or type(offer_count) is not int:
+                observation["observation_complete"] = False
+                observation["max_offer_count"] = None
+            else:
+                observation["max_offer_count"] = max(prior, offer_count)
+
+
+def _send_json(handler: BaseHTTPRequestHandler, status: int, payload: object) -> None:
+    try:
+        raw = json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    except Exception:
+        raw = b'{"error":{"message":"synthetic response unavailable"}}'
+        status = 500
+    if len(raw) > MAX_PROVIDER_RESPONSE_BYTES:
+        raw = b'{"error":{"message":"synthetic response cap"}}'
+        status = 500
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Content-Length", str(len(raw)))
+    handler.send_header("Connection", "close")
+    handler.end_headers()
+    handler.wfile.write(raw)
+
+
+class ProviderHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *_args: object) -> None:
+        return
+
+    def do_GET(self) -> None:
+        if self.client_address[0] != "127.0.0.1":
+            _send_json(self, 403, {"error": {"message": "synthetic local endpoint only"}})
+            return
+        with STATE["lock"]:
+            STATE["provider_get_count"] += 1
+            over_limit = STATE["provider_get_count"] > MAX_PROVIDER_GETS
+            if over_limit:
+                STATE["provider_get_limit_hit"] = True
+        if over_limit:
+            _send_json(self, 429, {"error": {"message": "synthetic request cap"}})
+            return
+        if self.path not in ("/v1/models", "/models"):
+            _send_json(self, 404, {"error": {"message": "synthetic endpoint unavailable"}})
+            return
+        _send_json(
+            self,
+            200,
+            {
+                "object": "list",
+                "data": [{"id": MODEL, "object": "model", "created": 0, "owned_by": "t127"}],
+            },
+        )
+
+    def do_POST(self) -> None:
+        if self.client_address[0] != "127.0.0.1":
+            _send_json(self, 403, {"error": {"message": "synthetic local endpoint only"}})
+            return
+        if self.path not in ("/v1/chat/completions", "/chat/completions"):
+            _send_json(self, 404, {"error": {"message": "synthetic endpoint unavailable"}})
+            return
+        if not _claim_provider_post():
+            with STATE["lock"]:
+                current = STATE.get("active_kind")
+            expected = None
+            case = None
+        else:
+            with STATE["lock"]:
+                current = STATE["active_kind"]
+                expected = STATE["expectations"].get(current)
+                case = STATE["cases"].get(current)
+        if current not in STATE["expectations"] or expected is None or case is None:
+            _mark_tool_offer_observation_incomplete(current)
+            _send_json(self, 503, {"error": {"message": "synthetic case unavailable"}})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except (TypeError, ValueError):
+            length = 0
+        if length <= 0 or length > MAX_PROVIDER_REQUEST_BYTES:
+            with STATE["lock"]:
+                STATE["provider_malformed"] = True
+            _mark_tool_offer_observation_incomplete(current)
+            _send_json(self, 413, {"error": {"message": "synthetic request rejected"}})
+            return
+        try:
+            request = strict_json_loads(self.rfile.read(length))
+            if type(request) is not dict:
+                raise ControlError("provider_request_shape_invalid")
+        except ControlError:
+            with STATE["lock"]:
+                STATE["provider_malformed"] = True
+            _mark_tool_offer_observation_incomplete(current)
+            _send_json(self, 400, {"error": {"message": "synthetic request rejected"}})
+            return
+        _record_tool_offer_observation(current, request)
+        with STATE["lock"]:
+            allow_tool_call = case["provider_tool_call_count"] == 0
+            response, bound, streaming = build_provider_response(
+                request,
+                expected,
+                case_ordinal=expected["ordinal"],
+                allow_tool_call=allow_tool_call,
+            )
+            if bound:
+                case["provider_case_bound"] = True
+                case["provider_tool_call_count"] += 1
+        if streaming:
+            raw = _sse_bytes(response, split_arguments=True)
+            if len(raw) > MAX_PROVIDER_RESPONSE_BYTES:
+                _send_json(self, 500, {"error": {"message": "synthetic response cap"}})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            midpoint = max(1, len(raw) // 3)
+            self.wfile.write(raw[:midpoint])
+            self.wfile.flush()
+            self.wfile.write(raw[midpoint : midpoint * 2])
+            self.wfile.flush()
+            self.wfile.write(raw[midpoint * 2 :])
+            return
+        raw = json.dumps(response, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+        if len(raw) > MAX_PROVIDER_RESPONSE_BYTES:
+            _send_json(self, 500, {"error": {"message": "synthetic response cap"}})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(raw)
+
+
+class LocalProvider(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+def _write_private_json_exclusive(path: Path, value: dict[str, Any]) -> None:
+    raw = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode(
+        "ascii"
+    ) + b"\n"
+    if len(raw) > MAX_CALLBACK_LEDGER_BYTES:
+        raise ControlError("callback_ledger_cap")
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise ControlError("callback_ledger_create_failed") from exc
+    with os.fdopen(fd, "wb") as out:
+        out.write(raw)
+        out.flush()
+        os.fsync(out.fileno())
+
+
+def _write_mcp_summary_atomic(
+    path: Path,
+    *,
+    kind: str,
+    ordinal: int,
+    attempts: int,
+    dispatches: int,
+) -> None:
+    if (
+        kind not in CASE_ORDER
+        or type(ordinal) is not int
+        or ordinal != CASE_ORDER.index(kind) + 1
+        or type(attempts) is not int
+        or type(dispatches) is not int
+        or not 0 <= attempts <= MAX_MCP_SUMMARY_COUNT
+        or not 0 <= dispatches <= attempts
+        or path != ROOT / "private" / ("mcp-summary-" + kind + ".json")
+    ):
+        raise ControlError("mcp_summary_binding_invalid")
+    value = {
+        "case_ordinal": ordinal,
+        "case_kind": kind,
+        "tool_call_attempt_count": attempts,
+        "fake_mcp_dispatch_count": dispatches,
+    }
+    raw = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode(
+        "ascii"
+    ) + b"\n"
+    if len(raw) > 1024:
+        raise ControlError("mcp_summary_cap")
+    _private_directory(path.parent)
+    if path.is_symlink():
+        raise ControlError("mcp_summary_target_invalid")
+    if path.exists():
+        _private_file(path, 0o600, 1024)
+    temporary = path.with_name(
+        "." + path.name + "." + str(os.getpid()) + "." + str(time.monotonic_ns()) + ".tmp"
+    )
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(temporary, flags, 0o600)
+    except OSError as exc:
+        raise ControlError("mcp_summary_temp_create_failed") from exc
+    try:
+        with os.fdopen(fd, "wb") as out:
+            out.write(raw)
+            out.flush()
+            os.fsync(out.fileno())
+        _private_file(temporary, 0o600, 1024)
+        if path.is_symlink():
+            raise ControlError("mcp_summary_target_invalid")
+        if path.exists():
+            _private_file(path, 0o600, 1024)
+        os.replace(temporary, path)
+        _private_file(path, 0o600, 1024)
+        directory_fd = os.open(
+            path.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except OSError as exc:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise ControlError("mcp_summary_write_failed") from exc
+    except ControlError:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _append_callback_record(path: Path, record: dict[str, Any]) -> None:
+    raw = json.dumps(record, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode(
+        "ascii"
+    ) + b"\n"
+    if len(raw) > MAX_CALLBACK_LEDGER_BYTES:
+        raise ControlError("callback_ledger_cap")
+    if not path.exists():
+        _write_private_json_exclusive(path, record)
+        return
+    info = _private_file(path, 0o600, MAX_CALLBACK_LEDGER_BYTES)
+    flags = os.O_APPEND | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise ControlError("callback_ledger_append_failed") from exc
+    with os.fdopen(fd, "ab") as out:
+        current_size = info.st_size
+        if current_size + len(raw) > MAX_CALLBACK_LEDGER_BYTES:
+            raise ControlError("callback_ledger_cap")
+        out.write(raw)
+        out.flush()
+        os.fsync(out.fileno())
+
+
+def _callback_path() -> tuple[str, Path, dict[str, Any]]:
+    kind = os.environ.get("T127_CASE")
+    path_text = os.environ.get("T127_EVIDENCE_PATH")
+    if kind not in CASE_ORDER or not isinstance(path_text, str):
+        raise ControlError("callback_binding_missing")
+    expected_path = ROOT / "private" / ("callback-" + kind + ".jsonl")
+    path = Path(path_text)
+    if path != expected_path:
+        raise ControlError("callback_binding_invalid")
+    expectations = load_expectations()
+    expected = expectations[kind]
+    return kind, path, expected
+
+
+def _mcp_response(request: object) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    if type(request) is not dict or request.get("jsonrpc") != "2.0":
+        return None, None
+    method = request.get("method")
+    request_id = request.get("id")
+    if type(method) is not str:
+        return None, None
+    if method.startswith("notifications/"):
+        return None, None
+    if type(request_id) not in (str, int) or type(request_id) is bool:
+        return None, None
+    if type(request_id) is str and (not request_id or len(request_id) > 64):
+        return None, None
+    if method == "initialize":
+        params = request.get("params")
+        requested = params.get("protocolVersion") if type(params) is dict else None
+        protocol_version = (
+            requested
+            if type(requested) is str and 1 <= len(requested) <= 32
+            else "2024-11-05"
+        )
+        return (
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "protocolVersion": protocol_version,
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "t127-synthetic-mcp", "version": "1.0"},
+                },
+            },
+            None,
+        )
+    if method == "ping":
+        return {"jsonrpc": "2.0", "id": request_id, "result": {}}, None
+    if method == "tools/list":
+        return (
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "tools": [
+                        {
+                            "name": TOOL_NAME,
+                            "description": "Receives a fixed synthetic text argument.",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "message": {"type": "string"},
+                                    "target": {"type": "string"},
+                                },
+                                "required": ["message", "target"],
+                                "additionalProperties": False,
+                            },
+                        }
+                    ]
+                },
+            },
+            None,
+        )
+    if method != "tools/call":
+        return (
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32601, "message": "synthetic method unavailable"},
+            },
+            None,
+        )
+    params = request.get("params")
+    if type(params) is not dict or params.get("name") != TOOL_NAME:
+        return (
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32602, "message": "synthetic tool unavailable"},
+            },
+            None,
+        )
+    try:
+        kind, path, expected = _callback_path()
+    except ControlError as exc:
+        return (
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32603, "message": exc.reason},
+            },
+            None,
+        )
+    arguments = params.get("arguments")
+    metrics = summarize_tool_arguments(arguments, expected)
+    record = {
+        "case_ordinal": expected["ordinal"],
+        "case_kind": kind,
+        "source_fixture_body_exact": expected["wire_message"] == expected["source_message"],
+        **metrics,
+    }
+    try:
+        _append_callback_record(path, record)
+    except ControlError as exc:
+        return (
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32603, "message": exc.reason},
+            },
+            record,
+        )
+    response_text = FINAL_TEXT if metrics["failure_class"] == "none" else ERROR_TEXT
+    return (
+        {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {
+                "content": [{"type": "text", "text": response_text}],
+                "isError": metrics["failure_class"] != "none",
+            },
+        },
+        record,
+    )
+
+
+class _McpTermination(Exception):
+    pass
+
+
+def run_mcp_stdio() -> int:
+    messages = 0
+    tool_calls = 0
+    fake_mcp_dispatches = 0
+    kind = os.environ.get("T127_CASE")
+    if kind not in CASE_ORDER:
+        return 2
+    ordinal = CASE_ORDER.index(kind) + 1
+    summary_path = ROOT / "private" / ("mcp-summary-" + kind + ".json")
+
+    def terminate(_signum: int, _frame: object) -> None:
+        raise _McpTermination
+
+    try:
+        previous_sigterm = signal.signal(signal.SIGTERM, terminate)
+    except (ValueError, OSError):
+        return 2
+    exit_code = 0
+    try:
+        _write_mcp_summary_atomic(
+            summary_path,
+            kind=kind,
+            ordinal=ordinal,
+            attempts=0,
+            dispatches=0,
+        )
+        while True:
+            line = sys.stdin.buffer.readline(MAX_MCP_LINE_BYTES + 1)
+            if not line:
+                break
+            messages += 1
+            if messages > MAX_MCP_MESSAGES or len(line) > MAX_MCP_LINE_BYTES:
+                exit_code = 2
+                break
+            try:
+                request = strict_json_loads(line)
+            except ControlError:
+                exit_code = 2
+                break
+            if type(request) is dict and request.get("method") == "tools/call":
+                tool_calls += 1
+                params = request.get("params")
+                if type(params) is dict and params.get("name") == TOOL_NAME:
+                    fake_mcp_dispatches += 1
+                try:
+                    _write_mcp_summary_atomic(
+                        summary_path,
+                        kind=kind,
+                        ordinal=ordinal,
+                        attempts=tool_calls,
+                        dispatches=fake_mcp_dispatches,
+                    )
+                except ControlError:
+                    exit_code = 2
+                    break
+                if tool_calls > MAX_MCP_TOOL_CALLS:
+                    exit_code = 2
+                    break
+            response, _record = _mcp_response(request)
+            if response is not None:
+                raw = json.dumps(response, ensure_ascii=True, separators=(",", ":")).encode(
+                    "ascii"
+                ) + b"\n"
+                if len(raw) > MAX_MCP_LINE_BYTES:
+                    exit_code = 2
+                    break
+                sys.stdout.buffer.write(raw)
+                sys.stdout.buffer.flush()
+    except _McpTermination:
+        exit_code = 2
+    except (BrokenPipeError, ControlError, OSError):
+        exit_code = 2
+    finally:
+        try:
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            _write_mcp_summary_atomic(
+                summary_path,
+                kind=kind,
+                ordinal=ordinal,
+                attempts=tool_calls,
+                dispatches=fake_mcp_dispatches,
+            )
+        except (ControlError, OSError, ValueError):
+            exit_code = 2
+        finally:
+            try:
+                signal.signal(signal.SIGTERM, previous_sigterm)
+            except (ValueError, OSError):
+                exit_code = 2
+    return exit_code
+
+
+def _process_count() -> int:
+    try:
+        return sum(entry.name.isdigit() for entry in Path("/proc").iterdir())
+    except OSError:
+        return MAX_PROCESS_COUNT + 1
+
+
+def _marked_child_count() -> int | None:
+    marker = MARKER.encode("ascii")
+    count = 0
+    try:
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit() or int(entry.name) in {os.getpid(), os.getppid()}:
+                continue
+            try:
+                if marker in (entry / "environ").read_bytes():
+                    count += 1
+            except FileNotFoundError:
+                continue
+            except OSError:
+                return None
+    except OSError:
+        return None
+    return count
+
+
+def _namespace_sha256(name: str) -> str | None:
+    try:
+        return hashlib.sha256(os.readlink("/proc/self/ns/" + name).encode("ascii")).hexdigest()
+    except (OSError, UnicodeError):
+        return None
+
+
+def _loopback_only_interfaces() -> bool:
+    try:
+        names = {name for _index, name in socket.if_nameindex()}
+        return names == {"lo"}
+    except OSError:
+        return False
+
+
+def _mem_available_kib() -> int:
+    try:
+        for line in Path("/proc/meminfo").read_text(encoding="ascii").splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1])
+    except (OSError, ValueError, UnicodeError):
+        pass
+    return 0
+
+
+def _case_report(
+    kind: str,
+    expected: dict[str, Any],
+    provider_case: dict[str, Any],
+    callback_rows: list[dict[str, Any]],
+    mcp_summary: dict[str, Any] | None,
+    *,
+    cli_exit_code: int | None,
+    timed_out: bool,
+) -> dict[str, Any]:
+    selected = [row for row in callback_rows if row.get("case_kind") == kind]
+    if len(selected) == 1:
+        row = selected[0]
+    else:
+        row = {}
+    tool_call_response_count = provider_case.get("provider_tool_call_count", 0)
+    provider_bound = (
+        provider_case.get("provider_case_bound") is True
+        and type(tool_call_response_count) is int
+        and tool_call_response_count == 1
+    )
+    summary_valid = (
+        type(mcp_summary) is dict
+        and set(mcp_summary)
+        == {
+            "case_ordinal",
+            "case_kind",
+            "tool_call_attempt_count",
+            "fake_mcp_dispatch_count",
+        }
+        and type(mcp_summary.get("case_ordinal")) is int
+        and mcp_summary.get("case_ordinal") == expected["ordinal"]
+        and mcp_summary.get("case_kind") == kind
+        and type(mcp_summary.get("tool_call_attempt_count")) is int
+        and 0 <= mcp_summary["tool_call_attempt_count"] <= MAX_MCP_SUMMARY_COUNT
+        and type(mcp_summary.get("fake_mcp_dispatch_count")) is int
+        and 0 <= mcp_summary["fake_mcp_dispatch_count"] <= MAX_MCP_SUMMARY_COUNT
+        and mcp_summary["fake_mcp_dispatch_count"]
+        <= mcp_summary["tool_call_attempt_count"]
+    )
+    attempt_count = (
+        mcp_summary["tool_call_attempt_count"] if summary_valid else 0
+    )
+    dispatch_count = (
+        mcp_summary["fake_mcp_dispatch_count"] if summary_valid else 0
+    )
+    result = {
+        "case_ordinal": expected["ordinal"],
+        "case_kind": kind,
+        "provider_request_count": provider_case.get("provider_request_count", 0),
+        "provider_tool_call_response_count": (
+            tool_call_response_count if type(tool_call_response_count) is int else 0
+        ),
+        "provider_case_bound": provider_bound,
+        "fake_mcp_tool_call_attempt_count": attempt_count,
+        "source_fixture_body_exact": (
+            expected["wire_message"] == expected["source_message"]
+        ),
+        "fake_mcp_dispatch_count": dispatch_count,
+        "fake_mcp_dispatch_once": (
+            summary_valid
+            and attempt_count == 1
+            and dispatch_count == 1
+            and len(selected) == 1
+        ),
+        "argument_exact": row.get("argument_exact") is True,
+        "utf8_byte_length_equal": row.get("utf8_byte_length_equal") is True,
+        "unicode_scalar_count_equal": row.get("unicode_scalar_count_equal") is True,
+        "no_extra_argument_keys": row.get("no_extra_argument_keys") is True,
+        "target_exact": row.get("target_exact") is True,
+        "expected_utf8_bytes": expected["expected_utf8_bytes"],
+        "observed_utf8_bytes": row.get("observed_utf8_bytes", 0),
+        "expected_unicode_scalars": expected["expected_unicode_scalars"],
+        "observed_unicode_scalars": row.get("observed_unicode_scalars", 0),
+        "failure_class": row.get("failure_class", "not_observed"),
+    }
+    if not summary_valid or dispatch_count != len(selected) or attempt_count != 1:
+        result["failure_class"] = "not_observed"
+    if not provider_bound:
+        result["failure_class"] = "not_observed"
+    if timed_out:
+        result["failure_class"] = "timeout"
+    elif provider_case.get("limit_hit") is True:
+        result["failure_class"] = "cap_hit"
+    elif cli_exit_code not in (None, 0) and result["failure_class"] == "none":
+        result["failure_class"] = "not_observed"
+    return result
+
+
+def _read_callback_lines(
+    path: Path,
+    expectations: dict[str, dict[str, Any]],
+    expected_kind: str,
+) -> list[dict[str, Any]]:
+    try:
+        _private_file(path, 0o600, MAX_CALLBACK_LEDGER_BYTES)
+        raw = path.read_bytes()
+    except ControlError:
+        return []
+    except OSError:
+        return []
+    if len(raw) > MAX_CALLBACK_LEDGER_BYTES:
+        return []
+    lines = raw.splitlines()
+    if expected_kind not in CASE_ORDER or len(lines) > MAX_MCP_TOOL_CALLS:
+        return []
+    records: list[dict[str, Any]] = []
+    allowed_fields = {
+        "case_ordinal",
+        "case_kind",
+        "source_fixture_body_exact",
+        "argument_exact",
+        "utf8_byte_length_equal",
+        "unicode_scalar_count_equal",
+        "no_extra_argument_keys",
+        "target_exact",
+        "expected_utf8_bytes",
+        "observed_utf8_bytes",
+        "expected_unicode_scalars",
+        "observed_unicode_scalars",
+        "failure_class",
+    }
+    try:
+        for line in lines:
+            item = strict_json_loads(line)
+            if (
+                type(item) is not dict
+                or set(item) != allowed_fields
+                or type(item.get("case_ordinal")) is not int
+                or type(item.get("case_kind")) is not str
+                or item.get("case_kind") != expected_kind
+            ):
+                return []
+            expected = expectations[item["case_kind"]]
+            bool_fields = (
+                "source_fixture_body_exact",
+                "argument_exact",
+                "utf8_byte_length_equal",
+                "unicode_scalar_count_equal",
+                "no_extra_argument_keys",
+                "target_exact",
+            )
+            int_fields = (
+                "expected_utf8_bytes",
+                "observed_utf8_bytes",
+                "expected_unicode_scalars",
+                "observed_unicode_scalars",
+            )
+            if (
+                item["case_ordinal"] != expected["ordinal"]
+                or item["source_fixture_body_exact"]
+                is not (expected["wire_message"] == expected["source_message"])
+                or any(type(item.get(field)) is not bool for field in bool_fields)
+                or any(
+                    type(item.get(field)) is not int
+                    or item[field] < 0
+                    or item[field] > 512
+                    for field in int_fields
+                )
+                or item["expected_utf8_bytes"] != len(expected["wire_message"].encode("utf-8"))
+                or item["expected_unicode_scalars"] != len(expected["wire_message"])
+                or item["utf8_byte_length_equal"]
+                is not (item["observed_utf8_bytes"] == item["expected_utf8_bytes"])
+                or item["unicode_scalar_count_equal"]
+                is not (item["observed_unicode_scalars"] == item["expected_unicode_scalars"])
+                or type(item.get("failure_class")) is not str
+                or item["failure_class"] not in {"none", "mismatch", "malformed_input"}
+            ):
+                return []
+            all_exact = all(
+                item[field] is True
+                for field in (
+                    "argument_exact",
+                    "utf8_byte_length_equal",
+                    "unicode_scalar_count_equal",
+                    "no_extra_argument_keys",
+                    "target_exact",
+                )
+            )
+            if (item["failure_class"] == "none") is not all_exact:
+                return []
+            if item["failure_class"] == "malformed_input" and item["argument_exact"] is True:
+                return []
+            records.append(item)
+    except ControlError:
+        return []
+    return records
+
+
+def _read_mcp_summary(path: Path, kind: str, ordinal: int) -> dict[str, Any] | None:
+    try:
+        raw = _read_stable_private_file(path, 1024)
+        item = strict_json_loads(raw)
+    except (ControlError, OSError, ValueError, TypeError):
+        return None
+    if (
+        type(item) is not dict
+        or set(item)
+        != {
+            "case_ordinal",
+            "case_kind",
+            "tool_call_attempt_count",
+            "fake_mcp_dispatch_count",
+        }
+        or type(item.get("case_ordinal")) is not int
+        or item.get("case_ordinal") != ordinal
+        or item.get("case_kind") != kind
+        or type(item.get("tool_call_attempt_count")) is not int
+        or not 0 <= item["tool_call_attempt_count"] <= MAX_MCP_SUMMARY_COUNT
+        or type(item.get("fake_mcp_dispatch_count")) is not int
+        or not 0 <= item["fake_mcp_dispatch_count"] <= MAX_MCP_SUMMARY_COUNT
+        or item["fake_mcp_dispatch_count"] > item["tool_call_attempt_count"]
+    ):
+        return None
+    return item
+
+
+def _new_runtime_dirs() -> None:
+    for name in (
+        "data",
+        "cache",
+        "state",
+        "tmp",
+        "tmp/work",
+        "private",
+        "xdg-config",
+        "config-dir",
+    ):
+        path = ROOT / name
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        info = path.stat(follow_symlinks=False)
+        if path.is_symlink() or not stat.S_ISDIR(info.st_mode):
+            raise ControlError("runtime_directory_invalid")
+        if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            raise ControlError("runtime_directory_identity_invalid")
+
+
+def _new_case_runtime_dirs(kind: str) -> None:
+    if kind not in CASE_ORDER:
+        raise ControlError("case_runtime_binding_invalid")
+    for relative in (
+        "data/" + kind,
+        "cache/" + kind,
+        "state/" + kind,
+        "tmp/" + kind,
+        "xdg-config/" + kind,
+        "config-dir/" + kind,
+    ):
+        path = ROOT / relative
+        path.mkdir(mode=0o700, parents=True, exist_ok=False)
+        _private_directory(path)
+    _private_directory(HOME_ROOT)
+    case_home = HOME_ROOT / kind
+    case_home.mkdir(mode=0o700, exist_ok=False)
+    _private_directory(case_home)
+    _write_case_config(
+        kind,
+        ROOT / "private" / ("callback-" + kind + ".jsonl"),
+    )
+
+
+def _case_config_path(kind: str) -> Path:
+    if kind not in CASE_ORDER:
+        raise ControlError("case_config_binding_invalid")
+    return ROOT / "config-dir" / kind / "t127-opencode.json"
+
+
+def _case_config_document(kind: str, callback_path: Path) -> dict[str, Any]:
+    if kind not in CASE_ORDER or callback_path != ROOT / "private" / (
+        "callback-" + kind + ".jsonl"
+    ):
+        raise ControlError("case_config_binding_invalid")
+    raw = _read_stable_private_file(BASE_CONFIG, MAX_CASE_CONFIG_BYTES)
+    if hashlib.sha256(raw).hexdigest() != EXPECTED_BASE_CONFIG_SHA256:
+        raise ControlError("case_config_base_hash_invalid")
+    document = strict_json_loads(raw)
+    servers = (
+        document.get("mcp", {}).get("servers")
+        if type(document) is dict and type(document.get("mcp")) is dict
+        else None
+    )
+    server = servers.get("t127fake") if type(servers) is dict else None
+    expected_marker = {"T127_CONTROL_MARKER": MARKER.partition("=")[2]}
+    if (
+        type(servers) is not dict
+        or set(servers) != {"t127fake"}
+        or type(server) is not dict
+        or server.get("codemode") is not False
+        or type(server.get("environment")) is not dict
+        or server["environment"] != expected_marker
+    ):
+        raise ControlError("case_config_base_shape_invalid")
+    server["environment"].update(
+        {
+            "T127_CASE": kind,
+            "T127_EVIDENCE_PATH": str(callback_path),
+        }
+    )
+    return document
+
+
+def _case_config_bytes(kind: str, callback_path: Path) -> bytes:
+    document = _case_config_document(kind, callback_path)
+    raw = (json.dumps(document, ensure_ascii=True, sort_keys=True, indent=2) + "\n").encode(
+        "ascii"
+    )
+    if len(raw) > MAX_CASE_CONFIG_BYTES:
+        raise ControlError("case_config_cap")
+    return raw
+
+
+def _write_case_config(kind: str, callback_path: Path) -> Path:
+    path = _case_config_path(kind)
+    _private_directory(path.parent)
+    raw = _case_config_bytes(kind, callback_path)
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise ControlError("case_config_create_failed") from exc
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        _private_file(path, 0o600, MAX_CASE_CONFIG_BYTES)
+        return path
+    except OSError as exc:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise ControlError("case_config_write_failed") from exc
+    except ControlError:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _validate_case_config(kind: str, callback_path: Path) -> Path:
+    path = _case_config_path(kind)
+    raw = _read_stable_private_file(path, MAX_CASE_CONFIG_BYTES)
+    if raw != _case_config_bytes(kind, callback_path):
+        raise ControlError("case_config_mismatch")
+    return path
+
+
+def _case_environment(kind: str, callback_path: Path) -> dict[str, str]:
+    if kind not in CASE_ORDER or callback_path != ROOT / "private" / (
+        "callback-" + kind + ".jsonl"
+    ):
+        raise ControlError("case_environment_binding_invalid")
+    config_path = _validate_case_config(kind, callback_path)
+    return {
+        "HOME": HOME_GUEST_ROOT + "/" + kind,
+        "PATH": "/usr/bin:/bin",
+        "LANG": "C.UTF-8",
+        "TERM": "dumb",
+        "XDG_CONFIG_HOME": "/work/xdg-config/" + kind,
+        "XDG_DATA_HOME": "/work/data/" + kind,
+        "XDG_CACHE_HOME": "/work/cache/" + kind,
+        "XDG_STATE_HOME": "/work/state/" + kind,
+        "TMPDIR": "/work/tmp/" + kind,
+        "OPENCODE_CONFIG": str(config_path),
+        "OPENCODE_CONFIG_DIR": "/work/config-dir/" + kind,
+        "OPENCODE_DB": "/work/data/" + kind + "/opencode.db",
+        "OPENCODE_DISABLE_AUTOUPDATE": "true",
+        "OPENCODE_DISABLE_MOUSE": "true",
+        "OPENCODE_DISABLE_TERMINAL_TITLE": "true",
+        "OPENCODE_API_KEY": "offline-dummy-only",
+        "T127_FAKE_API_KEY": "offline-dummy-only",
+        "T127_CONTROL_MARKER": MARKER.removeprefix("T127_CONTROL_MARKER="),
+        "T127_CASE": kind,
+        "T127_EVIDENCE_PATH": str(callback_path),
+    }
+
+
+def _validate_case_workspace(kind: str) -> Path:
+    if kind not in CASE_ORDER:
+        raise ControlError("case_workspace_binding_invalid")
+    work = Path("/workspaces") / kind
+    git_dir = work / ".git"
+    opencode = work / ".opencode"
+    plugin_dir = opencode / "plugins"
+    plugin = plugin_dir / "response_hook_probe.js"
+    try:
+        if {entry.name for entry in work.iterdir()} != {".git", ".opencode"}:
+            raise ControlError("case_workspace_inventory_invalid")
+        if {entry.name for entry in opencode.iterdir()} != {"plugins"}:
+            raise ControlError("case_workspace_opencode_inventory_invalid")
+        if {entry.name for entry in plugin_dir.iterdir()} != {"response_hook_probe.js"}:
+            raise ControlError("case_workspace_plugin_inventory_invalid")
+        _private_directory(work)
+        _private_directory(git_dir)
+        _private_directory(opencode)
+        _private_directory(plugin_dir)
+        plugin_raw = _read_stable_private_file(plugin, 128 * 1024)
+        if hashlib.sha256(plugin_raw).hexdigest() != PROBE_FILE_SHA256[kind]:
+            raise ControlError("case_workspace_plugin_hash_invalid")
+        git_count = 0
+        for base, directories, files in os.walk(git_dir, followlinks=False):
+            base_path = Path(base)
+            _private_directory(base_path)
+            git_count += len(directories) + len(files)
+            if git_count > 256:
+                raise ControlError("case_workspace_git_inventory_oversized")
+            for name in directories:
+                _private_directory(base_path / name)
+            for name in files:
+                _private_file(base_path / name, 0o600, 64 * 1024)
+        return work
+    except ControlError:
+        raise
+    except OSError as exc:
+        raise ControlError("case_workspace_unavailable") from exc
+
+
+def _stop_case_process_group(proc: subprocess.Popen[bytes]) -> bool:
+    """Stop only the case's new session and report whether it is gone."""
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return True
+    time.sleep(0.05)
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    try:
+        proc.wait(timeout=0.5)
+    except subprocess.TimeoutExpired:
+        return False
+    try:
+        os.killpg(proc.pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+def _early_isolation_failure(reason: str) -> dict[str, Any]:
+    if reason not in {
+        "memory_floor",
+        "case_setup_invalid",
+        "process_limit",
+        "child_wait_timeout",
+        "owned_group_remaining",
+        "writers_remaining",
+    }:
+        reason = "case_setup_invalid"
+    return {
+        "schema": "t127.synthetic-native-toolarg-control.v1",
+        "scope": "synthetic_native_fake_provider_fake_mcp",
+        "diagnostic_only": True,
+        "provider_request_count": 0,
+        "provider_get_count": 0,
+        "fake_mcp_dispatch_count": 0,
+        "cases": [],
+        "response_probe_cases": [],
+        "provider_tool_offer_diagnostics": _tool_offer_diagnostic_report(),
+        "both_baseline_cases_exact": False,
+        "failure_class": "isolation_failed",
+        "isolation_stop_reason": reason,
+    }
+
+
+def run_control() -> dict[str, Any]:
+    started = time.monotonic()
+    isolation_stop_reason = "none"
+    if os.geteuid() != os.getuid():
+        return _early_isolation_failure("case_setup_invalid")
+    if _mem_available_kib() < FLOOR_KIB:
+        return _early_isolation_failure("memory_floor")
+    try:
+        expectations = load_expectations()
+        with STATE["lock"]:
+            STATE["expectations"] = expectations
+            STATE["tool_offer_observations"] = {
+                kind: _empty_tool_offer_observation(ordinal, kind)
+                for ordinal, kind in enumerate(CASE_ORDER, start=1)
+            }
+        _new_runtime_dirs()
+    except ControlError:
+        return _early_isolation_failure("case_setup_invalid")
+    for kind in CASE_ORDER:
+        STATE["cases"][kind] = {
+            **_empty_case(expectations[kind]),
+            "provider_tool_call_count": 0,
+            "limit_hit": False,
+        }
+    try:
+        server = LocalProvider(("127.0.0.1", PORT), ProviderHandler)
+    except OSError:
+        return _early_isolation_failure("case_setup_invalid")
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    reports: list[dict[str, Any]] = []
+    isolation_failed = False
+    total_timeout = False
+    try:
+        for kind in CASE_ORDER:
+            if time.monotonic() - started >= MAX_TOTAL_SECONDS:
+                total_timeout = True
+                break
+            with STATE["lock"]:
+                STATE["active_kind"] = kind
+                STATE["cases"][kind]["provider_request_count"] = 0
+                STATE["cases"][kind]["provider_case_bound"] = False
+            callback_path = ROOT / "private" / ("callback-" + kind + ".jsonl")
+            try:
+                _new_case_runtime_dirs(kind)
+                work = _validate_case_workspace(kind)
+            except ControlError:
+                isolation_failed = True
+                isolation_stop_reason = "case_setup_invalid"
+                break
+            env = _case_environment(kind, callback_path)
+            cli_argv = [
+                "/opencode",
+                "run",
+                "--standalone",
+                "--agent",
+                "toolarg_probe",
+                "--model",
+                "t127fake/" + MODEL,
+                "--format",
+                "json",
+                "Send the exact fixed synthetic message through t127fake_send_message once. "
+                "Do not call other tools or modify files.",
+            ]
+            proc: subprocess.Popen[bytes] | None = None
+            timed_out = False
+            try:
+                proc = subprocess.Popen(
+                    cli_argv,
+                    cwd=str(work),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=env,
+                    start_new_session=True,
+                )
+                case_started = time.monotonic()
+                case_deadline = min(
+                    case_started + MAX_CASE_SECONDS,
+                    started + MAX_TOTAL_SECONDS,
+                )
+                while proc.poll() is None:
+                    available = _mem_available_kib()
+                    if available < FLOOR_KIB:
+                        isolation_failed = True
+                        isolation_stop_reason = "memory_floor"
+                        break
+                    if _process_count() > MAX_PROCESS_COUNT:
+                        isolation_failed = True
+                        isolation_stop_reason = "process_limit"
+                        break
+                    if time.monotonic() >= case_deadline:
+                        timed_out = True
+                        break
+                    time.sleep(0.1)
+                if proc.poll() is None:
+                    try:
+                        os.killpg(proc.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        proc.wait(timeout=0.5)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            os.killpg(proc.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        try:
+                            proc.wait(timeout=0.5)
+                        except subprocess.TimeoutExpired:
+                            isolation_failed = True
+                            if isolation_stop_reason == "none":
+                                isolation_stop_reason = "child_wait_timeout"
+                exit_code = proc.returncode
+            finally:
+                if proc is not None and not _stop_case_process_group(proc):
+                    isolation_failed = True
+                    if isolation_stop_reason == "none":
+                        isolation_stop_reason = "owned_group_remaining"
+            if proc is None:
+                isolation_failed = True
+                isolation_stop_reason = "case_setup_invalid"
+                break
+            provider_case = dict(STATE["cases"][kind])
+            provider_case["limit_hit"] = (
+                provider_case.get("limit_hit") is True
+                or STATE["provider_limit_hit"] is True
+            )
+            expected = expectations[kind]
+            callbacks = _read_callback_lines(callback_path, expectations, kind)
+            mcp_summary = _read_mcp_summary(
+                ROOT / "private" / ("mcp-summary-" + kind + ".json"),
+                kind,
+                CASE_ORDER.index(kind) + 1,
+            )
+            expected_counts = {
+                "expected_utf8_bytes": len(expected["wire_message"].encode("utf-8")),
+                "expected_unicode_scalars": len(expected["wire_message"]),
+            }
+            reports.append(
+                _case_report(
+                    kind,
+                    {**expected, **expected_counts},
+                    provider_case,
+                    callbacks,
+                    mcp_summary,
+                    cli_exit_code=exit_code,
+                    timed_out=timed_out,
+                )
+            )
+            if timed_out:
+                total_timeout = True
+                break
+            if isolation_failed:
+                break
+    finally:
+        with STATE["lock"]:
+            STATE["active_kind"] = None
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=1.0)
+    marked_children = _marked_child_count()
+    writers_dead = not server_thread.is_alive() and marked_children == 0
+    if not writers_dead:
+        isolation_failed = True
+        if isolation_stop_reason == "none":
+            isolation_stop_reason = "writers_remaining"
+    response_probe_cases = []
+    if writers_dead:
+        for kind in CASE_ORDER:
+            workspace = Path("/workspaces") / kind
+            response_probe_cases.append(
+                {
+                    "case_ordinal": CASE_ORDER.index(kind) + 1,
+                    "case_kind": kind,
+                    **read_response_probe(workspace, kind, writers_dead=writers_dead),
+                }
+            )
+    else:
+        response_probe_cases = [
+            {
+                "case_ordinal": ordinal,
+                "case_kind": kind,
+                "status": "unavailable",
+                "hook_registered": False,
+                "selected_response_count": 0,
+                "marker_seen": False,
+                "all_clones_completed": False,
+                "original_never_replaced": False,
+                "cleanup_complete": False,
+                "diagnostic_only": True,
+            }
+            for ordinal, kind in enumerate(CASE_ORDER, start=1)
+        ]
+    complete_pair = (
+        len(reports) == 2
+        and [item["case_ordinal"] for item in reports] == [1, 2]
+        and all(item["case_kind"] == CASE_ORDER[item["case_ordinal"] - 1] for item in reports)
+        and [item["source_fixture_body_exact"] for item in reports] == [True, False]
+        and all(
+            item["provider_case_bound"]
+            and item["fake_mcp_tool_call_attempt_count"] == 1
+            and item["fake_mcp_dispatch_count"] == 1
+            and item["fake_mcp_dispatch_once"]
+            and item["argument_exact"]
+            and item["utf8_byte_length_equal"]
+            and item["unicode_scalar_count_equal"]
+            and item["no_extra_argument_keys"]
+            and item["target_exact"]
+            and item["failure_class"] == "none"
+            for item in reports
+        )
+        and not total_timeout
+        and not isolation_failed
+        and not STATE["provider_limit_hit"]
+        and not STATE["provider_get_limit_hit"]
+        and not STATE["provider_malformed"]
+    )
+    return {
+        "schema": "t127.synthetic-native-toolarg-control.v1",
+        "scope": "synthetic_native_fake_provider_fake_mcp",
+        "diagnostic_only": True,
+        "real_provider_used": False,
+        "real_go_provider_used": False,
+        "native_actual_model_inference": False,
+        "external_network_available": False,
+        "operator_auth_used": False,
+        "cao_endpoint_configured": False,
+        "cao_side_effects_possible": False,
+        "global_acceptance_claimed": False,
+        "model_acceptance_claimed": False,
+        "network_namespace_sha256": _namespace_sha256("net"),
+        "pid_namespace_sha256": _namespace_sha256("pid"),
+        "loopback_only_network_interfaces": _loopback_only_interfaces(),
+        "provider_request_count": STATE["provider_post_count"] + STATE["provider_get_count"],
+        "provider_get_count": STATE["provider_get_count"],
+        "fake_mcp_dispatch_count": sum(item["fake_mcp_dispatch_count"] for item in reports),
+        "cases": reports,
+        "response_probe_cases": response_probe_cases,
+        "provider_tool_offer_diagnostics": _tool_offer_diagnostic_report(),
+        "both_baseline_cases_exact": complete_pair,
+        "isolation_stop_reason": isolation_stop_reason,
+        "failure_class": (
+            "none"
+            if complete_pair
+            else "timeout"
+            if total_timeout
+            else "isolation_failed"
+            if isolation_failed
+            else "cap_hit"
+            if STATE["provider_limit_hit"] or STATE["provider_get_limit_hit"]
+            else "mismatch"
+            if reports and any(item["failure_class"] == "mismatch" for item in reports)
+            else "not_observed"
+        ),
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mcp", action="store_true")
+    args = parser.parse_args()
+    if args.mcp:
+        return run_mcp_stdio()
+    report = run_control()
+    try:
+        raw = json.dumps(report, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        sys.stdout.write(raw + "\n")
+        sys.stdout.flush()
+    except Exception:
+        sys.stdout.write('{"scope":"synthetic_native_fake_provider_fake_mcp","failure_class":"isolation_failed"}\n')
+    return 0 if report.get("both_baseline_cases_exact") is True else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
