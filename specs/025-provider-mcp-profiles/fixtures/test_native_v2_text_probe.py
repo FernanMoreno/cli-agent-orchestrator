@@ -31,9 +31,9 @@ AGENT = "v2-sender"
 TARGET = SimpleNamespace(schema="cao_test", connection_parameters=lambda: {})
 
 
-def _valid_child_result():
-    result = probe._base_result(probe.MARKER)
-    shape = probe._shape(probe.MARKER)
+def _valid_child_result(expected_marker=probe.MARKER):
+    result = probe._base_result(expected_marker, expected_marker)
+    shape = probe._shape(expected_marker, expected_marker)
     result.update(
         status="observed",
         reason=None,
@@ -137,7 +137,7 @@ class NativeV2TextProbeTests(unittest.TestCase):
     def _db(self):
         return sqlite3.connect(self.db_path)
 
-    def _request(self, *, viewport=None, rendered=None):
+    def _request(self, *, viewport=None, rendered=None, expected_marker=probe.MARKER):
         return {
             "source_root": str(self.source_root),
             "run_root": str(self.run_root),
@@ -147,6 +147,7 @@ class NativeV2TextProbeTests(unittest.TestCase):
             "viewport": "current turn\n" + NONCE if viewport is None else viewport,
             "rendered": probe.MARKER if rendered is None else rendered,
             "expected_agent": AGENT,
+            "expected_marker": expected_marker,
             "stop": time.monotonic() + 2.0,
         }
 
@@ -159,6 +160,7 @@ class NativeV2TextProbeTests(unittest.TestCase):
     def test_red_green_native_v2_parent_agent_and_receipt_binding(self):
         result = self._observe_payload()
         self.assertEqual(result["schema"], probe.SCHEMA)
+        self.assertEqual(result["target_kind"], "unicode")
         self.assertEqual(result["status"], "observed")
         self.assertIsNone(result["reason"])
         self.assertTrue(result["active_receipt_bound"])
@@ -334,6 +336,105 @@ class NativeV2TextProbeTests(unittest.TestCase):
         self.assertTrue(result["native_public"]["compact_marker"])
         for forbidden in (NONCE, SECRET, probe.MARKER, str(self.run_root), str(self.config)):
             self.assertNotIn(forbidden, json.dumps(result, ensure_ascii=False))
+
+    def test_fixed_ack_target_uses_exact_marker_and_keeps_unicode_default(self):
+        cases = (
+            ("ACK", "native_equals_rendered", True, True),
+            ("ACK extra", "ack_not_exact", False, True),
+            ("ACK\n", "ack_not_exact", False, True),
+            ("BACK", "ack_not_exact", False, True),
+            (" ACK ", "ack_not_exact", False, True),
+            ("A\nCK", "native_text_contains_linebreak", False, False),
+            ("A\u00a0CK", "ack_not_exact", False, False),
+        )
+        with closing(self._db()) as db:
+            for body, classification, exact, contains in cases:
+                with self.subTest(shape=classification, exact=exact):
+                    db.execute(
+                        "UPDATE part SET data=? WHERE id='part-assistant'",
+                        (json.dumps({"type": "text", "text": body + "\n" + NONCE}),),
+                    )
+                    db.commit()
+                    result = self._observe_payload(expected_marker="ACK", rendered="ACK")
+                    self.assertEqual(result["status"], "observed")
+                    self.assertEqual(result["target_kind"], "ack")
+                    self.assertEqual(result["native_public"]["exact_marker"], exact)
+                    self.assertEqual(result["native_public"]["contains_marker"], contains)
+                    self.assertEqual(result["classification"], classification)
+                    self.assertEqual(result["native_equals_rendered"], body == "ACK")
+                    for forbidden in (body, NONCE, SECRET, str(self.run_root), str(self.config)):
+                        self.assertNotIn(forbidden, json.dumps(result, ensure_ascii=False))
+
+    def test_public_result_kind_is_bound_to_requested_ack_target(self):
+        result = probe.observe_bounded(
+            python=sys.executable,
+            source_root=self.source_root,
+            run_root=self.run_root,
+            cao_home=self.cao_home,
+            terminal_id=TERMINAL,
+            database_config_file=self.config,
+            viewport=NONCE,
+            rendered="ACK",
+            expected_agent=AGENT,
+            deadline=time.monotonic() + 9,
+            expected_marker="ACK",
+            capture=lambda *_args: json.dumps(_valid_child_result()).encode(),
+        )
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["reason"], "child_target_mismatch")
+        self.assertEqual(result["target_kind"], "ack")
+
+    def test_ack_removes_only_one_active_nonce_line_delimiter(self):
+        with closing(self._db()) as db:
+            db.execute(
+                "UPDATE part SET data=? WHERE id='part-assistant'",
+                (json.dumps({"type": "text", "text": "ACK\n" + NONCE + "\n"}),),
+            )
+            db.commit()
+        result = self._observe_payload(expected_marker="ACK", rendered="ACK")
+        self.assertEqual(result["status"], "observed")
+        self.assertTrue(result["native_public"]["exact_marker"])
+        self.assertEqual(result["classification"], "native_equals_rendered")
+
+    def test_public_ack_result_is_returned_when_child_binds_requested_target(self):
+        result = probe.observe_bounded(
+            python=sys.executable,
+            source_root=self.source_root,
+            run_root=self.run_root,
+            cao_home=self.cao_home,
+            terminal_id=TERMINAL,
+            database_config_file=self.config,
+            viewport=NONCE,
+            rendered="ACK",
+            expected_agent=AGENT,
+            deadline=time.monotonic() + 9,
+            expected_marker="ACK",
+            capture=lambda *_args: json.dumps(_valid_child_result("ACK")).encode(),
+        )
+        self.assertEqual(result["status"], "observed")
+        self.assertEqual(result["target_kind"], "ack")
+
+    def test_observe_bounded_refuses_unlisted_marker_before_capture(self):
+        for marker in ("ack", "ACK ", "ACK extra", None):
+            calls = []
+            with self.subTest(marker_type=type(marker).__name__):
+                result = probe.observe_bounded(
+                    python=sys.executable,
+                    source_root=self.source_root,
+                    run_root=self.run_root,
+                    cao_home=self.cao_home,
+                    terminal_id=TERMINAL,
+                    database_config_file=self.config,
+                    viewport=NONCE,
+                    rendered="ACK",
+                    expected_agent=AGENT,
+                    deadline=time.monotonic() + 9,
+                    expected_marker=marker,
+                    capture=lambda *args: calls.append(args),
+                )
+                self.assertEqual(result["status"], "unavailable")
+                self.assertEqual(result["reason"], "invalid_input")
+                self.assertEqual(calls, [])
 
     def test_path_symlinks_and_database_sidecars_fail_closed(self):
         root = self.native_root

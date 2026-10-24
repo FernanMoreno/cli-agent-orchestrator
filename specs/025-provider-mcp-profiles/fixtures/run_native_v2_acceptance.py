@@ -3970,10 +3970,25 @@ def _capture_sender_native_failure_diagnostic(context, deadline):
         return {"status": "not_applicable", "acceptance_input_changed": False}
     if time.monotonic() >= deadline:
         return {"status": "deadline", "acceptance_input_changed": False}
-    sender = context.get("terminals", {}).get("sender", {})
+    return _capture_role_native_text(
+        context,
+        role="sender",
+        viewport=context.get("last_viewport", ""),
+        rendered=context.get("last_text", ""),
+        expected_marker=LAST_RECEIPT,
+        deadline=deadline,
+    )
+
+
+def _capture_role_native_text(context, *, role, viewport, rendered, expected_marker, deadline):
+    if time.monotonic() >= deadline:
+        return {"status": "deadline", "acceptance_input_changed": False}
+    if role not in {"sender", "receiver"}:
+        return {"status": "context_unavailable", "acceptance_input_changed": False}
+    terminal = context.get("terminals", {}).get(role, {})
     server = context.get("server")
     if (
-        not _safe_terminal_identity(sender.get("id"))
+        not _safe_terminal_identity(terminal.get("id"))
         or server is None
         or PINNED_PYTHON is None
         or context.get("root") is None
@@ -3987,13 +4002,98 @@ def _capture_sender_native_failure_diagnostic(context, deadline):
         source_root=str(REPO),
         run_root=context["root"],
         cao_home=context["cao_home"],
-        terminal_id=sender["id"],
+        terminal_id=terminal["id"],
         database_config_file=server.database_config_path,
-        viewport=context.get("last_viewport", ""),
-        rendered=context.get("last_text", ""),
-        expected_agent="t104-v2-sender",
+        viewport=viewport,
+        rendered=rendered,
+        expected_agent=f"t104-v2-{role}",
+        expected_marker=expected_marker,
         deadline=deadline,
         capture=readers.capture_bytes,
+    )
+
+
+def _capture_receiver_native_failure_diagnostic(context, pane_observation, deadline):
+    phase = context.get("phase")
+    if (
+        type(phase) is not dict
+        or phase.get("receiver_turn_completed_once") is not True
+        or phase.get("receiver_ack_exact") is True
+    ):
+        return {"status": "not_applicable", "acceptance_input_changed": False}
+    if time.monotonic() >= deadline:
+        return {"status": "deadline", "acceptance_input_changed": False}
+    if type(pane_observation) is not dict or pane_observation.get("status") != "captured":
+        return {"status": "viewport_unavailable", "acceptance_input_changed": False}
+    raw_dir = context.get("raw_dir")
+    if raw_dir is None:
+        return {"status": "viewport_unavailable", "acceptance_input_changed": False}
+    try:
+        viewport = _read_owned_private_file(
+            Path(raw_dir) / "receiver-tmux-viewport.private", maximum=65536
+        ).decode("utf-8", errors="strict")
+    except (OSError, ValueError, UnicodeError, GateError):
+        return {"status": "viewport_unavailable", "acceptance_input_changed": False}
+    return _capture_role_native_text(
+        context,
+        role="receiver",
+        viewport=viewport,
+        rendered=context.get("receiver_output_text", ""),
+        expected_marker="ACK",
+        deadline=deadline,
+    )
+
+
+def _receiver_last_observation(http_status, body, in_time, *, parse_failed=False):
+    text = body.get("output") if type(body) is dict and http_status == 200 else None
+    try:
+        size = len(text.encode("utf-8")) if type(text) is str else None
+    except UnicodeError:
+        size = None
+    valid_text = type(size) is int and size <= OUTPUT_RANGE_MAX_BYTES
+    return {
+        "http_status": (
+            http_status if type(http_status) is int and 100 <= http_status <= 599 else None
+        ),
+        "body_state": (
+            "invalid_json"
+            if parse_failed is True
+            else (
+                "mapping"
+                if type(body) is dict and http_status == 200
+                else "non_mapping" if http_status == 200 else "not_read"
+            )
+        ),
+        "output_utf8_bytes": size if valid_text else None,
+        "output_lines": len(text.splitlines()) if valid_text else None,
+        "output_string_observed": valid_text,
+        "public_ack_exact": in_time is True and valid_text and _receiver_ack_exact(text),
+        "observed_within_deadline": in_time is True,
+        "acceptance_input_changed": False,
+    }
+
+
+def _receiver_current_receipt_verified(result):
+    row = result.get("receipt_row")
+    turn = result.get("turn")
+    return (
+        type(row) is dict
+        and row.get("status") == "captured"
+        and row.get("phase") == "result_verified"
+        and row.get("generation_matches_turn") is True
+        and type(turn) is dict
+        and turn.get("projection_status") == "valid"
+        and turn.get("state") == "verified"
+    )
+
+
+def _receiver_native_current_turn_bound(result):
+    native = result.get("native_text")
+    return (
+        _receiver_current_receipt_verified(result)
+        and type(native) is dict
+        and native.get("status") == "observed"
+        and native.get("target_kind") == "ack"
     )
 
 
@@ -4010,6 +4110,7 @@ def _capture_receiver_failure_diagnostic(
     raw_dir,
     database_target,
     shared_deadline=None,
+    native_text_context=None,
 ):
     started = time.monotonic()
     deadline = started + 9.0
@@ -4024,6 +4125,7 @@ def _capture_receiver_failure_diagnostic(
         "tmux": {"status": "not_attempted"},
         "turn": _project_turn_diagnostic(None, None),
         "receipt_row": {"status": "not_attempted", "generation_matches_turn": None},
+        "native_text_current_turn_bound": False,
     }
     if started >= deadline:
         result["status"] = "deadline_exceeded"
@@ -4077,7 +4179,30 @@ def _capture_receiver_failure_diagnostic(
                     )
                 except (OSError, ValueError, KeyError):
                     row["generation_matches_turn"] = None
+        if native_text_context is not None:
+            try:
+                expected_receiver = native_text_context.get("terminals", {}).get("receiver", {})
+                if expected_receiver.get("id") != receiver_id:
+                    result["native_text"] = {
+                        "status": "context_unavailable",
+                        "acceptance_input_changed": False,
+                    }
+                elif not _receiver_current_receipt_verified(result):
+                    result["native_text"] = {
+                        "status": "current_turn_unverified",
+                        "acceptance_input_changed": False,
+                    }
+                else:
+                    result["native_text"] = _capture_receiver_native_failure_diagnostic(
+                        native_text_context, result["tmux"], deadline
+                    )
+            except BaseException:
+                result["native_text"] = {
+                    "status": "diagnostic_failed_closed",
+                    "acceptance_input_changed": False,
+                }
     elapsed = time.monotonic() - started
+    result["native_text_current_turn_bound"] = _receiver_native_current_turn_bound(result)
     result["elapsed_ms"] = int(elapsed * 1000)
     result["within_10_seconds"] = elapsed <= 10.0
     result["within_shared_deadline"] = time.monotonic() <= deadline
@@ -5099,6 +5224,7 @@ def _run_enabled(
             sender_terminal_closed_at: float | None = None
             receiver_started_at: float | None = None
             receiver_completed_at: float | None = None
+            receiver_output_text = ""
             previous_poll_started: float | None = None
             while True:
                 _cancellation_checkpoint()
@@ -5305,6 +5431,10 @@ def _run_enabled(
                 and final_receiver.get("turn_sequence") == receiver_sequence_before + 1
                 and final_receiver.get("turn_completed") == receiver_sequence_before + 1
             )
+            receiver_output_body = None
+            receiver_output_http_status = None
+            receiver_output_in_time = False
+            receiver_output_parse_failed = False
             if receiver_completed_at is not None and receiver_started_at is not None:
                 try:
                     receiver_output, receiver_output_in_time = _bounded_phase_get(
@@ -5313,12 +5443,19 @@ def _run_enabled(
                         deadline=receiver_started_at + MODEL_PHASE_SECONDS,
                         params={"mode": "last"},
                     )
+                    receiver_output_http_status = (
+                        receiver_output.status_code if receiver_output is not None else None
+                    )
                     if (
                         receiver_output_in_time
                         and receiver_output is not None
                         and receiver_output.status_code == 200
                     ):
-                        receiver_output_body = receiver_output.json()
+                        try:
+                            receiver_output_body = receiver_output.json()
+                        except Exception:
+                            receiver_output_parse_failed = True
+                            raise
                         receiver_output_text = (
                             receiver_output_body.get("output", "")
                             if isinstance(receiver_output_body, dict)
@@ -5328,6 +5465,12 @@ def _run_enabled(
                 except Exception:
                     # Keep failures private and report only the fixed ACK gate.
                     pass
+            phase["receiver_last_observation"] = _receiver_last_observation(
+                receiver_output_http_status,
+                receiver_output_body,
+                receiver_output_in_time,
+                parse_failed=receiver_output_parse_failed,
+            )
             if phase["receiver_ack_exact"] is not True:
                 raise GateError("receiver_ack_not_exact")
             _write_private(raw_dir / f"phase-{index + 1}-screen.private", last_viewport)
@@ -5723,6 +5866,7 @@ def _run_enabled(
                     raw_dir=diagnostic_locals.get("raw_dir"),
                     database_target=getattr(diagnostic_locals.get("targets"), "main", None),
                     shared_deadline=diagnostic_deadline,
+                    native_text_context=diagnostic_locals,
                 )
             except BaseException:
                 receipt["receiver_failure_diagnostic"] = {

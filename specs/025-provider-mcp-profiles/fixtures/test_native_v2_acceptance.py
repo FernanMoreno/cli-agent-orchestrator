@@ -257,6 +257,196 @@ def test_actual_private_home_preparation_meets_native_probe_owner_modes(tmp_path
         assert stat.S_IMODE(path.stat().st_mode) == 0o700
 
 
+def test_receiver_native_probe_uses_current_receiver_frame_and_ack_target(monkeypatch, tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir(mode=0o700)
+    frame = raw / "receiver-tmux-viewport.private"
+    frame.write_text("private-frame-canary")
+    frame.chmod(0o600)
+    capture = object()
+    calls = []
+
+    def observe_bounded(**kwargs):
+        calls.append(kwargs)
+        return {"status": "observed", "target_kind": "ack", "acceptance_input_changed": False}
+
+    def load(filename):
+        return (
+            SimpleNamespace(observe_bounded=observe_bounded)
+            if filename == "native_v2_text_probe.py"
+            else SimpleNamespace(capture_bytes=capture)
+        )
+
+    monkeypatch.setattr(runner, "_load_failure_diagnostic_fixture", load)
+    monkeypatch.setattr(runner, "PINNED_PYTHON", Path("/private/venv/bin/python"))
+    monkeypatch.setattr(runner.time, "monotonic", lambda: 10.0)
+    context = {
+        "phase": {"receiver_turn_completed_once": True, "receiver_ack_exact": False},
+        "terminals": {"receiver": {"id": "a1b2c3d4"}, "sender": {"id": "b1c2d3e4"}},
+        "server": SimpleNamespace(database_config_path=Path("/owned/pg.json")),
+        "root": Path("/owned/root"),
+        "cao_home": Path("/owned/root/home/.aws/cli-agent-orchestrator"),
+        "raw_dir": raw,
+        "receiver_output_text": "private-result-canary",
+        "last_viewport": "wrong-sender-frame-canary",
+    }
+    result = runner._capture_receiver_native_failure_diagnostic(
+        context, {"status": "captured"}, 19.0
+    )
+    assert result["target_kind"] == "ack"
+    [call] = calls
+    assert call["terminal_id"] == "a1b2c3d4"
+    assert call["expected_agent"] == "t104-v2-receiver"
+    assert call["expected_marker"] == "ACK"
+    assert call["viewport"] == "private-frame-canary"
+    assert call["rendered"] == "private-result-canary"
+    assert call["deadline"] == 19.0 and call["capture"] is capture
+    assert "private-" not in json.dumps(result)
+    calls.clear()
+    assert (
+        runner._capture_receiver_native_failure_diagnostic(
+            context, {"status": "unavailable"}, 19.0
+        )["status"]
+        == "viewport_unavailable"
+    )
+    assert not calls
+    context["phase"]["receiver_turn_completed_once"] = False
+    assert (
+        runner._capture_receiver_native_failure_diagnostic(context, {"status": "captured"}, 19.0)[
+            "status"
+        ]
+        == "not_applicable"
+    )
+    assert not calls
+
+
+def test_receiver_last_observation_preserves_exact_ack_and_invalid_http():
+    for status, body, in_time, expected in (
+        (200, {"output": "ACK"}, True, True),
+        (200, {"output": "ACK plus text"}, True, False),
+        (200, {"output": "BACK"}, True, False),
+        (200, {"output": "ACK"}, False, False),
+        (202, {"output": "ACK"}, True, False),
+    ):
+        observed = runner._receiver_last_observation(status, body, in_time)
+        assert observed["public_ack_exact"] is expected
+        assert observed["acceptance_input_changed"] is False
+        assert "output" not in observed
+    malformed = runner._receiver_last_observation(200, None, True, parse_failed=True)
+    assert malformed["body_state"] == "invalid_json"
+    assert malformed["public_ack_exact"] is False
+
+
+def test_receiver_native_callback_uses_existing_frame_and_same_shared_deadline(
+    monkeypatch, tmp_path
+):
+    calls = []
+    monkeypatch.setattr(runner.time, "monotonic", lambda: 10.0)
+
+    def log(*args):
+        calls.append("log")
+        return {"status": "captured"}
+
+    def panes(*args):
+        calls.append("panes")
+        assert args[-1] == 19.0
+        return {"status": "captured"}
+
+    context = {"terminals": {"receiver": {"id": "a1b2c3d4"}}}
+
+    def native(actual_context, captured, deadline):
+        calls.append("native")
+        assert actual_context is context and captured["status"] == "captured"
+        assert deadline == 19.0
+        return {"status": "observed", "target_kind": "ack"}
+
+    monkeypatch.setattr(runner, "_copy_receiver_log", log)
+    monkeypatch.setattr(runner, "_capture_receiver_panes", panes)
+    monkeypatch.setattr(runner, "_capture_receiver_native_failure_diagnostic", native)
+    generation = "a" * 32
+
+    def get(*args, **kwargs):
+        calls.append("turn")
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {
+                "state": "verified",
+                "reason": None,
+                "attempts": 0,
+                "generation": generation,
+            },
+        )
+
+    def row(target, receiver_id, path, deadline):
+        calls.append("row")
+        assert deadline == 19.0
+        path.write_text(json.dumps({"generation": generation}))
+        return {"status": "captured", "phase": "result_verified"}
+
+    monkeypatch.setattr(runner, "_read_private_turn_receipt", row)
+    kwargs = dict(
+        receiver={"id": "a1b2c3d4", "name": "owned", "session_name": "session"},
+        server=SimpleNamespace(url="http://127.0.0.1:1234"),
+        requests_module=SimpleNamespace(get=get),
+        journey=None,
+        socket_path=None,
+        socket_id=None,
+        sid=None,
+        session_name="session",
+        cao_home=Path("/owned/cao"),
+        raw_dir=tmp_path,
+        database_target=object(),
+        shared_deadline=19.0,
+        native_text_context=context,
+    )
+    result = runner._capture_receiver_failure_diagnostic(**kwargs)
+    assert calls == ["log", "panes", "turn", "row", "native"]
+    assert result["native_text"]["target_kind"] == "ack"
+    assert result["within_shared_deadline"] is True
+    assert result["native_text_current_turn_bound"] is True
+    calls.clear()
+    context["terminals"]["receiver"]["id"] = "b1c2d3e4"
+    result = runner._capture_receiver_failure_diagnostic(**kwargs)
+    assert calls == ["log", "panes", "turn", "row"]
+    assert result["native_text"]["status"] == "context_unavailable"
+    context["terminals"]["receiver"]["id"] = "a1b2c3d4"
+    for invalid_row in (
+        {"status": "captured", "phase": "active"},
+        {"status": "unavailable"},
+    ):
+        calls.clear()
+        monkeypatch.setattr(runner, "_read_private_turn_receipt", lambda *args: invalid_row.copy())
+        result = runner._capture_receiver_failure_diagnostic(**kwargs)
+        assert "native" not in calls
+        assert result["native_text"]["status"] == "current_turn_unverified"
+        assert result["native_text_current_turn_bound"] is False
+
+
+def test_receiver_native_observation_needs_matching_verified_api_generation():
+    result = {
+        "native_text": {"status": "observed", "target_kind": "ack"},
+        "receipt_row": {
+            "status": "captured",
+            "phase": "result_verified",
+            "generation_matches_turn": True,
+        },
+        "turn": {"projection_status": "valid", "state": "verified"},
+    }
+    assert runner._receiver_native_current_turn_bound(result)
+    for key, update in (
+        ("receipt_row", {"generation_matches_turn": False}),
+        ("receipt_row", {"generation_matches_turn": None}),
+        ("receipt_row", {"generation_matches_turn": 1}),
+        ("receipt_row", {"phase": "active"}),
+        ("turn", {"projection_status": "unavailable"}),
+        ("turn", {"state": "active"}),
+        ("native_text", {"target_kind": "unicode"}),
+        ("native_text", {"status": "unavailable"}),
+    ):
+        changed = {**result, key: {**result[key], **update}}
+        assert not runner._receiver_native_current_turn_bound(changed)
+
+
 def test_public_gate_is_closed_without_reading_execution_manifest(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", [str(RUNNER_PATH)])
     monkeypatch.setattr(

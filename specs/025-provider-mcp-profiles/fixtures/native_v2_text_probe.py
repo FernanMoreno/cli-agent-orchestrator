@@ -21,6 +21,8 @@ from typing import Any, Callable
 
 SCHEMA = "caos.t111.native-v2-text-probe.v1"
 MARKER = "Validado ñ, 中文."
+ACK_MARKER = "ACK"
+MARKER_KIND = {MARKER: "unicode", ACK_MARKER: "ack"}
 TOKEN_PATTERN = r"(?:CAO-TURN-RECEIPT-|CAO_TURN_RECEIPT_)[0-9a-f]{32}"
 TOKEN_RE = re.compile(TOKEN_PATTERN)
 TERMINAL_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
@@ -52,6 +54,7 @@ REASONS = frozenset(
         "child_timeout",
         "capture_unavailable",
         "child_output_invalid",
+        "child_target_mismatch",
         "database_target_unavailable",
         "pg_read_unavailable",
         "pg_receipt_not_verified",
@@ -82,6 +85,7 @@ CLASSIFICATIONS = frozenset(
         "rendered_marker_native_missing",
         "native_text_contains_linebreak",
         "native_text_differs_from_rendered",
+        "ack_not_exact",
     }
 )
 
@@ -95,6 +99,7 @@ REQUEST_KEYS = frozenset(
         "viewport",
         "rendered",
         "expected_agent",
+        "expected_marker",
         "stop",
     }
 )
@@ -110,21 +115,23 @@ class ProbeFailure(Exception):
         super().__init__(reason)
 
 
-def _shape(text: str) -> dict[str, Any]:
+def _shape(text: str, expected_marker: str = MARKER) -> dict[str, Any]:
     compact = "".join(text.split())
-    expected_compact = "".join(MARKER.split())
-    standalone = bool(re.search(r"(?m)^[ \t]*" + re.escape(MARKER) + r"[ \t]*$", text))
+    expected_compact = "".join(expected_marker.split())
+    standalone = bool(re.search(r"(?m)^[ \t]*" + re.escape(expected_marker) + r"[ \t]*$", text))
     return {
         "characters": len(text),
         "lines": len(text.splitlines()),
-        "exact_marker": text == MARKER,
+        "exact_marker": text == expected_marker,
         "standalone_marker_line": standalone,
-        "contains_marker": MARKER in text,
+        "contains_marker": expected_marker in text,
         "compact_marker": compact == expected_compact,
     }
 
 
-def _base_result(rendered: str = "") -> dict[str, Any]:
+def _base_result(rendered: str = "", expected_marker: str = MARKER) -> dict[str, Any]:
+    if type(expected_marker) is not str or expected_marker not in MARKER_KIND:
+        expected_marker = MARKER
     if type(rendered) is not str or len(rendered) > INPUT_TEXT_CAP:
         rendered = ""
     else:
@@ -135,6 +142,7 @@ def _base_result(rendered: str = "") -> dict[str, Any]:
             rendered = ""
     return {
         "schema": SCHEMA,
+        "target_kind": MARKER_KIND[expected_marker],
         "diagnostic_only": True,
         "status": "unavailable",
         "reason": "probe_dependency_error",
@@ -149,8 +157,8 @@ def _base_result(rendered: str = "") -> dict[str, Any]:
         "native_equals_rendered": False,
         "active_nonce_candidate_count": 0,
         "native_text_part_count": 0,
-        "native_public": _shape(""),
-        "rendered_public": _shape(rendered),
+        "native_public": _shape("", expected_marker),
+        "rendered_public": _shape(rendered, expected_marker),
         "text_part_shapes": [],
         "classification": "unavailable",
         "elapsed_ms": 0,
@@ -265,6 +273,8 @@ def _validate_request(request: Any) -> dict[str, Any]:
     if type(request) is not dict or set(request) != REQUEST_KEYS:
         raise ProbeFailure("invalid_input")
     if any(type(request.get(key)) is not str for key in REQUEST_KEYS - {"stop"}):
+        raise ProbeFailure("invalid_input")
+    if request["expected_marker"] not in MARKER_KIND:
         raise ProbeFailure("invalid_input")
     if (
         TERMINAL_RE.fullmatch(request["terminal_id"]) is None
@@ -494,9 +504,30 @@ def _receipt_digest(target: Any, terminal_id: str, stop: float) -> str:
     return rows[0][0]
 
 
+def _without_nonce_line(text: str, nonce: str) -> str:
+    matches = list(re.finditer(r"(?m)^[ \t]*" + re.escape(nonce) + r"[ \t]*$", text))
+    if len(matches) != 1:
+        return text
+    match = matches[0]
+    before = text[: match.start()]
+    after = text[match.end() :]
+    if before.endswith("\r\n"):
+        before = before[:-2]
+    elif before.endswith(("\r", "\n")):
+        before = before[:-1]
+    if after.startswith("\r\n"):
+        after = after[2:]
+    elif after.startswith(("\r", "\n")):
+        after = after[1:]
+    return before + after
+
+
 def _observe_payload(request: Any, target: Any, *, validated: bool = False) -> dict[str, Any]:
     rendered = request.get("rendered", "") if type(request) is dict else ""
-    result = _base_result(rendered)
+    expected_marker = request.get("expected_marker", MARKER) if type(request) is dict else MARKER
+    if type(expected_marker) is not str or expected_marker not in MARKER_KIND:
+        expected_marker = MARKER
+    result = _base_result(rendered, expected_marker)
     progress: dict[str, bool] = {}
     try:
         if not validated:
@@ -537,22 +568,31 @@ def _observe_payload(request: Any, target: Any, *, validated: bool = False) -> d
         final = database.lstat()
         if (final.st_dev, final.st_ino) != identity or not stat.S_ISREG(final.st_mode):
             raise ProbeFailure("native_database_changed")
-        public_parts = [
-            re.sub(r"(?m)^[ \t]*" + re.escape(nonce) + r"[ \t]*$", "", part) for part in parts
-        ]
-        native_public = "".join(public_parts).strip()
-        part_shapes = [_shape(part.strip()) for part in public_parts]
-        native_shape = _shape(native_public)
-        rendered_shape = _shape(request["rendered"])
+        if expected_marker == ACK_MARKER:
+            public_parts = [_without_nonce_line(part, nonce) for part in parts]
+            native_public = "".join(public_parts)
+            part_shapes = [_shape(part, expected_marker) for part in public_parts]
+            native_equals_rendered = native_public == request["rendered"]
+        else:
+            public_parts = [
+                re.sub(r"(?m)^[ \t]*" + re.escape(nonce) + r"[ \t]*$", "", part) for part in parts
+            ]
+            native_public = "".join(public_parts).strip()
+            part_shapes = [_shape(part.strip(), expected_marker) for part in public_parts]
+            native_equals_rendered = native_public == request["rendered"].strip()
+        native_shape = _shape(native_public, expected_marker)
+        rendered_shape = _shape(request["rendered"], expected_marker)
         result.update(
             status="observed",
             reason=None,
-            native_equals_rendered=native_public == request["rendered"].strip(),
+            native_equals_rendered=native_equals_rendered,
             native_text_part_count=len(parts),
             native_public=native_shape,
             rendered_public=rendered_shape,
             text_part_shapes=part_shapes,
-            classification=_classify(native_public, native_shape, rendered_shape, len(parts)),
+            classification=_classify(
+                native_public, native_shape, rendered_shape, len(parts), expected_marker
+            ),
             raw_model_response_observed=False,
         )
     except ProbeFailure as exc:
@@ -564,7 +604,11 @@ def _observe_payload(request: Any, target: Any, *, validated: bool = False) -> d
 
 
 def _classify(
-    native: str, native_shape: dict[str, Any], rendered_shape: dict[str, Any], parts: int
+    native: str,
+    native_shape: dict[str, Any],
+    rendered_shape: dict[str, Any],
+    parts: int,
+    expected_marker: str = MARKER,
 ) -> str:
     if parts > 1:
         return "multiple_native_text_parts"
@@ -574,6 +618,14 @@ def _classify(
         and ("\n" in native or "\r" in native)
     ):
         return "native_text_contains_linebreak"
+    if expected_marker == ACK_MARKER:
+        if native_shape["exact_marker"] and rendered_shape["exact_marker"]:
+            return "native_equals_rendered"
+        if native_shape["exact_marker"]:
+            return "native_marker_rendered_missing"
+        if not native and rendered_shape["exact_marker"]:
+            return "rendered_marker_native_missing"
+        return "ack_not_exact"
     if native == MARKER and rendered_shape["exact_marker"]:
         return "native_equals_rendered"
     if native == "" or not native_shape["contains_marker"]:
@@ -643,6 +695,7 @@ def _child_entry(request_path: str) -> int:
         # The request is private and was created below this verified root.
         rough_run_root = path.parent
         request = _read_request(path, rough_run_root)
+        result = _base_result(request["rendered"], request["expected_marker"])
         source_root = Path(request["source_root"])
         run_root = Path(request["run_root"])
         cao_home = Path(request["cao_home"])
@@ -692,6 +745,7 @@ def _strict_result(value: Any) -> dict[str, Any] | None:
         return None
     if (
         value["schema"] != SCHEMA
+        or value["target_kind"] not in ("unicode", "ack")
         or value["diagnostic_only"] is not True
         or value["status"] not in ("observed", "unavailable")
         or value["raw_text_exported"] is not False
@@ -856,6 +910,7 @@ def observe_bounded(
     viewport: str,
     rendered: str,
     expected_agent: str,
+    expected_marker: str = MARKER,
     deadline: float,
     capture: Callable[[list[str], float, int], bytes],
 ) -> dict[str, Any]:
@@ -863,11 +918,16 @@ def observe_bounded(
 
     ``capture`` must be the source-pinned ``capture_bytes`` reader: it must
     enforce ``stop``, kill and reap the child on every path, and bound stdout.
+    ``expected_marker`` is restricted to the fixed Unicode marker or literal ACK.
     The temporary request remains until that callback returns or raises.
     """
     started = time.monotonic()
     safe_rendered = rendered if type(rendered) is str else ""
-    result = _base_result(safe_rendered)
+    marker_valid = type(expected_marker) is str and expected_marker in MARKER_KIND
+    safe_marker = expected_marker if marker_valid else MARKER
+    result = _base_result(safe_rendered, safe_marker)
+    if not marker_valid:
+        return _finish(_unavailable(result, "invalid_input"), started, deadline)
     if not _finite_number(deadline):
         return _finish(_unavailable(result, "invalid_input"), started, deadline)
     if deadline <= started:
@@ -907,6 +967,7 @@ def observe_bounded(
             "viewport": viewport,
             "rendered": rendered,
             "expected_agent": expected_agent,
+            "expected_marker": expected_marker,
             "stop": stop,
         }
         _validate_request(request)
@@ -947,7 +1008,10 @@ def observe_bounded(
             child_result = _strict_result(_json_object(capture_result))
             if child_result is None:
                 raise ValueError("invalid child projection")
-            result = child_result
+            if child_result["target_kind"] != MARKER_KIND[expected_marker]:
+                result = _unavailable(result, "child_target_mismatch")
+            else:
+                result = child_result
         except Exception:
             result = _unavailable(result, "child_output_invalid")
     if time.monotonic() > stop or time.monotonic() > deadline:
