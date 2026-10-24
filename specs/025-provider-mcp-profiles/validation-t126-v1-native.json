@@ -1,0 +1,48 @@
+{
+  "schema": "caos.native-acceptance-summary.v1",
+  "source_head": "71892e1ed35fe043a58581253c26ec49d147feb4",
+  "provider_major": "v1",
+  "success": true,
+  "elapsed_seconds": 102.984,
+  "private_native_receipt_sha256": "c12b96d5b45484df6a85fefdf4642da40cbc63718c429eef6e2eb3895e84a679",
+  "scope": "generic two-tool paired messages",
+  "source_runtime_file_count": 521,
+  "separate_artifact_count": 7,
+  "global_acceptance_claimed": false,
+  "external_cao_work_message_acceptance_claimed": false,
+  "historical_failure_cause_demonstrated": false,
+  "parent_pg_closed": true,
+  "exact_owned_container_absent": true,
+  "exact_owned_network_absent": true,
+  "unrelated_resources_preserved": true,
+  "case_gates_closed": true,
+  "private_state_removed": true,
+  "phases": [
+    {
+      "phase": 0,
+      "receiver_ack_exact": true,
+      "receiver_ack_within_deadline": true,
+      "receiver_turn_completed_once": true,
+      "last_receipt_unicode_verified": true,
+      "sender_completed": true,
+      "one_exact_new_persisted_message": true,
+      "inbox_pair_exact": true,
+      "agui_one_redacted_notification": true,
+      "model_seconds": 14.047856668999884
+    },
+    {
+      "phase": 1,
+      "receiver_ack_exact": true,
+      "receiver_ack_within_deadline": true,
+      "receiver_turn_completed_once": true,
+      "last_receipt_unicode_verified": true,
+      "sender_completed": true,
+      "one_exact_new_persisted_message": true,
+      "inbox_pair_exact": true,
+      "agui_one_redacted_notification": true,
+      "model_seconds": 8.935401373004424
+    }
+  ],
+  "minimum_admission_mib": 8136,
+  "strict_final_exact": true
+}

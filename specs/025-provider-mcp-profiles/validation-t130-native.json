@@ -1,0 +1,64 @@
+{
+  "schema": "caos.native-acceptance-summary.v1",
+  "source_head": "71892e1ed35fe043a58581253c26ec49d147feb4",
+  "provider_major": "v2",
+  "success": true,
+  "elapsed_seconds": 96.335,
+  "private_native_receipt_sha256": "a49da575bc04df7e5783c7e10bdd0f5a28f5acc83f2c260ca5eca4f208ac004c",
+  "scope": "full8 collaboration messages",
+  "source_runtime_file_count": 535,
+  "separate_artifact_count": 0,
+  "global_acceptance_claimed": false,
+  "external_cao_work_message_acceptance_claimed": false,
+  "historical_failure_cause_demonstrated": false,
+  "parent_pg_closed": true,
+  "exact_owned_container_absent": true,
+  "exact_owned_network_absent": true,
+  "unrelated_resources_preserved": true,
+  "case_gates_closed": true,
+  "private_state_removed": true,
+  "phases": [
+    {
+      "name": "before_restart",
+      "receiver_ack_exact": true,
+      "receiver_turn_completed_once": true,
+      "last_receipt_unicode_verified": true,
+      "durable_turn_completed": true,
+      "agui_redacted_one_notification": true,
+      "one_exact_pg_api_message": true,
+      "elapsed_seconds": 12.857
+    },
+    {
+      "name": "after_restart",
+      "receiver_ack_exact": true,
+      "receiver_turn_completed_once": true,
+      "last_receipt_unicode_verified": true,
+      "durable_turn_completed": true,
+      "agui_redacted_one_notification": true,
+      "one_exact_pg_api_message": true,
+      "elapsed_seconds": 9.865
+    }
+  ],
+  "minimum_admission_mib": 8523,
+  "response_argument_diagnostic_complete_both_phases": false,
+  "response_phase_results": [
+    {
+      "phase_ordinal": 1,
+      "status": "unavailable",
+      "target_tool_call_count": null,
+      "argument_exact": null,
+      "known_punctuation_variant_exact": null,
+      "expected_utf8_bytes": 48,
+      "observed_utf8_bytes": null
+    },
+    {
+      "phase_ordinal": 2,
+      "status": "unavailable",
+      "target_tool_call_count": null,
+      "argument_exact": null,
+      "known_punctuation_variant_exact": null,
+      "expected_utf8_bytes": 51,
+      "observed_utf8_bytes": null
+    }
+  ]
+}

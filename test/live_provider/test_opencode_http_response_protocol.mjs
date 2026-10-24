@@ -401,6 +401,18 @@ test("JSON response shape failures have a fixed boundary reason", () => {
   )
   assert.equal(invalidCalls.status, "unavailable")
   assert.equal(invalidCalls.reason, "json_shape")
+
+  const nullToolCalls = chatResponse([])
+  nullToolCalls.choices[0].message.tool_calls = null
+  const nullCalls = output(
+    parseResponseArguments({
+      bodyText: JSON.stringify(nullToolCalls),
+      contentType: "application/json",
+      expectedMessage: EXPECTED,
+    }),
+  )
+  assert.equal(nullCalls.status, "unavailable")
+  assert.equal(nullCalls.reason, "json_shape")
 })
 
 test("expectations and content types fail closed with distinct fixed reasons", () => {
@@ -602,6 +614,71 @@ test("SSE treats SDK-null tool_calls as no fragment and still requires completio
   assert.equal(absent.target_tool_call_count, 0)
 })
 
+test("SSE treats null or empty continuation metadata as no update for a known index", () => {
+  const start = targetStart({ argumentsText: JSON.stringify({ message: EXPECTED }) })
+  const nullMetadata = {
+    choices: [
+      {
+        index: 0,
+        delta: {
+          tool_calls: [{ index: 0, id: null, type: "", function: { name: null, arguments: null } }],
+        },
+        finish_reason: null,
+      },
+    ],
+  }
+  const emptyMetadata = {
+    choices: [
+      {
+        index: 0,
+        delta: {
+          tool_calls: [{ index: 0, id: "", type: null, function: { name: "", arguments: "" } }],
+        },
+        finish_reason: null,
+      },
+    ],
+  }
+  const nullFunction = {
+    choices: [
+      {
+        index: 0,
+        delta: { tool_calls: [{ index: 0, id: null, type: null, function: null }] },
+        finish_reason: null,
+      },
+    ],
+  }
+  const result = sseResult([
+    start,
+    nullMetadata,
+    emptyMetadata,
+    nullFunction,
+    { choices: [{ index: 0, delta: null, finish_reason: "tool_calls" }] },
+  ])
+
+  assert.equal(result.status, "observed")
+  assert.equal(result.argument_exact, true)
+  assert.equal(result.target_tool_call_count, 1)
+})
+
+test("SSE null or empty identity cannot create a call before a full initial fragment", () => {
+  const result = sseResult([
+    {
+      choices: [
+        {
+          index: 0,
+          delta: { tool_calls: [{ index: 0, id: null, type: "", function: null }] },
+          finish_reason: null,
+        },
+      ],
+    },
+    terminal(),
+  ])
+
+  assert.equal(result.status, "unavailable")
+  assert.equal(result.reason, "sse_initial_identity")
+  assert.equal(result.target_tool_call_count, null)
+})
+
 test("SSE null delta without a terminal signal remains incomplete", () => {
   const result = sseResult([
     targetStart({ argumentsText: JSON.stringify({ message: EXPECTED }) }),
@@ -733,6 +810,15 @@ test("SSE rejects missing indices, split initial names, and conflicting call ide
       },
     ],
   }
+  const conflictingType = {
+    choices: [
+      {
+        index: 0,
+        delta: { tool_calls: [{ index: 0, type: "custom", function: { arguments: "" } }] },
+        finish_reason: null,
+      },
+    ],
+  }
   const splitNameStart = targetStart({ name: "cao-mcp-server_" })
   const splitNameContinuation = targetContinuation(0, "", { name: "send_message" })
   const missingIndexResult = sseResult([missingIndex, terminal()])
@@ -750,6 +836,7 @@ test("SSE rejects missing indices, split initial names, and conflicting call ide
   for (const events of [
     [targetStart(), conflictingName, terminal()],
     [targetStart(), conflictingId, terminal()],
+    [targetStart(), conflictingType, terminal()],
     [splitNameStart, splitNameContinuation, terminal()],
   ]) {
     const result = sseResult(events)
@@ -901,4 +988,17 @@ test("SSE event and body bounds are enforced with fixed reasons", () => {
     terminal(),
   ])
   assert.equal(tooLargeArguments.reason, "arguments_oversized")
+})
+
+test("SSE rejects null initial arguments and typed continuation identity contradictions", () => {
+  const initial = targetStart({ argumentsText: null })
+  const result = sseResult([initial, terminal()])
+  assert.equal(result.status, "unavailable")
+  assert.equal(result.reason, "sse_arguments_fragment")
+  for (const metadata of [{ id: 0 }, { type: 1 }, { function: { name: 5 } }]) {
+    const continuation = { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, ...metadata }] } }] }
+    const rejected = sseResult([targetStart(), continuation, terminal()])
+    assert.equal(rejected.status, "unavailable")
+    assert.equal(rejected.reason, "sse_continuation_identity")
+  }
 })

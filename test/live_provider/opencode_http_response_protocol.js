@@ -31,6 +31,10 @@ function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
 }
 
+function isEmptyOptionalMetadata(value) {
+  return value === null || value === ""
+}
+
 function isUnicodeScalarString(value) {
   if (typeof value !== "string") return false
   for (let index = 0; index < value.length; index += 1) {
@@ -382,14 +386,21 @@ function parseSseResponse(bodyText, expectedMessage, expectedToolName, expectedB
       !Number.isInteger(fragment.index) ||
       fragment.index < 0 ||
       fragment.index >= MAX_TOOL_CALLS ||
-      eventIndexes.has(fragment.index) ||
-      !isRecord(fragment.function)
+      eventIndexes.has(fragment.index)
     ) {
       fail("sse_tool_fragment")
     }
     eventIndexes.add(fragment.index)
 
-    const functionPart = fragment.function
+    const functionIsPresent = Object.hasOwn(fragment, "function")
+    if (
+      functionIsPresent &&
+      fragment.function !== null &&
+      !isRecord(fragment.function)
+    ) {
+      fail("sse_tool_fragment")
+    }
+    const functionPart = isRecord(fragment.function) ? fragment.function : null
     const existing = calls.get(fragment.index)
     let call = existing
     if (call === undefined) {
@@ -398,6 +409,7 @@ function parseSseResponse(bodyText, expectedMessage, expectedToolName, expectedB
         fragment.id.length === 0 ||
         !isUnicodeScalarString(fragment.id) ||
         fragment.type !== "function" ||
+        functionPart === null ||
         typeof functionPart.name !== "string" ||
         functionPart.name.length === 0 ||
         !isUnicodeScalarString(functionPart.name)
@@ -416,30 +428,45 @@ function parseSseResponse(bodyText, expectedMessage, expectedToolName, expectedB
       calls.set(fragment.index, call)
     } else {
       if (
-        (Object.hasOwn(fragment, "id") && fragment.id !== call.id) ||
-        (Object.hasOwn(fragment, "type") && fragment.type !== "function") ||
-        (Object.hasOwn(functionPart, "name") && functionPart.name !== call.name)
+        (Object.hasOwn(fragment, "id") &&
+          !isEmptyOptionalMetadata(fragment.id) &&
+          fragment.id !== call.id) ||
+        (Object.hasOwn(fragment, "type") &&
+          !isEmptyOptionalMetadata(fragment.type) &&
+          fragment.type !== "function") ||
+        (functionPart !== null &&
+          Object.hasOwn(functionPart, "name") &&
+          !isEmptyOptionalMetadata(functionPart.name) &&
+          functionPart.name !== call.name)
       ) {
         fail("sse_continuation_identity")
       }
     }
 
-    if (Object.hasOwn(functionPart, "name")) {
+    if (functionPart !== null && Object.hasOwn(functionPart, "name")) {
+      const functionName = functionPart.name
       if (
-        typeof functionPart.name !== "string" ||
-        !isUnicodeScalarString(functionPart.name) ||
-        functionPart.name !== call.name
+        !isEmptyOptionalMetadata(functionName) &&
+        (typeof functionName !== "string" ||
+          !isUnicodeScalarString(functionName) ||
+          functionName !== call.name)
       ) {
         fail(existing === undefined ? "sse_initial_identity" : "sse_continuation_identity")
       }
     }
-    if (Object.hasOwn(functionPart, "arguments")) {
-      if (typeof functionPart.arguments !== "string") fail("sse_arguments_fragment")
-      if (call.target) {
-        const partBytes = Buffer.byteLength(functionPart.arguments, "utf8")
+    if (functionPart !== null && Object.hasOwn(functionPart, "arguments")) {
+      const argumentsFragment = functionPart.arguments
+      if (
+        typeof argumentsFragment !== "string" &&
+        !(existing !== undefined && argumentsFragment === null)
+      ) {
+        fail("sse_arguments_fragment")
+      }
+      if (typeof argumentsFragment === "string" && call.target) {
+        const partBytes = Buffer.byteLength(argumentsFragment, "utf8")
         call.argumentBytes += partBytes
         if (call.argumentBytes > MAX_ARGUMENT_BYTES) fail("arguments_oversized")
-        call.argumentParts.push(functionPart.arguments)
+        call.argumentParts.push(argumentsFragment)
       }
     }
   }
