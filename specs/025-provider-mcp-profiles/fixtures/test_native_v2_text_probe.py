@@ -483,6 +483,25 @@ class NativeV2TextProbeTests(unittest.TestCase):
         for forbidden in (NONCE, SECRET, probe.MARKER, str(self.run_root), str(self.config)):
             self.assertNotIn(forbidden, json.dumps(result, ensure_ascii=False))
 
+    def test_generic_target_missing_reports_actual_native_rendered_equality(self):
+        native = "x" * 69
+        self._replace_v2_assistant_text(native + "\n" + NONCE)
+        for rendered, equal in ((native, True), ("y" * 69, False)):
+            with self.subTest(equal=equal):
+                result = self._observe_payload(rendered=rendered)
+                self.assertEqual(result["status"], "observed")
+                self.assertIs(result["native_equals_rendered"], equal)
+                self.assertEqual(
+                    result["classification"],
+                    "native_equals_rendered" if equal else "native_text_differs_from_rendered",
+                )
+                for name in ("native_public", "rendered_public"):
+                    self.assertFalse(result[name]["contains_marker"])
+                    self.assertFalse(result[name]["exact_marker"])
+                self.assertFalse(result["acceptance_input_changed"])
+                self.assertNotIn(native, json.dumps(result))
+                self.assertNotIn(rendered, json.dumps(result))
+
     def test_fixed_ack_target_uses_exact_marker_and_keeps_unicode_default(self):
         cases = (
             ("ACK", "native_equals_rendered", True, True),

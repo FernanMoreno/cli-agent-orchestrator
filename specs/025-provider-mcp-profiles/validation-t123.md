@@ -1,0 +1,11 @@
+# T123 — preserve measured equality in diagnostic classification
+
+2026-10-24. T122's real source6373c456 receipt reports equal native/rendered text with the expected target absent, but its classifier labels the strings different. The original receipt remains unchanged. This is a diagnostic information-loss bug, not a native text reader, persistence or acceptance correction.
+
+Root cause: `_observe_payload` computes actual text equality, while `_classify` received only text shapes and native text. Target-absent shapes could not establish whether the two strings were equal. The observer now passes its existing equality boolean to the classifier. Multipart, linebreak and ACK-specific priorities remain ahead of the generic equality branch. Target flags, schema, bounds, privacy, input and acceptance remain unchanged.
+
+RED: the new real owned-SQLite observer-path regression failed its equal=true subcase against the old classifier. GREEN:144 tests passed,3 warnings,67.69 seconds across the complete probe and native acceptance modules, with normal configured focused coverage20% (not global acceptance). Equal69-character target-absent strings now report equality while exact/contains-marker flags stay false; an unequal string with the same length remains different. Existing ACK/linebreak and reader/ownership cases pass. Black/isort and diff checks pass. Architecture/composition:5 contracts kept,0 broken.
+
+Independent diagnosis by Luna Max reproduced the pure classifier defect. Completed Claude read review found no actionable blocker; it read the current code and relied on root's test evidence rather than executing tests. Source comparisons confirm all five runner prompt/case/observer/phase/final acceptance functions remain unchanged from6373c456. The stale Graphify graph has no fixture nodes; source inspection verifies observer-to-classifier wiring and strict result validation directly. No DB migration, production persistence/API change or separate external contract applies.
+
+Composition verdict: PASS for this diagnostic correction, with existing bounded native-reader availability limits unchanged. It does not repair or rerun T122's FAILED native journey, prove exact model-visible prompt bytes, or close T077/T116/T120/native acceptance. [Preserved real failure](validation-t122-native.json).

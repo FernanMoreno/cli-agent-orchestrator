@@ -468,3 +468,12 @@ T120 checkpoint offline integrado:1299 pytest/433 subtests, composición5/0,13 a
 
 
 - [ ] T122 [US4] [FR101/SC085] Diagnose the first unobserved incoming send_message argument boundary after e609ead2's one-codepoint literal-body mismatch. Add disabled-by-default, privately source-bound fixed-body equality/length observations before MCP dispatch, preserve all input bytes and strict acceptance, collect sealed post-cleanup prefix evidence on partial failure, test privacy/shape/oversize/duplicate/default compatibility and pass-through, independently review/integrate/check composition, then run one newly instrumented source-bound serial case. Do not rewrite punctuation or claim model cause from PG/frame evidence.
+
+
+- [x] T123 [US4] [FR102/SC086] Fix reproduced diagnostic-only native/rendered equality misclassification when both lack the target; retain ACK/linebreak/multipart priorities, target flags and strict acceptance. Actual SQLite observer RED/GREEN, independent review, composition and main integration; no unchanged native rerun.
+
+
+T122 actual source6373c456 failed sender_last_unicode_not_verified123.317s/min8776MiB. The one sealed incoming argument already differs before MCP dispatch (exact=false,50UTF8bytes); native/rendered public text equal but target absent. Receiver ACK passes; no second phase/restart/final offer acceptance. Original failure/gates/source-bound cleanup preserved; parent PG exited0, exact resources absent/unrelated preserved. No unchanged retry; no model-visible bytes or model cause claimed. [Actual result](validation-t122-native.json). T077/T116/T120 acceptance remains open.
+
+
+T123 diagnostic correction verified: actual SQLite observer RED;144 tests/3 warnings GREEN, composition5/0, Black/isort/diff checks and completed independent read review. Equality and target validity remain distinct; native FAILED/source6373 receipt unchanged and no native rerun. [Validation](validation-t123.md).

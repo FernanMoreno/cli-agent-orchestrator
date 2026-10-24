@@ -596,7 +596,12 @@ def _observe_payload(request: Any, target: Any, *, validated: bool = False) -> d
             rendered_public=rendered_shape,
             text_part_shapes=part_shapes,
             classification=_classify(
-                native_public, native_shape, rendered_shape, len(parts), expected_marker
+                native_public,
+                native_shape,
+                rendered_shape,
+                len(parts),
+                expected_marker,
+                native_equals_rendered=native_equals_rendered,
             ),
             raw_model_response_observed=False,
         )
@@ -614,6 +619,8 @@ def _classify(
     rendered_shape: dict[str, Any],
     parts: int,
     expected_marker: str = MARKER,
+    *,
+    native_equals_rendered: bool = False,
 ) -> str:
     if parts > 1:
         return "multiple_native_text_parts"
@@ -631,6 +638,8 @@ def _classify(
         if not native and rendered_shape["exact_marker"]:
             return "rendered_marker_native_missing"
         return "ack_not_exact"
+    if native_equals_rendered:
+        return "native_equals_rendered"
     if native == MARKER and rendered_shape["exact_marker"]:
         return "native_equals_rendered"
     if native == "" or not native_shape["contains_marker"]:

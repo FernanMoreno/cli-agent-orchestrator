@@ -1,0 +1,82 @@
+{
+  "case_gates_closed": true,
+  "case_id": "generic_message",
+  "cleanup_failures": [],
+  "elapsed_seconds": 123.317,
+  "error_code": "sender_last_unicode_not_verified",
+  "exact_owned_container_absent": true,
+  "exact_owned_network_absent": true,
+  "final_offer_gate_reached": false,
+  "full_source_cleanup_predicate_verified": true,
+  "minimum_admission_mib": 8776,
+  "native_acceptance_claimed": false,
+  "native_text_evidence": {
+    "acceptance_input_changed": false,
+    "active_receipt_bound": true,
+    "assistant_agent_matches": true,
+    "assistant_turn_completed": true,
+    "native_equals_rendered": true,
+    "native_public": {
+      "characters": 69,
+      "compact_marker": false,
+      "contains_marker": false,
+      "exact_marker": false,
+      "lines": 1,
+      "standalone_marker_line": false
+    },
+    "owned_major2_root": true,
+    "raw_model_response_observed": false,
+    "rendered_public": {
+      "characters": 69,
+      "compact_marker": false,
+      "contains_marker": false,
+      "exact_marker": false,
+      "lines": 1,
+      "standalone_marker_line": false
+    },
+    "status": "observed",
+    "user_parent_bound": true
+  },
+  "operator_auth_unchanged": true,
+  "parent_pg_closed": true,
+  "phases": [
+    {
+      "durable_turn_completed": false,
+      "elapsed_seconds": 75.104,
+      "last_receipt_unicode_verified": false,
+      "name": "before_restart",
+      "receiver_ack_exact": true,
+      "receiver_model_seconds": 6.313,
+      "receiver_turn_completed_once": true,
+      "sender_model_within_75_seconds": false,
+      "sender_terminal_closed_seconds": 16.873,
+      "sender_terminal_closed_within_75_seconds": true
+    }
+  ],
+  "private_native_receipt_sha256": "8140525d446443984598106c1d7aafb65a4d65b8e2e646bfbe995cad7d42dc34",
+  "private_state_removed": true,
+  "result": "FAILED",
+  "schema": "caos.spec025.t122.native-failed.sanitized.v1",
+  "sender_message_argument_diagnostic": {
+    "acceptance_input_changed": false,
+    "expected_phase_count": 2,
+    "observations": [
+      {
+        "exact": false,
+        "ordinal": 1,
+        "status": "compared",
+        "utf8_length": 50
+      }
+    ],
+    "observed_count": 1,
+    "reason": "none",
+    "schema": "spec025.t122.send-message-argument-diagnostic.v1",
+    "sealed_raw_copy_verified": true,
+    "status": "observed_prefix",
+    "two_phase_arguments_exact": false
+  },
+  "source_count": 523,
+  "source_head": "6373c456dab2185485e35949e0df6e90b82e9f20",
+  "source_unchanged": true,
+  "unrelated_resources_preserved": true
+}
