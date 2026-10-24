@@ -1,6 +1,6 @@
 # T110 — exact trusted-loopback source ownership
 
-Status: observer correction integrated and offline verified; fresh v2 native acceptance pending. T110/T104 remain open and R2 stays FAILED.
+Status: bounded observer correction integrated, offline verified and actual R3 source-owner gate passed. T110 complete in that lane; the full R3 case FAILED later at sender LAST, so T104/global acceptance remain open. R2 stays FAILED.
 
 The old capability predicate required owner_principal_id=None and owner_source=unowned. A real Starlette loopback Request through production optional_creation_principal returns a sealed local_operator identity when IdP configuration and browser deployment are absent; production register_source records authenticated_creation with that exact owner. The regression exercised the actual factory path and reproduced the old predicate's rejection, with local-bearer access mocked so no operator auth file was read.
 
@@ -10,6 +10,8 @@ The real caller records six allowlisted booleans from already-read context and r
 
 Root integrated configured fixture suite:34 tests passed in62.80s,3 existing deprecation warnings, normal project coverage. Its19% focused coverage is not global acceptance; no project settings/thresholds changed. Tests use the real sealed principal path, reject foreign/unsealed/wrong-owner/unowned cases, exercise current process/loopback trust, all diagnostic failure positions, raw-value canary dropping and incomplete/false/extra maps. Self-check, Black/isort and JSON checks pass. Claude read-only review found no blocking trust/wiring/privacy issue; the lead reviewed the actual correction and preserved the immutable R2 source-bound failure.
 
-This covers one local API ownership lane and the selected Go model fixture. OAuth/JWT/browser/global authentication and native message acceptance remain open. The API's real next source row and full native tool-offer/message/ACK/restart/cleanup flow must pass on freshly committed bindings.
+This covers one local API ownership lane and the selected Go model fixture. OAuth/JWT/browser/global authentication and native message acceptance remain open. At the preparation checkpoint, the next real source row and full native flow required fresh bindings. R3 below verifies the owner correction and preserves the later independent LAST failure.
 
 Final integrated composition check: 412 files, 1834 dependencies, five contracts kept and zero broken. Root Black, isort, v2 self-check and diff checks passed. These checks do not replace the pending native run.
+
+R3 actual revalidation on e6352bfe confirms the bounded T110 correction: all six trusted-source/owner/hash/fingerprint booleans passed and both native message phases started. The complete case FAILED later at the separate sender-LAST gate; T104 remains open and the result does not accredit all authentication modes. T110's observer correction is complete in this sealed local-operator lane. [R3](validation-t104-r3-native.json).

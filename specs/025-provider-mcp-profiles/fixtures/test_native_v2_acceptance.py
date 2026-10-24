@@ -23,6 +23,240 @@ sys.modules[SPEC.name] = runner
 SPEC.loader.exec_module(runner)
 
 
+@pytest.mark.parametrize("http_status", [200, 202, 503, None])
+def test_sender_last_diagnostic_keeps_http_and_closed_turn_distinct(http_status):
+    body = {
+        "output": "Validado\nñ, 中文.\nprivate-receipt-canary",
+        "token": "private-field-canary",
+    }
+    state = {"status": "completed", "turn_sequence": 1, "turn_completed": 1}
+    result = runner._sender_last_observation(http_status, body, state, 1, 10.796)
+    assert result["http_status"] == http_status
+    assert result["terminal_closed_for_input"] is True
+    assert result["literal_unicode_present"] is False
+    assert result["whitespace_joined_unicode_present"] is (http_status == 200)
+    assert "private-" not in json.dumps(result)
+    assert result["acceptance_input_changed"] is False
+
+
+def test_sender_last_diagnostic_never_uses_prompt_or_range_markers():
+    observation = runner._sender_last_observation(
+        200,
+        {"output": runner.LAST_RECEIPT},
+        {"status": "processing", "turn_sequence": 2, "turn_completed": 1},
+        2,
+        5.0,
+    )
+    assert observation["literal_unicode_present"] is True
+    assert observation["terminal_closed_for_input"] is False
+    for state in (
+        {"status": "completed", "turn_sequence": True, "turn_completed": True},
+        {"status": "completed", "turn_sequence": 1, "turn_completed": 1},
+        {"status": "unknown", "turn_sequence": 2, "turn_completed": 2},
+        None,
+    ):
+        assert not runner._sender_last_observation(202, None, state, 2, 5.0)[
+            "terminal_closed_for_input"
+        ]
+
+
+def test_completed_sender_without_literal_is_reported_as_last_failure():
+    phase = {
+        "sender_model_within_75_seconds": False,
+        "receiver_model_within_75_seconds": True,
+        "sender_terminal_closed_within_75_seconds": True,
+        "last_receipt_unicode_verified": False,
+    }
+    assert runner._model_phase_failure_code(phase) == "sender_last_unicode_not_verified"
+    for update in (
+        {"sender_terminal_closed_within_75_seconds": False},
+        {"sender_terminal_closed_within_75_seconds": 1},
+        {"last_receipt_unicode_verified": True},
+    ):
+        assert runner._model_phase_failure_code({**phase, **update}) == (
+            "model_phase_exceeded_75_seconds"
+        )
+    assert (
+        runner._model_phase_failure_code({**phase, "sender_model_within_75_seconds": True})
+        == "model_phase_exceeded_75_seconds"
+    )
+
+
+def test_sender_failure_probe_uses_owned_current_context_and_reaping_capture(monkeypatch):
+    calls = []
+    capture = object()
+
+    def observe_bounded(**kwargs):
+        calls.append(kwargs)
+        return {"status": "observed", "acceptance_input_changed": False}
+
+    def load(filename):
+        if filename == "native_v2_text_probe.py":
+            return SimpleNamespace(observe_bounded=observe_bounded)
+        assert filename == "native_phase_readers.py"
+        return SimpleNamespace(capture_bytes=capture)
+
+    monkeypatch.setattr(runner, "_load_failure_diagnostic_fixture", load)
+    monkeypatch.setattr(runner, "PINNED_PYTHON", Path("/private/venv/bin/python"))
+    monkeypatch.setattr(runner.time, "monotonic", lambda: 10.0)
+    context = {
+        "phase": {
+            "sender_terminal_closed_within_75_seconds": True,
+            "last_receipt_unicode_verified": False,
+        },
+        "terminals": {"sender": {"id": "a1b2c3d4"}},
+        "server": SimpleNamespace(database_config_path=Path("/owned/pg.json")),
+        "root": Path("/owned/root"),
+        "cao_home": Path("/owned/root/home/.aws/cli-agent-orchestrator"),
+        "last_viewport": "private-screen-canary",
+        "last_text": "private-result-canary",
+    }
+    result = runner._capture_sender_native_failure_diagnostic(context, 19.0)
+    assert result == {"status": "observed", "acceptance_input_changed": False}
+    assert len(calls) == 1
+    assert calls[0]["deadline"] == 19.0
+    assert calls[0]["capture"] is capture
+    assert calls[0]["database_config_file"] == context["server"].database_config_path
+    assert calls[0]["expected_agent"] == "t104-v2-sender"
+    assert calls[0]["rendered"] == context["last_text"]
+    assert "private-" not in json.dumps(result)
+    calls.clear()
+    assert runner._capture_sender_native_failure_diagnostic(context, 10.0)["status"] == "deadline"
+    assert not calls
+    context["phase"]["last_receipt_unicode_verified"] = True
+    assert runner._capture_sender_native_failure_diagnostic(context, 19.0)["status"] == (
+        "not_applicable"
+    )
+    assert not calls
+
+
+def test_failure_diagnostic_source_pins_and_shared_deadline_wiring():
+    import ast
+    import inspect
+
+    paths = runner.SOURCE_PATHS
+    for filename in (
+        "native_v2_text_probe.py",
+        "test_native_v2_text_probe.py",
+        "native_phase_readers.py",
+        "native_v1_probe.py",
+    ):
+        assert "specs/025-provider-mcp-profiles/fixtures/" + filename in paths
+    tree = ast.parse(inspect.getsource(runner._run_enabled))
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    sender_call = next(
+        node
+        for node in calls
+        if isinstance(node.func, ast.Name)
+        and node.func.id == "_capture_sender_native_failure_diagnostic"
+    )
+    receiver_call = next(
+        node
+        for node in calls
+        if isinstance(node.func, ast.Name)
+        and node.func.id == "_capture_receiver_failure_diagnostic"
+    )
+    assert sender_call.lineno < receiver_call.lineno
+    assert isinstance(sender_call.args[1], ast.Name)
+    assert sender_call.args[1].id == "diagnostic_deadline"
+    deadline = next(kw.value for kw in receiver_call.keywords if kw.arg == "shared_deadline")
+    assert isinstance(deadline, ast.Name) and deadline.id == "diagnostic_deadline"
+    assert any(
+        isinstance(node.func, ast.Name) and node.func.id == "_model_phase_failure_code"
+        for node in calls
+    )
+
+
+def test_receiver_diagnostics_do_not_restart_an_expired_shared_budget(monkeypatch):
+    monkeypatch.setattr(runner.time, "monotonic", lambda: 20.0)
+    monkeypatch.setattr(runner, "_copy_receiver_log", lambda *a: pytest.fail("late log read"))
+    monkeypatch.setattr(runner, "_capture_receiver_panes", lambda *a: pytest.fail("late pane read"))
+    result = runner._capture_receiver_failure_diagnostic(
+        receiver={"id": "a1b2c3d4", "name": "owned"},
+        server=object(),
+        requests_module=object(),
+        journey=object(),
+        socket_path=None,
+        socket_id=None,
+        sid=None,
+        session_name=None,
+        cao_home=None,
+        raw_dir=None,
+        database_target=None,
+        shared_deadline=20.0,
+    )
+    assert result["status"] == "deadline_exceeded"
+    assert result["within_shared_deadline"] is False
+    assert result["terminal_log"]["status"] == "not_attempted"
+
+
+def test_invalid_last_json_is_recorded_before_original_error_propagates():
+    class Response:
+        status_code = 200
+
+        def json(self):
+            raise ValueError("private-payload-canary")
+
+    phase = {"sender_last_observations": [], "sender_last_observations_truncated": False}
+    with pytest.raises(ValueError):
+        runner._sender_last_body(Response(), phase, 1, 4.0)
+    [sample] = phase["sender_last_observations"]
+    assert sample["http_status"] == 200
+    assert sample["output_body_state"] == "invalid_json"
+    assert not sample["output_string_observed"]
+    assert not sample["literal_unicode_present"]
+    assert "private-" not in json.dumps(phase)
+
+
+def test_unobserved_last_on_completed_sender_is_unverified_not_text_attribution():
+    sample = runner._sender_last_observation(
+        202, None, {"status": "completed", "turn_sequence": 1, "turn_completed": 1}, 1, 5.0
+    )
+    assert not sample["output_string_observed"]
+    assert not sample["literal_unicode_present"]
+    assert (
+        runner._model_phase_failure_code(
+            {
+                "sender_model_within_75_seconds": False,
+                "receiver_model_within_75_seconds": True,
+                "sender_terminal_closed_within_75_seconds": sample["terminal_closed_for_input"],
+                "last_receipt_unicode_verified": sample["literal_unicode_present"],
+            }
+        )
+        == "sender_last_unicode_not_verified"
+    )
+
+
+def test_actual_private_home_preparation_meets_native_probe_owner_modes(tmp_path):
+    import ast
+    import inspect
+    import stat
+
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    tree = ast.parse(inspect.getsource(runner._run_enabled))
+    assignments = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id in {"aws_home", "cao_home", "opencode_config_dir"}
+    ]
+    assignments.sort(key=lambda node: node.lineno)
+    namespace = {"home": home, "_private_directory": runner._private_directory}
+    old_umask = os.umask(0o022)
+    try:
+        exec(
+            compile(ast.Module(body=assignments, type_ignores=[]), "actual-preparation", "exec"),
+            namespace,
+        )
+    finally:
+        os.umask(old_umask)
+    for path in (home / ".aws", namespace["cao_home"], namespace["opencode_config_dir"]):
+        assert stat.S_IMODE(path.stat().st_mode) == 0o700
+
+
 def test_public_gate_is_closed_without_reading_execution_manifest(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", [str(RUNNER_PATH)])
     monkeypatch.setattr(

@@ -116,6 +116,10 @@ SOURCE_PATHS = (
     "specs/025-provider-mcp-profiles/fixtures/run_native_v2_acceptance.py",
     "specs/025-provider-mcp-profiles/fixtures/native-v2-collaboration-acceptance-profiles.json",
     "specs/025-provider-mcp-profiles/fixtures/test_native_v2_acceptance.py",
+    "specs/025-provider-mcp-profiles/fixtures/native_v2_text_probe.py",
+    "specs/025-provider-mcp-profiles/fixtures/test_native_v2_text_probe.py",
+    "specs/025-provider-mcp-profiles/fixtures/native_phase_readers.py",
+    "specs/025-provider-mcp-profiles/fixtures/native_v1_probe.py",
 )
 CLOSED_CANDIDATE_RELATIVE_PATH = (
     "specs/025-provider-mcp-profiles/fixtures/run_native_v2_acceptance.py"
@@ -3847,6 +3851,152 @@ def _read_private_turn_receipt(target, receiver_id, destination, deadline):
     return result
 
 
+def _sender_last_observation(
+    http_status, body, terminal, sequence, elapsed_seconds, *, body_parse_failed=False
+):
+    """Project existing LAST/state reads without changing their acceptance input."""
+    text = body.get("output") if http_status == 200 and type(body) is dict else None
+    try:
+        size = len(text.encode("utf-8")) if type(text) is str else None
+    except UnicodeError:
+        size = None
+    valid_text = type(size) is int and size <= OUTPUT_RANGE_MAX_BYTES
+    state = terminal if type(terminal) is dict else {}
+    status = state.get("status")
+    status = (
+        status
+        if type(status) is str and status in {"idle", "completed", "processing", "error", "unknown"}
+        else "other"
+    )
+    turn_sequence = state.get("turn_sequence")
+    turn_completed = state.get("turn_completed")
+    closed = (
+        status == "completed"
+        and type(sequence) is int
+        and 0 < sequence <= 2**63 - 1
+        and type(turn_sequence) is int
+        and type(turn_completed) is int
+        and turn_sequence == turn_completed == sequence
+    )
+    return {
+        "http_status": (
+            http_status if type(http_status) is int and 100 <= http_status <= 599 else None
+        ),
+        "output_body_state": (
+            "invalid_json"
+            if body_parse_failed is True
+            else (
+                "mapping"
+                if type(body) is dict and http_status == 200
+                else "non_mapping" if http_status == 200 else "not_read"
+            )
+        ),
+        "output_string_observed": valid_text,
+        "output_utf8_bytes": size if valid_text else None,
+        "output_lines": len(text.splitlines()) if valid_text else None,
+        "literal_unicode_present": valid_text and LAST_RECEIPT in text,
+        "whitespace_joined_unicode_present": valid_text and LAST_RECEIPT in " ".join(text.split()),
+        "terminal_status": status,
+        "terminal_closed_for_input": closed,
+        "observed_by_elapsed_seconds": round(max(0.0, elapsed_seconds), 3),
+        "acceptance_input_changed": False,
+    }
+
+
+def _record_sender_last_observation(phase, observation):
+    if len(phase["sender_last_observations"]) < 256:
+        phase["sender_last_observations"].append(observation)
+    else:
+        phase["sender_last_observations_truncated"] = True
+
+
+def _sender_last_body(response, phase, sequence, elapsed_seconds):
+    if response.status_code != 200:
+        return None
+    try:
+        return response.json()
+    except Exception:
+        _record_sender_last_observation(
+            phase,
+            _sender_last_observation(
+                response.status_code,
+                None,
+                None,
+                sequence,
+                elapsed_seconds,
+                body_parse_failed=True,
+            ),
+        )
+        raise
+
+
+def _model_phase_failure_code(phase):
+    if (
+        phase.get("sender_model_within_75_seconds") is False
+        and phase.get("sender_terminal_closed_within_75_seconds") is True
+        and phase.get("last_receipt_unicode_verified") is False
+    ):
+        return "sender_last_unicode_not_verified"
+    return "model_phase_exceeded_75_seconds"
+
+
+def _load_failure_diagnostic_fixture(filename):
+    if filename not in {"native_v2_text_probe.py", "native_phase_readers.py"}:
+        raise GateError("failure_diagnostic_source_binding_invalid")
+    relative = "specs/025-provider-mcp-profiles/fixtures/" + filename
+    path = REPO / relative
+    expected = (RUN_MANIFEST or {}).get("source_sha256s", {}).get(relative)
+    if not _digest_shape(expected) or path.is_symlink() or _sha256(path) != expected:
+        raise GateError("failure_diagnostic_source_binding_invalid")
+    module_name = "spec025_t111_" + path.stem
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise GateError("failure_diagnostic_source_binding_invalid")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    if _sha256(path) != expected:
+        raise GateError("failure_diagnostic_source_binding_invalid")
+    return module
+
+
+def _capture_sender_native_failure_diagnostic(context, deadline):
+    phase = context.get("phase")
+    if (
+        type(phase) is not dict
+        or phase.get("sender_terminal_closed_within_75_seconds") is not True
+        or phase.get("last_receipt_unicode_verified") is not False
+    ):
+        return {"status": "not_applicable", "acceptance_input_changed": False}
+    if time.monotonic() >= deadline:
+        return {"status": "deadline", "acceptance_input_changed": False}
+    sender = context.get("terminals", {}).get("sender", {})
+    server = context.get("server")
+    if (
+        not _safe_terminal_identity(sender.get("id"))
+        or server is None
+        or PINNED_PYTHON is None
+        or context.get("root") is None
+        or context.get("cao_home") is None
+    ):
+        return {"status": "context_unavailable", "acceptance_input_changed": False}
+    probe = _load_failure_diagnostic_fixture("native_v2_text_probe.py")
+    readers = _load_failure_diagnostic_fixture("native_phase_readers.py")
+    return probe.observe_bounded(
+        python=str(PINNED_PYTHON),
+        source_root=str(REPO),
+        run_root=context["root"],
+        cao_home=context["cao_home"],
+        terminal_id=sender["id"],
+        database_config_file=server.database_config_path,
+        viewport=context.get("last_viewport", ""),
+        rendered=context.get("last_text", ""),
+        expected_agent="t104-v2-sender",
+        deadline=deadline,
+        capture=readers.capture_bytes,
+    )
+
+
 def _capture_receiver_failure_diagnostic(
     receiver,
     server,
@@ -3859,9 +4009,12 @@ def _capture_receiver_failure_diagnostic(
     cao_home,
     raw_dir,
     database_target,
+    shared_deadline=None,
 ):
     started = time.monotonic()
     deadline = started + 9.0
+    if shared_deadline is not None:
+        deadline = min(deadline, shared_deadline)
     result = {
         "schema": "spec025.t104.receiver-failure-diagnostic.v1",
         "status": "partial",
@@ -3872,6 +4025,11 @@ def _capture_receiver_failure_diagnostic(
         "turn": _project_turn_diagnostic(None, None),
         "receipt_row": {"status": "not_attempted", "generation_matches_turn": None},
     }
+    if started >= deadline:
+        result["status"] = "deadline_exceeded"
+        result["within_shared_deadline"] = False
+        result["within_10_seconds"] = True
+        return result
     receiver_id = receiver.get("id") if type(receiver) is dict else None
     window = receiver.get("name") if type(receiver) is dict else None
     session = receiver.get("session_name") if type(receiver) is dict else session_name
@@ -3922,6 +4080,7 @@ def _capture_receiver_failure_diagnostic(
     elapsed = time.monotonic() - started
     result["elapsed_ms"] = int(elapsed * 1000)
     result["within_10_seconds"] = elapsed <= 10.0
+    result["within_shared_deadline"] = time.monotonic() <= deadline
     if result["status"] == "partial":
         result["status"] = "captured" if elapsed <= 10.0 else "deadline_exceeded"
     return result
@@ -4220,8 +4379,9 @@ def _run_enabled(
         role_workdirs = {
             role: _private_directory(root / f"{role}-workdir") for role in ("receiver", "sender")
         }
-        cao_home = _private_directory(home / ".aws/cli-agent-orchestrator")
-        opencode_config_dir = _private_directory(home / ".aws/opencode")
+        aws_home = _private_directory(home / ".aws")
+        cao_home = _private_directory(aws_home / "cli-agent-orchestrator")
+        opencode_config_dir = _private_directory(aws_home / "opencode")
         opencode_agents_dir = _private_directory(opencode_config_dir / "agents")
         xdg_config = _private_directory(root / "xdg-config")
         opencode_data_home = _private_directory(root / "opencode-data")
@@ -4906,6 +5066,8 @@ def _run_enabled(
                 "name": phase_name,
                 "receiver_ack_exact": None,
                 "output_range_observations": {"sender": [], "receiver": []},
+                "sender_last_observations": [],
+                "sender_last_observations_truncated": False,
             }
             receipt["phases"].append(phase)
             model_start = time.monotonic()
@@ -4934,6 +5096,7 @@ def _run_enabled(
             last_rows: list[dict[str, Any]] = []
             last_viewport = ""
             sender_completed_at: float | None = None
+            sender_terminal_closed_at: float | None = None
             receiver_started_at: float | None = None
             receiver_completed_at: float | None = None
             previous_poll_started: float | None = None
@@ -4982,8 +5145,10 @@ def _run_enabled(
                     )
                     if not output_observed_in_time or output_response is None:
                         break
+                    output_body = _sender_last_body(
+                        output_response, phase, sequence, time.monotonic() - model_start
+                    )
                     if output_response.status_code == 200:
-                        output_body = output_response.json()
                         last_text = (
                             output_body.get("output", "") if isinstance(output_body, dict) else ""
                         )
@@ -4996,6 +5161,19 @@ def _run_enabled(
                     if not sender_terminal_in_time or sender_terminal is None:
                         break
                     final_terminal = sender_terminal
+                    sender_observation = _sender_last_observation(
+                        output_response.status_code,
+                        output_body,
+                        final_terminal,
+                        sequence,
+                        time.monotonic() - model_start,
+                    )
+                    _record_sender_last_observation(phase, sender_observation)
+                    if (
+                        sender_terminal_closed_at is None
+                        and sender_observation["terminal_closed_for_input"] is True
+                    ):
+                        sender_terminal_closed_at = time.monotonic()
                     _attach_range_turn_fields(
                         sender_range_sample,
                         sender_terminal,
@@ -5105,6 +5283,19 @@ def _run_enabled(
             ]
             phase["model_seconds"] = max(measured_model_phases, default=None)
             phase["last_receipt_unicode_verified"] = LAST_RECEIPT in last_text
+            raw_sender_closed_seconds = (
+                sender_terminal_closed_at - model_start
+                if sender_terminal_closed_at is not None
+                else None
+            )
+            phase["sender_terminal_closed_seconds"] = (
+                round(raw_sender_closed_seconds, 3)
+                if raw_sender_closed_seconds is not None
+                else None
+            )
+            phase["sender_terminal_closed_within_75_seconds"] = _within_budget(
+                raw_sender_closed_seconds, MODEL_PHASE_SECONDS
+            )
             phase["durable_turn_completed"] = sender_completed_at is not None
             phase["receiver_turn_completed_once"] = (
                 receiver_completed_at is not None
@@ -5148,7 +5339,7 @@ def _run_enabled(
                 phase["sender_model_within_75_seconds"] is not True
                 or phase["receiver_model_within_75_seconds"] is not True
             ):
-                raise GateError("model_phase_exceeded_75_seconds")
+                raise GateError(_model_phase_failure_code(phase))
             api_rows_now = _api_rows(requests, server.url, receiver_id)
             agui_matches = capture.take_until(time.monotonic() + 1.0)
             capture.stop()
@@ -5497,14 +5688,28 @@ def _run_enabled(
     except BaseException as error:
         _SIGTERM_CLEANUP_ACTIVE = True
         if isinstance(error, _ControlledSigterm):
+            receipt["sender_failure_diagnostic"] = {
+                "status": "skipped_for_sigterm_cleanup",
+                "acceptance_input_changed": False,
+            }
             receipt["receiver_failure_diagnostic"] = {
                 "schema": "spec025.t104.receiver-failure-diagnostic.v1",
                 "status": "skipped_for_sigterm_cleanup",
                 "within_10_seconds": False,
             }
         else:
+            diagnostic_locals = locals()
+            diagnostic_deadline = time.monotonic() + 9.0
             try:
-                diagnostic_locals = locals()
+                receipt["sender_failure_diagnostic"] = _capture_sender_native_failure_diagnostic(
+                    diagnostic_locals, diagnostic_deadline
+                )
+            except BaseException:
+                receipt["sender_failure_diagnostic"] = {
+                    "status": "diagnostic_failed_closed",
+                    "acceptance_input_changed": False,
+                }
+            try:
                 receipt["receiver_failure_diagnostic"] = _capture_receiver_failure_diagnostic(
                     receiver=diagnostic_locals.get("terminals", {}).get("receiver"),
                     server=diagnostic_locals.get("server"),
@@ -5517,6 +5722,7 @@ def _run_enabled(
                     cao_home=diagnostic_locals.get("cao_home"),
                     raw_dir=diagnostic_locals.get("raw_dir"),
                     database_target=getattr(diagnostic_locals.get("targets"), "main", None),
+                    shared_deadline=diagnostic_deadline,
                 )
             except BaseException:
                 receipt["receiver_failure_diagnostic"] = {
@@ -5524,6 +5730,9 @@ def _run_enabled(
                     "status": "diagnostic_failed_closed",
                     "within_10_seconds": False,
                 }
+            receipt["failure_diagnostics_within_shared_budget"] = (
+                time.monotonic() <= diagnostic_deadline
+            )
         acceptance_failure_stage = _message_live_failure_stage(error)
         if acceptance_failure_stage is not None:
             receipt["message_live_acceptance_failure_stage"] = acceptance_failure_stage

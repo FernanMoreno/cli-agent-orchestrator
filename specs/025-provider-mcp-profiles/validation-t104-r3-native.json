@@ -1,0 +1,36 @@
+{
+  "acceptance_claimed": false,
+  "cleanup_failures": [],
+  "elapsed_seconds": 158.507,
+  "error_code": "model_phase_exceeded_75_seconds",
+  "error_type": "GateError",
+  "execution_gates_closed": true,
+  "global_acceptance_claimed": false,
+  "minimum_admission_mib": 9316,
+  "operator_auth_unchanged": true,
+  "owned_writers_isolated_case_database_private_state_clean": true,
+  "phase_1_exact_message_ack_unicode_agui_pass": true,
+  "phase_2_receiver_ack_exact": true,
+  "phase_2_receiver_model_seconds": 4.955,
+  "phase_2_sender_closed_samples": 111,
+  "phase_2_sender_literal_unicode_verified": false,
+  "phase_2_sender_status_counts": {
+    "completed": 111,
+    "processing": 10
+  },
+  "private_receipt_sha256": "e7390b71a8916c1c63d108e888e4e44fa8daa6f8a21806f07064f080438ff440",
+  "result": "FAILED",
+  "schema": "caos.spec025.t104.r3.sanitized.v1",
+  "sender_failure_cause": "Exact sender LAST predicate unmet; completion samples observed. Native text versus rendering/extraction cause not yet established.",
+  "shared_owned_parent_postgres_retained": true,
+  "source_head": "e6352bfe3feade15a4c0b0816f0f87cb65f9e40f",
+  "source_unchanged": true,
+  "trusted_source_owner_six_checks": {
+    "capability_hash_matches": true,
+    "kind_exact": true,
+    "owner_exact": true,
+    "source_current": true,
+    "tool_fingerprint_matches": true,
+    "trusted_api_context": true
+  }
+}

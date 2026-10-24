@@ -8,8 +8,10 @@ import hashlib
 import importlib.util
 import inspect
 import json
+import math
 import os
 import re
+import selectors
 import shutil
 import stat
 import subprocess
@@ -146,7 +148,7 @@ sys.path[:0] = [
 import native_acceptance_contract as acceptance
 import native_v1_probe as native_probe
 from native_phase_observer import NativePhaseObserver, RoleScope
-from native_phase_readers import OwnedPhaseReaders, http_json_bytes
+from native_phase_readers import HTTPStatusError, OwnedPhaseReaders, http_json_bytes
 
 case = json.loads(
     (
@@ -326,6 +328,713 @@ def admit(phase):
 
 def _bounded_count(value):
     return value if type(value) is int and 0 <= value <= 2**63 - 1 else None
+
+
+_INBOX_FAILURE_SNAPSHOT_GRACE_SECONDS = 10.0
+# Reserve two seconds from the ten-second grace for killing and reaping the child.
+_INBOX_FAILURE_SNAPSHOT_WORK_SECONDS = 7.5
+_INBOX_FAILURE_SNAPSHOT_REAP_SECONDS = 1.0
+_INBOX_FAILURE_SNAPSHOT_MAX_BYTES = 4096
+_INBOX_FAILURE_SNAPSHOT_ROW_LIMIT = 10
+_INBOX_FAILURE_STATUSES = frozenset({"pending", "delivered", "reconcile", "failed"})
+_INBOX_FAILURE_TERMINAL_STATES = frozenset(
+    {
+        "unknown",
+        "idle",
+        "processing",
+        "completed",
+        "waiting_user_answer",
+        "waiting_quota",
+        "reconcile",
+        "error",
+    }
+)
+
+
+def _failure_snapshot_rows_summary(rows, expected_messages, sender_id, receiver_id):
+    """Reduce private inbox rows to bounded fixed-field diagnostic evidence."""
+    summary = {
+        "status": "invalid_payload",
+        "row_count": 0,
+        "valid_id_count": 0,
+        "sender_receiver_match": False,
+        "expected_messages_match": False,
+        "statuses": [],
+    }
+    if type(rows) is not list or len(rows) > _INBOX_FAILURE_SNAPSHOT_ROW_LIMIT:
+        summary["row_count"] = (
+            min(len(rows), _INBOX_FAILURE_SNAPSHOT_ROW_LIMIT + 1) if type(rows) is list else 0
+        )
+        return summary
+    summary["status"] = "observed"
+    summary["row_count"] = len(rows)
+    summary["valid_id_count"] = sum(
+        1 for row in rows if type(row) is dict and type(row.get("id")) is int and row["id"] > 0
+    )
+    private_rows = []
+    for row in rows:
+        if (
+            type(row) is not dict
+            or set(row) != {"id", "sender_id", "receiver_id", "message", "status", "created_at"}
+            or type(row.get("id")) is not int
+            or row["id"] <= 0
+            or type(row.get("sender_id")) is not str
+            or type(row.get("receiver_id")) is not str
+            or type(row.get("message")) is not str
+            or type(row.get("status")) is not str
+            or type(row.get("created_at")) is not str
+        ):
+            summary["status"] = "invalid_payload"
+            continue
+        try:
+            created_at = datetime.datetime.fromisoformat(row["created_at"])
+        except ValueError:
+            summary["status"] = "invalid_payload"
+            continue
+        if created_at.isoformat() != row["created_at"]:
+            summary["status"] = "invalid_payload"
+            continue
+        status = row["status"] if row["status"] in _INBOX_FAILURE_STATUSES else "other"
+        summary["statuses"].append(status)
+        private_rows.append(
+            (
+                row["id"],
+                row["sender_id"],
+                row["receiver_id"],
+                row["message"],
+                row["status"],
+                row["created_at"],
+            )
+        )
+    summary["sender_receiver_match"] = (
+        summary["status"] == "observed"
+        and len(rows) == len(expected_messages)
+        and len(private_rows) == len(rows)
+        and all(row[1] == sender_id and row[2] == receiver_id for row in private_rows)
+    )
+    summary["expected_messages_match"] = summary["sender_receiver_match"] and sorted(
+        row[3] for row in private_rows
+    ) == sorted(expected_messages)
+    return summary
+
+
+def _record_failure_receiver_observation(phase, state, *, phase_elapsed_seconds):
+    """Cache only the latest identity-bound receiver counters already read in the loop."""
+    status = state.get("status")
+    phase["_failure_receiver_state"] = {
+        "bound": True,
+        "http_status": (
+            state.get("http_status")
+            if type(state.get("http_status")) is int and 100 <= state["http_status"] <= 599
+            else None
+        ),
+        "status": status if status in _INBOX_FAILURE_TERMINAL_STATES else "other",
+        "turn_sequence": _bounded_count(state.get("turn_sequence")),
+        "turn_completed": _bounded_count(state.get("turn_completed")),
+        "source": "phase_poll",
+        "phase_elapsed_seconds": round(max(0.0, phase_elapsed_seconds), 3),
+    }
+
+
+def _run_bounded_private_child(argv, payload, stop, *, max_output_bytes):
+    """Run a fixed diagnostic child with private stdin and incremental output bounds."""
+    if (
+        type(stop) not in (int, float)
+        or not math.isfinite(stop)
+        or type(max_output_bytes) is not int
+        or not 1 <= max_output_bytes <= _INBOX_FAILURE_SNAPSHOT_MAX_BYTES
+        or type(argv) is not list
+        or len(argv) != 5
+        or argv[0] != sys.executable
+        or argv[1] != "-I"
+        or argv[2] != "-B"
+        or argv[3] != "-c"
+        or type(argv[4]) is not str
+    ):
+        raise ValueError("failure_snapshot_context_invalid")
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if len(encoded) > 65536:
+        raise ValueError("failure_snapshot_input_limit")
+    if stop - time.monotonic() <= 0:
+        raise TimeoutError("failure_snapshot_deadline")
+    process = subprocess.Popen(
+        argv,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
+        bufsize=0,
+    )
+    selector = None
+    output = bytearray()
+    input_offset = 0
+    stdin_open = False
+    stdout_open = False
+    try:
+        stdin = process.stdin
+        stdout = process.stdout
+        if stdin is None or stdout is None:
+            raise RuntimeError("failure_snapshot_child_pipes_unavailable")
+        stdin_fd = stdin.fileno()
+        stdout_fd = stdout.fileno()
+        os.set_blocking(stdin_fd, False)
+        os.set_blocking(stdout_fd, False)
+        selector = selectors.DefaultSelector()
+        selector.register(stdout_fd, selectors.EVENT_READ, "stdout")
+        stdout_open = True
+        if encoded:
+            selector.register(stdin_fd, selectors.EVENT_WRITE, "stdin")
+            stdin_open = True
+        else:
+            stdin.close()
+
+        while stdout_open or stdin_open:
+            remaining = stop - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("failure_snapshot_deadline")
+            events = selector.select(remaining)
+            if not events:
+                raise TimeoutError("failure_snapshot_deadline")
+            for key, _ in events:
+                if time.monotonic() >= stop:
+                    raise TimeoutError("failure_snapshot_deadline")
+                if key.data == "stdin":
+                    try:
+                        written = os.write(
+                            stdin_fd,
+                            encoded[input_offset : input_offset + 4096],
+                        )
+                    except BlockingIOError:
+                        continue
+                    except BrokenPipeError:
+                        raise RuntimeError("failure_snapshot_child_unavailable") from None
+                    if written <= 0:
+                        raise RuntimeError("failure_snapshot_child_unavailable")
+                    input_offset += written
+                    if input_offset == len(encoded):
+                        selector.unregister(stdin_fd)
+                        stdin_open = False
+                        stdin.close()
+                else:
+                    read_limit = min(4096, max_output_bytes + 1 - len(output))
+                    try:
+                        chunk = os.read(stdout_fd, read_limit)
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        selector.unregister(stdout_fd)
+                        stdout_open = False
+                        continue
+                    if len(output) + len(chunk) > max_output_bytes:
+                        raise ValueError("failure_snapshot_output_limit")
+                    output.extend(chunk)
+
+        remaining = stop - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("failure_snapshot_deadline")
+        try:
+            process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            raise TimeoutError("failure_snapshot_deadline") from None
+        if time.monotonic() >= stop:
+            raise TimeoutError("failure_snapshot_deadline")
+        if process.returncode != 0:
+            raise RuntimeError("failure_snapshot_child_unavailable")
+        return bytes(output)
+    finally:
+        try:
+            if process.poll() is None:
+                cleanup_deadline = min(
+                    stop + 2 * _INBOX_FAILURE_SNAPSHOT_REAP_SECONDS,
+                    time.monotonic() + 2 * _INBOX_FAILURE_SNAPSHOT_REAP_SECONDS,
+                )
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(
+                        timeout=min(
+                            _INBOX_FAILURE_SNAPSHOT_REAP_SECONDS,
+                            max(0.0, cleanup_deadline - time.monotonic()),
+                        )
+                    )
+                except subprocess.TimeoutExpired:
+                    try:
+                        process.kill()
+                    except ProcessLookupError:
+                        pass
+                    remaining = cleanup_deadline - time.monotonic()
+                    if remaining > 0:
+                        process.wait(timeout=remaining)
+                    else:
+                        raise TimeoutError("failure_snapshot_child_reap_deadline") from None
+        finally:
+            if selector is not None:
+                selector.close()
+            for stream in (process.stdin, process.stdout):
+                if stream is not None and not stream.closed:
+                    stream.close()
+
+
+def _read_owned_postgres_inbox_snapshot(context, stop):
+    """Read the private inbox rows in a short-lived isolated Python child."""
+    child_source = r"""import json, re, sys
+from datetime import datetime
+
+def emit(value):
+    sys.stdout.write(json.dumps(value, separators=(",", ":")))
+
+def unavailable(status="unavailable", identity_status="unavailable"):
+    emit({"status": status, "target_identity_match": identity_status == "matched",
+          "target_identity_status": identity_status, "row_count": 0,
+          "sender_receiver_match": False, "expected_messages_match": False,
+          "api_pg_rows_match": False, "provider_variant_is_opencode_v1": False,
+          "statuses": []})
+
+def main():
+    identity_status = "unavailable"
+    try:
+        value = json.load(sys.stdin)
+        schema = value["schema"]
+        store_id = value["store_id"]
+        scope = value["scope"]
+        sender = value["sender_id"]
+        receiver = value["receiver_id"]
+        expected = value["expected_messages"]
+        api_rows = value["api_rows"]
+        api_rows_observed = value["api_rows_observed"]
+        params = value["connection_parameters"]
+        if (not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", schema)
+                or not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", store_id)
+                or schema in {"public", "information_schema"}
+                or schema.startswith("pg_")
+                or scope != "main"
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", sender)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", receiver)
+                or not isinstance(expected, list) or not 1 <= len(expected) <= 2
+                or any(not isinstance(item, str) or not item or len(item) > 4096 for item in expected)
+                or not isinstance(api_rows, list) or len(api_rows) > 10
+                or type(api_rows_observed) is not bool
+                or not isinstance(params, dict)
+                or not {"host", "port", "dbname", "user", "password", "sslmode"}.issubset(params)):
+            unavailable("invalid_context")
+            return
+        import psycopg
+        from psycopg import sql
+        params.update(connect_timeout=1,
+                      options="-c statement_timeout=500 -c lock_timeout=500 -c default_transaction_read_only=on",
+                      application_name="t112-v1-inbox-snapshot-readonly")
+        with psycopg.connect(**params) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(sql.SQL(
+                    "SELECT scope,store_id FROM {}._cao_store_identity WHERE singleton=1"
+                ).format(sql.Identifier(schema)))
+                identity = cursor.fetchone()
+                identity_match = identity == (scope, store_id)
+                identity_status = "matched" if identity_match else "mismatch"
+                if not identity_match:
+                    unavailable("ownership_mismatch", identity_status)
+                    return
+                cursor.execute(sql.SQL(
+                    "SELECT t.provider_variant,i.id,i.sender_id,i.receiver_id,"
+                    "i.message,i.status,i.created_at "
+                    "FROM {}.terminals AS t LEFT JOIN {}.inbox AS i ON i.receiver_id=t.id "
+                    "WHERE t.id=%s ORDER BY i.created_at,i.id LIMIT 11"
+                ).format(sql.Identifier(schema), sql.Identifier(schema)), (receiver,))
+                joined_rows = cursor.fetchall()
+        provider_variant_is_opencode_v1 = bool(joined_rows) and all(
+            row[0] == "opencode-v1" for row in joined_rows
+        )
+        rows = [row[1:] for row in joined_rows if row[1] is not None]
+        statuses = [
+            row[4] if row[4] in {"pending", "delivered", "reconcile", "failed"} else "other"
+            for row in rows
+        ]
+        private_rows = []
+        shape = True
+        for row in rows:
+            if (len(row) != 6 or type(row[0]) is not int or row[0] <= 0
+                    or any(type(item) is not str for item in row[1:5])
+                    or not isinstance(row[5], datetime)):
+                shape = False
+                continue
+            private_rows.append((row[0], *row[1:5], row[5].isoformat()))
+        sender_receiver_match = (
+            shape and len(private_rows) == len(rows) and len(rows) == len(expected)
+            and all(row[1] == sender and row[2] == receiver for row in private_rows)
+        )
+        expected_messages_match = (sender_receiver_match
+                                   and sorted(row[3] for row in private_rows) == sorted(expected))
+        def api_signature(items):
+            if api_rows_observed is not True or not isinstance(items, list):
+                return None
+            result = []
+            for item in items:
+                if (not isinstance(item, dict)
+                        or set(item) != {"id", "sender_id", "receiver_id", "message",
+                                         "status", "created_at"}
+                        or type(item.get("id")) is not int or item["id"] <= 0
+                        or type(item.get("sender_id")) is not str
+                        or type(item.get("receiver_id")) is not str
+                        or type(item.get("message")) is not str
+                        or type(item.get("status")) is not str
+                        or type(item.get("created_at")) is not str):
+                    return None
+                try:
+                    created_at = datetime.fromisoformat(item["created_at"])
+                except ValueError:
+                    return None
+                if created_at.isoformat() != item["created_at"]:
+                    return None
+                result.append((item["id"], item["sender_id"], item["receiver_id"],
+                               item["message"], item["status"], item["created_at"]))
+            return sorted(result)
+        api_signature_rows = api_signature(api_rows)
+        api_pg_rows_match = (
+            shape and len(private_rows) == len(rows) and api_signature_rows is not None
+            and api_signature_rows == sorted(private_rows)
+        )
+        emit({"status": "observed", "target_identity_match": True,
+              "target_identity_status": "matched",
+              "row_count": min(len(rows), 11),
+              "sender_receiver_match": bool(sender_receiver_match),
+              "expected_messages_match": bool(expected_messages_match),
+              "api_pg_rows_match": bool(api_pg_rows_match),
+              "provider_variant_is_opencode_v1": provider_variant_is_opencode_v1,
+              "statuses": statuses[:11]})
+    except Exception:
+        unavailable(identity_status=identity_status)
+
+main()
+"""
+    output = _run_bounded_private_child(
+        [sys.executable, "-I", "-B", "-c", child_source],
+        context,
+        stop,
+        max_output_bytes=_INBOX_FAILURE_SNAPSHOT_MAX_BYTES,
+    )
+    value = json.loads(output)
+    required = {
+        "status",
+        "target_identity_match",
+        "target_identity_status",
+        "row_count",
+        "sender_receiver_match",
+        "expected_messages_match",
+        "api_pg_rows_match",
+        "provider_variant_is_opencode_v1",
+        "statuses",
+    }
+    if type(value) is not dict or set(value) != required:
+        raise ValueError("failure_snapshot_child_shape")
+    if value["status"] not in {"observed", "unavailable", "ownership_mismatch", "invalid_context"}:
+        raise ValueError("failure_snapshot_child_shape")
+    if value["target_identity_status"] not in {"matched", "mismatch", "unavailable"}:
+        raise ValueError("failure_snapshot_child_shape")
+    if any(
+        type(value[key]) is not bool
+        for key in (
+            "target_identity_match",
+            "sender_receiver_match",
+            "expected_messages_match",
+            "api_pg_rows_match",
+            "provider_variant_is_opencode_v1",
+        )
+    ):
+        raise ValueError("failure_snapshot_child_shape")
+    if type(value["row_count"]) is not int or not 0 <= value["row_count"] <= 11:
+        raise ValueError("failure_snapshot_child_shape")
+    if (
+        type(value["statuses"]) is not list
+        or len(value["statuses"]) > 11
+        or any(item not in _INBOX_FAILURE_STATUSES | {"other"} for item in value["statuses"])
+    ):
+        raise ValueError("failure_snapshot_child_shape")
+    return value
+
+
+def _capture_failure_inbox_snapshot(index, message, phase, readers):
+    """Record queue and receiver facts before the ACK gate triggers cleanup."""
+    started = time.monotonic()
+    deadline = started + _INBOX_FAILURE_SNAPSHOT_WORK_SECONDS
+    snapshot = {
+        "diagnostic_only": True,
+        "status": "unavailable",
+        "elapsed_seconds": 0.0,
+        "within_deadline": False,
+        "receiver": {
+            "status": "unavailable",
+            "owned": False,
+            "source": "unavailable",
+            "http_status": None,
+            "terminal_status": "unavailable",
+            "turn_sequence": None,
+            "turn_completed": None,
+            "runtime_id_present": None,
+            "runtime_incarnation_id_present": None,
+            "native_swarm_pending": None,
+            "fresh_read_status": "not_attempted",
+            "fresh_http_status": None,
+            "snapshot_elapsed_seconds": None,
+            "phase_elapsed_seconds": None,
+        },
+        "api_inbox": {
+            "status": "unavailable",
+            "http_status": None,
+            "row_count": 0,
+            "valid_id_count": 0,
+            "sender_receiver_match": False,
+            "expected_messages_match": False,
+            "statuses": [],
+        },
+        "postgres_inbox": {
+            "status": "unavailable",
+            "target_identity_match": False,
+            "target_identity_status": "unavailable",
+            "row_count": 0,
+            "sender_receiver_match": False,
+            "expected_messages_match": False,
+            "api_pg_rows_match": False,
+            "provider_variant_is_opencode_v1": False,
+            "statuses": [],
+        },
+    }
+    phase["failure_snapshot"] = snapshot
+    api_rows = []
+    api_rows_observed = False
+    try:
+        if (
+            type(index) is not int
+            or index not in (0, 1)
+            or not isinstance(message, str)
+            or pgentered is not True
+            or not isinstance(terminals, dict)
+            or set(terminals) != {"sender", "receiver"}
+            or sender_id != terminals["sender"].get("id")
+            or receiver_id != terminals["receiver"].get("id")
+            or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", sender_id) is None
+            or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", receiver_id) is None
+            or message != (PRE_RESTART_MESSAGE, POST_RESTART_MESSAGE)[index]
+        ):
+            snapshot["status"] = "invalid_context"
+            return snapshot
+
+        target = getattr(targets, "main", None)
+        schema = getattr(target, "schema", None)
+        store_id = getattr(target, "store_id", None)
+        scope = getattr(target, "scope", None)
+        target_identity = getattr(target, "identity", None)
+        if (
+            target is None
+            or scope != "main"
+            or not isinstance(schema, str)
+            or re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", schema) is None
+            or schema in {"public", "information_schema"}
+            or schema.startswith("pg_")
+            or not isinstance(store_id, str)
+            or re.fullmatch(
+                r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}",
+                store_id,
+            )
+            is None
+            or target_identity
+            != (
+                getattr(target, "host", None),
+                getattr(target, "port", None),
+                getattr(target, "database", None),
+                schema,
+                store_id,
+            )
+        ):
+            snapshot["status"] = "invalid_context"
+            return snapshot
+        api_url = server.url
+        parsed = urlsplit(api_url)
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname != "127.0.0.1"
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+            or not parsed.port
+        ):
+            snapshot["status"] = "invalid_context"
+            return snapshot
+
+        try:
+            reader_scope = readers._check(receiver_id, min(deadline, time.monotonic() + 1.0))
+        except Exception:
+            snapshot["status"] = "invalid_context"
+            return snapshot
+
+        cached = phase.get("_failure_receiver_state")
+        if time.monotonic() < deadline:
+            state_stop = min(deadline, time.monotonic() + 1.0)
+            fresh_read_error = False
+            fresh_http_status = None
+            try:
+                state = readers._json(receiver_id, state_stop, 65537)
+                if time.monotonic() > state_stop:
+                    raise TimeoutError("failure_snapshot_deadline")
+                if type(reader_scope) is not dict or (
+                    state.get("id"),
+                    state.get("session_name"),
+                    state.get("name"),
+                ) != (receiver_id, reader_scope.get("session"), reader_scope.get("pane")):
+                    read_status = "identity_mismatch"
+                    fresh_read_error = True
+                else:
+                    snapshot["receiver"] = {
+                        "status": "observed",
+                        "owned": True,
+                        "source": "failure_snapshot",
+                        "http_status": 200,
+                        "terminal_status": (
+                            state.get("status")
+                            if state.get("status") in _INBOX_FAILURE_TERMINAL_STATES
+                            else "other"
+                        ),
+                        "turn_sequence": _bounded_count(state.get("turn_sequence")),
+                        "turn_completed": _bounded_count(state.get("turn_completed")),
+                        "runtime_id_present": type(state.get("runtime_id")) is str
+                        and bool(state.get("runtime_id")),
+                        "runtime_incarnation_id_present": type(state.get("runtime_incarnation_id"))
+                        is str
+                        and bool(state.get("runtime_incarnation_id")),
+                        "native_swarm_pending": (
+                            state.get("native_swarm_pending")
+                            if type(state.get("native_swarm_pending")) is bool
+                            else None
+                        ),
+                        "fresh_read_status": "observed",
+                        "fresh_http_status": 200,
+                        "snapshot_elapsed_seconds": round(time.monotonic() - started, 3),
+                        "phase_elapsed_seconds": None,
+                    }
+            except HTTPStatusError as error:
+                read_status = "http_error"
+                fresh_http_status = error.status_code
+                fresh_read_error = True
+            except Exception:
+                read_status = "deadline" if time.monotonic() >= state_stop else "unavailable"
+                fresh_read_error = True
+            if fresh_read_error:
+                if type(cached) is dict and cached.get("bound") is True:
+                    snapshot["receiver"] = {
+                        "status": "observed",
+                        "owned": True,
+                        "source": "phase_poll_fallback",
+                        "fresh_read_status": read_status,
+                        "fresh_http_status": fresh_http_status,
+                        "http_status": cached.get("http_status"),
+                        "terminal_status": (
+                            cached.get("status")
+                            if cached.get("status") in _INBOX_FAILURE_TERMINAL_STATES
+                            else "other"
+                        ),
+                        "turn_sequence": _bounded_count(cached.get("turn_sequence")),
+                        "turn_completed": _bounded_count(cached.get("turn_completed")),
+                        "runtime_id_present": None,
+                        "runtime_incarnation_id_present": None,
+                        "native_swarm_pending": None,
+                        "snapshot_elapsed_seconds": round(time.monotonic() - started, 3),
+                        "phase_elapsed_seconds": cached.get("phase_elapsed_seconds"),
+                    }
+                else:
+                    snapshot["receiver"]["status"] = read_status
+                    snapshot["receiver"]["fresh_read_status"] = read_status
+                    snapshot["receiver"]["fresh_http_status"] = fresh_http_status
+
+        api_stop = min(deadline, time.monotonic() + 2.0)
+        try:
+            readers._check(receiver_id, api_stop)
+            body = http_json_bytes(
+                api_url,
+                "/terminals/" + receiver_id + "/inbox/messages?limit=10",
+                api_stop,
+                65537,
+            )
+            readers._check(receiver_id, api_stop)
+            if time.monotonic() > api_stop:
+                raise TimeoutError("failure_snapshot_deadline")
+            snapshot["api_inbox"]["http_status"] = 200
+            api_rows = json.loads(body)
+            summary = _failure_snapshot_rows_summary(
+                api_rows,
+                [
+                    expected_persisted_message(item, sender_id)
+                    for item in (PRE_RESTART_MESSAGE, POST_RESTART_MESSAGE)[: index + 1]
+                ],
+                sender_id,
+                receiver_id,
+            )
+            snapshot["api_inbox"].update(summary)
+            api_rows_observed = summary["status"] == "observed"
+        except HTTPStatusError as error:
+            snapshot["api_inbox"]["status"] = "http_error"
+            snapshot["api_inbox"]["http_status"] = error.status_code
+        except Exception:
+            snapshot["api_inbox"]["status"] = (
+                "deadline" if time.monotonic() >= api_stop else "unavailable"
+            )
+
+        if time.monotonic() < deadline:
+            params = target.connection_parameters()
+            context = {
+                "connection_parameters": params,
+                "schema": schema,
+                "store_id": store_id,
+                "scope": scope,
+                "sender_id": sender_id,
+                "receiver_id": receiver_id,
+                "expected_messages": [
+                    expected_persisted_message(item, sender_id)
+                    for item in (PRE_RESTART_MESSAGE, POST_RESTART_MESSAGE)[: index + 1]
+                ],
+                "api_rows": api_rows if type(api_rows) is list else [],
+                "api_rows_observed": api_rows_observed,
+            }
+            pg_stop = min(deadline, time.monotonic() + 5.0)
+            try:
+                snapshot["postgres_inbox"] = _read_owned_postgres_inbox_snapshot(context, pg_stop)
+            except TimeoutError:
+                snapshot["postgres_inbox"]["status"] = "deadline"
+            except Exception:
+                snapshot["postgres_inbox"]["status"] = (
+                    "deadline" if time.monotonic() >= pg_stop else "unavailable"
+                )
+        else:
+            snapshot["postgres_inbox"]["status"] = "deadline"
+
+        component_statuses = [
+            snapshot[name]["status"] for name in ("receiver", "api_inbox", "postgres_inbox")
+        ]
+        observed = component_statuses.count("observed")
+        receiver_is_current = (
+            snapshot["receiver"]["status"] == "observed"
+            and snapshot["receiver"]["fresh_read_status"] == "observed"
+        )
+        if observed == 3 and receiver_is_current:
+            snapshot["status"] = "complete"
+        elif time.monotonic() >= deadline or "deadline" in component_statuses:
+            snapshot["status"] = "deadline"
+        elif observed:
+            snapshot["status"] = "partial"
+        else:
+            snapshot["status"] = "unavailable"
+        return snapshot
+    except Exception:
+        snapshot["status"] = "deadline" if time.monotonic() >= deadline else "unavailable"
+        return snapshot
+    finally:
+        elapsed = max(0.0, time.monotonic() - started)
+        snapshot["elapsed_seconds"] = round(elapsed, 3)
+        snapshot["within_deadline"] = elapsed <= _INBOX_FAILURE_SNAPSHOT_GRACE_SECONDS
+        if not snapshot["within_deadline"]:
+            snapshot["status"] = "deadline"
 
 
 class _GateError(RuntimeError):
@@ -873,6 +1582,10 @@ def _collect_message_phase(index, message, phase, readers):
                     break
                 try:
                     state = readers.read_state(data["id"], min(deadline, time.monotonic() + 1.0))
+                    if role == "receiver":
+                        _record_failure_receiver_observation(
+                            phase, state, phase_elapsed_seconds=time.monotonic() - t
+                        )
                     if not acceptance.turn_exact(state, scopes[role].expected_turn):
                         continue
                     text = readers.read_output(
@@ -926,9 +1639,12 @@ def _collect_message_phase(index, message, phase, readers):
                 time.sleep(min(0.25, remaining))
         phase["model_seconds"] = time.monotonic() - t
         phase.update(coordinator.finish())
+        if phase.get("receiver_ack_exact") is not True:
+            _capture_failure_inbox_snapshot(index, message, phase, readers)
     finally:
         if coordinator is not None:
             phase.update(coordinator.abort())
+        phase.pop("_failure_receiver_state", None)
         readers.close()
 
 
