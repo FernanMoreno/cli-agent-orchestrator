@@ -1,0 +1,55 @@
+{
+  "acceptance_claimed": false,
+  "binary_sha256": "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f",
+  "controls": [
+    {
+      "canary_bound_tool_names": [
+        "skill",
+        "execute"
+      ],
+      "cli_exit_code": 130,
+      "config_sha256": "80225406aaea770b151c0a7f6255b93789fe447fe9078c8242b5143621adc8f1",
+      "configuration_unchanged": true,
+      "control": "actual-12-rules",
+      "custom_agent_canary_requests": 3,
+      "elapsed_seconds": 11.116,
+      "remaining_owned_children": 0,
+      "standalone": true,
+      "timed_out": true
+    },
+    {
+      "canary_bound_tool_names": [
+        "skill"
+      ],
+      "cli_exit_code": 130,
+      "config_sha256": "22b2a8ef55dac350c477776c707a5f10cea1b95c5c9167615d97390bbcd6ddbe",
+      "configuration_unchanged": true,
+      "control": "actual-plus-execute-deny",
+      "custom_agent_canary_requests": 3,
+      "elapsed_seconds": 11.114,
+      "remaining_owned_children": 0,
+      "standalone": true,
+      "timed_out": true
+    }
+  ],
+  "driver_sha256": "4fa9a17fb6a387df5c116e95087a60555b2b8d83a5dba6469836a84083eaf27d",
+  "external_network_available": false,
+  "helper_sha256": {
+    "opencode_permissions.py": "8382fbc682117a8942f3f2fc9a004d771a6b83db432856cffae04a4955537464",
+    "opencode_v2.py": "c12244f9e62d0326a039d35530187842dfd4e478560c0222f9904228a8876c3c"
+  },
+  "historical_r5_identity_claimed": false,
+  "inner_harness_sha256": "e7215d7437f3693af1b31e1f2cd9577d636f2e45745de5bfa56f4fd0472d22a0",
+  "minimum_available_mib": 9588.609375,
+  "only_configuration_difference": "one appended exact execute deny rule",
+  "operator_credentials_mounted": false,
+  "private_audit_sha256": "ce95eb3967fda5212e53770e5ee6b24a46ac683751d7bb3298d39f22b3dbf76b",
+  "process_scan_limitation": "55 host /proc environment entries unreadable:53 other UIDs and2 same-UID systemd/sd-pam; private PID namespaces independently confirmed zero owned children before exit.",
+  "real_model_called": false,
+  "same_loopback_fake_provider_port": true,
+  "schema": "caos.spec025.t115.isolated-execute-deny.v1",
+  "separate_home_config_data_cache_state_database": true,
+  "separate_pid_and_network_namespaces": true,
+  "source_head": "a69248eb589df9f1d163d609093d17ed0f136700",
+  "source_policy_scope": "native tool offers; no execute invocation or direct MCP stub in this experiment"
+}

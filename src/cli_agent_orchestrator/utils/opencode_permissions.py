@@ -31,6 +31,8 @@ ALL_OPENCODE_TOOLS: List[str] = [
     "codesearch",
     "skill",
     "todowrite",
+    # Native v2 global CodeMode wrapper, separate from per-server MCP codemode.
+    "execute",
 ]
 
 # ── CAO category → OpenCode tools mapping ────────────────────────────────────
@@ -51,7 +53,9 @@ _CAO_VOCABULARY_TOOLS: frozenset = frozenset(
 # ── Hardcoded non-vocabulary policies ────────────────────────────────────────
 # These apply regardless of allowedTools (unless overridden by "*").
 
-_HARDCODED_DENY: frozenset = frozenset(["task", "question", "webfetch", "websearch", "codesearch"])
+_HARDCODED_DENY: frozenset = frozenset(
+    ["task", "question", "webfetch", "websearch", "codesearch", "execute"]
+)
 _HARDCODED_ALLOW: frozenset = frozenset(["todowrite", "skill"])
 
 
@@ -62,7 +66,7 @@ def cao_tools_to_opencode_permission(allowed_tools: List[str]) -> Dict[str, str]
         allowed_tools: CAO-vocabulary tool list, e.g. ``["@builtin", "execute_bash"]``.
 
     Returns:
-        A ``{tool_name: "allow"|"deny"}`` dict covering all 13 OpenCode
+        A ``{tool_name: "allow"|"deny"}`` dict covering all 14 OpenCode
         built-in tools.  ``@``-prefixed entries in ``allowed_tools`` grant no
         OpenCode tool: ``@builtin`` is the provider-chrome selector that maps to
         nothing in ``utils/tool_mapping.py`` for any provider it translates, and

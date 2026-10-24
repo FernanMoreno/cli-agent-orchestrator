@@ -12,7 +12,7 @@ from cli_agent_orchestrator.utils.opencode_permissions import (
 class TestAllToolsUnrestricted:
     """'*' expands to every OpenCode tool set to allow."""
 
-    def test_wildcard_allows_all_13_tools(self):
+    def test_wildcard_allows_all_native_tools(self):
         result = cao_tools_to_opencode_permission(["*"])
         assert set(result.keys()) == set(ALL_OPENCODE_TOOLS)
         assert all(v == "allow" for v in result.values())
@@ -24,6 +24,7 @@ class TestAllToolsUnrestricted:
         assert result["webfetch"] == "allow"
         assert result["websearch"] == "allow"
         assert result["codesearch"] == "allow"
+        assert result["execute"] == "allow"
 
 
 class TestBuiltinShorthand:
@@ -51,7 +52,7 @@ class TestBuiltinShorthand:
         assert result["todowrite"] == "allow"
         assert result["skill"] == "allow"
 
-    def test_builtin_result_covers_all_13_tools(self):
+    def test_builtin_result_covers_all_native_tools(self):
         result = cao_tools_to_opencode_permission(["@builtin"])
         assert set(result.keys()) == set(ALL_OPENCODE_TOOLS)
 
@@ -92,14 +93,16 @@ class TestExplicitCategories:
 
     def test_mcp_only_skips_all_mcp_entries(self):
         result = cao_tools_to_opencode_permission(["@my-server"])
-        # No MCP-named keys; only the 13 OpenCode built-ins present
+        # No MCP-named keys; only the 14 OpenCode built-ins present
         assert set(result.keys()) == set(ALL_OPENCODE_TOOLS)
 
 
 class TestHardcodedPolicies:
     """Non-vocabulary tools have fixed policies regardless of allowedTools."""
 
-    @pytest.mark.parametrize("tool", ["task", "question", "webfetch", "websearch", "codesearch"])
+    @pytest.mark.parametrize(
+        "tool", ["task", "question", "webfetch", "websearch", "codesearch", "execute"]
+    )
     def test_always_denied(self, tool: str):
         for allowed in (["@builtin"], ["execute_bash"], []):
             result = cao_tools_to_opencode_permission(allowed)
@@ -126,13 +129,13 @@ class TestEmptyAllowedTools:
         assert result["skill"] == "allow"
         assert result["task"] == "deny"
 
-    def test_returns_all_13_tools(self):
+    def test_returns_all_native_tools(self):
         result = cao_tools_to_opencode_permission([])
         assert set(result.keys()) == set(ALL_OPENCODE_TOOLS)
 
 
 class TestResultContainsAllTools:
-    """Every call returns exactly the 13 built-in OpenCode tools."""
+    """Every call returns exactly the 14 built-in OpenCode tools."""
 
     @pytest.mark.parametrize(
         "allowed",
@@ -144,7 +147,7 @@ class TestResultContainsAllTools:
             [],
         ],
     )
-    def test_exactly_13_tools_returned(self, allowed: list):
+    def test_exactly_native_tools_returned(self, allowed: list):
         result = cao_tools_to_opencode_permission(allowed)
         assert set(result.keys()) == set(ALL_OPENCODE_TOOLS)
 
@@ -160,3 +163,13 @@ class TestUnhandledToolFailsLoudly:
         )
         with pytest.raises(AssertionError, match="unhandled tool 'mystery_tool'"):
             cao_tools_to_opencode_permission(["@builtin"])
+
+
+@pytest.mark.parametrize(
+    "allowed", [[], ["@builtin"], ["@cao-mcp-server"], ["execute_bash"], ["fs_*"], ["execute"]]
+)
+def test_native_code_mode_execute_requires_unrestricted_cao_grant(allowed):
+    permissions = cao_tools_to_opencode_permission(allowed)
+    assert permissions["execute"] == "deny"
+    assert permissions["skill"] == permissions["todowrite"] == "allow"
+    assert "*" not in permissions

@@ -1258,3 +1258,63 @@ def test_native_install_rejects_env_pairs_before_dict_coercion(
     assert source.read_bytes() == before
     assert not install_workspace["agents_dir"].exists()
     assert not install_workspace["config_file"].exists()
+
+
+@pytest.mark.parametrize(
+    ("allowed", "effect"),
+    [
+        ([], "deny"),
+        (["@builtin"], "deny"),
+        (["@cao-mcp-server"], "deny"),
+        (["fs_*"], "deny"),
+        (["*"], "allow"),
+    ],
+)
+def test_installed_execute_policy_survives_v2_translation(
+    runner, install_workspace, tmp_path, allowed, effect
+):
+    from cli_agent_orchestrator.utils.opencode_v2 import (
+        _effective_permission,
+        write_v2_configuration,
+    )
+
+    _write_profile(
+        install_workspace["local_store"] / "test-agent.md",
+        extra_frontmatter="allowedTools: " + json.dumps(allowed) + "\n",
+    )
+    installed = runner.invoke(install, ["test-agent", "--provider", "opencode_cli"])
+    assert installed.exit_code == 0, installed.output
+    agent = frontmatter.loads((install_workspace["agents_dir"] / "test-agent.md").read_text())
+    assert agent.metadata["permission"]["execute"] == effect
+    assert agent.metadata["permission"]["skill"] == "allow"
+    assert agent.metadata["permission"]["todowrite"] == "allow"
+
+    mcp_granted = "*" in allowed or "@cao-mcp-server" in allowed
+    source_config = {
+        "mcp": {"cao-mcp-server": {"type": "local", "command": ["cao-mcp-server"]}},
+        "agent": {"test-agent": {"tools": {"cao-mcp-server*": mcp_granted}}},
+    }
+    destination = tmp_path / "translated-v2"
+    write_v2_configuration(
+        destination,
+        source_agents=install_workspace["agents_dir"],
+        source_config=source_config,
+        session_id="execute-policy-test",
+    )
+    translated = json.loads((destination / "opencode.json").read_text())
+    rules = translated["agents"]["test-agent"]["permissions"]
+    assert {"action": "execute", "resource": "*", "effect": effect} in rules
+    assert {"action": "skill", "resource": "*", "effect": "allow"} in rules
+    assert {"action": "todowrite", "resource": "*", "effect": "allow"} in rules
+    assert {
+        "action": "cao-mcp-server_*",
+        "resource": "*",
+        "effect": "allow" if mcp_granted else "deny",
+    } in rules
+    assert translated["mcp"]["servers"]["cao-mcp-server"]["codemode"] is False
+    assert _effective_permission(rules, "execute") == effect
+    assert _effective_permission(rules, "skill") == "allow"
+    assert _effective_permission(rules, "todowrite") == "allow"
+    assert _effective_permission(rules, "cao-mcp-server_send_message") == (
+        "allow" if mcp_granted else "deny"
+    )
