@@ -13,6 +13,8 @@ Treat work as significant when it affects multiple subsystems, shared persistenc
 
 For bugs/failing tests/unexpected behavior, use `systematic-debugging`, reproduce the issue, trace the first incorrect boundary, and identify root cause before changing behavior.
 
+For native/provider diagnostics, also apply the focused diagnostic preflight in `AI_WORKFLOW.md` section 6.1 before an expensive real run.
+
 For significant work:
 - use Spec Kit;
 - use Graphify before implementation and verify it against source;

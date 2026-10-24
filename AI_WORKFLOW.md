@@ -106,6 +106,15 @@ For bugs, failing tests, integration failures, or unexpected behavior:
 Prefer test-driven development for new behavior and regressions when practical.
 
 Use `verification-before-completion` before substantial completion.
+
+### 6.1 Focused native/provider diagnostics
+
+- State the first unobserved boundary and the one observation that will distinguish the current hypotheses. Prefer instrumenting an existing working real journey over constructing a surrogate journey.
+- Reuse production configuration, startup/readiness gates and protocol schemas. Before a real run, exercise the actual controller-to-service initialization boundary and verify the required tool is discovered/offered; configuration declarations and isolated packet-builder tests are insufficient.
+- Separate harness defects, offline evidence, actual diagnostics and final acceptance. After a harness failure, reproduce and fix its first incorrect boundary before another expensive run; preserve the failed receipt and use fresh source-bound launchers.
+- Keep reviews scoped to the observation needed. Optional diagnostics, generic hardening and unrelated refactors do not block progress unless they affect that observation's correctness, privacy or cleanup. Do not add fields or review rounds merely to improve an otherwise adequate control.
+- Preserve acceptance criteria and coverage. Record durable causes and prevention rules in Obsidian; keep raw logs and temporary execution details in the repository/private receipts instead.
+
 ## 7. Significant composition review
 
 A significant change is not complete because isolated feature tests pass.
