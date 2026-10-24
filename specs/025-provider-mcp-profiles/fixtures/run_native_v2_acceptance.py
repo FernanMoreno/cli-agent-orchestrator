@@ -5279,6 +5279,98 @@ def _receiver_phase_failure_code(phase):
     return "receiver_ack_not_observed"
 
 
+def _receiver_output_failure_snapshot_unavailable(reason):
+    return {"status": "unavailable", "reason": reason}
+
+
+def _capture_receiver_output_failure_snapshot(*, raw_dir, phase_ordinal, failure_code, body):
+    if type(failure_code) is not str or failure_code not in {
+        "receiver_turn_not_completed_once",
+        "receiver_ack_not_exact",
+        "receiver_ack_not_observed",
+    }:
+        return _receiver_output_failure_snapshot_unavailable("failure_code_invalid")
+    if type(phase_ordinal) is not int or phase_ordinal not in {1, 2}:
+        return _receiver_output_failure_snapshot_unavailable("phase_invalid")
+    if type(body) is not dict or type(body.get("output")) is not str:
+        return _receiver_output_failure_snapshot_unavailable("output_unavailable")
+
+    output = body["output"]
+    try:
+        output_bytes = output.encode("utf-8", errors="strict")
+    except UnicodeError:
+        return _receiver_output_failure_snapshot_unavailable("output_not_utf8")
+    if len(output_bytes) > OUTPUT_RANGE_MAX_BYTES:
+        return _receiver_output_failure_snapshot_unavailable("output_too_large")
+    try:
+        serialized = (
+            json.dumps(
+                {"output": output},
+                ensure_ascii=False,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8", errors="strict")
+    except (TypeError, ValueError, UnicodeError):
+        return _receiver_output_failure_snapshot_unavailable("output_not_serializable")
+    if len(serialized) > OUTPUT_RANGE_MAX_BYTES + 32:
+        return _receiver_output_failure_snapshot_unavailable("serialized_output_too_large")
+
+    expected_raw_dir = EVIDENCE / "raw"
+    if (
+        not isinstance(raw_dir, Path)
+        or not raw_dir.is_absolute()
+        or raw_dir != expected_raw_dir
+        or not EVIDENCE.is_absolute()
+    ):
+        return _receiver_output_failure_snapshot_unavailable("snapshot_context_invalid")
+    try:
+        for directory in (EVIDENCE, raw_dir):
+            metadata = directory.lstat()
+            if (
+                directory.is_symlink()
+                or not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) != 0o700
+                or directory.resolve(strict=True) != directory
+            ):
+                return _receiver_output_failure_snapshot_unavailable("snapshot_context_invalid")
+    except (OSError, RuntimeError, ValueError):
+        return _receiver_output_failure_snapshot_unavailable("snapshot_context_invalid")
+
+    destination = raw_dir / f"phase-{phase_ordinal}-receiver-output-failure.json"
+    try:
+        _write_private(destination, serialized)
+    except FileExistsError:
+        return _receiver_output_failure_snapshot_unavailable("snapshot_target_exists")
+    except Exception:
+        return _receiver_output_failure_snapshot_unavailable("snapshot_write_failed")
+    copied = _read_owned_private_file(destination, maximum=OUTPUT_RANGE_MAX_BYTES + 32)
+    if copied != serialized:
+        return _receiver_output_failure_snapshot_unavailable("snapshot_verification_failed")
+    return {"status": "captured", "reason": "none"}
+
+
+def _capture_receiver_output_failure_snapshot_safely(**kwargs):
+    try:
+        return _capture_receiver_output_failure_snapshot(**kwargs)
+    except BaseException:
+        return _receiver_output_failure_snapshot_unavailable("snapshot_error")
+
+
+def _raise_receiver_phase_failure_if_needed(*, phase, failure_code, raw_dir, phase_ordinal, body):
+    if failure_code is None:
+        return
+    phase["receiver_output_failure_snapshot"] = _capture_receiver_output_failure_snapshot_safely(
+        raw_dir=raw_dir,
+        phase_ordinal=phase_ordinal,
+        failure_code=failure_code,
+        body=body,
+    )
+    raise GateError(failure_code)
+
+
 def _load_failure_diagnostic_fixture(filename):
     if filename not in {"native_v2_text_probe.py", "native_phase_readers.py"}:
         raise GateError("failure_diagnostic_source_binding_invalid")
@@ -7196,8 +7288,13 @@ def _run_enabled(
                 parse_failed=receiver_output_parse_failed,
             )
             receiver_failure_code = _receiver_phase_failure_code(phase)
-            if receiver_failure_code is not None:
-                raise GateError(receiver_failure_code)
+            _raise_receiver_phase_failure_if_needed(
+                phase=phase,
+                failure_code=receiver_failure_code,
+                raw_dir=raw_dir,
+                phase_ordinal=index + 1,
+                body=receiver_output_body,
+            )
             _write_private(raw_dir / f"phase-{index + 1}-screen.private", last_viewport)
             _write_private(
                 raw_dir / f"phase-{index + 1}-pg.private",

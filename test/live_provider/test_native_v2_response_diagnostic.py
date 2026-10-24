@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import stat
 import sys
 from pathlib import Path
 from test.live_provider import opencode_http_prompt_observer as prompt_observer
@@ -369,3 +370,177 @@ def test_response_collector_rejects_changed_installed_support(tmp_path: Path, mo
     assert result["status"] == "unavailable"
     assert result["reason"] == "installed_source_mismatch"
     assert result["sealed_raw_copy_verified"] is False
+
+
+def _seed_receiver_failure_raw(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
+    evidence = _private_directory(tmp_path / "failure-evidence")
+    raw_dir = _private_directory(evidence / "raw")
+    monkeypatch.setattr(runner, "EVIDENCE", evidence)
+    return evidence, raw_dir
+
+
+def test_receiver_failure_snapshot_preserves_utf8_and_crlf_privately(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _evidence, raw_dir = _seed_receiver_failure_raw(tmp_path, monkeypatch)
+    output = "ACK\r\nrespuesta: café, 日本語\r\n"
+
+    result = runner._capture_receiver_output_failure_snapshot_safely(
+        raw_dir=raw_dir,
+        phase_ordinal=2,
+        failure_code="receiver_ack_not_exact",
+        body={"output": output},
+    )
+
+    snapshot = raw_dir / "phase-2-receiver-output-failure.json"
+    metadata = snapshot.lstat()
+    assert result == {"status": "captured", "reason": "none"}
+    assert stat.S_IMODE(metadata.st_mode) == 0o600
+    assert metadata.st_uid == os.getuid()
+    assert metadata.st_nlink == 1
+    assert json.loads(snapshot.read_bytes()) == {"output": output}
+    assert result == {"status": "captured", "reason": "none"}
+    public = json.dumps(result, ensure_ascii=False)
+    assert output not in public
+    assert str(snapshot) not in public
+
+
+@pytest.mark.parametrize(
+    ("output", "reason"),
+    [
+        ("x" * (runner.OUTPUT_RANGE_MAX_BYTES + 1), "output_too_large"),
+        ("invalid\ud800text", "output_not_utf8"),
+    ],
+)
+def test_receiver_failure_snapshot_rejects_unbounded_or_invalid_text(
+    tmp_path: Path, monkeypatch, output: str, reason: str
+) -> None:
+    _evidence, raw_dir = _seed_receiver_failure_raw(tmp_path, monkeypatch)
+
+    result = runner._capture_receiver_output_failure_snapshot_safely(
+        raw_dir=raw_dir,
+        phase_ordinal=1,
+        failure_code="receiver_ack_not_exact",
+        body={"output": output},
+    )
+
+    assert result == {"status": "unavailable", "reason": reason}
+    assert not (raw_dir / "phase-1-receiver-output-failure.json").exists()
+
+
+def test_receiver_failure_snapshot_rejects_foreign_raw_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _evidence, _owned_raw = _seed_receiver_failure_raw(tmp_path, monkeypatch)
+    foreign_raw = _private_directory(tmp_path / "foreign-raw")
+
+    result = runner._capture_receiver_output_failure_snapshot_safely(
+        raw_dir=foreign_raw,
+        phase_ordinal=1,
+        failure_code="receiver_ack_not_exact",
+        body={"output": "ACK plus private context"},
+    )
+
+    assert result == {"status": "unavailable", "reason": "snapshot_context_invalid"}
+    assert list(foreign_raw.iterdir()) == []
+
+
+def test_receiver_failure_snapshot_is_omitted_without_failure_or_text(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _evidence, raw_dir = _seed_receiver_failure_raw(tmp_path, monkeypatch)
+    phase: dict[str, object] = {}
+
+    runner._raise_receiver_phase_failure_if_needed(
+        phase=phase,
+        failure_code=None,
+        raw_dir=raw_dir,
+        phase_ordinal=1,
+        body={"output": "would be private"},
+    )
+    unavailable = runner._capture_receiver_output_failure_snapshot_safely(
+        raw_dir=raw_dir,
+        phase_ordinal=1,
+        failure_code="receiver_ack_not_exact",
+        body={"output": None},
+    )
+
+    assert phase == {}
+    assert unavailable == {"status": "unavailable", "reason": "output_unavailable"}
+    assert list(raw_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize("target_kind", ["premade", "symlink"])
+def test_receiver_failure_snapshot_does_not_overwrite_existing_target(
+    tmp_path: Path, monkeypatch, target_kind: str
+) -> None:
+    _evidence, raw_dir = _seed_receiver_failure_raw(tmp_path, monkeypatch)
+    snapshot = raw_dir / "phase-1-receiver-output-failure.json"
+    sentinel = b"preexisting-private-bytes\n"
+    if target_kind == "premade":
+        _private_file(snapshot, sentinel)
+    else:
+        target = tmp_path / "symlink-target.private"
+        _private_file(target, sentinel)
+        snapshot.symlink_to(target)
+
+    result = runner._capture_receiver_output_failure_snapshot_safely(
+        raw_dir=raw_dir,
+        phase_ordinal=1,
+        failure_code="receiver_ack_not_exact",
+        body={"output": "ACK plus private context"},
+    )
+
+    assert result == {"status": "unavailable", "reason": "snapshot_target_exists"}
+    if target_kind == "premade":
+        assert snapshot.read_bytes() == sentinel
+    else:
+        assert snapshot.is_symlink()
+        assert snapshot.resolve().read_bytes() == sentinel
+
+
+def test_receiver_failure_snapshot_error_preserves_original_gate_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _evidence, raw_dir = _seed_receiver_failure_raw(tmp_path, monkeypatch)
+    phase = {
+        "receiver_turn_completed_once": True,
+        "receiver_ack_exact": False,
+        "receiver_last_observation": runner._receiver_last_observation(
+            200, {"output": "not ACK"}, True
+        ),
+    }
+
+    def interrupted(**_kwargs):
+        raise KeyboardInterrupt("private snapshot exception")
+
+    monkeypatch.setattr(runner, "_capture_receiver_output_failure_snapshot", interrupted)
+    with pytest.raises(runner.GateError, match="^receiver_ack_not_exact$"):
+        runner._raise_receiver_phase_failure_if_needed(
+            phase=phase,
+            failure_code=runner._receiver_phase_failure_code(phase),
+            raw_dir=raw_dir,
+            phase_ordinal=1,
+            body={"output": "not ACK"},
+        )
+
+    assert phase["receiver_output_failure_snapshot"] == {
+        "status": "unavailable",
+        "reason": "snapshot_error",
+    }
+    assert not (raw_dir / "phase-1-receiver-output-failure.json").exists()
+
+
+def test_receiver_failure_snapshot_is_called_before_the_existing_gate_raise() -> None:
+    source = RUNNER_PATH.read_text(encoding="utf-8")
+    failure_helper = source.index("def _raise_receiver_phase_failure_if_needed(")
+    safe_capture = source.index("_capture_receiver_output_failure_snapshot_safely(", failure_helper)
+    original_raise = source.index("raise GateError(failure_code)", safe_capture)
+    run_failure = source.index("receiver_failure_code = _receiver_phase_failure_code(phase)")
+    run_snapshot = source.index("_raise_receiver_phase_failure_if_needed(", run_failure)
+    next_phase_gate = source.index(
+        '_write_private(raw_dir / f"phase-{index + 1}-screen.private"', run_snapshot
+    )
+
+    assert safe_capture < original_raise
+    assert run_failure < run_snapshot < next_phase_gate
