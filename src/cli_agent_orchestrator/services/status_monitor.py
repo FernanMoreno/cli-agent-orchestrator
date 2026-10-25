@@ -22,6 +22,10 @@ from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services.event_bus import bus
 from cli_agent_orchestrator.services.settings_service import get_server_settings
 from cli_agent_orchestrator.utils.event import terminal_id_from_topic
+from cli_agent_orchestrator.utils.receipt_verification_diagnostics import (
+    emit_receipt_verification_event,
+    receipt_verification_diagnostics_enabled,
+)
 
 if TYPE_CHECKING:
     import pyte
@@ -633,6 +637,30 @@ class StatusMonitor:
         the caller must then publish the change on the bus AFTER releasing the
         lock (see _apply_detection for why).
         """
+        if detected == TerminalStatus.COMPLETED and receipt_verification_diagnostics_enabled():
+            current_turn = self._turn.get(terminal_id, 0)
+            stale_capture = (
+                (cleared_buffer_turn is not None and cleared_buffer_turn != current_turn)
+                or (observed_turn is not None and observed_turn != current_turn)
+                or (
+                    observed_started is False
+                    and detected in _TURN_END_STATUSES
+                    and self._turn_started.get(terminal_id, False)
+                )
+                or (
+                    buffer_epoch is not None
+                    and buffer_epoch != self._buffer_epochs.get(terminal_id, 0)
+                )
+            )
+            if stale_capture:
+                admission_outcome = "stale_capture"
+            elif any(
+                value is not None for value in (cleared_buffer_turn, observed_turn, buffer_epoch)
+            ):
+                admission_outcome = "current_capture"
+            else:
+                admission_outcome = "progress_unconfirmed"
+            emit_receipt_verification_event("admission", admission_outcome)
         detected = self._gate_terminal_completion(terminal_id, provider, detected)
         last = self._last_status.get(terminal_id)
 

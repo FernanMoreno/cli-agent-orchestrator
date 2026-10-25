@@ -160,6 +160,14 @@ from cli_agent_orchestrator.utils.path_validation import (
     resolve_and_validate_path,
     resolve_registered_working_directory,
 )
+from cli_agent_orchestrator.utils.receipt_verification_diagnostics import (
+    current_receipt_verification_attempt,
+    emit_receipt_verification_event,
+    receipt_verification_attempt,
+    receipt_verification_diagnostic_stage,
+    receipt_verification_diagnostic_stage_outcome,
+    set_receipt_verification_diagnostic_sink,
+)
 from cli_agent_orchestrator.utils.skills import build_skill_catalog
 from cli_agent_orchestrator.utils.terminal import (
     generate_session_name,
@@ -945,6 +953,10 @@ def schedule_receipt_result_verification(terminal_id: str, provider: Any) -> boo
             return True
         if terminal_id in _receipt_verification_inflight:
             return True
+        attempt_ordinal = min(
+            max(1, current.attempts + 1),
+            _RECEIPT_VERIFICATION_MAX_AUTOMATIC_ATTEMPTS,
+        )
         _receipt_verification_inflight.add(terminal_id)
         if current.deadline_timer is None:
             remaining = 55.0
@@ -963,24 +975,46 @@ def schedule_receipt_result_verification(terminal_id: str, provider: Any) -> boo
 
     def _verify() -> None:
         try:
-            # FULL applies the same receipt validation as LAST while preserving
-            # the normal dashboard transcript contract.  It raises
-            # OutputExtractionError until the active response is genuinely
-            # extractable and receipt-backed.
-            get_output(terminal_id, OutputMode.LAST)
-            current_fingerprint = _pending_receipt_fingerprint(provider)
-            if current_fingerprint is None:
-                # _verify_receipt_bearing_result settled the receipt and the
-                # matching native child in one database transaction. It is now
-                # safe for that function to have published COMPLETED.
-                _clear_receipt_verification_state(terminal_id, fingerprint)
-                return
-            if current_fingerprint != fingerprint:
-                # A different turn began while this read was in flight. It
-                # owns a separate retry budget; never charge it for stale
-                # observations from the earlier receipt.
-                return
-            if current_fingerprint is not None:
+            with receipt_verification_attempt(attempt_ordinal):
+                emit_receipt_verification_event("attempt", "started")
+                emit_receipt_verification_event("result_extraction", "started")
+                try:
+                    # FULL applies the same receipt validation as LAST while
+                    # preserving the normal dashboard transcript contract.
+                    # It raises until the active response is extractable.
+                    get_output(terminal_id, OutputMode.LAST)
+                except OutputExtractionError:
+                    if (
+                        receipt_verification_diagnostic_stage_outcome("result_extraction")
+                        == "started"
+                    ):
+                        emit_receipt_verification_event("result_extraction", "unavailable")
+                    raise
+                except BaseException:
+                    if (
+                        receipt_verification_diagnostic_stage_outcome("result_extraction")
+                        == "started"
+                    ):
+                        emit_receipt_verification_event("result_extraction", "error")
+                    raise
+                else:
+                    if (
+                        receipt_verification_diagnostic_stage_outcome("result_extraction")
+                        == "started"
+                    ):
+                        emit_receipt_verification_event("result_extraction", "returned")
+
+                current_fingerprint = _pending_receipt_fingerprint(provider)
+                if current_fingerprint is None:
+                    # _verify_receipt_bearing_result settled the receipt
+                    # and matching child in one database transaction.
+                    _clear_receipt_verification_state(terminal_id, fingerprint)
+                    emit_receipt_verification_event("attempt", "verified")
+                    return
+                if current_fingerprint != fingerprint:
+                    # A different turn owns a separate retry budget.
+                    emit_receipt_verification_event("attempt", "superseded")
+                    return
                 logger.info(
                     "Receipt result verification for %s did not settle the active turn",
                     terminal_id,
@@ -990,7 +1024,10 @@ def schedule_receipt_result_verification(terminal_id: str, provider: Any) -> boo
                     fingerprint,
                     reason="result remained unverified after capture",
                 )
+                emit_receipt_verification_event("attempt", "unresolved")
         except OutputExtractionError as exc:
+            with receipt_verification_attempt(attempt_ordinal):
+                emit_receipt_verification_event("attempt", "unresolved")
             logger.info(
                 "Receipt-backed result for %s is not verifiable yet; keeping it processing",
                 terminal_id,
@@ -1001,6 +1038,8 @@ def schedule_receipt_result_verification(terminal_id: str, provider: Any) -> boo
                 reason=str(exc)[:256],
             )
         except Exception:
+            with receipt_verification_attempt(attempt_ordinal):
+                emit_receipt_verification_event("attempt", "unresolved")
             # A transient database/history error is not evidence of a failed
             # task.  Preserve the receipt for reconciliation/retry and avoid
             # changing terminal or child state based on an observer failure.
@@ -1010,6 +1049,10 @@ def schedule_receipt_result_verification(terminal_id: str, provider: Any) -> boo
                 fingerprint,
                 reason="output capture or receipt verification failed",
             )
+        except BaseException:
+            with receipt_verification_attempt(attempt_ordinal):
+                emit_receipt_verification_event("attempt", "unresolved")
+            raise
         finally:
             with _receipt_verification_lock:
                 _receipt_verification_inflight.discard(terminal_id)
@@ -5141,34 +5184,49 @@ def _verify_receipt_bearing_result(
         ensure_terminal_is_not_work_owned(terminal_id)
     if getattr(provider, "requires_turn_receipt", False) is not True:
         return result
-    receipt_state = provider.pending_turn_receipt_state()
-    if expected_generation is not None and (
-        receipt_state is None or receipt_state["generation"] != expected_generation
-    ):
-        raise TurnResultUnavailableError("requested turn generation changed before verification")
-    if receipt_state is None:
-        # A prior verified result may be read again.  There is no active
-        # receipt to settle, so preserve normal read-only output behavior.
-        return result
-    receipt_witness = (
-        provider.receipt_result_viewport_terminal_status
-        if rendered_viewport
-        else provider.receipt_result_terminal_status
-    )
-    terminal_status = receipt_witness(transcript, result)
-    if terminal_status is None:
-        # A provider may have rendered a specific post-answer dialog over its
-        # normal response.  Do not treat a menu as output: only an override
-        # that can recover a receipt-bearing answer and independently return a
-        # real terminal state gets through this branch.
-        post_turn_result = provider.extract_post_turn_completion_result(transcript)
-        if post_turn_result:
-            result = post_turn_result
+    if current_receipt_verification_attempt() == 0:
+        emit_receipt_verification_event("result_extraction", "started")
+    emit_receipt_verification_event("result_extraction", "returned")
+    try:
+        with receipt_verification_diagnostic_stage("receipt_witness") as finish_witness:
+            receipt_state = provider.pending_turn_receipt_state()
+            if expected_generation is not None and (
+                receipt_state is None or receipt_state["generation"] != expected_generation
+            ):
+                finish_witness("rejected")
+                raise TurnResultUnavailableError(
+                    "requested turn generation changed before verification"
+                )
+            if receipt_state is None:
+                finish_witness("not_applicable")
+                # A prior verified result may be read again.  There is no active
+                # receipt to settle, so preserve normal read-only output behavior.
+                emit_receipt_verification_event("canonicalizer", "not_applicable")
+                return result
+            receipt_witness = (
+                provider.receipt_result_viewport_terminal_status
+                if rendered_viewport
+                else provider.receipt_result_terminal_status
+            )
             terminal_status = receipt_witness(transcript, result)
-    if terminal_status is None:
-        raise TurnResultUnavailableError(
-            "output was extractable but its active task receipt was not yet complete"
-        )
+            if terminal_status is None:
+                # A provider may have rendered a specific post-answer dialog over
+                # its normal response. Do not treat a menu as output: only an
+                # override that recovers a receipt-bearing answer and independently
+                # returns a real terminal state gets through this branch.
+                post_turn_result = provider.extract_post_turn_completion_result(transcript)
+                if post_turn_result:
+                    result = post_turn_result
+                    terminal_status = receipt_witness(transcript, result)
+            if terminal_status is None:
+                finish_witness("rejected")
+                raise TurnResultUnavailableError(
+                    "output was extractable but its active task receipt was not yet complete"
+                )
+            finish_witness("passed")
+    except BaseException:
+        emit_receipt_verification_event("canonicalizer", "not_applicable")
+        raise
     # Some native stores preserve the logical response more accurately than
     # the terminal renderer.  Ask concrete overrides to canonicalize normally
     # completed responses; provider-specific blockers keep their rendered path.
@@ -5182,53 +5240,78 @@ def _verify_receipt_bearing_result(
         and canonicalizer is not BaseProvider.canonicalize_turn_receipt_result
         and getattr(provider, "supports_canonical_turn_receipt_result", False) is True
     ):
+        with receipt_verification_diagnostic_stage("canonicalizer") as finish_canonicalizer:
+            try:
+                canonical_result = canonicalizer(provider, result)
+                if (
+                    type(canonical_result) is not str
+                    or not canonical_result
+                    or not BaseProvider._result_has_active_receipt(provider, canonical_result)
+                ):
+                    finish_canonicalizer("rejected")
+                    raise TurnResultUnavailableError(
+                        "canonical receipt result did not contain the active receipt"
+                    )
+                current_receipt_state = provider.pending_turn_receipt_state()
+                if current_receipt_state != receipt_state:
+                    finish_canonicalizer("rejected")
+                    raise TurnResultUnavailableError(
+                        "active turn changed while its result was being canonicalized"
+                    )
+            except Exception:
+                finish_canonicalizer("error")
+                raise TurnResultUnavailableError(
+                    "canonical receipt result could not be verified"
+                ) from None
+            except BaseException:
+                finish_canonicalizer("error")
+                raise
+            finish_canonicalizer("passed")
         try:
-            canonical_result = canonicalizer(provider, result)
-            if (
-                type(canonical_result) is not str
-                or not canonical_result
-                or not BaseProvider._result_has_active_receipt(provider, canonical_result)
-            ):
-                raise TurnResultUnavailableError(
-                    "canonical receipt result did not contain the active receipt"
-                )
-            current_receipt_state = provider.pending_turn_receipt_state()
-            if current_receipt_state != receipt_state:
-                raise TurnResultUnavailableError(
-                    "active turn changed while its result was being canonicalized"
-                )
-            canonical_status = receipt_witness(transcript, canonical_result)
-            if canonical_status is not terminal_status:
-                raise TurnResultUnavailableError(
-                    "canonical receipt result did not preserve the completion witness"
-                )
+            with receipt_verification_diagnostic_stage("receipt_witness") as finish_witness:
+                canonical_status = receipt_witness(transcript, canonical_result)
+                if canonical_status is not terminal_status:
+                    finish_witness("rejected")
+                    raise TurnResultUnavailableError(
+                        "canonical receipt result did not preserve the completion witness"
+                    )
+                finish_witness("passed")
         except Exception:
             raise TurnResultUnavailableError(
                 "canonical receipt result could not be verified"
             ) from None
         result = canonical_result
+    else:
+        emit_receipt_verification_event("canonicalizer", "not_applicable")
     result_sha256 = hashlib.sha256(result.encode("utf-8")).hexdigest()
     public_result = re.sub(
         r"(?m)^[ \t]*(?:CAO-TURN-RECEIPT-|CAO_TURN_RECEIPT_)[0-9a-f]{32}[ \t]*$",
         "",
         result,
     ).strip()
-    try:
-        verified = settle_terminal_turn_receipt_result(
-            terminal_id,
-            receipt_state["generation"],
-            receipt_state["receipt_sha256"],
-            result_sha256,
-            result_text=public_result,
-        )
-    except Exception as exc:
-        raise OutputExtractionError(
-            "result was extracted but its durable receipt could not be verified"
-        ) from exc
-    if not verified:
-        raise TurnResultUnavailableError(
-            "result receipt changed before verification; reconcile the terminal"
-        )
+    with receipt_verification_diagnostic_stage("durable_cas") as finish_cas:
+        try:
+            verified = settle_terminal_turn_receipt_result(
+                terminal_id,
+                receipt_state["generation"],
+                receipt_state["receipt_sha256"],
+                result_sha256,
+                result_text=public_result,
+            )
+        except Exception as exc:
+            finish_cas("error")
+            raise OutputExtractionError(
+                "result was extracted but its durable receipt could not be verified"
+            ) from exc
+        except BaseException:
+            finish_cas("error")
+            raise
+        if not verified:
+            finish_cas("conflict")
+            raise TurnResultUnavailableError(
+                "result receipt changed before verification; reconcile the terminal"
+            )
+        finish_cas("settled")
     provider.mark_turn_receipt_result_verified()
     # Publish the actual terminal state only after the task CAS succeeds.  For
     # a normal renderer this is COMPLETED; a post-turn blocker remains WAITING

@@ -1,0 +1,17 @@
+{
+  "status": "passed",
+  "contract": "cao.work.message",
+  "source_head": "7f6cdff012462900402a4d020ed110334cfc5b26",
+  "receipt_sha256": "a1120388fbdd0686f3e5dcd246fa6e7011069247723165295a987aebfb1a68a9",
+  "owned_targets_removed": true,
+  "runner_process_group_absent": true,
+  "gate_closed": true,
+  "provider_credential_free_child_environment": true,
+  "minimum_preflight_mib": 10352,
+  "schema": "caos.external-work-message-summary.v1",
+  "parent_pg_closed": true,
+  "exact_owned_container_absent": true,
+  "exact_owned_network_absent": true,
+  "global_acceptance_claimed": false,
+  "native_llm_inference_claimed": false
+}

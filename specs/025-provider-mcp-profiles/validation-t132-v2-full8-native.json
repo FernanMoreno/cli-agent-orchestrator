@@ -1,0 +1,93 @@
+{
+  "schema": "caos.native-acceptance-summary.v1",
+  "source_head": "7f6cdff012462900402a4d020ed110334cfc5b26",
+  "case": "v2-full8",
+  "success": false,
+  "error_code": "receiver_turn_not_completed_once",
+  "elapsed_seconds": 152.141,
+  "private_native_receipt_sha256": "5590c0352dca85d417912f3db458d2bb1e36523ca7fa10e89862479f1aaf91fb",
+  "case_gates_closed": true,
+  "parent_pg_closed": true,
+  "exact_owned_container_absent": true,
+  "exact_owned_network_absent": true,
+  "unrelated_resources_preserved": true,
+  "operator_auth_unchanged": true,
+  "private_state_removed": true,
+  "global_acceptance_claimed": false,
+  "source_runtime_file_count": 535,
+  "separate_artifact_count": 0,
+  "cleanup_failures": [],
+  "phases": [
+    {
+      "name": "before_restart",
+      "receiver_ack_exact": true,
+      "receiver_turn_completed_once": true,
+      "last_receipt_unicode_verified": true,
+      "durable_turn_completed": true,
+      "one_exact_pg_api_message": true,
+      "model_seconds": 12.488,
+      "elapsed_seconds": 13.193,
+      "receiver_last_observation": {
+        "http_status": 200,
+        "body_state": "mapping",
+        "output_utf8_bytes": 3,
+        "output_lines": 1,
+        "output_string_observed": true,
+        "public_ack_exact": true,
+        "observed_within_deadline": true,
+        "acceptance_input_changed": false
+      }
+    },
+    {
+      "name": "after_restart",
+      "receiver_ack_exact": null,
+      "receiver_turn_completed_once": false,
+      "last_receipt_unicode_verified": true,
+      "durable_turn_completed": true,
+      "model_seconds": 11.832,
+      "elapsed_seconds": 79.052,
+      "receiver_last_observation": {
+        "http_status": null,
+        "body_state": "not_read",
+        "output_utf8_bytes": null,
+        "output_lines": null,
+        "output_string_observed": false,
+        "public_ack_exact": false,
+        "observed_within_deadline": false,
+        "acceptance_input_changed": false
+      },
+      "receiver_output_failure_snapshot": {
+        "status": "unavailable",
+        "reason": "output_unavailable"
+      }
+    }
+  ],
+  "response_argument_observation": {
+    "observer_status": "observed",
+    "trace_complete": true,
+    "overflow": false,
+    "request_count": 5,
+    "response_count": 5,
+    "durable_record_count": 5,
+    "phase_results": [
+      {
+        "phase_ordinal": 1,
+        "status": "exact",
+        "target_tool_call_count": 1,
+        "argument_exact": true,
+        "known_punctuation_variant_exact": false,
+        "expected_utf8_bytes": 48,
+        "observed_utf8_bytes": 48
+      },
+      {
+        "phase_ordinal": 2,
+        "status": "exact",
+        "target_tool_call_count": 1,
+        "argument_exact": true,
+        "known_punctuation_variant_exact": false,
+        "expected_utf8_bytes": 51,
+        "observed_utf8_bytes": 51
+      }
+    ]
+  }
+}

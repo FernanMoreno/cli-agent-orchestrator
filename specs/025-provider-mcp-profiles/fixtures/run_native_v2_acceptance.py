@@ -280,6 +280,8 @@ RUN_SOURCE_MODULES = (
     "test.live_provider.opencode_http_tool_offer_observer",
     "test.live_provider.opencode_http_prompt_observer",
     "test.live_provider.opencode_http_response_argument_observer",
+    "test.live_provider.receipt_verification_observer",
+    "cli_agent_orchestrator.utils.receipt_verification_diagnostics",
     "cli_agent_orchestrator.utils.opencode_config",
     "cli_agent_orchestrator.utils.opencode_ownership",
     "cli_agent_orchestrator.utils.opencode_v2",
@@ -287,6 +289,12 @@ RUN_SOURCE_MODULES = (
     "cli_agent_orchestrator.utils.opencode_v2_result_binding",
 )
 RUN_SOURCE_RELATIVE_PATHS = {
+    "test.live_provider.receipt_verification_observer": (
+        "test/live_provider/receipt_verification_observer.py"
+    ),
+    "cli_agent_orchestrator.utils.receipt_verification_diagnostics": (
+        "src/cli_agent_orchestrator/utils/receipt_verification_diagnostics.py"
+    ),
     "test.fixtures.cao_server": "test/fixtures/cao_server.py",
     "test.live_provider.message_api_restart_live": (
         "test/live_provider/message_api_restart_live.py"
@@ -3402,6 +3410,115 @@ _HTTP_RESPONSE_OBSERVER_STATUSES = frozenset({"observed", "incomplete", "unavail
 _HTTP_RESPONSE_LEDGER_NAME_PATTERN = re.compile(r"response-[0-9]{4}\.json\Z")
 
 
+RECEIPT_STAGE_SOURCE_FILES = (
+    "src/cli_agent_orchestrator/providers/opencode_cli.py",
+    "src/cli_agent_orchestrator/services/status_monitor.py",
+    "src/cli_agent_orchestrator/services/terminal_service.py",
+    "src/cli_agent_orchestrator/utils/receipt_verification_diagnostics.py",
+)
+
+
+def _prepare_receipt_stage_api_pythonpath(
+    *, observer, bootstrap_root, raw_dir, source_hashes, role
+):
+    if role not in {"api_a", "api_b"} or type(source_hashes) is not dict:
+        raise GateError("receipt_stage_bootstrap_context_invalid")
+    hashes = {relative: source_hashes.get(relative) for relative in RECEIPT_STAGE_SOURCE_FILES}
+    if not all(_digest_shape(value) for value in hashes.values()):
+        raise GateError("receipt_stage_source_hash_missing")
+    bootstrap = Path(bootstrap_root) / role
+    value = observer.prepare_api_observer(bootstrap, raw_dir, REPO, hashes, role)
+    expected = os.pathsep.join(map(str, (bootstrap, REPO / "src", REPO)))
+    if value != expected:
+        raise GateError("receipt_stage_api_pythonpath_mismatch")
+    return value
+
+
+def _receipt_stage_api_ready(raw_dir, role):
+    """Reject a healthy API that did not initialize its requested bootstrap."""
+    try:
+        if type(role) is not str or role not in {"api_a", "api_b"}:
+            return False
+        directory = (Path(raw_dir) / role).lstat()
+        event = (Path(raw_dir) / role / "events.jsonl").lstat()
+        return (
+            stat.S_ISDIR(directory.st_mode)
+            and directory.st_uid == os.getuid()
+            and stat.S_IMODE(directory.st_mode) == 0o700
+            and stat.S_ISREG(event.st_mode)
+            and event.st_uid == os.getuid()
+            and event.st_nlink == 1
+            and stat.S_IMODE(event.st_mode) == 0o600
+        )
+    except OSError:
+        return False
+
+
+def _receipt_stage_epoch_summary(value, role):
+    from cli_agent_orchestrator.utils.receipt_verification_diagnostics import _ALLOWED_OUTCOMES
+
+    unavailable = {
+        "observer_status": "unavailable",
+        "role": role,
+        "event_count": None,
+        "thread_count": None,
+        "failed_event_count": None,
+        "stage_outcome_counts": None,
+    }
+    if type(value) is not dict or set(value) != set(unavailable) or value["role"] != role:
+        return unavailable
+    if value["observer_status"] != "complete":
+        return unavailable
+    for key in ("event_count", "thread_count", "failed_event_count"):
+        if type(value[key]) is not int or not 0 <= value[key] <= 4096:
+            return unavailable
+    if value["failed_event_count"] != 0 or value["thread_count"] > value["event_count"]:
+        return unavailable
+    counts = value["stage_outcome_counts"]
+    if type(counts) is not dict or set(counts) != set(_ALLOWED_OUTCOMES):
+        return unavailable
+    safe = {}
+    total = 0
+    for stage, outcomes in _ALLOWED_OUTCOMES.items():
+        row = counts[stage]
+        if type(row) is not dict or set(row) != set(outcomes):
+            return unavailable
+        if any(type(count) is not int or not 0 <= count <= 4096 for count in row.values()):
+            return unavailable
+        safe[stage] = {outcome: row[outcome] for outcome in sorted(outcomes)}
+        total += sum(row.values())
+    if total != value["event_count"]:
+        return unavailable
+    return {**value, "stage_outcome_counts": safe}
+
+
+def _capture_receipt_stage_diagnostic_safely(*, observer, raw_dir, writers_dead):
+    result = {
+        "schema": "spec025.receipt-verification-stages.v1",
+        "status": "unavailable",
+        "acceptance_input_changed": False,
+    }
+    if writers_dead is not True:
+        return {**result, "reason": "writers_not_confirmed_dead"}
+    try:
+        if Path(raw_dir).resolve() != (EVIDENCE / "raw/receipt-verification").resolve():
+            return {**result, "reason": "context_invalid"}
+        epochs = {
+            role: _receipt_stage_epoch_summary(
+                observer.read_api_observation(raw_dir, role=role, writers_dead=True), role
+            )
+            for role in ("api_a", "api_b")
+        }
+        complete = sum(row["observer_status"] == "complete" for row in epochs.values())
+        return {
+            **result,
+            "status": "complete" if complete == 2 else "partial" if complete else "unavailable",
+            "epochs": epochs,
+        }
+    except BaseException:
+        return {**result, "reason": "observer_unavailable"}
+
+
 def _http_response_unavailable(reason):
     return {
         "schema": "spec025.t128.http-response-argument-diagnostic.v1",
@@ -5967,6 +6084,7 @@ def _run_enabled(
         from test.live_provider import opencode_http_response_argument_observer as response_observer
         from test.live_provider import opencode_http_tool_offer_observer as offer_observer
         from test.live_provider import opencode_interaction_journey as journey
+        from test.live_provider import receipt_verification_observer as receipt_stage_observer
         from test.postgres import fixtures as postgres_fixtures
         from test.postgres.fixtures import IMAGE_ID, _discover_postgres_service
 
@@ -5987,6 +6105,7 @@ def _run_enabled(
             opencode_v2,
             opencode_v2_result_binding,
             opencode_v2_store,
+            receipt_verification_diagnostics,
         )
     except ModuleNotFoundError:
         raise GateError("current_source_import_missing") from None
@@ -6142,6 +6261,7 @@ def _run_enabled(
     offer_directories: dict[str, Path] = {}
     prompt_context: dict[str, Any] | None = None
     response_context: dict[str, Any] | None = None
+    receipt_stage_context: dict[str, Path] | None = None
     failures: set[str] = set()
     start = time.monotonic()
     original_run_environment = dict(os.environ)
@@ -6176,6 +6296,10 @@ def _run_enabled(
         observer_dir = _private_directory(root / "observer")
         raw_dir = _private_directory(EVIDENCE / "raw")
         raw_observer_dir = _private_directory(raw_dir / "observer")
+        receipt_stage_context = {
+            "bootstrap_root": _private_directory(root / "receipt-stage-bootstrap"),
+            "raw_dir": _private_directory(raw_dir / "receipt-verification"),
+        }
         receipt["private_raw_evidence_present"] = True
 
         offer_plugin_source = REPO / "test/live_provider/opencode_http_tool_offer_observer.js"
@@ -6606,14 +6730,25 @@ def _run_enabled(
             registry = getattr(fixture_server_module, "_LIVE_SERVERS", None)
             before = set(registry) if isinstance(registry, set) else None
             try:
-                return _start_cao_server(
+                api_environment = dict(api_extra)
+                api_environment["PYTHONPATH"] = _prepare_receipt_stage_api_pythonpath(
+                    observer=receipt_stage_observer,
+                    bootstrap_root=receipt_stage_context["bootstrap_root"],
+                    raw_dir=receipt_stage_context["raw_dir"],
+                    source_hashes=runner_manifest["source_sha256s"],
+                    role=role,
+                )
+                started_server = _start_cao_server(
                     home,
                     api_port,
                     deadline=60,
                     database_targets=targets,
-                    extra_env=api_extra,
+                    extra_env=api_environment,
                     allowed_external_credentials=api_allowlist,
                 )
+                if not _receipt_stage_api_ready(receipt_stage_context["raw_dir"], role):
+                    raise GateError("receipt_stage_api_bootstrap_not_ready")
+                return started_server
             except BaseException:
                 registry_after = getattr(fixture_server_module, "_LIVE_SERVERS", None)
                 if before is None or not isinstance(registry_after, set):
@@ -7965,6 +8100,13 @@ def _run_enabled(
                         and tmux_processes_confirmed_dead is True
                     ),
                 )
+            )
+
+        if receipt_stage_context is not None:
+            receipt["receipt_verification_diagnostic"] = _capture_receipt_stage_diagnostic_safely(
+                observer=receipt_stage_observer,
+                raw_dir=receipt_stage_context["raw_dir"],
+                writers_dead=api_processes_confirmed_dead is True,
             )
 
         if pg_context is not None:

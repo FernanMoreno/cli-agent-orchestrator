@@ -1,0 +1,48 @@
+{
+  "schema": "caos.native-acceptance-summary.v1",
+  "source_head": "7f6cdff012462900402a4d020ed110334cfc5b26",
+  "case": "v1",
+  "success": false,
+  "error_code": "receiver_ack_not_observed",
+  "elapsed_seconds": 162.464,
+  "private_native_receipt_sha256": "e948879b7400bf546be1f4864a75496411a51f9a99bd71e9bd58a40675f85af9",
+  "case_gates_closed": true,
+  "parent_pg_closed": true,
+  "exact_owned_container_absent": true,
+  "exact_owned_network_absent": true,
+  "unrelated_resources_preserved": true,
+  "operator_auth_unchanged": true,
+  "private_state_removed": true,
+  "global_acceptance_claimed": false,
+  "source_runtime_file_count": 521,
+  "separate_artifact_count": 7,
+  "cleanup_failures": [],
+  "phases": [
+    {
+      "phase": 0,
+      "receiver_ack_exact": true,
+      "receiver_turn_completed_once": true,
+      "last_receipt_unicode_verified": true,
+      "sender_completed": true,
+      "model_seconds": 11.021756489004474
+    },
+    {
+      "phase": 1,
+      "receiver_ack_exact": false,
+      "receiver_turn_completed_once": false,
+      "last_receipt_unicode_verified": true,
+      "sender_completed": true,
+      "model_seconds": 75.00037418099237
+    }
+  ],
+  "failure_snapshot_summary": {
+    "receiver_status": "reconcile",
+    "receiver_turn_sequence": 1,
+    "receiver_turn_completed": 0,
+    "api_pg_rows_match": true,
+    "delivery_states": [
+      "delivered",
+      "delivered"
+    ]
+  }
+}

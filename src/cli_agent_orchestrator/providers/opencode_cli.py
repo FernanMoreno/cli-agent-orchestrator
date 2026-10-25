@@ -65,6 +65,11 @@ from cli_agent_orchestrator.utils.opencode_policy import (
     parse_native_agent,
     validate_native_binding,
 )
+from cli_agent_orchestrator.utils.receipt_verification_diagnostics import (
+    emit_receipt_verification_event,
+    receipt_verification_diagnostic_stage,
+    receipt_verification_diagnostics_enabled,
+)
 from cli_agent_orchestrator.utils.terminal import wait_for_shell
 
 logger = logging.getLogger(__name__)
@@ -723,22 +728,66 @@ class OpenCodeCliProvider(BaseProvider):
         durable CAS. A native read is authoritative only when it joins the
         unique active nonce to this launch's privately bound selected agent.
         """
+        stages = (
+            "active_receipt_identity",
+            "native_binding",
+            "native_parts",
+            "native_receipt_identity",
+            "native_render_guard",
+        )
+        observed_stages: set[str] = set()
+
+        def skip_unobserved_stages() -> None:
+            for stage_name in stages:
+                if stage_name not in observed_stages:
+                    observed_stages.add(stage_name)
+                    emit_receipt_verification_event(stage_name, "skip")
+
         if self._cli_major != 2:
             return result
+        observed_stages.add("active_receipt_identity")
+        emit_receipt_verification_event("active_receipt_identity", "started")
+        active_identity_complete = False
+
+        def finish_active_identity(outcome: str) -> None:
+            nonlocal active_identity_complete
+            if active_identity_complete:
+                return
+            emit_receipt_verification_event("active_receipt_identity", outcome)
+            active_identity_complete = True
+
         if type(result) is not str or not result:
+            finish_active_identity("rejected")
+            skip_unobserved_stages()
             raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
-        state = self.pending_turn_receipt_state()
+        if receipt_verification_diagnostics_enabled():
+            try:
+                state = self.pending_turn_receipt_state()
+            except BaseException:
+                finish_active_identity("error")
+                skip_unobserved_stages()
+                raise
+        else:
+            # Keep this provider read outside the broad normalization block
+            # below, matching the original exception boundary exactly.
+            state = self.pending_turn_receipt_state()
         if state is None:
+            finish_active_identity("not_applicable")
+            skip_unobserved_stages()
             return result
         try:
             receipt_lines = _ACTIVE_TURN_RECEIPT_LINE.findall(result)
             if len(receipt_lines) != 1:
+                finish_active_identity("rejected")
                 raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
             nonce = receipt_lines[0]
             if hashlib.sha256(nonce.encode("utf-8")).hexdigest() != state["receipt_sha256"]:
+                finish_active_identity("rejected")
                 raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
             if self._pending_turn_receipt is not None and self._pending_turn_receipt != nonce:
+                finish_active_identity("rejected")
                 raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+            finish_active_identity("passed")
 
             from cli_agent_orchestrator.utils.opencode_v2_result_binding import (
                 assert_v2_database_unchanged,
@@ -748,50 +797,75 @@ class OpenCodeCliProvider(BaseProvider):
             from cli_agent_orchestrator.utils.opencode_v2_store import _native_parts
 
             stop = time.monotonic() + 3.0
-            expected_agent = None
-            if self._agent_profile:
-                from cli_agent_orchestrator.utils.opencode_config import to_opencode_agent_id
+            observed_stages.add("native_binding")
+            with receipt_verification_diagnostic_stage("native_binding") as finish:
+                expected_agent = None
+                if self._agent_profile:
+                    from cli_agent_orchestrator.utils.opencode_config import (
+                        to_opencode_agent_id,
+                    )
 
-                expected_agent = to_opencode_agent_id(self._agent_profile)
-            binding = read_v2_result_binding(
-                self._config_ownership(),
-                expected_agent,
-                stop=stop,
-            )
-            if binding.mode == "rendered":
-                assert_v2_result_binding_unchanged(binding, stop=stop)
-                return result
-            if (
-                binding.mode != "native_text"
-                or binding.agent_id is None
-                or binding.database_path is None
-                or binding.database_identity is None
-            ):
-                raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
-            parts = _native_parts(
-                binding.database_path,
-                nonce,
-                stop,
-                expected_agent=binding.agent_id,
-            )
-            assert_v2_database_unchanged(binding, stop=stop)
-            if time.monotonic() >= stop or type(parts) not in (tuple, list) or not parts:
-                raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
-            if any(type(part) is not str for part in parts):
-                raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+                    expected_agent = to_opencode_agent_id(self._agent_profile)
+                binding = read_v2_result_binding(
+                    self._config_ownership(),
+                    expected_agent,
+                    stop=stop,
+                )
+                if binding.mode == "rendered":
+                    assert_v2_result_binding_unchanged(binding, stop=stop)
+                    finish("passed")
+                    return result
+                if (
+                    binding.mode != "native_text"
+                    or binding.agent_id is None
+                    or binding.database_path is None
+                    or binding.database_identity is None
+                ):
+                    finish("rejected")
+                    raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+
+            observed_stages.add("native_parts")
+            with receipt_verification_diagnostic_stage("native_parts") as finish:
+                parts = _native_parts(
+                    binding.database_path,
+                    nonce,
+                    stop,
+                    expected_agent=binding.agent_id,
+                )
+                assert_v2_database_unchanged(binding, stop=stop)
+                if time.monotonic() >= stop or type(parts) not in (tuple, list) or not parts:
+                    finish("rejected")
+                    raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+                if any(type(part) is not str for part in parts):
+                    finish("rejected")
+                    raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
             native = "".join(parts)
-            native_receipts = _ACTIVE_TURN_RECEIPT_LINE.findall(native)
-            if native_receipts != [nonce]:
-                raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
-            native_public = _without_active_turn_receipt(native, nonce)
-            rendered_public = _without_active_turn_receipt(result, nonce)
-            if _render_guard_signature(native_public) != _render_guard_signature(rendered_public):
-                raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+            observed_stages.add("native_receipt_identity")
+            with receipt_verification_diagnostic_stage("native_receipt_identity") as finish:
+                native_receipts = _ACTIVE_TURN_RECEIPT_LINE.findall(native)
+                if native_receipts != [nonce]:
+                    finish("rejected")
+                    raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+                native_public = _without_active_turn_receipt(native, nonce)
+                rendered_public = _without_active_turn_receipt(result, nonce)
+
+            observed_stages.add("native_render_guard")
+            with receipt_verification_diagnostic_stage("native_render_guard") as finish:
+                if _render_guard_signature(native_public) != _render_guard_signature(
+                    rendered_public
+                ):
+                    finish("rejected")
+                    raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
             return native
         except OutputExtractionError:
             raise
         except Exception:
+            finish_active_identity("error")
             raise OutputExtractionError("OpenCode v2 canonical result is unavailable") from None
+        finally:
+            if not active_identity_complete:
+                finish_active_identity("error")
+            skip_unobserved_stages()
 
     @staticmethod
     def _v2_without_delivery_contract(
