@@ -146,3 +146,6 @@ Actualización global compartida, 2026-10-22 (R5/T132): la memoria permitió eje
 
 
 Actualización compartida2026-10-25: T140 corrige la equidad del inbox al unificar la admisión de eventos de estado en2Q lugares, conservando límites/orden/cierre.129 pruebas del controlador, API y PostgreSQL pasan; esto es infraestructura compartida y no una ejecución nativa reciente de este cliente ni un cierre de sus gates. [Alcance y evidencia](../specs/025-provider-mcp-profiles/validation-t140.md).
+
+
+Actualización compartida2026-10-25: T141 elimina el bloqueo global de reconstrucción en ProviderManager.get_provider. Las restauraciones de terminales distintos avanzan de forma independiente y los lectores del mismo terminal siguen esperando a su recibo restaurado antes de ver el adaptador.187 regresiones pasan, incluida PostgreSQL con adaptadores Codex reales sin iniciar CLI/modelo; arquitectura5/0 y revisión de Claude/Luna. Esto no cierra las carreras previas de creación/limpieza, OC-06 ni la aceptación nativa actual de este cliente. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t141.md).

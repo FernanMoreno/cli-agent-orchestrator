@@ -2,7 +2,8 @@
 
 import logging
 import threading
-from typing import Dict, List, Optional
+from contextlib import contextmanager
+from typing import Dict, Iterator, List, Optional
 
 from cli_agent_orchestrator.clients.database import (
     get_terminal_metadata,
@@ -38,12 +39,39 @@ from cli_agent_orchestrator.utils.opencode_policy import NativeAgentSnapshot
 logger = logging.getLogger(__name__)
 
 
+class _RestoreLockEntry:
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self.refs = 0
+
+
 class ProviderManager:
     """Simplified provider manager with direct mapping."""
 
     def __init__(self) -> None:
         self._providers: Dict[str, BaseProvider] = {}
-        self._restore_lock = threading.RLock()
+        self._restore_locks_guard = threading.Lock()
+        self._restore_locks: Dict[str, _RestoreLockEntry] = {}
+
+    @contextmanager
+    def _restoration_lock(self, terminal_id: str) -> Iterator[None]:
+        # Count holders and registered waiters before acquisition. Retire only
+        # after the final lock release, so a waiter cannot retain an old lock
+        # while a new caller creates a second lock for the same terminal.
+        with self._restore_locks_guard:
+            entry = self._restore_locks.get(terminal_id)
+            if entry is None:
+                entry = _RestoreLockEntry()
+                self._restore_locks[terminal_id] = entry
+            entry.refs += 1
+        try:
+            with entry.lock:
+                yield
+        finally:
+            with self._restore_locks_guard:
+                entry.refs -= 1
+                if entry.refs == 0 and self._restore_locks.get(terminal_id) is entry:
+                    del self._restore_locks[terminal_id]
 
     def create_provider(
         self,
@@ -252,7 +280,7 @@ class ProviderManager:
             return None
         # A receipt restoration is one publication: other readers must never
         # see a new adapter before its durable input fence has been restored.
-        with self._restore_lock:
+        with self._restoration_lock(terminal_id):
             return self._get_provider_locked(terminal_id)
 
     def _get_provider_locked(self, terminal_id: str) -> Optional[BaseProvider]:
