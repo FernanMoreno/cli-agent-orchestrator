@@ -13,5 +13,11 @@
   "exact_owned_container_absent": true,
   "exact_owned_network_absent": true,
   "global_acceptance_claimed": false,
-  "native_llm_inference_claimed": false
+  "native_llm_inference_claimed": false,
+  "shared_parent_cleanup_evidence": {
+    "sha256": "eb7d36b18ed5d5a025f489e44146199b9939eba99e61d74c5812d7dc27dce06e",
+    "private_artifact": "t132-current-native-v2-collaboration/postgres-parent/postgres-owner-cleanup.json",
+    "scope": "Common PostgreSQL parent closed after all serial v2, v1 and external Work jobs; this is later owner evidence, not a flag from each case receipt."
+  },
+  "postgres_case_boundary": "The Work receipt verifies the same PostgreSQL parent remained running before/after Work. The separately hashed owner cleanup occurred later, after all borrowers exited."
 }

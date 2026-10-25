@@ -88,6 +88,16 @@
         "expected_utf8_bytes": 51,
         "observed_utf8_bytes": 51
       }
-    ]
+    ],
+    "active_receipt_identity_attested": false,
+    "scope": "Request/phase-bound HTTP sender arguments; does not attest native active receipt identity."
+  },
+  "shared_parent_cleanup_evidence": {
+    "sha256": "eb7d36b18ed5d5a025f489e44146199b9939eba99e61d74c5812d7dc27dce06e",
+    "private_artifact": "t132-current-native-v2-collaboration/postgres-parent/postgres-owner-cleanup.json",
+    "scope": "Common PostgreSQL parent closed after all serial v2, v1 and external Work jobs; this is later owner evidence, not a flag from each case receipt."
+  },
+  "phase_field_semantics": {
+    "durable_turn_completed": "Sender durable turn completion only; not receiver completion or PG/API parity."
   }
 }
