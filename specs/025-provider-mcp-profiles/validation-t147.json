@@ -91,7 +91,7 @@
   "obsidian_strict_issues": 0,
   "foreign_graphify_tracked_preserved": 12,
   "remaining": [
-    "preclaim KAS profile overwrite",
+    "preclaim KAS creation of absent grant/source files",
     "child receipt inserted for an existing terminal lacking receipt",
     "row generation/CAS after successful insertion",
     "sidecar publication in bulk cleanup",
@@ -100,5 +100,11 @@
     "worktree cancellation compensation",
     "ambiguous commit reconciliation",
     "worktree cleanup error may replace original creation error"
-  ]
+  ],
+  "later_clarification": {
+    "task": "T148",
+    "date": "2026-10-25",
+    "original_hypothesis": "preclaim KAS profile overwrite",
+    "source_correction": "Installer uses os.link and rejects different existing bytes; reproduced issue is creation of absent deterministic files before terminal registration, not overwrite. Original T147 run/source evidence unchanged."
+  }
 }

@@ -1,0 +1,119 @@
+{
+  "task": "T148",
+  "date": "2026-10-25",
+  "base_main": "8772281eab6e7e3df093d5521b0053d8df12c927",
+  "scope": "FR126/SC110 KAS proof publication after acknowledged registration; bounded T143 increment",
+  "final": {
+    "initial_available_mib": 12445,
+    "selected_test_files": [
+      "test/integration/test_failed_create_authority.py",
+      "test/services/test_terminal_service_full.py::TestCreateTerminal",
+      "test/services/test_terminal_service_full.py::TestCreateTerminalWorktree",
+      "test/services/test_terminal_service_full.py::TestCreateTerminalIdempotencyKey",
+      "test/services/test_terminal_service_full.py::TestDeferredInitFailureNotification",
+      "test/services/test_terminal_service_full.py::TestDeferredInitWaitingUserAnswerSurvival",
+      "test/services/test_provider_operation_async.py",
+      "test/services/test_session_teardown_atomic.py",
+      "test/integration/test_provider_startup_retirement.py",
+      "test/services/test_provider_lifecycle.py",
+      "test/services/test_terminal_service_inbox_registration.py",
+      "test/services/test_opencode_profile_preallocation.py",
+      "test/services/test_initial_task_inbox_ordering.py",
+      "test/providers/test_provider_publication_cleanup.py",
+      "test/integration/test_provider_publication_cleanup.py",
+      "test/services/test_worktree_service.py",
+      "test/integration/test_kas_registration_publication.py",
+      "test/services/test_integration_008_kas_runtime_profile.py",
+      "test/providers/test_integration_008_kas_launch_review.py",
+      "test/providers/test_integration_008_kas_restoration.py",
+      "test/services/test_kiro_engine_phase0.py",
+      "test/services/test_kiro_kas_profiles.py",
+      "test/services/test_kiro_profile_service.py",
+      "test/services/test_kiro_policy_sidecar.py",
+      "test/services/test_integration_008_core.py"
+    ],
+    "source_sha256": {
+      "src/cli_agent_orchestrator/providers/manager.py": "139885d70c1d088b6a9b2639929f5f92c6091bb8fb033c56ec22956f6f971ab6",
+      "src/cli_agent_orchestrator/services/terminal_service.py": "707f4b42955932c247e9e97d1a489acd4c0b7bfbb912312534ccee9140df3957",
+      "src/cli_agent_orchestrator/services/cleanup_service.py": "ad9ba238c61fdaa20b9d3f46d29f34e6cae4a542f4e1cec5948c6646f0bd6e27",
+      "src/cli_agent_orchestrator/services/session_service.py": "bba8bbcb610fc6fdbf2fab876c1075ff7d2198a1f1f2269a96e8c44f0deaf1ac",
+      "src/cli_agent_orchestrator/services/flow_service.py": "99005f9fbd7a9fb2e319a068c18fa2e40d9f02541379eac84025f0822d978651",
+      "src/cli_agent_orchestrator/services/provider_lifecycle.py": "e1520d49f0bcc2f81dce8f0c59d93a42b02e03700d4d2b8ca73304c3110b3df7",
+      "src/cli_agent_orchestrator/runtime_channel/bridge.py": "b2905bd810ff2afeafe53b68e7c661fa50df0a23833c0c5732d9ea078d61d62d",
+      "src/cli_agent_orchestrator/api/main.py": "c161a41f5cddb0a519c62db72b59c08c4ec4e9981247d5d07ef7e53c22341bde",
+      "src/cli_agent_orchestrator/services/herdr_inbox_service.py": "c9cae1c4df9167ef9688697f5941003b094d6325f48183605a55359f6695ab5a",
+      "src/cli_agent_orchestrator/utils/orchestration.py": "1d868ecb337f299ba338c72313d9b71cacbd6d96c040e1731ad06b424b949cfd",
+      "src/cli_agent_orchestrator/services/kiro_profiles.py": "b606a89ba50b2b561fc05f7fde5d72c6d1caf3fa26e90ca802df130959b1479e",
+      "src/cli_agent_orchestrator/providers/kiro_cli.py": "3008f7a4722de4aaa23e97af6914b0766fbeb61c12ec4f001f8452b08e6b421a"
+    },
+    "identity_verified": true,
+    "pytest_returncode": 0,
+    "owner_closed": true,
+    "exact_container_absent": true,
+    "elapsed_seconds": 208.215,
+    "sources_unchanged": true
+  },
+  "pytest": {
+    "passed": 310,
+    "warnings": 2,
+    "seconds": 199.71,
+    "new_cases": 15,
+    "configured_focused_coverage_percent": 23,
+    "coverage_settings_unchanged": true
+  },
+  "history": {
+    "red": {
+      "failed": 7,
+      "passed": 1,
+      "seconds": 35.78,
+      "scope": "6 premature-file-publication failures,1 positive-order failure,1 no-replace passing control"
+    },
+    "first_green": {
+      "passed": 8,
+      "seconds": 35.52
+    },
+    "first_regression": {
+      "status": "INTERRUPTED_NOT_ACCEPTANCE",
+      "reason": "include explicit owned-child reconcile state from peer review",
+      "owner_closed": true,
+      "exact_container_absent": true,
+      "sources_unchanged": true,
+      "raw_pytest_exit_code": 1,
+      "raw_log": "regression.log"
+    }
+  },
+  "reviews": {
+    "claude_diagnosis": "3c7afe215dc14d33a65a57c42a3d0723",
+    "claude_code": "f8992f9d9e414d309f26848292d886b4",
+    "claude_bounded_go": "078991a404df41bc87ce3e43b5223fda",
+    "luna": "provider_lifecycle_fence_audit, ECC source audit; tests run by root"
+  },
+  "composition": {
+    "kept": 5,
+    "broken": 0,
+    "black": true,
+    "isort": true,
+    "verdict": "PASS WITH RISKS: T148 accepted, full T143 open"
+  },
+  "test_sha256": {
+    "test/integration/test_kas_registration_publication.py": "76acb332b0fdbdb0c361d160ca42679c10824940a0bcfb022a74d0fe70997488"
+  },
+  "correction_to_prior_hypothesis": "No-replace hardlink rejects different existing bytes. The reproduced issue is creation of absent artifact/source files before registration, not overwrite. T147 historical test/source receipts remain intact.",
+  "native_cli_executed": false,
+  "production_KAS_optin_changed": false,
+  "current_native_equivalence": false,
+  "private_evidence_root": "/home/felni/.cache/caos-git-publish-20261020/t148-kas-registration-publication",
+  "obsidian_operation": "save-20261025-caos-kas-registration-publication",
+  "obsidian_strict_issues": 0,
+  "foreign_graphify_tracked_preserved": 12,
+  "remaining": [
+    "cold restoration can transiently reject visible row with pending proof",
+    "ordinary later KAS unlink still keyed by ID",
+    "file pair is not transactional",
+    "preplanned child receipt can attach to existing terminal lacking child",
+    "per-row generation/CAS and distributed ownership",
+    "bulk sidecar publication and Herdr freshness/ready-provider retirement",
+    "escaped-worker and retained-resource reconciliation",
+    "worktree cancellation compensation"
+  ]
+}

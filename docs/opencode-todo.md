@@ -556,3 +556,6 @@ Actualización compartida2026-10-25: T146 reserva el arranque antes de publicar 
 
 
 Actualización compartida2026-10-25: T147 corrige la reversión de una creación fallida que borraba una fila ajena con el mismo ID. Exige publicación confirmada antes de limpiar por ID, conserva commits ambiguos y marcas previas, retira solo worktrees creados y liquida solo recibos propios.221 regresiones pasan con PostgreSQL; arquitectura5/0 y revisión Claude/Luna. T143 sigue abierto para preasignación KAS/hijos, generación, sidecars, Herdr y alcance distribuido; no acredita inferencia nativa actual. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t147.md).
+
+
+Actualización compartida2026-10-25: T148 publica las pruebas KAS solo después de confirmar el registro y antes del proveedor. Los archivos existentes ya rechazaban reemplazar contenido distinto; se corrigió la creación de archivos ausentes con un ID rechazado. Fallo parcial conserva fila/prueba y marca un hijo propio reconcile; cancelación espera al trabajador real.310 regresiones pasan, arquitectura5/0, revisión Claude/Luna y PostgreSQL propio cerrado. T143 sigue abierto para recibos preasignados, generación/distribución, sidecars/Herdr y reconciliación; no acredita inferencia nativa actual. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t148.md).

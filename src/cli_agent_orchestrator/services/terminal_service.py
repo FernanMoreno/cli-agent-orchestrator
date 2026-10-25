@@ -1960,6 +1960,7 @@ async def create_terminal(
     pipe_pane_started = False
     kas_profile = None
     kas_digest = None
+    kas_publication_complete = False
     # Reassigned to the resolved repo root once a worktree is actually created
     # below (Step 1b), so the failure-cleanup path (the `except` block) knows
     # whether there is a worktree to roll back too. Still None if Step 1b never
@@ -2067,11 +2068,6 @@ async def create_terminal(
         ):
             raise ValueError("admitted launch terminal identity is already in use")
         terminal_id = managed_terminal_id or generate_terminal_id()
-        if kas_profile is not None:
-            from cli_agent_orchestrator.services.kiro_profiles import install_runtime_kas_profile
-
-            await asyncio.to_thread(install_runtime_kas_profile, terminal_id, kas_profile)
-
         # Persist the child receipt BEFORE any tmux/provider side effect.  A
         # process death in the following creation window leaves ``planned`` and
         # a deterministic terminal handle; the lease reader turns that into
@@ -2503,6 +2499,19 @@ async def create_terminal(
                     pass
             raise
 
+        if kas_profile is not None:
+            from cli_agent_orchestrator.services.kiro_profiles import install_runtime_kas_profile
+
+            def publish_registered_kas_profile():
+                nonlocal kas_publication_complete
+                install_runtime_kas_profile(terminal_id, kas_profile)
+                kas_publication_complete = True
+
+            # Registration is acknowledged and startup remains owned. Never
+            # materialize deterministic grant files for a rejected/ambiguous ID.
+            # Drain the real publisher on cancellation before releasing ownership.
+            await _await_provider_operation(publish_registered_kas_profile)
+
         # Step 4/5: Set up the FIFO event-driven output pipeline for pipe-pane
         # backends (tmux). Event-inbox backends (herdr) deliver via their own
         # socket events and their pipe_pane is a no-op, so skip the FIFO there and
@@ -2838,6 +2847,30 @@ async def create_terminal(
                 await _await_provider_operation(
                     worktree_service.remove_worktree, worktree_repo_root, terminal_id
                 )
+            raise
+        if kas_profile is not None and not kas_publication_complete:
+            # The installer refuses conflicting existing files and can publish
+            # only part of the pair before failing. Row ownership is not proof
+            # that every deterministic grant file belongs to this attempt:
+            # ordinary rollback would delete those files with the row. Keep the
+            # discoverable shell/row and proof for explicit reconciliation;
+            # provider construction and native CLI launch have not started.
+            if native_child_planned:
+                try:
+                    await _await_provider_operation(
+                        transition_native_child,
+                        terminal_id,
+                        "reconcile",
+                        error_kind="kas_publication_failed",
+                        error_summary=str(e),
+                    )
+                except Exception:
+                    logger.exception("Could not reconcile KAS child %s", terminal_id)
+            logger.warning(
+                "Terminal %s KAS grant publication failed; retaining registration and proof "
+                "for reconciliation",
+                terminal_id,
+            )
             raise
         if isinstance(e, TerminalInputBlockedError) and e.delivery_may_have_occurred:
             # A provider can report this before its first task receipt exists:
