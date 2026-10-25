@@ -823,13 +823,15 @@ def delete_session(session_name: str, registry: PluginRegistry | None = None) ->
                     if terminal_service.delete_terminal_row(terminal_id, metadata, registry=None):
                         if metadata:
                             torn_down.append((terminal_id, metadata))
-                    elif metadata and metadata.get("engine") == "kas":
+                    elif (metadata and metadata.get("engine") == "kas") or (
+                        terminal_service.get_terminal_metadata(terminal_id) is not None
+                    ):
                         cleanup_complete = False
                         deferred_ids.append(terminal_id)
                         result["errors"].append(
                             {
                                 "terminal_id": terminal_id,
-                                "error": "KAS native stop proof unavailable; retry delete_session",
+                                "error": "terminal cleanup or native stop proof deferred; retry delete_session",
                             }
                         )
                 except Exception as e:
@@ -865,7 +867,23 @@ def delete_session(session_name: str, registry: PluginRegistry | None = None) ->
             # loop already cleared them. Deferred ids are excluded: their rows
             # are the retry handle for cleanup that has NOT happened yet.
             try:
-                delete_terminals_by_ids([i for i in incarnation_ids if i not in deferred_ids])
+                with ExitStack() as retirements:
+                    for terminal_id in sorted(set(incarnation_ids) - set(deferred_ids)):
+                        if (
+                            retirements.enter_context(
+                                terminal_service.provider_manager.retirement_fence(terminal_id)
+                            )
+                            is False
+                        ):
+                            cleanup_complete = False
+                            deferred_ids.append(terminal_id)
+                            result["errors"].append(
+                                {
+                                    "terminal_id": terminal_id,
+                                    "error": "provider cleanup deferred; retry delete_session",
+                                }
+                            )
+                    delete_terminals_by_ids([i for i in incarnation_ids if i not in deferred_ids])
             except Exception as e:
                 logger.warning(f"Failed to sweep registry rows for {session_name}: {e}")
                 result["errors"].append(
@@ -883,13 +901,15 @@ def delete_session(session_name: str, registry: PluginRegistry | None = None) ->
                 # retry handle and the retried delete_session owns the event —
                 # emitting now as well would double-fire on that retry.
                 for terminal_id, metadata in row_delete_failed:
+                    if terminal_id in deferred_ids:
+                        continue
                     if metadata.get("engine") == "kas":
                         from cli_agent_orchestrator.services.kiro_profiles import (
                             delete_runtime_kas_proof,
                         )
 
                         delete_runtime_kas_proof(terminal_id)
-                torn_down.extend(row_delete_failed)
+                torn_down.extend((i, m) for i, m in row_delete_failed if i not in deferred_ids)
 
             # Drop the per-session forwarded-env mapping (issue #248). Safe
             # even when no vars were forwarded — the helper is a no-op then.

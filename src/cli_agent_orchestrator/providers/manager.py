@@ -74,6 +74,21 @@ class ProviderManager:
                 if entry.refs == 0 and self._restore_locks.get(terminal_id) is entry:
                     del self._restore_locks[terminal_id]
 
+    @contextmanager
+    def retirement_fence(self, terminal_id: str) -> Iterator[bool]:
+        """Retire any newly cached adapter and exclude restore through row deletion.
+
+        Callers must keep monitor reads/clear and observer joins outside this
+        scope; runtime teardown remains their responsibility where applicable.
+        Repeat only cached cleanup, never cold private cleanup. False keeps a
+        retryable or reentrant owner.
+        This is local cache ordering, not DB authority or initializer cancellation.
+        """
+        with self._restoration_lock(terminal_id):
+            with self._providers_guard:
+                cached = terminal_id in self._providers
+            yield self._cleanup_provider_locked(terminal_id) if cached else True
+
     def create_provider(
         self,
         provider_type: str,

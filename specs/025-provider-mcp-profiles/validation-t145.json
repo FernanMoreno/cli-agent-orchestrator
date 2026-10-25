@@ -1,0 +1,65 @@
+{
+  "task": "T145",
+  "date": "2026-10-25",
+  "parent_main": "122bb7361dc2dd762edb33ceb544eda8312f15f5",
+  "scope": "Local cached reconstruction retirement through caller-authorized row deletion; fullT143 remains open",
+  "source_sha256": {
+    "src/cli_agent_orchestrator/providers/manager.py": "7e72b0709334198ab0c8df63e8dbfa94bb232613bf5ad696d8ac018b343840ad",
+    "src/cli_agent_orchestrator/services/terminal_service.py": "0439dfc32cc29ed851ddad83cb3f5f4ea3153a620f9cae2043e9b8f9f5219b71",
+    "src/cli_agent_orchestrator/services/cleanup_service.py": "fae5612af2761af0237c5ce98eef8eb5cc2c31de0b8b88dfff9331895d4e2e6c",
+    "src/cli_agent_orchestrator/services/session_service.py": "524becee6f8d4c37834523f91436b9d09b238fc8ed10464d757c94107aece8b9",
+    "src/cli_agent_orchestrator/services/flow_service.py": "d56cd7db2bd9bf63dfdf66c725185fa69f72bf01fb69fd16f662ee37b4f92d9d"
+  },
+  "red": {
+    "passed": 0,
+    "failed": 1,
+    "pytest_seconds": 33.44,
+    "proof": "/home/felni/.cache/caos-git-publish-20261020/t145-provider-row-retirement/red-proof.json"
+  },
+  "full_regression": {
+    "passed": 398,
+    "warnings": 5,
+    "pytest_seconds": 220.66,
+    "proof": "/home/felni/.cache/caos-git-publish-20261020/t145-provider-row-retirement/final-proof.json",
+    "normal_coverage_percent": 25
+  },
+  "last_change": "Two Flow deferral warnings only; removing exactly those blocks reproduces the398-run Flow source hash; other tested production sources unchanged",
+  "final_flow_and_all_new_controls": {
+    "passed": 35,
+    "warnings": 2,
+    "pytest_seconds": 48.48,
+    "proof": "/home/felni/.cache/caos-git-publish-20261020/t145-provider-row-retirement/final-flow-review-proof.json",
+    "normal_coverage_percent": 16
+  },
+  "architecture": {
+    "contracts_kept": 5,
+    "broken": 0,
+    "log": "/home/felni/.cache/caos-git-publish-20261020/t145-provider-row-retirement/composition-final.log"
+  },
+  "peer": {
+    "diagnosis": "590cdf754e3443edb2ca6cfebd59d7c3",
+    "superseded_review_cancelled": "336fe7395214469e84fe73920c67b67a",
+    "correction_queued_timeout_not_success": "b907d06c53aa4889bbd0c90e2c0ba4a3",
+    "bounded_go": "ecfc81fc63224305ba028ce709ada0fd",
+    "logs_read_by_peer": false,
+    "root_verified_results": true,
+    "luna": "provider_lifecycle_fence_audit; read-only ECC change-impact b92f181b3b748d1abbc2afd94af6aa7d8c8fca29"
+  },
+  "accepted_patch_sha256": "bedac015db34a6c32668a87ef4473b30e481895580f3124ec9929018d7c694e2",
+  "resource_owners_closed": true,
+  "native_inference_run": false,
+  "residual": [
+    "explicit provider construction/publication after delete",
+    "already-running initialize/deferred ownership and cancellation",
+    "same-ID ABA authority; session incarnation is not a terminal generation",
+    "distributed caches",
+    "existing bulk deferred-sidecar publication gap",
+    "explicit post-delete publication during session sweep can leave an owner without row; outside getter scope"
+  ],
+  "obsidian": {
+    "operation_id": "save-20261025-caos-provider-row-retirement",
+    "applied": true,
+    "strict_issues": 0,
+    "pages": 14
+  }
+}

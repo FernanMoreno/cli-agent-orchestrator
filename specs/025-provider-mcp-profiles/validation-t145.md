@@ -1,0 +1,36 @@
+# T145 — retirada final de caché hasta borrar la fila
+
+Fecha: 2026-10-25. FR123/SC107; corrección acotada de T143. Base `122bb7361dc2dd762edb33ceb544eda8312f15f5`, trabajo integrado en `main`. [Recibo estructurado y hashes](validation-t145.json).
+
+## Fallo y corrección
+
+La primera limpieza liberaba el bloqueo del gestor antes de borrar la fila. Un getter reconstruía desde esa fila todavía existente y publicaba un adaptador que sobrevivía al borrado. La prueba sobre `delete_terminal` y PostgreSQL real falló antes de corregir: 1 fallo, 33,44 s. No requiere inferencia, binarios nativos ni credenciales.
+
+`ProviderManager.retirement_fence` reutiliza el bloqueo reentrante contado por terminal. Retira únicamente un adaptador que haya reaparecido en caché y conserva el bloqueo hasta terminar el borrado autorizado por el llamador. No repite la reconstrucción de un adaptador para limpieza privada cuando la caché ya está vacía. `False` conserva el propietario y su fila para reintentar. El bloqueo se retira tras su último titular/esperador; no se introduce un historial de identificadores ni un bloqueo global de restauración.
+
+`delete_terminal_row` aplica ese tramo final a los borrados individuales, incluidos los realizados desde limpieza por antigüedad y sesión. Flow y el barrido final de sesión mantienen los bloqueos finales por identificadores ordenados alrededor de limpieza de caché y SQL. Una sesión excluye las limpiezas aplazadas tanto del barrido como de los eventos recuperados. Los permisos de Work, bloqueos de despacho/sesión, prueba exacta KAS y política de conservación previa se mantienen. Los plugins se ejecutan después del bloqueo del gestor.
+
+La revisión de Luna descartó la primera colocación amplia antes de aceptarla: mantener el bloqueo del gestor mientras se limpia el monitor crea un ciclo con el monitor, que puede tener su propio bloqueo y llamar a `get_provider`. La corrección final mantiene las consultas, limpieza y esperas de observadores fuera del tramo final. El control de orden permite completar un lookup de otro hilo durante la fase de retirada del observador. Es evidencia controlada del orden; el ciclo original se identificó mediante revisión de código.
+
+## Validación
+
+- 12 casos PostgreSQL fuerzan el getter dentro del borrado para terminal, Flow con sesión viva/ausente, sesión, recuperación por barrido y limpieza antigua. Cada recorrido se prueba también reconstruyendo un adaptador entre la primera limpieza y el borrado. El getter termina con fila ausente, la caché queda vacía y los bloqueos se retiran.
+- 4 casos PostgreSQL adicionales conservan fila/propietario ante `False` en la retirada final de sesión, barrido y ambas ramas de Flow; no emiten `post_kill_terminal` para ese terminal. Otros 4 controles verifican orden con observador, excepción/False de limpieza, conservación de sidecars y liberación al fallar SQL sin repetir limpieza fría.
+- Suite ampliada: **398 pruebas pasan**, 5 avisos, 220,66 s; cobertura enfocada normal 25 %. Incluye las 273 anteriores, creación, perfiles, recibos, inbox/API, borrados, sesión atómica, Flow, limpieza, tombstones y eventos.
+- Tras añadir únicamente dos avisos de aplazamiento de Flow solicitados por Claude: **35 pruebas pasan**, 2 avisos, 48,48 s, cobertura enfocada normal 16 %. Incluye los 20 controles nuevos y los 15 de ejecución de Flow. Se verificó que retirar exactamente esos dos bloques reproduce el hash de Flow de la pasada de 398 y que el resto de fuentes probadas no cambió. No se presenta la pasada anterior como una ejecución de los nuevos bytes de logging.
+- Ambos propietarios PostgreSQL verificaron identidad e imagen fijada, mantuvieron la propiedad hasta salir pytest y cerraron contenedor con ausencia exacta comprobada. Memoria inicial: 11.946 y 12.355 MiB; límites y cobertura sin rebajas. Recibos y logs privados: `/home/felni/.cache/caos-git-publish-20261020/t145-provider-row-retirement/`.
+- Arquitectura/composición final: 5 contratos conservados, 0 rotos. Black, isort y revisión de diff pasan. No cambia HTTP/MCP, esquema ni contrato entre servicios independientes; no procede añadir Pact.
+
+El ensayo intermedio tuvo 12 casos PostgreSQL correctos y un control marcado offline que intentaba resolver configuración PostgreSQL del operador. Se corrigió el arnés suministrando un destino ficticio para ese control; no se creó ni modificó configuración del operador. El resultado fallido se conserva. La primera pasada de 394 y el verde de la colocación amplia son históricos, no la aceptación final.
+
+## Revisión de composición y límites
+
+Subsistemas: gestor de proveedores, borrado de terminal, sesión y reciclado Flow. Vecinos revisados: monitor/FIFO, restauración privada/recibos, bloqueos Work/sesión, SQL y sidecars, KAS y plugins. Invariantes comprobados: retiro de caché antes de eliminar la fila, no reconstrucción durante SQL, fallo conservador, orden de bloqueos, ausencia de eventos falsos en limpieza aplazada, propagación de error y liberación de recursos. PostgreSQL real verifica el límite de persistencia; los dobles de backend evitan lanzar CLI/modelos. Los controles de concurrencia sustituyen algunas guardas externas para aislar el límite local; las regresiones existentes cubren los llamadores y autoridad sin cambiar esas guardas.
+
+Claude da **GO acotado** (`ecfc81fc63224305ba028ce709ada0fd`), tras diagnóstico `590cdf754e3443edb2ca6cfebd59d7c3`. La revisión `336fe7395214469e84fe73920c67b67a` se canceló al descartar la colocación amplia; `b907d06c53aa4889bbd0c90e2c0ba4a3` agotó su plazo en cola y no cuenta como éxito. El revisor no leyó los logs: los resultados y cierres anteriores los verificó Codex. Se corrigieron comentarios de alcance y se añadieron los avisos de Flow. Luna revisó en lectura con guía ECC y verificó la desaparición del ciclo del monitor.
+
+**T143 permanece abierto**: constructor/publicación explícita que termina después de borrar, inicialización ya en curso, reversión completa, identidad por fila y cachés distribuidas. `session_incarnation_id` identifica la sesión, no cada encarnación de terminal; `last_active` es mutable. No se añadió compare-delete ni una migración por sospecha de reutilización de id. Los barridos SQL existentes de sesión/Flow siguen sin unirse al bloqueo de publicación de sidecars: ese límite tampoco se cierra aquí. Una publicación explícita después de un borrado individual puede reaparecer antes del barrido, aplazarlo y dejar un propietario sin fila; es la misma frontera explícita pendiente, fuera del getter frío cubierto por T145. La purga de filas y las reversiones que llaman al borrado central heredan el bloqueo final, pero no obtienen aceptación de todo su ciclo.
+
+Veredicto: **PASS para FR123/SC107/T145**, con los límites anteriores. OC-06, los gates globales y la aceptación nativa sobre fuente actual siguen separados. No se ejecutó inferencia ni se alteraron login, instalaciones, jobs históricos o datos ajenos.
+
+Conocimiento durable actualizado mediante transacción wiki `save-20261025-caos-provider-row-retirement`: concepto de propiedad de reconstrucción, índice, log y hot cache. Lint estricto: 0 incidencias, 14 páginas. Graphify se consultó en lectura y se contrastó con los llamadores; se preservaron sus 12 cambios ajenos sin regenerarlo.

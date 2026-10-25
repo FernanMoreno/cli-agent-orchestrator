@@ -6255,32 +6255,44 @@ def delete_terminal_row(
     single-terminal ``delete_terminal`` path emits its event after releasing
     the Work terminal dispatch lock.
     """
-    if metadata and metadata.get("engine") == KiroEngine.KAS.value:
-        try:
-            proof = get_backend().cleanup_terminal_exact(
-                terminal_id, metadata.get("tmux_session"), metadata.get("tmux_window"), close=False
-            )
-        except Exception:
-            logger.warning("Retaining KAS terminal %s: native stop proof unavailable", terminal_id)
+    # Runtime/observer teardown is caller-owned where applicable. The monitor
+    # can get a provider while holding its lock: never read/clear/join it here.
+    with provider_manager.retirement_fence(terminal_id) as retired:
+        if retired is False:
             return False
-        if not proof.reclaimed:
-            logger.warning("Retaining KAS terminal %s: native runtime may still exist", terminal_id)
-            return False
+        if metadata and metadata.get("engine") == KiroEngine.KAS.value:
+            try:
+                proof = get_backend().cleanup_terminal_exact(
+                    terminal_id,
+                    metadata.get("tmux_session"),
+                    metadata.get("tmux_window"),
+                    close=False,
+                )
+            except Exception:
+                logger.warning(
+                    "Retaining KAS terminal %s: native stop proof unavailable", terminal_id
+                )
+                return False
+            if not proof.reclaimed:
+                logger.warning(
+                    "Retaining KAS terminal %s: native runtime may still exist", terminal_id
+                )
+                return False
 
-    # Serialize row deletion with fallback publication. Otherwise a deferred
-    # init task can exhaust DB retries, a concurrent DELETE can remove the row
-    # and existing sidecars, and then the background task can publish a new
-    # orphan sidecar after DELETE has already returned.
-    with _DEFERRED_INIT_SIDECAR_LOCK:
-        deleted = db_delete_terminal(terminal_id)
-        # Sidecars are keyed by terminal id and are safe to remove even when the
-        # DB row was already deleted by another lifecycle owner.
-        _delete_deferred_failure_fallback(terminal_id)
-        _delete_deferred_init_complete_fallback(terminal_id)
-    if deleted and metadata and metadata.get("engine") == KiroEngine.KAS.value:
-        from cli_agent_orchestrator.services.kiro_profiles import delete_runtime_kas_proof
+        # Serialize row deletion with fallback publication. Otherwise a deferred
+        # init task can exhaust DB retries, a concurrent DELETE can remove the row
+        # and existing sidecars, and then the background task can publish a new
+        # orphan sidecar after DELETE has already returned.
+        with _DEFERRED_INIT_SIDECAR_LOCK:
+            deleted = db_delete_terminal(terminal_id)
+            # Sidecars are keyed by terminal id and are safe to remove even when the
+            # DB row was already deleted by another lifecycle owner.
+            _delete_deferred_failure_fallback(terminal_id)
+            _delete_deferred_init_complete_fallback(terminal_id)
+        if deleted and metadata and metadata.get("engine") == KiroEngine.KAS.value:
+            from cli_agent_orchestrator.services.kiro_profiles import delete_runtime_kas_proof
 
-        delete_runtime_kas_proof(terminal_id)
+            delete_runtime_kas_proof(terminal_id)
     logger.info(f"Deleted terminal: {terminal_id}")
     if deleted and metadata:
         dispatch_plugin_event(

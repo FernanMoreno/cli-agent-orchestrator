@@ -307,7 +307,17 @@ def _recycle_flow_session(name: str, session_name: str) -> bool:
                     name,
                 )
                 return False
-            delete_terminals_by_ids([str(t["id"]) for t in terminals])
+            with ExitStack() as retirements:
+                for terminal_id in sorted({str(t["id"]) for t in terminals}):
+                    if (
+                        retirements.enter_context(provider_manager.retirement_fence(terminal_id))
+                        is False
+                    ):
+                        logger.warning(
+                            "Flow %s final provider retirement deferred; retaining rows", name
+                        )
+                        return False
+                delete_terminals_by_ids([str(t["id"]) for t in terminals])
         elif terminals:
             terminals = [
                 t
@@ -321,7 +331,17 @@ def _recycle_flow_session(name: str, session_name: str) -> bool:
             if not cleanup_complete:
                 logger.warning("Flow %s has retained terminal cleanup; deferring next run", name)
                 return False
-            delete_terminals_by_ids([str(t["id"]) for t in terminals])
+            with ExitStack() as retirements:
+                for terminal_id in sorted({str(t["id"]) for t in terminals}):
+                    if (
+                        retirements.enter_context(provider_manager.retirement_fence(terminal_id))
+                        is False
+                    ):
+                        logger.warning(
+                            "Flow %s final provider retirement deferred; retaining rows", name
+                        )
+                        return False
+                delete_terminals_by_ids([str(t["id"]) for t in terminals])
         return True
 
 

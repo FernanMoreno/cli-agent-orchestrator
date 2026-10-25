@@ -547,3 +547,6 @@ Actualización compartida2026-10-25: T142 corrige solapamientos del registro de 
 
 
 Actualización compartida2026-10-25: T144 completa la integración asíncrona de T142. La publicación del proveedor y el tramo final ya autorizado de reversión se ejecutan fuera del bucle, conservando contexto y propiedad del trabajador ante cancelación repetida.273 regresiones pasan, incluida PostgreSQL, creación/worktrees y los controles anteriores; arquitectura5/0. Esto no acredita cancelación segura de todo el ciclo ni inferencia nativa actual. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t144.md).
+
+
+Actualización compartida2026-10-25: T145 corrige la reconstrucción entre limpieza y borrado: retira cualquier adaptador reaparecido y protege el borrado individual y los barridos finales de sesión/Flow. Mantiene el monitor fuera del bloqueo para evitar una inversión de orden.398 regresiones pasan;35 controles finales verifican los avisos posteriores de Flow y los20 casos nuevos. PostgreSQL real, arquitectura5/0, revisión Claude/Luna y recursos propios cerrados. T143 sigue abierto para publicación/inicialización concurrente, identidad por fila y alcance distribuido; no acredita inferencia nativa actual. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t145.md).
