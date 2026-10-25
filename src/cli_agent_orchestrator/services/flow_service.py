@@ -45,6 +45,7 @@ from cli_agent_orchestrator.services.status_monitor import status_monitor
 from cli_agent_orchestrator.services.terminal_service import (
     WorkOwnedTerminalError,
     WorkOwnershipStoreUnavailableError,
+    _delete_terminal_rows_with_sidecars,
     create_terminal,
     send_input,
     should_retain_deferred_failure_tombstone,
@@ -323,7 +324,9 @@ def _recycle_flow_session(name: str, session_name: str) -> bool:
                             "Flow %s final provider retirement deferred; retaining rows", name
                         )
                         return False
-                delete_terminals_by_ids([str(t["id"]) for t in terminals])
+                _delete_terminal_rows_with_sidecars(
+                    [str(t["id"]) for t in terminals], delete_rows=delete_terminals_by_ids
+                )
         elif terminals:
             terminals = [
                 t
@@ -347,7 +350,9 @@ def _recycle_flow_session(name: str, session_name: str) -> bool:
                             "Flow %s final provider retirement deferred; retaining rows", name
                         )
                         return False
-                delete_terminals_by_ids([str(t["id"]) for t in terminals])
+                _delete_terminal_rows_with_sidecars(
+                    [str(t["id"]) for t in terminals], delete_rows=delete_terminals_by_ids
+                )
         return True
 
 

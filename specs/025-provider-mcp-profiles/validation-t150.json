@@ -1,0 +1,115 @@
+{
+  "task": "T150",
+  "date": "2026-10-25",
+  "base_main": "e08fc5969bca19ac905ac11b15683013921f89d1",
+  "scope": "FR128/SC112 process-local deferred sidecar publication versus authorized Session/Flow bulk retirement",
+  "final": {
+    "initial_available_mib": 12279,
+    "selected_test_files": [
+      "test/services/test_deferred_sidecar_lock_lifecycle.py",
+      "test/integration/test_bulk_deferred_sidecar_retirement.py",
+      "test/services/test_terminal_service_full.py",
+      "test/services/test_session_teardown_atomic.py",
+      "test/services/test_session_service.py",
+      "test/services/test_flow_service.py",
+      "test/integration/test_provider_row_retirement.py",
+      "test/integration/test_provider_startup_retirement.py",
+      "test/services/test_cleanup_service.py",
+      "test/services/test_terminal_tombstone_exact_cleanup.py",
+      "test/services/test_provider_lifecycle.py",
+      "test/runtime_channel/test_remote_services.py",
+      "test/runtime_channel/test_bridge_serve_contracts.py",
+      "test/services/test_integration_008_kas_runtime_profile.py",
+      "test/providers/test_integration_008_kas_launch_review.py",
+      "test/services/test_plugin_event_emission.py::TestTerminalPluginEvents",
+      "test/services/test_plugin_event_emission.py::TestSessionPluginEvents",
+      "test/mcp_server/test_terminal_cleanup.py",
+      "test/api/test_api_endpoints.py::TestDeleteTerminal",
+      "test/api/test_api_endpoints.py::TestDeleteSession",
+      "test/api/test_terminals.py::TestDeleteTerminalEndpoint"
+    ],
+    "source_sha256": {
+      "src/cli_agent_orchestrator/providers/manager.py": "139885d70c1d088b6a9b2639929f5f92c6091bb8fb033c56ec22956f6f971ab6",
+      "src/cli_agent_orchestrator/services/terminal_service.py": "da418b77634a3228bbc6c6a85919a80f2d125d14a2ce3902da8dce1f0ea9f7ff",
+      "src/cli_agent_orchestrator/services/cleanup_service.py": "ad9ba238c61fdaa20b9d3f46d29f34e6cae4a542f4e1cec5948c6646f0bd6e27",
+      "src/cli_agent_orchestrator/services/session_service.py": "77e7237f42a4d9a1b1e9832773084569bab361fd7e3c696d4277fc21e2f24a35",
+      "src/cli_agent_orchestrator/services/flow_service.py": "2e7fedcb6d0166b5a2b18dc3455fa4de523d4aaa6c2cb5fa7a05895ba0a59278",
+      "src/cli_agent_orchestrator/services/provider_lifecycle.py": "e1520d49f0bcc2f81dce8f0c59d93a42b02e03700d4d2b8ca73304c3110b3df7",
+      "src/cli_agent_orchestrator/runtime_channel/bridge.py": "b2905bd810ff2afeafe53b68e7c661fa50df0a23833c0c5732d9ea078d61d62d",
+      "src/cli_agent_orchestrator/api/main.py": "c161a41f5cddb0a519c62db72b59c08c4ec4e9981247d5d07ef7e53c22341bde",
+      "src/cli_agent_orchestrator/services/herdr_inbox_service.py": "c9cae1c4df9167ef9688697f5941003b094d6325f48183605a55359f6695ab5a",
+      "src/cli_agent_orchestrator/utils/orchestration.py": "1d868ecb337f299ba338c72313d9b71cacbd6d96c040e1731ad06b424b949cfd",
+      "src/cli_agent_orchestrator/services/kiro_profiles.py": "b606a89ba50b2b561fc05f7fde5d72c6d1caf3fa26e90ca802df130959b1479e",
+      "src/cli_agent_orchestrator/providers/kiro_cli.py": "3008f7a4722de4aaa23e97af6914b0766fbeb61c12ec4f001f8452b08e6b421a",
+      "src/cli_agent_orchestrator/clients/database.py": "c3363f956efeb9ff2b44e80cb9120a2b240912e91597e0685cd66a9293446ff2",
+      "src/cli_agent_orchestrator/services/remote_terminal_service.py": "9a65db33a7375caa9e0b64eeb6eda064319a699072361251627831d244f78f52"
+    },
+    "identity_verified": true,
+    "pytest_returncode": 0,
+    "owner_closed": true,
+    "exact_container_absent": true,
+    "elapsed_seconds": 295.905,
+    "sources_unchanged": true
+  },
+  "pytest": {
+    "passed": 419,
+    "deselected": 3,
+    "warnings": 5,
+    "seconds": 278.37,
+    "new_cases": 33,
+    "configured_focused_coverage_percent": 28,
+    "coverage_and_deselectors_unchanged": true
+  },
+  "history": {
+    "red": {
+      "failed": 6,
+      "passed": 2,
+      "seconds": 37.24
+    },
+    "initial_green": {
+      "passed": 8,
+      "seconds": 36.67
+    },
+    "focused_controls": {
+      "passed": 31,
+      "seconds": 41.85,
+      "note": "before adding two retained/excluded-ID controls"
+    }
+  },
+  "reviews": {
+    "claude_diagnosis": "96fd8b5abbef46b7a1391f9e1ae0db3c",
+    "claude_code": "78a26f733f1b4c79b4874c5dc7ecd327",
+    "claude_frozen_patch_go": "66561805079f4fed98ae2988fa03a31e",
+    "luna": "provider_lifecycle_fence_audit; ECC source/lease/caller audit, no edits or tests",
+    "root_verified": "Session candidate expression and both Flow filters unchanged; callback list/order/duplicates/result preserved; new tests staged100644"
+  },
+  "composition": {
+    "kept": 5,
+    "broken": 0,
+    "black": true,
+    "isort": true,
+    "verdict": "PASS WITH RISKS for bounded T150; full T143 open"
+  },
+  "test_sha256": {
+    "test/services/test_deferred_sidecar_lock_lifecycle.py": "e013bc0a68ceedf9dfb1a91ee0037fb80acac25bacbb18e2fb5f9c739435c736",
+    "test/integration/test_bulk_deferred_sidecar_retirement.py": "4d68c1f42e9eb9198204b0961684c303b16a3727abe4102ff2d72672b3d4aa5b"
+  },
+  "native_cli_executed": false,
+  "current_native_equivalence": false,
+  "schema_changed": false,
+  "private_evidence_root": "/home/felni/.cache/caos-git-publish-20261020/t150-bulk-deferred-sidecar-retirement",
+  "obsidian_operation": "save-20261025-caos-bulk-deferred-sidecar-retirement",
+  "obsidian_strict_issues": 0,
+  "foreign_graphify_tracked_preserved": 12,
+  "remaining": [
+    "cross-process filesystem ordering",
+    "publishing after deletion when later DB read is unknown",
+    "ambiguous commit retains orphan evidence",
+    "best-effort unlink under filesystem errors",
+    "generation/reuse ABA and DB-state repair unlinks",
+    "raw SQL/Herdr deletion and unwired delete-by-session helper",
+    "later KAS proof cleanup",
+    "Herdr snapshot freshness and ready-provider retirement",
+    "escaped-worker and worktree cancellation ownership"
+  ]
+}

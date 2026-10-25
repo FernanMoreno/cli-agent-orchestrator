@@ -896,7 +896,10 @@ def delete_session(session_name: str, registry: PluginRegistry | None = None) ->
                                     "error": "provider cleanup deferred; retry delete_session",
                                 }
                             )
-                    delete_terminals_by_ids([i for i in incarnation_ids if i not in deferred_ids])
+                    terminal_service._delete_terminal_rows_with_sidecars(
+                        [i for i in incarnation_ids if i not in deferred_ids],
+                        delete_rows=delete_terminals_by_ids,
+                    )
             except Exception as e:
                 logger.warning(f"Failed to sweep registry rows for {session_name}: {e}")
                 result["errors"].append(

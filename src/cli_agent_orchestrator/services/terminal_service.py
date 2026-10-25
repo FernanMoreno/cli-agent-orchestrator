@@ -29,7 +29,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import Future as WorkerOutcome
-from contextlib import ExitStack, closing, nullcontext
+from contextlib import ExitStack, closing, contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -491,7 +491,37 @@ _DEFERRED_INIT_FAILURE_SCAN_MAX = 16384
 _DEFERRED_INIT_FAILURE_PERSIST_ATTEMPTS = 3
 _DEFERRED_INIT_FAILURE_FALLBACK_SUFFIX = ".deferred-init-failure.json"
 _DEFERRED_INIT_COMPLETE_FALLBACK_SUFFIX = ".deferred-init-complete"
-_DEFERRED_INIT_SIDECAR_LOCK = threading.RLock()
+
+
+class _DeferredSidecarLockEntry:
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self.refs = 0
+
+
+_deferred_sidecar_locks_guard = threading.Lock()
+_deferred_sidecar_locks: dict[str, _DeferredSidecarLockEntry] = {}
+
+
+@contextmanager
+def _deferred_init_sidecar_lock(terminal_id: str):
+    # Register holders and waiters before acquisition. Retire after the final
+    # release so a waiter never keeps an old lock while another caller gets a
+    # second lock for the same key. The guard never spans database/filesystem I/O.
+    with _deferred_sidecar_locks_guard:
+        entry = _deferred_sidecar_locks.get(terminal_id)
+        if entry is None:
+            entry = _DeferredSidecarLockEntry()
+            _deferred_sidecar_locks[terminal_id] = entry
+        entry.refs += 1
+    try:
+        with entry.lock:
+            yield
+    finally:
+        with _deferred_sidecar_locks_guard:
+            entry.refs -= 1
+            if entry.refs == 0 and _deferred_sidecar_locks.get(terminal_id) is entry:
+                del _deferred_sidecar_locks[terminal_id]
 
 
 class IdempotencyKeyConflict(Exception):
@@ -3240,13 +3270,36 @@ def _publish_deferred_failure_fallback(terminal_id: str, failure: dict[str, Any]
     the row disappeared, so fail toward publishing the external-owner evidence.
     """
 
-    with _DEFERRED_INIT_SIDECAR_LOCK:
+    with _deferred_init_sidecar_lock(terminal_id):
         try:
             if get_terminal_metadata(terminal_id) is None:
                 return False
         except Exception:  # noqa: BLE001 — DB outage is why this fallback exists
             pass
         return _write_deferred_failure_fallback(terminal_id, failure)
+
+
+def _delete_terminal_rows_with_sidecars(
+    terminal_ids: list[str], *, delete_rows: Callable[[list[str]], int]
+) -> int:
+    """Coordinate an already-authorized final bulk SQL phase with publishers.
+
+    The caller owns native/provider/session retirement; this grants none.
+    Keep provider leases outside these sorted per-ID sidecar leases, and keep
+    monitor/observer/plugin work outside both. The callback is the existing
+    bulk database operation, not a runtime teardown or arbitrary observer.
+    Unknown/failed SQL outcomes preserve all fallback evidence.
+    """
+    ids = list(terminal_ids)
+    keys = sorted(set(ids))
+    with ExitStack() as sidecars:
+        for terminal_id in keys:
+            sidecars.enter_context(_deferred_init_sidecar_lock(terminal_id))
+        deleted = delete_rows(ids)
+        for terminal_id in keys:
+            _delete_deferred_failure_fallback(terminal_id)
+            _delete_deferred_init_complete_fallback(terminal_id)
+        return deleted
 
 
 def _read_deferred_failure_fallback(terminal_id: str) -> dict[str, Any] | None:
@@ -3294,7 +3347,7 @@ def _write_deferred_init_complete_fallback(terminal_id: str) -> bool:
 def _publish_deferred_init_complete_fallback(terminal_id: str) -> bool:
     """Publish successful-init fallback without racing terminal deletion."""
 
-    with _DEFERRED_INIT_SIDECAR_LOCK:
+    with _deferred_init_sidecar_lock(terminal_id):
         try:
             if get_terminal_metadata(terminal_id) is None:
                 return False
@@ -6470,7 +6523,7 @@ def delete_terminal_row(
         # init task can exhaust DB retries, a concurrent DELETE can remove the row
         # and existing sidecars, and then the background task can publish a new
         # orphan sidecar after DELETE has already returned.
-        with _DEFERRED_INIT_SIDECAR_LOCK:
+        with _deferred_init_sidecar_lock(terminal_id):
             deleted = db_delete_terminal(terminal_id)
             # Sidecars are keyed by terminal id and are safe to remove even when the
             # DB row was already deleted by another lifecycle owner.
