@@ -1,0 +1,181 @@
+{
+  "schema": "caos.native-acceptance-summary.v1",
+  "source_head": "cf58d148b485bb1a20c2a2e70c944f8ceb18f3b3",
+  "source_runtime_file_count": 539,
+  "case": "v2-full8",
+  "success": false,
+  "error_type": "RuntimeError",
+  "error_code": "private_runtime_diagnostic_error",
+  "elapsed_seconds": 68.91,
+  "private_native_receipt_sha256": "462e8592b35a8cc337c7af319f71245fbc5c8a2ef700a6cbf6ea73c3dbec92dd",
+  "phases": [
+    {
+      "name": "before_restart",
+      "receiver_ack_exact": true,
+      "sender_last_observations_truncated": false,
+      "elapsed_seconds": 18.826,
+      "sender_model_within_75_seconds": true,
+      "receiver_model_within_75_seconds": true,
+      "sender_model_seconds": 18.808,
+      "receiver_model_seconds": 5.217,
+      "model_seconds": 18.808,
+      "last_receipt_unicode_verified": true,
+      "sender_terminal_closed_seconds": 18.808,
+      "sender_terminal_closed_within_75_seconds": true,
+      "durable_turn_completed": true,
+      "receiver_turn_completed_once": true,
+      "agui_capture_stopped_cleanly": true,
+      "agui_redacted_one_notification": true,
+      "one_exact_pg_api_message": true
+    }
+  ],
+  "phase_field_semantics": {
+    "durable_turn_completed": "Sender only."
+  },
+  "response_argument_observation": {
+    "schema": "spec025.t128.http-response-argument-diagnostic.v1",
+    "status": "sealed_observation_available",
+    "reason": "none",
+    "observation": {
+      "observer_status": "observed",
+      "trace_complete": true,
+      "overflow": false,
+      "request_count": 3,
+      "response_count": 3,
+      "durable_record_count": 3,
+      "phase_results": [
+        {
+          "phase_ordinal": 1,
+          "status": "exact",
+          "target_tool_call_count": 1,
+          "argument_exact": true,
+          "known_punctuation_variant_exact": false,
+          "expected_utf8_bytes": 48,
+          "observed_utf8_bytes": 48
+        },
+        {
+          "phase_ordinal": 2,
+          "status": "not_observed",
+          "target_tool_call_count": null,
+          "argument_exact": null,
+          "known_punctuation_variant_exact": null,
+          "expected_utf8_bytes": 51,
+          "observed_utf8_bytes": null
+        }
+      ]
+    },
+    "sealed_raw_copy_verified": true,
+    "active_receipt_identity_attested": false,
+    "acceptance_input_changed": false
+  },
+  "receipt_verification_diagnostic": {
+    "schema": "spec025.receipt-verification-stages.v1",
+    "status": "partial",
+    "acceptance_input_changed": false,
+    "epochs": {
+      "api_a": {
+        "role": "api_a",
+        "observer_status": "complete",
+        "event_count": 46,
+        "thread_count": 3,
+        "failed_event_count": 0,
+        "stage_outcome_counts": {
+          "admission": {
+            "current_capture": 2,
+            "progress_unconfirmed": 2,
+            "stale_capture": 0
+          },
+          "attempt": {
+            "started": 1,
+            "superseded": 0,
+            "unresolved": 0,
+            "verified": 1
+          },
+          "result_extraction": {
+            "error": 0,
+            "returned": 2,
+            "started": 2,
+            "unavailable": 0
+          },
+          "receipt_witness": {
+            "error": 0,
+            "not_applicable": 0,
+            "passed": 4,
+            "rejected": 0,
+            "started": 4
+          },
+          "canonicalizer": {
+            "error": 0,
+            "not_applicable": 0,
+            "passed": 2,
+            "rejected": 0,
+            "started": 2
+          },
+          "active_receipt_identity": {
+            "error": 0,
+            "not_applicable": 0,
+            "passed": 2,
+            "rejected": 0,
+            "skip": 0,
+            "started": 2
+          },
+          "native_binding": {
+            "error": 0,
+            "passed": 2,
+            "rejected": 0,
+            "skip": 0,
+            "started": 2
+          },
+          "native_parts": {
+            "error": 0,
+            "passed": 2,
+            "rejected": 0,
+            "skip": 0,
+            "started": 2
+          },
+          "native_receipt_identity": {
+            "error": 0,
+            "passed": 2,
+            "rejected": 0,
+            "skip": 0,
+            "started": 2
+          },
+          "native_render_guard": {
+            "error": 0,
+            "passed": 2,
+            "rejected": 0,
+            "skip": 0,
+            "started": 2
+          },
+          "durable_cas": {
+            "conflict": 0,
+            "error": 0,
+            "settled": 2,
+            "started": 2
+          }
+        }
+      },
+      "api_b": {
+        "observer_status": "unavailable",
+        "role": "api_b",
+        "event_count": null,
+        "thread_count": null,
+        "failed_event_count": null,
+        "stage_outcome_counts": null
+      }
+    }
+  },
+  "before_restart_lifecycle_verified": true,
+  "snapshot_failure_boundary": "Unclassified RuntimeError after lifecycle snapshot; durable receipt read or native tagged-process scan remains unproven.",
+  "api_restart_observed": false,
+  "case_gates_closed": true,
+  "parent_pg_closed": true,
+  "parent_scope": "Later shared owner cleanup after both v2 and serial v1 writers exited.",
+  "operator_auth_unchanged": true,
+  "private_state_removed": true,
+  "cleanup_failures": [],
+  "global_acceptance_claimed": false,
+  "exact_owned_container_absent": true,
+  "exact_owned_network_absent": true,
+  "shared_parent_cleanup_sha256": "b8ef87bd7c1dddea74eb7f1a881222caed98d337206c840465d031bfd5e29350"
+}

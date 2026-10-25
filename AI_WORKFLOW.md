@@ -115,6 +115,7 @@ Use `verification-before-completion` before substantial completion.
 - Keep reviews scoped to the observation needed. Optional diagnostics, generic hardening and unrelated refactors do not block progress unless they affect that observation's correctness, privacy or cleanup. Do not add fields or review rounds merely to improve an otherwise adequate control.
 - Give read-only peer reviewers a prepared scoped diff and frozen file list. They cannot execute Git or tests; avoid whole-file exploration for a bounded change.
 - Before parallel pytest runs, inspect autouse fixtures for real databases. Use an explicit verified PostgreSQL metadata binding with autostart disabled, and keep its owner alive until every borrower exits; a unit-test filename does not establish an offline suite.
+- For private launcher admission, select the top-level flag assignment with AST inspection rather than counting flag spellings that may also occur in validation strings. Validate every candidate hash before copying any file; then arm only the reviewed execution descriptors.
 - Preserve acceptance criteria and coverage. Record durable causes and prevention rules in Obsidian; keep raw logs and temporary execution details in the repository/private receipts instead.
 - When workspace aliases differ from editable-import paths (including OneDrive letter case), run verification from the same canonical checkout path used by imports. Verify coverage measures the executed source; fix the invocation rather than changing coverage settings or thresholds.
 

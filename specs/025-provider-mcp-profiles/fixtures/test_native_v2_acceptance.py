@@ -4249,3 +4249,205 @@ def test_passive_receiver_public_ack_only_contract_composes_with_receipt(filenam
     assert "exactly this receipt: CAO-TURN-RECEIPT-" + "a" * 32 in prepared
     assert runner._receiver_ack_exact("ACK") is True
     assert runner._receiver_ack_exact("ACK\n\nMensaje recibido correctamente.") is False
+
+
+def test_t135_pre_restart_checkpoint_executes_the_existing_reads_in_order(monkeypatch):
+    receipt = {}
+    events = []
+    target = object()
+    terminals = {
+        "sender": {"id": "sender-id"},
+        "receiver": {"id": "receiver-id"},
+    }
+
+    def durable(connect, received_target, received_terminals):
+        assert receipt["pre_restart_snapshot_checkpoint"] == {"stage": "durable_receipt_snapshot"}
+        assert received_target is target
+        assert received_terminals is terminals
+        events.append("durable")
+        return {"sender": ("sender-row",), "receiver": ("receiver-row",)}
+
+    class Journey:
+        def _terminal_tagged_processes(self, terminal_id, socket_path, *, server_identity):
+            assert receipt["pre_restart_snapshot_checkpoint"] == {
+                "stage": "provider_process_snapshot"
+            }
+            events.append(terminal_id)
+            return {terminal_id}
+
+    monkeypatch.setattr(runner, "_durable_receipt_snapshot", durable)
+    snapshots = runner._capture_pre_restart_snapshots(
+        receipt=receipt,
+        connect=object(),
+        target=target,
+        terminals=terminals,
+        journey=Journey(),
+        socket_path=object(),
+        sid=object(),
+    )
+
+    assert events == ["durable", "sender-id", "receiver-id"]
+    assert snapshots[0] == {"sender": ("sender-row",), "receiver": ("receiver-row",)}
+    assert snapshots[1] == {"sender": {"sender-id"}, "receiver": {"receiver-id"}}
+    assert receipt["pre_restart_snapshot_checkpoint"] == {"stage": "complete"}
+
+
+@pytest.mark.parametrize(
+    ("failure_at", "error", "expected_stage", "expected_code"),
+    [
+        (
+            "durable",
+            RuntimeError("private_process_environment_unreadable"),
+            "durable_receipt_snapshot",
+            "private_process_environment_unreadable",
+        ),
+        (
+            "process",
+            RuntimeError("private_process_identity_changed"),
+            "provider_process_snapshot",
+            "private_process_identity_changed",
+        ),
+        (
+            "process",
+            RuntimeError("private-secret-path-/tmp/hidden-value"),
+            "provider_process_snapshot",
+            "unknown_private_runtime_error",
+        ),
+        (
+            "process",
+            RuntimeError("private_process_environment_unreadable", "secret-detail"),
+            "provider_process_snapshot",
+            "unknown_private_runtime_error",
+        ),
+    ],
+)
+def test_t135_snapshot_failure_records_only_fixed_stage_and_safe_code(
+    monkeypatch, failure_at, error, expected_stage, expected_code
+):
+    receipt = {}
+    terminals = {"sender": {"id": "sender-id"}, "receiver": {"id": "receiver-id"}}
+
+    def durable(*_args):
+        if failure_at == "durable":
+            raise error
+        return {"sender": ("row",), "receiver": ("row",)}
+
+    class Journey:
+        def _terminal_tagged_processes(self, *_args, **_kwargs):
+            if failure_at == "process":
+                raise error
+            return {object()}
+
+    monkeypatch.setattr(runner, "_durable_receipt_snapshot", durable)
+    try:
+        runner._capture_pre_restart_snapshots(
+            receipt=receipt,
+            connect=object(),
+            target=object(),
+            terminals=terminals,
+            journey=Journey(),
+            socket_path=object(),
+            sid=object(),
+        )
+    except RuntimeError as observed:
+        assert observed is error
+    else:
+        pytest.fail("the configured snapshot failure was not raised")
+
+    runner._record_pre_restart_snapshot_exception(receipt, error)
+    checkpoint = receipt["pre_restart_snapshot_checkpoint"]
+    assert checkpoint == {"stage": expected_stage, "private_error_code": expected_code}
+    encoded = json.dumps(receipt)
+    assert "secret-detail" not in encoded
+    assert "/tmp/hidden-value" not in encoded
+    assert "private-secret-path" not in encoded
+
+
+def test_t135_non_runtime_and_post_checkpoint_failures_add_no_private_error_code():
+    receipt = {"pre_restart_snapshot_checkpoint": {"stage": "provider_process_snapshot"}}
+    error = ValueError("private-value-must-not-be-exported")
+    runner._record_pre_restart_snapshot_exception(receipt, error)
+    assert receipt["pre_restart_snapshot_checkpoint"] == {"stage": "provider_process_snapshot"}
+    assert "private-value-must-not-be-exported" not in json.dumps(receipt)
+
+    completed = {"pre_restart_snapshot_checkpoint": {"stage": "complete"}}
+    runner._record_pre_restart_snapshot_exception(
+        completed, RuntimeError("private_process_environment_unreadable")
+    )
+    assert completed["pre_restart_snapshot_checkpoint"] == {"stage": "complete"}
+
+    class RuntimeSubclass(RuntimeError):
+        pass
+
+    subclass_receipt = {"pre_restart_snapshot_checkpoint": {"stage": "provider_process_snapshot"}}
+    runner._record_pre_restart_snapshot_exception(
+        subclass_receipt, RuntimeSubclass("private-subclass-detail")
+    )
+    assert subclass_receipt["pre_restart_snapshot_checkpoint"] == {
+        "stage": "provider_process_snapshot",
+        "private_error_code": "unknown_private_runtime_error",
+    }
+    assert "private-subclass-detail" not in json.dumps(subclass_receipt)
+
+
+def test_t135_diagnostic_checkpoint_is_not_restart_acceptance_input():
+    receipt = {
+        "native_process_pids_before_restart": {"sender": [11], "receiver": [12]},
+        "native_process_pids_after_restart": {"sender": [11], "receiver": [12]},
+        "terminal_metadata_before_restart": {"sender": {"x": 1}, "receiver": {"x": 2}},
+        "terminal_metadata_after_restart": {"sender": {"x": 1}, "receiver": {"x": 2}},
+    }
+    baseline = runner._restart_snapshots_unchanged(receipt)
+    assert baseline is True
+    receipt["pre_restart_snapshot_checkpoint"] = {
+        "stage": "provider_process_snapshot",
+        "private_error_code": "private_process_identity_changed",
+    }
+    assert runner._restart_snapshots_unchanged(receipt) is baseline
+
+
+def test_t135_outer_failure_handler_records_checkpoint_without_replacing_error():
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(runner._run_enabled))
+    failure_handler = next(
+        handler
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Try)
+        for handler in node.handlers
+        if isinstance(handler.type, ast.Name)
+        and handler.type.id == "BaseException"
+        and any(
+            isinstance(child, ast.Subscript)
+            and isinstance(child.value, ast.Name)
+            and child.value.id == "receipt"
+            and isinstance(child.slice, ast.Constant)
+            and child.slice.value == "error_type"
+            for statement in handler.body
+            for child in ast.walk(statement)
+        )
+    )
+    calls = [
+        child.func.id
+        for statement in failure_handler.body
+        for child in ast.walk(statement)
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
+    ]
+    assert calls.index("_record_pre_restart_snapshot_exception") < calls.index(
+        "_capture_sender_native_failure_diagnostic"
+    )
+
+    error = RuntimeError("private-runtime-detail")
+    receipt = {"pre_restart_snapshot_checkpoint": {"stage": "provider_process_snapshot"}}
+    try:
+        raise error
+    except BaseException as observed:
+        runner._record_pre_restart_snapshot_exception(receipt, observed)
+        assert observed is error
+        assert type(observed) is RuntimeError
+    assert "private-runtime-detail" not in json.dumps(receipt)
+    assert receipt["pre_restart_snapshot_checkpoint"] == {
+        "stage": "provider_process_snapshot",
+        "private_error_code": "unknown_private_runtime_error",
+    }

@@ -5969,6 +5969,56 @@ def _capture_receiver_failure_diagnostic(
     return result
 
 
+_PRE_RESTART_SNAPSHOT_STAGES = (
+    "durable_receipt_snapshot",
+    "provider_process_snapshot",
+    "complete",
+)
+_PRE_RESTART_PRIVATE_PROCESS_ERRORS = frozenset(
+    {
+        "private_process_environment_unreadable",
+        "private_process_identity_changed",
+        "private_process_identity_unsupported",
+        "private_process_table_unavailable",
+        "private_process_table_unreadable",
+    }
+)
+
+
+def _capture_pre_restart_snapshots(
+    *, receipt, connect, target, terminals, journey, socket_path, sid
+):
+    """Run the existing pre-restart reads once and retain their fixed checkpoint."""
+    checkpoint = {"stage": "durable_receipt_snapshot"}
+    receipt["pre_restart_snapshot_checkpoint"] = checkpoint
+    durable_receipts = _durable_receipt_snapshot(connect, target, terminals)
+    checkpoint["stage"] = "provider_process_snapshot"
+    provider_processes = {
+        role: journey._terminal_tagged_processes(data["id"], socket_path, server_identity=sid)
+        for role, data in terminals.items()
+    }
+    checkpoint["stage"] = "complete"
+    return durable_receipts, provider_processes
+
+
+def _record_pre_restart_snapshot_exception(receipt, error):
+    """Add only a fixed process error code to an incomplete snapshot checkpoint."""
+    checkpoint = receipt.get("pre_restart_snapshot_checkpoint")
+    if (
+        type(checkpoint) is not dict
+        or checkpoint.get("stage") not in _PRE_RESTART_SNAPSHOT_STAGES[:2]
+        or not isinstance(error, RuntimeError)
+    ):
+        return
+    code = None
+    if type(error) is RuntimeError:
+        args = error.args
+        if type(args) is tuple and len(args) == 1:
+            if type(args[0]) is str and args[0] in _PRE_RESTART_PRIVATE_PROCESS_ERRORS:
+                code = args[0]
+    checkpoint["private_error_code"] = code or "unknown_private_runtime_error"
+
+
 def _run_enabled(
     model: str,
     *,
@@ -7494,15 +7544,18 @@ def _run_enabled(
                         "before_restart", {}
                     ),
                 )
-                durable_receipts_before_restart = _durable_receipt_snapshot(
-                    connect, targets.main, terminals
+                (
+                    durable_receipts_before_restart,
+                    provider_processes_before_restart,
+                ) = _capture_pre_restart_snapshots(
+                    receipt=receipt,
+                    connect=connect,
+                    target=targets.main,
+                    terminals=terminals,
+                    journey=journey,
+                    socket_path=socket_path,
+                    sid=sid,
                 )
-                provider_processes_before_restart = {
-                    role: journey._terminal_tagged_processes(
-                        data["id"], socket_path, server_identity=sid
-                    )
-                    for role, data in terminals.items()
-                }
                 if not all(provider_processes_before_restart.values()):
                     raise GateError("native_process_identity_missing_before_restart")
                 receipt["native_process_pids_before_restart"] = {
@@ -7820,6 +7873,7 @@ def _run_enabled(
             receipt["capability_inventory_zero_after_delete"] = True
     except BaseException as error:
         _SIGTERM_CLEANUP_ACTIVE = True
+        _record_pre_restart_snapshot_exception(receipt, error)
         if isinstance(error, _ControlledSigterm):
             receipt["sender_failure_diagnostic"] = {
                 "status": "skipped_for_sigterm_cleanup",
