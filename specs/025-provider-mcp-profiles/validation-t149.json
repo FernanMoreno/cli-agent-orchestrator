@@ -1,0 +1,133 @@
+{
+  "task": "T149",
+  "date": "2026-10-25",
+  "base_main": "233f19eba72b9fbc593b206a03cb3c55b4cb52ad",
+  "scope": "FR127/SC111 exact native-child claim for both compliant terminal INSERT writers on one PostgreSQL table",
+  "final": {
+    "initial_available_mib": 12138,
+    "selected_test_files": [
+      "test/integration/test_failed_create_authority.py",
+      "test/services/test_terminal_service_full.py",
+      "test/services/test_provider_operation_async.py",
+      "test/services/test_session_teardown_atomic.py",
+      "test/integration/test_provider_startup_retirement.py",
+      "test/services/test_provider_lifecycle.py",
+      "test/services/test_terminal_service_inbox_registration.py",
+      "test/services/test_opencode_profile_preallocation.py",
+      "test/services/test_initial_task_inbox_ordering.py",
+      "test/providers/test_provider_publication_cleanup.py",
+      "test/integration/test_provider_publication_cleanup.py",
+      "test/services/test_worktree_service.py",
+      "test/integration/test_kas_registration_publication.py",
+      "test/services/test_integration_008_kas_runtime_profile.py",
+      "test/providers/test_integration_008_kas_launch_review.py",
+      "test/providers/test_integration_008_kas_restoration.py",
+      "test/services/test_kiro_engine_phase0.py",
+      "test/services/test_kiro_kas_profiles.py",
+      "test/services/test_kiro_profile_service.py",
+      "test/services/test_kiro_policy_sidecar.py",
+      "test/services/test_integration_008_core.py",
+      "test/integration/test_native_child_registration_claim.py",
+      "test/clients/test_database.py",
+      "test/clients/test_turn_recovery.py",
+      "test/runtime_channel/test_postgres_remote_publication.py",
+      "test/runtime_channel/test_remote_services.py",
+      "test/runtime_channel/test_remote_integration.py"
+    ],
+    "source_sha256": {
+      "src/cli_agent_orchestrator/providers/manager.py": "139885d70c1d088b6a9b2639929f5f92c6091bb8fb033c56ec22956f6f971ab6",
+      "src/cli_agent_orchestrator/services/terminal_service.py": "e1c7bc81fae80b208e17c45a61054fe84de660777f66d437454a180e57be0438",
+      "src/cli_agent_orchestrator/services/cleanup_service.py": "ad9ba238c61fdaa20b9d3f46d29f34e6cae4a542f4e1cec5948c6646f0bd6e27",
+      "src/cli_agent_orchestrator/services/session_service.py": "bba8bbcb610fc6fdbf2fab876c1075ff7d2198a1f1f2269a96e8c44f0deaf1ac",
+      "src/cli_agent_orchestrator/services/flow_service.py": "99005f9fbd7a9fb2e319a068c18fa2e40d9f02541379eac84025f0822d978651",
+      "src/cli_agent_orchestrator/services/provider_lifecycle.py": "e1520d49f0bcc2f81dce8f0c59d93a42b02e03700d4d2b8ca73304c3110b3df7",
+      "src/cli_agent_orchestrator/runtime_channel/bridge.py": "b2905bd810ff2afeafe53b68e7c661fa50df0a23833c0c5732d9ea078d61d62d",
+      "src/cli_agent_orchestrator/api/main.py": "c161a41f5cddb0a519c62db72b59c08c4ec4e9981247d5d07ef7e53c22341bde",
+      "src/cli_agent_orchestrator/services/herdr_inbox_service.py": "c9cae1c4df9167ef9688697f5941003b094d6325f48183605a55359f6695ab5a",
+      "src/cli_agent_orchestrator/utils/orchestration.py": "1d868ecb337f299ba338c72313d9b71cacbd6d96c040e1731ad06b424b949cfd",
+      "src/cli_agent_orchestrator/services/kiro_profiles.py": "b606a89ba50b2b561fc05f7fde5d72c6d1caf3fa26e90ca802df130959b1479e",
+      "src/cli_agent_orchestrator/providers/kiro_cli.py": "3008f7a4722de4aaa23e97af6914b0766fbeb61c12ec4f001f8452b08e6b421a",
+      "src/cli_agent_orchestrator/clients/database.py": "c3363f956efeb9ff2b44e80cb9120a2b240912e91597e0685cd66a9293446ff2",
+      "src/cli_agent_orchestrator/services/remote_terminal_service.py": "9a65db33a7375caa9e0b64eeb6eda064319a699072361251627831d244f78f52"
+    },
+    "identity_verified": true,
+    "pytest_returncode": 0,
+    "owner_closed": true,
+    "exact_container_absent": true,
+    "elapsed_seconds": 442.26,
+    "sources_unchanged": true
+  },
+  "pytest": {
+    "passed": 521,
+    "warnings": 3,
+    "seconds": 431.63,
+    "new_cases": 21,
+    "configured_focused_coverage_percent": 29,
+    "coverage_settings_unchanged": true
+  },
+  "history": {
+    "red": {
+      "failed": 3,
+      "seconds": 27.88
+    },
+    "initial_green": {
+      "passed": 3,
+      "seconds": 30.44
+    },
+    "claim_and_remote_controls": {
+      "passed": 23,
+      "seconds": 41.27
+    }
+  },
+  "reviews": {
+    "claude_diagnosis": "0db8cc3f708443819518531b44ec34cc",
+    "claude_source": "c5a44201ee754b3191c6429559156b63",
+    "claude_frozen_patch_go": "4ec3979ce7914026abf051304b9cbe54",
+    "luna": "provider_lifecycle_fence_audit; ECC read-only writer/lock audit; root executed tests",
+    "lead_checked_caveats": [
+      "actual unmanaged service collision is a recorded RED: receipt unexpectedly present in red.log; managed-only precheck does not apply",
+      "new test is staged non-executable despite DrvFS stat/no-index patch mode",
+      "autouse isolated_memory_db supplies private PG target/config to independent child process",
+      "strict planned state is not an independent lease-clock check"
+    ]
+  },
+  "composition": {
+    "kept": 5,
+    "broken": 0,
+    "black": true,
+    "isort": true,
+    "verdict": "PASS WITH RISKS: bounded T149, full T143 open"
+  },
+  "test_sha256": {
+    "test/integration/test_native_child_registration_claim.py": "189da212cebc8a64cc8bd3780bbc49e7c221ac77549b60ac7b90a840489f54cb",
+    "test/runtime_channel/test_postgres_remote_publication.py": "9c6df60ae31721587ae93b3fb6e097c3de5139337faba4c78b294cb5e4de878d",
+    "test/clients/test_database.py": "1c6669969b33fea8b24ec3860bbb1426af51ba9763de7466c7d0054d5b4c4302",
+    "test/clients/test_turn_recovery.py": "c33b0dbe56529a9870c3d43b76e46de78933dd6cc5833e1c5522aefea905c1b9"
+  },
+  "evidence_methods": [
+    "actual pg_stat_activity Lock/advisory observation",
+    "both writer commit orders and rollback",
+    "unrelated ID progress",
+    "independent Python process admission",
+    "remote publish/plan both orders and exact replay",
+    "repeated cancellation drains actual planner",
+    "rejected witness has no session incarnation or idempotency writes"
+  ],
+  "native_cli_executed": false,
+  "current_native_equivalence": false,
+  "schema_changed": false,
+  "public_api_claim_parameter_added": false,
+  "private_evidence_root": "/home/felni/.cache/caos-git-publish-20261020/t149-native-child-registration-claim",
+  "obsidian_operation": "save-20261025-caos-native-child-registration-claim",
+  "obsidian_strict_issues": 0,
+  "foreign_graphify_tracked_preserved": 12,
+  "remaining": [
+    "raw SQL and arbitrary receipt deletion",
+    "delete/reuse ABA and per-row generation/CAS",
+    "cross-database lifetime authority",
+    "bulk sidecar publication",
+    "Herdr ghost snapshot freshness and ready-provider cache retirement",
+    "later ID-based KAS proof unlink and nontransactional pair",
+    "worktree cancellation and escaped-worker reconciliation"
+  ]
+}

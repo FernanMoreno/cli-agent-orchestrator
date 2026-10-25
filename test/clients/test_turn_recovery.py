@@ -16,11 +16,27 @@ RESULT = "c" * 64
 
 
 @pytest.fixture
-def store(tmp_path, monkeypatch):
+def store(tmp_path, monkeypatch, request):
     target = DatabaseTarget.from_settings()
     engine = configured_orm_engine()
     monkeypatch.setattr(db, "SessionLocal", sessionmaker(bind=engine))
-    db.create_terminal("supervisor", "session", "window", "codex", "developer")
+    child = None
+    if getattr(request, "param", False):
+        child = db.plan_native_child(
+            parent_terminal_id="parent",
+            terminal_id="supervisor",
+            provider="codex",
+            agent_profile="developer",
+            lease_seconds=30,
+        )
+    db.create_terminal(
+        "supervisor",
+        "session",
+        "window",
+        "codex",
+        "developer",
+        **({"caller_id": "parent", "expected_native_child_id": child["id"]} if child else {}),
+    )
     assert db.begin_terminal_turn_receipt("supervisor", "codex", GEN, RECEIPT)
     assert db.mark_terminal_turn_receipt_sent("supervisor", GEN, RECEIPT)
     yield target
@@ -211,14 +227,10 @@ def test_cached_result_redacts_plaintext_receipt_and_preserves_original_digest(s
     assert db.get_terminal_turn_recovery("supervisor")["result_text"] == cached
 
 
+@pytest.mark.parametrize("store", [True], indirect=True)
 def test_new_turn_after_confirmed_cancel_does_not_revive_historic_child(store):
-    child = db.plan_native_child(
-        parent_terminal_id="parent",
-        terminal_id="supervisor",
-        provider="codex",
-        agent_profile="developer",
-        lease_seconds=30,
-    )
+    child = db.get_native_child_for_terminal("supervisor")
+    assert child is not None
     db.transition_native_child("supervisor", "sent")
     assert db.begin_terminal_turn_cancellation("supervisor", GEN)
     assert db.finish_terminal_turn_cancellation("supervisor", GEN)
@@ -236,14 +248,10 @@ def test_new_turn_after_confirmed_cancel_does_not_revive_historic_child(store):
     assert not db.settle_terminal_turn_receipt_result("supervisor", GEN, RECEIPT, RESULT)
 
 
+@pytest.mark.parametrize("store", [True], indirect=True)
 def test_historic_child_cancellation_requires_confirmed_turn_boundary(store):
-    child = db.plan_native_child(
-        parent_terminal_id="parent",
-        terminal_id="supervisor",
-        provider="codex",
-        agent_profile="developer",
-        lease_seconds=30,
-    )
+    child = db.get_native_child_for_terminal("supervisor")
+    assert child is not None
     db.transition_native_child("supervisor", "sent")
     db.transition_native_child("supervisor", "cancelled")
     assert not db.settle_terminal_turn_receipt_result("supervisor", GEN, RECEIPT, RESULT)

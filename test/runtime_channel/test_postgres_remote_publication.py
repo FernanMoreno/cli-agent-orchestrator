@@ -133,3 +133,55 @@ def test_postgres_same_launch_publications_share_transaction_lock(
         assert connection.execute(
             select(database.TerminalModel.id).where(database.TerminalModel.id == terminal["id"])
         ).all() == [(terminal["id"],)]
+
+
+@pytest.mark.parametrize("plan_first", [False, True])
+def test_remote_publication_and_local_child_plan_cannot_share_identity(
+    postgres_core, postgres_runtime_channel, monkeypatch, plan_first
+):
+    from cli_agent_orchestrator.runtime_channel.store import RemoteIdentityConflict
+
+    target = postgres_runtime_channel
+    monkeypatch.setattr(remote.runtime_registry, "place", Mock())
+    terminal = {
+        "id": "remote-child-claim",
+        "session_incarnation_id": "remote-claim-inc",
+        "session_name": "remote-claim-session",
+        "name": "worker",
+        "provider": "codex",
+        "agent_profile": "developer",
+    }
+    _seed_settled_launch(target, terminal)
+
+    def plan():
+        return database.plan_native_child(
+            parent_terminal_id="parent",
+            terminal_id=terminal["id"],
+            provider="codex",
+            agent_profile="developer",
+            lease_seconds=60,
+        )
+
+    def publish():
+        remote.record_placement(
+            "publication-runtime", "publication-incarnation", "publication-launch", terminal
+        )
+
+    if plan_first:
+        child = plan()
+        with pytest.raises(RemoteIdentityConflict):
+            publish()
+        assert remote.placement(terminal["id"]) is None
+        assert database.get_terminal_metadata(terminal["id"]) is None
+        assert database.get_native_child_for_terminal(terminal["id"]) == child
+        remote.runtime_registry.place.assert_not_called()
+    else:
+        publish()
+        before = remote.placement(terminal["id"])
+        with pytest.raises(database.NativeChildIdentityConflict):
+            plan()
+        assert database.get_native_child_for_terminal(terminal["id"]) is None
+        assert remote.placement(terminal["id"]) == before
+        # Exact replay is still idempotent, without creating another placement.
+        publish()
+        assert remote.placement(terminal["id"]) == before

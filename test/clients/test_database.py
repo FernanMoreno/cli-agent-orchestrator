@@ -107,13 +107,21 @@ class TestNativeChildLifecycle:
 
     def test_terminal_removal_cancels_unsettled_child_but_preserves_receipt(self, test_db):
         with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
-            create_terminal("child002", "cao-session", "worker", "codex", "developer")
             child = plan_native_child(
                 parent_terminal_id="parent01",
                 terminal_id="child002",
                 provider="codex",
                 agent_profile="developer",
                 lease_seconds=30,
+            )
+            create_terminal(
+                "child002",
+                "cao-session",
+                "worker",
+                "codex",
+                "developer",
+                caller_id="parent01",
+                expected_native_child_id=child["id"],
             )
             transition_native_child("child002", "acknowledged")
             transition_native_child("child002", "sent")
@@ -193,13 +201,21 @@ class TestNativeChildLifecycle:
         receipt = "a" * 64
         result = "c" * 64
         with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
-            create_terminal(terminal_id, "cao-session", "worker", "gemini_cli", "reviewer")
             child = plan_native_child(
                 parent_terminal_id="parent01",
                 terminal_id=terminal_id,
                 provider="gemini_cli",
                 agent_profile="reviewer",
                 lease_seconds=30,
+            )
+            create_terminal(
+                terminal_id,
+                "cao-session",
+                "worker",
+                "gemini_cli",
+                "reviewer",
+                caller_id="parent01",
+                expected_native_child_id=child["id"],
             )
             transition_native_child(terminal_id, "sent")
             with test_db() as session:
@@ -226,13 +242,21 @@ class TestNativeChildLifecycle:
     def test_cancelled_child_cannot_be_revived_by_a_late_generic_success_observer(self, test_db):
         """Delete/cancel wins over a verifier thread that wakes up afterwards."""
         with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
-            create_terminal("child-cancelled", "cao-session", "worker", "gemini_cli", "reviewer")
             child = plan_native_child(
                 parent_terminal_id="parent01",
                 terminal_id="child-cancelled",
                 provider="gemini_cli",
                 agent_profile="reviewer",
                 lease_seconds=30,
+            )
+            create_terminal(
+                "child-cancelled",
+                "cao-session",
+                "worker",
+                "gemini_cli",
+                "reviewer",
+                caller_id="parent01",
+                expected_native_child_id=child["id"],
             )
             transition_native_child("child-cancelled", "sent")
             assert delete_terminal("child-cancelled") is True
@@ -415,13 +439,21 @@ class TestTerminalTurnReceiptLifecycle:
         """
         terminal_id = "gemini-atomic-recovery"
         with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
-            create_terminal(terminal_id, "session", "window", "gemini_cli", "reviewer")
             child = plan_native_child(
                 parent_terminal_id="parent01",
                 terminal_id=terminal_id,
                 provider="gemini_cli",
                 agent_profile="reviewer",
                 lease_seconds=30,
+            )
+            create_terminal(
+                terminal_id,
+                "session",
+                "window",
+                "gemini_cli",
+                "reviewer",
+                caller_id="parent01",
+                expected_native_child_id=child["id"],
             )
             transition_native_child(terminal_id, "sent")
             assert begin_terminal_turn_receipt(
@@ -466,13 +498,21 @@ class TestTerminalTurnReceiptLifecycle:
         """An old output observer loses if terminal deletion committed first."""
         terminal_id = "gemini-atomic-cancelled"
         with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
-            create_terminal(terminal_id, "session", "window", "gemini_cli", "reviewer")
             child = plan_native_child(
                 parent_terminal_id="parent01",
                 terminal_id=terminal_id,
                 provider="gemini_cli",
                 agent_profile="reviewer",
                 lease_seconds=30,
+            )
+            create_terminal(
+                terminal_id,
+                "session",
+                "window",
+                "gemini_cli",
+                "reviewer",
+                caller_id="parent01",
+                expected_native_child_id=child["id"],
             )
             assert begin_terminal_turn_receipt(
                 terminal_id,
@@ -502,13 +542,21 @@ class TestTerminalTurnReceiptLifecycle:
         """A wait/status worker loses its race once durable result proof wins."""
         terminal_id = "gemini-atomic-running-race"
         with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
-            create_terminal(terminal_id, "session", "window", "gemini_cli", "reviewer")
             child = plan_native_child(
                 parent_terminal_id="parent01",
                 terminal_id=terminal_id,
                 provider="gemini_cli",
                 agent_profile="reviewer",
                 lease_seconds=30,
+            )
+            create_terminal(
+                terminal_id,
+                "session",
+                "window",
+                "gemini_cli",
+                "reviewer",
+                caller_id="parent01",
+                expected_native_child_id=child["id"],
             )
             transition_native_child(terminal_id, "sent")
             assert begin_terminal_turn_receipt(
@@ -541,13 +589,21 @@ class TestTerminalTurnReceiptLifecycle:
         """Receipt evidence is retained, but a failed child never revives to success."""
         terminal_id = "gemini-atomic-failed-race"
         with patch("cli_agent_orchestrator.clients.database.SessionLocal", test_db):
-            create_terminal(terminal_id, "session", "window", "gemini_cli", "reviewer")
             child = plan_native_child(
                 parent_terminal_id="parent01",
                 terminal_id=terminal_id,
                 provider="gemini_cli",
                 agent_profile="reviewer",
                 lease_seconds=30,
+            )
+            create_terminal(
+                terminal_id,
+                "session",
+                "window",
+                "gemini_cli",
+                "reviewer",
+                caller_id="parent01",
+                expected_native_child_id=child["id"],
             )
             transition_native_child(terminal_id, "sent")
             assert begin_terminal_turn_receipt(
@@ -779,6 +835,8 @@ class TestTerminalOperations:
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
         mock_session_class.return_value = mock_session
+        mock_session.execute.return_value.mappings.return_value.first.return_value = None
+        mock_session.execute.return_value.scalar_one.return_value = "read committed"
 
         result = create_terminal("test123", "cao-session", "window-0", "kiro_cli", "developer")
 
@@ -1064,6 +1122,8 @@ class TestIdempotencyKey:
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
         mock_session_class.return_value = mock_session
+        mock_session.execute.return_value.mappings.return_value.first.return_value = None
+        mock_session.execute.return_value.scalar_one.return_value = "read committed"
 
         create_terminal(
             "test123",
@@ -1090,6 +1150,8 @@ class TestIdempotencyKey:
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
         mock_session_class.return_value = mock_session
+        mock_session.execute.return_value.mappings.return_value.first.return_value = None
+        mock_session.execute.return_value.scalar_one.return_value = "read committed"
 
         create_terminal("test123", "cao-session", "window-0", "kiro_cli", "developer")
 
@@ -1288,6 +1350,8 @@ class TestGroupAndMetadata:
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
         mock_session_class.return_value = mock_session
+        mock_session.execute.return_value.mappings.return_value.first.return_value = None
+        mock_session.execute.return_value.scalar_one.return_value = "read committed"
 
         result = create_terminal(
             "test123",
@@ -1312,6 +1376,8 @@ class TestGroupAndMetadata:
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
         mock_session_class.return_value = mock_session
+        mock_session.execute.return_value.mappings.return_value.first.return_value = None
+        mock_session.execute.return_value.scalar_one.return_value = "read committed"
 
         result = create_terminal("test123", "cao-session", "window-0", "kiro_cli", "developer")
 
@@ -1334,6 +1400,8 @@ class TestGroupAndMetadata:
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
         mock_session_class.return_value = mock_session
+        mock_session.execute.return_value.mappings.return_value.first.return_value = None
+        mock_session.execute.return_value.scalar_one.return_value = "read committed"
 
         result = create_terminal(
             "test123", "cao-session", "window-0", "kiro_cli", "developer", group=[], metadata={}

@@ -103,6 +103,8 @@ def record_placement(runtime_id, incarnation_id, launch_op_id, terminal):
             "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
             (f"cao-remote-placement:{database.main_target().identity}:{terminal_id}",),
         )
+        # Preserve remote-placement -> registration identity lock order.
+        database.lock_terminal_registration_identity(conn, terminal_id)
         if launch_was_deleted(runtime_id, incarnation_id, launch_op_id, terminal, connection=conn):
             raise RemoteIdentityConflict("Deleted remote launch cannot publish again")
         existing = (
@@ -121,6 +123,20 @@ def record_placement(runtime_id, incarnation_id, launch_op_id, terminal):
         ).first()
         if local:
             raise RemoteIdentityConflict("Remote terminal ID collides with a local terminal")
+        try:
+            # Ordinary remote launches have no local native-child planning claim.
+            database.assert_native_child_registration_claim(
+                conn,
+                terminal_id,
+                expected_native_child_id=None,
+                caller_id=None,
+                provider=terminal["provider"],
+                agent_profile=terminal.get("agent_profile"),
+            )
+        except database.NativeChildIdentityConflict as error:
+            raise RemoteIdentityConflict(
+                "Remote terminal ID is claimed by a native child"
+            ) from error
         # Row and placement publish atomically, with a namespace distinct from local sessions.
         session = f"remote-{runtime_id}-{terminal['session_name']}"
         conn.execute(

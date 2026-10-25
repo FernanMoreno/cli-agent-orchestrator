@@ -1968,6 +1968,7 @@ async def create_terminal(
     worktree_repo_root: Optional[str] = None
     row_published = False
     native_child_planned = False
+    native_child_plan_id = None
     worktree_created = False
     initial_mark_added = False
     external_mark_added = False
@@ -2074,15 +2075,20 @@ async def create_terminal(
         # ``reconcile`` instead of pretending the task completed.  Root
         # terminals (no caller) intentionally have no native-child receipt.
         if caller_id is not None:
-            await asyncio.to_thread(
-                plan_native_child,
-                parent_terminal_id=caller_id,
-                terminal_id=terminal_id,
-                provider=provider,
-                agent_profile=agent_profile,
-                lease_seconds=native_child_lease_seconds,
-            )
-            native_child_planned = True
+
+            def plan_owned_native_child():
+                nonlocal native_child_planned, native_child_plan_id
+                planned = plan_native_child(
+                    parent_terminal_id=caller_id,
+                    terminal_id=terminal_id,
+                    provider=provider,
+                    agent_profile=agent_profile,
+                    lease_seconds=native_child_lease_seconds,
+                )
+                native_child_planned = True
+                native_child_plan_id = planned["id"]
+
+            await _await_provider_operation(plan_owned_native_child)
 
         if not session_name:
             session_name = generate_session_name()
@@ -2431,6 +2437,11 @@ async def create_terminal(
                         idempotency_key=idempotency_key,
                         request_fingerprint=request_fingerprint,
                         new_session_incarnation=created_session,
+                        **(
+                            {"expected_native_child_id": native_child_plan_id}
+                            if native_child_planned
+                            else {}
+                        ),
                     )
                     row_published = True
                 except BaseException:

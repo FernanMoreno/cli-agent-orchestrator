@@ -24,8 +24,10 @@ from sqlalchemy import (
     create_engine,
     event,
     literal_column,
+    select,
     text,
 )
+from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -1163,6 +1165,69 @@ def _backfill_legacy_related_keys(conn: Any) -> None:
         )
 
 
+class NativeChildIdentityConflict(ValueError):
+    """A terminal registration cannot adopt another native-child claim."""
+
+
+def lock_terminal_registration_identity(connection: Session | Connection, terminal_id: str) -> None:
+    """Serialize compliant writers for one actual terminal table/ID until commit.
+
+    The table OID scopes the key to this connection's resolved namespace, not
+    mutable process configuration. No Python lock or historical key map is kept.
+    A hash collision only serializes unrelated IDs; it cannot grant authority.
+    """
+    # Advisory admission waits inside a statement. Later reads require fresh
+    # snapshots; a repeatable-read snapshot could predate the winning commit.
+    if connection.execute(text("SHOW transaction_isolation")).scalar_one() != "read committed":
+        raise NativeChildIdentityConflict("Terminal identity admission requires READ COMMITTED")
+    connection.execute(
+        text(
+            "SELECT pg_advisory_xact_lock(hashtextextended("
+            "'cao-terminal-registration-v1:' || "
+            "CAST(CAST(CAST('terminals' AS regclass) AS oid) AS text) || ':' || "
+            ":terminal_id, 0))"
+        ),
+        {"terminal_id": terminal_id},
+    )
+
+
+def assert_native_child_registration_claim(
+    connection: Session | Connection,
+    terminal_id: str,
+    *,
+    expected_native_child_id: Optional[str],
+    caller_id: Optional[str],
+    provider: str,
+    agent_profile: Optional[str],
+) -> None:
+    """Validate the exact planning witness under terminal-identity admission.
+
+    The existing receipt UUID is an internal identity witness, not a new
+    authentication grant. Keep its row stable through registration commit.
+    """
+    child = (
+        connection.execute(
+            select(NativeChildModel.__table__)
+            .where(NativeChildModel.terminal_id == terminal_id)
+            .with_for_update()
+        )
+        .mappings()
+        .first()
+    )
+    if child is None and expected_native_child_id is None:
+        return
+    if (
+        child is None
+        or not isinstance(expected_native_child_id, str)
+        or child["id"] != expected_native_child_id
+        or child["parent_terminal_id"] != caller_id
+        or child["provider"] != provider
+        or child["agent_profile"] != agent_profile
+        or child["state"] != "planned"
+    ):
+        raise NativeChildIdentityConflict("Terminal identity has no matching planned child claim")
+
+
 def create_terminal(
     terminal_id: str,
     tmux_session: str,
@@ -1183,6 +1248,8 @@ def create_terminal(
     request_fingerprint: Optional[str] = None,
     new_session_incarnation: bool = False,
     kiro_policy_digest: Optional[str] = None,
+    *,
+    expected_native_child_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create terminal metadata record.
 
@@ -1212,6 +1279,15 @@ def create_terminal(
         raise ValueError("invalid KAS policy digest")
 
     with SessionLocal() as db:
+        lock_terminal_registration_identity(db, terminal_id)
+        assert_native_child_registration_claim(
+            db,
+            terminal_id,
+            expected_native_child_id=expected_native_child_id,
+            caller_id=caller_id,
+            provider=provider,
+            agent_profile=agent_profile,
+        )
         if new_session_incarnation:
             if not session_incarnation_id:
                 raise ValueError("A new session incarnation requires an incarnation id")
@@ -2720,6 +2796,9 @@ def plan_native_child(
         raise ValueError("lease_seconds must be positive")
     now = _utcnow()
     with SessionLocal() as db:
+        lock_terminal_registration_identity(db, terminal_id)
+        if db.get(TerminalModel, terminal_id) is not None:
+            raise NativeChildIdentityConflict("Cannot plan a child for a registered terminal")
         row = NativeChildModel(
             parent_terminal_id=parent_terminal_id,
             terminal_id=terminal_id,
