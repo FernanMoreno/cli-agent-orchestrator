@@ -18,6 +18,7 @@ Terminal Workflow:
 """
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import logging
@@ -31,6 +32,7 @@ from contextlib import closing, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, cast
 
@@ -1227,6 +1229,34 @@ def _roll_back_cancelled_create(
             logger.exception(
                 f"Rollback: failed to delete registry row {terminal_id} " "after a cancelled create"
             )
+
+
+async def _await_provider_operation(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Yield during provider locks/I/O, retaining the private worker on cancel.
+
+    The shared default executor supplies the existing worker bound. Its future
+    stays private (not a separately cancellable asyncio Task); cancellation of
+    this caller must not report completion while publication/cleanup still runs.
+    """
+    context = contextvars.copy_context()
+    worker = asyncio.get_running_loop().run_in_executor(
+        None, partial(context.run, function, *args, **kwargs)
+    )
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError as cancellation:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except BaseException:
+                break
+        try:
+            worker.result()
+        except BaseException:
+            pass
+        raise cancellation
 
 
 async def _finish_and_roll_back_cancelled_create(
@@ -2440,7 +2470,8 @@ async def create_terminal(
         # the skill catalog here; Kiro (skill:// resources) and OpenCode
         # (OPENCODE_CONFIG_DIR/skills symlink) discover skills natively;
         # Copilot gets the catalog baked at install time.
-        provider_instance = provider_manager.create_provider(
+        provider_instance = await _await_provider_operation(
+            provider_manager.create_provider,
             provider,
             terminal_id,
             session_name,
@@ -2774,50 +2805,53 @@ async def create_terminal(
                 get_backend().kill_window(session_name, window_name)
             except Exception:
                 pass  # Ignore cleanup errors
+
         # The process-owning tmux session/window must be stopped before a
         # provider releases private on-disk state.  In particular Grok can
         # have an updater still writing $GROK_HOME while its initialization
         # fails; its cleanup verifies that no such process remains.
-        cleanup_complete = True
-        try:
-            if terminal_id is not None:
-                cleanup_complete = provider_manager.cleanup_provider(terminal_id) is not False
-                if cleanup_complete:
-                    _remove_interaction_capability_files(terminal_id)
-        except Exception:
-            # Preserve the existing rollback contract for an unexpected
-            # provider-manager failure. Only an explicit False is a Grok
-            # cleanup deferral with enough information to retry safely.
+        def finish_failed_create() -> None:
             cleanup_complete = True
-        # Do not erase the only retry handle before Grok has safely released
-        # its private home.  The original create error is still raised below;
-        # retaining this row makes the failed terminal discoverable and its
-        # deletion retryable rather than leaking credentials/config forever.
-        if cleanup_complete:
             try:
                 if terminal_id is not None:
-                    delete_terminal_row(
-                        terminal_id, get_terminal_metadata(terminal_id), registry=None
-                    )
+                    cleanup_complete = provider_manager.cleanup_provider(terminal_id) is not False
+                    if cleanup_complete:
+                        _remove_interaction_capability_files(terminal_id)
             except Exception:
-                pass  # Ignore cleanup errors
-        elif terminal_id is not None:
-            logger.warning(
-                "Create rollback deferred Grok cleanup for %s; retaining terminal metadata for retry",
-                terminal_id,
-            )
-        if worktree_repo_root is not None and terminal_id is not None:
-            # A worktree WAS created (Step 1b succeeded) before some later step
-            # failed -- roll it back too, same best-effort posture as everything
-            # else in this block. Without this, a provider-init timeout (or any
-            # later failure) on a worktree-backed terminal would leave an orphan
-            # worktree + branch behind with no CAO-side record pointing at it.
-            # Offloaded to a thread for the same reason Step 1b's create is:
-            # `git worktree remove` is a blocking subprocess call and this
-            # `except` block still runs on the shared event loop.
-            await asyncio.to_thread(
-                worktree_service.remove_worktree, worktree_repo_root, terminal_id
-            )
+                # Preserve the existing rollback contract for an unexpected
+                # provider-manager failure. Only an explicit False is a Grok
+                # cleanup deferral with enough information to retry safely.
+                cleanup_complete = True
+            # Do not erase the only retry handle before Grok has safely released
+            # its private home.  The original create error is still raised below;
+            # retaining this row makes the failed terminal discoverable and its
+            # deletion retryable rather than leaking credentials/config forever.
+            if cleanup_complete:
+                try:
+                    if terminal_id is not None:
+                        delete_terminal_row(
+                            terminal_id, get_terminal_metadata(terminal_id), registry=None
+                        )
+                except Exception:
+                    pass  # Ignore cleanup errors
+            elif terminal_id is not None:
+                logger.warning(
+                    "Create rollback deferred Grok cleanup for %s; retaining terminal metadata for retry",
+                    terminal_id,
+                )
+            if worktree_repo_root is not None and terminal_id is not None:
+                # A worktree WAS created (Step 1b succeeded) before some later step
+                # failed -- roll it back too, same best-effort posture as everything
+                # else in this block. Without this, a provider-init timeout (or any
+                # later failure) on a worktree-backed terminal would leave an orphan
+                # worktree + branch behind with no CAO-side record pointing at it.
+                # This whole remaining rollback now runs on its owned worker:
+                # `git worktree remove` is a blocking subprocess call and this
+                # parent coroutine remains responsive and retains cancellation ownership.
+                worktree_service.remove_worktree(worktree_repo_root, terminal_id)
+
+        await _await_provider_operation(finish_failed_create)
+
         raise
 
 

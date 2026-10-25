@@ -1,0 +1,43 @@
+{
+  "schema": "caos.provider-async-ownership-validation.v1",
+  "baseline_source_head": "dafeaca3c98308977dcac962022d931f0ec846ba",
+  "source_sha256": {
+    "src/cli_agent_orchestrator/providers/manager.py": "ac5940123a9d12d10fe7fbf57c8916035b837c0d38a6f2112f394789e6025860",
+    "src/cli_agent_orchestrator/services/terminal_service.py": "503c98844b2c429daa6412cfc597b0b317d2a38603b70b59ad538456d9c953c8"
+  },
+  "actual_create_heartbeat_red_failed": true,
+  "red_seconds": 34.87,
+  "focused_green_tests": 6,
+  "focused_green_seconds": 37.81,
+  "copied_context_preserved": true,
+  "result_and_error_identity_preserved": true,
+  "repeated_cancel_keeps_real_worker_owned": true,
+  "late_success_and_failure_after_cancel_covered": true,
+  "protected_rollback_order": [
+    "provider cleanup",
+    "conditional capability files",
+    "conditional terminal row",
+    "existing worktree removal"
+  ],
+  "new_executor_or_pool_limit": false,
+  "selected_regression_passed": 273,
+  "selected_regression_warnings": 5,
+  "selected_regression_seconds": 136.05,
+  "configured_focused_coverage_percent": 24,
+  "selected_nodes": 24,
+  "initial_available_mib": 11889,
+  "postgres_identity_verified": true,
+  "postgres_owner_closed": true,
+  "exact_owned_container_absent": true,
+  "sources_unchanged_through_regression": true,
+  "composition_contracts_kept": 5,
+  "composition_contracts_broken": 0,
+  "claude_code_review": "ddd0c4a3cd664217ac9cf9bd23c23534",
+  "claude_code_verdict": "GO for protected remaining rollback batch and provider step",
+  "full_rollback_cancel_safety_claimed": false,
+  "full_lifecycle_or_native_acceptance_claimed": false,
+  "obsidian_operation": "save-20261025-caos-provider-async-ownership",
+  "claude_final_review": "9165aa65b8cc48ee9da22e8ae2dfa2ec",
+  "claude_final_verdict": "GO for bounded async provider step and remaining rollback batch",
+  "reviewed_patch_sha256": "586b994fbd92f49fc8fc539c3b4285e5a2a5cc73fff10bd4c9d2713868615142"
+}
