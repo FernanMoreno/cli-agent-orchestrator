@@ -600,3 +600,8 @@ T144 accepted urgent integration: actualcreate heartbeatRED→6focusedPASS;273 P
 
 
 T145 aceptado: getter/SQL RED→GREEN,16 casos PostgreSQL y4 controles locales nuevos;398 regresiones pasan y35 controles finales tras añadir avisos de Flow. Arquitectura5/0, ClaudeGO acotado y auditoría Luna del orden monitor/gestor. [Evidencia y límites](validation-t145.md). T143 sigue pendiente de inicialización/publicación explícita, autoridad por fila, reversión y alcance distribuido; no reejecutar este fallo ya corregido como diagnóstico nuevo.
+
+- [x] T146 [US4] [FR124/SC108] Reproduce actual constructor/initializer versus delete; implement local startup/retirement token admission and actual-launch publication witness, preserving async worker ownership, deferred handoff, owner rollback and safe uncertain cancellation. Test ordinary terminal/session/Flow/stale/central-row gates before backend effects; explicitly retain unresolved distributed/ABA/escaped-worker reconciliation scope under T143.
+
+
+T146 aceptado: reserva anterior a la fila, retirada lógica sin bloqueo del monitor, validación de registro al publicar, autoridad limitada a compensación explícita y cancelación conservadora. Herdr directo incluido tras3RED;676 regresiones pasan con10 fuentes fijadas, arquitectura5/0 y revisiones Claude/Luna. Los fallos de aislamiento de fixtures se corrigieron y se verificó el orden entre módulos. [Evidencia y límites](validation-t146.md). T143 sigue pendiente en las fronteras enumeradas; no volver a diagnosticar la carrera local ya cerrada como si fuera nueva.

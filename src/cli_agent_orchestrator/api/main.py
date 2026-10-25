@@ -4742,7 +4742,7 @@ async def delete_session(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
                     f"cleanup deferred for session '{session_name}'; "
-                    "retry delete after residual Grok processes exit"
+                    "retry delete after startup or provider cleanup has settled"
                 ),
             )
         return {"success": True, **result}
@@ -10036,7 +10036,7 @@ async def delete_terminal(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
                     f"cleanup deferred for terminal '{terminal_id}'; "
-                    "retry delete after residual Grok processes exit"
+                    "retry delete after startup or provider cleanup has settled"
                 ),
             )
         return {"success": True}

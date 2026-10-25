@@ -183,6 +183,27 @@ async def test_creation_passes_frozen_selection_through_real_manager(
         return "reviewer-window"
 
     create_mocks.backend.create_window.side_effect = replace_after_preparation
+    # This remains an offline controller/profile composition test. Model the
+    # actual registry write before asking the real manager to witness it.
+    from cli_agent_orchestrator.providers import manager as manager_module
+
+    registration = {}
+    reads = []
+
+    def register(key, session, window, provider, *_args, **kwargs):
+        registration[key] = {
+            "provider": provider,
+            "tmux_session": session,
+            "tmux_window": window,
+            "session_incarnation_id": kwargs["session_incarnation_id"],
+        }
+
+    def read(key):
+        reads.append(key)
+        return registration.get(key)
+
+    create_mocks.db_create_terminal.side_effect = register
+    monkeypatch.setattr(manager_module, "get_terminal_metadata", read)
     manager = ProviderManager()
     created = []
 
@@ -202,6 +223,9 @@ async def test_creation_passes_frozen_selection_through_real_manager(
     assert path.read_text() == "Replacement after allocation."
     assert len(created) == 1 and created[0]._prepared_native_profile is not None
     assert created[0].initialize.await_count == (0 if deferred else 1)
+
+    assert reads == [result.id]
+    assert registration[result.id]["tmux_window"] == "reviewer-window"
 
 
 @pytest.mark.asyncio

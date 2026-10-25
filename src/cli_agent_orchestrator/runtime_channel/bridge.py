@@ -44,6 +44,7 @@ from cli_agent_orchestrator.runtime_channel.protocol import (
 )
 from cli_agent_orchestrator.runtime_channel.token import TOKEN_HEADER, runtime_token
 from cli_agent_orchestrator.services.event_bus import bus
+from cli_agent_orchestrator.services.provider_lifecycle import retirement_scope
 
 logger = logging.getLogger(__name__)
 
@@ -328,23 +329,34 @@ class Bridge:
                     from cli_agent_orchestrator.backends.base import TerminalCleanupResult
                     from cli_agent_orchestrator.backends.registry import get_backend
 
-                    metadata = await asyncio.to_thread(get_terminal_metadata, terminal.id)
-                    exact = await asyncio.to_thread(
-                        get_backend().cleanup_terminal_exact,
-                        terminal.id,
-                        metadata.get("tmux_session") if metadata else None,
-                        metadata.get("tmux_window") if metadata else None,
-                    )
-                    if isinstance(exact, TerminalCleanupResult) and exact.reclaimed and metadata:
-                        dismantled = await asyncio.to_thread(
-                            terminal_service.dismantle_terminal_runtime,
-                            terminal.id,
-                            metadata,
-                            kill_window=False,
-                        )
-                        stopped = dismantled and await asyncio.to_thread(
-                            terminal_service.delete_terminal_row, terminal.id, metadata
-                        )
+                    def stop_unreported():
+                        with retirement_scope(terminal.id) as admitted:
+                            if admitted:
+                                metadata = get_terminal_metadata(terminal.id)
+                                exact = get_backend().cleanup_terminal_exact(
+                                    terminal.id,
+                                    metadata.get("tmux_session") if metadata else None,
+                                    metadata.get("tmux_window") if metadata else None,
+                                )
+                                if (
+                                    isinstance(exact, TerminalCleanupResult)
+                                    and exact.reclaimed
+                                    and metadata
+                                ):
+                                    dismantled = terminal_service.dismantle_terminal_runtime(
+                                        terminal.id,
+                                        metadata,
+                                        kill_window=False,
+                                    )
+                                    return bool(
+                                        dismantled
+                                        and terminal_service.delete_terminal_row(
+                                            terminal.id, metadata
+                                        )
+                                    )
+                        return False
+
+                    stopped = await terminal_service._await_provider_operation(stop_unreported)
                 except Exception:  # noqa: BLE001 - reported in the error below
                     logger.exception("could not stop unreported terminal %s", terminal.id)
                 detail = f"launched terminal {terminal.id} but could not report it ({exc})"
@@ -477,35 +489,44 @@ class Bridge:
             from cli_agent_orchestrator.backends.base import TerminalCleanupResult
             from cli_agent_orchestrator.backends.registry import get_backend
 
-            metadata = await asyncio.to_thread(get_terminal_metadata, terminal_id)
-            exact = await asyncio.to_thread(
-                guarded,
-                get_backend().cleanup_terminal_exact,
-                terminal_id,
-                metadata.get("tmux_session") if metadata else None,
-                metadata.get("tmux_window") if metadata else None,
-            )
-            if not isinstance(exact, TerminalCleanupResult) or exact.outcome.value == "unknown":
-                from cli_agent_orchestrator.runtime_channel.registry import (
-                    RemoteOutcomeUnknownError,
-                )
+            def delete_local():
+                with retirement_scope(terminal_id) as admitted:
+                    if not admitted:
+                        return {"deleted": False}
+                    metadata = get_terminal_metadata(terminal_id)
+                    exact = guarded(
+                        get_backend().cleanup_terminal_exact,
+                        terminal_id,
+                        metadata.get("tmux_session") if metadata else None,
+                        metadata.get("tmux_window") if metadata else None,
+                    )
+                    if (
+                        not isinstance(exact, TerminalCleanupResult)
+                        or exact.outcome.value == "unknown"
+                    ):
+                        from cli_agent_orchestrator.runtime_channel.registry import (
+                            RemoteOutcomeUnknownError,
+                        )
 
-                raise RemoteOutcomeUnknownError("Exact remote terminal teardown remains uncertain")
-            if not exact.reclaimed:
-                raise RuntimeError("Exact remote terminal remains present")
-            if metadata is None:
-                return {"deleted": True, "absent": True}
-            dismantled = await asyncio.to_thread(
-                guarded,
-                terminal_service.dismantle_terminal_runtime,
-                terminal_id,
-                metadata,
-                kill_window=False,
-            )
-            deleted = dismantled and await asyncio.to_thread(
-                guarded, terminal_service.delete_terminal_row, terminal_id, metadata
-            )
-            return {"deleted": bool(deleted)}
+                        raise RemoteOutcomeUnknownError(
+                            "Exact remote terminal teardown remains uncertain"
+                        )
+                    if not exact.reclaimed:
+                        raise RuntimeError("Exact remote terminal remains present")
+                    if metadata is None:
+                        return {"deleted": True, "absent": True}
+                    dismantled = guarded(
+                        terminal_service.dismantle_terminal_runtime,
+                        terminal_id,
+                        metadata,
+                        kill_window=False,
+                    )
+                    deleted = dismantled and guarded(
+                        terminal_service.delete_terminal_row, terminal_id, metadata
+                    )
+                    return {"deleted": bool(deleted)}
+
+            return await terminal_service._await_provider_operation(delete_local)
         raise ValueError(f"unsupported command: {command.type.value}")
 
     # --- connection ---

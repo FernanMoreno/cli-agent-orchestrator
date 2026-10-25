@@ -245,6 +245,11 @@ class TestCreateTerminal:
         assert result.status == TerminalStatus.UNKNOWN
         assert mock_provider_manager.create_provider.call_args.kwargs["model"] == ("gpt-5.1-codex")
         mock_provider.initialize.assert_not_awaited()
+        from cli_agent_orchestrator.services.provider_lifecycle import StartupOwner
+
+        startup_owner = mock_schedule_deferred_init.call_args.kwargs["startup_owner"]
+        assert isinstance(startup_owner, StartupOwner)
+        assert startup_owner.terminal_id == "test1234" and not startup_owner.uncertain
         mock_schedule_deferred_init.assert_called_once_with(
             mock_provider,
             "test1234",
@@ -254,6 +259,7 @@ class TestCreateTerminal:
             True,
             initial_caller_id=None,
             delete_on_failure=False,
+            startup_owner=startup_owner,
         )
 
     @pytest.mark.asyncio

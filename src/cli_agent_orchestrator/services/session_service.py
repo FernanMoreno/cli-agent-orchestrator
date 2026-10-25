@@ -51,6 +51,7 @@ from cli_agent_orchestrator.plugins import (
 )
 from cli_agent_orchestrator.security.auth import Principal
 from cli_agent_orchestrator.services.plugin_dispatch import dispatch_plugin_event
+from cli_agent_orchestrator.services.provider_lifecycle import retirement_scope
 from cli_agent_orchestrator.services.session_env import clear_session_env
 from cli_agent_orchestrator.services.session_lock import session_lifecycle_lock
 from cli_agent_orchestrator.services.terminal_service import (
@@ -738,6 +739,18 @@ def delete_session(session_name: str, registry: PluginRegistry | None = None) ->
                 )
             for terminal_id in sorted(set(incarnation_ids)):
                 terminal_service.ensure_terminal_is_not_work_owned(terminal_id)
+
+            # Reserve every retirement before shared-session side effects.
+            # These are logical permits; no mutex spans monitor/backend work.
+            for terminal_id in sorted(set(incarnation_ids)):
+                if not terminal_locks.enter_context(retirement_scope(terminal_id)):
+                    result["errors"].append(
+                        {
+                            "terminal_id": terminal_id,
+                            "error": "startup still owned; retry delete_session",
+                        }
+                    )
+                    return result
 
             # Step 2: read-only scrollback/metadata capture, which has to happen
             # while the panes still exist. ``metadata`` is kept because both

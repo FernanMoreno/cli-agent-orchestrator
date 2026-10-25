@@ -105,6 +105,7 @@ class ProviderManager:
         publish: bool = True,
         provider_variant: Optional[str] = None,
         opencode_native_profile: NativeAgentSnapshot | None = None,
+        expected_registration: Optional[dict] = None,
     ) -> BaseProvider:
         """Create and store provider instance."""
         try:
@@ -283,6 +284,15 @@ class ProviderManager:
                 # reconstruction/cleanup, then publish this candidate; never
                 # clean a replaced reconstructed adapter's shared private home.
                 with self._restoration_lock(terminal_id):
+                    if expected_registration is not None:
+                        current = get_terminal_metadata(terminal_id)
+                        keys = ("provider", "tmux_session", "tmux_window", "session_incarnation_id")
+                        if current is None or any(
+                            current.get(key) != expected_registration.get(key) for key in keys
+                        ):
+                            raise ValueError(
+                                "terminal registration changed before provider publication"
+                            )
                     with self._providers_guard:
                         self._providers[terminal_id] = provider
             logger.info(f"Created {provider_type} provider for terminal: {terminal_id}")
@@ -437,8 +447,13 @@ class ProviderManager:
 
     def cleanup_provider(self, terminal_id: str) -> bool:
         """Serialize private cleanup; retain retry state or a superseding owner."""
-        with self._restoration_lock(terminal_id):
-            return self._cleanup_provider_locked(terminal_id)
+        from cli_agent_orchestrator.services.provider_lifecycle import retirement_scope
+
+        with retirement_scope(terminal_id) as admitted:
+            if not admitted:
+                return False
+            with self._restoration_lock(terminal_id):
+                return self._cleanup_provider_locked(terminal_id)
 
     def _cleanup_provider_locked(self, terminal_id: str) -> bool:
         """Cleanup a provider, retaining any retryable private state on failure.

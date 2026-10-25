@@ -23,6 +23,7 @@ from cli_agent_orchestrator.constants import (
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services.fifo_reader import fifo_manager
 from cli_agent_orchestrator.services.memory_format import parse_index_entry
+from cli_agent_orchestrator.services.provider_lifecycle import retirement_scope
 from cli_agent_orchestrator.services.status_monitor import status_monitor
 
 logger = logging.getLogger(__name__)
@@ -89,25 +90,35 @@ def cleanup_old_data():
                     DatabaseTarget.from_settings(scope="main"), terminal_id
                 ):
                     terminal_service.ensure_terminal_is_not_work_owned(terminal_id)
-                    metadata = terminal_service.get_terminal_metadata(terminal_id)
-                    if metadata and metadata.get("engine") == "kas":
-                        if not terminal_service.dismantle_terminal_runtime(terminal_id, metadata):
+                    with retirement_scope(terminal_id) as admitted:
+                        if not admitted:
+                            logger.info(
+                                "Retaining stale terminal %s while startup is owned", terminal_id
+                            )
                             continue
+                        metadata = terminal_service.get_terminal_metadata(terminal_id)
+                        if metadata and metadata.get("engine") == "kas":
+                            if not terminal_service.dismantle_terminal_runtime(
+                                terminal_id, metadata
+                            ):
+                                continue
+                            if terminal_service.delete_terminal_row(
+                                terminal_id, metadata, registry=None
+                            ):
+                                deleted_terminals += 1
+                            continue
+                        fifo_manager.stop_reader(terminal_id)
+                        status_monitor.clear_terminal(terminal_id)
+                        if provider_manager.cleanup_provider(terminal_id) is False:
+                            logger.warning(
+                                "Retaining stale terminal %s while cleanup is deferred", terminal_id
+                            )
+                            continue
+                        metadata = terminal_service.get_terminal_metadata(terminal_id)
                         if terminal_service.delete_terminal_row(
                             terminal_id, metadata, registry=None
                         ):
                             deleted_terminals += 1
-                        continue
-                    fifo_manager.stop_reader(terminal_id)
-                    status_monitor.clear_terminal(terminal_id)
-                    if provider_manager.cleanup_provider(terminal_id) is False:
-                        logger.warning(
-                            "Retaining stale terminal %s while cleanup is deferred", terminal_id
-                        )
-                        continue
-                    metadata = terminal_service.get_terminal_metadata(terminal_id)
-                    if terminal_service.delete_terminal_row(terminal_id, metadata, registry=None):
-                        deleted_terminals += 1
             except Exception as exc:  # noqa: BLE001 — uncertain ownership retains runtime
                 logger.warning("Failed to delete stale terminal %s: %s", terminal_id, exc)
 

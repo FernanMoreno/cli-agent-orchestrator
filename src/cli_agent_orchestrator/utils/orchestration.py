@@ -1876,7 +1876,7 @@ def _delete_terminal_impl(terminal_id: str, target_host: Optional[str] = None) -
                 "success": False,
                 "message": (
                     f"Terminal {terminal_id}{location} cleanup is pending; retry "
-                    "delete_terminal after the Grok process exits."
+                    "delete_terminal after startup or provider cleanup has settled."
                 ),
             }
         response.raise_for_status()
@@ -1886,7 +1886,7 @@ def _delete_terminal_impl(terminal_id: str, target_host: Optional[str] = None) -
                 "success": False,
                 "message": (
                     f"Terminal {terminal_id}{location} cleanup is pending; retry "
-                    "delete_terminal after the Grok process exits."
+                    "delete_terminal after startup or provider cleanup has settled."
                 ),
             }
         return {
@@ -1901,7 +1901,7 @@ def _delete_terminal_impl(terminal_id: str, target_host: Optional[str] = None) -
                 "success": False,
                 "message": (
                     f"Terminal {terminal_id}{location} cleanup is pending; retry "
-                    "delete_terminal after the Grok process exits."
+                    "delete_terminal after startup or provider cleanup has settled."
                 ),
             }
         return {"success": False, "message": f"Failed to delete terminal: {str(e)}"}

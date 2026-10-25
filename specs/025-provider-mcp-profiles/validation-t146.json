@@ -1,0 +1,145 @@
+{
+  "task": "T146",
+  "date": "2026-10-25",
+  "parent_main": "d2009a98b0b417af35a54f174bffa49b6ad971a7",
+  "scope": "Process-local startup and retirement admission, witnessed actual launch publication, explicit rollback ownership",
+  "source_sha256": {
+    "src/cli_agent_orchestrator/providers/manager.py": "139885d70c1d088b6a9b2639929f5f92c6091bb8fb033c56ec22956f6f971ab6",
+    "src/cli_agent_orchestrator/services/terminal_service.py": "8570331516214667b69f7b449a0c04feb9da6bb9b058926d49c6fd474ae8faea",
+    "src/cli_agent_orchestrator/services/cleanup_service.py": "ad9ba238c61fdaa20b9d3f46d29f34e6cae4a542f4e1cec5948c6646f0bd6e27",
+    "src/cli_agent_orchestrator/services/session_service.py": "bba8bbcb610fc6fdbf2fab876c1075ff7d2198a1f1f2269a96e8c44f0deaf1ac",
+    "src/cli_agent_orchestrator/services/flow_service.py": "99005f9fbd7a9fb2e319a068c18fa2e40d9f02541379eac84025f0822d978651",
+    "src/cli_agent_orchestrator/services/provider_lifecycle.py": "e1520d49f0bcc2f81dce8f0c59d93a42b02e03700d4d2b8ca73304c3110b3df7",
+    "src/cli_agent_orchestrator/runtime_channel/bridge.py": "b2905bd810ff2afeafe53b68e7c661fa50df0a23833c0c5732d9ea078d61d62d",
+    "src/cli_agent_orchestrator/api/main.py": "c161a41f5cddb0a519c62db72b59c08c4ec4e9981247d5d07ef7e53c22341bde",
+    "src/cli_agent_orchestrator/services/herdr_inbox_service.py": "c9cae1c4df9167ef9688697f5941003b094d6325f48183605a55359f6695ab5a",
+    "src/cli_agent_orchestrator/utils/orchestration.py": "1d868ecb337f299ba338c72313d9b71cacbd6d96c040e1731ad06b424b949cfd"
+  },
+  "tests": {
+    "passed": 676,
+    "warnings": 8,
+    "pytest_seconds": 546.56,
+    "normal_focused_coverage_percent": 31,
+    "proof": "/home/felni/.cache/caos-git-publish-20261020/t146-startup-retirement/accepted-proof.json",
+    "selected_paths": [
+      "test/services/test_provider_operation_async.py",
+      "test/services/test_terminal_service_full.py::TestCreateTerminal",
+      "test/services/test_terminal_service_full.py::TestCreateTerminalWorktree",
+      "test/providers/test_provider_publication_cleanup.py",
+      "test/integration/test_provider_publication_cleanup.py",
+      "test/services/test_opencode_profile_preallocation.py",
+      "test/services/test_integration_008_core.py",
+      "test/providers/test_provider_restore_concurrency.py",
+      "test/integration/test_provider_restore_isolation.py",
+      "test/providers/test_provider_manager_unit.py",
+      "test/providers/test_provider_restart_receipts.py",
+      "test/services/test_inbox_status_sink.py",
+      "test/services/test_inbox_pending_scheduler.py",
+      "test/services/test_inbox_status_dispatch.py",
+      "test/integration/test_inbox_status_dispatch.py",
+      "test/services/test_inbox_subscription_lifecycle.py",
+      "test/services/test_event_bus.py",
+      "test/services/test_inbox_lock_lifecycle.py",
+      "test/integration/test_inbox_lock_lifecycle.py",
+      "test/services/test_inbox_service.py",
+      "test/api/test_lifespan_inbox.py",
+      "test/services/test_initial_task_inbox_ordering.py",
+      "test/services/test_terminal_service_inbox_registration.py",
+      "test/api/test_inbox_messages.py",
+      "test/integration/test_provider_row_retirement.py",
+      "test/services/test_terminal_service_full.py::TestDeleteTerminal",
+      "test/services/test_terminal_service_full.py::TestDeleteTerminalWorktree",
+      "test/services/test_session_teardown_atomic.py",
+      "test/services/test_session_service.py::TestDeleteSession",
+      "test/services/test_cleanup_service.py",
+      "test/services/test_flow_service.py::TestExecuteFlow",
+      "test/services/test_terminal_tombstone_exact_cleanup.py",
+      "test/services/test_plugin_event_emission.py::TestTerminalPluginEvents",
+      "test/services/test_plugin_event_emission.py::TestSessionPluginEvents",
+      "test/services/test_provider_lifecycle.py",
+      "test/integration/test_provider_startup_retirement.py",
+      "test/services/test_terminal_service_full.py::TestDeferredInitFailureNotification",
+      "test/services/test_terminal_service_full.py::TestDeferredInitWaitingUserAnswerSurvival",
+      "test/runtime_channel/test_channel_parts.py",
+      "test/runtime_channel/test_bridge_serve_contracts.py",
+      "test/runtime_channel/test_remote_integration.py",
+      "test/runtime_channel/test_remote_services.py",
+      "test/api/test_api_endpoints.py::TestDeleteTerminal",
+      "test/api/test_api_endpoints.py::TestDeleteSession",
+      "test/api/test_terminals.py::TestDeleteTerminalEndpoint",
+      "test/api/test_work_terminal_input_fence.py",
+      "test/integration/test_work_dispatch.py",
+      "test/services/test_herdr_inbox_registry.py",
+      "test/backends/test_herdr_inbox_service.py",
+      "test/mcp_server/test_terminal_cleanup.py"
+    ]
+  },
+  "reproduction": {
+    "actual_create": {
+      "failed": 2,
+      "seconds": 34.7,
+      "proof": "/home/felni/.cache/caos-git-publish-20261020/t146-startup-retirement/red-actual-id-proof.json"
+    },
+    "herdr": {
+      "failed": 3,
+      "seconds": 28.91,
+      "proof": "/home/felni/.cache/caos-git-publish-20261020/t146-startup-retirement/herdr-red-proof.json"
+    },
+    "invalid_first_fixture_target_not_product_evidence": "/home/felni/.cache/caos-git-publish-20261020/t146-startup-retirement/red-proof.json"
+  },
+  "intermediate_evidence": {
+    "failed_old_full": {
+      "failed": 6,
+      "passed": 565,
+      "seconds": 503.25,
+      "proof": "/home/felni/.cache/caos-git-publish-20261020/t146-startup-retirement/regression-proof.json"
+    },
+    "fixture_order_green": {
+      "passed": 67,
+      "seconds": 160.75,
+      "proof": "/home/felni/.cache/caos-git-publish-20261020/t146-startup-retirement/cross-fixture-proof.json"
+    },
+    "herdr_green": {
+      "passed": 105,
+      "seconds": 82.98,
+      "proof": "/home/felni/.cache/caos-git-publish-20261020/t146-startup-retirement/herdr-green-proof.json"
+    },
+    "interrupted_prior_final_not_acceptance": "/home/felni/.cache/caos-git-publish-20261020/t146-startup-retirement/final-proof.json"
+  },
+  "architecture": {
+    "contracts_kept": 5,
+    "broken": 0,
+    "log": "/home/felni/.cache/caos-git-publish-20261020/t146-startup-retirement/composition-final.log"
+  },
+  "peer": {
+    "diagnosis": "62111e8b2fa247069b60142eeaba8033",
+    "review": "37ad36b0ba2f421f887f44bcd507b475",
+    "core_go": "81ec4101f8b148fabf154fbefbbe5eba",
+    "herdr_go": "32ed4afd28f2475f9bcc5bd3edd5e6e9",
+    "mode": "read",
+    "reviewer_ran_tests": false,
+    "root_verified_results": true,
+    "luna": "provider_lifecycle_fence_audit, ECC change-impact b92f181b3b748d1abbc2afd94af6aa7d8c8fca29"
+  },
+  "accepted_patch_sha256": "d1b1d358e75efef192c22a3eb4196e46c0d052d85a620f4d54ec3b23ddc3f18a",
+  "initial_available_mib": 12409,
+  "owner_closed": true,
+  "exact_container_absent": true,
+  "sources_unchanged": true,
+  "native_inference_run": false,
+  "uncertain_cancellation_policy": "Retain current startup owner and external activity marker; no live-process clearing API; owning process restart then existing native cleanup proof required. Not a claim that cancellation stopped inner workers.",
+  "residual": [
+    "Full row/rollback authority and same-tuple ABA",
+    "Distributed caches and direct SQL bypass",
+    "Session/Flow bulk deferred-sidecar publication",
+    "Ghost snapshot freshness and ready-provider cache retirement",
+    "General escaped timeout workers and pre-initialize cancellation compensation",
+    "Current-source native acceptance requires fresh launchers including new provider_lifecycle.py"
+  ],
+  "obsidian": {
+    "operation_id": "save-20261025-caos-startup-retirement-admission",
+    "applied": true,
+    "strict_issues": 0,
+    "pages": 14
+  }
+}

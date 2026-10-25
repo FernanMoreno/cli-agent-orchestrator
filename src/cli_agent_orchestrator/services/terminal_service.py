@@ -28,7 +28,8 @@ import stat
 import threading
 import time
 import uuid
-from contextlib import closing, nullcontext
+from concurrent.futures import Future as WorkerOutcome
+from contextlib import ExitStack, closing, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -135,6 +136,14 @@ from cli_agent_orchestrator.services.memory_gateway import (
 )
 from cli_agent_orchestrator.services.memory_service import MemoryService
 from cli_agent_orchestrator.services.plugin_dispatch import dispatch_plugin_event
+from cli_agent_orchestrator.services.provider_lifecycle import (
+    finish_startup,
+    guard_retirement,
+    reserve_startup,
+    retain_uncertain_startup,
+    retirement_scope,
+    startup_context,
+)
 from cli_agent_orchestrator.services.session_env import (
     clear_session_env,
     get_session_env,
@@ -602,6 +611,7 @@ _CURRENT_COMPOSER_PROBE_MAX_CHARS = 64
 # deferred provider.initialize() + input-send task could be GC'd mid-run,
 # silently leaving a worker uninitialized. Tasks drop themselves on completion.
 _deferred_init_tasks: set = set()
+_create_compensations: set = set()
 
 # External-owner deferred-init rows survive provider startup failures so Bridge
 # and other external observers can read a durable verdict. Restart recovery
@@ -1259,35 +1269,29 @@ async def _await_provider_operation(function: Callable[..., Any], *args: Any, **
         raise cancellation
 
 
-async def _finish_and_roll_back_cancelled_create(
-    create_worker: "asyncio.Task[Tuple[str, bool, bool]]",
+def _finish_and_roll_back_cancelled_create(
+    create_outcome: WorkerOutcome,
     session_name: str,
     terminal_id: str,
+    *,
+    startup_owner_getter: Callable[[], Any] | None = None,
 ) -> None:
-    """Await the un-cancellable create worker, then compensate its outcome.
-
-    If the worker RAISED, its locked closure already rolled the backend
-    resource back and never wrote the row — nothing to do. If it RETURNED, it
-    built a session/window and committed a row that no caller will ever hear
-    about; roll both back under the lifecycle lock.
-    """
+    """Compensate on a real executor worker, independent of asyncio task cancellation."""
     try:
-        window_name, session_created, _ = await create_worker
+        window_name, session_created, _ = create_outcome.result()
     except BaseException:
-        return
-    from cli_agent_orchestrator.services.work_terminal import current_managed_terminal_id
+        return  # The create worker already compensated its own failed effects.
+    owner = startup_owner_getter() if startup_owner_getter is not None else None
+    try:
+        with startup_context(owner):
+            from cli_agent_orchestrator.services.work_terminal import current_managed_terminal_id
 
-    if current_managed_terminal_id() is not None:
-        # The durable attempt owns this outcome, including repeated cancellation.
-        # Keep the committed identity and resources available for reconciliation.
-        return
-    await asyncio.to_thread(
-        _roll_back_cancelled_create,
-        session_name,
-        terminal_id,
-        window_name,
-        created_session=session_created,
-    )
+            if current_managed_terminal_id() is None:
+                _roll_back_cancelled_create(
+                    session_name, terminal_id, window_name, created_session=session_created
+                )
+    finally:
+        finish_startup(owner)
 
 
 # ``allowed_tools=None`` and ``allowed_tools=[]`` are DIFFERENT requests --
@@ -1954,6 +1958,9 @@ async def create_terminal(
     # whether there is a worktree to roll back too. Still None if Step 1b never
     # ran (use_worktree=False) or itself failed before create_worktree returned.
     worktree_repo_root: Optional[str] = None
+    startup_owner = None
+    startup_transferred = False
+    startup_initialize_started = False
     try:
         # Resolve profile policy and Kiro engine BEFORE allocating any backend
         # resource. A KAS request must probe then fail closed with no window,
@@ -2244,14 +2251,22 @@ async def create_terminal(
             not own, leaving ITS row pointing at nothing. Under the lock the
             name goes free -> free with no observable intermediate state.
             """
-            nonlocal deferred_delete_on_failure, session_incarnation_id
+            nonlocal deferred_delete_on_failure, session_incarnation_id, startup_owner
             assert session_name is not None  # narrowed by the caller
             parent_lock = (
                 terminal_dispatch_lock(DatabaseTarget.from_settings(scope="main"), caller_id)
                 if fence_parent and caller_id
                 else nullcontext()
             )
-            with parent_lock, session_lifecycle_lock(session_name):
+            with (
+                parent_lock,
+                session_lifecycle_lock(session_name),
+                ExitStack() as stale_retirements,
+            ):
+                if new_session:
+                    for old in list_terminals_by_session(session_name):
+                        if not stale_retirements.enter_context(retirement_scope(str(old["id"]))):
+                            raise RuntimeError("previous session startup is still active")
                 if fence_parent:
                     assert caller_id is not None
                     ensure_terminal_is_not_work_owned(caller_id)
@@ -2367,6 +2382,7 @@ async def create_terminal(
                     # the launch policy already resolved above (allowed_tools,
                     # engine), so API reads and snapshots report what was actually
                     # launched.
+                    startup_owner = reserve_startup(terminal_id, replace_retired=new_session)
                     db_create_terminal(
                         terminal_id,
                         session_name,
@@ -2389,6 +2405,7 @@ async def create_terminal(
                         new_session_incarnation=created_session,
                     )
                 except BaseException:
+                    finish_startup(startup_owner)
                     _clear_deferred_init_external_owner_active(terminal_id)
                     _roll_back_backend_create_locked(
                         session_name,
@@ -2409,19 +2426,45 @@ async def create_terminal(
         # So shield the worker, and on cancellation hand its outcome to a
         # compensator that rolls back whatever it built (under the lifecycle
         # lock) before letting the cancellation continue.
-        create_worker = asyncio.ensure_future(asyncio.to_thread(_create_session_or_window_locked))
+        create_outcome = WorkerOutcome()
+
+        def create_with_outcome():
+            try:
+                result = _create_session_or_window_locked()
+            except BaseException as error:
+                create_outcome.set_exception(error)
+                raise
+            create_outcome.set_result(result)
+            return result
+
+        create_context = contextvars.copy_context()
+        create_worker = asyncio.get_running_loop().run_in_executor(
+            None, create_context.run, create_with_outcome
+        )
         try:
             window_name, session_created, window_created = await asyncio.shield(create_worker)
         except asyncio.CancelledError:
             if not create_worker.cancelled():
-                compensator = asyncio.ensure_future(
-                    _finish_and_roll_back_cancelled_create(create_worker, session_name, terminal_id)
+                startup_transferred = True
+                compensation_context = contextvars.copy_context()
+                compensator = asyncio.get_running_loop().run_in_executor(
+                    None,
+                    compensation_context.run,
+                    partial(
+                        _finish_and_roll_back_cancelled_create,
+                        create_outcome,
+                        session_name,
+                        terminal_id,
+                        startup_owner_getter=lambda: startup_owner,
+                    ),
                 )
+                _create_compensations.add(compensator)
+                compensator.add_done_callback(_create_compensations.discard)
                 try:
                     await asyncio.shield(compensator)
                 except asyncio.CancelledError:
                     # A repeat cancellation landed while the compensator ran;
-                    # the shielded task still completes on the loop. The
+                    # the owned executor compensation still completes. The
                     # ORIGINAL cancellation is re-raised below either way.
                     pass
             _clear_deferred_init_external_owner_active(terminal_id)
@@ -2483,6 +2526,12 @@ async def create_terminal(
             engine=resolved_engine,
             resume_session_id=resume_session_id,
             opencode_native_profile=opencode_native_profile,
+            expected_registration={
+                "provider": provider,
+                "tmux_session": session_name,
+                "tmux_window": window_name,
+                "session_incarnation_id": session_incarnation_id,
+            },
         )
 
         # Issue a source capability only after the durable terminal row and
@@ -2538,7 +2587,7 @@ async def create_terminal(
                 # its configuration (OpenCode probes ``--version``).  Keep
                 # that bounded subprocess/config work off the API event loop;
                 # the provider caches the resulting runtime pin for init.
-                source_configured = await asyncio.to_thread(
+                source_configured = await _await_provider_operation(
                     provider_instance.interaction_source_configured,
                     getattr(profile, "mcpServers", None),
                 )
@@ -2610,25 +2659,30 @@ async def create_terminal(
                 prompt_redelivery,
                 initial_caller_id=caller_id,
                 delete_on_failure=deferred_delete_on_failure,
+                startup_owner=startup_owner,
             )
             # A handful of unit/integration seams patch the private scheduler
             # with a non-Task mock. Production always returns an asyncio.Task;
             # if the seam replaced it, release the pre-insert fence here so one
             # test cannot leak process-local recovery state into another.
-            if not isinstance(deferred_task, asyncio.Task):
+            if isinstance(deferred_task, asyncio.Task):
+                startup_transferred = True
+            else:
                 _clear_deferred_init_external_owner_active(terminal_id)
         else:
+            startup_initialize_started = True
             await provider_instance.initialize()
+            startup_initialize_started = False
 
             # The provider, not merely the tmux window, has acknowledged the
             # child launch.  This is deliberately after initialize(): a DB row
             # or a visible shell alone is not a delivery/readiness receipt.
             runtime_variant = getattr(provider_instance, "runtime_variant", None)
             if isinstance(runtime_variant, str) and runtime_variant:
-                await asyncio.to_thread(
+                await _await_provider_operation(
                     update_terminal_provider_variant, terminal_id, runtime_variant
                 )
-            await asyncio.to_thread(transition_native_child, terminal_id, "acknowledged")
+            await _await_provider_operation(transition_native_child, terminal_id, "acknowledged")
 
             # Persist shell_command baseline if the provider captured one
             shell_command = provider_instance.shell_baseline
@@ -2713,7 +2767,17 @@ async def create_terminal(
                 logger.warning(f"Failed to register terminal {terminal_id} with herdr inbox: {e}")
         return terminal
 
+    except asyncio.CancelledError:
+        if not startup_transferred and startup_initialize_started:
+            retain_uncertain_startup(startup_owner)
+        raise
     except Exception as e:
+        if startup_transferred:
+            logger.warning(
+                "Terminal %s reporting failed after deferred ownership transfer; retaining runtime",
+                terminal_id,
+            )
+            raise
         if managed_terminal_id is not None:
             # WorkAdmission owns reconciliation. Legacy cleanup cannot assume
             # authority after revocation, or ownership of an ID whose INSERT
@@ -2811,48 +2875,54 @@ async def create_terminal(
         # have an updater still writing $GROK_HOME while its initialization
         # fails; its cleanup verifies that no such process remains.
         def finish_failed_create() -> None:
-            cleanup_complete = True
-            try:
-                if terminal_id is not None:
-                    cleanup_complete = provider_manager.cleanup_provider(terminal_id) is not False
-                    if cleanup_complete:
-                        _remove_interaction_capability_files(terminal_id)
-            except Exception:
-                # Preserve the existing rollback contract for an unexpected
-                # provider-manager failure. Only an explicit False is a Grok
-                # cleanup deferral with enough information to retry safely.
+            with startup_context(startup_owner):
                 cleanup_complete = True
-            # Do not erase the only retry handle before Grok has safely released
-            # its private home.  The original create error is still raised below;
-            # retaining this row makes the failed terminal discoverable and its
-            # deletion retryable rather than leaking credentials/config forever.
-            if cleanup_complete:
                 try:
                     if terminal_id is not None:
-                        delete_terminal_row(
-                            terminal_id, get_terminal_metadata(terminal_id), registry=None
+                        cleanup_complete = (
+                            provider_manager.cleanup_provider(terminal_id) is not False
                         )
+                        if cleanup_complete:
+                            _remove_interaction_capability_files(terminal_id)
                 except Exception:
-                    pass  # Ignore cleanup errors
-            elif terminal_id is not None:
-                logger.warning(
-                    "Create rollback deferred Grok cleanup for %s; retaining terminal metadata for retry",
-                    terminal_id,
-                )
-            if worktree_repo_root is not None and terminal_id is not None:
-                # A worktree WAS created (Step 1b succeeded) before some later step
-                # failed -- roll it back too, same best-effort posture as everything
-                # else in this block. Without this, a provider-init timeout (or any
-                # later failure) on a worktree-backed terminal would leave an orphan
-                # worktree + branch behind with no CAO-side record pointing at it.
-                # This whole remaining rollback now runs on its owned worker:
-                # `git worktree remove` is a blocking subprocess call and this
-                # parent coroutine remains responsive and retains cancellation ownership.
-                worktree_service.remove_worktree(worktree_repo_root, terminal_id)
+                    # Preserve the existing rollback contract for an unexpected
+                    # provider-manager failure. Only an explicit False is a Grok
+                    # cleanup deferral with enough information to retry safely.
+                    cleanup_complete = True
+                # Do not erase the only retry handle before Grok has safely released
+                # its private home.  The original create error is still raised below;
+                # retaining this row makes the failed terminal discoverable and its
+                # deletion retryable rather than leaking credentials/config forever.
+                if cleanup_complete:
+                    try:
+                        if terminal_id is not None:
+                            delete_terminal_row(
+                                terminal_id, get_terminal_metadata(terminal_id), registry=None
+                            )
+                    except Exception:
+                        pass  # Ignore cleanup errors
+                elif terminal_id is not None:
+                    logger.warning(
+                        "Create rollback deferred Grok cleanup for %s; retaining terminal metadata for retry",
+                        terminal_id,
+                    )
+                if worktree_repo_root is not None and terminal_id is not None:
+                    # A worktree WAS created (Step 1b succeeded) before some later step
+                    # failed -- roll it back too, same best-effort posture as everything
+                    # else in this block. Without this, a provider-init timeout (or any
+                    # later failure) on a worktree-backed terminal would leave an orphan
+                    # worktree + branch behind with no CAO-side record pointing at it.
+                    # This whole remaining rollback now runs on its owned worker:
+                    # `git worktree remove` is a blocking subprocess call and this
+                    # parent coroutine remains responsive and retains cancellation ownership.
+                    worktree_service.remove_worktree(worktree_repo_root, terminal_id)
 
         await _await_provider_operation(finish_failed_create)
 
         raise
+    finally:
+        if not startup_transferred:
+            finish_startup(startup_owner)
 
 
 def _notify_cross_node_caller(terminal_id: str, session_name: str, message: str) -> bool:
@@ -3931,6 +4001,7 @@ def _schedule_deferred_init(
     *,
     initial_caller_id: Optional[str] = None,
     delete_on_failure: bool | None = None,
+    startup_owner=None,
 ) -> asyncio.Task | None:
     """Kick off provider.initialize() in the background and, on success,
     deliver the initial message via send_input.
@@ -3948,7 +4019,17 @@ def _schedule_deferred_init(
     blind re-send.
     """
 
+    async def _surface_owned_failure(*args, **kwargs):
+        # Only the settled failure path may retire this startup. Normal init,
+        # delivery and plugin callbacks must not inherit rollback authority.
+        with startup_context(startup_owner):
+            return await _surface_deferred_init_failure(*args, **kwargs)
+
+    startup_task_started = False
+
     async def _run() -> None:
+        nonlocal startup_task_started
+        startup_task_started = True
         caller_id: Optional[str] = initial_caller_id
         try:
             await provider_instance.initialize()
@@ -4052,7 +4133,7 @@ def _schedule_deferred_init(
                             "Deferred init for %s: provider entered ERROR after task delivery.",
                             terminal_id,
                         )
-                        await _surface_deferred_init_failure(
+                        await _surface_owned_failure(
                             terminal_id,
                             kind="provider_error_after_delivery",
                             message=provider_error_message
@@ -4111,7 +4192,7 @@ def _schedule_deferred_init(
                             error_kind="delivery_unconfirmed",
                             error_summary="initial task pickup was not observed",
                         )
-                        await _surface_deferred_init_failure(
+                        await _surface_owned_failure(
                             terminal_id,
                             kind="delivery_unconfirmed",
                             message="Task pickup was not observed. Inspect the retained terminal and reconcile its delivery before retrying.",
@@ -4224,7 +4305,7 @@ def _schedule_deferred_init(
                 error_kind="deferred_initialization_error",
                 error_summary=str(e),
             )
-            await _surface_deferred_init_failure(
+            await _surface_owned_failure(
                 terminal_id,
                 kind="provider_init_error",
                 message=f"Worker {terminal_id} failed to initialize: {e}",
@@ -4239,7 +4320,8 @@ def _schedule_deferred_init(
         logger.error(f"Deferred init for {terminal_id}: no running event loop; init skipped")
         _clear_deferred_init_external_owner_active(terminal_id)
         return None
-    task = loop.create_task(_run())
+    with startup_context(None):
+        task = loop.create_task(_run())
     _mark_initial_task_pending(terminal_id)
     if delete_on_failure is False:
         _mark_deferred_init_external_owner_active(terminal_id)
@@ -4247,7 +4329,11 @@ def _schedule_deferred_init(
 
     def _on_done(done_task: asyncio.Task) -> None:
         _deferred_init_tasks.discard(done_task)
-        _clear_deferred_init_external_owner_active(terminal_id)
+        if done_task.cancelled() and startup_task_started:
+            retain_uncertain_startup(startup_owner)
+        else:
+            _clear_deferred_init_external_owner_active(terminal_id)
+            finish_startup(startup_owner)
 
     task.add_done_callback(_on_done)
     return task
@@ -6024,6 +6110,7 @@ def capture_terminal_snapshot(terminal_id: str) -> Optional[Dict]:
     return metadata
 
 
+@guard_retirement
 def dismantle_terminal_runtime(
     terminal_id: str,
     metadata: Optional[Dict],
@@ -6235,6 +6322,7 @@ def dismantle_terminal_runtime(
     return runtime_complete
 
 
+@guard_retirement
 def delete_terminal_row(
     terminal_id: str,
     metadata: Optional[Dict],
@@ -6324,13 +6412,16 @@ def delete_terminal(terminal_id: str, registry: PluginRegistry | None = None) ->
     try:
         with terminal_dispatch_lock(DatabaseTarget.from_settings(scope="main"), terminal_id):
             ensure_terminal_is_not_work_owned(terminal_id)
-            metadata = capture_terminal_snapshot(terminal_id)
-            if not dismantle_terminal_runtime(terminal_id, metadata):
-                logger.warning(
-                    "Terminal %s cleanup deferred; retaining metadata for a retry", terminal_id
-                )
-                return False
-            deleted = delete_terminal_row(terminal_id, metadata, registry=None)
+            with retirement_scope(terminal_id) as admitted:
+                if not admitted:
+                    return False
+                metadata = capture_terminal_snapshot(terminal_id)
+                if not dismantle_terminal_runtime(terminal_id, metadata):
+                    logger.warning(
+                        "Terminal %s cleanup deferred; retaining metadata for a retry", terminal_id
+                    )
+                    return False
+                deleted = delete_terminal_row(terminal_id, metadata, registry=None)
         if deleted and metadata:
             dispatch_plugin_event(
                 registry,

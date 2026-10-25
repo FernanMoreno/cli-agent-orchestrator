@@ -24,6 +24,7 @@ from contextlib import ExitStack
 from typing import Callable, Dict, Optional, Set
 
 from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+from cli_agent_orchestrator.services.provider_lifecycle import retirement_scope
 
 logger = logging.getLogger(__name__)
 
@@ -48,84 +49,89 @@ def _retain_deferred_failure_tombstone_unlocked(
     terminal_service <-> herdr service module cycle.
     """
 
-    from cli_agent_orchestrator.clients.database import (
-        get_terminal_metadata,
-        update_terminal_deferred_init_runtime_reclaimed,
-    )
-    from cli_agent_orchestrator.services.terminal_service import (
-        _is_deferred_init_external_owner_active,
-        capture_terminal_snapshot,
-        dismantle_terminal_runtime,
-        should_retain_deferred_failure_tombstone,
-    )
-
-    # A current-process external-owner worker can legitimately appear in a
-    # stale startup/reconcile discovery window while its deferred initializer
-    # is still running.  Its DB row has the same ownership bit as a crash-
-    # stranded tombstone, so durable metadata alone cannot distinguish them.
-    # The process-local active fence is authoritative for this one case:
-    # retain the row, but do NOT dismantle the live provider/FIFO/worktree.
-    # Once the init task settles the fence is cleared; a durable failure can
-    # then be reclaimed by the normal retry/rediscovery path.
-    if _is_deferred_init_external_owner_active(terminal_id):
-        return True
-
-    try:
-        metadata = get_terminal_metadata(terminal_id)
-        retain = should_retain_deferred_failure_tombstone(terminal_id, metadata)
-    except Exception as exc:  # noqa: BLE001 — uncertain ownership must not delete evidence
-        logger.warning(
-            "Deferred-init retention check failed for terminal %s; retaining fail-closed: %s",
-            terminal_id,
-            exc,
+    with retirement_scope(terminal_id) as admitted:
+        if not admitted:
+            if on_cleanup_deferred is not None:
+                on_cleanup_deferred(terminal_id)
+            return True
+        from cli_agent_orchestrator.clients.database import (
+            get_terminal_metadata,
+            update_terminal_deferred_init_runtime_reclaimed,
         )
-        # Unknown ownership cannot authorize resource destruction. In particular,
-        # dismantling with metadata=None bypasses exact identity proof, while a
-        # cached provider can still delete its private home without reading the
-        # DB. Preserve all resources until a retry can establish runtime absence.
-        if on_cleanup_deferred is not None:
-            on_cleanup_deferred(terminal_id)
-        return True
-    if not retain:
-        return False
+        from cli_agent_orchestrator.services.terminal_service import (
+            _is_deferred_init_external_owner_active,
+            capture_terminal_snapshot,
+            dismantle_terminal_runtime,
+            should_retain_deferred_failure_tombstone,
+        )
 
-    try:
+        # A current-process external-owner worker can legitimately appear in a
+        # stale startup/reconcile discovery window while its deferred initializer
+        # is still running.  Its DB row has the same ownership bit as a crash-
+        # stranded tombstone, so durable metadata alone cannot distinguish them.
+        # The process-local active fence is authoritative for this one case:
+        # retain the row, but do NOT dismantle the live provider/FIFO/worktree.
+        # Once the init task settles the fence is cleared; a durable failure can
+        # then be reclaimed by the normal retry/rediscovery path.
+        if _is_deferred_init_external_owner_active(terminal_id):
+            return True
+
         try:
-            metadata = capture_terminal_snapshot(terminal_id) or metadata
-        except Exception as snapshot_exc:  # noqa: BLE001 — cleanup can proceed from DB metadata
+            metadata = get_terminal_metadata(terminal_id)
+            retain = should_retain_deferred_failure_tombstone(terminal_id, metadata)
+        except Exception as exc:  # noqa: BLE001 — uncertain ownership must not delete evidence
             logger.warning(
-                "Deferred-init tombstone snapshot failed for terminal %s: %s",
+                "Deferred-init retention check failed for terminal %s; retaining fail-closed: %s",
                 terminal_id,
-                snapshot_exc,
+                exc,
             )
-        complete = dismantle_terminal_runtime(terminal_id, metadata, kill_window=False)
-        if complete:
+            # Unknown ownership cannot authorize resource destruction. In particular,
+            # dismantling with metadata=None bypasses exact identity proof, while a
+            # cached provider can still delete its private home without reading the
+            # DB. Preserve all resources until a retry can establish runtime absence.
+            if on_cleanup_deferred is not None:
+                on_cleanup_deferred(terminal_id)
+            return True
+        if not retain:
+            return False
+
+        try:
             try:
-                if not update_terminal_deferred_init_runtime_reclaimed(terminal_id, True):
-                    complete = False
-            except Exception as update_exc:  # noqa: BLE001 — retry bookkeeping later
-                complete = False
+                metadata = capture_terminal_snapshot(terminal_id) or metadata
+            except Exception as snapshot_exc:  # noqa: BLE001 — cleanup can proceed from DB metadata
                 logger.warning(
-                    "Deferred-init tombstone runtime reclaim marker failed for %s: %s",
+                    "Deferred-init tombstone snapshot failed for terminal %s: %s",
                     terminal_id,
-                    update_exc,
+                    snapshot_exc,
                 )
-        if not complete:
+            complete = dismantle_terminal_runtime(terminal_id, metadata, kill_window=False)
+            if complete:
+                try:
+                    if not update_terminal_deferred_init_runtime_reclaimed(terminal_id, True):
+                        complete = False
+                except Exception as update_exc:  # noqa: BLE001 — retry bookkeeping later
+                    complete = False
+                    logger.warning(
+                        "Deferred-init tombstone runtime reclaim marker failed for %s: %s",
+                        terminal_id,
+                        update_exc,
+                    )
+            if not complete:
+                if on_cleanup_deferred is not None:
+                    on_cleanup_deferred(terminal_id)
+                logger.warning(
+                    "Deferred-init tombstone runtime cleanup deferred for terminal %s",
+                    terminal_id,
+                )
+        except Exception as exc:  # noqa: BLE001 — retention must survive cleanup failure
             if on_cleanup_deferred is not None:
                 on_cleanup_deferred(terminal_id)
             logger.warning(
-                "Deferred-init tombstone runtime cleanup deferred for terminal %s",
+                "Deferred-init tombstone runtime cleanup failed for terminal %s: %s",
                 terminal_id,
+                exc,
             )
-    except Exception as exc:  # noqa: BLE001 — retention must survive cleanup failure
-        if on_cleanup_deferred is not None:
-            on_cleanup_deferred(terminal_id)
-        logger.warning(
-            "Deferred-init tombstone runtime cleanup failed for terminal %s: %s",
-            terminal_id,
-            exc,
-        )
-    return True
+        return True
 
 
 def _retain_deferred_failure_tombstone(terminal_id, *, on_cleanup_deferred=None):
@@ -259,7 +265,10 @@ class HerdrInboxService:
 
         with terminal_dispatch_lock(DatabaseTarget.from_settings(scope="main"), terminal_id):
             ensure_terminal_is_not_work_owned(terminal_id)
-            delete_terminal(terminal_id)
+            with retirement_scope(terminal_id) as admitted:
+                if not admitted:
+                    raise RuntimeError("terminal startup is still owned; ghost cleanup deferred")
+                delete_terminal(terminal_id)
 
     @staticmethod
     def _kill_empty_session_if_unowned(session_name: str, terminal_ids: Set[str]) -> bool:
@@ -283,6 +292,9 @@ class HerdrInboxService:
                     )
                 for terminal_id in terminal_ids:
                     ensure_terminal_is_not_work_owned(terminal_id)
+                for terminal_id in sorted(terminal_ids):
+                    if not locks.enter_context(retirement_scope(terminal_id)):
+                        return False
                 if list_terminals_by_session(session_name):
                     return False
                 get_backend().kill_session(session_name)
@@ -906,14 +918,20 @@ class HerdrInboxService:
                     DatabaseTarget.from_settings(scope="main"), terminal_id
                 ):
                     ensure_terminal_is_not_work_owned(terminal_id)
-                    retained = _retain_deferred_failure_tombstone_unlocked(
-                        terminal_id, on_cleanup_deferred=self._pending_tombstone_runtime_cleanup.add
-                    )
-                    if not retained:
-                        from cli_agent_orchestrator.clients.database import delete_terminal
+                    with retirement_scope(terminal_id) as admitted:
+                        if not admitted:
+                            raise RuntimeError(
+                                "terminal startup is still owned; reconciliation deferred"
+                            )
+                        retained = _retain_deferred_failure_tombstone_unlocked(
+                            terminal_id,
+                            on_cleanup_deferred=self._pending_tombstone_runtime_cleanup.add,
+                        )
+                        if not retained:
+                            from cli_agent_orchestrator.clients.database import delete_terminal
 
-                        delete_terminal(terminal_id)
-                        deleted += 1
+                            delete_terminal(terminal_id)
+                            deleted += 1
             except Exception as error:
                 logger.warning("Reconcile: retaining guarded terminal %s: %s", terminal_id, error)
                 continue

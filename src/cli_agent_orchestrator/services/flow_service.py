@@ -38,6 +38,7 @@ from cli_agent_orchestrator.models.kiro_engine import parse_kiro_engine
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services.fifo_reader import fifo_manager
+from cli_agent_orchestrator.services.provider_lifecycle import retirement_scope
 from cli_agent_orchestrator.services.session_lock import session_lifecycle_lock
 from cli_agent_orchestrator.services.session_service import list_current_session_terminals
 from cli_agent_orchestrator.services.status_monitor import status_monitor
@@ -279,6 +280,11 @@ def _recycle_flow_session(name: str, session_name: str) -> bool:
         _verified_flow_terminal_rows(session_name, terminal_locks)
         backend_exists = get_backend().session_exists(session_name)
         terminals = list_current_session_terminals(session_name, backend_exists=backend_exists)
+
+        for terminal_id in sorted({str(t["id"]) for t in terminals}):
+            if not terminal_locks.enter_context(retirement_scope(terminal_id)):
+                logger.info("Flow %s startup still owned; recycling deferred", name)
+                return False
 
         if backend_exists:
             conductor = terminals[0] if terminals else None
