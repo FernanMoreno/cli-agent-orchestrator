@@ -6267,6 +6267,8 @@ def dismantle_terminal_runtime(
     terminal_id: str,
     metadata: Optional[Dict],
     kill_window: bool = True,
+    *,
+    unregister_inbox: bool = True,
 ) -> bool:
     """Tear down a terminal's runtime state, but NOT its registry row.
 
@@ -6399,8 +6401,9 @@ def dismantle_terminal_runtime(
             if exact.outcome != TerminalCleanupOutcome.ABSENT:
                 return False
 
-    # Unregister from herdr inbox service
-    svc = get_herdr_inbox_service()
+    # Herdr reconciliation can own this operation on an executor worker and
+    # apply routing changes on its event loop only after successful retirement.
+    svc = get_herdr_inbox_service() if unregister_inbox else None
     if svc:
         try:
             svc.unregister_terminal(terminal_id)

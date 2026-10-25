@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from cli_agent_orchestrator import constants
+from cli_agent_orchestrator.backends.base import TerminalCleanupOutcome, TerminalCleanupResult
 from cli_agent_orchestrator.clients.postgres import connect
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 from cli_agent_orchestrator.services.herdr_inbox_service import HerdrInboxService
@@ -22,6 +23,9 @@ def _run_async(coro):
 @pytest.fixture(autouse=True)
 def isolated_herdr_locks(tmp_path, monkeypatch):
     monkeypatch.setattr(constants, "LOCK_DIR", tmp_path / "locks")
+    from cli_agent_orchestrator.services import terminal_service
+
+    monkeypatch.setattr(terminal_service, "TERMINAL_LOG_DIR", tmp_path / "terminals")
 
 
 class TestHerdrInboxServiceRegistration:
@@ -465,15 +469,20 @@ class TestHerdrInboxServiceReconcile:
         }
         mock_meta.return_value = None  # No session tracking needed
 
-        _run_async(service._reconcile())
+        with patch("cli_agent_orchestrator.backends.registry.get_backend") as backend:
+            backend.return_value.cleanup_terminal_exact.return_value = TerminalCleanupResult(
+                TerminalCleanupOutcome.ABSENT
+            )
+            _run_async(service._reconcile())
+            backend.return_value.cleanup_terminal_exact.assert_called_once_with("tid2", close=False)
 
         # pane-stale pruned; pane-live kept
         assert "pane-stale" not in service._pane_to_terminal
         assert "tid2" not in service._terminal_to_pane
         assert "pane-live" in service._pane_to_terminal
         assert "tid1" in service._terminal_to_pane
-        # DB record for stale terminal deleted
-        mock_delete.assert_called_once_with("tid2")
+        # The DB read already proved absence; reap only the stale routing.
+        mock_delete.assert_not_called()
 
     @patch.object(HerdrInboxService, "_fetch_snapshot")
     def test_reconcile_no_op_when_all_panes_live(self, mock_snap):
@@ -508,7 +517,7 @@ class TestHerdrInboxServiceReconcile:
         assert "pane-a" in service._pane_to_terminal
 
     @patch.object(HerdrInboxService, "_fetch_snapshot")
-    @patch("cli_agent_orchestrator.clients.database.delete_terminal")
+    @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal")
     @patch("cli_agent_orchestrator.clients.database.list_terminals_by_session")
     def test_reconcile_deletes_ghost_db_terminals(
         self, mock_list_terminals, mock_delete, mock_snap
@@ -528,7 +537,20 @@ class TestHerdrInboxServiceReconcile:
             {"id": "tid-ghost", "tmux_window": "ghost-window"},
         ]
 
-        _run_async(service._reconcile())
+        for row in mock_list_terminals.return_value:
+            row.update(tmux_session="my-session", provider="mock_cli", session_incarnation_id=None)
+        by_id = {row["id"]: row for row in mock_list_terminals.return_value}
+        with (
+            patch(
+                "cli_agent_orchestrator.clients.database.get_terminal_metadata",
+                side_effect=by_id.get,
+            ),
+            patch("cli_agent_orchestrator.backends.registry.get_backend") as backend,
+        ):
+            backend.return_value.cleanup_terminal_exact.return_value = TerminalCleanupResult(
+                TerminalCleanupOutcome.ABSENT
+            )
+            _run_async(service._reconcile())
 
         # Only the ghost terminal should be deleted
         mock_delete.assert_called_once_with("tid-ghost")
@@ -674,7 +696,7 @@ class TestHerdrInboxSnapshot:
 class TestHerdrInboxServiceStartupDbCleanup:
     """Test _startup_db_cleanup removes ghost terminals on server start."""
 
-    @patch("cli_agent_orchestrator.clients.database.delete_terminal")
+    @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal")
     @patch("cli_agent_orchestrator.clients.database.list_terminals_by_session")
     @patch.object(HerdrInboxService, "_fetch_snapshot")
     def test_startup_cleanup_deletes_ghost_from_snapshot(self, mock_snap, mock_list, mock_delete):
@@ -693,7 +715,20 @@ class TestHerdrInboxServiceStartupDbCleanup:
             {"id": "tid-ghost", "tmux_window": "dead-window"},
         ]
 
-        _run_async(service._startup_db_cleanup())
+        for row in mock_list.return_value:
+            row.update(tmux_session="my-session", provider="mock_cli", session_incarnation_id=None)
+        by_id = {row["id"]: row for row in mock_list.return_value}
+        with (
+            patch(
+                "cli_agent_orchestrator.clients.database.get_terminal_metadata",
+                side_effect=by_id.get,
+            ),
+            patch("cli_agent_orchestrator.backends.registry.get_backend") as backend,
+        ):
+            backend.return_value.cleanup_terminal_exact.return_value = TerminalCleanupResult(
+                TerminalCleanupOutcome.ABSENT
+            )
+            _run_async(service._startup_db_cleanup())
 
         mock_delete.assert_called_once_with("tid-ghost")
 
@@ -1162,7 +1197,7 @@ class TestHerdrInboxServiceReconcileLiveTerminal:
     @patch("cli_agent_orchestrator.backends.registry.get_backend")
     @patch("cli_agent_orchestrator.services.herdr_inbox_service.subprocess.run")
     @patch.object(HerdrInboxService, "_fetch_snapshot")
-    @patch("cli_agent_orchestrator.clients.database.delete_terminal")
+    @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal")
     @patch("cli_agent_orchestrator.clients.database.get_terminal_metadata")
     def test_reconcile_deletes_when_tab_label_gone(
         self, mock_meta, mock_delete, mock_snap, mock_run, mock_get_backend
@@ -1171,7 +1206,13 @@ class TestHerdrInboxServiceReconcileLiveTerminal:
         service = HerdrInboxService(socket_path="/tmp/test.sock")
         service.register_terminal("tid1", "pane-old")
         service._working_since["tid1"] = time.time()
-        mock_meta.return_value = {"tmux_session": "sess", "tmux_window": "win-gone"}
+        mock_meta.return_value = {
+            "id": "tid1",
+            "tmux_session": "sess",
+            "tmux_window": "win-gone",
+            "provider": "mock_cli",
+            "session_incarnation_id": None,
+        }
 
         # Snapshot: pane-old is stale (only pane-other live); empty workspaces
         # bypasses the DB cross-check.
@@ -1186,6 +1227,9 @@ class TestHerdrInboxServiceReconcileLiveTerminal:
         )
         mock_run.return_value = MagicMock(returncode=0, stdout=tab_list_response, stderr="")
         mock_get_backend.return_value = MagicMock()
+        mock_get_backend.return_value.cleanup_terminal_exact.return_value = TerminalCleanupResult(
+            TerminalCleanupOutcome.ABSENT
+        )
 
         _run_async(service._reconcile())
 
@@ -1465,14 +1509,23 @@ class TestHerdrWorkLifecycleFence:
             patch.object(service, "_label_still_live", return_value=False),
             patch(
                 "cli_agent_orchestrator.clients.database.get_terminal_metadata",
-                return_value={"tmux_session": "session", "tmux_window": "window"},
+                side_effect=lambda key: {
+                    "id": key,
+                    "tmux_session": "session",
+                    "tmux_window": "window",
+                    "provider": "mock_cli",
+                    "session_incarnation_id": None,
+                },
             ),
             patch(
-                "cli_agent_orchestrator.clients.database.delete_terminal",
+                "cli_agent_orchestrator.services.terminal_service.db_delete_terminal",
                 side_effect=delete_and_bind_first,
             ),
             patch("cli_agent_orchestrator.backends.registry.get_backend") as backend,
         ):
+            backend.return_value.cleanup_terminal_exact.return_value = TerminalCleanupResult(
+                TerminalCleanupOutcome.ABSENT
+            )
             _run_async(service._reconcile())
         assert len(removed) == 2
         backend.return_value.kill_session.assert_not_called()
@@ -1511,3 +1564,45 @@ class TestHerdrWorkLifecycleFence:
         assert service._kiro_terminals == {"work-terminal"}
         assert service._working_since == {"work-terminal": 1.0}
         assert service._workspace_to_session == {"ws": "session"}
+
+
+class TestHerdrRoutingOwnerLifetime:
+    def test_registration_replaces_its_old_alias_and_owner_state(self):
+        service = HerdrInboxService(socket_path="/tmp/test.sock")
+        service.register_terminal("owner", "old-pane", is_kiro=True)
+        previous = service._routing_owner("owner")
+        service._working_since["owner"] = 1.0
+        service.register_terminal("owner", "new-pane", is_kiro=False)
+        current = service._routing_owner("owner")
+        assert current is not previous
+        assert "old-pane" not in service._pane_to_terminal
+        assert "owner" not in service._kiro_terminals
+        assert "owner" not in service._working_since
+        assert service._unregister_if_routing_owner("owner", previous) is False
+        assert service._terminal_to_pane["owner"] == "new-pane"
+        assert service._unregister_if_routing_owner("owner", current) is True
+        assert service._routing_owners == {}
+        assert service._terminal_to_pane == service._pane_to_terminal == {}
+
+    def test_old_owner_cannot_pop_another_terminals_reused_pane(self):
+        service = HerdrInboxService(socket_path="/tmp/test.sock")
+        service.register_terminal("first", "compact-pane")
+        service.register_terminal("second", "compact-pane")
+        service.unregister_terminal("first")
+        assert service._pane_to_terminal["compact-pane"] == "second"
+        assert service._terminal_to_pane["second"] == "compact-pane"
+        assert "first" not in service._routing_owners
+
+    def test_ten_thousand_completed_owners_leave_no_routing_history(self, monkeypatch):
+        from cli_agent_orchestrator.services import herdr_inbox_service
+
+        monkeypatch.setattr(herdr_inbox_service.logger, "info", lambda *_a, **_k: None)
+        service = HerdrInboxService(socket_path="/tmp/test.sock")
+        for index in range(10000):
+            key = f"owner-{index}"
+            service.register_terminal(key, f"pane-{index}", is_kiro=True)
+            assert service._unregister_if_routing_owner(key, service._routing_owner(key))
+        assert service._routing_owners == {}
+        assert service._terminal_to_pane == service._pane_to_terminal == {}
+        assert service._kiro_terminals == set()
+        assert service._working_since == {}

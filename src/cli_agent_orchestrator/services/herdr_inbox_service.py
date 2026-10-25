@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import subprocess
+import threading
 import time
 from contextlib import ExitStack
 from typing import Callable, Dict, Optional, Set
@@ -35,6 +36,7 @@ _BACKOFF_MULTIPLIER = 2.0
 
 # Kiro supplement check: how long in "working" before we check pane read
 _KIRO_WORKING_THRESHOLD = 30.0  # seconds
+_UNSPECIFIED_GHOST_METADATA = object()
 
 
 def _retain_deferred_failure_tombstone_unlocked(
@@ -178,6 +180,10 @@ class HerdrInboxService:
         # Managed pane tracking
         self._pane_to_terminal: Dict[str, str] = {}  # pane_id → terminal_id
         self._terminal_to_pane: Dict[str, str] = {}  # terminal_id → pane_id
+        # Current routing owners only: a worker result cannot unregister a
+        # newer registration, even when Herdr reuses the same compact pane ID.
+        self._routing_owners: Dict[str, object] = {}
+        self._routing_guard = threading.Lock()
 
         # Kiro-specific tracking for supplement check
         self._kiro_terminals: Set[str] = set()  # terminal_ids using kiro-cli
@@ -233,10 +239,18 @@ class HerdrInboxService:
             pane_id: Current herdr compact pane_id
             is_kiro: Whether this terminal runs kiro-cli (enables supplement check)
         """
-        self._pane_to_terminal[pane_id] = terminal_id
-        self._terminal_to_pane[terminal_id] = pane_id
-        if is_kiro:
-            self._kiro_terminals.add(terminal_id)
+        with self._routing_guard:
+            old_pane = self._terminal_to_pane.get(terminal_id)
+            if old_pane != pane_id and self._pane_to_terminal.get(old_pane) == terminal_id:
+                self._pane_to_terminal.pop(old_pane, None)
+            self._pane_to_terminal[pane_id] = terminal_id
+            self._terminal_to_pane[terminal_id] = pane_id
+            self._routing_owners[terminal_id] = object()
+            if is_kiro:
+                self._kiro_terminals.add(terminal_id)
+            else:
+                self._kiro_terminals.discard(terminal_id)
+            self._working_since.pop(terminal_id, None)
 
         logger.info(f"Registered terminal {terminal_id} (pane={pane_id}, kiro={is_kiro})")
 
@@ -246,20 +260,50 @@ class HerdrInboxService:
         Args:
             terminal_id: Terminal to unregister
         """
-        pane_id = self._terminal_to_pane.pop(terminal_id, None)
-        if pane_id:
-            self._pane_to_terminal.pop(pane_id, None)
-        self._kiro_terminals.discard(terminal_id)
-        self._working_since.pop(terminal_id, None)
+        with self._routing_guard:
+            self._unregister_routing_locked(terminal_id)
         logger.info(f"Unregistered terminal {terminal_id}")
 
+    def _unregister_routing_locked(self, terminal_id: str) -> None:
+        pane_id = self._terminal_to_pane.pop(terminal_id, None)
+        if pane_id and self._pane_to_terminal.get(pane_id) == terminal_id:
+            self._pane_to_terminal.pop(pane_id, None)
+        self._routing_owners.pop(terminal_id, None)
+        self._kiro_terminals.discard(terminal_id)
+        self._working_since.pop(terminal_id, None)
+
+    def _routing_owner(self, terminal_id: str):
+        with self._routing_guard:
+            return self._routing_owners.get(terminal_id)
+
+    def _unregister_if_routing_owner(self, terminal_id: str, expected_owner) -> bool:
+        with self._routing_guard:
+            if self._routing_owners.get(terminal_id) is not expected_owner:
+                return False
+            self._unregister_routing_locked(terminal_id)
+        logger.info("Retired Herdr routing for %s", terminal_id)
+        return True
+
     @staticmethod
-    def _delete_ghost_terminal(terminal_id: str) -> None:
-        """Keep a Work binding from racing a legacy registry-row deletion."""
-        from cli_agent_orchestrator import constants
-        from cli_agent_orchestrator.clients.database import delete_terminal
+    def _delete_ghost_terminal(
+        terminal_id: str, *, expected_metadata=_UNSPECIFIED_GHOST_METADATA
+    ) -> bool:
+        """Retire an ordinary ghost only after exact read-only absence proof.
+
+        Caller owns a blocking worker. No label-based snapshot/kill, routing
+        mutation, or physical provider lease spans monitor teardown here.
+        """
+        from cli_agent_orchestrator.backends.base import TerminalCleanupOutcome
+        from cli_agent_orchestrator.backends.registry import get_backend
+        from cli_agent_orchestrator.clients.database import get_terminal_metadata
+        from cli_agent_orchestrator.services import remote_terminal_service as remote
         from cli_agent_orchestrator.services.terminal_service import (
+            _is_deferred_init_external_owner_active,
+            delete_terminal_row,
+            dismantle_terminal_runtime,
             ensure_terminal_is_not_work_owned,
+            provider_manager,
+            should_retain_deferred_failure_tombstone,
         )
         from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
@@ -268,7 +312,92 @@ class HerdrInboxService:
             with retirement_scope(terminal_id) as admitted:
                 if not admitted:
                     raise RuntimeError("terminal startup is still owned; ghost cleanup deferred")
-                delete_terminal(terminal_id)
+                if remote.placement(terminal_id):
+                    return False
+                metadata = get_terminal_metadata(terminal_id)
+                if expected_metadata is None and metadata is not None:
+                    return False  # An observed-absent row was replaced while queued.
+                if metadata is None:
+                    # Routing-only recovery after a completed/cancelled worker:
+                    # no row or private adapter may be retired without metadata.
+                    if provider_manager.has_cached_provider(terminal_id):
+                        return False
+                    exact = get_backend().cleanup_terminal_exact(terminal_id, close=False)
+                    return exact.outcome == TerminalCleanupOutcome.ABSENT
+                if expected_metadata is not _UNSPECIFIED_GHOST_METADATA:
+                    fields = (
+                        "id",
+                        "tmux_session",
+                        "tmux_window",
+                        "provider",
+                        "session_incarnation_id",
+                    )
+                    if any(metadata.get(key) != expected_metadata.get(key) for key in fields):
+                        return False
+                # Recheck retention inside admission, rather than trusting the
+                # earlier discovery. Maintenance handles retained tombstones.
+                if _is_deferred_init_external_owner_active(
+                    terminal_id
+                ) or should_retain_deferred_failure_tombstone(terminal_id, metadata):
+                    return False
+                exact = get_backend().cleanup_terminal_exact(
+                    terminal_id,
+                    metadata.get("tmux_session"),
+                    metadata.get("tmux_window"),
+                    close=False,
+                )
+                if exact.outcome != TerminalCleanupOutcome.ABSENT:
+                    return False
+                # Never read a replacement's history/cwd by reusable labels.
+                metadata = dict(metadata)
+                metadata["live_working_directory"] = metadata.get("working_directory")
+                if not dismantle_terminal_runtime(
+                    terminal_id, metadata, kill_window=False, unregister_inbox=False
+                ):
+                    return False
+                return delete_terminal_row(terminal_id, metadata, registry=None)
+
+    def _cleanup_ghost_session(self, session_name: str):
+        """Own the complete blocking session phase; return routing work to the loop."""
+        from cli_agent_orchestrator.clients.database import list_terminals_by_session
+        from cli_agent_orchestrator.services.session_lock import session_lifecycle_lock
+
+        deleted, deferred, visited = set(), set(), set()
+        routing_owners = {}
+        with session_lifecycle_lock(session_name):
+            try:
+                rows = list_terminals_by_session(session_name)
+                live_labels = self._fresh_live_tab_labels_for_session(session_name)
+            except Exception as error:
+                logger.warning("Herdr ghost discovery deferred for %s: %s", session_name, error)
+                return deleted, deferred, visited, routing_owners
+            if live_labels is None:
+                return deleted, deferred, visited, routing_owners
+            for metadata in rows:
+                terminal_id = str(metadata["id"])
+                visited.add(terminal_id)
+                window = metadata.get("tmux_window", "")
+                if not window or window in live_labels:
+                    continue
+                routing_owners[terminal_id] = self._routing_owner(terminal_id)
+                try:
+                    complete = self._delete_ghost_terminal(terminal_id, expected_metadata=metadata)
+                except Exception as error:
+                    logger.warning("Herdr ghost retirement deferred for %s: %s", terminal_id, error)
+                    complete = False
+                (deleted if complete else deferred).add(terminal_id)
+        return deleted, deferred, visited, routing_owners
+
+    def _apply_ghost_retirement(self, deleted, deferred, routing_owners) -> None:
+        """Mutate Herdr routing only on its event loop, after the worker stops."""
+        for terminal_id in deleted:
+            self._unregister_if_routing_owner(terminal_id, routing_owners.get(terminal_id))
+        for terminal_id in deferred:
+            self._pending_tombstone_runtime_cleanup.add(terminal_id)
+            _retain_deferred_failure_tombstone(
+                terminal_id,
+                on_cleanup_deferred=self._pending_tombstone_runtime_cleanup.add,
+            )
 
     @staticmethod
     def _kill_empty_session_if_unowned(session_name: str, terminal_ids: Set[str]) -> bool:
@@ -346,57 +475,15 @@ class HerdrInboxService:
         # after this snapshot but before the DB read. Freeze that name with the
         # same lifecycle lock as creation, enumerate the CURRENT rows, then take
         # a fresh scoped snapshot before deleting anything.
+        from cli_agent_orchestrator.services.terminal_service import _await_provider_operation
+
         for session_name in set(workspace_to_session.values()):
-            with session_lifecycle_lock(session_name):
-                try:
-                    db_terminals = list_terminals_by_session(session_name)
-                except Exception as exc:  # noqa: BLE001 — maintenance retries elsewhere
-                    logger.warning(
-                        "Startup DB cleanup: could not list terminals for %s; "
-                        "deferring ghost cleanup: %s",
-                        session_name,
-                        exc,
-                    )
-                    continue
-
-                live_labels = self._fresh_live_tab_labels_for_session(session_name)
-                if live_labels is None:
-                    logger.warning(
-                        "Startup DB cleanup: could not establish fresh tab liveness "
-                        "for %s; deferring ghost cleanup",
-                        session_name,
-                    )
-                    continue
-
-                for term in db_terminals:
-                    terminal_id = str(term["id"])
-                    visited_terminal_ids.add(terminal_id)
-                    window = term.get("tmux_window", "")
-                    if window and window not in live_labels:
-                        if _retain_deferred_failure_tombstone(
-                            terminal_id,
-                            on_cleanup_deferred=self._pending_tombstone_runtime_cleanup.add,
-                        ):
-                            logger.info(
-                                "Startup DB cleanup: retaining deferred-init terminal %s "
-                                "(%s:%s) as external-owner tombstone",
-                                terminal_id,
-                                session_name,
-                                window,
-                            )
-                            continue
-                        logger.info(
-                            f"Startup DB cleanup: deleting ghost terminal {terminal_id} "
-                            f"({session_name}:{window}) — absent from fresh Herdr state"
-                        )
-                        try:
-                            self._delete_ghost_terminal(terminal_id)
-                            deleted += 1
-                        except Exception as e:
-                            logger.warning(
-                                f"Startup DB cleanup: failed to delete ghost terminal "
-                                f"{terminal_id}: {e}"
-                            )
+            removed, deferred, visited, owners = await _await_provider_operation(
+                self._cleanup_ghost_session, session_name
+            )
+            visited_terminal_ids.update(visited)
+            self._apply_ghost_retirement(removed, deferred, owners)
+            deleted += len(removed)
 
         # A workspace may have vanished completely while cao-server was down,
         # in which case it is absent from both snapshot.workspaces and tabs and
@@ -525,11 +612,7 @@ class HerdrInboxService:
         # rows we were able to enumerate. Durable tombstones do not need a live
         # pane mapping and Bridge observes them through the terminal API.
         for terminal_id in terminal_ids:
-            pane_id = self._terminal_to_pane.pop(terminal_id, None)
-            if pane_id:
-                self._pane_to_terminal.pop(pane_id, None)
-            self._kiro_terminals.discard(terminal_id)
-            self._working_since.pop(terminal_id, None)
+            self.unregister_terminal(terminal_id)
         return complete
 
     def _retry_pending_closed_sessions(self) -> None:
@@ -751,56 +834,14 @@ class HerdrInboxService:
         # enumerate the current DB worklist, and then take a fresh scoped Herdr
         # snapshot before any destructive action. Unknown fresh liveness always
         # defers instead of turning stale evidence into a delete.
-        processed_sessions: Set[str] = set()
-        for session_name in self._workspace_to_session.values():
-            if session_name in processed_sessions:
-                continue
-            processed_sessions.add(session_name)
-            with session_lifecycle_lock(session_name):
-                try:
-                    db_terminals = list_terminals_by_session(session_name)
-                except Exception as exc:  # noqa: BLE001 — stale-pane pass can still recover
-                    logger.warning(
-                        "Reconcile: could not list DB terminals for %s: %s",
-                        session_name,
-                        exc,
-                    )
-                    continue
+        from cli_agent_orchestrator.services.terminal_service import _await_provider_operation
 
-                live_labels = self._fresh_live_tab_labels_for_session(session_name)
-                if live_labels is None:
-                    logger.warning(
-                        "Reconcile: could not establish fresh tab liveness for %s; "
-                        "deferring DB ghost cleanup",
-                        session_name,
-                    )
-                    continue
-
-                for term in db_terminals:
-                    window = term.get("tmux_window", "")
-                    if window and window not in live_labels:
-                        if _retain_deferred_failure_tombstone(
-                            term["id"],
-                            on_cleanup_deferred=self._pending_tombstone_runtime_cleanup.add,
-                        ):
-                            logger.info(
-                                "Reconcile: retaining deferred-init terminal %s "
-                                "(%s:%s) as external-owner tombstone",
-                                term["id"],
-                                session_name,
-                                window,
-                            )
-                            continue
-                        logger.info(
-                            f"Reconcile: deleting ghost terminal {term['id']} "
-                            f"({session_name}:{window}) — absent from fresh Herdr state"
-                        )
-                        try:
-                            self._delete_ghost_terminal(term["id"])
-                        except Exception as e:
-                            logger.warning(
-                                f"Reconcile: failed to delete ghost terminal {term['id']}: {e}"
-                            )
+        # Freeze the list before awaiting; routing events may update the map.
+        for session_name in list(dict.fromkeys(self._workspace_to_session.values())):
+            removed, deferred, _visited, owners = await _await_provider_operation(
+                self._cleanup_ghost_session, session_name
+            )
+            self._apply_ghost_retirement(removed, deferred, owners)
 
         # Find stale panes: stored pane_id no longer in herdr's live pane list.
         #
@@ -829,6 +870,7 @@ class HerdrInboxService:
                 self._pane_to_terminal.pop(pane_id, None)
                 continue
 
+            routing_owner = self._routing_owner(terminal_id)
             # Session/window identity before any mutation.
             try:
                 meta = get_terminal_metadata(terminal_id)
@@ -863,8 +905,8 @@ class HerdrInboxService:
 
             # Re-map renumbered-but-live panes instead of deleting. A live tab
             # label means the pane_id was renumbered, not closed: re-resolve the
-            # current pane_id and update both maps. Only when re-resolution fails
-            # do we fall through to the delete path.
+            # current pane_id and update both maps. A failed lookup is not proof
+            # of absence and retains both maps for a later retry.
             term_live = self._label_still_live(term_window) if term_window else False
             if term_live is None:
                 logger.warning(
@@ -887,11 +929,12 @@ class HerdrInboxService:
                 except Exception as e:
                     logger.warning(
                         "Reconcile: tab %s live but pane re-resolve failed for %s (%s); "
-                        "deleting",
+                        "retaining routing for retry",
                         term_window,
                         terminal_id,
                         e,
                     )
+                    continue
                 else:
                     self._pane_to_terminal.pop(pane_id, None)
                     self._pane_to_terminal[new_pane_id] = terminal_id
@@ -905,40 +948,23 @@ class HerdrInboxService:
                     remapped += 1
                     continue
 
-            # Keep routing and retry evidence until the existing dispatch fence
-            # proves this terminal may be destructively reclaimed.
-            from cli_agent_orchestrator import constants
-            from cli_agent_orchestrator.services.terminal_service import (
-                ensure_terminal_is_not_work_owned,
-            )
-            from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
-
+            # The owned worker drains before cancellation propagates, leaving
+            # routing untouched unless exact/native/provider retirement completes.
             try:
-                with terminal_dispatch_lock(
-                    DatabaseTarget.from_settings(scope="main"), terminal_id
-                ):
-                    ensure_terminal_is_not_work_owned(terminal_id)
-                    with retirement_scope(terminal_id) as admitted:
-                        if not admitted:
-                            raise RuntimeError(
-                                "terminal startup is still owned; reconciliation deferred"
-                            )
-                        retained = _retain_deferred_failure_tombstone_unlocked(
-                            terminal_id,
-                            on_cleanup_deferred=self._pending_tombstone_runtime_cleanup.add,
-                        )
-                        if not retained:
-                            from cli_agent_orchestrator.clients.database import delete_terminal
-
-                            delete_terminal(terminal_id)
-                            deleted += 1
+                complete = await _await_provider_operation(
+                    self._delete_ghost_terminal,
+                    terminal_id,
+                    expected_metadata=meta,
+                )
             except Exception as error:
                 logger.warning("Reconcile: retaining guarded terminal %s: %s", terminal_id, error)
+                complete = False
+            if not complete:
+                self._pending_tombstone_runtime_cleanup.add(terminal_id)
                 continue
-            self._pane_to_terminal.pop(pane_id, None)
-            self._terminal_to_pane.pop(terminal_id, None)
-            self._kiro_terminals.discard(terminal_id)
-            self._working_since.pop(terminal_id, None)
+            if not self._unregister_if_routing_owner(terminal_id, routing_owner):
+                continue
+            deleted += 1
             if term_session:
                 affected_sessions.setdefault(term_session, set()).add(terminal_id)
 
@@ -1251,10 +1277,7 @@ class HerdrInboxService:
                 logger.warning(f"pane.closed: failed to delete terminal {terminal_id}: {e}")
                 return
 
-            self._pane_to_terminal.pop(pane_id, None)
-            self._terminal_to_pane.pop(terminal_id, None)
-            self._kiro_terminals.discard(terminal_id)
-            self._working_since.pop(terminal_id, None)
+            self.unregister_terminal(terminal_id)
 
             logger.info(f"pane.closed: cleaned up terminal {terminal_id} (pane={pane_id})")
 
@@ -1330,10 +1353,7 @@ class HerdrInboxService:
 
                     for pid, tid in to_remove:
                         if tid in cleaned:
-                            self._pane_to_terminal.pop(pid, None)
-                            self._terminal_to_pane.pop(tid, None)
-                            self._kiro_terminals.discard(tid)
-                            self._working_since.pop(tid, None)
+                            self.unregister_terminal(tid)
 
                     if len(cleaned) == len(terminals):
                         self._workspace_to_session.pop(workspace_id, None)

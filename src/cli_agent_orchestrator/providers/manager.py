@@ -598,6 +598,11 @@ class ProviderManager:
             logger.error(f"Failed to cleanup provider for terminal {terminal_id}: {e}")
             return False
 
+    def has_cached_provider(self, terminal_id: str) -> bool:
+        """Inspect one cache key without restoration or private-state I/O."""
+        with self._providers_guard:
+            return terminal_id in self._providers
+
     def list_providers(self) -> Dict[str, str]:
         """List all active providers (for debugging)."""
         with self._providers_guard:
