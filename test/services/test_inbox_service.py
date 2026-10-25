@@ -3,7 +3,7 @@
 import asyncio
 import threading
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -755,7 +755,11 @@ class TestRun:
             except asyncio.CancelledError:
                 pass
 
-        mock_to_thread.assert_awaited_once_with(svc.deliver_pending, "abc123", registry=None)
+        mock_to_thread.assert_awaited_once_with(
+            svc._deliver_status_pending, "abc123", ANY, registry=None
+        )
+        # The worker's invocation fence must remain closed after consumer exit.
+        assert mock_to_thread.await_args.args[2].is_set()
 
 
 @pytest.mark.asyncio

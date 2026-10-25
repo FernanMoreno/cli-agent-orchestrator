@@ -36,6 +36,10 @@ from cli_agent_orchestrator.utils.event import terminal_id_from_topic
 
 logger = logging.getLogger(__name__)
 
+# Per consumer, shared-executor submissions stay bounded independently of event
+# volume. Other delivery paths retain their existing admission and lock rules.
+_STATUS_DELIVERY_CONCURRENCY = 4
+
 
 class InboxServiceStoppingError(RuntimeError):
     """Raised when inbox work is requested after shutdown has closed admission."""
@@ -163,12 +167,12 @@ class InboxService:
                 logger.debug("Inbox drain loop already closed")
 
     @contextmanager
-    def _track_operation(self) -> Iterator[None]:
+    def _track_operation(self, *, cancelled: threading.Event | None = None) -> Iterator[None]:
         depth = getattr(self._operation_context, "depth", 0)
         is_outermost = depth == 0
         if is_outermost:
             with self._operations:
-                if not self._accepting_operations:
+                if not self._accepting_operations or (cancelled is not None and cancelled.is_set()):
                     raise InboxServiceStoppingError("inbox service is stopping")
                 self._active_operations += 1
 
@@ -204,32 +208,84 @@ class InboxService:
                 if entry.refs == 0 and self._delivery_locks.get(terminal_id) is entry:
                     del self._delivery_locks[terminal_id]
 
+    def _deliver_status_pending(
+        self,
+        terminal_id: str,
+        cancelled: threading.Event,
+        registry: PluginRegistry | None = None,
+    ) -> None:
+        # Admission and the invocation's stop fence share the operation lock.
+        # A late executor worker cannot join a subsequent server lifespan.
+        with self._track_operation(cancelled=cancelled):
+            self.deliver_pending(terminal_id, registry=registry)
+
     async def run(self, registry: PluginRegistry | None = None) -> None:
         queue = bus.subscribe("terminal.*.status")
+        pending: list[str] = []
+        capacity = max(1, queue.maxsize)
+        deliveries: dict[str, asyncio.Task[None]] = {}
+        reader: asyncio.Task | None = None
+        cancelled = threading.Event()
         try:
             logger.info("InboxService started")
             while True:
-                try:
-                    event = await queue.get()
-                    status_value = event["data"]["status"]
-                    if status_value in (TerminalStatus.IDLE.value, TerminalStatus.COMPLETED.value):
-                        terminal_id = terminal_id_from_topic(event["topic"])
-                        # deliver_pending does blocking DB + tmux I/O. Offload it to a
-                        # worker thread so this consumer keeps yielding to the event loop
-                        # (StatusMonitor/LogWriter must not be starved — see the threading
-                        # note in docs/event-driven-architecture.md). The registry is
-                        # threaded through so status-driven deliveries fire
-                        # PostSendMessageEvent hooks with the same attribution as the
-                        # immediate and OpenCode-poller paths.
-                        await asyncio.to_thread(
-                            self.deliver_pending, terminal_id, registry=registry
-                        )
-                except Exception as e:
-                    logger.error(f"Error in InboxService: {e}")
+                with self._operations:
+                    if not self._accepting_operations:
+                        return
+                # Keep every consumed ready event. Skip busy keys without
+                # occupying executor slots waiting for their per-terminal lock.
+                while len(deliveries) < _STATUS_DELIVERY_CONCURRENCY:
+                    index = next(
+                        (i for i, key in enumerate(pending) if key not in deliveries), None
+                    )
+                    if index is None:
+                        break
+                    terminal_id = pending.pop(index)
+                    deliveries[terminal_id] = asyncio.create_task(
+                        asyncio.to_thread(
+                            self._deliver_status_pending, terminal_id, cancelled, registry=registry
+                        ),
+                        name="inbox-status-delivery",
+                    )
+                if reader is None and len(pending) < capacity:
+                    reader = asyncio.create_task(queue.get(), name="inbox-status-reader")
+                waiting = set(deliveries.values())
+                if reader is not None:
+                    waiting.add(reader)
+                done, _ = await asyncio.wait(waiting, return_when=asyncio.FIRST_COMPLETED)
+                for terminal_id, delivery in tuple(deliveries.items()):
+                    if delivery in done:
+                        del deliveries[terminal_id]
+                        try:
+                            delivery.result()
+                        except InboxServiceStoppingError:
+                            logger.debug("Inbox status delivery rejected during shutdown")
+                        except Exception as e:
+                            logger.error(f"Error in InboxService: {e}")
+                if reader is not None and reader in done:
+                    completed_reader = reader
+                    reader = None
+                    try:
+                        event = completed_reader.result()
+                        if event["data"]["status"] in (
+                            TerminalStatus.IDLE.value,
+                            TerminalStatus.COMPLETED.value,
+                        ):
+                            pending.append(terminal_id_from_topic(event["topic"]))
+                    except Exception as e:
+                        logger.error(f"Error in InboxService: {e}")
         finally:
-            # Cancelling the consumer does not stop a delivery's worker thread;
-            # drain() still owns it. Retire only this invocation's event queue.
+            with self._operations:
+                cancelled.set()
             bus.unsubscribe("terminal.*.status", queue)
+            children = list(deliveries.values())
+            if reader is not None:
+                children.append(reader)
+            for child in children:
+                child.cancel()
+            # Join asyncio awaiters only. The real threads remain owned by
+            # _track_operation and the server's bounded drain, not this gather.
+            await asyncio.gather(*children, return_exceptions=True)
 
     def deliver_pending(
         self,

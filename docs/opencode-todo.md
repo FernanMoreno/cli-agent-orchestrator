@@ -517,3 +517,10 @@ T136 / OC-06: reproducida y corregida la retención ilimitada de bloqueos del in
 Corregida la retención de colas al salir InboxService.run:20 ciclos de arranque/cancelación dejaban20 suscripciones y ahora dejan0. Se conserva cada suscriptor ajeno y la entrega activa sigue perteneciendo al drain después de cancelar su espera. Cuatro casos RED/GREEN y96 regresiones pasan, con PostgreSQL real; arquitectura5/0 y revisión de Claude sin bloqueos. [Resultados y límites](../specs/025-provider-mcp-profiles/validation-t137.md).
 
 OC-06 sigue abierto: T138 registra el bloqueo reproducido del consumidor secuencial, donde una entrega lenta de A retrasa el evento listo de B. Este cambio no implementa aún su despacho concurrente ni actualiza la aceptación nativa de fuentes anteriores.
+
+
+## Avance2026-10-25: T138 despacho acotado entre terminales
+
+Implementado el despacho de eventos con hasta4 entregas y1lector por consumidor, conservando cada evento pendiente y la exclusión por terminal. A retenido con seis eventos repetidos permite avanzar a B; A conserva sus siete intentos. Añadido cierre por invocación para que un trabajador antiguo no entre después de reabrir la API.20 controles enfocados y108 regresiones pasan, incluida PostgreSQL real con A retenido y B entregado antes de liberar A; arquitectura5/0 y ClaudeGO. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t138.md).
+
+Este resultado sustituye el pendiente de despacho secuencial registrado en T137 dentro de este alcance acotado. OC-06 sigue abierto: dos buffers finitos cambian el punto de saturación, y un buffer lleno de terminales ocupados aún puede retrasar otros eventos. El bloqueo global de restauración de proveedores, presión del ejecutor, hooks concurrentes y perfiles nativos requieren evidencia propia. No se atribuye este código a los recibos nativos anteriores.
