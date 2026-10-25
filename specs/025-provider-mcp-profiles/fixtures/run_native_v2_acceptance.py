@@ -1351,7 +1351,10 @@ def _phase_prompt(index: int, receiver_id: str, message: str) -> str:
         + receiver_id
         + " and message "
         + json.dumps(message, ensure_ascii=False)
-        + ". Do not retry or redeliver. After a successful call, the public result body "
+        + ". Pass message as the exact JSON-decoded string, preserving every Unicode "
+        + "code point, whitespace and punctuation verbatim. Do not translate, normalize, "
+        + "or substitute characters or punctuation width. Do not retry or redeliver. "
+        + "After a successful call, the public result body "
         + "must be exactly this line: "
         + LAST_RECEIPT
         + "\nThen comply with this turn's CAO completion receipt contract: append its "

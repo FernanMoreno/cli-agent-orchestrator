@@ -1,0 +1,186 @@
+{
+  "schema": "caos.native-acceptance-summary.v1",
+  "source_head": "7d187ea5bfd7397a6371b2d4c36bf6f6a92a1c22",
+  "source_runtime_file_count": 539,
+  "case": "v2-full8",
+  "success": false,
+  "error_code": "message_phase_acceptance_mismatch",
+  "elapsed_seconds": 73.136,
+  "private_native_receipt_sha256": "ab1190df6597de33bb1beaf04412c1a9b4f97c7a1d8ec05631c5782d6d63e5ec",
+  "phase_field_semantics": {
+    "durable_turn_completed": "Sender only."
+  },
+  "phases": [
+    {
+      "name": "before_restart",
+      "receiver_ack_exact": true,
+      "receiver_turn_completed_once": true,
+      "last_receipt_unicode_verified": true,
+      "durable_turn_completed": true,
+      "one_exact_pg_api_message": false,
+      "agui_redacted_one_notification": true,
+      "elapsed_seconds": 19.226
+    }
+  ],
+  "response_argument_observation": {
+    "schema": "spec025.t128.http-response-argument-diagnostic.v1",
+    "status": "sealed_observation_available",
+    "reason": "none",
+    "observation": {
+      "observer_status": "observed",
+      "trace_complete": true,
+      "overflow": false,
+      "request_count": 3,
+      "response_count": 3,
+      "durable_record_count": 3,
+      "phase_results": [
+        {
+          "phase_ordinal": 1,
+          "status": "known_punctuation_variant",
+          "target_tool_call_count": 1,
+          "argument_exact": false,
+          "known_punctuation_variant_exact": true,
+          "expected_utf8_bytes": 48,
+          "observed_utf8_bytes": 50
+        },
+        {
+          "phase_ordinal": 2,
+          "status": "not_observed",
+          "target_tool_call_count": null,
+          "argument_exact": null,
+          "known_punctuation_variant_exact": null,
+          "expected_utf8_bytes": 51,
+          "observed_utf8_bytes": null
+        }
+      ]
+    },
+    "sealed_raw_copy_verified": true,
+    "active_receipt_identity_attested": false,
+    "acceptance_input_changed": false
+  },
+  "mcp_ingress_observation": {
+    "schema": "spec025.t122.send-message-argument-diagnostic.v1",
+    "status": "observed_prefix",
+    "reason": "none",
+    "expected_phase_count": 2,
+    "observed_count": 1,
+    "observations": [
+      {
+        "ordinal": 1,
+        "status": "compared",
+        "exact": false,
+        "utf8_length": 50
+      }
+    ],
+    "two_phase_arguments_exact": false,
+    "sealed_raw_copy_verified": true,
+    "acceptance_input_changed": false
+  },
+  "receipt_verification_diagnostic": {
+    "schema": "spec025.receipt-verification-stages.v1",
+    "status": "partial",
+    "acceptance_input_changed": false,
+    "epochs": {
+      "api_a": {
+        "role": "api_a",
+        "observer_status": "complete",
+        "event_count": 47,
+        "thread_count": 3,
+        "failed_event_count": 0,
+        "stage_outcome_counts": {
+          "admission": {
+            "current_capture": 1,
+            "progress_unconfirmed": 2,
+            "stale_capture": 0
+          },
+          "attempt": {
+            "started": 2,
+            "superseded": 0,
+            "unresolved": 0,
+            "verified": 2
+          },
+          "result_extraction": {
+            "error": 0,
+            "returned": 2,
+            "started": 2,
+            "unavailable": 0
+          },
+          "receipt_witness": {
+            "error": 0,
+            "not_applicable": 0,
+            "passed": 4,
+            "rejected": 0,
+            "started": 4
+          },
+          "canonicalizer": {
+            "error": 0,
+            "not_applicable": 0,
+            "passed": 2,
+            "rejected": 0,
+            "started": 2
+          },
+          "active_receipt_identity": {
+            "error": 0,
+            "not_applicable": 0,
+            "passed": 2,
+            "rejected": 0,
+            "skip": 0,
+            "started": 2
+          },
+          "native_binding": {
+            "error": 0,
+            "passed": 2,
+            "rejected": 0,
+            "skip": 0,
+            "started": 2
+          },
+          "native_parts": {
+            "error": 0,
+            "passed": 2,
+            "rejected": 0,
+            "skip": 0,
+            "started": 2
+          },
+          "native_receipt_identity": {
+            "error": 0,
+            "passed": 2,
+            "rejected": 0,
+            "skip": 0,
+            "started": 2
+          },
+          "native_render_guard": {
+            "error": 0,
+            "passed": 2,
+            "rejected": 0,
+            "skip": 0,
+            "started": 2
+          },
+          "durable_cas": {
+            "conflict": 0,
+            "error": 0,
+            "settled": 2,
+            "started": 2
+          }
+        }
+      },
+      "api_b": {
+        "observer_status": "unavailable",
+        "role": "api_b",
+        "event_count": null,
+        "thread_count": null,
+        "failed_event_count": null,
+        "stage_outcome_counts": null
+      }
+    }
+  },
+  "case_gates_closed": true,
+  "parent_pg_closed": true,
+  "exact_owned_container_absent": true,
+  "exact_owned_network_absent": true,
+  "unrelated_resources_preserved": true,
+  "operator_auth_unchanged": true,
+  "cleanup_failures": [],
+  "private_state_removed": true,
+  "global_acceptance_claimed": false,
+  "api_restart_observed": false
+}
