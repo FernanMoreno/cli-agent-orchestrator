@@ -574,3 +574,6 @@ Actualización compartida2026-10-25: T152 reproduce y corrige la inversión de b
 
 
 Actualización compartida2026-10-25: T153 reproduce y corrige pares KAS huérfanos y retirada sin prueba nativa en ambas rutas de reciclado Flow. Exige ausencia exacta antes de limpiar proveedores y retira solo pruebas seleccionadas tras SQL confirmado.626 regresiones pasan,29casos nuevos,3 deselecciones configuradas intactas y arquitectura5/0; GO Claude/Luna, PostgreSQL cerrado y Obsidian actualizado. Conserva evidencia ante incertidumbre/error SQL; parada previa y unlink parcial siguen explícitos. T143 y aceptación nativa actual continúan abiertos. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t153.md).
+
+
+Actualización compartida2026-10-26: T154 corrige el worktree huérfano al cancelar una asignación con retorno positivo antes de enviar la creación backend. Drena también la limpieza y conserva cancelación original, trabajo sucio y commits sin integrar; fases posteriores se retienen.683 regresiones pasan,15casos nuevos,3 deselecciones configuradas intactas y arquitectura5/0. Se corrigió una contaminación de fixture detectada por los controles existentes; GO Claude/Luna, PostgreSQL cerrado y Obsidian actualizado. T143 y aceptación nativa actual siguen abiertos. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t154.md).

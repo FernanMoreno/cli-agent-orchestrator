@@ -2000,6 +2000,7 @@ async def create_terminal(
     native_child_planned = False
     native_child_plan_id = None
     worktree_created = False
+    backend_create_submitted = False
     initial_mark_added = False
     external_mark_added = False
     startup_owner = None
@@ -2511,6 +2512,10 @@ async def create_terminal(
             return result
 
         create_context = contextvars.copy_context()
+        # Once submitted, backend compensation owns the outcome and may retain
+        # a live/uncertain runtime. Row absence alone cannot authorize removing
+        # its working directory after cancellation.
+        backend_create_submitted = True
         create_worker = asyncio.get_running_loop().run_in_executor(
             None, create_context.run, create_with_outcome
         )
@@ -2856,6 +2861,27 @@ async def create_terminal(
     except asyncio.CancelledError:
         if not startup_transferred and startup_initialize_started:
             retain_uncertain_startup(startup_owner)
+        if (
+            worktree_created
+            and worktree_repo_root is not None
+            and terminal_id is not None
+            and managed_terminal_id is None
+            and not backend_create_submitted
+            and not startup_transferred
+        ):
+            # Allocation has drained and returned successfully, but no backend
+            # worker could own this checkout. Keep dirty/uncertain/unmerged work
+            # under the existing conservative Git cleanup contract.
+            try:
+                await _await_provider_operation(
+                    worktree_service.remove_worktree, worktree_repo_root, terminal_id
+                )
+            except asyncio.CancelledError:
+                # A second cancellation still drains the removal worker. The
+                # original cancellation remains the outcome of this operation.
+                pass
+            except Exception:
+                logger.exception("Cancelled worktree cleanup deferred for %s", terminal_id)
         raise
     except Exception as e:
         if startup_transferred:
