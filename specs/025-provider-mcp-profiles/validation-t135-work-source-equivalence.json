@@ -1,0 +1,19 @@
+{
+  "schema": "caos.work-source-equivalence.v1",
+  "contract": "cao.work.message",
+  "accepted_execution_head": "7f6cdff012462900402a4d020ed110334cfc5b26",
+  "target_code_head": "0fe560dc7fb8ee79e24df32a401f4af92c329425",
+  "accepted_receipt_sha256": "a1120388fbdd0686f3e5dcd246fa6e7011069247723165295a987aebfb1a68a9",
+  "declared_source_file_count": 46,
+  "tracked_launcher_file_count": 2,
+  "tracked_launchers_already_in_source_map": true,
+  "union_file_count": 46,
+  "all_declared_bytes_identical": true,
+  "executed_manifest_digest_matches_actual_receipt": true,
+  "current_closed_manifest_is_not_execution_manifest": true,
+  "execution_relabelled": false,
+  "new_target_execution_claimed": false,
+  "native_llm_inference_claimed": false,
+  "global_acceptance_claimed": false,
+  "scope": "Exactly the declared source and tracked launcher pins. The accepted run remains at accepted_execution_head; current private bundle stays closed and cannot be rerun without fresh runtime bindings."
+}

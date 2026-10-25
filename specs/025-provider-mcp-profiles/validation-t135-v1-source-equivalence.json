@@ -1,0 +1,11 @@
+{
+  "schema": "caos.v1-source-equivalence.v1",
+  "execution_head": "cf58d148b485bb1a20c2a2e70c944f8ceb18f3b3",
+  "target_code_head": "0fe560dc7fb8ee79e24df32a401f4af92c329425",
+  "runtime_file_count": 525,
+  "artifact_file_count": 7,
+  "complete_runtime_inventory_unchanged": true,
+  "all_pinned_bytes_identical": true,
+  "execution_relabelled": false,
+  "scope": "Current generic v1 runtime and its seven declared artifacts only; actual receipt remains source-bound to execution_head. No v2/full8/global acceptance follows."
+}

@@ -1,5 +1,7 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+Actualización 2026-10-25: mensajería nativa/reinicio acreditados en v1 genérico (**99,3s**, fuentecf58;525runtime+7artefactos idénticos a0fe) y v2 genérico (**89,9s**) y full8 (**91,2s**) en0fe560dc. Dos fases exactas, ACK/Unicode/PG/API/AG-UI/reinicio y limpieza pasan; catálogos MCP observados2/0 y8/0. Work conserva su PASS separado en7f6 con equivalencia exacta de46archivos declarados, incluidos dos lanzadores; no se presenta como una ejecución nueva. [Cierre y límites](../specs/025-provider-mcp-profiles/validation-t135-closeout.md). Siguen separados concurrencia/escala, operaciones de perfiles ampliados, autenticación/OAuth/modelos, lanzadores históricos y reconciliación/global.
+
 Publicación, 2026-10-20: el gate común reprodujo el NFR de memoria a 1,010 s en el diagnóstico serial y a 2,200 s en la ejecución completa con ocho trabajadores, frente al límite de 1 s. Esta última terminó con 18.263 pruebas correctas, una fallida y 83 omitidas; el push fue rechazado. Es evidencia del backend, separado de los perfiles y recorridos OpenCode. [Resultados y límites de evidencia](../specs/021-postgresql-persistence/publication-nfr-20261020.md).
 
 Fecha de revisión inicial: 2026-10-20. Esta lista registra trabajo por hacer; no activa herramientas ni cambia permisos. Las casillas abiertas son propuestas o validaciones pendientes, no necesariamente defectos reproducidos.
@@ -38,9 +40,9 @@ Las tres herramientas del recorrido restringido son `cao_ask_user`, `cao_wait_fo
 - [x] OC-02 Añadir primero las capacidades de colaboración básica y consulta de interacciones. Verificar permisos tanto en el cliente como en el servidor; no sustituirlos por instrucciones de texto.
 - [x] OC-03 Añadir delegación, supervisión y conocimiento solo a los perfiles correspondientes; distinguir asignación local de trabajadores elásticos.
 - [x] OC-04 Probar herramientas permitidas, denegadas, nombres desconocidos, permisos vacíos/parciales, colisiones y aislamiento entre terminales; preservar respuestas humanas y autoridad delegada.
-- [ ] OC-05 Validar mensajes genéricos con PostgreSQL, proyección AG-UI y reinicio de API en la fuente final. Resolver y probar por separado el contrato externo `cao.work.message`; no asumir que es alias del MCP `send_message`.
+- [x] OC-05 Validar mensajes genéricos con PostgreSQL, proyección AG-UI y reinicio de API en la fuente final. Resolver y probar por separado el contrato externo `cao.work.message`; no asumir que es alias del MCP `send_message`.
 - [ ] OC-06 Verificar concurrencia con múltiples terminales: límites de tareas, esperas y cancelación acotadas, orden de mensajes, ausencia de cruces de credenciales y limpieza propia. Medir latencia del control separada del tiempo del modelo.
-- [ ] OC-07 Consolidar evidencia y actualizar las tareas de Spec 022/023; conservar fallos anteriores. La aceptación requiere código integrado en main y recibos vinculados a la fuente ejecutada.
+- [x] OC-07 Consolidar evidencia y actualizar las tareas de Spec 022/023; conservar fallos anteriores. La aceptación requiere código integrado en main y recibos vinculados a la fuente ejecutada.
 
 ## Pendientes específicos de v1
 
@@ -504,3 +506,5 @@ T133 diagnóstico real7d187ea5/539: FAILED73,136s antes del reinicio. ACK y cier
 T134 implementada offline: instrucción explícita de preservar cada carácter Unicode, espacios y puntuación del argumento JSON, sin traducción/normalización/sustitución de ancho. Cambia una sola frase; mensajes y otras149funciones intactos.156 pruebas, composición5/0 y revisión Claude pasan. No acredita causa upstream ni cumplimiento real; falta recorrido nuevo ligado al commit. [Detalle](../specs/025-provider-mcp-profiles/validation-t134.md).
 
 Fuentecf58d148: v1 genérico PASS99,303s, generaciónPASS16,773s, dos fases con ACK/Unicode/PG/API/AG-UI/reinicio exactos y contrato final estricto. v2 full8 pasa ahora toda la primera fase exacta, pero termina a68,910s por RuntimeError del arnés entre la lectura del recibo durable y el examen de procesos, antes de API-b. T135 añade únicamente clasificación fija para distinguir ambas; no se atribuye aún causa ni se debilitan los controles. Los dos casos y PostgreSQL compartido están cerrados, recursos exactos ausentes y credenciales intactas. [v1](../specs/025-provider-mcp-profiles/validation-t134-v1-native.json), [v2](../specs/025-provider-mcp-profiles/validation-t134-v2-native.json).
+
+T135 cierre actual: v2 genérico y full8 pasan con ambos epochs API sellados/completos; snapshot previo al reinicio complete, sin reproducir el RuntimeError histórico. Catálogo/oferta y llamadas reales verificadas en estos perfiles de mensajes. OC-05/OC-07 y T077/T104/T131/T134 cierran sus alcances escritos; OC2-04 queda abierta para las operaciones ampliadas no ejercidas. Padres PostgreSQL cerrados después de los escritores, sin recursos propios residuales ni cambios de credenciales. Spec022/023 enlazan esta evidencia sin cerrar sus matrices/historial global. [Detalle](../specs/025-provider-mcp-profiles/validation-t135-closeout.md).

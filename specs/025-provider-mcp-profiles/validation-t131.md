@@ -13,3 +13,6 @@ Composition surface: fixture/profile contract → installed native prompt → in
 Offline correction is implemented; a fresh source-bound actual journey remains required before closing T131/T104/T077 or full8 diagnostic completeness. No unchanged retry is authorized by these results.
 
 Claude final read review20c07a1208ca4aaeb344a92b0edee582 approved offline closure after the corrected test signature and profile/input separation. The earlier review caught the test error; it was fixed before the final152-test pass. Composition verdict PASS WITH RISKS: offline instruction alignment is accepted, native compliance remains unproven. Durable boundary lessons/current failures were saved through the shared Obsidian transaction with strict lint0issues.
+
+
+2026-10-25 later source-bound closeout: The three defined receiver-profile clarification scopes now have actual acceptance: v1genericcf58 with exact source equivalence to0fe, and v2generic/full8 on0fe, both ACK phases exact. This is not deterministic all-model compliance. See [current receipts, source equivalence and limits](validation-t135-closeout.md).

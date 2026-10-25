@@ -33,3 +33,6 @@ R2 cleanup scope: owned writers, isolated case database and private state were c
 R5 source09a89192 FAILED native_model_request_tool_offer_mismatch94.402s after both transport/restart phases passed. Exact catalogs/calls passed; one untracked offered name per primary request prevents final acceptance. Full cleanup/gates closed. [R5](validation-t104-r5-native.json). T114 diagnoses this boundary; no offer criterion relaxed.
 
 R6 source76b33892 FAILED before final model-tool-offer validation: receiver turn was not verified (PGsent/APIreconcile), despite a pure frame-parser ACK candidate. No wrong ACK-body or model/extractor cause is proved. Complete owned cleanup, immutable receipt and closed gates retained. [R6](validation-t104-r6-native.json). T117 aligns the receiver profile with the existing delivery receipt requirement.
+
+
+2026-10-25 later source-bound closeout: The current full8 message/restart case now passes on0fe560dc in91.212s, with exact8/0 CAO offers/calls, both HTTP arguments and complete functional/cleanup gates. Historical failed receipts and unknown causes remain unchanged. See [current receipts, source equivalence and limits](validation-t135-closeout.md).
