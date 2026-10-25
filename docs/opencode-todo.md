@@ -568,3 +568,6 @@ Actualización compartida2026-10-25: T150 corrige archivos de error/inicializaci
 
 
 Actualización compartida2026-10-25: T151 retira fantasmas Herdr solo con ausencia nativa exacta y limpieza central confirmada; conserva estado ante incertidumbre y etiquetas vivas sin ubicación. El trabajador bloqueante conserva su propiedad y el bucle aplica bajas con testigo de inscripción actual, sin historial por ID.582 regresiones pasan;3 deselecciones intactas, arquitectura5/0 y revisión Claude/Luna. T152 recoge una inversión previa de bloqueos pendiente de reproducción; T143 y la aceptación nativa actual siguen abiertos. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t151.md).
+
+
+Actualización compartida2026-10-25: T152 reproduce y corrige la inversión de bloqueos entre creación con padre y limpieza Herdr. Creación toma sesión antes de dispatch, mantiene comprobaciones de identidad/generación y rollback bajo ambos; límites intactos.597 regresiones pasan,3 deselecciones configuradas intactas y arquitectura5/0. Claude revisó la corrección de una aserción de prueba y dio GO; auditoría Luna y PostgreSQL cerrado. T143 y aceptación nativa actual siguen abiertos. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t152.md).

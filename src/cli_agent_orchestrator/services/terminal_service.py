@@ -2320,9 +2320,12 @@ async def create_terminal(
                 if fence_parent and caller_id
                 else nullcontext()
             )
+            # Herdr/session teardown acquires session before terminal dispatch.
+            # A fenced parent must use that same order or each actor can hold
+            # the other's next lock until the dispatch timeout aborts cleanup.
             with (
-                parent_lock,
                 session_lifecycle_lock(session_name),
+                parent_lock,
                 ExitStack() as stale_retirements,
             ):
                 if new_session:
