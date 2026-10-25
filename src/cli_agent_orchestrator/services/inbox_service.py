@@ -206,24 +206,30 @@ class InboxService:
 
     async def run(self, registry: PluginRegistry | None = None) -> None:
         queue = bus.subscribe("terminal.*.status")
-        logger.info("InboxService started")
-
-        while True:
-            try:
-                event = await queue.get()
-                status_value = event["data"]["status"]
-                if status_value in (TerminalStatus.IDLE.value, TerminalStatus.COMPLETED.value):
-                    terminal_id = terminal_id_from_topic(event["topic"])
-                    # deliver_pending does blocking DB + tmux I/O. Offload it to a
-                    # worker thread so this consumer keeps yielding to the event loop
-                    # (StatusMonitor/LogWriter must not be starved — see the threading
-                    # note in docs/event-driven-architecture.md). The registry is
-                    # threaded through so status-driven deliveries fire
-                    # PostSendMessageEvent hooks with the same attribution as the
-                    # immediate and OpenCode-poller paths.
-                    await asyncio.to_thread(self.deliver_pending, terminal_id, registry=registry)
-            except Exception as e:
-                logger.error(f"Error in InboxService: {e}")
+        try:
+            logger.info("InboxService started")
+            while True:
+                try:
+                    event = await queue.get()
+                    status_value = event["data"]["status"]
+                    if status_value in (TerminalStatus.IDLE.value, TerminalStatus.COMPLETED.value):
+                        terminal_id = terminal_id_from_topic(event["topic"])
+                        # deliver_pending does blocking DB + tmux I/O. Offload it to a
+                        # worker thread so this consumer keeps yielding to the event loop
+                        # (StatusMonitor/LogWriter must not be starved — see the threading
+                        # note in docs/event-driven-architecture.md). The registry is
+                        # threaded through so status-driven deliveries fire
+                        # PostSendMessageEvent hooks with the same attribution as the
+                        # immediate and OpenCode-poller paths.
+                        await asyncio.to_thread(
+                            self.deliver_pending, terminal_id, registry=registry
+                        )
+                except Exception as e:
+                    logger.error(f"Error in InboxService: {e}")
+        finally:
+            # Cancelling the consumer does not stop a delivery's worker thread;
+            # drain() still owns it. Retire only this invocation's event queue.
+            bus.unsubscribe("terminal.*.status", queue)
 
     def deliver_pending(
         self,
