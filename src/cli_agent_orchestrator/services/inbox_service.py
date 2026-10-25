@@ -53,6 +53,14 @@ class InboxServiceDrainTimeout(TimeoutError):
         )
 
 
+class _DeliveryLockEntry:
+    __slots__ = ("lock", "refs")
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.refs = 0
+
+
 class InboxService:
     """Delivers one pending message per terminal per IDLE cycle."""
 
@@ -64,11 +72,11 @@ class InboxService:
         # consumer and the immediate POST path both dispatch to worker threads, and
         # the OpenCode poller and the reconcile sweep add more. Serialize the whole
         # read→mark→send sequence per terminal; as a side effect this also keeps
-        # two pastes from ever interleaving in one pane. The lock map is tiny
-        # (one Lock per terminal id ever delivered to in this process) and is not
-        # reaped — terminal ids are bounded by session lifecycle.
+        # two pastes from ever interleaving in one pane. Holders and registered
+        # waiters share one entry, retired only after the final lease releases
+        # its lock. Historical terminal ids must not accumulate in the registry.
         self._delivery_locks_guard = threading.Lock()
-        self._delivery_locks: Dict[str, threading.Lock] = {}
+        self._delivery_locks: Dict[str, _DeliveryLockEntry] = {}
         self._operations = threading.Condition()
         self._operation_context = threading.local()
         self._accepting_operations = True
@@ -178,13 +186,23 @@ class InboxService:
                         self._drain_waiters.clear()
                 self._notify_drainers(waiters)
 
-    def _delivery_lock(self, terminal_id: str) -> threading.Lock:
+    @contextmanager
+    def _delivery_lock(self, terminal_id: str) -> Iterator[None]:
+        """Count waiting callers before acquisition; retire after the last release."""
         with self._delivery_locks_guard:
-            lock = self._delivery_locks.get(terminal_id)
-            if lock is None:
-                lock = threading.Lock()
-                self._delivery_locks[terminal_id] = lock
-            return lock
+            entry = self._delivery_locks.get(terminal_id)
+            if entry is None:
+                entry = _DeliveryLockEntry()
+                self._delivery_locks[terminal_id] = entry
+            entry.refs += 1
+        try:
+            with entry.lock:
+                yield
+        finally:
+            with self._delivery_locks_guard:
+                entry.refs -= 1
+                if entry.refs == 0 and self._delivery_locks.get(terminal_id) is entry:
+                    del self._delivery_locks[terminal_id]
 
     async def run(self, registry: PluginRegistry | None = None) -> None:
         queue = bus.subscribe("terminal.*.status")
